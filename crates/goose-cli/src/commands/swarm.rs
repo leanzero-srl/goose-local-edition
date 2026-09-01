@@ -33,9 +33,9 @@ use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
-    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, planner_fallback,
-    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind,
-    Engines, LmsProcess,
+    drop_unservable_devices_per_engine, engines_for_run, live_fleet_slots, merge_sidecar_devices,
+    planner_fallback, prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine,
+    EngineKind, Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -22795,55 +22795,10 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
 /// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
 /// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
 /// concurrency change.
-/// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot.
 ///
-/// `fleet_slot_models(devices)` is computed once from the pool resolved at run start, and every fanned
-/// phase — coverage, research, review, the test angles, the fix wave — used that snapshot. Only BUILD saw
-/// a change, through the scheduler's `DeviceAdmission`. So a machine that died after the pool was
-/// resolved kept being handed work for the rest of the run: each fan gave it a slot, the call failed, and
-/// the slot was wasted while the surviving nodes queued.
-///
-/// CLOUD DEVICES ARE NEVER RESIDENCY-CHECKED. A cloud model does not appear in `lms ps` and never will,
-/// so treating absence as death would delete the entire cloud half of a mixed fleet. That is not a
-/// hypothetical: it is the version of this function I wrote first and reverted, and `DeviceCfg.is_cloud`
-/// exists precisely so the question can be asked only where it has an answer.
-///
-/// FALLS BACK TO THE SNAPSHOT ON ANY DOUBT — a failed probe, a probe that returns nothing, or a result
-/// that would leave the fan with no slots at all. A fan running on a stale-but-working list is a small
-/// inefficiency; a fan running on an empty one is a dead phase, and the probe is the newer and less
-/// trustworthy of the two inputs.
-fn live_fleet_slots(devices: &[DeviceCfg], engines: &Engines) -> Vec<String> {
-    let snapshot = fleet_slot_models(devices);
-    // DeviceCfg carries no engine tag (a goose-swarm type), so residency is the UNION of what
-    // each registered engine reports: the LM Studio probe (primary, its failure still falls back
-    // to the snapshot) plus the sidecar's live catalog — `lms ps` cannot see a rapid-mlx server,
-    // and without the union a healthy sidecar node would be filtered out of every fan.
-    let Ok(procs) = engines.lmstudio().resident_processes() else {
-        return snapshot;
-    };
-    let mut resident: std::collections::HashSet<String> =
-        procs.iter().map(|p| p.identifier.clone()).collect();
-    if let Some(sidecar) = engines.for_kind(EngineKind::MlxSidecar) {
-        if let Ok(p) = sidecar.resident_processes() {
-            resident.extend(p.into_iter().map(|p| p.identifier));
-        }
-    }
-    if resident.is_empty() {
-        return snapshot;
-    }
-    let live: Vec<String> = devices
-        .iter()
-        .filter(|d| d.is_cloud || resident.contains(&d.model_id))
-        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
-        .collect();
-    if live.is_empty() {
-        snapshot
-    } else {
-        live
-    }
-}
-
-fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
+/// The LIVE-fleet variant every fan actually calls is `swarm_engine::live_fleet_slots` (per-engine
+/// residency, this snapshot as its fallback).
+pub(super) fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
     devices
         .iter()
         .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
@@ -25590,7 +25545,8 @@ async fn run_linear_plan(
     cwd_for_ask: &std::path::Path,
     ask_wait_secs: u64,
 ) -> Result<(String, Dag, PlanConf)> {
-    let worker_models: Vec<String> = live_fleet_slots(devices, &dispatcher.engines);
+    let worker_models: Vec<String> =
+        live_fleet_slots(devices, &dispatcher.engines, &dispatcher.engine_models);
 
     // ---- OPEN -------------------------------------------------------------------------------
     phase_banner(
@@ -38187,7 +38143,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `fleet_slots` is what the fan-outs get, because their permit count IS the list length.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-    let fleet_slots: Vec<String> = live_fleet_slots(&devices, &engines);
+    let fleet_slots: Vec<String> = live_fleet_slots(&devices, &engines, &dispatcher.engine_models);
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();

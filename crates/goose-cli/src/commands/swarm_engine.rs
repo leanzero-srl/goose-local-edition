@@ -10,6 +10,7 @@
 
 use anyhow::{bail, Result};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
+use goose_swarm::DeviceCfg;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Command as ProcCommand;
@@ -343,6 +344,75 @@ pub(super) fn planner_fallback(
         .map(|e| e.http_host())
         .unwrap_or_else(|| format!("{planner_kind:?} (no engine registered)"));
     Some((host, alt))
+}
+
+/// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot — PER ENGINE.
+///
+/// `fleet_slot_models(devices)` is computed once from the pool resolved at run start, and every fanned
+/// phase — coverage, research, review, the test angles, the fix wave — used that snapshot. Only BUILD saw
+/// a change, through the scheduler's `DeviceAdmission`. So a machine that died after the pool was
+/// resolved kept being handed work for the rest of the run: each fan gave it a slot, the call failed, and
+/// the slot was wasted while the surviving nodes queued.
+///
+/// CLOUD DEVICES ARE NEVER RESIDENCY-CHECKED. A cloud model does not appear in `lms ps` and never will,
+/// so treating absence as death would delete the entire cloud half of a mixed fleet. That is not a
+/// hypothetical: it is the version of this function I wrote first and reverted, and `DeviceCfg.is_cloud`
+/// exists precisely so the question can be asked only where it has an answer.
+///
+/// EACH DEVICE IS JUDGED ONLY BY ITS OWN ENGINE'S PROBE, and a partition whose probe cannot answer
+/// keeps its snapshot entries. The single-union shape this replaces (LM Studio residents ∪ sidecar
+/// catalog, then "empty ⇒ snapshot") stopped falling back the moment a sidecar served anything: an
+/// LM Studio probe hiccup (`lms ps` empty and the curl --max-time 6 fallback timing out — an
+/// `Ok(empty)`, never an `Err`, which is why the old `let Ok(..) else` guard was unreachable) left
+/// the union holding only the sidecar alias, and every LM Studio device vanished from every fan
+/// for that call. `DeviceCfg` carries no engine tag (a goose-swarm type), so the dispatcher's
+/// `engine_models` names the devices on a registered non-default engine; absent = LM Studio by
+/// definition. Order is the original slot order; a result that would leave the fan with no slots
+/// at all still falls back to the whole snapshot — a fan on a stale-but-working list is a small
+/// inefficiency, a fan on an empty one is a dead phase.
+pub(super) fn live_fleet_slots(
+    devices: &[DeviceCfg],
+    engines: &Engines,
+    engine_models: &HashMap<String, EngineKind>,
+) -> Vec<String> {
+    let snapshot = super::swarm::fleet_slot_models(devices);
+    let kind_of = |d: &DeviceCfg| {
+        engine_models
+            .get(&d.model_id)
+            .copied()
+            .unwrap_or(EngineKind::LmStudio)
+    };
+    // One residency probe per engine KIND in the pool. `None` = that engine proved nothing: its
+    // probe errored, answered nothing, or no engine is registered for the kind (an unregistered
+    // kind never reaches engine_models, so that arm is the honest spelling of "nobody to ask").
+    let mut proven: HashMap<EngineKind, Option<HashSet<String>>> = HashMap::new();
+    for d in devices.iter().filter(|d| !d.is_cloud) {
+        let kind = kind_of(d);
+        proven.entry(kind).or_insert_with(|| {
+            match engines.for_kind(kind).map(|e| e.resident_processes()) {
+                Some(Ok(procs)) if !procs.is_empty() => {
+                    Some(procs.into_iter().map(|p| p.identifier).collect())
+                }
+                _ => None,
+            }
+        });
+    }
+    let live: Vec<String> = devices
+        .iter()
+        .filter(|d| {
+            d.is_cloud
+                || match proven.get(&kind_of(d)) {
+                    Some(Some(resident)) => resident.contains(&d.model_id),
+                    _ => true,
+                }
+        })
+        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
+        .collect();
+    if live.is_empty() {
+        snapshot
+    } else {
+        live
+    }
 }
 
 /// The one engine today. Construct through `default_engine` so every call site shares the seam
@@ -1257,6 +1327,8 @@ mod tests {
     struct RecordingEngine {
         name: &'static str,
         host: &'static str,
+        /// What `resident_processes` answers — empty = the probe proved nothing.
+        resident: Vec<&'static str>,
         calls: std::sync::Mutex<Vec<(String, u32)>>,
     }
     impl RecordingEngine {
@@ -1264,9 +1336,13 @@ mod tests {
             Self::with_host(name, "")
         }
         fn with_host(name: &'static str, host: &'static str) -> Arc<Self> {
+            Self::serving(name, host, &[])
+        }
+        fn serving(name: &'static str, host: &'static str, resident: &[&'static str]) -> Arc<Self> {
             Arc::new(Self {
                 name,
                 host,
+                resident: resident.to_vec(),
                 calls: std::sync::Mutex::new(Vec::new()),
             })
         }
@@ -1297,9 +1373,140 @@ mod tests {
                 .push((model_id.to_string(), instances));
         }
         fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
-            Ok(Vec::new())
+            Ok(self
+                .resident
+                .iter()
+                .map(|id| LmsProcess {
+                    identifier: id.to_string(),
+                    status: "loaded".to_string(),
+                    device: device_from_lms_id(id),
+                    parallel: None,
+                    loaded_context_length: None,
+                })
+                .collect())
         }
         fn probe_report(&self) {}
+    }
+
+    fn dev_cfg(id: &str, model: &str, weight: u32, is_cloud: bool) -> DeviceCfg {
+        DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+            is_cloud,
+        }
+    }
+
+    /// S-H2 pinned on the mixed pool: the LM Studio probe answers nothing (the `lms ps` +
+    /// curl --max-time hiccup, an Ok(empty)) while the sidecar serves its alias. The old union
+    /// held only the alias and every LM Studio device vanished from the fan; per engine, the LM
+    /// partition is UNPROVEN and keeps its snapshot slots, the sidecar partition is filtered by
+    /// its own catalog, and the original slot order survives.
+    #[test]
+    fn a_failed_lm_probe_keeps_the_lm_partition_while_the_sidecar_filters_its_own() {
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar(
+            "mlx-sidecar",
+            RecordingEngine::serving("omlx", "http://127.0.0.1:8899", &[alias]),
+        );
+        let devices = vec![
+            dev_cfg("mac-gabee", "gabee-qwen3.8-27b", 2, false),
+            dev_cfg("local-mihai", "mihai-qwen3.8-27b", 2, false),
+            dev_cfg("works-workhorse", "workhorse-qwen3.8-27b", 2, false),
+            dev_cfg("workhorse-mlx", alias, 1, false),
+            dev_cfg("workhorse-mlx-stale", "workhorse-stale-alias-mlx", 1, false),
+        ];
+        let engine_models: HashMap<String, EngineKind> = [
+            (alias.to_string(), EngineKind::MlxSidecar),
+            (
+                "workhorse-stale-alias-mlx".to_string(),
+                EngineKind::MlxSidecar,
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let slots = live_fleet_slots(&devices, &engines, &engine_models);
+        assert_eq!(
+            slots,
+            vec![
+                "gabee-qwen3.8-27b",
+                "gabee-qwen3.8-27b",
+                "mihai-qwen3.8-27b",
+                "mihai-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                alias,
+            ],
+            "LM partition unproven → its 6 snapshot slots kept; the stale sidecar alias dropped by ITS probe"
+        );
+    }
+
+    /// The mirror image and the all-LM shape: an answering LM Studio probe filters ITS devices
+    /// (byte-identical to the single-engine behaviour), an unproven sidecar keeps its slot, a
+    /// cloud device is never residency-checked, and a probe answering nothing on every engine
+    /// is the whole snapshot.
+    #[test]
+    fn each_partition_is_judged_only_by_its_own_engines_probe() {
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let devices = vec![
+            dev_cfg("mac-gabee", "gabee-qwen3.8-27b", 2, false),
+            dev_cfg("local-mihai", "mihai-qwen3.8-27b", 1, false),
+            dev_cfg("bedrock-1", "anthropic.claude", 1, true),
+            dev_cfg("workhorse-mlx", alias, 1, false),
+        ];
+        let engine_models: HashMap<String, EngineKind> =
+            [(alias.to_string(), EngineKind::MlxSidecar)]
+                .into_iter()
+                .collect();
+        // LM Studio answers (mihai withdrawn); the sidecar probe answers nothing.
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::serving(
+            "lmstudio",
+            "",
+            &["gabee-qwen3.8-27b"],
+        ));
+        engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
+        assert_eq!(
+            live_fleet_slots(&devices, &engines, &engine_models),
+            vec![
+                "gabee-qwen3.8-27b",
+                "gabee-qwen3.8-27b",
+                "anthropic.claude",
+                alias
+            ],
+            "LM filtered by its probe; cloud untouched; unproven sidecar keeps its slot"
+        );
+        // Every probe answers nothing → the whole snapshot, in order.
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
+        assert_eq!(
+            live_fleet_slots(&devices, &engines, &engine_models),
+            super::super::swarm::fleet_slot_models(&devices)
+        );
+        // All-LM pool (empty engine_models), LM answering: the single-engine filter, verbatim.
+        let lm_only = &devices[..2];
+        let engines = Engines::with_lmstudio_for_tests(RecordingEngine::serving(
+            "lmstudio",
+            "",
+            &["mihai-qwen3.8-27b"],
+        ));
+        assert_eq!(
+            live_fleet_slots(lm_only, &engines, &HashMap::new()),
+            vec!["mihai-qwen3.8-27b"]
+        );
+        // A proven probe that would strand the fan with zero slots still falls back to the snapshot.
+        let engines = Engines::with_lmstudio_for_tests(RecordingEngine::serving(
+            "lmstudio",
+            "",
+            &["something-else-entirely"],
+        ));
+        assert_eq!(
+            live_fleet_slots(lm_only, &engines, &HashMap::new()),
+            super::super::swarm::fleet_slot_models(lm_only)
+        );
     }
 
     /// The 2026-08-30 micro-run defect, pinned: a config-complete sidecar device (tagged, engine
