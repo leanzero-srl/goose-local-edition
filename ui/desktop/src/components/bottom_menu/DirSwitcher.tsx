@@ -11,6 +11,7 @@ import {
 } from '../ui/dropdown-menu';
 import { toast } from 'react-toastify';
 import { defineMessages, useIntl } from '../../i18n';
+import { MOTION, cx } from '../lz';
 
 const i18n = defineMessages({
   failedToUpdateWorkingDir: {
@@ -179,7 +180,14 @@ export const DirSwitcher: React.FC<DirSwitcherProps> = ({
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <button
-                className={`z-[100] ${isDirectoryChooserOpen ? 'opacity-50' : 'hover:cursor-pointer hover:text-text-primary'} text-text-primary/70 text-xs flex items-center transition-colors pl-1 [&>svg]:size-4 ${className}`}
+                className={cx(
+                  'z-[100] flex items-center pl-1 text-lz-meta [&>svg]:size-4',
+                  isDirectoryChooserOpen
+                    ? 'cursor-not-allowed text-lz-ink-4'
+                    : 'text-lz-ink-3 hover:cursor-pointer hover:text-lz-ink',
+                  MOTION,
+                  className
+                )}
                 onClick={handleDirectoryClick}
                 disabled={isDirectoryChooserOpen}
               >

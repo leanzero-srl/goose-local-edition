@@ -3,6 +3,7 @@ import { CoinIcon } from '../icons';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/Tooltip';
 import { fetchCanonicalModelInfo, type CanonicalModelInfo } from '../../utils/canonical';
 import { defineMessages, useIntl } from '../../i18n';
+import { MOTION, TNUM, cx } from '../lz';
 
 const i18n = defineMessages({
   pricingUnavailable: {
@@ -114,8 +115,8 @@ export function CostTracker({
   // If still loading, show a placeholder
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-text-secondary translate-y-[1px]">
-        <span className="text-xs font-mono">...</span>
+      <div className="flex h-full items-center justify-center text-lz-ink-3">
+        <span className={cx('text-lz-meta', TNUM)}>...</span>
       </div>
     );
   }
@@ -128,8 +129,8 @@ export function CostTracker({
     const freeProviders = ['ollama', 'local', 'localhost'];
     if (freeProviders.includes(currentProvider.toLowerCase())) {
       return (
-        <div className="flex items-center justify-center h-full text-text-primary/70 transition-colors cursor-default translate-y-[1px]">
-          <span className="text-xs font-mono">
+        <div className="flex h-full cursor-default items-center justify-center text-lz-ink-3">
+          <span className={cx('text-lz-meta', TNUM)}>
             {inputTokens.toLocaleString()}↑ {outputTokens.toLocaleString()}↓
           </span>
         </div>
@@ -151,9 +152,14 @@ export function CostTracker({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center justify-center h-full transition-colors cursor-default translate-y-[1px] text-text-primary/70 hover:text-text-primary">
+          <div
+            className={cx(
+              'flex h-full cursor-default items-center justify-center text-lz-ink-3 hover:text-lz-ink',
+              MOTION
+            )}
+          >
             <CoinIcon className="mr-1" size={16} />
-            <span className="text-xs font-mono">0.0000</span>
+            <span className={cx('text-lz-meta', TNUM)}>0.0000</span>
           </div>
         </TooltipTrigger>
         <TooltipContent>{getUnavailableTooltip()}</TooltipContent>
@@ -194,9 +200,14 @@ export function CostTracker({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="flex items-center justify-center h-full transition-colors cursor-default translate-y-[1px] text-text-primary/70 hover:text-text-primary">
+        <div
+          className={cx(
+            'flex h-full cursor-default items-center justify-center text-lz-ink-3 hover:text-lz-ink',
+            MOTION
+          )}
+        >
           <CoinIcon className="mr-1" size={16} />
-          <span className="text-xs font-mono">{formatCost(totalCost)}</span>
+          <span className={cx('text-lz-meta', TNUM)}>{formatCost(totalCost)}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent>{getTooltipContent()}</TooltipContent>
