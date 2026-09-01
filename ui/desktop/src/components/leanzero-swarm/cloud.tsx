@@ -26,9 +26,10 @@ export function cloudCliErr(r: { stdout: string; stderr: string; error: string |
 /** The cloud providers the panel can add nodes from — THE single mirror of the engine's CLOUD_DEFS
  *  (crates/goose-cli/src/commands/swarm.rs). `cli` = the `goose swarm cloud <cli>` name and the
  *  SwarmDevice.provider value; `registry` = the goose provider-registry id (CloudDef.registry),
- *  which is how configured-ness joins acpListProviderDetails. Every surface derives from this
- *  table — when the engine grows a cloud family, it is added HERE and nowhere else. Distinct
- *  SOLID chip hues per provider, per the UI rules. */
+ *  which is how configured-ness joins acpListProviderDetails; `seg` = the short label every
+ *  surface shows for what serves a node. Every surface derives from this table — when the engine
+ *  grows a cloud family, it is added HERE and nowhere else. No colour lives here: provider is
+ *  text (a quiet Chip), node identity is the nodeHue ramp. */
 export const CLOUD_PROVIDERS = [
   {
     seg: 'Bedrock',
@@ -37,7 +38,6 @@ export const CLOUD_PROVIDERS = [
     label: 'Amazon Bedrock',
     keyPlaceholder: 'Bedrock API key (ABSK…)',
     region: true,
-    chip: '#8e4ec6',
   },
   {
     seg: 'Z.ai',
@@ -46,7 +46,6 @@ export const CLOUD_PROVIDERS = [
     label: 'Z.ai',
     keyPlaceholder: 'Z.ai API key',
     region: false,
-    chip: '#f76b15',
   },
   {
     seg: 'Gemini',
@@ -55,7 +54,6 @@ export const CLOUD_PROVIDERS = [
     label: 'Google Gemini',
     keyPlaceholder: 'Gemini API key (AIza…)',
     region: false,
-    chip: '#12a594',
   },
   {
     seg: 'DeepSeek',
@@ -64,7 +62,6 @@ export const CLOUD_PROVIDERS = [
     label: 'DeepSeek',
     keyPlaceholder: 'DeepSeek API key (sk-…)',
     region: false,
-    chip: '#d6409f',
   },
 ] as const;
 export type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
@@ -72,11 +69,11 @@ export type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
 export const chipFor = (provider: string | null | undefined): CloudProviderDef | null =>
   CLOUD_PROVIDERS.find((c) => c.cli === provider) ?? null;
 
-/** A node is local unless a cloud provider claims it. LM Studio gets its own solid hue, and the
- *  LeanZero MLX engine (SwarmDevice.engine === 'mlx-sidecar') its violet — every row in the Nodes
- *  list is labelled by what serves it. */
-export const LOCAL_CHIP = { seg: 'LM Studio', chip: '#1d4ed8' } as const;
-export const MLX_CHIP = { seg: 'LeanZero MLX', chip: '#7c3aed' } as const;
+/** A node is local unless a cloud provider claims it: the LM Studio fleet, or the LeanZero MLX
+ *  engine (SwarmDevice.engine === 'mlx-sidecar') — every row in the Nodes list is labelled by
+ *  what serves it. */
+export const LOCAL_CHIP = { seg: 'LM Studio' } as const;
+export const MLX_CHIP = { seg: 'LeanZero MLX' } as const;
 
 /**
  * A cloud provider's key + roster + node add/remove (Bedrock, Z.ai, Gemini, DeepSeek). The whole
