@@ -83,7 +83,8 @@ and all three fixes are in flight; NO r6d LAUNCH until each is landed with an in
   FOLLOW-UP: the endpoint probe must RECORD status+body into the finding (see TICK-NOTES).
 
 r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (INDEPENDENTLY CONFIRMED at web-viz 12:01:05.541221; −28..−42% band, unmeasured)
-· [~] GATE A ownership: afae2eb1b landed — replay on the r6c archive: 0 unowned in both rounds (F1→web/app.js via authored source; drafts.py owned via segment claims; handoff persisted+consumed); four of r6c's eight findings were probe artifacts (bare POST → JSON 401) now inconclusive-with-evidence — INDEPENDENT TRACE IN FLIGHT · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
+· [x] GATE A ownership: afae2eb1b INDEPENDENTLY CONFIRMED (every finding owned both rounds; SIX of nine r6c findings
+were bare-POST 401/400 envelopes — now inconclusive-with-evidence; 18,291 node-s of repair had been spent on them) · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
 reproduction loops; HANDOFF was a dead letter → persistence+consumption folded into the gate-A surgeon;
 probe evidence = gap 3 there) · [x] probe findings carry request/status/body (afae2eb1b, post_probe.rs) · [ ]
 levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set dispatch weight 1 per
