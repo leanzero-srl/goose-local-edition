@@ -8,7 +8,75 @@
 //! `write_progress`/`drift_streak_step` and the ladder's obedience arm (the deliverable decides,
 //! never a tool-call count).
 
-use super::OMNI_JUDGE_MIN_CHARS;
+// THE JUDGE'S LOOK CONSTANTS, moved verbatim from swarm.rs (incremental-split law, paying for
+// VA-056/VA-058's wiring in the worker loop). Each keeps its own WHY below; the module's other
+// readers (`desk.rs`, the worker loop) reach them through swarm.rs's `use ladder::...`.
+// REMOVED (VA-056, 2026-09-01): OMNI_JUDGE_FIRST_LOOK_SECS (45) and OMNI_JUDGE_INTERVAL_SECS (60, backing
+// off to 300 after six looks) — the judge's cadence clock. VA-013 had already made build/repair lanes
+// evidence-only; the output-tool lanes were the last to keep the clock and the growth-without-acting
+// chunk trigger. MEASURED r6e: 58 planner-side looks, every one cadence or growth, ~185 node-min, three
+// nudges none acted on, and no look on any lane would have been a recurrence or forming-stall look.
+// Every lane now summons on evidence alone (`ladder::judge_summon_trigger`); two seconds literals that
+// could reach a model call are gone (gate 5). #135's intent ("you will see it immediately") lives on in
+// the recurrence meter and the repeat detector, which fire the moment the evidence exists.
+/// Minimum reasoning before a look is meaningful — below this there is nothing to assess yet.
+///
+/// Set to 2_000, having been 1_200 then briefly 4_000. Raising it was the WRONG fix and the data says so:
+/// the judge fired at 1,200, 1,201, 3,759 and 4,003 chars — i.e. immediately past whatever floor was set —
+/// so the threshold only moved WHEN the misread happened, never whether. The real fix is corroboration
+/// (two consecutive LOOPING verdicts, see the abort site), which makes an early first look safe again and
+/// restores the #135 intent of catching a loop in its first minute rather than its tenth.
+///
+/// Kept modestly above the original 1,200 so the first look still has a paragraph or two to read.
+///
+/// ORIGINAL NOTE, retained: RAISED 1_200 -> 4_000 on measured evidence. The judge is asked whether "the SAME content clearly
+/// recurs", and recurrence needs the same thing to appear TWICE. At 1,200 characters — roughly one
+/// paragraph — there is not enough text for that to be observable, so a yes is the weak model
+/// pattern-matching on "this looks repetitive" rather than seeing an actual repeat. It is not a gating
+/// bug: the verdict already requires HIGH confidence, and the model gave HIGH confidence anyway.
+///
+/// MEASURED, three omni fires observed to date:
+///   1,200 chars  -> FALSE positive. Killed `verify-e2e::0` seconds after it started, costing 166s and a
+///                   retry on a task that was doing nothing wrong.
+///   8,988 chars  -> true positive, task retried and completed.
+///   15,097 chars -> true positive, task retried and completed.
+/// 4_000 sits well above the false positive and well below both true ones, and is about the point where
+/// the 2,000-char tail the judge is shown can actually contain a repeat.
+///
+/// Deliberately a raise, not a disable — the intent of #135 stands ("you will see it immediately"; waiting
+/// for 26,000 threw away minutes of a node per incident). This only stops it firing before there is
+/// anything to read.
+/// How often the streaming loop wakes when the provider is sending nothing.
+///
+/// NOT A CAP, and the distinction is the whole point: expiry runs the judge-look trigger and then goes
+/// back to awaiting the same stream. Nothing is cancelled, failed, or given up on. It exists because
+/// every judge look lives inside the stream loop, so a call that has gone silent is a call the judge
+/// cannot see — which is precisely the call it most needs to see.
+pub(super) const JUDGE_WAKE: std::time::Duration = std::time::Duration::from_secs(30);
+
+pub(super) const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
+
+/// The IO coalesce cadence every digest/sidecar write site rides — the two worker-digest write
+/// sites (main loop + judge-probe branch) and the forming observer's ArgsDelta coalescing. One
+/// constant so the three sites cannot drift apart: their comments already promised "the digest's
+/// own 400ms cadence" and only convention held them equal. An IO cadence, never a bound on model
+/// work (gate 5): expiry writes a file; nothing about the call changes.
+pub(super) const DIGEST_IO_CADENCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The look-tail SCALE: how many chars of live reasoning ride in the digest's `last_thinking`,
+/// in the judge's own look tail, and in the re-stream seed's carried tail. One constant because
+/// the three are the SAME window by design — the judge reads what the digest carries, and the
+/// re-stream seed hands back exactly what was read. A message-formation scale on carried text,
+/// never a cap on model work (the transcripts are append-only and complete).
+pub(super) const LOOK_TAIL_CHARS: usize = 2_000;
+
+/// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
+// REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
+// long a call is supervised, and the judge is now the only thing watching.
+//
+// How much further reasoning, with NO intervening tool call, summons the judge again. This is not a
+// budget the call can exceed — nothing happens when it is crossed except that someone READS the call.
+pub(super) const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 
 /// ONE definition of "this call produced something since the judge last looked", used by EVERY judge
 /// gate that asks the question.
@@ -66,15 +134,21 @@ pub(super) fn durable_clamped_produced(
 /// or by tail similarity — and the payload named none of them, so "which trigger produces useful nudges"
 /// could not be answered from any file the engine writes.
 ///
-/// Ordered most-factual first: a measured repeat is an engine fact, DRIFTING is a verdict about taste,
-/// and the streak's two arms are told apart by whether the detector could see the recurrence itself.
+/// Ordered most-factual first: a measured repeat is an engine fact; a REPEATED NEXT (VA-056) is the
+/// judge's previous look's undelivered direction standing while the call took no action — the
+/// prior look is the first witness, this DRIFTING the second; plain DRIFTING is a verdict about
+/// taste; and the streak's two arms are told apart by whether the detector could see the
+/// recurrence itself.
 pub(super) fn nudge_arm(
     repeat_measured: bool,
+    repeated_next: bool,
     drifting_now: bool,
     recurring: bool,
 ) -> &'static str {
     if repeat_measured {
         "measured_repeat"
+    } else if repeated_next {
+        "repeated_next"
     } else if drifting_now {
         "drifting"
     } else if recurring {
@@ -402,7 +476,7 @@ pub(super) fn nudge_delivery(
         return NudgeDelivery::Restream("judge said restart");
     }
     match write_progress_since_nudge {
-        None => NudgeDelivery::Steer("first nudge"),
+        None => NudgeDelivery::Steer("first nudge of this attempt"),
         Some(true) => NudgeDelivery::Steer("write progress since the previous nudge"),
         Some(false) if advancing && !wrong_channel && promise_due => NudgeDelivery::Restream(
             "steer ignored and the promised delivery is due: zero actions and zero write \
@@ -505,13 +579,10 @@ pub(super) fn restream_seed(
     )
 }
 
-/// The measured facts one loop pass hands `judge_summon_trigger` (VA-013). All booleans are
-/// derived from the call's own counters at that pass — no clock is among them except
-/// `cadence_due`, which only an output-tool lane may act on.
+/// The measured facts one loop pass hands `judge_summon_trigger` (VA-013, VA-056). Every one is
+/// derived from the call's own counters or files at that pass — no clock is among them.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct SummonFacts {
-    /// The call owes a structured reply (research / synthesis / open — the output-tool lanes).
-    pub(super) structured_reply: bool,
     /// The repeat detector measured the same command returning the same bytes N times.
     pub(super) repeat: bool,
     /// The answer is 400+ chars of whitespace.
@@ -522,22 +593,25 @@ pub(super) struct SummonFacts {
     pub(super) recurring: bool,
     /// A forming tool call's argument bytes stopped while reasoning grew (`forming_stalled`).
     pub(super) forming_stall: bool,
-    /// Reasoning grew by a chunk with no tool call in between.
-    pub(super) grew_without_acting: bool,
-    /// The back-off interval since the last OK look has elapsed.
-    pub(super) cadence_due: bool,
 }
 
-/// VA-013: which measured fact summons the judge on this pass — or none. BUILD and REPAIR lanes
-/// (no structured reply; they deliver files) summon on EVIDENCE only: the repeat detector, a
-/// degenerate answer, the recurrence meter, or a forming-channel stall — never cadence, never
-/// bare growth-without-acting. MEASURED r6c: 132 build-lane looks (99 cadence, 33 growth, ~925
-/// look-minutes, 44% of the judge's whole spend) bought four nudges, two compliances and zero
-/// kills, and NOT ONE of those looks would have been a recurrence look (0 of 182 looks in the
-/// run crossed the meter). Output-tool lanes keep every trigger: they complied 7/7, and their
-/// 13 of 14 nudges came from growth looks. `ready` gates the reasoning-shaped triggers only;
-/// repeat and degenerate bypass it, as they always did. The name returned rides
-/// `judge_look_dispatched.trigger`, so a replay never re-derives the trigger from counters.
+/// Which measured fact summons the judge on this pass — or none. EVERY lane kind is looked at on
+/// EVIDENCE only: the repeat detector, a degenerate answer, the recurrence meter, or a
+/// forming-channel stall. VA-013 made BUILD/REPAIR lanes evidence-only (r6c: 132 build-lane
+/// looks — 99 cadence, 33 growth, ~925 look-minutes — for two compliances and zero kills, and
+/// not one would have been a recurrence look). VA-056 deleted the cadence and
+/// growth-without-acting triggers for the output-tool lanes too, which were the last lanes that
+/// had them. MEASURED r6e (run swarm-20260901-141137451): 58 looks on planner-side lanes, ALL
+/// cadence (32) or growth (26) — OPEN 12 looks / 0 nudges / ~34 node-min; research 46 looks / 3
+/// nudges / 0 acted on / ~151 node-min, every research look on a node already generating a
+/// sibling lane (inflight=1); the meter's highest reading on any of them was rate 0.088 (trigger
+/// 0.25) and no forming frame was ever open — under this rule zero of the 58 dispatch. A
+/// REPEATED judge NEXT across two looks is evidence too, but it is evidence about DELIVERY, not
+/// summoning (the omni seam's `repeated_next`: the prior look's undelivered NEXT is the first
+/// witness, the next DRIFTING the second, and that NEXT is delivered instead of a third look).
+/// `ready` gates the meter only; repeat and degenerate bypass it, as they always did. The name
+/// returned rides `judge_look_dispatched.trigger`, so a replay never re-derives the trigger from
+/// counters.
 pub(super) fn judge_summon_trigger(f: SummonFacts) -> Option<&'static str> {
     if f.repeat {
         return Some("repeat");
@@ -551,13 +625,78 @@ pub(super) fn judge_summon_trigger(f: SummonFacts) -> Option<&'static str> {
     if f.forming_stall {
         return Some("forming_stall");
     }
-    if f.structured_reply && f.ready && f.grew_without_acting {
-        return Some("growth_without_acting");
-    }
-    if f.structured_reply && f.ready && f.cadence_due {
-        return Some("cadence");
-    }
     None
+}
+
+/// The TASK ATTEMPT's supervision history — what the judge has recorded about and delivered to
+/// this call across EVERY stream it has had. Distinct from the per-attempt ladder
+/// (`tool_calls_at_last_nudge` and its siblings, which the restream seam resets so a fresh
+/// attempt is never read as having ignored a steer it was never given — r6a): this history is
+/// never reset, because the restream is the same task's next stream, not a new task.
+///
+/// VA-058, MEASURED r6e research-viz3d-engine: 15:38:20Z steer (nudge 1), 15:45:38Z restream
+/// (nudge 2, 22,621 chars abandoned), then 15:48:14Z the post-restream steer was recorded
+/// `judge_nudge nudge=1 reason="first nudge"` — the counter had reset with the stream, so the
+/// escalation clause told the judge it had never redirected this call, `judge_out_of_moves`
+/// could never see a direction repeated across the wipe, and steer→restream→steer could cycle
+/// with every wipe re-buying the same derivation. And the seed carried only the LAST look's
+/// ESTABLISHED (238 chars) — look 4's "tie cases (e.g. 0.3*5→1.5) resolve identically under both
+/// rounding modes in float64" was gone, and the fresh attempt re-derived exactly that ("c=5:
+/// 1.5->2 either way … settled g=150 -> 82.5 real divergence"). `established` keeps every look's
+/// record so the seed carries the whole settled content, in the judge's words drawn from the
+/// call's own.
+#[derive(Debug, Clone, Default)]
+pub(super) struct NudgeHistory {
+    /// Nudges delivered to this call, every stream counted. UNBOUNDED — the old JUDGE_NUDGE_MAX
+    /// is gone; what escalates a nudge is the judge seeing its own previous direction and
+    /// whether the call obeyed it, never this number.
+    pub(super) nudges_used: u32,
+    /// The judge's last DELIVERED direction, fed back to it verbatim so it can tell "it ignored
+    /// me" from "it tried".
+    pub(super) last_direction: String,
+    /// Every non-empty ESTABLISHED the judge recorded, in look order, exact repeats folded.
+    pub(super) established: Vec<String>,
+    /// The previous look's NEXT when that look delivered nothing — an OK verdict, a held drift.
+    /// `None` once a direction is delivered (the delivered text is `last_direction`) or when the
+    /// previous look named no NEXT.
+    pub(super) undelivered_next: Option<String>,
+}
+
+impl NudgeHistory {
+    /// A verdict-bearing look landed: keep what the judge recorded as established.
+    pub(super) fn record_established(&mut self, established: &str) {
+        let e = established.trim();
+        if !e.is_empty() && self.established.last().is_none_or(|last| last != e) {
+            self.established.push(e.to_string());
+        }
+    }
+
+    /// The look delivered nothing; its NEXT stands as the direction the call never heard.
+    pub(super) fn note_undelivered(&mut self, next: &str) {
+        let n = next.trim();
+        self.undelivered_next = (!n.is_empty()).then(|| n.to_string());
+    }
+
+    /// A direction was delivered (steer or restream): it is the last direction, and nothing is
+    /// pending undelivered.
+    pub(super) fn direction_delivered(&mut self, direction: &str) {
+        self.last_direction = direction.to_string();
+        self.undelivered_next = None;
+    }
+
+    /// The whole settled record for a restream seed — every look's ESTABLISHED, oldest first,
+    /// one line each. Empty when no look recorded anything (the seed then omits the claim).
+    pub(super) fn seed_established(&self) -> String {
+        match self.established.len() {
+            0 => String::new(),
+            1 => self.established[0].clone(),
+            _ => self
+                .established
+                .iter()
+                .map(|e| format!("\n- {e}"))
+                .collect::<String>(),
+        }
+    }
 }
 
 /// VA-013 (b): a write the model announced and walked away from. Sampled on REASONING GROWTH
@@ -623,13 +762,16 @@ mod tests {
     #[test]
     fn the_measured_recurrence_arm_does_not_consult_production() {
         assert_eq!(
-            nudge_arm(false, false, true),
+            nudge_arm(false, false, false, true),
             "measured_recurrence",
             "a measured recurrence arms on its own, whatever the production predicate says"
         );
-        assert_eq!(nudge_arm(true, true, true), "measured_repeat");
-        assert_eq!(nudge_arm(false, true, false), "drifting");
-        assert_eq!(nudge_arm(false, false, false), "tail_similarity_streak");
+        assert_eq!(nudge_arm(true, false, true, true), "measured_repeat");
+        assert_eq!(nudge_arm(false, false, true, false), "drifting");
+        assert_eq!(
+            nudge_arm(false, false, false, false),
+            "tail_similarity_streak"
+        );
     }
 
     /// `judge_out_of_moves` fired on a call with TWO early tool calls and every surface said ZERO.
@@ -662,7 +804,7 @@ mod tests {
         use goose_swarm::Verdict;
         assert_eq!(
             nudge_delivery(true, None, &Verdict::Looping, false, false, false),
-            NudgeDelivery::Steer("first nudge"),
+            NudgeDelivery::Steer("first nudge of this attempt"),
             "the first nudge on a call is a steer: it keeps the partial and costs nothing"
         );
         assert_eq!(
@@ -765,7 +907,7 @@ mod tests {
                     for promise in [false, true] {
                         assert_eq!(
                             nudge_delivery(true, None, &verdict, advancing, wrong, promise),
-                            NudgeDelivery::Steer("first nudge"),
+                            NudgeDelivery::Steer("first nudge of this attempt"),
                             "a fresh attempt (write_progress_since_nudge = None after the seam \
                              reset) earns its own ladder: first delivery is a steer, never the \
                              wipe (verdict {verdict:?}, advancing {advancing}, wrong {wrong}, \
@@ -1195,59 +1337,106 @@ mod tests {
 mod summon_tests {
     use super::*;
 
+    // Two lane kinds, one trigger set (VA-056): the helpers are kept so a future per-kind fact
+    // has a place to land — and so the test says in its own words that it tried both kinds.
     fn build_lane() -> SummonFacts {
         SummonFacts {
-            structured_reply: false,
             ready: true,
             ..SummonFacts::default()
         }
     }
     fn output_lane() -> SummonFacts {
         SummonFacts {
-            structured_reply: true,
             ready: true,
             ..SummonFacts::default()
         }
     }
 
-    /// r6c web-viz, look 10 (the nudge that changed nothing: "calls flat 46m, lane ran 210 more
-    /// min"): a build lane at recurrence 0.003 over 65,536 shingles, 34,286 fresh chars and zero
-    /// actions since the last look, cadence due. Under VA-013 nothing summons.
+    /// r6c web-viz, look 10 (a build lane at recurrence 0.003 over 65,536 shingles, 34,286 fresh
+    /// chars, zero actions since the last look) and r6e's 58 planner-side looks (OPEN 12, research
+    /// 46 — all cadence or growth; meter max 0.088, no forming frame ever open): with no evidence
+    /// NOTHING summons, whatever the lane kind. Cadence and growth-without-acting are not facts a
+    /// pass can hand in any more — the fields are gone, not gated.
     #[test]
-    fn a_build_lane_is_never_summoned_on_growth_or_cadence() {
-        let f = SummonFacts {
-            grew_without_acting: true,
-            cadence_due: true,
-            ..build_lane()
-        };
-        assert_eq!(judge_summon_trigger(f), None);
+    fn no_lane_kind_is_summoned_without_evidence() {
+        assert_eq!(judge_summon_trigger(build_lane()), None);
+        assert_eq!(judge_summon_trigger(output_lane()), None);
+        // Below the readiness floor, likewise nothing (a fresh lane with a paragraph of reasoning).
         assert_eq!(
             judge_summon_trigger(SummonFacts {
-                cadence_due: true,
-                ..build_lane()
+                ready: false,
+                ..output_lane()
             }),
             None
         );
     }
 
-    /// r6c research-web-viz-q2, look 2 (an output-tool lane, 8,916 fresh chars, zero actions):
-    /// the growth look stays — 7/7 of these complied.
+    /// The history survives the restream seam: the seam replaces the per-attempt ladder and never
+    /// names `NudgeHistory`, so nudge 3 after a wipe is recorded as nudge 3 (r6e recorded it as
+    /// "nudge 1, first nudge"), the last direction stays visible to the escalation clause, and
+    /// the seed carries EVERY look's ESTABLISHED — look 4's tie-case record included.
     #[test]
-    fn an_output_tool_lane_keeps_growth_and_cadence() {
+    fn the_nudge_history_accumulates_across_looks_and_is_never_reset_by_the_seam() {
+        let mut h = NudgeHistory::default();
+        // Looks 1-5 of r6e viz3d (abridged), the steer at look 2, the restream at look 5.
+        h.record_established("pinned the spec constraints: ≤8 default-FBO draws at N=12,288");
+        h.note_undelivered("call the output tool NOW and emit final_output now");
         assert_eq!(
-            judge_summon_trigger(SummonFacts {
-                grew_without_acting: true,
-                ..output_lane()
-            }),
-            Some("growth_without_acting")
+            h.undelivered_next.as_deref(),
+            Some("call the output tool NOW and emit final_output now")
         );
+        h.record_established(
+            "Color derivation chain established (dim=round(0.30·c), side=round(0.55·dim))",
+        );
+        h.nudges_used += 1;
+        h.direction_delivered("Your next message must be a tool call: invoke the output tool");
         assert_eq!(
-            judge_summon_trigger(SummonFacts {
-                cadence_due: true,
-                ..output_lane()
-            }),
-            Some("cadence")
+            h.undelivered_next, None,
+            "a delivered direction leaves nothing undelivered"
         );
+        h.record_established(
+            "tie cases (e.g. 0.3*5→1.5) resolve identically under both rounding modes in float64",
+        );
+        h.record_established(
+            "tie cases (e.g. 0.3*5→1.5) resolve identically under both rounding modes in float64",
+        );
+        assert_eq!(h.established.len(), 3, "an exact repeat folds");
+        h.record_established("   ");
+        assert_eq!(h.established.len(), 3, "an empty record is not a record");
+        h.nudges_used += 1;
+        h.direction_delivered(
+            "Your next message must be a tool call to the output tool — not reasoning text.",
+        );
+        // THE SEAM: the ladder is reset (its own fields, elsewhere); the history is untouched by
+        // construction — there is no method on it that forgets.
+        let after_seam = h.clone();
+        assert_eq!(after_seam.nudges_used, 2);
+        assert_eq!(
+            after_seam.last_direction,
+            "Your next message must be a tool call to the output tool — not reasoning text."
+        );
+        let seed = after_seam.seed_established();
+        assert!(
+            seed.contains("tie cases (e.g. 0.3*5→1.5) resolve identically"),
+            "look 4's record rides the seed: {seed}"
+        );
+        assert!(seed.contains("pinned the spec constraints"));
+        assert_eq!(
+            seed.matches("\n- ").count(),
+            3,
+            "one line per recorded look"
+        );
+        // The post-restream steer is nudge 3, not "nudge 1".
+        let mut fresh_attempt_look = after_seam;
+        fresh_attempt_look.nudges_used += 1;
+        assert_eq!(fresh_attempt_look.nudges_used, 3);
+        // A single record renders bare, no bullet.
+        let mut one = NudgeHistory::default();
+        one.record_established("only this");
+        assert_eq!(one.seed_established(), "only this");
+        assert_eq!(NudgeHistory::default().seed_established(), "");
+        assert_eq!(nudge_arm(false, true, true, false), "repeated_next");
+        assert_eq!(nudge_arm(true, true, true, true), "measured_repeat");
     }
 
     /// r6d research-ledger-core-q3, look 1: recurrence 0.353 over 10,760 shingles — the meter
