@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleJoinKey } from "../src/handlers/joinKey";
 import { JWT_TTL_SECONDS } from "../src/lib/config";
-import { usernameForEmail } from "../src/lib/headscale";
+import { policyIsolates, usernameForEmail } from "../src/lib/headscale";
 import { signJwt } from "../src/lib/jwt";
 import {
   jsonBody,
@@ -30,6 +30,27 @@ const ISOLATED_POLICY = {
 };
 const ALLOW_ALL_POLICY = {
   policy: '{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}',
+  updatedAt: "2026-09-01T00:00:00Z",
+};
+// W-M3's measured case: the self rule PLUS an allow-all rule passed `.some()` and minted.
+const SELF_PLUS_ALLOW_ALL_POLICY = {
+  policy:
+    '{"acls":[{"action":"accept","src":["*"],"dst":["autogroup:self:*"]},{"action":"accept","src":["*"],"dst":["*:*"]}]}',
+  updatedAt: "2026-09-01T00:00:00Z",
+};
+// W-M4's measured case: an isolating policy written as HuJSON (comments, trailing comma)
+// failed JSON.parse, was judged "wrong", and was overwritten.
+const HUJSON_ISOLATED_POLICY = {
+  policy:
+    "// LeanZero Link isolation policy\n{\n  /* one rule: a node reaches only its own account */\n" +
+    '  "acls": [\n    { "action": "accept", "src": ["*"], "dst": ["autogroup:self:*"], },\n  ],\n}\n',
+  updatedAt: "2026-09-01T00:00:00Z",
+};
+const UNPARSEABLE_POLICY = { policy: '{"acls": [ {"action": "accept", "src": ["*"', updatedAt: "2026-09-01T00:00:00Z" };
+const EMPTY_POLICY = { policy: "", updatedAt: "2026-09-01T00:00:00Z" };
+const SSH_POLICY = {
+  policy:
+    '{"acls":[{"action":"accept","src":["*"],"dst":["autogroup:self:*"]}],"ssh":[{"action":"accept","src":["*"],"dst":["*"],"users":["root"]}]}',
   updatedAt: "2026-09-01T00:00:00Z",
 };
 
@@ -144,6 +165,80 @@ describe("POST /v1/mesh/join-key — Headscale (multi-tenant)", () => {
     const put = h.calls.find((c) => c.url === POLICY_URL && c.init?.method === "PUT");
     expect(put).toBeDefined();
     expect((jsonBody(put!.init) as { policy: string }).policy).toContain("autogroup:self");
+  });
+
+  it("heals a policy whose self rule sits beside an allow-all rule — every rule must isolate", async () => {
+    const username = await usernameForEmail(EMAIL);
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: hsApi({ policy: SELF_PLUS_ALLOW_ALL_POLICY, users: [{ id: "5", name: username }], key: "hskey-auth-4" }),
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(200);
+    const put = h.calls.find((c) => c.url === POLICY_URL && c.init?.method === "PUT");
+    expect(put).toBeDefined();
+    const healed = JSON.parse((jsonBody(put!.init) as { policy: string }).policy) as unknown;
+    expect(policyIsolates(healed)).toBe(true);
+  });
+
+  it("heals a policy that isolates in its acls but opens an ssh section", async () => {
+    const username = await usernameForEmail(EMAIL);
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: hsApi({ policy: SSH_POLICY, users: [{ id: "5", name: username }], key: "hskey-auth-5" }),
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(200);
+    expect(h.calls.some((c) => c.url === POLICY_URL && c.init?.method === "PUT")).toBe(true);
+  });
+
+  it("accepts an isolating policy written as HuJSON (comments, trailing commas) WITHOUT overwriting it", async () => {
+    const username = await usernameForEmail(EMAIL);
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: hsApi({ policy: HUJSON_ISOLATED_POLICY, users: [{ id: "5", name: username }], key: "hskey-auth-6" }),
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(200);
+    expect(h.calls.some((c) => c.url === POLICY_URL && c.init?.method === "PUT")).toBe(false);
+    expect(h.logs.some((l) => l.event === "headscale_policy_healing")).toBe(false);
+  });
+
+  it("REFUSES the mint (502) on a policy it cannot parse — never overwrites what it could not read", async () => {
+    const h = makeHarness({ env: HS_ENV, fetchHandler: hsApi({ policy: UNPARSEABLE_POLICY, key: "hskey-auth-7" }) });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(502);
+    expect(await responseJson(response)).toEqual({ error: "headscale key mint failed", status: 200 });
+    expect(h.calls.some((c) => c.url === POLICY_URL && c.init?.method === "PUT")).toBe(false);
+    expect(h.calls.some((c) => c.url === PREAUTH_URL)).toBe(false);
+    expect(h.logs.some((l) => l.event === "headscale_policy_unparseable")).toBe(true);
+  });
+
+  it("sets the isolation policy on a server that has none yet (empty policy text)", async () => {
+    const username = await usernameForEmail(EMAIL);
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: hsApi({ policy: EMPTY_POLICY, users: [{ id: "5", name: username }], key: "hskey-auth-8" }),
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(200);
+    const put = h.calls.find((c) => c.url === POLICY_URL && c.init?.method === "PUT");
+    expect(put).toBeDefined();
+  });
+
+  it("policyIsolates: every accept rule must be self-only; ssh/grants must be absent or empty", () => {
+    const self = { action: "accept", src: ["*"], dst: ["autogroup:self:*"] };
+    expect(policyIsolates({ acls: [self] })).toBe(true);
+    expect(policyIsolates({ acls: [self], ssh: [], grants: [] })).toBe(true);
+    expect(policyIsolates({ acls: [{ ...self, dst: ["autogroup:self:22", "autogroup:self"] }] })).toBe(true);
+    expect(policyIsolates({ acls: [] })).toBe(false);
+    expect(policyIsolates({ acls: [self, { action: "accept", src: ["*"], dst: ["*:*"] }] })).toBe(false);
+    expect(policyIsolates({ acls: [{ ...self, dst: ["autogroup:self:*", "10.0.0.0/8:*"] }] })).toBe(false);
+    expect(policyIsolates({ acls: [{ ...self, dst: ["autogroup:selfish:*"] }] })).toBe(false);
+    expect(policyIsolates({ acls: [self], grants: [{ src: ["*"], dst: ["*"], ip: ["*"] }] })).toBe(false);
+    expect(policyIsolates({ acls: [self], ssh: [{ action: "accept", src: ["*"], dst: ["*"] }] })).toBe(false);
+    expect(policyIsolates(null)).toBe(false);
+    expect(policyIsolates("nope")).toBe(false);
   });
 
   it("fails loudly (502) when Headscale refuses the mint — never a fabricated key", async () => {

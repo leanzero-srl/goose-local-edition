@@ -1,5 +1,6 @@
 import type { Deps } from "./deps";
 import { safeText, truncate } from "./http";
+import { parseHujson } from "./hujson";
 
 // Headscale-backed mesh keys — the self-hosted, multi-tenant path. Each account maps to
 // one Headscale user (the isolation unit); a node joins with a per-user ephemeral preauth
@@ -71,46 +72,73 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-/// The isolation policy currently on the server already denies cross-account visibility.
-function policyIsolates(policyText: unknown): boolean {
-  if (typeof policyText !== "string") {
+function isSelfOnly(dst: unknown): boolean {
+  return typeof dst === "string" && (dst === "autogroup:self" || dst.startsWith("autogroup:self:"));
+}
+
+function sectionIsEmpty(section: unknown): boolean {
+  return section === undefined || section === null || (Array.isArray(section) && section.length === 0);
+}
+
+/// A PARSED policy enforces per-account isolation only if EVERY reachability rule keeps a
+/// node inside its own account: at least one acl, every acl an `accept` whose every dst is
+/// `autogroup:self[:port]`, and no `ssh` or `grants` section (either can open a path the
+/// acls do not). One extra allow-all rule beside the self rule used to pass — `.some()` —
+/// and a key was minted into a server where every account could see every other.
+export function policyIsolates(policy: unknown): boolean {
+  const p = asRecord(policy);
+  if (p === null) {
     return false;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(policyText);
-  } catch {
+  const acls = p.acls;
+  if (!Array.isArray(acls) || acls.length === 0) {
     return false;
   }
-  const acls = asRecord(parsed)?.acls;
-  if (!Array.isArray(acls)) {
-    return false;
-  }
-  return acls.some((rule) => {
+  for (const rule of acls) {
     const r = asRecord(rule);
-    const dst = r?.dst;
-    return (
-      r?.action === "accept" &&
-      Array.isArray(dst) &&
-      dst.some((d) => typeof d === "string" && d.startsWith("autogroup:self"))
-    );
-  });
+    if (r === null || r.action !== "accept") {
+      return false;
+    }
+    const dst = r.dst;
+    if (!Array.isArray(dst) || dst.length === 0 || !dst.every(isSelfOnly)) {
+      return false;
+    }
+  }
+  return sectionIsEmpty(p.ssh) && sectionIsEmpty(p.grants);
 }
 
 /// Refuse to mint into a Headscale whose policy does not enforce per-account isolation:
-/// GET the policy, and PUT the isolation policy if it is missing/wrong (self-healing). A
-/// key must NEVER be handed out against an allow-all server — that would silently let one
-/// account see another. Any API failure here fails the mint loudly.
+/// GET the policy (HuJSON — Headscale returns it verbatim), and PUT the isolation policy
+/// only when the server has NONE or the parsed one does not isolate (self-healing). A
+/// policy that cannot be parsed is NEVER overwritten — an operator's intent we could not
+/// read is not ours to replace — and the mint is refused. A key must NEVER be handed out
+/// against an allow-all server. Any API failure here fails the mint loudly.
 async function ensureIsolationPolicy(deps: Deps): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
   const got = await hsFetch(deps, "/api/v1/policy");
   if (!got.ok) {
     deps.log("headscale_policy_get_failed", { status: got.status, detail: truncate(got.text) });
     return { ok: false, status: got.status, detail: "headscale policy read failed" };
   }
-  if (policyIsolates(asRecord(got.json)?.policy)) {
-    return { ok: true };
+  const policyText = asRecord(got.json)?.policy;
+  if (typeof policyText !== "string") {
+    deps.log("headscale_policy_unparseable", { error: "response carried no policy string", detail: truncate(got.text) });
+    return { ok: false, status: got.status, detail: "headscale policy response had no policy string" };
   }
-  deps.log("headscale_policy_healing", { detail: "isolation policy missing/wrong; setting it" });
+  let reason: string;
+  if (policyText.trim().length === 0) {
+    reason = "no policy set";
+  } else {
+    const parsed = parseHujson(policyText);
+    if (!parsed.ok) {
+      deps.log("headscale_policy_unparseable", { error: parsed.error, head: truncate(policyText, 120) });
+      return { ok: false, status: got.status, detail: "headscale policy unparseable; refusing to overwrite it" };
+    }
+    if (policyIsolates(parsed.value)) {
+      return { ok: true };
+    }
+    reason = "policy does not isolate accounts";
+  }
+  deps.log("headscale_policy_healing", { detail: `${reason}; setting the isolation policy` });
   const put = await hsFetch(deps, "/api/v1/policy", {
     method: "PUT",
     body: JSON.stringify({ policy: ISOLATION_POLICY }),
