@@ -26,6 +26,7 @@
 //! dispatched exactly as before (the contract miss costs nothing but a lane) and named by
 //! `research_question_unkinded` so the miss is visible.
 
+use super::orientation::request_file_label;
 use super::EventSink;
 
 /// One semantic slice of the request, as the opener sees it.
@@ -236,11 +237,16 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
         },
         |p| p.display().to_string(),
     );
+    let label = request_file_label();
     format!(
         "\n\nQUESTIONS. A question is an OBJECT {{question, kind, cite, fact}}. EVERY kind carries a \
          cite; the schema rejects a question with an empty cite. Before you write any question, RUN \
          (do not describe) a grep against the request file named under SOURCES: `grep -n -i '<term>' \
-         {path}` then `sed -n 'A,Bp'`. Never print the whole file. Then:\n\
+         {path}` then `sed -n 'A,Bp'`. Never print the whole file. When the request arrives as its \
+         ORIENTATION INDEX, every entry carries its section's line range (`{label}:A-B`): take \
+         cites FROM the index, and read a section (`sed -n 'A,Bp'`) only when a fact needs its \
+         words — the index IS the heading-to-line map, so never rebuild one by hand and never \
+         re-read a range you have already read. Then:\n\
          — If a line ANSWERS it, it is not a question: kind spec_lookup, cite request.md:<N>, fact = \
          the answer in the request's own words, literals verbatim; no lane runs. Example: \
          {{\"question\":\"Which sort keys does sort accept?\",\"kind\":\"spec_lookup\",\"cite\":\"request.md:148-150\",\"fact\":\"sort is one of created_at, -created_at, amount_minor, -amount_minor; default created_at (ascending by INSTANT); an unknown sort value is a validation error, not an empty result.\"}}\n\

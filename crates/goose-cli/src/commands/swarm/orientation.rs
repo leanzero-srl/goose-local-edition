@@ -34,6 +34,15 @@ pub(super) struct SpecSection {
     /// the `####` children of §3 and §8 went to whichever slice named them, never to the
     /// slice that claimed the parent.
     pub(super) level: usize,
+    /// VA-077: the section's span in the request file, 1-based and inclusive — the heading line
+    /// through the line before the next heading (the last section runs to the document's last
+    /// line). Counted by CODE over the same bytes `persist_request_text` writes verbatim, so
+    /// `sed -n 'A,Bp'` on the request file prints exactly this section. r6f's opener spent 14 of
+    /// its 71 minutes building this map BY HAND ("Rendering: heading 545. Canvas 547-550 (grep
+    /// 547-549), depth 551-552 (grep 551)…") after seven grep/sed pairs re-read ranges it had
+    /// already read; the index carries the map now.
+    pub(super) line_start: usize,
+    pub(super) line_end: usize,
 }
 
 pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
@@ -42,8 +51,11 @@ pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
         heading: String::new(),
         body: String::new(),
         level: 0,
+        line_start: 1,
+        line_end: 0,
     };
-    for line in spec.lines() {
+    for (idx, line) in spec.lines().enumerate() {
+        let line_no = idx + 1;
         let t = line.trim_start();
         let hashes = t.chars().take_while(|c| *c == '#').count();
         let is_heading = (1..=6).contains(&hashes) && {
@@ -59,10 +71,13 @@ pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
                 heading: rest.trim().to_string(),
                 body: String::new(),
                 level: hashes,
+                line_start: line_no,
+                line_end: line_no,
             };
         } else {
             cur.body.push_str(line);
             cur.body.push('\n');
+            cur.line_end = line_no;
         }
     }
     if !cur.heading.is_empty() || !cur.body.trim().is_empty() {
@@ -110,11 +125,23 @@ pub(super) fn orientation_armed(spec: &str, sections: &[SpecSection]) -> bool {
     sections.len() >= 3 && spec.chars().count() >= SPEC_ORIENTATION_MIN_CHARS
 }
 
+/// The file name every cite uses (`request.md:148`), derived from the path `persist_request_text`
+/// writes — one source, so the index's ranges and the rule's cite form cannot drift apart.
+pub(super) fn request_file_label() -> String {
+    std::path::Path::new(super::REQUEST_FILE)
+        .file_name()
+        .expect("REQUEST_FILE names a file")
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// The compact index the opener consumes when `orientation_armed`: every section's heading with
-/// a measured size and a head excerpt ending at a SENTENCE boundary. The detail is not lost —
-/// `briefs_from_slices` splices each claimed section's FULL text into the owning slice's brief,
-/// verbatim.
+/// its LINE RANGE in the request file (VA-077 — cites come from here; a section is read only
+/// when its words matter), a measured size and a head excerpt ending at a SENTENCE boundary.
+/// The detail is not lost — `briefs_from_slices` splices each claimed section's FULL text into
+/// the owning slice's brief, verbatim.
 pub(super) fn spec_orientation(sections: &[SpecSection]) -> String {
+    let label = request_file_label();
     let mut s = String::new();
     for sec in sections {
         let heading = if sec.heading.is_empty() {
@@ -124,8 +151,10 @@ pub(super) fn spec_orientation(sections: &[SpecSection]) -> String {
         };
         let head = head_to_sentence_end(&sec.body, 400);
         s.push_str(&format!(
-            "## {heading} [{} chars]\n{}\n\n",
+            "## {heading} [{} chars] ({label}:{}-{})\n{}\n\n",
             sec.body.chars().count(),
+            sec.line_start,
+            sec.line_end,
             head.trim_end()
         ));
     }
@@ -271,6 +300,32 @@ mod tests {
                 .rev()
                 .collect::<String>()
         );
+        // VA-077 on the real document: the heading line opens every span, the spans tile the
+        // file with no gap, the last runs to EOF, and the index renders each range.
+        let lines: Vec<&str> = spec.lines().collect();
+        for sec in sections.iter().filter(|s| !s.heading.is_empty()) {
+            assert!(
+                lines[sec.line_start - 1].contains(&sec.heading),
+                "line {} opens {:?}",
+                sec.line_start,
+                sec.heading
+            );
+            assert!(
+                orientation.contains(&format!(
+                    "## {} [{} chars] (request.md:{}-{})\n",
+                    sec.heading,
+                    sec.body.chars().count(),
+                    sec.line_start,
+                    sec.line_end
+                )),
+                "the index entry carries the range: {:?}",
+                sec.heading
+            );
+        }
+        for w in sections.windows(2) {
+            assert_eq!(w[0].line_end + 1, w[1].line_start, "{:?}", w[1].heading);
+        }
+        assert_eq!(sections.last().unwrap().line_end, lines.len());
         let small = "# a\nbody\n# b\nbody\n# c\nbody\n";
         assert!(
             !orientation_armed(small, &spec_sections(small)),
@@ -307,5 +362,52 @@ x
             )),
             None
         );
+    }
+
+    /// VA-077: every index entry carries the section's line span in the request file, counted
+    /// by code — the map r6f's opener rebuilt by hand over 14 minutes (seven grep/sed pairs
+    /// re-reading ranges it had already read, then "heading 545. Canvas 547-550 (grep
+    /// 547-549)…"). A heading-less preamble starts at line 1; trailing blank lines belong to the
+    /// section they follow (so `sed -n 'A,Bp'` prints the section whole); the last section runs
+    /// to the document's last line, with or without a trailing newline.
+    #[test]
+    fn the_index_carries_each_sections_line_range() {
+        let spec = "intro line one\nintro line two\n\n# Alpha\nalpha body\n\n## Beta\n| k | v |\n\
+                    |---|---|\n| a | 1 |\n\n# Gamma\ngamma one\ngamma two\n";
+        let sections = spec_sections(spec);
+        let spans: Vec<(&str, usize, usize)> = sections
+            .iter()
+            .map(|s| (s.heading.as_str(), s.line_start, s.line_end))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                ("", 1, 3),
+                ("Alpha", 4, 6),
+                ("Beta", 7, 11),
+                ("Gamma", 12, 14)
+            ]
+        );
+        assert_eq!(spec.lines().count(), 14);
+        let index = spec_orientation(&sections);
+        for (heading, range) in [
+            ("(preamble)", "(request.md:1-3)"),
+            ("Alpha", "(request.md:4-6)"),
+            ("Beta", "(request.md:7-11)"),
+            ("Gamma", "(request.md:12-14)"),
+        ] {
+            let entry = index
+                .lines()
+                .find(|l| l.starts_with(&format!("## {heading} [")))
+                .unwrap_or_else(|| panic!("no entry for {heading} in\n{index}"));
+            assert!(
+                entry.ends_with(range),
+                "the entry ends with the copyable cite: {entry:?}"
+            );
+        }
+        assert_eq!(request_file_label(), "request.md");
+        let no_trailing_newline = "# a\nx\n# b\ny";
+        let last = spec_sections(no_trailing_newline).pop().unwrap();
+        assert_eq!((last.line_start, last.line_end), (3, 4));
     }
 }
