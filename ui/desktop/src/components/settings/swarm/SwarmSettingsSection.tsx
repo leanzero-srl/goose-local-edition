@@ -648,9 +648,10 @@ function CloudPane({
 
 export default function SwarmSettingsSection() {
   const { read, upsert } = useConfig();
-  const fleet = useFleet();
   const [logMode, setLogMode] = useSwarmLogMode();
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
+  // Probe the host the ENGINE uses — the same `cfg.endpoint` the card prints in its offline message.
+  const fleet = useFleet(5000, cfg.endpoint);
   const [loaded, setLoaded] = useState(false);
   // Sampling DEFAULTS: canonical in localStorage (`swarmSamplingDefaults` — what every run
   // window's strip prefills from), written through to the swarm config so a headless/CLI run
