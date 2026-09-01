@@ -1,5 +1,40 @@
 # MLX engine campaign — LEDGER
 
+## 2026-09-01 — LEANZERO LINK recon: the seams the build binds to (survives compaction)
+
+Isolation (measured): personal tailscaled = /usr/local/bin/tailscaled on /var/run/tailscaled.socket
+(Tailscale.app, carrying the live benchmark — DO NOT TOUCH); the sidecar uses the SEPARATE Homebrew
+tailscaled 1.98.5 (/opt/homebrew/bin) with ~/.leanzero/tailscale/{state,sock} + userspace-networking
+— different binary/socket/state, provably non-interfering. Homebrew tailscaled uses single-dash Go
+flags (-socket, -statedir; -tun to be confirmed by the mesh agent).
+
+Session mirroring seam: goose-server/src/session_event_bus.rs ALREADY is a subscribe-able bus —
+broadcast::Sender<SessionEvent> cap 256 + 512 replay buffer + AtomicU64 seq; subscribe(last_id)
+returns replay+receiver (ClientTooFarBehind on eviction). BUT per-session (AppState.session_buses
+map), no process-wide bus, no session-created/archived event — the control service iterates the map
+and adds lifecycle events. Payload = MessageEvent (routes/reply.rs:128). SSE precedent live at
+GET /sessions/{id}/events (Last-Event-ID honored, comment-heartbeat). axum ws in both server crates;
+/acp is the existing WS (token via ?token= query, origin-policy gated).
+
+Idle/busy truth: AgentManager (execution/manager.rs) global singleton — is_session_busy(id),
+list_active_session_ids(); caveat normal reply paths under-register, so the honest node-busy signal
+is "any session bus has an active_request" (session_event_bus active_requests) ∪ ACP
+active_prompt_runs. Cross-node liveness prior art = SwarmEngine::resident_processes (swarm_engine.rs)
++ live_fleet_slots. Dispatcher idle-guard seam: scheduler.rs DeviceAdmission.offer (:771, mid-run
+join, append-only) + least_loaded_free_device (:1450); DispatchError::Transient re-steers to another
+device (natural "peer busy" path). swarm-surgeon owns these edits.
+
+Identity/token: jsonwebtoken 10.2 present (sign-only today; the Rust client only STORES the
+worker-minted JWT, never verifies its own). Secret plumbing needs ZERO new code
+(Config set_secret/get_secret + LEANZERO_LINK_TOKEN env override) — but the SPEC wants
+~/.leanzero/identity.json as source of truth, honored. goosed secret = GOOSE_SERVER__SECRET_KEY;
+desktop finds goosed on a random 127.0.0.1 port (gooseServe.ts findAvailablePort, no port file).
+
+IN FLIGHT: worker (leanzero-link/worker/) + mesh sidecar crate (crates/leanzero-link/src/mesh.rs).
+NEXT (sequenced): control module in the same crate (/v1/swarm/nodes|sessions|stream bound to the
+mesh IP) after mesh lands; identity client after worker contract; dispatcher idle-guard via
+swarm-surgeon; Link tab UI via panel-surgeon.
+
 ## 2026-08-31 ~20:45 — Restructure COMPLETE (pass C); one testing casualty owned and repaired
 
 Pass C (0fc7a4dd9): the LeanZero Swarm three-tab view is live — LeanZero MLX (engine content
