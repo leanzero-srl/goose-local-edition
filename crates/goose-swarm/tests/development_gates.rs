@@ -401,7 +401,12 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,564 (VA-065): rule (a) `repair_owning_nothing` + `repoint_dependency` moved
     // to commands/swarm/plan_repairs.rs beside rules (d)-(f), carrying THE SPLIT exemption, paying
     // for `merge_dossier_incomplete` at the merger's dispatch and `merge_hole` at its completion.
-    const SWARM_RS_LINE_BASELINE: usize = 34_564;
+    // Tightened to 34,429 (SPLIT v2, part 2): `mentions_ext` / `detect_language` and their two tests
+    // moved to commands/swarm/lang.rs, paying for the shard-completion verification seam
+    // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
+    // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
+    // the baseline is the count AFTER all three, so each intermediate commit sits under it.
+    const SWARM_RS_LINE_BASELINE: usize = 34_429;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

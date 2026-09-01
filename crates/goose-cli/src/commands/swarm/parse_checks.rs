@@ -15,26 +15,108 @@ pub(super) async fn syntax_error(path: &Path) -> Option<String> {
 }
 
 /// Syntax-check a Python file without polluting `__pycache__` (ast.parse, not py_compile). Returns the
-/// last error line on a SyntaxError, `None` if it parses.
+/// last error line on a SyntaxError, `None` if it parses — AND `None` when python3 cannot start
+/// (the pre-existing `.ok()?` arm, kept byte-for-byte in meaning for the DONE gate and
+/// `shards::parse_piece`; the shard verifier reads `check_piece` instead, where that absence is
+/// `PieceCheck::ToolUnavailable`, never a pass).
 pub(super) async fn py_syntax_error(path: &Path) -> Option<String> {
-    let out = tokio::process::Command::new("python3")
-        .arg("-c")
-        .arg("import ast,sys; ast.parse(open(sys.argv[1]).read())")
-        .arg(path)
+    match check_piece(path).await {
+        PieceCheck::Failed(err) => Some(err),
+        _ => None,
+    }
+}
+
+/// The per-file checkers by name, so a test can point one at a binary that does not exist and
+/// prove the absent-tool arm without touching PATH (process-global, racy under parallel tests).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ToolNames {
+    pub(super) node: String,
+    pub(super) python: String,
+}
+
+impl Default for ToolNames {
+    fn default() -> Self {
+        Self {
+            node: "node".to_string(),
+            python: "python3".to_string(),
+        }
+    }
+}
+
+/// What a per-file check could establish about ONE piece — `RustCheck`'s tri-state at file grain
+/// (SPLIT v2 mechanism 2). `shards::parse_piece` is the string-form predecessor: it says "node not
+/// available — unchecked" in the same `Some(..)` slot as a SyntaxError, so a reader must match on
+/// prose to tell a missing tool from a broken file. Here the tool's absence is its own variant,
+/// the shard verifier turns it into `shard_check_unavailable{tool}`, and a piece is never called
+/// parsed because nothing could look at it (fallback gate).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PieceCheck {
+    /// The tool ran and accepted the file.
+    Parsed,
+    /// The tool ran and rejected it: the error line it printed.
+    Failed(String),
+    /// The tool could not start (not on PATH, not executable) — nothing is known about the file.
+    ToolUnavailable { tool: String, error: String },
+    /// No per-file checker exists for this extension (`.rs` is checked crate-wide by
+    /// `rust_compile_error`; `.ts` needs a project's tsc) — said, never green.
+    NoChecker { ext: String },
+}
+
+pub(super) async fn check_piece(path: &Path) -> PieceCheck {
+    check_piece_with(path, &ToolNames::default()).await
+}
+
+/// `.py` -> `python3 -c "ast.parse(...)"` (ast.parse, not py_compile, so no `__pycache__` lands in
+/// the shard folder and gets read as a piece); `.js`/`.mjs`/`.cjs` -> `node --check`. The error
+/// line is the tool's own: Python's traceback ends in `SyntaxError: …`, node prints the
+/// `SyntaxError` line among the source excerpt.
+pub(super) async fn check_piece_with(path: &Path, tools: &ToolNames) -> PieceCheck {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let picked: Option<(&str, Vec<std::ffi::OsString>)> = match ext.as_str() {
+        "py" => Some((
+            tools.python.as_str(),
+            vec![
+                "-c".into(),
+                "import ast,sys; ast.parse(open(sys.argv[1]).read())".into(),
+                path.as_os_str().to_os_string(),
+            ],
+        )),
+        "js" | "mjs" | "cjs" => Some((
+            tools.node.as_str(),
+            vec!["--check".into(), path.as_os_str().to_os_string()],
+        )),
+        _ => None,
+    };
+    let Some((tool, args)) = picked else {
+        return PieceCheck::NoChecker { ext };
+    };
+    let run = tokio::process::Command::new(tool)
+        .args(&args)
+        .kill_on_drop(true)
         .output()
-        .await
-        .ok()?;
-    if out.status.success() {
-        None
-    } else {
-        Some(
-            String::from_utf8_lossy(&out.stderr)
-                .lines()
-                .last()
-                .unwrap_or("syntax error")
-                .trim()
-                .to_string(),
-        )
+        .await;
+    match run {
+        Err(e) => PieceCheck::ToolUnavailable {
+            tool: tool.to_string(),
+            error: e.to_string(),
+        },
+        Ok(out) if out.status.success() => PieceCheck::Parsed,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let line = if ext == "py" {
+                stderr.lines().last()
+            } else {
+                stderr
+                    .lines()
+                    .find(|l| l.contains("Error"))
+                    .or_else(|| stderr.lines().last())
+            };
+            PieceCheck::Failed(line.unwrap_or("syntax error").trim().to_string())
+        }
     }
 }
 
