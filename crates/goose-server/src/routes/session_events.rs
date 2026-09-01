@@ -292,8 +292,6 @@ pub async fn session_reply(
         .await
         .map_err(|_| ErrorResponse::not_found(format!("Session {} not found", session_id)))?;
 
-    let session_start = std::time::Instant::now();
-
     tracing::info!(
         monotonic_counter.goose.session_starts = 1,
         session_type = "app",
@@ -346,14 +344,52 @@ pub async fn session_reply(
         return Ok(Json(SessionReplyResponse { request_id }));
     }
 
+    if let Err(ReplyDispatchError::AlreadyActive) = spawn_reply_task(
+        state.clone(),
+        session_id.clone(),
+        request_id.clone(),
+        user_message,
+        override_conversation,
+    )
+    .await
+    {
+        return Err(ErrorResponse::bad_request(
+            "Session already has an active request. Cancel it first.",
+        ));
+    }
+
+    Ok(Json(SessionReplyResponse { request_id }))
+}
+
+/// The dispatch outcome of [`spawn_reply_task`]: the session already had an in-flight
+/// request, so nothing new was started (the HTTP route maps this to `400`, the LeanZero
+/// Link executor maps it to `ExecuteError::Busy`).
+#[derive(Debug)]
+pub enum ReplyDispatchError {
+    AlreadyActive,
+}
+
+/// The shared reply-dispatch core: register `request_id` on the session's event bus and
+/// spawn the agent reply task that streams every `MessageEvent` to the per-session bus AND
+/// the process-wide delta tap (the LeanZero Link mesh mirror). Both
+/// `POST /sessions/{id}/reply` and the LeanZero Link remote executor
+/// (`GoosedRemoteExecutor::execute`) drive a run through THIS — neither reimplements the
+/// agent loop. The session must already exist (both callers validate that first).
+pub async fn spawn_reply_task(
+    state: Arc<AppState>,
+    session_id: String,
+    request_id: String,
+    user_message: Message,
+    override_conversation: Option<Vec<Message>>,
+) -> Result<(), ReplyDispatchError> {
+    let session_start = std::time::Instant::now();
+
     let bus = state.get_or_create_event_bus(&session_id).await;
 
     let cancel_token = bus
         .try_register_request(request_id.clone())
         .await
-        .map_err(|_| {
-            ErrorResponse::bad_request("Session already has an active request. Cancel it first.")
-        })?;
+        .map_err(|_| ReplyDispatchError::AlreadyActive)?;
 
     let task_state = state.clone();
     let task_session_id = session_id.clone();
@@ -608,7 +644,7 @@ pub async fn session_reply(
         task_bus.cleanup_request(&task_request_id).await;
     }));
 
-    Ok(Json(SessionReplyResponse { request_id }))
+    Ok(())
 }
 
 // ── POST /sessions/{id}/cancel ──────────────────────────────────────────

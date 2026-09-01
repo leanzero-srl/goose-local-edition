@@ -5241,6 +5241,7 @@ name = "goose-server"
 version = "1.41.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "axum-server",
  "base64 0.22.1",

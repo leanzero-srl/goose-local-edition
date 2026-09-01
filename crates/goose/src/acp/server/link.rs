@@ -52,6 +52,11 @@ use leanzero_link::{discovery, worker_client};
 /// classify its `MessageEvent`s into it without naming `leanzero-link` directly.
 pub use leanzero_link::wire::SessionDeltaKind;
 
+/// The remote-execution seam types, re-exported so goose-server can implement
+/// [`RemoteExecutor`] and drive [`ExecuteRequest`]/[`ExecuteAccepted`]/[`ExecuteError`]
+/// through `goose::acp::server::*` without a direct `leanzero-link` dependency.
+pub use leanzero_link::state::{ExecuteAccepted, ExecuteError, ExecuteRequest, RemoteExecutor};
+
 /// How often the delta poller re-snapshots node/session state. Matches the fabric's own
 /// peer poll cadence (`ControlConfig::poll_interval` default) so a busy/idle transition
 /// surfaces to peers on the same order of latency whether via our stream or their poll.
@@ -112,6 +117,26 @@ pub fn set_delta_source(source: impl DeltaSource) {
 
 fn current_delta_source() -> Option<Arc<dyn DeltaSource>> {
     DELTA_SOURCE.get().cloned()
+}
+
+static EXECUTOR: OnceLock<Arc<dyn RemoteExecutor>> = OnceLock::new();
+
+/// Inject the process-wide remote executor. Called once by the goose-server boot path
+/// (its `GoosedRemoteExecutor` drives the reply machinery, which only goose-server can
+/// reach). Threaded into every [`LinkManager`] built afterwards — so the node's
+/// `POST /v1/swarm/execute` route and [`LinkManager::remote_execute`] self short-circuit
+/// can actually run goose. If never set (goose without the server boot), the control
+/// route answers `501` — loud-absent, never a fake accept. A second call is ignored with
+/// a warning: the executor is a process singleton.
+pub fn set_executor(executor: impl RemoteExecutor) {
+    let executor: Arc<dyn RemoteExecutor> = Arc::new(executor);
+    if EXECUTOR.set(executor).is_err() {
+        warn!("leanzeroLink: remote executor already injected; ignoring the duplicate");
+    }
+}
+
+fn current_executor() -> Option<Arc<dyn RemoteExecutor>> {
+    EXECUTOR.get().cloned()
 }
 
 // ---------------------------------------------------------------------------
@@ -551,8 +576,13 @@ impl GooseAcpAgent {
     ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
         let config = build_link_config(email)?;
         let source = self.link_source();
-        let manager = LinkManager::new(config, source)
+        let mut manager = LinkManager::new(config, source)
             .internal_err_ctx("constructing the LeanZero Link manager")?;
+        // Attach the process-wide remote executor if goose-server injected one at boot; a
+        // node built without it serves `/v1/swarm/execute` as `501` (execution not wired).
+        if let Some(executor) = current_executor() {
+            manager = manager.with_executor(executor);
+        }
         Ok(Arc::new(manager))
     }
 

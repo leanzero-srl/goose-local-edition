@@ -12,11 +12,13 @@ use chrono::{DateTime, TimeZone, Utc};
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use leanzero_link::control::{
-    ControlConfig, ControlHandle, ControlService, MeshBind, CLOSE_CODE_CLIENT_TOO_FAR_BEHIND,
-    CLOSE_REASON_CLIENT_TOO_FAR_BEHIND,
+    execute_error_status, ControlConfig, ControlHandle, ControlService, MeshBind,
+    CLOSE_CODE_CLIENT_TOO_FAR_BEHIND, CLOSE_REASON_CLIENT_TOO_FAR_BEHIND,
 };
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
-use leanzero_link::state::{PeerTarget, SwarmStateSource};
+use leanzero_link::state::{
+    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerTarget, RemoteExecutor, SwarmStateSource,
+};
 use leanzero_link::wire::{
     LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
 };
@@ -118,12 +120,22 @@ impl SwarmStateSource for FakeStateSource {
 }
 
 async fn spawn_node(source: Arc<FakeStateSource>, mesh_ip: Option<IpAddr>) -> ControlHandle {
+    spawn_node_full(source, mesh_ip, None, true).await
+}
+
+async fn spawn_node_full(
+    source: Arc<FakeStateSource>,
+    mesh_ip: Option<IpAddr>,
+    executor: Option<Arc<dyn RemoteExecutor>>,
+    allow_remote_execution: bool,
+) -> ControlHandle {
     let mut config = ControlConfig::new(TOKEN.to_string(), mesh_ip);
     config.port = 0;
     config.poll_interval = Duration::from_millis(100);
     config.heartbeat_interval = Duration::from_secs(5);
     config.reconnect_backoff = Duration::from_millis(100);
-    ControlService::start(config, source)
+    config.allow_remote_execution = allow_remote_execution;
+    ControlService::start(config, source, executor)
         .await
         .expect("control service starts")
 }
@@ -555,4 +567,218 @@ async fn no_mesh_ip_binds_loopback_only_and_reports_offline() {
     assert_eq!(sessions.as_array().unwrap().len(), 1);
 
     handle.shutdown();
+}
+
+// ── POST /v1/swarm/execute: gates + executor seam ───────────────────────
+
+/// A scripted [`RemoteExecutor`]: records the requests it is handed and returns a fixed
+/// outcome. Stands in for goose-server's `GoosedRemoteExecutor` — no agent, no model.
+struct FakeExecutor {
+    recorded: StdMutex<Vec<ExecuteRequest>>,
+    outcome: Result<ExecuteAccepted, ExecuteError>,
+}
+
+impl FakeExecutor {
+    fn accepting(session_id: &str) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Ok(ExecuteAccepted {
+                session_id: session_id.to_string(),
+            }),
+        })
+    }
+
+    fn failing(error: ExecuteError) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Err(error),
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.recorded.lock().unwrap().len()
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteExecutor for FakeExecutor {
+    async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+        self.recorded.lock().unwrap().push(req);
+        self.outcome.clone()
+    }
+}
+
+async fn post_execute(
+    client: &reqwest::Client,
+    base: &str,
+    bearer: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    client
+        .post(format!("{base}/v1/swarm/execute"))
+        .bearer_auth(bearer)
+        .json(&body)
+        .send()
+        .await
+        .expect("execute request sends")
+}
+
+#[tokio::test]
+async fn execute_returns_202_when_idle_enabled_and_wired() {
+    let source = FakeStateSource::new("node-a"); // no sessions → Idle
+    let executor = FakeExecutor::accepting("sess-remote-1");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(
+        &client,
+        &base,
+        TOKEN,
+        serde_json::json!({"prompt": "build me a thing", "working_dir": "/tmp/x"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 202);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["session_id"], "sess-remote-1");
+
+    let recorded = executor.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "the executor ran exactly once");
+    assert_eq!(recorded[0].prompt, "build me a thing");
+    assert_eq!(recorded[0].working_dir.as_deref(), Some("/tmp/x"));
+    assert_eq!(recorded[0].session_id, None);
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_409_when_node_busy_and_never_calls_executor() {
+    let source = FakeStateSource::new("node-a");
+    source.set_sessions(vec![summary("s1", "node-a", true, 100)]); // live → Busy
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(
+        resp.status(),
+        409,
+        "receive-side idle guard refuses a busy node"
+    );
+    assert_eq!(
+        executor.call_count(),
+        0,
+        "a busy node never reaches the executor"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_403_when_remote_execution_disabled() {
+    let source = FakeStateSource::new("node-a");
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), false).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 403);
+    assert_eq!(executor.call_count(), 0, "observe-only node never executes");
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_501_when_no_executor_injected() {
+    let source = FakeStateSource::new("node-a");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), None, true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(
+        resp.status(),
+        501,
+        "no executor wired is loud-absent, never a fake accept"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_401_on_bad_bearer_and_never_calls_executor() {
+    let source = FakeStateSource::new("node-a");
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(
+        &client,
+        &base,
+        "wrong-token",
+        serde_json::json!({"prompt": "x"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 401);
+    assert_eq!(executor.call_count(), 0);
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_maps_executor_internal_error_to_500() {
+    let source = FakeStateSource::new("node-a");
+    let executor = FakeExecutor::failing(ExecuteError::Internal("session store exploded".into()));
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        executor.call_count(),
+        1,
+        "the executor ran and its error mapped"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_400_on_unparseable_body() {
+    let source = FakeStateSource::new("node-a");
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/v1/swarm/execute"))
+        .bearer_auth(TOKEN)
+        .header("content-type", "application/json")
+        .body("this is not json")
+        .send()
+        .await
+        .expect("request sends");
+    assert_eq!(resp.status(), 400);
+    assert_eq!(executor.call_count(), 0);
+
+    handle.shutdown();
+}
+
+#[test]
+fn execute_error_status_mapping_is_exact() {
+    assert_eq!(execute_error_status(&ExecuteError::Busy).as_u16(), 409);
+    assert_eq!(execute_error_status(&ExecuteError::Disabled).as_u16(), 403);
+    assert_eq!(
+        execute_error_status(&ExecuteError::BadRequest("bad".into())).as_u16(),
+        400
+    );
+    assert_eq!(
+        execute_error_status(&ExecuteError::Internal("boom".into())).as_u16(),
+        500
+    );
 }

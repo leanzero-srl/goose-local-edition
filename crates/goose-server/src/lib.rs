@@ -8,6 +8,7 @@ pub mod auth;
 pub mod configuration;
 pub mod error;
 pub mod openapi;
+pub mod remote_executor;
 pub mod routes;
 pub mod session_delta_tap;
 pub mod session_event_bus;

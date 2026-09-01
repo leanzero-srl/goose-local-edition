@@ -64,6 +64,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json", "time"] }
 tokio-stream = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 base64 = { workspace = true }

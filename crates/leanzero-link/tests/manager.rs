@@ -17,11 +17,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::BoxStream;
-use leanzero_link::control::ControlConfig;
+use leanzero_link::control::{ControlConfig, ControlService};
 use leanzero_link::identity::{Identity, IdentityStore};
-use leanzero_link::manager::{AuthState, LinkManager, LinkManagerConfig, Mesh, MeshFactory};
+use leanzero_link::manager::{
+    AuthState, LinkError, LinkManager, LinkManagerConfig, Mesh, MeshFactory,
+};
 use leanzero_link::mesh::{BackendState, MeshConfig, MeshError, MeshStatus};
-use leanzero_link::state::SwarmStateSource;
+use leanzero_link::state::{
+    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerTarget, RemoteExecutor, SwarmStateSource,
+};
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -118,6 +122,57 @@ fn connected_status() -> MeshStatus {
         backend_state: BackendState::Running,
         online: true,
         peers: Vec::new(),
+    }
+}
+
+/// An always-Idle source with a chosen node id — node B's state in the peer-execute test.
+struct NamedIdleSource {
+    node_id: String,
+}
+
+#[async_trait]
+impl SwarmStateSource for NamedIdleSource {
+    async fn local_node(&self) -> NodeState {
+        NodeState {
+            node_id: self.node_id.clone(),
+            hostname: format!("{}-host", self.node_id),
+            mesh_ip: None,
+            status: NodeStatus::Idle,
+            sessions_active: 0,
+            updated_at: Utc::now(),
+        }
+    }
+    async fn local_sessions(&self) -> Vec<SessionSummary> {
+        Vec::new()
+    }
+    fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
+        Box::pin(futures::stream::pending())
+    }
+}
+
+/// A scripted [`RemoteExecutor`] that records what it is asked to run and returns a fixed
+/// session id — the same stand-in the control tests use, no agent involved.
+struct RecordingExecutor {
+    recorded: StdMutex<Vec<ExecuteRequest>>,
+    session_id: String,
+}
+
+impl RecordingExecutor {
+    fn new(session_id: &str) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            session_id: session_id.to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl RemoteExecutor for RecordingExecutor {
+    async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+        self.recorded.lock().unwrap().push(req);
+        Ok(ExecuteAccepted {
+            session_id: self.session_id.clone(),
+        })
     }
 }
 
@@ -427,4 +482,141 @@ async fn logout_while_only_logged_in_clears_identity() {
     assert!(!h.identity_present());
     // No connection existed, so the mesh was never touched.
     assert_eq!(h.calls.lock().unwrap().logout_count, 0);
+}
+
+#[tokio::test]
+async fn remote_execute_self_short_circuits_to_the_local_executor() {
+    let server = MockServer::start().await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    let executor = RecordingExecutor::new("local-sess-1");
+    // FakeStateSource reports node_id "self-node"; targeting it takes the no-network path.
+    let manager = h.manager(&server, false).with_executor(executor.clone());
+
+    let accepted = manager
+        .remote_execute(
+            "self-node",
+            ExecuteRequest {
+                prompt: "do the thing locally".to_string(),
+                working_dir: Some("/tmp/here".to_string()),
+                session_id: None,
+            },
+        )
+        .await
+        .expect("self execute runs the local executor");
+    assert_eq!(accepted.session_id, "local-sess-1");
+
+    let recorded = executor.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "no network hop; the local executor ran");
+    assert_eq!(recorded[0].prompt, "do the thing locally");
+    assert_eq!(recorded[0].working_dir.as_deref(), Some("/tmp/here"));
+}
+
+#[tokio::test]
+async fn remote_execute_self_without_executor_is_loud() {
+    let server = MockServer::start().await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    let manager = h.manager(&server, false); // no executor wired
+
+    let err = manager
+        .remote_execute(
+            "self-node",
+            ExecuteRequest {
+                prompt: "x".to_string(),
+                working_dir: None,
+                session_id: None,
+            },
+        )
+        .await
+        .expect_err("no executor is a loud typed error, not a fake accept");
+    assert!(matches!(err, LinkError::ExecutorUnavailable), "got {err:?}");
+}
+
+#[tokio::test]
+async fn remote_execute_posts_to_a_peer_execute_route() {
+    // Node B: a real control service with a recording executor, on ephemeral loopback.
+    let b_executor = RecordingExecutor::new("sess-on-b");
+    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    b_config.port = 0;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        Some(b_executor.clone()),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    // Node A: a connected manager (fake mesh reports zero peers of its own).
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let a_executor = RecordingExecutor::new("unused-on-a");
+    let manager = h.manager(&server, false).with_executor(a_executor.clone());
+    manager.connect().await.expect("A connects");
+
+    let registry = manager
+        .active_registry()
+        .await
+        .expect("A has a live peer registry while connected");
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b_port,
+    };
+
+    // The peer-sync loop reconciles mesh-derived peers to [] exactly once at connect; re-seed
+    // B until the POST lands (after that first reconcile it never wipes again, since the fake
+    // mesh keeps reporting zero peers).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let accepted = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager
+            .remote_execute(
+                "node-b",
+                ExecuteRequest {
+                    prompt: "run this on B".to_string(),
+                    working_dir: None,
+                    session_id: None,
+                },
+            )
+            .await
+        {
+            Ok(accepted) => break accepted,
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => panic!("unexpected remote_execute error: {other:?}"),
+        }
+    };
+
+    assert_eq!(
+        accepted.session_id, "sess-on-b",
+        "A got B's session id back"
+    );
+    {
+        let recorded = b_executor.recorded.lock().unwrap();
+        assert_eq!(
+            recorded.len(),
+            1,
+            "the prompt reached B's executor over HTTP"
+        );
+        assert_eq!(recorded[0].prompt, "run this on B");
+        assert!(
+            a_executor.recorded.lock().unwrap().is_empty(),
+            "A's local executor must not run for a peer target"
+        );
+    }
+
+    b.shutdown();
+    manager.logout(false).await.unwrap();
 }
