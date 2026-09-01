@@ -15,10 +15,19 @@
 //! authoring site names itself at the moment it pushes; the text is transport, not evidence.
 //!
 //! MILD: severity ORDERS work and reporting — the wave fans the severest file-group first and
-//! every shard brief says what leads and why. It never gates, refuses or aborts, and the green
-//! claim is UNCHANGED: `passed` is still the `engine_critical` partition, membership untouched
-//! (e.g. the sync_rows finding stays repairable-never-blocking per its pinned test even though
-//! its authoring check ranks CRITICAL for ordering).
+//! every shard brief says what leads and why. It never gates, refuses or aborts. The green claim
+//! (`FindingProvenance::partition_criticals`, VA-006 / DESIGN-REPAIR-V2 §4) is the
+//! `engine_critical` wording PLUS the browser probe's app-unusable findings — no rows in a real
+//! browser, an uncaught exception in the advertised page's boot path — and `passed` further
+//! requires no render-class finding among the known active bugs. The sync_rows finding stays
+//! repairable-never-blocking per its pinned test even though its authoring check ranks CRITICAL
+//! for ordering: it is not a render probe.
+//!
+//! THE CHECK (REPAIR v2, VA-087): every sourced finding derives a `FindingCheck` — a key that
+//! names the same check across gate runs and, when the finding carries it, the gate's own replay
+//! command. The repair wave hands the command to the shard as its FIRST action and promotes a
+//! shard only when the gate re-run on its merged preview no longer fails that key (and fails no
+//! key it did not fail before). An untagged finding has no check: `finding_unverifiable`.
 
 /// GOOSE_SWARM_COMPLETE_PARALLEL: a group of verify findings that all name the SAME file, so exactly one
 /// fix agent ever writes that file (same-file failures serialize by construction).
@@ -281,9 +290,9 @@ fn finding_fingerprint(f: &str) -> String {
 /// Fold findings with equal fingerprints, keeping ONE.
 ///
 /// The finding COUNT is the ruler for three decisions at once: it gates green, it fires the stall exit,
-/// and it is the baseline `shard_beats_baseline` compares a shadow against. One duplicate is charged
-/// three times — and in the SAME round it makes the app harder to call green and the shard easier to
-/// promote.
+/// and it seeds the per-check baseline the wave grades a shard's preview against (`TreeGrade`). One
+/// duplicate is charged three times — and in the SAME round it makes the app harder to call green and
+/// the shard easier to promote.
 ///
 /// MEASURED (round 0 of a live run): "Empty limit parameter silently falls back to default" was reported
 /// by two testers and BOTH survived, because TEST prefixes every defect with `[{angle}] ` and the merge
@@ -314,10 +323,116 @@ pub(super) fn engine_critical(f: &str) -> bool {
         || l.contains("nothing at all once it")
 }
 
-/// The round's own GREEN partition (`engine_critical`), split once instead of filtered twice at
-/// the call site — the two Vecs are always consumed together (final_passed / known_active_bugs).
-pub(super) fn partition_by_engine_critical(findings: &[String]) -> (Vec<String>, Vec<String>) {
-    findings.iter().cloned().partition(|f| engine_critical(f))
+/// The planned-deliverable stat's finding, ONE template for the round ruler and the wave's
+/// grader (two copies once disagreed by a word and the keys they grade by would have too).
+pub(super) fn missing_deliverable_finding(file: &str) -> String {
+    format!(
+        "planned deliverable `{file}` is MISSING or EMPTY — a task was marked done without \
+         writing it. Create it (the simplest version that satisfies the spec) so the app is \
+         complete and runnable."
+    )
+}
+
+/// Does a browser console line name an UNCAUGHT JS EXCEPTION — `ReferenceError: x is not
+/// defined`, `TypeError: Illegal invocation`, `Uncaught SyntaxError …` — rather than a resource
+/// failure (`Failed to load resource: net::ERR_EMPTY_RESPONSE`) or an app's own console.error
+/// text? The classes are the LANGUAGE'S: a capitalized token ending in `Error` directly followed
+/// by `:`, or the `Uncaught` prefix Chromium prints for a pageerror. Derived from the line the
+/// probe recorded, so the render gate can name the authoring branch (`RenderGateException`) at
+/// the moment it pushes — provenance, not a needle on the finding afterwards.
+pub(super) fn console_error_is_exception(line: &str) -> bool {
+    line.split_whitespace().any(|t| {
+        let t = t.trim_start_matches(['(', '[', '"', '\'']);
+        t == "Uncaught"
+            || t.strip_suffix(':').is_some_and(|name| {
+                name.ends_with("Error")
+                    && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            })
+    })
+}
+
+/// The CHECK behind a finding — what the shard re-runs FIRST (DESIGN-REPAIR-V2 §1) and what the
+/// gate re-runs on the merged preview to decide promotion (§2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FindingCheck {
+    /// The check's identity ACROSS gate runs: the authoring check's label plus the finding
+    /// template's own first clause, parenthesized spans dropped and digit runs normalized. The
+    /// gate re-run on a preview boots the app on a fresh port, re-numbers a shifted line and
+    /// quotes whichever console error is first NOW — none of that is a different check. What
+    /// stays is the subject the template names outside parentheses: the endpoint, the DOM id,
+    /// the module, the deliverable path.
+    pub(super) key: String,
+    /// The check as the gate states it in the finding's own words — its `GATE COMMAND` /
+    /// `REPLAY IT` sentence, or the leading backticked command — verbatim. None when the
+    /// authoring check is not a command a shard can run by hand (a static scan, a deliverable
+    /// stat): the brief then names the check and says the engine re-runs it on the edit.
+    pub(super) command: Option<String>,
+}
+
+/// The identity of a check across gate runs. Parenthesized spans go (the quoted exemplar, the
+/// `(in \`file\`)` attribution, `(exit 1)`), digit runs become `#` (ports, line numbers, counts),
+/// and the key is the first clause — the engine's templates separate the claim from its
+/// elaboration with ` — `, a sentence end or a newline. Lowercased and whitespace-collapsed.
+pub(super) fn check_key(source: FindingSource, text: &str) -> String {
+    let mut depth = 0usize;
+    let mut in_digits = false;
+    let mut flat = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c == '(' {
+            depth += 1;
+            in_digits = false;
+            continue;
+        }
+        if c == ')' {
+            depth = depth.saturating_sub(1);
+            in_digits = false;
+            continue;
+        }
+        if depth > 0 {
+            continue;
+        }
+        if c.is_ascii_digit() {
+            if !in_digits {
+                flat.push('#');
+                in_digits = true;
+            }
+            continue;
+        }
+        in_digits = false;
+        flat.push(c);
+    }
+    let mut head = flat.as_str();
+    for sep in [" — ", "\n", ". ", ": "] {
+        if let Some((h, _)) = head.split_once(sep) {
+            head = h;
+        }
+    }
+    let norm = head
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    format!("{} | {}", source.label(), norm)
+}
+
+/// The gate's own replay, quoted from the finding: the sentence from its `GATE COMMAND` or
+/// `REPLAY IT:` marker (both written by the engine's probes) to the end, minus the trailing
+/// attribution suffix `extract_file_from_finding` parses; else the command a finding OPENS with
+/// (`` `pytest -q` failed … ``, `` `python3 -m app --help` failed … ``). None for a finding that
+/// carries no command — said as such, never invented.
+pub(super) fn check_command(text: &str) -> Option<String> {
+    for marker in ["GATE COMMAND", "REPLAY IT:"] {
+        if let Some(i) = text.find(marker) {
+            let rest = &text[i..];
+            let rest = rest.rsplit_once(" (in `").map(|(a, _)| a).unwrap_or(rest);
+            return Some(rest.trim().trim_end_matches('.').to_string());
+        }
+    }
+    let mut parts = text.splitn(3, '`');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(""), Some(cmd), Some(_)) if !cmd.trim().is_empty() => Some(cmd.trim().to_string()),
+        _ => None,
+    }
 }
 
 pub(super) fn dedupe_findings_exact(
@@ -435,8 +550,14 @@ pub(super) enum FindingSource {
     RenderGateRows,
     /// The restart-durability probe: never binds again on its own database, or loses rows.
     RestartDurability,
-    /// The render gate's console: JS errors in normal use.
+    /// The render gate's console: JS errors in normal use that are NOT exceptions (a resource
+    /// that failed to load, an app's own console.error).
     RenderGateConsole,
+    /// The render gate's console: an UNCAUGHT EXCEPTION (`ReferenceError`, `TypeError`, …) during
+    /// the advertised page's boot/probe — the whole script after it never ran (r5: one
+    /// `ReferenceError: onBrushChangeTracked is not defined` severed the entire 3D scene and
+    /// shipped as a MINOR known bug; VA-006 ruled this class CRITICAL by construction).
+    RenderGateException,
     /// The client public-API paging probe: a direct caller gets a fraction of the collection.
     ClientApiPaging,
     /// The cross-module drift scan: a module reads a field a sibling never defines.
@@ -477,6 +598,19 @@ impl FindingSource {
         )
     }
 
+    /// RENDER-CLASS: the browser probe's findings about whether a spec-advertised surface WORKS
+    /// in a real browser — rows rendered, exceptions thrown, console errors hit. `passed`
+    /// (VA-006) requires none of these among the known active bugs; the probe's styling
+    /// conjunction is its cosmetic reading and stays advisory (Low), so it is not in this class.
+    pub(super) fn is_render_probe(self) -> bool {
+        matches!(
+            self,
+            FindingSource::RenderGateRows
+                | FindingSource::RenderGateConsole
+                | FindingSource::RenderGateException
+        )
+    }
+
     /// THE DERIVATION TABLE. Class rules: app-unusable product checks are CRITICAL;
     /// feature-severing evidence is HIGH; contract/shape is MEDIUM; cosmetic is LOW.
     pub(super) fn severity(self) -> FindingSeverity {
@@ -488,6 +622,7 @@ impl FindingSource {
             | FindingSource::EndpointDeadProbe
             | FindingSource::SyncAcquisition
             | FindingSource::RenderGateRows
+            | FindingSource::RenderGateException
             | FindingSource::RestartDurability => FindingSeverity::Critical,
             FindingSource::RenderGateConsole
             | FindingSource::ClientApiPaging
@@ -514,6 +649,9 @@ impl FindingSource {
             FindingSource::RenderGateRows => "render gate rows (journey dead in a browser)",
             FindingSource::RestartDurability => "restart durability probe",
             FindingSource::RenderGateConsole => "render gate console (browser JS errors)",
+            FindingSource::RenderGateException => {
+                "render gate exception (uncaught JS exception in the page's boot path)"
+            }
             FindingSource::ClientApiPaging => "client public-API paging probe",
             FindingSource::CrossModuleDrift => "cross-module drift scan",
             FindingSource::DomIdScan => "dom-id contract scan",
@@ -586,6 +724,45 @@ impl FindingProvenance {
     /// treats that as "no preference", never as a class.
     pub(super) fn source_of(&self, text: &str) -> Option<FindingSource> {
         self.by_text.get(text).copied()
+    }
+
+    /// The check behind a finding (`FindingCheck`). None only for an untagged finding — no
+    /// authoring check is recorded, so nothing can be re-run for it; the wave says
+    /// `finding_unverifiable` and keeps the labelled count comparison for that finding alone.
+    pub(super) fn check_of(&self, text: &str) -> Option<FindingCheck> {
+        let source = self.source_of(text)?;
+        Some(FindingCheck {
+            key: check_key(source, text),
+            command: check_command(text),
+        })
+    }
+
+    /// THE GREEN PARTITION (VA-006, DESIGN-REPAIR-V2 §4). A finding is critical when the
+    /// engine's own wording says the app does not run/build/answer (`engine_critical`), OR when
+    /// the browser probe of a spec-advertised surface found the app unusable there — no rows in
+    /// a real browser, an uncaught exception in the page's boot path. r5 shipped `passed:true`
+    /// with `ReferenceError: onBrushChangeTracked is not defined` as a minor known bug; r6c with
+    /// `TypeError: Illegal invocation` and an empty table as two "criticals" the partition never
+    /// saw, because it read the TEXT class alone. Provenance decides the render half — never a
+    /// literal like `viz3d` — and the sync_rows probe stays repairable-never-blocking (its
+    /// pinned test): it is not a render probe.
+    pub(super) fn is_critical(&self, text: &str) -> bool {
+        engine_critical(text)
+            || self
+                .source_of(text)
+                .is_some_and(|s| s.is_render_probe() && s.severity() == FindingSeverity::Critical)
+    }
+
+    /// The round's green partition, split once — the two Vecs are always consumed together
+    /// (final_passed / known_active_bugs).
+    pub(super) fn partition_criticals(&self, findings: &[String]) -> (Vec<String>, Vec<String>) {
+        findings.iter().cloned().partition(|f| self.is_critical(f))
+    }
+
+    /// Render-class (`FindingSource::is_render_probe`): the findings `passed` may not ship as
+    /// known active bugs.
+    pub(super) fn is_render_class(&self, text: &str) -> bool {
+        self.source_of(text).is_some_and(|s| s.is_render_probe())
     }
 
     fn rank(&self, text: &str) -> u8 {
@@ -767,8 +944,8 @@ mod tests {
     use super::*;
 
     #[test]
-    /// The finding COUNT gates green, fires the stall exit, AND is the baseline shard_beats_baseline
-    /// compares against — so one duplicate is charged three times, making the app harder to call green
+    /// The finding COUNT gates green, fires the stall exit, AND seeds the wave's per-check baseline
+    /// (`TreeGrade`) — so one duplicate is charged three times, making the app harder to call green
     /// and the shard easier to promote in the same round.
     ///
     /// MEASURED: two testers reported "Empty limit parameter silently falls back to default" and both
@@ -1196,6 +1373,7 @@ mod tests {
             EndpointDeadProbe,
             SyncAcquisition,
             RenderGateRows,
+            RenderGateException,
             RestartDurability,
         ] {
             assert_eq!(s.severity(), FindingSeverity::Critical, "{s:?}");
@@ -1475,5 +1653,267 @@ mod tests {
             v[1].2
         );
         assert!(parse_finding_verdicts("all good, nothing to report").is_empty());
+    }
+
+    /// VA-006 / REPAIR v2 §4: the render gate names the EXCEPTION branch from the console line
+    /// the probe recorded — the language's own classes, never a list of symbol names. r5's
+    /// `ReferenceError` and r6c's `TypeError: Illegal invocation` are exceptions; a resource
+    /// that failed to load and an app's own console.error text are not.
+    #[test]
+    fn a_console_exception_is_classified_by_the_language_never_by_a_name() {
+        for line in [
+            "ReferenceError: onBrushChangeTracked is not defined",
+            "TypeError: Illegal invocation",
+            "Uncaught SyntaxError: Unexpected token '<'",
+            "TypeError: Cannot read properties of null (reading 'getContext')",
+            "Error: WebGL2 unavailable",
+        ] {
+            assert!(console_error_is_exception(line), "{line}");
+        }
+        for line in [
+            "Failed to load resource: net::ERR_EMPTY_RESPONSE",
+            "GET http://127.0.0.1:8931/styles.css 404 (Not Found)",
+            "Sync failed: HTTP 500",
+            "",
+        ] {
+            assert!(!console_error_is_exception(line), "{line}");
+        }
+    }
+
+    /// REPAIR v2 §2: a check's KEY is the same check across two gate runs — the preview boots on
+    /// another port, r6c's DOM-id line moves when an edit lands above it, and the console's first
+    /// error changes when the first one is fixed — while two different checks stay distinct: two
+    /// DOM ids in one file, the same words under two authoring checks. An untagged finding has no
+    /// check at all (the fallback gate: unverifiable is said, never guessed).
+    #[test]
+    fn a_checks_key_survives_ports_line_shifts_and_exemplar_changes() {
+        let mut prov = FindingProvenance::default();
+        let r5_console = |n: u32, first: &str, port: u32| {
+            format!(
+                "the page renders but the browser console carries {n} error(s) in normal use \
+                 (first: {first}) — fix the JS errors; users hit them as broken interactions. \
+                 GATE COMMAND (run it yourself; it prints consoleErrors.texts): `node \
+                 /opt/probe.mjs load http://127.0.0.1:{port}`. (in `web/viz.js`)"
+            )
+        };
+        let before = r5_console(
+            4,
+            "ReferenceError: onBrushChangeTracked is not defined",
+            54321,
+        );
+        let after = r5_console(
+            3,
+            "TypeError: gl.vertexAttribDivisor is not a function",
+            61002,
+        );
+        prov.tag(
+            FindingSource::RenderGateException,
+            &[before.clone(), after.clone()],
+        );
+        let kb = prov.check_of(&before).expect("sourced");
+        let ka = prov.check_of(&after).expect("sourced");
+        assert_eq!(kb.key, ka.key, "port, count and exemplar are not the check");
+        assert_eq!(
+            kb.key,
+            "render gate exception (uncaught JS exception in the page's boot path) | the page \
+             renders but the browser console carries # error in normal use"
+        );
+        let dom = |line: u32, id: &str| {
+            format!(
+                "web/viz.js:{line} references DOM id `{id}` which NO html file in the app \
+                 defines — getElementById returns null there and the page throws at runtime \
+                 (the rendered-nothing class). Either add the id to the HTML or fix the \
+                 reference to an id that exists."
+            )
+        };
+        let d533 = dom(533, "viz-labels");
+        let d540 = dom(540, "viz-labels");
+        let legend = dom(533, "viz-legend");
+        prov.tag(
+            FindingSource::DomIdScan,
+            &[d533.clone(), d540.clone(), legend.clone()],
+        );
+        assert_eq!(
+            check_key(FindingSource::DomIdScan, &d533),
+            check_key(FindingSource::DomIdScan, &d540),
+            "a line shift is not a different check"
+        );
+        assert_ne!(
+            check_key(FindingSource::DomIdScan, &d533),
+            check_key(FindingSource::DomIdScan, &legend),
+            "two DOM ids in one file are two checks"
+        );
+        let shared = "the served page renders NO data rows in a real browser — the API works \
+                      but the frontend shows a user nothing. First console error: TypeError: \
+                      Illegal invocation. (in `viz.js`)";
+        assert_ne!(
+            check_key(FindingSource::RenderGateRows, shared),
+            check_key(FindingSource::EndpointContractProbe, shared),
+            "the same words under two authoring checks are two checks"
+        );
+        assert_eq!(
+            check_key(FindingSource::RenderGateRows, shared),
+            "render gate rows (journey dead in a browser) | the served page renders no data rows \
+             in a real browser"
+        );
+        assert_eq!(
+            check_key(
+                FindingSource::BootProbe,
+                "the app never bound port 8123 when started EXACTLY as its spec documents \
+                 (`python3 -m app --db-dir X`), so it does not run at all. Check that the \
+                 entrypoint BLOCKS while serving."
+            ),
+            "boot probe (advertised entry never bound) | the app never bound port # when started \
+             exactly as its spec documents , so it does not run at all"
+        );
+        assert_eq!(prov.check_of("never tagged"), None, "unsourced = no check");
+    }
+
+    /// REPAIR v2 §1: the shard's first action is the gate's own replay, quoted from the finding
+    /// — the render gate's `GATE COMMAND` sentence (attribution suffix stripped), the POST
+    /// probe's `REPLAY IT:` sentence, the command a smoke finding opens with — and a finding
+    /// that carries no command says so (None), never a substitute.
+    #[test]
+    fn a_checks_command_is_the_gates_own_replay_sentence() {
+        let console = "the page renders but the browser console carries 4 error(s) in normal use \
+                       (first: ReferenceError: onBrushChangeTracked is not defined) — fix the JS \
+                       errors. GATE COMMAND (run it yourself; it prints consoleErrors.texts): \
+                       `node /opt/probe.mjs load http://127.0.0.1:54321`. (in `web/viz.js`)";
+        assert_eq!(
+            check_command(console).as_deref(),
+            Some(
+                "GATE COMMAND (run it yourself; it prints consoleErrors.texts): `node \
+                 /opt/probe.mjs load http://127.0.0.1:54321`"
+            )
+        );
+        let post = "POST /api/webhooks/meridian's response could not be read as a JSON object on \
+                    either probe — the spec documents a JSON response for every endpoint. PROBE \
+                    EVIDENCE — request as sent: `POST /api/webhooks/meridian` with NO body and NO \
+                    headers (bare `curl -X POST`, 20s budget); probe 1: HTTP 401, body «{}». \
+                    REPLAY IT: boot exactly as the gate did — `cd <tree> && PYTHONPATH=src \
+                    python3 -m app.ledgerd --db-dir D` — then `curl -s -w '\\n%{http_code}' -X \
+                    POST -m 20 http://127.0.0.1:8931/api/webhooks/meridian`; a NOT REAL verdict \
+                    must quote that command's status and body.";
+        let cmd = check_command(post).expect("the REPLAY IT sentence");
+        assert!(
+            cmd.starts_with("REPLAY IT: boot exactly as the gate did"),
+            "{cmd}"
+        );
+        assert!(cmd.contains("-X POST -m 20 http://127.0.0.1:8931/api/webhooks/meridian"));
+        assert_eq!(
+            check_command("`pytest -q` failed — the generated tests exercise runtime paths:\nFAILED tests/test_api.py::test_x")
+                .as_deref(),
+            Some("pytest -q")
+        );
+        assert_eq!(
+            check_command("web/viz.js:533 references DOM id `viz-labels` which NO html file in the app defines — fix it"),
+            None,
+            "a static scan is not a command the shard can run by hand"
+        );
+    }
+
+    /// VA-006 (DESIGN-REPAIR-V2 §4), the partition r5 and r6c shipped green through: a boot-path
+    /// exception and a dead journey in a real browser are CRITICAL by provenance; a resource
+    /// console error is render-class but not critical; styling is neither; the sync_rows probe
+    /// keeps its pinned MILD standing (critical for ORDERING, never for the green claim); the
+    /// endpoint contract stays a minor. r6c's round-0 nine, partitioned, put both render rows
+    /// findings in the criticals — the two "known active bugs" its `passed:true` shipped over.
+    #[test]
+    fn boot_path_exceptions_are_critical_and_render_class_is_named() {
+        let mut prov = FindingProvenance::default();
+        let exception = "the page renders but the browser console carries 4 error(s) in normal \
+                         use (first: ReferenceError: onBrushChangeTracked is not defined) — fix \
+                         the JS errors. (in `web/viz.js`)"
+            .to_string();
+        let rows = "the served page renders NO data rows in a real browser — the API works but \
+                    the frontend shows a user nothing. First console error: TypeError: Illegal \
+                    invocation. (in `viz.js`)"
+            .to_string();
+        let resource = "the page renders but the browser console carries 1 error(s) in normal \
+                        use (first: Failed to load resource: net::ERR_EMPTY_RESPONSE) — fix the \
+                        JS errors."
+            .to_string();
+        let styling = "the served page renders with browser-DEFAULT styling — no stylesheet \
+                       reached the browser."
+            .to_string();
+        let sync_rows = "sync_rows: the vendor's own collection holds 12288 row(s), the \
+                         advertised sync (`POST /api/sync`) answered 200, and the app's OWN reads \
+                         still report ZERO rows — the sync is not acquiring the data."
+            .to_string();
+        let contract = "POST /api/drafts's response does not carry the documented field(s) \
+                        `amount_minor`, `currency` — the spec's endpoint table names them."
+            .to_string();
+        let never_bound = "the app never bound port 8123 when started EXACTLY as its spec \
+                           documents (`python3 -m app`), so it does not run at all."
+            .to_string();
+        prov.tag(
+            FindingSource::RenderGateException,
+            std::slice::from_ref(&exception),
+        );
+        prov.tag(FindingSource::RenderGateRows, std::slice::from_ref(&rows));
+        prov.tag(
+            FindingSource::RenderGateConsole,
+            std::slice::from_ref(&resource),
+        );
+        prov.tag(
+            FindingSource::RenderGateStyling,
+            std::slice::from_ref(&styling),
+        );
+        prov.tag(
+            FindingSource::SyncAcquisition,
+            std::slice::from_ref(&sync_rows),
+        );
+        prov.tag(
+            FindingSource::EndpointContractProbe,
+            std::slice::from_ref(&contract),
+        );
+        prov.tag(FindingSource::BootProbe, std::slice::from_ref(&never_bound));
+        assert!(
+            prov.is_critical(&exception),
+            "a boot-path exception is critical"
+        );
+        assert!(
+            prov.is_critical(&rows),
+            "a dead journey in a browser is critical"
+        );
+        assert!(
+            prov.is_critical(&never_bound),
+            "engine_critical wording still counts"
+        );
+        assert!(
+            !prov.is_critical(&resource) && prov.is_render_class(&resource),
+            "a resource console error is render-class, not critical"
+        );
+        assert!(
+            !prov.is_critical(&styling) && !prov.is_render_class(&styling),
+            "styling stays advisory"
+        );
+        assert!(
+            !prov.is_critical(&sync_rows) && !prov.is_render_class(&sync_rows),
+            "sync_rows is repairable-never-blocking (P1-12 MILD, pinned)"
+        );
+        assert!(!prov.is_critical(&contract) && !prov.is_render_class(&contract));
+        let all = vec![
+            rows.clone(),
+            exception.clone(),
+            resource.clone(),
+            styling.clone(),
+            sync_rows,
+            contract.clone(),
+        ];
+        let (criticals, minors) = prov.partition_criticals(&all);
+        assert_eq!(criticals, vec![rows, exception]);
+        assert_eq!(minors.len(), 4);
+        let render_class_minors: Vec<&String> =
+            minors.iter().filter(|m| prov.is_render_class(m)).collect();
+        assert_eq!(
+            render_class_minors,
+            vec![&resource],
+            "the one render-class minor is what blocks `passed`"
+        );
+        // An untagged text: neither critical nor render-class by provenance — only its own
+        // wording can make it critical.
+        assert!(!prov.is_render_class("never tagged"));
+        assert!(prov.is_critical("the entry exited non-zero"));
     }
 }

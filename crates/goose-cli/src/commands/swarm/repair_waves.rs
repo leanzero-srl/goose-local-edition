@@ -22,19 +22,34 @@
 //!     so the conflict can be quoted verbatim back to the finding's re-dispatch instead of being
 //!     resolved by a second, weaker diff engine of our own. A conflicting hunk promotes nothing:
 //!     the finding is re-dispatched immediately on the merged base with the conflict quoted.
-//!     The tree is RE-GRADED after each promotion (`one_ruler_grade`) so the next shard is judged
-//!     against the tree it will actually land on — never the round's opening count.
+//!     The tree is RE-GRADED after each promotion (`one_ruler_grade`, per CHECK) so the next shard
+//!     is judged against the tree it will actually land on — never the round's opening grade.
 //! (c) NO ROUND BARRIER: findings dispatch as nodes free (a slot pool, `JoinSet`); a handoff naming
 //!     a non-owned tree file re-shards that finding at once with the file added
 //!     (`handoff_reshard{finding, file}`); a finding that was tried against THIS tree and promoted
 //!     nothing waits for the tree to change (progress, not a count). The wave ends when no finding
 //!     is dispatchable and no shard runs; the outer loop's `complete_fix_converged` (existing) ends
 //!     the phase when a wave changed nothing on the tree.
+//! (d) REPAIR v2 (VA-087, DESIGN-REPAIR-V2 §1/§2/§6). The finding's CHECK (findings.rs
+//!     `FindingCheck`) is the shard's first action and the promoter's ruler:
+//!     - the brief OPENS with the gate's own replay command and the localization the evidence
+//!       already names (`repro_block`); the shard's durable `<task>.calls.jsonl` says whether the
+//!       check was re-run before the first edit — `repro_confirmed` / `edit_before_repro` /
+//!       `repro_never_ran`, said, never blocked (r5's `__main__.py` shard: 70 samples, 0 changed,
+//!       first_change_secs null — 70 minutes without one byte, nothing said which);
+//!     - a preview is PROMOTED ON THE FLIP (`decide_promotion`): the gate re-run on the merged
+//!       preview fails the finding's own check FEWER times than the tree now AND fails no check
+//!       more — `finding_flipped` / `finding_still_failing{quote}` / `preview_regressed`. The
+//!       count-strictly-lower rule (`shard_beats_baseline`) survives ONLY for a finding with no
+//!       authoring check, labelled `finding_unverifiable` (r6c: the `web/viz.js` shard sent for
+//!       `TypeError: Illegal invocation` was promoted 9→8 for closing a DOM id while the
+//!       exception stood in the next verify, verbatim).
 //!
 //! Sibling module under the incremental-split law; the per-file fan's closure body moved here
-//! from swarm.rs's wave loop, which now calls `run_wave`.
+//! from swarm.rs's wave loop, which now calls `run_wave`; `one_ruler_grade` moved here with the
+//! flip (the wave is its only consumer) and returns the graded findings, not a count.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -43,20 +58,29 @@ use goose_swarm::{DispatchRequest, EventSink, TaskDispatcher};
 
 use super::attribution::parse_handoffs;
 use super::decisions::BriefDecisions;
-use super::findings::{parse_finding_verdicts, FileGroup};
+use super::findings::{
+    dedupe_findings_exact, missing_deliverable_finding, parse_finding_verdicts, FileGroup,
+    FindingCheck, FindingProvenance, FindingSource,
+};
 use super::fleet_order::{order_fleet_by_speed, resolved_fleet_speed_weights};
 use super::ledger_block::read_ledger_rollup;
 use super::ledger_writers::{write_repair_ledger, RepairLedgerRow};
+use super::transcripts::read_calls_capture;
 use super::{
-    copy_created_source_files, copy_tree_excluding, load_config, one_ruler_grade,
-    render_repair_history, shard_beats_baseline, smoke_fix_description, spawn_fix_progress_sampler,
-    FixAttemptProgress, GooseAgentDispatcher, TargetLang,
+    activity_digest_key, app_scope_py, copy_created_source_files, copy_tree_excluding,
+    cross_module_drift, css_coherence_scan, dom_id_scan, http_timeout_scan,
+    is_intentional_empty_marker, is_test_path, load_config, render_repair_history, run_smoke_gate,
+    run_spec_contract, shard_beats_baseline, smoke_fix_description, spawn_fix_progress_sampler,
+    swarm_gate_cfg, FixAttemptProgress, GooseAgentDispatcher, TargetLang,
 };
 
 /// One open finding and the shard that will work it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct OpenFinding {
     pub(super) text: String,
+    /// The check that produced it (findings.rs `FindingProvenance::check_of`): the brief's first
+    /// action and the promoter's ruler. None = no authoring check recorded → `finding_unverifiable`.
+    pub(super) check: Option<FindingCheck>,
     /// The attributed file (the shard's name) and the files the shard owns.
     pub(super) file: String,
     pub(super) owned: Vec<String>,
@@ -80,6 +104,7 @@ pub(super) fn explode_groups(
     owned_by_shard: &[Vec<String>],
     order_notes: &[String],
     replay_required: &dyn Fn(&str) -> bool,
+    check_of: &dyn Fn(&str) -> Option<FindingCheck>,
 ) -> Vec<OpenFinding> {
     let mut out = Vec::new();
     for (i, g) in groups.iter().enumerate() {
@@ -91,6 +116,7 @@ pub(super) fn explode_groups(
         for (k, f) in g.findings.iter().enumerate() {
             out.push(OpenFinding {
                 text: f.clone(),
+                check: check_of(f),
                 file: g.file.clone(),
                 owned: owned.clone(),
                 order_note: note.clone(),
@@ -235,10 +261,10 @@ fn preview_workspace(real_root: &Path) -> Result<tempfile::TempDir, String> {
 /// What grading a shard's composition returned.
 #[derive(Debug, Default)]
 pub(super) struct Preview {
-    /// The one ruler's finding count on the preview tree. None = not graded: nothing changed, a
-    /// conflicted or tool-less composition, no shadow, or `setup_error` says the preview itself
+    /// The one ruler's grade of the preview tree, per check. None = not graded: nothing changed,
+    /// a conflicted or tool-less composition, no shadow, or `setup_error` says the preview itself
     /// could not be built.
-    pub(super) verified: Option<usize>,
+    pub(super) graded: Option<TreeGrade>,
     /// The shard's owned files differ from the tree (merged, conflicted or unavailable).
     pub(super) changed: bool,
     pub(super) composed: Composed,
@@ -352,7 +378,7 @@ impl GooseAgentDispatcher {
             Ok(t) => t,
             Err(e) => {
                 return Preview {
-                    verified: None,
+                    graded: None,
                     changed: composed.changed(),
                     composed,
                     setup_error: Some(e),
@@ -367,7 +393,7 @@ impl GooseAgentDispatcher {
         }
         if !composed.changed() && created == 0 {
             return Preview {
-                verified: None,
+                graded: None,
                 changed: false,
                 composed,
                 setup_error: None,
@@ -375,7 +401,7 @@ impl GooseAgentDispatcher {
         }
         if !composed.conflicts.is_empty() || !composed.unavailable.is_empty() {
             return Preview {
-                verified: None,
+                graded: None,
                 changed: true,
                 composed,
                 setup_error: None,
@@ -389,7 +415,7 @@ impl GooseAgentDispatcher {
                 let _ = std::fs::write(preview.path().join(rel), bytes);
             }
         }
-        let (verified, _established) = one_ruler_grade(
+        let graded = one_ruler_grade(
             preview.path(),
             prompt,
             lang,
@@ -403,7 +429,7 @@ impl GooseAgentDispatcher {
             composed.three_way += 0;
         }
         Preview {
-            verified,
+            graded,
             changed: true,
             composed,
             setup_error: None,
@@ -465,7 +491,10 @@ impl GooseAgentDispatcher {
 /// Everything one wave needs, named once at the call site.
 pub(super) struct WaveInputs {
     pub(super) round: u32,
-    pub(super) baseline: usize,
+    /// The round's opening gate, graded per check (`TreeGrade::of` over the round's findings and
+    /// their provenance) — what every shard's preview is compared against until a promotion
+    /// re-grades the tree.
+    pub(super) baseline: TreeGrade,
     pub(super) findings: Vec<OpenFinding>,
     pub(super) fleet_slots: Vec<String>,
     pub(super) all_files: Vec<String>,
@@ -497,6 +526,9 @@ pub(super) struct WaveOutcome {
 pub(super) struct ShardOutcome {
     /// Bytes LANDED on the real tree (S13-c: `promote_merged` wrote at least one file).
     pub(super) promoted: bool,
+    /// The finding's check no longer fails on the tree now — a sibling's promotion closed it
+    /// while this shard worked; the driver retires the finding instead of parking it.
+    pub(super) already_closed: bool,
     /// Overlapping hunks — re-dispatch at once on the merged base with this note.
     pub(super) conflict_note: Option<String>,
     /// The merge tool could not run — no progress on this tree (parked, never re-armed).
@@ -517,10 +549,10 @@ pub(super) trait ShardRunner: Send + Sync + 'static {
         &self,
         f: &OpenFinding,
         slot: &str,
-        baseline: Arc<tokio::sync::RwLock<usize>>,
+        baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
     ) -> ShardOutcome;
-    /// The tree's finding count NOW (None = the gate could not run).
-    async fn regrade(&self) -> Option<usize>;
+    /// The tree's grade NOW, per check (None = the gate could not run).
+    async fn regrade(&self) -> Option<TreeGrade>;
 }
 
 fn conflict_note(conflicts: &[(String, Vec<String>)]) -> String {
@@ -551,13 +583,13 @@ pub(super) async fn drive_wave<R: ShardRunner>(
     runner: Arc<R>,
     sink: Arc<dyn EventSink>,
     round: u32,
-    baseline: usize,
+    baseline: TreeGrade,
     findings: Vec<OpenFinding>,
     fleet_slots: Vec<String>,
 ) -> WaveOutcome {
     let mut open = findings;
     // S14-5: a LOCK, not an atomic — the driver holds the WRITE guard across the regrade so a
-    // sibling finishing meanwhile parks on `read()` and compares against the re-graded count.
+    // sibling finishing meanwhile parks on `read()` and compares against the re-graded tree.
     let baseline = Arc::new(tokio::sync::RwLock::new(baseline));
     let mut tree_version: u64 = 0;
     let mut outcome = WaveOutcome::default();
@@ -650,11 +682,12 @@ pub(super) async fn drive_wave<R: ShardRunner>(
             // fix-one-break-one as an improvement. When the gate cannot run the previous count
             // stays in force and the event SAYS which count that is.
             let mut guard = baseline.write().await;
-            let verified = runner.regrade().await;
-            if let Some(v) = verified {
-                *guard = v;
+            let regraded = runner.regrade().await;
+            let verified = regraded.as_ref().map(|g| g.count);
+            if let Some(g) = regraded {
+                *guard = g;
             }
-            let baseline_in_force = *guard;
+            let baseline_in_force = guard.count;
             drop(guard);
             sink.write_value(serde_json::json!({
                 "event": "repair_tree_regraded",
@@ -670,6 +703,12 @@ pub(super) async fn drive_wave<R: ShardRunner>(
                     o.attempted_at = None;
                 }
             }
+            continue;
+        }
+        if res.already_closed {
+            // A sibling's landed fix closed this finding's check meanwhile (the shard's event
+            // `finding_closed_by_sibling` says so): retired, never re-dispatched on the new tree.
+            done.insert(key.clone());
             continue;
         }
         if let Some(error) = &res.setup_error {
@@ -750,11 +789,11 @@ impl ShardRunner for DispatcherShardRunner {
         &self,
         f: &OpenFinding,
         slot: &str,
-        baseline: Arc<tokio::sync::RwLock<usize>>,
+        baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
     ) -> ShardOutcome {
         run_finding_shard(self, f, slot, baseline).await
     }
-    async fn regrade(&self) -> Option<usize> {
+    async fn regrade(&self) -> Option<TreeGrade> {
         one_ruler_grade(
             &self.cwd,
             &self.prompt,
@@ -764,7 +803,6 @@ impl ShardRunner for DispatcherShardRunner {
             self.missing_gate,
         )
         .await
-        .0
     }
 }
 
@@ -898,7 +936,8 @@ async fn run_finding_shard(
         .map(|n| format!("\n\n{n}"))
         .unwrap_or_default();
     let shard_desc = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
+        repro_block(f),
         f.order_note,
         smoke_fix_description(
             &findings,
@@ -947,8 +986,52 @@ async fn run_finding_shard(
             "longest_still_secs": st.longest_still_secs,
         }));
     }
+    // REPAIR v2 §1: did the shard re-run the finding's own check BEFORE its first edit? Read from
+    // its durable calls capture — the shadow's primary row file, the real tree's mirror when the
+    // primary is empty (the mirror accumulates rounds under one task id, so rows are filtered to
+    // this attempt). Said by name in every case, never blocked.
+    let calls_file = format!("{}.calls.jsonl", activity_digest_key(&task_id));
+    let mirror = cwd.join(".swarm").join("activity").join(&calls_file);
+    let capture = match me.speculative_root(&task_id) {
+        Some(shadow) => read_calls_capture(
+            &shadow.join(".swarm").join("activity").join(&calls_file),
+            Some(mirror),
+        ),
+        None => read_calls_capture(&mirror, None),
+    };
+    let (rows, unparseable_rows) = match capture.as_deref() {
+        Some(text) => parse_call_rows(text, round),
+        None => (Vec::new(), 0),
+    };
+    let check_command = f.check.as_ref().and_then(|c| c.command.clone());
+    let finding_short = super::findings::elide_middle(&f.text, 150, 400);
+    let (repro_event, repro_detail) = match repro_verdict(&rows, f.check.as_ref()) {
+        Repro::Confirmed { call } => ("repro_confirmed", serde_json::json!({ "call": call })),
+        Repro::EditBeforeRepro { first_edit } => (
+            "edit_before_repro",
+            serde_json::json!({ "first_edit": first_edit }),
+        ),
+        Repro::NeverRan => ("repro_never_ran", serde_json::json!({})),
+        Repro::NoCommand => (
+            "repro_unobservable",
+            serde_json::json!({ "why": "the finding carries no command to re-run by hand (a static scan or stat); the engine re-runs its check on the merged preview" }),
+        ),
+        Repro::NoCalls => (
+            "repro_unobservable",
+            serde_json::json!({ "why": "no calls capture for this shard (primary and mirror empty)" }),
+        ),
+    };
+    sink.write_value(serde_json::json!({
+        "event": repro_event,
+        "round": round, "shard": f.file, "task_id": task_id,
+        "finding": finding_short,
+        "check": check_command,
+        "calls": rows.len(),
+        "unparseable_rows": unparseable_rows,
+        "detail": repro_detail,
+    }));
     let Preview {
-        verified,
+        graded,
         changed: shard_changed,
         composed,
         setup_error,
@@ -966,14 +1049,57 @@ async fn run_finding_shard(
     let conflicted = !composed.conflicts.is_empty();
     let unavailable = !composed.unavailable.is_empty();
     // S13-b: compare against the baseline AS IT IS NOW — a sibling that landed while this shard
-    // ran lowered it, and a preview that already contains the sibling's fix must beat the
-    // post-sibling count, never the opening one (or a regression lands as an improvement).
+    // ran re-graded it, and a preview that already contains the sibling's fix is judged against
+    // the post-sibling tree, never the opening one (or a regression lands as an improvement).
     // S14-5: `read()` parks while the driver holds the write guard across a sibling's regrade.
-    let baseline_now = *baseline.read().await;
-    let would_promote = shard_changed
-        && !conflicted
-        && !unavailable
-        && shard_beats_baseline(verified, baseline_now);
+    let baseline_now = baseline.read().await.clone();
+    let verified = graded.as_ref().map(|g| g.count);
+    // REPAIR v2 §2: PROMOTE ON THE FLIP — the finding's own check fails fewer times on the merged
+    // preview than on the tree now, and no check fails more. The count rule survives only for a
+    // finding with no authoring check, labelled.
+    let decision = decide_promotion(f.check.as_ref(), graded.as_ref(), &baseline_now);
+    if shard_changed && !conflicted && !unavailable {
+        let check_key = f.check.as_ref().map(|c| c.key.clone());
+        match &decision {
+            Promotion::Flipped { before, after, .. } => sink.write_value(serde_json::json!({
+                "event": "finding_flipped",
+                "round": round, "shard": f.file, "task_id": task_id,
+                "finding": finding_short, "check": check_key, "command": check_command,
+                "fails_before": before, "fails_after": after,
+            })),
+            Promotion::StillFailing { fails, quote, .. } => sink.write_value(serde_json::json!({
+                "event": "finding_still_failing",
+                "round": round, "shard": f.file, "task_id": task_id,
+                "finding": finding_short, "check": check_key, "fails_on_preview": fails,
+                "quote": super::findings::elide_middle(quote, 150, 400),
+            })),
+            Promotion::Regressed { new_failures, .. } => sink.write_value(serde_json::json!({
+                "event": "preview_regressed",
+                "round": round, "shard": f.file, "task_id": task_id,
+                "finding": finding_short, "check": check_key,
+                "new_failures": new_failures.iter().map(|(k, q)| serde_json::json!({
+                    "check": k, "quote": super::findings::elide_middle(q, 150, 400)
+                })).collect::<Vec<_>>(),
+            })),
+            Promotion::AlreadyClosed { .. } => sink.write_value(serde_json::json!({
+                "event": "finding_closed_by_sibling",
+                "round": round, "shard": f.file, "task_id": task_id,
+                "finding": finding_short, "check": check_key,
+            })),
+            Promotion::Unverifiable { promote, verified, baseline } => {
+                sink.write_value(serde_json::json!({
+                    "event": "finding_unverifiable",
+                    "round": round, "shard": f.file, "task_id": task_id,
+                    "finding": finding_short,
+                    "rule": "count strictly lower — LABELLED: no authoring check is recorded for this finding, so nothing can be re-run for it",
+                    "verified_findings": verified, "baseline_findings": baseline,
+                    "promote": promote,
+                }))
+            }
+            Promotion::Ungraded => {}
+        }
+    }
+    let would_promote = shard_changed && !conflicted && !unavailable && decision.promotes();
     let mut written = Vec::new();
     if would_promote {
         written = me.promote_merged(&task_id, cwd);
@@ -1052,7 +1178,7 @@ async fn run_finding_shard(
             description: &shard_desc,
             output,
             promoted,
-            baseline: baseline_now,
+            baseline: baseline_now.count,
             agent_ok: ran.is_ok(),
             edited: shard_changed,
             unreplayed: &unreplayed,
@@ -1079,7 +1205,7 @@ async fn run_finding_shard(
         "agent_error": ran.as_ref().err().map(|e| e.to_string()),
         "setup_failed": setup_error,
         "verified_findings": verified,
-        "baseline_findings": baseline_now,
+        "baseline_findings": baseline_now.count,
         "shard_changed": shard_changed,
         "three_way_merged": composed.three_way,
         "conflicted": conflicted,
@@ -1092,11 +1218,568 @@ async fn run_finding_shard(
     }));
     ShardOutcome {
         promoted,
+        already_closed: matches!(decision, Promotion::AlreadyClosed { .. }),
         conflict_note: conflicted.then(|| conflict_note(&composed.conflicts)),
         unavailable,
         handoff_files,
         setup_error,
     }
+}
+
+/// A tree's grade PER CHECK (findings.rs `check_key`): how many findings fail each check and one
+/// finding's text per check for quoting, plus the plain count the old ruler used. Built from a
+/// finding list and its provenance — the round's opening gate at the wave's start, the one
+/// ruler's re-run after every promotion, and every shard's merged preview.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct TreeGrade {
+    failing: BTreeMap<String, (usize, String)>,
+    /// Every finding, sourced or not — the labelled count rule for a finding with no check.
+    pub(super) count: usize,
+}
+
+impl TreeGrade {
+    pub(super) fn of(findings: &[String], prov: &FindingProvenance) -> Self {
+        let mut failing: BTreeMap<String, (usize, String)> = BTreeMap::new();
+        for f in findings {
+            // An unsourced finding has no check: it counts, it keys nothing (finding_unverifiable).
+            if let Some(c) = prov.check_of(f) {
+                let slot = failing.entry(c.key).or_insert_with(|| (0, f.clone()));
+                slot.0 += 1;
+            }
+        }
+        TreeGrade {
+            failing,
+            count: findings.len(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn unkeyed(count: usize) -> Self {
+        TreeGrade {
+            failing: BTreeMap::new(),
+            count,
+        }
+    }
+
+    /// How many findings fail `key` on this tree (0 = the check passes here).
+    pub(super) fn fails(&self, key: &str) -> usize {
+        self.failing.get(key).map(|(n, _)| *n).unwrap_or(0)
+    }
+
+    pub(super) fn quote(&self, key: &str) -> Option<&str> {
+        self.failing.get(key).map(|(_, q)| q.as_str())
+    }
+
+    /// The checks this tree fails MORE than `before` did — what a shard's edit broke.
+    pub(super) fn regressions_from(&self, before: &TreeGrade) -> Vec<(String, String)> {
+        self.failing
+            .iter()
+            .filter(|(k, (n, _))| *n > before.fails(k))
+            .map(|(k, (_, q))| (k.clone(), q.clone()))
+            .collect()
+    }
+}
+
+/// THE ONE RULER — the same checks the round loop composes (the F862 law: a check enters the
+/// round ruler and this grader TOGETHER), run on `root` and returned graded PER CHECK with each
+/// finding's provenance, so a preview is judged on whether THIS finding's check flipped, not on
+/// a count. None when the smoke gate could not run there: nothing is known, and nothing promotes
+/// on unknown. Moved here from swarm.rs under the incremental-split law — the wave is its only
+/// consumer.
+pub(super) async fn one_ruler_grade(
+    root: &Path,
+    prompt: &str,
+    lang: TargetLang,
+    all_files: &[String],
+    composite: bool,
+    missing_gate: bool,
+) -> Option<TreeGrade> {
+    let g = run_smoke_gate(root, lang).await;
+    if !g.ran {
+        return None;
+    }
+    let mut prov = FindingProvenance::default();
+    let mut findings: Vec<String> = Vec::new();
+    prov.tag(FindingSource::SmokeGate, &g.findings);
+    findings.extend(g.findings);
+    if composite {
+        let sc = run_spec_contract(root, prompt, lang).await;
+        prov.absorb(sc.provenance);
+        findings.extend(sc.findings);
+    }
+    let app_only: Vec<String> = all_files
+        .iter()
+        .filter(|f| !is_test_path(lang, f))
+        .cloned()
+        .collect();
+    let timeouts = http_timeout_scan(root, lang, &app_scope_py(root, &app_only)).await;
+    prov.tag(FindingSource::HttpTimeoutScan, &timeouts.findings);
+    findings.extend(timeouts.findings);
+    let dom = dom_id_scan(root, all_files).await;
+    prov.tag(FindingSource::DomIdScan, &dom.findings);
+    findings.extend(dom.findings);
+    let css = css_coherence_scan(root, all_files).await;
+    prov.tag(FindingSource::CssCoherenceScan, &css.findings);
+    findings.extend(css.findings);
+    if swarm_gate_cfg(
+        "GOOSE_SWARM_CROSS_MODULE_CHECK",
+        load_config().cross_module_check,
+    ) {
+        let drift = cross_module_drift(root, lang, &app_scope_py(root, all_files)).await;
+        prov.tag(FindingSource::CrossModuleDrift, &drift.findings);
+        findings.extend(drift.findings);
+    }
+    if missing_gate {
+        let missing: Vec<String> = all_files
+            .iter()
+            .filter(|f| {
+                lang.is_source_file(f) && !lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
+            })
+            .filter(|f| !is_intentional_empty_marker(f))
+            .filter(|f| {
+                !root
+                    .join(f)
+                    .metadata()
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+            })
+            .map(|f| missing_deliverable_finding(f.as_str()))
+            .collect();
+        prov.tag(FindingSource::MissingDeliverable, &missing);
+        findings.extend(missing);
+    }
+    let findings = dedupe_findings_exact(&findings, &std::collections::HashSet::new());
+    Some(TreeGrade::of(&findings, &prov))
+}
+
+/// What the promoter decided about one shard's merged preview (REPAIR v2 §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Promotion {
+    /// The finding's own check fails fewer times on the preview than on the tree now, and no
+    /// check fails more: the fix landed and broke nothing the gate can see.
+    Flipped {
+        key: String,
+        before: usize,
+        after: usize,
+    },
+    /// The finding's own check still fails on the preview — quoted, so the words say what the
+    /// shard did not close (r6c: `TypeError: Illegal invocation` under a promoted DOM-id fix).
+    StillFailing {
+        key: String,
+        fails: usize,
+        quote: String,
+    },
+    /// The finding's check flipped, but a check that passed on the tree now fails on the preview.
+    Regressed {
+        key: String,
+        new_failures: Vec<(String, String)>,
+    },
+    /// The finding's check no longer fails on the tree either — a sibling's landed fix closed it
+    /// while this shard worked; nothing to credit, nothing to re-dispatch.
+    AlreadyClosed { key: String },
+    /// No authoring check is recorded for the finding, so nothing can be re-run for it: the count
+    /// rule (`shard_beats_baseline`) decides, LABELLED as such in the event.
+    Unverifiable {
+        promote: bool,
+        verified: usize,
+        baseline: usize,
+    },
+    /// The preview was not graded (nothing changed, a conflict, no shadow, a setup failure).
+    Ungraded,
+}
+
+impl Promotion {
+    pub(super) fn promotes(&self) -> bool {
+        matches!(
+            self,
+            Promotion::Flipped { .. } | Promotion::Unverifiable { promote: true, .. }
+        )
+    }
+}
+
+/// PROMOTE ON THE FLIP. Pure over the finding's check, the preview's grade and the tree's grade
+/// now, so the r6c sequence is a unit test: the shard sent for the exception whose preview closed
+/// only a DOM id is `StillFailing` with the exception quoted; the DOM id's own shard is `Flipped`.
+pub(super) fn decide_promotion(
+    check: Option<&FindingCheck>,
+    preview: Option<&TreeGrade>,
+    baseline: &TreeGrade,
+) -> Promotion {
+    let Some(preview) = preview else {
+        return Promotion::Ungraded;
+    };
+    let Some(check) = check else {
+        return Promotion::Unverifiable {
+            promote: shard_beats_baseline(Some(preview.count), baseline.count),
+            verified: preview.count,
+            baseline: baseline.count,
+        };
+    };
+    let key = check.key.clone();
+    let before = baseline.fails(&key);
+    let after = preview.fails(&key);
+    if before == 0 && after == 0 {
+        return Promotion::AlreadyClosed { key };
+    }
+    if after >= before {
+        let quote = preview.quote(&key).unwrap_or("").to_string();
+        return Promotion::StillFailing {
+            key,
+            fails: after,
+            quote,
+        };
+    }
+    let new_failures = preview.regressions_from(baseline);
+    if !new_failures.is_empty() {
+        return Promotion::Regressed { key, new_failures };
+    }
+    Promotion::Flipped { key, before, after }
+}
+
+/// One row of the shard's durable `<task>.calls.jsonl`: the tool's name and the argument summary
+/// the dispatcher wrote when the call was made (`inflight_args_preview`'s shapes —
+/// `developer__shell: <line>`, `str_replace <path>`, `view <path>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CallRow {
+    pub(super) name: String,
+    pub(super) summary: String,
+}
+
+/// The rows of one attempt, in call order, plus how many lines did not parse (said in the event,
+/// never dropped silently). Rows without a name and summary — the `attempt_end` snapshot the
+/// terminal flush appends — are not calls. `attempt` filters the mirror, which accumulates every
+/// round's rows under one task id.
+pub(super) fn parse_call_rows(jsonl: &str, attempt: u32) -> (Vec<CallRow>, usize) {
+    let mut rows = Vec::new();
+    let mut unparseable = 0usize;
+    for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            unparseable += 1;
+            continue;
+        };
+        if v.get("attempt").and_then(|a| a.as_u64()) != Some(u64::from(attempt)) {
+            continue;
+        }
+        let (Some(name), Some(summary)) = (
+            v.get("name").and_then(|x| x.as_str()),
+            v.get("summary").and_then(|x| x.as_str()),
+        ) else {
+            continue;
+        };
+        rows.push(CallRow {
+            name: name.to_string(),
+            summary: summary.to_string(),
+        });
+    }
+    (rows, unparseable)
+}
+
+/// What the shard did first (REPAIR v2 §1), read from its own calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Repro {
+    /// A shell call re-ran the finding's check before any edit.
+    Confirmed { call: String },
+    /// The first edit came before any re-run of the check.
+    EditBeforeRepro { first_edit: String },
+    /// Neither: the shard never re-ran the check and never edited.
+    NeverRan,
+    /// The finding carries no command to re-run by hand.
+    NoCommand,
+    /// No calls were captured for the shard.
+    NoCalls,
+}
+
+/// An edit, by the tool's own name — the rows carry the SHORT name (`edit`, `write`, `shell`: r5
+/// and r6c's archived `complete-fix::*.calls.jsonl`) or the prefixed one (`developer__edit`), and
+/// a `text_editor` names its verb first in the summary (`str_replace <path>`; `view` is a read).
+fn is_edit_call(row: &CallRow) -> bool {
+    let name = row.name.rsplit("__").next().unwrap_or(&row.name);
+    let verb = row.summary.split_whitespace().next().unwrap_or("");
+    let edit_verb = |v: &str| {
+        matches!(
+            v,
+            "write" | "str_replace" | "insert" | "create" | "edit" | "undo_edit"
+        )
+    };
+    edit_verb(name) || (name == "text_editor" && edit_verb(verb))
+}
+
+fn is_shell_call(row: &CallRow) -> bool {
+    row.name.contains("shell") || row.summary.starts_with("developer__shell")
+}
+
+/// Does a shell line re-run the check's command? The command's LAST backticked span is the probe
+/// or request the gate ran (an earlier span is its boot); its program, its URL path (segment-wise,
+/// a `<id>`/`{id}`/`:id` placeholder matching any real id — `detail_names_path`) and its plain
+/// words (no flags, no digits — the gate's port and ids are the gate's, not the check's) must all
+/// appear in the line. `node /opt/probe.mjs load http://127.0.0.1:54321` is re-run by `node
+/// /opt/probe.mjs load http://127.0.0.1:9000`; `curl -s -w '%{http_code}' -X POST -m 20
+/// http://127.0.0.1:8931/api/payments/<id>/note` by r6c's own `curl -s -i -X POST
+/// http://127.0.0.1:8099/api/payments/pay_00042/note …`.
+pub(super) fn shell_reruns_check(shell_line: &str, command: &str) -> bool {
+    let parts: Vec<&str> = command.split('`').collect();
+    let span = if parts.len() >= 3 {
+        parts
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 1)
+            .map(|(_, s)| *s)
+            .next_back()
+            .unwrap_or(command)
+    } else {
+        command
+    };
+    let basename = |t: &str| t.rsplit('/').next().unwrap_or(t).to_lowercase();
+    let mut program: Option<String> = None;
+    let mut url_path: Option<String> = None;
+    let mut words: Vec<String> = Vec::new();
+    let mut skipping_cd = false;
+    for t in span.split_whitespace() {
+        if matches!(t, "&&" | ";" | "|" | "||") {
+            program = None;
+            skipping_cd = false;
+            continue;
+        }
+        if skipping_cd {
+            continue;
+        }
+        if program.is_none() {
+            if t == "cd" {
+                skipping_cd = true;
+                continue;
+            }
+            if t.contains('=') && !t.starts_with('-') {
+                continue; // an ENV=VALUE prefix
+            }
+            program = Some(basename(t));
+            continue;
+        }
+        if t.starts_with('-') {
+            continue;
+        }
+        if let Some(i) = t.find("://") {
+            let rest = &t[i + 3..];
+            url_path = rest.find('/').map(|j| {
+                rest[j..]
+                    .trim_end_matches(['\'', '"', '`', ';'])
+                    .to_lowercase()
+            });
+            continue;
+        }
+        if t.chars().any(|c| c.is_ascii_digit()) || t.contains(['%', '{', '}', '\\']) {
+            continue;
+        }
+        words.push(basename(t.trim_matches(['\'', '"'])));
+    }
+    let line = shell_line.to_lowercase();
+    program.as_deref().is_some_and(|p| line.contains(p))
+        && url_path
+            .as_deref()
+            .is_none_or(|p| detail_names_path(&line, p))
+        && words.iter().all(|w| line.contains(w.as_str()))
+}
+
+/// REPAIR v2 §1, the reading: walk the shard's calls in order — a shell re-run of the check before
+/// the first edit is `Confirmed`; an edit first is `EditBeforeRepro`; neither is `NeverRan`.
+pub(super) fn repro_verdict(rows: &[CallRow], check: Option<&FindingCheck>) -> Repro {
+    let Some(command) = check.and_then(|c| c.command.as_deref()) else {
+        return Repro::NoCommand;
+    };
+    if rows.is_empty() {
+        return Repro::NoCalls;
+    }
+    for row in rows {
+        if is_shell_call(row) && shell_reruns_check(&row.summary, command) {
+            return Repro::Confirmed {
+                call: row.summary.clone(),
+            };
+        }
+        if is_edit_call(row) {
+            return Repro::EditBeforeRepro {
+                first_edit: row.summary.clone(),
+            };
+        }
+    }
+    Repro::NeverRan
+}
+
+/// The search stem for a misnamed symbol's sibling: `onBrushChangeTracked` → `onBrushChange`
+/// (all camel-case words but the last), `compute_total_v2` → `compute_total` (up to the last
+/// `_`), a one-word name → itself.
+fn sibling_search_stem(name: &str) -> String {
+    if let Some((head, _)) = name.rsplit_once('_') {
+        if !head.is_empty() {
+            return head.to_string();
+        }
+    }
+    let mut cuts: Vec<usize> = name
+        .char_indices()
+        .filter(|(i, c)| *i > 0 && c.is_ascii_uppercase())
+        .map(|(i, _)| i)
+        .collect();
+    match cuts.pop() {
+        Some(last) if !cuts.is_empty() || last > 1 => name[..last].to_string(),
+        _ => name.to_string(),
+    }
+}
+
+/// `path:line` and `File "path", line N` frames the finding quotes, in order, deduplicated.
+fn frame_locations(text: &str) -> Vec<(String, u32)> {
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    let is_path = |p: &str| {
+        !p.is_empty()
+            && super::findings::FINDING_PATH_EXTS
+                .iter()
+                .any(|e| p.ends_with(e))
+    };
+    let mut out: Vec<(String, u32)> = Vec::new();
+    let mut push = |file: &str, line: u32| {
+        if !out.iter().any(|(f, l)| f == file && *l == line) {
+            out.push((file.to_string(), line));
+        }
+    };
+    for (i, raw) in toks.iter().enumerate() {
+        let t = raw.trim_matches(|c: char| "()[],;'\"`".contains(c));
+        if let Some((file, rest)) = t.split_once(':') {
+            let line = rest.split(':').next().unwrap_or("");
+            if is_path(file) && !line.is_empty() && line.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = line.parse::<u32>() {
+                    push(file, n);
+                }
+            }
+        }
+        if *raw == "File" {
+            if let (Some(f), Some(kw), Some(n)) =
+                (toks.get(i + 1), toks.get(i + 2), toks.get(i + 3))
+            {
+                let file = f.trim_matches(|c: char| "\",".contains(c));
+                let n = n.trim_matches(|c: char| ",:".contains(c));
+                if *kw == "line" && is_path(file) {
+                    if let Ok(n) = n.parse::<u32>() {
+                        push(file, n);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// REPAIR v2 §1, the localization CARRIED IN THE BRIEF from the evidence the finding already
+/// quotes: an exception class names what to grep for, a frame names the file and line. Every
+/// sentence is built from this finding's own symbol or path — nothing here names a bench.
+pub(super) fn localization_hints(text: &str) -> Vec<String> {
+    let mut hints: Vec<String> = Vec::new();
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    let ident = |t: &str| {
+        t.trim_matches(|c: char| !(c.is_alphanumeric() || "_$.".contains(c)))
+            .to_string()
+    };
+    for (i, t) in toks.iter().enumerate() {
+        if t.trim_start_matches(['(', '[']) == "ReferenceError:" {
+            if let Some(x) = toks.get(i + 1).map(|x| ident(x)).filter(|x| !x.is_empty()) {
+                let stem = sibling_search_stem(&x);
+                hints.push(format!(
+                    "`{x}` is referenced but never defined (the ReferenceError): `grep -n '{x}'` in \
+                     your owned files finds the call site; `grep -n '{stem}'` finds the sibling that \
+                     IS defined under a nearby name. ONE edit: make the call use the name that exists, \
+                     or define `{x}`."
+                ));
+            }
+        }
+    }
+    if let Some(i) = text.find(" is not a function") {
+        let before = &text[..i];
+        if let Some(x) = before
+            .split_whitespace()
+            .next_back()
+            .map(ident)
+            .filter(|x| !x.is_empty())
+        {
+            let last = x.rsplit('.').next().unwrap_or(&x).to_string();
+            hints.push(format!(
+                "`{x}` exists where it is called but is not callable (the TypeError): `grep -n '{last}'` \
+                 for its definition and every caller — one side holds a different type than the other \
+                 assumes. Fix that one site."
+            ));
+        }
+    }
+    if text.contains("Illegal invocation") {
+        hints.push(
+            "`Illegal invocation`: a browser API method was called DETACHED from its object — \
+             `const f = obj.method; f(…)`, or a `cond ? gl.a : gl.b` that picks a method and then \
+             calls it bare. Grep the owned scripts for methods stored in variables or chosen by \
+             `?:` and call them ON their object (`obj.method(…)` / `.call(obj, …)`)."
+                .to_string(),
+        );
+    }
+    if text.contains("Cannot read propert") || text.contains("Cannot set propert") {
+        let prop = text
+            .split_once("(reading '")
+            .or_else(|| text.split_once("property '"))
+            .and_then(|(_, rest)| rest.split('\'').next())
+            .unwrap_or("");
+        hints.push(format!(
+            "`{prop}` was read on null/undefined: a `getElementById`/`querySelector` whose id or \
+             selector the served page does not define, or a handle that failed to create. Grep the \
+             owned files for the lookup that yields the null and the served html for the id."
+        ));
+    }
+    for (file, line) in frame_locations(text).into_iter().take(4) {
+        hints.push(format!(
+            "open `{file}` at line {line} — the frame the evidence names; the FIRST edit goes there."
+        ));
+    }
+    hints
+}
+
+/// REPAIR v2 §1/§6 — the head of a fix shard's brief: the finding's own check, verbatim, as the
+/// FIRST action; the localization the evidence already names; then the first edit at that
+/// location. Assembled from THIS finding's check and evidence; the instruction sentences are
+/// constants branched on what the finding carries.
+pub(super) fn repro_block(f: &OpenFinding) -> String {
+    let check_line = match f.check.as_ref() {
+        Some(FindingCheck {
+            command: Some(cmd), ..
+        }) => format!(
+            "THE CHECK THAT PRODUCED IT, as the gate ran it: {cmd}\nYOUR FIRST ACTION: run that \
+             check yourself against YOUR booted copy of the app (your own port in place of the \
+             gate's) and quote the failing line. Reading files before it is fine; editing before it \
+             is not — the engine reads your call log and records which came first \
+             (`repro_confirmed` / `edit_before_repro`)."
+        ),
+        Some(FindingCheck { key, command: None }) => format!(
+            "THE CHECK THAT PRODUCED IT: {key} — a check the engine runs on the tree, not a command \
+             you run by hand; the finding's text below is its whole output, and the engine re-runs \
+             it on your merged result to decide whether the finding closed."
+        ),
+        None => "THE CHECK THAT PRODUCED IT: none recorded — no authoring check is known for this \
+                 finding, so nothing can be re-run for it; the engine will grade your edit by the \
+                 total finding count alone (labelled unverifiable)."
+            .to_string(),
+    };
+    let hints = localization_hints(&f.text);
+    let localize = if hints.is_empty() {
+        "LOCALIZE FROM THE EVIDENCE: the finding names its subject (the endpoint, the DOM id, the \
+         test, the file) — the FIRST edit goes where that subject is implemented in your owned files."
+            .to_string()
+    } else {
+        format!(
+            "LOCALIZE FROM THE EVIDENCE — the finding already names where:\n{}",
+            hints
+                .iter()
+                .map(|h| format!("- {h}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    format!(
+        "REPRODUCE FIRST, THEN LOCALIZE, THEN EDIT. This shard exists for ONE finding (numbered 1 \
+         below).\n{check_line}\n{localize}\nTHE FIRST EDIT goes at that location — before any survey \
+         of the rest of the codebase and without a refactor around it; then re-run the check. The \
+         finding is closed when the check stops failing, and the engine confirms that on your merged \
+         result before anything lands.\n\n"
+    )
 }
 
 #[cfg(test)]
@@ -1183,9 +1866,19 @@ mod tests {
             vec!["web/viz.js".to_string(), "web/index.html".to_string()],
         ];
         let notes = vec!["A".to_string(), "B".to_string()];
-        let open = explode_groups(&groups, &owned, &notes, &|t: &str| t == "f4");
+        let open = explode_groups(&groups, &owned, &notes, &|t: &str| t == "f4", &|t: &str| {
+            (t == "f4").then(|| FindingCheck {
+                key: "render gate rows | f4".into(),
+                command: None,
+            })
+        });
         assert_eq!(open.len(), 4);
         assert!(open[3].replay_required && !open[0].replay_required);
+        assert_eq!(
+            open[3].check.as_ref().map(|c| c.key.as_str()),
+            Some("render gate rows | f4")
+        );
+        assert!(open[0].check.is_none(), "no authoring check → unverifiable");
         assert_eq!(open[0].k, 0);
         assert_eq!(open[2].k, 2);
         assert_eq!(open[2].owned, owned[0]);
@@ -1281,34 +1974,32 @@ mod tests {
                 &self,
                 f: &OpenFinding,
                 _slot: &str,
-                baseline: Arc<tokio::sync::RwLock<usize>>,
+                baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
             ) -> ShardOutcome {
                 self.dispatched.lock().unwrap().push(f.text.clone());
                 let (delay, promoted) = self.script.get(&f.text).copied().unwrap_or((0, false));
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                let seen = *baseline.read().await;
+                let seen = baseline.read().await.count;
                 self.baselines_seen
                     .lock()
                     .unwrap()
                     .push((f.text.clone(), seen));
                 ShardOutcome {
                     promoted,
-                    conflict_note: None,
-                    unavailable: false,
-                    handoff_files: Vec::new(),
-                    setup_error: None,
+                    ..ShardOutcome::default()
                 }
             }
             // S14-5: a SLOW gate — the sibling finishing during it must still read the re-graded
-            // count (the driver holds the write guard), never the pre-promotion one.
-            async fn regrade(&self) -> Option<usize> {
+            // tree (the driver holds the write guard), never the pre-promotion one.
+            async fn regrade(&self) -> Option<TreeGrade> {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 let n = self.regrades.fetch_add(1, Ordering::SeqCst) + 1;
-                Some(9 - n)
+                Some(TreeGrade::unkeyed(9 - n))
             }
         }
         let finding = |text: &str, file: &str, k: usize| OpenFinding {
             text: text.into(),
+            check: None,
             file: file.into(),
             owned: vec![file.into()],
             order_note: String::new(),
@@ -1341,7 +2032,7 @@ mod tests {
                 runner.clone(),
                 sink_dyn,
                 0,
-                9,
+                TreeGrade::unkeyed(9),
                 findings,
                 vec!["m1".into(), "m2".into(), "m3".into()],
             )
@@ -1433,7 +2124,7 @@ mod tests {
                 &self,
                 f: &OpenFinding,
                 _slot: &str,
-                _baseline: Arc<tokio::sync::RwLock<usize>>,
+                _baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
             ) -> ShardOutcome {
                 self.dispatched.lock().unwrap().push(f.text.clone());
                 ShardOutcome {
@@ -1441,7 +2132,7 @@ mod tests {
                     ..ShardOutcome::default()
                 }
             }
-            async fn regrade(&self) -> Option<usize> {
+            async fn regrade(&self) -> Option<TreeGrade> {
                 panic!("nothing promoted, nothing to regrade")
             }
         }
@@ -1455,9 +2146,10 @@ mod tests {
             runner.clone(),
             sink_dyn,
             2,
-            9,
+            TreeGrade::unkeyed(9),
             vec![OpenFinding {
                 text: "GET /api/drafts returns HTML".into(),
+                check: None,
                 file: "app/api.py".into(),
                 owned: vec!["app/api.py".into()],
                 order_note: String::new(),
@@ -1486,5 +2178,490 @@ mod tests {
         assert_eq!(said["finding"], "GET /api/drafts returns HTML");
         assert_eq!(said["shard"], "app/api.py");
         assert_eq!(said["error"], err);
+    }
+
+    fn sourced(prov: &mut FindingProvenance, source: FindingSource, text: &str) -> String {
+        let t = text.to_string();
+        prov.tag(source, std::slice::from_ref(&t));
+        t
+    }
+
+    /// REPAIR v2 §2, r6c's round 0 as a unit test. The `web/viz.js` shard was dispatched for
+    /// the exception finding (`TypeError: Illegal invocation`, RenderGateRows) and its preview
+    /// closed only the DOM id (`viz-labels`): the count rule promoted it 9→8 and the next verify
+    /// carried the exception verbatim. On the flip: that shard is `StillFailing` with the
+    /// exception QUOTED; the DOM id's own shard, same preview, is `Flipped`; a preview that also
+    /// breaks the note endpoint is `Regressed`; a finding with no check keeps the labelled count
+    /// rule; an ungraded preview promotes nothing; a check a sibling already closed is
+    /// `AlreadyClosed`.
+    #[test]
+    fn promotion_flips_only_when_the_findings_own_check_passes_and_nothing_regresses() {
+        let mut prov = FindingProvenance::default();
+        let f0 = sourced(
+            &mut prov,
+            FindingSource::RenderGateRows,
+            "the served page renders NO data rows in a real browser — the API works but the \
+             frontend shows a user nothing. First console error: TypeError: Illegal invocation. \
+             Open web/index.html end to end: the page must fetch the documented endpoints and \
+             render the rows. GATE COMMAND (run it yourself against your booted app; it prints \
+             renderedRowCount and consoleErrors): `node /opt/probe.mjs load \
+             http://127.0.0.1:52001`. (in `viz.js`)",
+        );
+        let f2 = sourced(
+            &mut prov,
+            FindingSource::DomIdScan,
+            "web/viz.js:533 references DOM id `viz-labels` which NO html file in the app defines \
+             — getElementById returns null there and the page throws at runtime (the \
+             rendered-nothing class). Either add the id to the HTML or fix the reference to an \
+             id that exists.",
+        );
+        let f3 = sourced(
+            &mut prov,
+            FindingSource::EndpointContractProbe,
+            "POST /api/payments/<id>/note's response does not carry the documented field(s) \
+             `id`, `note`, `version` — the spec's endpoint table names them for exactly this \
+             endpoint.",
+        );
+        let baseline = TreeGrade::of(&[f0.clone(), f2.clone(), f3.clone()], &prov);
+        assert_eq!(baseline.count, 3);
+        // The gate re-run on the preview: its own provenance, a fresh port, the DOM id gone.
+        let mut preview_prov = FindingProvenance::default();
+        let f0_again = sourced(
+            &mut preview_prov,
+            FindingSource::RenderGateRows,
+            &f0.replace("52001", "52777"),
+        );
+        let f3_again = sourced(&mut preview_prov, FindingSource::EndpointContractProbe, &f3);
+        let preview = TreeGrade::of(&[f0_again.clone(), f3_again.clone()], &preview_prov);
+        assert_eq!(
+            preview.count, 2,
+            "the count rule would have promoted: 2 < 3"
+        );
+        let exception_shard = prov.check_of(&f0).expect("sourced");
+        let dom_shard = prov.check_of(&f2).expect("sourced");
+        match decide_promotion(Some(&exception_shard), Some(&preview), &baseline) {
+            Promotion::StillFailing { fails, quote, key } => {
+                assert_eq!(fails, 1);
+                assert!(quote.contains("TypeError: Illegal invocation"), "{quote}");
+                assert_eq!(key, exception_shard.key);
+            }
+            other => panic!("the exception's shard must not promote on a DOM id: {other:?}"),
+        }
+        assert_eq!(
+            decide_promotion(Some(&dom_shard), Some(&preview), &baseline),
+            Promotion::Flipped {
+                key: dom_shard.key.clone(),
+                before: 1,
+                after: 0
+            },
+            "the DOM id's own shard lands the DOM id fix"
+        );
+        // The same edit also broke the note endpoint: flipped, but a regression — refused.
+        let broke = sourced(
+            &mut preview_prov,
+            FindingSource::EndpointContractProbe,
+            "POST /api/payments/<id>/note returned 500 — the spec advertises this endpoint and \
+             it errors (server 5xx). Nothing downstream of it can work.",
+        );
+        let preview2 = TreeGrade::of(&[f0_again, f3_again, broke], &preview_prov);
+        match decide_promotion(Some(&dom_shard), Some(&preview2), &baseline) {
+            Promotion::Regressed { new_failures, .. } => {
+                assert_eq!(new_failures.len(), 1, "{new_failures:?}");
+                assert!(
+                    new_failures[0].1.contains("returned 500"),
+                    "{new_failures:?}"
+                );
+            }
+            other => panic!("a new failure must refuse the promotion: {other:?}"),
+        }
+        // No authoring check: the LABELLED count rule, exactly the old `shard_beats_baseline`.
+        assert_eq!(
+            decide_promotion(None, Some(&preview), &baseline),
+            Promotion::Unverifiable {
+                promote: true,
+                verified: 2,
+                baseline: 3
+            }
+        );
+        assert_eq!(
+            decide_promotion(None, Some(&baseline), &baseline),
+            Promotion::Unverifiable {
+                promote: false,
+                verified: 3,
+                baseline: 3
+            }
+        );
+        assert_eq!(
+            decide_promotion(Some(&dom_shard), None, &baseline),
+            Promotion::Ungraded
+        );
+        // A sibling landed the DOM id meanwhile: the tree now no longer fails it — retired.
+        let tree_after_sibling = TreeGrade::of(&[f0, f3], &prov);
+        assert!(matches!(
+            decide_promotion(Some(&dom_shard), Some(&preview), &tree_after_sibling),
+            Promotion::AlreadyClosed { .. }
+        ));
+        assert!(!Promotion::Ungraded.promotes());
+        assert!(Promotion::Flipped {
+            key: "k".into(),
+            before: 1,
+            after: 0
+        }
+        .promotes());
+        assert!(!Promotion::Unverifiable {
+            promote: false,
+            verified: 3,
+            baseline: 3
+        }
+        .promotes());
+    }
+
+    /// REPAIR v2 §1: the shard's own calls say whether it re-ran the check before it edited.
+    /// The render probe re-run on the shard's own port is a re-run; a grep is not; an edit
+    /// before any re-run is `EditBeforeRepro`; the POST probe's replay is its LAST span (the
+    /// curl), never the boot; rows are this attempt's only, the `attempt_end` snapshot is not a
+    /// call, and a corrupt line is counted, not dropped.
+    #[test]
+    fn repro_first_is_read_from_the_shards_own_calls() {
+        let check = FindingCheck {
+            key: "k".into(),
+            command: Some(
+                "GATE COMMAND (run it yourself; it prints consoleErrors.texts): `node \
+                 /opt/probe.mjs load http://127.0.0.1:54321`"
+                    .into(),
+            ),
+        };
+        let row = |name: &str, summary: &str| CallRow {
+            name: name.into(),
+            summary: summary.into(),
+        };
+        let rerun =
+            "developer__shell: cd /tmp/shadow && node /opt/probe.mjs load http://127.0.0.1:9000";
+        let confirmed = vec![
+            row("developer__text_editor", "view web/viz.js"),
+            row(
+                "developer__shell",
+                "developer__shell: grep -n 'onBrushChangeTracked' web/viz.js",
+            ),
+            row("developer__shell", rerun),
+            row("developer__text_editor", "str_replace web/viz.js"),
+        ];
+        assert_eq!(
+            repro_verdict(&confirmed, Some(&check)),
+            Repro::Confirmed { call: rerun.into() }
+        );
+        let edited_first = vec![
+            row("developer__text_editor", "view web/viz.js"),
+            row("developer__text_editor", "str_replace web/viz.js"),
+            row("developer__shell", rerun),
+        ];
+        assert_eq!(
+            repro_verdict(&edited_first, Some(&check)),
+            Repro::EditBeforeRepro {
+                first_edit: "str_replace web/viz.js".into()
+            }
+        );
+        let never = vec![
+            row("developer__text_editor", "view web/viz.js"),
+            row("developer__shell", "developer__shell: ls web"),
+        ];
+        assert_eq!(repro_verdict(&never, Some(&check)), Repro::NeverRan);
+        assert_eq!(repro_verdict(&confirmed, None), Repro::NoCommand);
+        let scan = FindingCheck {
+            key: "k".into(),
+            command: None,
+        };
+        assert_eq!(repro_verdict(&confirmed, Some(&scan)), Repro::NoCommand);
+        assert_eq!(repro_verdict(&[], Some(&check)), Repro::NoCalls);
+
+        let replay = "REPLAY IT: boot exactly as the gate did — `cd <tree> && PYTHONPATH=src \
+                      python3 -m app.ledgerd --db-dir D` — then `curl -s -w '\\n%{http_code}' -X \
+                      POST -m 20 http://127.0.0.1:8931/api/drafts`; a NOT REAL verdict must quote \
+                      that command's status and body";
+        assert!(shell_reruns_check(
+            "developer__shell: curl -X POST -d '{}' http://127.0.0.1:9000/api/drafts",
+            replay
+        ));
+        assert!(
+            !shell_reruns_check(
+                "developer__shell: curl http://127.0.0.1:9000/api/drafts",
+                replay
+            ),
+            "a GET is not the POST the gate sent"
+        );
+        assert!(
+            !shell_reruns_check(
+                "developer__shell: PYTHONPATH=src python3 -m app.ledgerd --db-dir D",
+                replay
+            ),
+            "booting is not re-running the check"
+        );
+        assert!(shell_reruns_check(
+            "developer__shell: pytest -q tests/",
+            "pytest -q"
+        ));
+
+        // THE ARCHIVE'S OWN ROW SHAPES (r6c `complete-fix::app~sledgerd~s__init__.py.calls.jsonl`
+        // and `complete-fix::web~sviz.js.calls.jsonl`): short tool names, raw summaries — a curl
+        // with a REAL id re-runs the placeholder check; an `edit` row whose summary is only the
+        // path is an edit.
+        let note_check = FindingCheck {
+            key: "k".into(),
+            command: Some(
+                "REPLAY IT: boot exactly as the gate did — `cd <tree> && PYTHONPATH=src python3 -m \
+                 app.ledgerd --db-dir D` — then `curl -s -w '\\n%{http_code}' -X POST -m 20 \
+                 http://127.0.0.1:8931/api/payments/<id>/note`; a NOT REAL verdict must quote that \
+                 command's status and body"
+                    .into(),
+            ),
+        };
+        let r6c_ledgerd = vec![
+            row("shell", "cd /var/folders/T/.tmpYg9SG8 2>/dev/null; grep -n 'note' app/api.py"),
+            row("shell", "sed -n '370,450p' app/api.py"),
+            row(
+                "shell",
+                "echo '=== note ==='; curl -s -i -X POST http://127.0.0.1:8099/api/payments/pay_00042/note -H 'Content-Type: application/json' -d '{}'",
+            ),
+        ];
+        match repro_verdict(&r6c_ledgerd, Some(&note_check)) {
+            Repro::Confirmed { call } => assert!(call.contains("pay_00042/note"), "{call}"),
+            other => panic!("a real-id curl re-runs the placeholder check: {other:?}"),
+        }
+        let r6c_viz = vec![
+            row(
+                "shell",
+                "grep -rn 'viz-labels' web/ ; echo '---'; sed -n '515,560p' web/viz.js",
+            ),
+            row("edit", "/var/folders/T/.tmpWtl6Iu/web/index.html"),
+            row("edit", "/var/folders/T/.tmpWtl6Iu/web/viz.js"),
+            row("shell", "node /opt/probe.mjs load http://127.0.0.1:8099"),
+        ];
+        assert_eq!(
+            repro_verdict(&r6c_viz, Some(&check)),
+            Repro::EditBeforeRepro {
+                first_edit: "/var/folders/T/.tmpWtl6Iu/web/index.html".into()
+            },
+            "the archive's `edit` row is an edit"
+        );
+
+        let jsonl = concat!(
+            "{\"ts\":\"t\",\"attempt\":0,\"name\":\"developer__shell\",\"summary\":\"developer__shell: ls\",\"ok\":true,\"result_tail\":\"\"}\n",
+            "{\"ts\":\"t\",\"attempt\":1,\"name\":\"developer__text_editor\",\"summary\":\"view web/viz.js\",\"ok\":true,\"result_tail\":\"\"}\n",
+            "{\"kind\":\"attempt_end\",\"attempt\":1}\n",
+            "not json\n",
+            "{\"ts\":\"t\",\"attempt\":1,\"name\":\"developer__shell\",\"summary\":\"developer__shell: node /opt/probe.mjs load http://127.0.0.1:9000\",\"ok\":true,\"result_tail\":\"{}\"}\n",
+        );
+        let (rows, unparseable) = parse_call_rows(jsonl, 1);
+        assert_eq!(
+            unparseable, 1,
+            "a corrupt row is counted, never dropped silently"
+        );
+        assert_eq!(
+            rows.len(),
+            2,
+            "attempt 0's row and the attempt_end snapshot are not calls"
+        );
+        assert_eq!(rows[0].summary, "view web/viz.js");
+        assert!(rows[1].summary.contains("probe.mjs load"));
+        assert_eq!(
+            repro_verdict(&rows, Some(&check)),
+            Repro::Confirmed {
+                call: rows[1].summary.clone()
+            }
+        );
+    }
+
+    /// REPAIR v2 §1/§6: the brief opens with the gate's own replay as the first action and
+    /// carries the localization the evidence already names — r5's `ReferenceError` yields the
+    /// grep for the symbol and for its defined sibling (`onBrushChange`), r6c's `Illegal
+    /// invocation` names the detached-method shape, a frame names its file and line — and never
+    /// opens a numbered block of its own (parse_numbered_findings reads the first `1. `).
+    #[test]
+    fn the_brief_opens_with_the_check_and_the_localization_from_the_evidence() {
+        let mut prov = FindingProvenance::default();
+        let console = sourced(
+            &mut prov,
+            FindingSource::RenderGateException,
+            "the page renders but the browser console carries 4 error(s) in normal use (first: \
+             ReferenceError: onBrushChangeTracked is not defined) — fix the JS errors; users hit \
+             them as broken interactions. GATE COMMAND (run it yourself; it prints \
+             consoleErrors.texts): `node /opt/probe.mjs load http://127.0.0.1:54321`. (in \
+             `web/viz.js`)",
+        );
+        let open = |text: &str, check: Option<FindingCheck>| OpenFinding {
+            text: text.into(),
+            check,
+            file: "web/viz.js".into(),
+            owned: vec!["web/viz.js".into(), "web/index.html".into()],
+            order_note: String::new(),
+            k: 0,
+            attempted_at: None,
+            conflict_note: None,
+            replay_required: true,
+        };
+        let block = repro_block(&open(&console, prov.check_of(&console)));
+        assert!(
+            block.starts_with("REPRODUCE FIRST, THEN LOCALIZE, THEN EDIT."),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "THE CHECK THAT PRODUCED IT, as the gate ran it: GATE COMMAND (run it yourself; \
+                 it prints consoleErrors.texts): `node /opt/probe.mjs load http://127.0.0.1:54321`"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("`grep -n 'onBrushChangeTracked'`"),
+            "{block}"
+        );
+        assert!(
+            block.contains("`grep -n 'onBrushChange'`"),
+            "the defined sibling's stem: {block}"
+        );
+        assert!(
+            block.contains("THE FIRST EDIT goes at that location"),
+            "{block}"
+        );
+        assert!(block.ends_with("\n\n"), "prepends cleanly to the brief");
+        assert!(
+            block.lines().all(|l| !l.trim_start().starts_with("1. ")),
+            "the head must never open a numbered block: {block}"
+        );
+
+        let hints = localization_hints(
+            "the served page renders NO data rows in a real browser — the API works but the \
+             frontend shows a user nothing. First console error: TypeError: Illegal invocation. \
+             (in `viz.js`)",
+        );
+        assert!(
+            hints.iter().any(|h| h.contains("DETACHED from its object")),
+            "{hints:?}"
+        );
+        assert_eq!(
+            localization_hints(
+                "web/viz.js:533 references DOM id `viz-labels` which NO html file in the app \
+                 defines — fix it"
+            ),
+            vec!["open `web/viz.js` at line 533 — the frame the evidence names; the FIRST edit goes there."]
+        );
+        let hints = localization_hints(
+            "`pytest -q` failed:\n  File \"/Users/x/runs/unit/app/api.py\", line 40, in \
+             list_payments\napp/store.py:88: in query\nE   TypeError: Cannot read properties of \
+             null (reading 'getContext')\nE   TypeError: this.draw is not a function",
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("open `/Users/x/runs/unit/app/api.py` at line 40")),
+            "{hints:?}"
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("open `app/store.py` at line 88")),
+            "{hints:?}"
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("`getContext` was read on null")),
+            "{hints:?}"
+        );
+        assert!(
+            hints.iter().any(|h| h.contains("`grep -n 'draw'`")),
+            "{hints:?}"
+        );
+        assert_eq!(sibling_search_stem("onBrushChangeTracked"), "onBrushChange");
+        assert_eq!(sibling_search_stem("compute_total_v2"), "compute_total");
+        assert_eq!(sibling_search_stem("draw"), "draw");
+
+        // A static scan carries no command: the check is NAMED, and the model is told the
+        // engine re-runs it — never a substituted command.
+        let scan_block = repro_block(&open(
+            "web/viz.js:533 references DOM id `viz-labels` which NO html file in the app defines",
+            Some(FindingCheck {
+                key: "dom-id contract scan | web/viz.js:# references dom id `viz-labels`".into(),
+                command: None,
+            }),
+        ));
+        assert!(
+            scan_block.contains(
+                "THE CHECK THAT PRODUCED IT: dom-id contract scan | web/viz.js:# references dom \
+                 id `viz-labels` — a check the engine runs on the tree"
+            ),
+            "{scan_block}"
+        );
+        assert!(
+            repro_block(&open("a finding nothing authored", None)).contains("none recorded"),
+            "unsourced is said, not filled"
+        );
+    }
+
+    /// A finding whose check a sibling's promotion already closed is RETIRED by the driver, not
+    /// parked and re-dispatched on the next tree version.
+    #[tokio::test]
+    async fn a_finding_closed_by_a_sibling_is_retired_not_redispatched() {
+        use std::sync::Mutex;
+        #[derive(Default)]
+        struct Rec(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for Rec {
+            fn emit(&self, _e: &goose_swarm::SwarmEvent) {}
+            fn write_value(&self, v: serde_json::Value) {
+                self.0.lock().unwrap().push(v);
+            }
+        }
+        struct Closed {
+            dispatched: Mutex<Vec<String>>,
+        }
+        #[async_trait]
+        impl ShardRunner for Closed {
+            async fn run_shard(
+                &self,
+                f: &OpenFinding,
+                _slot: &str,
+                _baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
+            ) -> ShardOutcome {
+                self.dispatched.lock().unwrap().push(f.text.clone());
+                ShardOutcome {
+                    already_closed: true,
+                    ..ShardOutcome::default()
+                }
+            }
+            async fn regrade(&self) -> Option<TreeGrade> {
+                panic!("nothing promoted, nothing to regrade")
+            }
+        }
+        let runner = Arc::new(Closed {
+            dispatched: Mutex::new(Vec::new()),
+        });
+        let sink: Arc<dyn EventSink> = Arc::new(Rec::default());
+        let out = drive_wave(
+            runner.clone(),
+            sink,
+            0,
+            TreeGrade::unkeyed(2),
+            vec![OpenFinding {
+                text: "web/viz.js:533 references DOM id `viz-labels`".into(),
+                check: Some(FindingCheck {
+                    key: "dom-id contract scan | web/viz.js:# references dom id `viz-labels`"
+                        .into(),
+                    command: None,
+                }),
+                file: "web/viz.js".into(),
+                owned: vec!["web/viz.js".into()],
+                order_note: String::new(),
+                k: 0,
+                attempted_at: None,
+                conflict_note: None,
+                replay_required: false,
+            }],
+            vec!["m1".into(), "m2".into()],
+        )
+        .await;
+        assert_eq!(out.shards, 1);
+        assert_eq!(out.promoted, 0);
+        assert_eq!(out.findings_left, 0, "retired, not left open: {out:?}");
+        assert_eq!(runner.dispatched.lock().unwrap().len(), 1);
     }
 }
