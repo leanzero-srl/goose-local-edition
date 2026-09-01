@@ -22,6 +22,7 @@ import fsSync from 'node:fs';
 import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
 import { resolveSwarmDir } from './utils/swarmRunDir';
 import { SwarmWatchRegistry } from './utils/swarmWatch';
+import { benchRunArgvTokens, pidsMatchingTokens } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -3050,12 +3051,21 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
   });
 });
 
-ipcMain.handle('benchmark-cancel', async () => {
+// ONE cancel body for the two doors that end a benchmark run early — the Cancel button and app quit
+// (U-M8: will-quit used to leave the runner and the engine running; the runner then died on
+// BrokenPipe while the ENGINE kept the fleet generating for a run nobody would ever score).
+//
+// Synchronous on purpose: will-quit does not wait for a promise, so the reap must have happened by
+// the time this returns. The `ps` scan is one execFileSync (its 4s timeout is transport, not model
+// work) and every kill is `process.kill(pid)`.
+const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
   const run = activeBenchRun;
   if (!run) return { ok: false, error: 'no benchmark run is active' };
   run.cancelled = true;
   const pid = run.child.pid;
-  // Kill the runner's whole process group (python + the in-process vendor sim)…
+  // The runner's own process group (python + the in-process vendor sim). The runner is spawned
+  // `detached`, so it is its own session and group leader — pgid == pid by construction — and this
+  // is the kill_app_tree model: a group WE created. It is the only group kill here.
   if (pid) {
     try {
       process.kill(-pid, 'SIGKILL');
@@ -3067,21 +3077,35 @@ ipcMain.handle('benchmark-cancel', async () => {
       }
     }
   }
-  // …then the engine. run_build spawns `goose swarm run` with start_new_session=True, so it is
-  // NOT in the runner's group and would keep the fleet generating for a dead run. Its command
-  // line carries the workdir (--log-file <workdir>/run.jsonl), as does the scorer's vendorsync
-  // child (--db <workdir>/graded.db) — match on that, which is unique to this run.
+  // Then the engine and the scorer child, PER PID by the run-unique argv tokens (benchReap.ts).
+  // run_build starts `goose swarm run` with start_new_session=True, so it is NOT in the runner's
+  // group and would keep the fleet generating for a dead run. This used to be `pkill -9 -f
+  // <workdir>` — a substring that also killed any tail/less/tick.py holding the path. Never killpg
+  // on those: they share nobody's group that we own (the REAPING gate, paid for by r2).
+  const stray: number[] = [];
   if (process.platform !== 'win32') {
+    let ps = '';
     try {
-      execFile('pkill', ['-9', '-f', run.workdir], () => {
-        /* exit 1 = nothing matched, which is fine */
-      });
-    } catch {
-      /* pkill unavailable — the group kill above still stopped the runner */
+      ps = execFileSync('ps', ['-axo', 'pid=,args='], { encoding: 'utf8', timeout: 4000 });
+    } catch (err) {
+      log.warn(`[benchmark-cancel] ps failed; engine/scorer pids not reaped: ${String(err)}`);
+    }
+    for (const p of pidsMatchingTokens(ps, benchRunArgvTokens(run.workdir), process.pid)) {
+      try {
+        process.kill(p, 'SIGKILL');
+        stray.push(p);
+      } catch {
+        /* exited between the scan and the kill */
+      }
     }
   }
+  log.info(
+    `[benchmark-cancel] ${why}: runner group ${pid ?? '?'}; by-token pids ${stray.join(',') || 'none'}`
+  );
   return { ok: true };
-});
+};
+
+ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
 ipcMain.handle(
   'benchmark-publish',
@@ -5078,6 +5102,10 @@ async function getAllowList(): Promise<string[]> {
 }
 
 app.on('will-quit', async () => {
+  // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
+  // synchronous so it lands before Electron finishes quitting (U-M8).
+  if (activeBenchRun !== null) cancelActiveBenchRun('app quitting');
+
   const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
   if (gooseServeLeaseCount > 0) {
     log.info(`App quitting, cleaning up ${gooseServeLeaseCount} backend lease(s)`);
