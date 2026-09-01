@@ -390,8 +390,36 @@ Another very long URL: https://www.example.com/very/long/path/with/many/segments
 
       const markdownContainer = document.querySelector('.prose');
       expect(markdownContainer).toBeInTheDocument();
+      expect(markdownContainer).toHaveClass('break-words');
       expect(markdownContainer).toHaveClass('prose-a:break-all');
       expect(markdownContainer).toHaveClass('prose-a:overflow-wrap-anywhere');
+    });
+  });
+
+  describe('Heading weights (LeanZero Studio)', () => {
+    // MEASURED: `font-normal` (and every `prose-hN:font-normal`) compiles to NO rule in this app —
+    // the MCP theme registration sets --font-weight-normal to `initial` — so the old heading classes
+    // were silent no-ops and the headings rendered at the typography plugin's 800/700/600. The
+    // Studio heading register is 600 (--font-weight-lz-semibold); the size step carries the
+    // hierarchy. This pins the classes AND proves they produce a rule through the real pipeline.
+    it('headings carry the Studio semibold weight through a token utility that compiles', async () => {
+      const { missingUtilities } = await import('./lz/compileStudioCss');
+      renderWithIntl(<MarkdownContent content="# Title" />);
+
+      const container = document.querySelector('.prose');
+      expect(container).toBeInTheDocument();
+      const classes = Array.from(container!.classList);
+      const headingWeights = classes.filter((c) => /^prose-h[1-3]:font-/.test(c));
+      expect(headingWeights.sort()).toEqual([
+        'prose-h1:font-lz-semibold',
+        'prose-h1:font-sans',
+        'prose-h2:font-lz-semibold',
+        'prose-h2:font-sans',
+        'prose-h3:font-lz-semibold',
+        'prose-h3:font-sans',
+      ]);
+      expect(classes.some((c) => /font-(normal|medium|semibold|bold)$/.test(c))).toBe(false);
+      expect(await missingUtilities([...headingWeights, 'break-words'])).toEqual([]);
     });
   });
 
