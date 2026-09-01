@@ -2,7 +2,7 @@
 //! (unknown deps, cycles) and computes fan-out + initial ready set.
 
 use anyhow::{bail, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
 pub type TaskId = String;
@@ -30,6 +30,64 @@ pub struct TaskSpec {
     /// module's frozen stub at consumption. Nothing dispatches differently until a fill fan
     /// consumes it; empty for every task whose spec carries no such line.
     pub subsplit: Vec<String>,
+    /// THE SPLIT (VA-021): this task is one SHARD of a fat module — it works in its own folder
+    /// under `.swarm/shards/`, produces pieces and a structured README, and never writes the
+    /// module's final file. Engine-written plan metadata (`shard_of` in the plan JSON).
+    pub shard_of: Option<ShardOf>,
+    /// THE SPLIT (VA-021): this task is the MERGER of a split module — it depends on every shard,
+    /// owns the module's final file(s), and is dispatched with a code-built dossier.
+    pub merger_of: Option<MergerOf>,
+}
+
+/// One name the module MUST export, as SYNTHESIS declared it when it split the module into shards
+/// (VA-021; Mihai 2026-09-01: "why do we have… open and whatnot if we can't restrict function
+/// names, classes"). Plan TEXT only — written to no stub file: the measured CONTRACTS harm was stub
+/// FILES on disk (2/3 and 3/6 unparseable, hiding real behaviour), never the declaration.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredExport {
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub signature: String,
+    #[serde(default)]
+    pub purpose: String,
+}
+
+/// The module's declared interface every shard and the merger are bound to: its exports, the
+/// shared-state shape every part reads or writes, and the final file(s)' assembly order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleInterface {
+    #[serde(default)]
+    pub exports: Vec<DeclaredExport>,
+    #[serde(default)]
+    pub shared_state: String,
+    #[serde(default)]
+    pub layout: Vec<String>,
+}
+
+/// A shard task's identity: which module, which shard, where it works, what it is responsible
+/// for, and the module interface it must implement its part of.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShardOf {
+    pub module: String,
+    pub shard: String,
+    pub folder: String,
+    #[serde(default)]
+    pub responsibility: String,
+    #[serde(default)]
+    pub interface: ModuleInterface,
+}
+
+/// A merger task's identity: the module, its shard task ids and their folders (the dossier reads
+/// the pieces and READMEs there), and the declared interface the final file is checked against.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergerOf {
+    pub module: String,
+    pub shards: Vec<String>,
+    pub folders: Vec<String>,
+    #[serde(default)]
+    pub interface: ModuleInterface,
 }
 
 /// The detailer's optional latent decomposition: the LAST `SUBSPLIT:` line of a spec,
@@ -376,6 +434,10 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
         depends_on: Vec<String>,
         #[serde(default)]
         files: Vec<String>,
+        #[serde(default)]
+        shard_of: Option<ShardOf>,
+        #[serde(default)]
+        merger_of: Option<MergerOf>,
     }
     let plan: PlanJson = serde_json::from_str(json)?;
     Ok(plan
@@ -394,6 +456,8 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
                 owned_files: t.files,
                 deps: t.depends_on,
                 subsplit,
+                shard_of: t.shard_of,
+                merger_of: t.merger_of,
             }
         })
         .collect())
@@ -477,6 +541,8 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
             owned_files: vec![file.clone()],
             deps: t.deps.clone(),
             subsplit: Vec::new(),
+            shard_of: None,
+            merger_of: None,
         });
         let mut fill_ids = Vec::new();
         for slot in &t.subsplit {
@@ -495,6 +561,8 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
                 owned_files: vec![format!("{file}#{slot}")],
                 deps: vec![skeleton_id.clone()],
                 subsplit: Vec::new(),
+                shard_of: None,
+                merger_of: None,
             });
         }
         out.push(TaskSpec {
@@ -510,6 +578,8 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
             owned_files: vec![file],
             deps: fill_ids,
             subsplit: Vec::new(),
+            shard_of: None,
+            merger_of: None,
         });
     }
     out
@@ -528,6 +598,8 @@ mod expand_tests {
             owned_files: files.iter().map(|s| s.to_string()).collect(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
             subsplit: sub.iter().map(|s| s.to_string()).collect(),
+            shard_of: None,
+            merger_of: None,
         }
     }
 

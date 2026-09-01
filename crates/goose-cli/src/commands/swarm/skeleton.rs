@@ -93,7 +93,9 @@ fn skeleton_description(
     );
     for t in subtasks {
         let id = t.get("id").and_then(|i| i.as_str()).unwrap_or_default();
-        if id == goose_swarm::SINK_ID || id == SKELETON_ID {
+        // A shard owns only its `.swarm/shards/…/README.md` — nothing importable; its module is
+        // listed through the merger, which owns the final file (2c S1).
+        if id == goose_swarm::SINK_ID || id == SKELETON_ID || t.get("shard_of").is_some() {
             continue;
         }
         let files: Vec<String> = t

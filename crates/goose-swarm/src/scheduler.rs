@@ -2894,6 +2894,8 @@ impl State {
                     owned_files: c.files.clone(),
                     deps,
                     subsplit: Vec::new(),
+                    shard_of: None,
+                    merger_of: None,
                 }
             })
             .collect();
