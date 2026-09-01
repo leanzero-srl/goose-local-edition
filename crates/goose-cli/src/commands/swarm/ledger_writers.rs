@@ -6,18 +6,29 @@
 
 use std::path::{Path, PathBuf};
 
-pub(super) fn write_task_ledger(
-    root: &Path,
-    task_id: &str,
-    status: &str,
-    salvaged: bool,
-    owned_files: &[String],
-    attempt: u32,
-    calls_mirror_dir: Option<PathBuf>,
-    // Extra keys merged into the row — a shard's `shard_note` / `handoffs` (S3); `None` keeps
-    // every other row byte-identical.
-    extra: Option<serde_json::Value>,
-) -> Option<std::path::PathBuf> {
+/// What one task attempt's ledger row is written from (the task leg's arguments, named).
+pub(super) struct TaskLedgerWrite<'a> {
+    pub(super) task_id: &'a str,
+    pub(super) status: &'a str,
+    pub(super) salvaged: bool,
+    pub(super) owned_files: &'a [String],
+    pub(super) attempt: u32,
+    pub(super) calls_mirror_dir: Option<PathBuf>,
+    /// Extra keys merged into the row — a shard's `shard_note` / `handoffs` (S3); `None` keeps
+    /// every other row byte-identical.
+    pub(super) extra: Option<serde_json::Value>,
+}
+
+pub(super) fn write_task_ledger(root: &Path, w: TaskLedgerWrite<'_>) -> Option<std::path::PathBuf> {
+    let TaskLedgerWrite {
+        task_id,
+        status,
+        salvaged,
+        owned_files,
+        attempt,
+        calls_mirror_dir,
+        extra,
+    } = w;
     let mut row = super::build_task_ledger_row(
         root,
         task_id,

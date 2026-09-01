@@ -1477,79 +1477,21 @@ impl ShardNote {
     }
 }
 
-fn field_of(line: &str) -> Option<(usize, &str)> {
-    let t = line
-        .trim()
-        .trim_start_matches(['#', '*', '-', '>', '•'])
-        .trim()
-        .trim_matches('`')
-        .trim_matches('*');
-    for (i, f) in README_FIELDS.iter().enumerate() {
-        if t.len() >= f.len() && t[..f.len()].eq_ignore_ascii_case(f) {
-            let rest = t[f.len()..].trim_start_matches(['*', '`']).trim_start();
-            if let Some(r) = rest.strip_prefix(':') {
-                return Some((i, r.trim()));
-            }
-            if rest.is_empty() {
-                return Some((i, ""));
-            }
-        }
-    }
-    None
-}
-
-/// Parse the four fields out of a README or a final message. None when no field line exists —
-/// the caller names that absence (`merge_note_missing`), never a default note.
+/// Parse the four fields out of a README or a final message (`parse_fields` over
+/// `README_FIELDS`). None when no field line exists — the caller names that absence
+/// (`merge_note_missing`), never a default note.
 pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
-    let mut note = ShardNote::default();
-    let mut current: Option<usize> = None;
-    let mut seen = false;
-    let push = |note: &mut ShardNote, i: usize, item: &str| {
-        let item = item
-            .trim()
-            .trim_start_matches(['-', '*', '•'])
-            .trim()
-            .trim_matches('`')
-            .trim();
-        if item.is_empty() || item.eq_ignore_ascii_case("none") || item == "-" {
-            return;
-        }
-        let list = match i {
-            0 => &mut note.provides,
-            1 => &mut note.assumes,
-            2 => &mut note.unfinished,
-            _ => &mut note.checked_with,
-        };
-        if !list.iter().any(|x| x == item) {
-            list.push(item.to_string());
-        }
-    };
-    for line in text.lines() {
-        if let Some((i, rest)) = field_of(line) {
-            seen = true;
-            current = Some(i);
-            push(&mut note, i, rest);
-            continue;
-        }
-        let Some(i) = current else {
-            continue;
-        };
-        let t = line.trim();
-        if t.is_empty() {
-            continue;
-        }
-        let is_item = line.starts_with(' ')
-            || line.starts_with('\t')
-            || t.starts_with('-')
-            || t.starts_with('*')
-            || t.starts_with('•');
-        if is_item {
-            push(&mut note, i, t);
-        } else {
-            current = None;
-        }
-    }
-    seen.then_some(note)
+    let mut lists = parse_fields(text, &README_FIELDS)?;
+    let checked_with = lists.pop().unwrap_or_default();
+    let unfinished = lists.pop().unwrap_or_default();
+    let assumes = lists.pop().unwrap_or_default();
+    let provides = lists.pop().unwrap_or_default();
+    Some(ShardNote {
+        provides,
+        assumes,
+        unfinished,
+        checked_with,
+    })
 }
 
 impl GooseAgentDispatcher {
@@ -1691,5 +1633,1327 @@ mod dispatch_tests {
         assert_eq!(ev["event"], "merge_note_missing");
         assert_eq!(ev["module"], "web-viz");
         assert_eq!(ev["shard"], "render");
+    }
+}
+
+// ---- S4: THE MERGER — code builds the dossier, a judicious model merges, code checks after -----
+
+/// The merge README the merger leaves beside the shard folders: which duplicate it kept and why,
+/// what it filled itself, what it sent out. `.swarm/shards/<module>/MERGE.md`.
+pub(super) const MERGE_README: &str = "MERGE.md";
+pub(super) const MERGE_FIELDS: [&str; 4] = ["KEPT", "DROPPED", "FILLED", "SENT_OUT"];
+/// The merger's handoff line for a gap it judges too big to fill in the merge: one per line in
+/// its final message. The engine dispatches each to a free node as a new shard and calls the
+/// merger back when they land (the merge-gap door, scheduler.rs).
+pub(super) const MERGE_GAP_PREFIX: &str = "MERGE_GAP:";
+
+/// One definition found in a piece or in the final file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Symbol {
+    pub(super) name: String,
+    pub(super) params: String,
+    pub(super) line: usize,
+}
+
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_' || c == '$'
+}
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+fn ident_at(s: &str) -> Option<&str> {
+    let mut end = 0;
+    for (i, c) in s.char_indices() {
+        if i == 0 && !is_ident_start(c) {
+            return None;
+        }
+        if !is_ident_char(c) && c != '.' {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    (end > 0).then(|| s.split_at(end).0)
+}
+
+fn params_after(s: &str) -> Option<String> {
+    let open = s.find('(')?;
+    let (_, from_open) = s.split_at(open);
+    let inner = from_open.split_at(1).1;
+    let mut depth = 0i32;
+    for (i, c) in from_open.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(inner.split_at(i.saturating_sub(1)).0.trim().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(inner.trim().to_string())
+}
+
+/// The text after the matching `)` of the first `(` in `s`.
+fn after_params(s: &str) -> Option<&str> {
+    let open = s.find('(')?;
+    let (_, from_open) = s.split_at(open);
+    let mut depth = 0i32;
+    for (i, c) in from_open.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(from_open.split_at(i + 1).1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+const JS_KEYWORDS: [&str; 16] = [
+    "if", "for", "while", "switch", "catch", "return", "function", "else", "do", "try", "new",
+    "typeof", "await", "yield", "throw", "case",
+];
+
+/// Definitions in a source text, line-based and deterministic — the merger's dossier and the
+/// after-check read the SAME extractor, so "present in the final file" means what "defined in a
+/// piece" meant. JavaScript: `function name(`, `const/let/var name = function|(…) =>|async`,
+/// `a.b.c = function|(…) =>`, object-literal methods `name(…) {` and `name: function(`/`name: (…) =>`.
+/// Python: `def`/`async def`/`class`. Other languages: `fn`/`func` heads.
+pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symbol> {
+    let mut out: Vec<Symbol> = Vec::new();
+    let mut push = |name: &str, params: Option<String>, line: usize| {
+        let name = name.trim_end_matches('.').to_string();
+        if name.is_empty() || JS_KEYWORDS.contains(&name.as_str()) {
+            return;
+        }
+        if !out.iter().any(|s| s.name == name) {
+            out.push(Symbol {
+                name,
+                params: params.unwrap_or_default(),
+                line,
+            });
+        }
+    };
+    for (i, raw) in source.lines().enumerate() {
+        let t = raw.trim_start();
+        if t.starts_with("//") || t.starts_with('#') || t.starts_with('*') || t.starts_with("/*") {
+            continue;
+        }
+        let line = i + 1;
+        match lang {
+            super::TargetLang::Python => {
+                for head in ["async def ", "def ", "class "] {
+                    if let Some(rest) = t.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            let params = if head == "class " {
+                                None
+                            } else {
+                                params_after(rest)
+                            };
+                            push(name, params, line);
+                        }
+                    }
+                }
+            }
+            super::TargetLang::Rust | super::TargetLang::Go => {
+                let core = t
+                    .trim_start_matches("pub(crate) ")
+                    .trim_start_matches("pub ")
+                    .trim_start_matches("async ");
+                for head in ["fn ", "func "] {
+                    if let Some(rest) = core.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            push(name, params_after(rest), line);
+                        }
+                    }
+                }
+            }
+            _ => {
+                // function name(
+                for head in [
+                    "async function ",
+                    "function ",
+                    "export function ",
+                    "export async function ",
+                ] {
+                    if let Some(rest) = t.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            push(name, params_after(rest), line);
+                        }
+                    }
+                }
+                // const name = function | (…) => | async (…) => | x =>
+                for head in ["const ", "let ", "var ", "export const "] {
+                    if let Some(rest) = t.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            let after = rest.split_at(name.len()).1.trim_start();
+                            if let Some(rhs) = after.strip_prefix('=') {
+                                let rhs = rhs.trim_start();
+                                let is_fn = rhs.starts_with("function")
+                                    || rhs.starts_with("async")
+                                    || (rhs.contains("=>")
+                                        && (rhs.starts_with('(') || ident_at(rhs).is_some()));
+                                if is_fn {
+                                    push(name, params_after(rhs), line);
+                                }
+                            }
+                        }
+                    }
+                }
+                // a.b.c = function | (…) =>   (assignment of a function to a dotted path)
+                if let Some(name) = ident_at(t) {
+                    if name.contains('.') {
+                        let after = t.split_at(name.len()).1.trim_start();
+                        if let Some(rhs) = after.strip_prefix('=') {
+                            let rhs = rhs.trim_start();
+                            if !rhs.starts_with('=')
+                                && (rhs.starts_with("function")
+                                    || rhs.starts_with("async")
+                                    || rhs.contains("=>"))
+                            {
+                                push(name, params_after(rhs), line);
+                            }
+                        }
+                    }
+                    // object-literal method shorthand `name(...) {` and `name: function(` / `name: (…) =>`
+                    if !name.contains('.') {
+                        let after = t.split_at(name.len()).1.trim_start();
+                        if after.starts_with('(')
+                            && after_params(after)
+                                .is_some_and(|rest| rest.trim_start().starts_with('{'))
+                        {
+                            push(name, params_after(after), line);
+                        } else if let Some(rhs) = after.strip_prefix(':') {
+                            let rhs = rhs.trim_start();
+                            if rhs.starts_with("function")
+                                || rhs.starts_with("async")
+                                || (rhs.starts_with('(') && rhs.contains("=>"))
+                            {
+                                push(name, params_after(rhs), line);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn last_segment(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Same symbol? Exact, or the declared dotted name's last segment equals the definition (a
+/// declared `window.vs7dbg.pick` is met by a method `pick(sx, sy)` on the object the pieces build).
+fn same_symbol(declared: &str, found: &str) -> bool {
+    declared == found
+        || last_segment(declared) == found
+        || declared == last_segment(found)
+        || last_segment(declared) == last_segment(found)
+}
+
+fn normalize_params(p: &str) -> Vec<String> {
+    p.split(',')
+        .map(|x| {
+            x.trim()
+                .split([':', '='])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_start_matches("...")
+                .to_lowercase()
+        })
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+/// One shard as the dossier saw it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ShardDossier {
+    pub(super) id: String,
+    pub(super) folder: String,
+    pub(super) readme_present: bool,
+    pub(super) note: Option<ShardNote>,
+    /// (relative piece path, parse verdict — None = parsed / unchecked, Some(err) = error, symbols)
+    pub(super) pieces: Vec<(String, Option<String>, Vec<Symbol>)>,
+}
+
+impl ShardDossier {
+    fn defines(&self) -> impl Iterator<Item = &Symbol> {
+        self.pieces.iter().flat_map(|(_, _, s)| s.iter())
+    }
+    fn provides_or_defines(&self, name: &str) -> bool {
+        self.defines().any(|s| same_symbol(name, &s.name))
+            || self.note.as_ref().is_some_and(|n| {
+                n.provides
+                    .iter()
+                    .any(|p| ident_at(p).is_some_and(|i| same_symbol(name, i)))
+            })
+    }
+}
+
+/// THE MERGE DOSSIER — built by CODE, no model: parse result per piece, the cross-shard symbol
+/// table (duplicates, signatures that disagree with the declaration, declared names nobody
+/// defines), every README's assumptions no sibling provides, every unfinished item, the declared
+/// interface and layout, and the previous merge README when this is a second pass (a merger
+/// called back after its gaps landed).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct MergeDossier {
+    pub(super) module: String,
+    pub(super) files: Vec<String>,
+    pub(super) interface: ModuleInterface,
+    pub(super) shards: Vec<ShardDossier>,
+    pub(super) duplicates: Vec<(String, Vec<String>)>,
+    pub(super) declared_missing: Vec<String>,
+    /// (declared name, declared signature, found params, shard)
+    pub(super) signature_disagreements: Vec<(String, String, String, String)>,
+    pub(super) assumptions_unmet: Vec<(String, String)>,
+    pub(super) unfinished: Vec<(String, String)>,
+    pub(super) prior_merge: Option<String>,
+    pub(super) final_file_symbols: Vec<Symbol>,
+}
+
+fn candidate_names(item: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // backticked spans first
+    let mut parts = item.split('`');
+    parts.next();
+    for span in parts.step_by(2) {
+        if let Some(id) = ident_at(span.trim()) {
+            out.push(id.trim_end_matches('.').to_string());
+        }
+    }
+    if out.is_empty() {
+        for tok in item.split(|c: char| c.is_whitespace() || ",;:()[]{}\"'".contains(c)) {
+            if tok.contains('(') || tok.contains('.') {
+                if let Some(id) = ident_at(tok) {
+                    out.push(id.trim_end_matches('.').to_string());
+                }
+            }
+        }
+    }
+    out.retain(|n| n.chars().count() >= 3);
+    out
+}
+
+pub(super) async fn parse_piece(path: &std::path::Path) -> Option<String> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("py") => super::parse_checks::py_syntax_error(path).await,
+        Some("js") | Some("mjs") | Some("cjs") => {
+            let out = tokio::process::Command::new("node")
+                .arg("--check")
+                .arg(path)
+                .kill_on_drop(true)
+                .output()
+                .await;
+            match out {
+                Ok(o) if o.status.success() => None,
+                Ok(o) => Some(
+                    String::from_utf8_lossy(&o.stderr)
+                        .lines()
+                        .find(|l| l.contains("SyntaxError") || l.contains("Error"))
+                        .unwrap_or("syntax error")
+                        .trim()
+                        .to_string(),
+                ),
+                Err(_) => Some("node not available — unchecked".to_string()),
+            }
+        }
+        _ => None,
+    }
+}
+
+pub(super) async fn build_merge_dossier(
+    root: &std::path::Path,
+    merger: &MergerOf,
+    module_files: &[String],
+    lang: super::TargetLang,
+) -> MergeDossier {
+    let mut shards: Vec<ShardDossier> = Vec::new();
+    for (i, id) in merger.shards.iter().enumerate() {
+        let folder = merger
+            .folders
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| format!("{SHARDS_DIR}/{}/{}", merger.module, id));
+        let dir = root.join(&folder);
+        let readme = std::fs::read_to_string(dir.join("README.md")).ok();
+        let note = readme.as_deref().and_then(parse_shard_note);
+        let mut pieces = Vec::new();
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.file_name().to_str().map(String::from))
+            .filter(|n| n != "README.md")
+            .collect();
+        names.sort();
+        for n in names {
+            let path = dir.join(&n);
+            let src = std::fs::read_to_string(&path).unwrap_or_default();
+            let verdict = parse_piece(&path).await;
+            let symbols = extract_symbols(&src, lang);
+            pieces.push((format!("{folder}/{n}"), verdict, symbols));
+        }
+        shards.push(ShardDossier {
+            id: id.clone(),
+            folder,
+            readme_present: readme.as_ref().is_some_and(|r| !r.trim().is_empty()),
+            note,
+            pieces,
+        });
+    }
+    // duplicates: a name defined in two shards
+    let mut by_name: Vec<(String, Vec<String>)> = Vec::new();
+    for sh in &shards {
+        for s in sh.defines() {
+            match by_name.iter_mut().find(|(n, _)| *n == s.name) {
+                Some((_, owners)) => {
+                    if !owners.contains(&sh.id) {
+                        owners.push(sh.id.clone());
+                    }
+                }
+                None => by_name.push((s.name.clone(), vec![sh.id.clone()])),
+            }
+        }
+    }
+    let duplicates: Vec<(String, Vec<String>)> = by_name
+        .iter()
+        .filter(|(_, o)| o.len() > 1)
+        .cloned()
+        .collect();
+    let mut declared_missing = Vec::new();
+    let mut signature_disagreements = Vec::new();
+    for e in &merger.interface.exports {
+        let mut found = false;
+        for sh in &shards {
+            for s in sh.defines() {
+                if same_symbol(&e.name, &s.name) {
+                    found = true;
+                    if let Some(declared_params) = params_after(&e.signature) {
+                        let d = normalize_params(&declared_params);
+                        let f = normalize_params(&s.params);
+                        if !d.is_empty() && !f.is_empty() && d != f {
+                            signature_disagreements.push((
+                                e.name.clone(),
+                                e.signature.clone(),
+                                s.params.clone(),
+                                sh.id.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if !found && !shards.iter().any(|sh| sh.provides_or_defines(&e.name)) {
+            declared_missing.push(e.name.clone());
+        }
+    }
+    let mut assumptions_unmet = Vec::new();
+    let mut unfinished = Vec::new();
+    // An assumption about the DECLARED shared state (`S.dirty` when the declaration names `S`)
+    // is met by the declaration — the merger reconciles the shape; only a name no sibling
+    // provides and no declaration carries is unmet.
+    let declared_roots: Vec<String> = merger
+        .interface
+        .shared_state
+        .split(|c: char| !(is_ident_char(c) || c == '.'))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.split('.').next().unwrap_or(w).to_string())
+        .collect();
+    for sh in &shards {
+        if let Some(n) = &sh.note {
+            for a in &n.assumes {
+                let names = candidate_names(a);
+                let met = |nm: &String| {
+                    shards.iter().any(|o| o.provides_or_defines(nm))
+                        || nm
+                            .split('.')
+                            .next()
+                            .is_some_and(|root| declared_roots.iter().any(|r| r == root))
+                };
+                if !names.is_empty() && !names.iter().any(met) {
+                    assumptions_unmet.push((sh.id.clone(), a.clone()));
+                }
+            }
+            for u in &n.unfinished {
+                unfinished.push((sh.id.clone(), u.clone()));
+            }
+        }
+    }
+    let prior_merge = std::fs::read_to_string(
+        root.join(SHARDS_DIR)
+            .join(&merger.module)
+            .join(MERGE_README),
+    )
+    .ok()
+    .filter(|t| !t.trim().is_empty());
+    let mut final_file_symbols = Vec::new();
+    for f in module_files {
+        if let Ok(src) = std::fs::read_to_string(root.join(f)) {
+            final_file_symbols.extend(extract_symbols(&src, lang));
+        }
+    }
+    MergeDossier {
+        module: merger.module.clone(),
+        files: module_files.to_vec(),
+        interface: merger.interface.clone(),
+        shards,
+        duplicates,
+        declared_missing,
+        signature_disagreements,
+        assumptions_unmet,
+        unfinished,
+        prior_merge,
+        final_file_symbols,
+    }
+}
+
+impl MergeDossier {
+    pub(super) fn summary_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "module": self.module,
+            "shards": self.shards.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            "pieces": self.shards.iter().map(|s| s.pieces.len()).sum::<usize>(),
+            "pieces_with_parse_errors": self.shards.iter().flat_map(|s| s.pieces.iter()).filter(|(_, v, _)| v.as_deref().is_some_and(|e| !e.contains("unchecked"))).count(),
+            "readmes_missing": self.shards.iter().filter(|s| s.note.is_none()).map(|s| s.id.clone()).collect::<Vec<_>>(),
+            "duplicates": self.duplicates.iter().map(|(n, o)| serde_json::json!({"symbol": n, "shards": o})).collect::<Vec<_>>(),
+            "declared_missing": self.declared_missing,
+            "signature_disagreements": self.signature_disagreements.iter().map(|(n, d, f, s)| serde_json::json!({"symbol": n, "declared": d, "found_params": f, "shard": s})).collect::<Vec<_>>(),
+            "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
+            "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
+            "second_pass": self.prior_merge.is_some(),
+        })
+    }
+
+    /// The MERGER BRIEF: a NUMBERED, SPECIFIC task list from the dossier — never "merge the
+    /// module". Mihai 11:4x: "the merge node should actually be judicious in its work not just go
+    /// in and copy… the task of doing the merge needs to be specific".
+    pub(super) fn merger_brief(&self, cwd: &str) -> String {
+        let final_files = self
+            .files
+            .iter()
+            .map(|f| format!("`{f}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut s = format!(
+            "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
+             its own folder under `{cwd}/{dir}/{module}/`; NOBODY has written {final_files} — you do, \
+             from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
+             fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
+            module = self.module,
+            n = self.shards.len(),
+            dir = SHARDS_DIR,
+        );
+        if let Some(prior) = &self.prior_merge {
+            s.push_str(&format!(
+                "SECOND PASS: you already merged once; the gaps you sent out have landed as new shards \
+                 (listed below). Fold their pieces into the EXISTING {final_files} — do not restart from \
+                 the pieces. Your previous merge README:\n{prior}\n\n"
+            ));
+        }
+        s.push_str("THE PIECES (path — parse — definitions):\n");
+        for sh in &self.shards {
+            s.push_str(&format!(
+                "shard `{}` — folder `{cwd}/{}`{}:\n",
+                sh.id,
+                sh.folder,
+                if sh.readme_present {
+                    ""
+                } else {
+                    " — NO README (its handoff is missing; read the pieces harder)"
+                }
+            ));
+            if sh.pieces.is_empty() {
+                s.push_str("  (no piece files — this shard delivered nothing but its README)\n");
+            }
+            for (path, verdict, symbols) in &sh.pieces {
+                let names: Vec<String> = symbols
+                    .iter()
+                    .map(|x| {
+                        if x.params.is_empty() {
+                            format!("`{}`", x.name)
+                        } else {
+                            format!("`{}({})`", x.name, x.params)
+                        }
+                    })
+                    .collect();
+                s.push_str(&format!(
+                    "  - `{cwd}/{path}` — {} — {}\n",
+                    match verdict {
+                        None => "parses".to_string(),
+                        Some(e) if e.contains("unchecked") => e.clone(),
+                        Some(e) => format!("PARSE ERROR: {e}"),
+                    },
+                    if names.is_empty() {
+                        "no definitions found".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                ));
+            }
+            if let Some(n) = &sh.note {
+                if !n.provides.is_empty() {
+                    s.push_str(&format!("  PROVIDES: {}\n", n.provides.join("; ")));
+                }
+                if !n.assumes.is_empty() {
+                    s.push_str(&format!("  ASSUMES: {}\n", n.assumes.join("; ")));
+                }
+                if !n.unfinished.is_empty() {
+                    s.push_str(&format!("  UNFINISHED: {}\n", n.unfinished.join("; ")));
+                }
+                if !n.checked_with.is_empty() {
+                    s.push_str(&format!("  CHECKED_WITH: {}\n", n.checked_with.join("; ")));
+                }
+            }
+        }
+        s.push_str(&format!(
+            "\nTHE DECLARED INTERFACE (binding — every export below must exist in the final file with this signature):\n{}\n",
+            render_interface(&self.interface)
+        ));
+        s.push_str("YOUR TASKS, in order — each one is specific, do it and say what you did in MERGE.md:\n");
+        let mut k = 0usize;
+        let mut item = |s: &mut String, text: String| {
+            k += 1;
+            s.push_str(&format!("{k}. {text}\n"));
+        };
+        for (name, owners) in &self.duplicates {
+            item(&mut s, format!(
+                "`{name}` is defined in shards {} — keep ONE definition (or rename if they are different things), name which and why under KEPT/DROPPED.",
+                owners.iter().map(|o| format!("`{o}`")).collect::<Vec<_>>().join(" and ")
+            ));
+        }
+        for (name, declared, found, shard) in &self.signature_disagreements {
+            item(&mut s, format!(
+                "`{name}` is declared `{declared}` but shard `{shard}` defines it with `({found})` — reconcile to the DECLARED signature and fix every caller."
+            ));
+        }
+        for (shard, assumption) in &self.assumptions_unmet {
+            item(&mut s, format!(
+                "shard `{shard}` ASSUMES \"{assumption}\" and no shard provides it — reconcile to the declared interface/shared state; if that means new code, write it or send it out."
+            ));
+        }
+        for name in &self.declared_missing {
+            item(&mut s, format!(
+                "`{name}` is DECLARED and defined by no shard — write it yourself if it is small, else send it out (MERGE_GAP below)."
+            ));
+        }
+        for (shard, u) in &self.unfinished {
+            item(&mut s, format!(
+                "shard `{shard}` left UNFINISHED: \"{u}\" — fill it yourself if it is small, else send it out (MERGE_GAP below); either way name it under FILLED or SENT_OUT."
+            ));
+        }
+        for sh in &self.shards {
+            for (path, verdict, _) in &sh.pieces {
+                if let Some(e) = verdict {
+                    if !e.contains("unchecked") {
+                        item(
+                            &mut s,
+                            format!("`{path}` does not parse ({e}) — fix it as you fold it in."),
+                        );
+                    }
+                }
+            }
+            if !sh.readme_present {
+                item(&mut s, format!("shard `{}` left no README — derive what it provides from its pieces and say so under KEPT.", sh.id));
+            }
+        }
+        let order = if self.interface.layout.is_empty() {
+            "the order the module's brief implies (constants, state, helpers, mechanisms, the exported API, boot)".to_string()
+        } else {
+            self.interface.layout.join(" → ")
+        };
+        item(&mut s, format!(
+            "ASSEMBLE {final_files} in the declared order — {order}. ASSEMBLE, DON'T RETYPE: build the file by \
+             concatenating the piece files in that order with the shell (e.g. `cat <piece> <piece> … > <file>`), \
+             then EDIT the result for the glue — one shared state object, one definition per name, the exports \
+             wired exactly as declared, no leftover duplicate. Retyping 40 KB from memory is the slowest and least \
+             faithful path and is how pieces get silently dropped."
+        ));
+        item(&mut s, format!(
+            "Check the assembled file parses (`node --check` / `python3 -m py_compile` / the language's equivalent) \
+             and that EVERY declared export exists in it with the declared signature; then write \
+             `{cwd}/{dir}/{module}/{readme}` with four fields, one item per line: {f0}: (which duplicate/version you kept and why), \
+             {f1}: (any piece symbol you left out and why), {f2}: (gaps you filled yourself), {f3}: (gaps you sent out).",
+            dir = SHARDS_DIR, module = self.module, readme = MERGE_README,
+            f0 = MERGE_FIELDS[0], f1 = MERGE_FIELDS[1], f2 = MERGE_FIELDS[2], f3 = MERGE_FIELDS[3]
+        ));
+        s.push_str(&format!(
+            "\nSENDING WORK OUT: for a gap you judge too big to fill during the merge, put ONE line per gap in your \
+             final message, exactly `{gap} <what is missing — the declared names, the spec section, what it must do>`. \
+             The engine dispatches each to a free machine as a new shard immediately and calls you back to fold its \
+             pieces in; the module is not done until then. Use it for real gaps, not for work you can finish now.\n\n\
+             THE MODULE'S BRIEF (whole — what the finished module must do; the spec sections are the `###` blocks):\n\n",
+            gap = MERGE_GAP_PREFIX
+        ));
+        s
+    }
+}
+
+/// `MERGE_GAP: …` lines in the merger's final message, in order, deduped.
+pub(super) fn parse_merge_gaps(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches(['-', '*', '•', '>', '#'])
+            .trim()
+            .trim_matches('`')
+            .trim_matches('*');
+        let Some((head, tail)) = t.split_at_checked(MERGE_GAP_PREFIX.len()) else {
+            continue;
+        };
+        if head.eq_ignore_ascii_case(MERGE_GAP_PREFIX) {
+            let rest = tail
+                .trim_start_matches(['*', '`', ' '])
+                .trim()
+                .trim_end_matches(['*', '`'])
+                .trim();
+            if !rest.is_empty()
+                && !rest.eq_ignore_ascii_case("none")
+                && !out.iter().any(|o| o == rest)
+            {
+                out.push(rest.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The shard specs for a merger's gaps — the engine's follow-ups the scheduler splices through the
+/// merge-gap door: each a new shard of the same module in `gap-<k>/`, owning only its README,
+/// depending on nothing, briefed with the gap text, the siblings' provides and the declaration.
+pub(super) fn gap_specs(
+    merger: &MergerOf,
+    module_files: &[String],
+    module_brief: &str,
+    dossier: &MergeDossier,
+    gaps: &[String],
+) -> Vec<goose_swarm::TaskSpec> {
+    let mut siblings: Vec<ShardPlan> = dossier
+        .shards
+        .iter()
+        .map(|sh| ShardPlan {
+            id: last_segment(&sh.id).to_string(),
+            responsibility: sh
+                .note
+                .as_ref()
+                .map(|n| n.provides.join(", "))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| format!("(no README) pieces in {}", sh.folder)),
+            sections: Vec::new(),
+            provides: sh
+                .note
+                .as_ref()
+                .map(|n| n.provides.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let base = merger.shards.len();
+    let plans: Vec<ShardPlan> = gaps
+        .iter()
+        .enumerate()
+        .map(|(i, g)| ShardPlan {
+            id: format!("gap-{}", base + i + 1),
+            responsibility: format!(
+                "MERGE GAP sent out by the merger of `{}`: {g}",
+                merger.module
+            ),
+            sections: Vec::new(),
+            provides: candidate_names(g),
+        })
+        .collect();
+    siblings.extend(plans.iter().cloned());
+    plans
+        .iter()
+        .map(|p| {
+            let folder = format!("{SHARDS_DIR}/{}/{}", merger.module, p.id);
+            let id = format!("{}-{}", merger.module, p.id);
+            let brief = format!(
+                "MERGE GAP — the merger of `{}` read every shard's pieces and README and found this MISSING; \
+                 it is sent to you to build as a new shard, the merger folds it in when you finish:\n{}\n\n{}",
+                merger.module,
+                p.responsibility,
+                shard_brief(&merger.module, module_files, module_brief, p, &siblings, &folder, &merger.interface)
+            );
+            goose_swarm::TaskSpec {
+                id: id.clone(),
+                description: brief,
+                difficulty: goose_swarm::Difficulty::Hard,
+                preferred_model: None,
+                owned_files: vec![format!("{folder}/README.md")],
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                shard_of: Some(ShardOf {
+                    module: merger.module.clone(),
+                    shard: p.id.clone(),
+                    folder,
+                    responsibility: p.responsibility.clone(),
+                    interface: merger.interface.clone(),
+                }),
+                merger_of: None,
+            }
+        })
+        .collect()
+}
+
+/// What CODE found after the merge (MILD — reported, never a refusal).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct MergeCheck {
+    pub(super) parse_errors: Vec<(String, String)>,
+    pub(super) declared_present: Vec<String>,
+    pub(super) declared_missing: Vec<String>,
+    pub(super) dropped: Vec<(String, String)>,
+    pub(super) gaps_open: Vec<(String, String)>,
+    pub(super) merge_readme_present: bool,
+    pub(super) promoted: bool,
+}
+
+pub(super) async fn check_merge(
+    root: &std::path::Path,
+    dossier: &MergeDossier,
+    lang: super::TargetLang,
+    gaps_sent: &[String],
+) -> MergeCheck {
+    let mut parse_errors = Vec::new();
+    let mut final_symbols: Vec<Symbol> = Vec::new();
+    let mut final_text = String::new();
+    for f in &dossier.files {
+        let path = root.join(f);
+        if let Some(e) = parse_piece(&path).await {
+            if !e.contains("unchecked") {
+                parse_errors.push((f.clone(), e));
+            }
+        }
+        if let Ok(src) = std::fs::read_to_string(&path) {
+            final_symbols.extend(extract_symbols(&src, lang));
+            final_text.push_str(&src);
+            final_text.push('\n');
+        }
+    }
+    let mentions = |name: &str| -> bool {
+        let seg = last_segment(name);
+        final_symbols.iter().any(|s| same_symbol(name, &s.name))
+            || final_text.match_indices(seg).any(|(i, _)| {
+                let (before_text, rest) = final_text.split_at(i);
+                let before = before_text.chars().next_back();
+                let after = rest.split_at(seg.len()).1.chars().next();
+                !before.is_some_and(is_ident_char) && !after.is_some_and(is_ident_char)
+            })
+    };
+    let mut declared_present = Vec::new();
+    let mut declared_missing = Vec::new();
+    for e in &dossier.interface.exports {
+        if mentions(&e.name) {
+            declared_present.push(e.name.clone());
+        } else {
+            declared_missing.push(e.name.clone());
+        }
+    }
+    let merge_readme = std::fs::read_to_string(
+        root.join(SHARDS_DIR)
+            .join(&dossier.module)
+            .join(MERGE_README),
+    )
+    .ok();
+    let merge_fields = merge_readme
+        .as_deref()
+        .and_then(|t| parse_fields(t, &MERGE_FIELDS))
+        .unwrap_or_default();
+    let explained = |name: &str, field: usize| -> bool {
+        merge_fields
+            .get(field)
+            .is_some_and(|items| items.iter().any(|it| it.contains(name)))
+    };
+    let mut dropped = Vec::new();
+    for sh in &dossier.shards {
+        for s in sh.defines() {
+            if !mentions(&s.name) && !explained(&s.name, 1) {
+                dropped.push((sh.id.clone(), s.name.clone()));
+            }
+        }
+    }
+    let mut gaps_open = Vec::new();
+    for (sh, u) in &dossier.unfinished {
+        let sent = gaps_sent.iter().any(|g| {
+            candidate_names(u).iter().any(|n| g.contains(n))
+                || g.contains(u.as_str())
+                || u.contains(g.as_str())
+        });
+        let filled = merge_fields.get(2).is_some_and(|items| {
+            items.iter().any(|it| {
+                it.contains(u.as_str()) || candidate_names(u).iter().any(|n| it.contains(n))
+            })
+        }) || merge_fields.get(3).is_some_and(|items| {
+            items.iter().any(|it| {
+                it.contains(u.as_str()) || candidate_names(u).iter().any(|n| it.contains(n))
+            })
+        });
+        if !sent && !filled {
+            gaps_open.push((sh.clone(), u.clone()));
+        }
+    }
+    let promoted = parse_errors.is_empty()
+        && declared_missing.is_empty()
+        && gaps_open.is_empty()
+        && gaps_sent.is_empty()
+        && !dossier.files.iter().any(|f| !root.join(f).is_file());
+    MergeCheck {
+        parse_errors,
+        declared_present,
+        declared_missing,
+        dropped,
+        gaps_open,
+        merge_readme_present: merge_readme.is_some(),
+        promoted,
+    }
+}
+
+/// Field-line parser shared by the shard README (`README_FIELDS`) and the merge README
+/// (`MERGE_FIELDS`): `FIELD: item`, bullets/indented continuations belong to the field above,
+/// `none` is the empty list said aloud. None when no field line exists.
+pub(super) fn parse_fields(text: &str, fields: &[&str]) -> Option<Vec<Vec<String>>> {
+    let mut lists: Vec<Vec<String>> = vec![Vec::new(); fields.len()];
+    let field_of = |line: &str| -> Option<(usize, String)> {
+        let t = line
+            .trim()
+            .trim_start_matches(['#', '*', '-', '>', '•'])
+            .trim()
+            .trim_matches('`')
+            .trim_matches('*');
+        for (i, f) in fields.iter().enumerate() {
+            let Some((head, tail)) = t.split_at_checked(f.len()) else {
+                continue;
+            };
+            if head.eq_ignore_ascii_case(f) {
+                let rest = tail.trim_start_matches(['*', '`']).trim_start();
+                if let Some(r) = rest.strip_prefix(':') {
+                    return Some((i, r.trim().to_string()));
+                }
+                if rest.is_empty() {
+                    return Some((i, String::new()));
+                }
+            }
+        }
+        None
+    };
+    let push = |lists: &mut Vec<Vec<String>>, i: usize, item: &str| {
+        let item = item
+            .trim()
+            .trim_start_matches(['-', '*', '•'])
+            .trim()
+            .replace('`', "");
+        let item = item.trim();
+        if item.is_empty() || item.eq_ignore_ascii_case("none") || item == "-" {
+            return;
+        }
+        if !lists[i].iter().any(|x| x == item) {
+            lists[i].push(item.to_string());
+        }
+    };
+    let mut current: Option<usize> = None;
+    let mut seen = false;
+    for line in text.lines() {
+        if let Some((i, rest)) = field_of(line) {
+            seen = true;
+            current = Some(i);
+            push(&mut lists, i, &rest);
+            continue;
+        }
+        let Some(i) = current else {
+            continue;
+        };
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let is_item = line.starts_with(' ')
+            || line.starts_with('\t')
+            || t.starts_with('-')
+            || t.starts_with('*')
+            || t.starts_with('•');
+        if is_item {
+            push(&mut lists, i, t);
+        } else {
+            current = None;
+        }
+    }
+    seen.then_some(lists)
+}
+
+impl GooseAgentDispatcher {
+    /// At the merger's dispatch: CODE builds the dossier over the shards' folders, says what it
+    /// found (`merge_dossier`), and returns the numbered brief with the module's own brief behind.
+    pub(super) async fn merger_dispatch_brief(
+        &self,
+        req: &goose_swarm::DispatchRequest,
+        merger: &MergerOf,
+        root: &std::path::Path,
+        lang: super::TargetLang,
+    ) -> String {
+        let dossier = build_merge_dossier(root, merger, &req.owned_files, lang).await;
+        let mut ev = dossier.summary_json();
+        if let Some(o) = ev.as_object_mut() {
+            o.insert("event".into(), "merge_dossier".into());
+            o.insert("task_id".into(), req.task_id.clone().into());
+        }
+        self.events.write_value(ev);
+        format!(
+            "{}{}",
+            dossier.merger_brief(&root.display().to_string()),
+            req.description
+        )
+    }
+
+    /// At the merger's completion: gaps it sent out become follow-up shard specs (the scheduler
+    /// splices them and calls the merger back); otherwise CODE checks the final file — parse,
+    /// conformance to the declaration, pieces dropped without a stated reason, unfinished items
+    /// neither filled nor sent — and reports (`merge_checked`, `merge_piece_dropped`,
+    /// `merge_gap_open`, `merge_promoted`). MILD: the task completes either way.
+    pub(super) async fn record_merge_result(
+        &self,
+        req: &goose_swarm::DispatchRequest,
+        merger: &MergerOf,
+        root: &std::path::Path,
+        lang: super::TargetLang,
+        final_text: &str,
+    ) -> Vec<goose_swarm::TaskSpec> {
+        let dossier = build_merge_dossier(root, merger, &req.owned_files, lang).await;
+        let gaps = parse_merge_gaps(final_text);
+        let follow_ups = gap_specs(merger, &req.owned_files, &req.description, &dossier, &gaps);
+        for (spec, gap) in follow_ups.iter().zip(gaps.iter()) {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_gap",
+                "module": merger.module,
+                "shard": spec.id,
+                "task_id": req.task_id,
+                "missing": gap,
+                "folder": spec.shard_of.as_ref().map(|s| s.folder.clone()),
+            }));
+        }
+        let check = check_merge(root, &dossier, lang, &gaps).await;
+        for (shard, symbol) in &check.dropped {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_piece_dropped",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "shard": shard,
+                "symbol": symbol,
+            }));
+        }
+        for (shard, item) in &check.gaps_open {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_gap_open",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "shard": shard,
+                "item": item,
+            }));
+        }
+        self.events.write_value(serde_json::json!({
+            "event": "merge_checked",
+            "module": merger.module,
+            "task_id": req.task_id,
+            "files": req.owned_files,
+            "parse_errors": check.parse_errors.iter().map(|(f, e)| serde_json::json!({"file": f, "error": e})).collect::<Vec<_>>(),
+            "declared_present": check.declared_present,
+            "declared_missing": check.declared_missing,
+            "dropped": check.dropped.len(),
+            "gaps_open": check.gaps_open.len(),
+            "gaps_sent": gaps,
+            "merge_readme_present": check.merge_readme_present,
+            "promoted": check.promoted,
+        }));
+        if check.promoted {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_promoted",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "files": req.owned_files,
+            }));
+        }
+        follow_ups
+    }
+}
+
+#[cfg(test)]
+mod merger_tests {
+    use super::*;
+    use goose_swarm::DeclaredExport;
+
+    fn viz_interface() -> ModuleInterface {
+        ModuleInterface {
+            exports: vec![
+                DeclaredExport {
+                    name: "window.vs7dbg.pick".into(),
+                    kind: "function".into(),
+                    signature: "pick(sx, sy) -> {id, index} | null".into(),
+                    purpose: "pick".into(),
+                },
+                DeclaredExport {
+                    name: "buildScene".into(),
+                    kind: "function".into(),
+                    signature: "buildScene(data) -> void".into(),
+                    purpose: "fill buffers".into(),
+                },
+                DeclaredExport {
+                    name: "drawBrush".into(),
+                    kind: "function".into(),
+                    signature: "drawBrush(ids) -> void".into(),
+                    purpose: "dim non-members".into(),
+                },
+            ],
+            shared_state: "S = {yaw, pitch, distance, brush: Set<id>}".into(),
+            layout: vec![
+                "constants".into(),
+                "state".into(),
+                "render".into(),
+                "pick".into(),
+                "api".into(),
+            ],
+        }
+    }
+
+    /// The archived r6c viz.js (39,519 bytes) carries FIVE names defined twice — hoisted empty
+    /// stubs at lines 98-102 redefined later (`buildScene`, `clearBrush`, `ensureSized`,
+    /// `updateLabels`, `uploadSlotFloat`); the extractor finds function heads, arrow consts,
+    /// dotted assignments and object methods, once each per source, so a dossier over shards
+    /// that each define one of them names the duplicate.
+    #[test]
+    fn the_extractor_finds_every_definition_shape_once() {
+        let js = "  function ensureSized() {}\n  function updateLabels() {}\n  const clamp = (v, lo, hi) => v;\n  let render = function (dt) {};\n  window.vs7dbg.pick = function(sx, sy) { return null; };\n  window.vs7dbg = {\n    layout() { return L; },\n    sceneDigest: function() {},\n    camera: () => S,\n  };\n  function ensureSized() { real(); }\n  if (x) { y(); }\n  for (let i = 0; i < n; i++) {}\n";
+        let syms = extract_symbols(js, super::super::TargetLang::TypeScript);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "ensureSized",
+                "updateLabels",
+                "clamp",
+                "render",
+                "window.vs7dbg.pick",
+                "layout",
+                "sceneDigest",
+                "camera"
+            ],
+            "{syms:?}"
+        );
+        assert_eq!(
+            syms.iter()
+                .find(|s| s.name == "window.vs7dbg.pick")
+                .unwrap()
+                .params,
+            "sx, sy"
+        );
+        assert_eq!(
+            syms.iter().find(|s| s.name == "clamp").unwrap().params,
+            "v, lo, hi"
+        );
+        let py = "class Store:\n    def __init__(self, path):\n        pass\n\nasync def fetch_page(cursor=None):\n    pass\ndef helper(a, b):\n    return a\n";
+        let syms = extract_symbols(py, super::super::TargetLang::Python);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["Store", "__init__", "fetch_page", "helper"]);
+        assert!(same_symbol("window.vs7dbg.pick", "pick"));
+        assert!(!same_symbol("window.vs7dbg.pick", "pickPixel"));
+        assert_eq!(
+            normalize_params("sx: number, sy = 0, ...rest"),
+            vec!["sx", "sy", "rest"]
+        );
+    }
+
+    /// r6c's web-viz as S1 splits it (render / pick-camera / labels-brush-api), with the pieces the
+    /// archived viz.js would have produced: `buildScene` in two shards (the archive's hoisted stub
+    /// and its real body), `pick` defined with `(x, y)` against the declared `(sx, sy)`, the
+    /// labels shard ASSUMING `scene.points` is an array nobody provides, `drawBrush` declared and
+    /// written by nobody, one UNFINISHED item. The dossier names each; the brief numbers each; the
+    /// after-check on an assembled file reports what was dropped and what stayed open.
+    #[tokio::test]
+    async fn the_dossier_names_duplicates_disagreements_unmet_assumptions_and_missing_exports() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "function buildScene(data) {}\nfunction render() {}\nfunction initGL() {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\n- render()\n- initGL()\nASSUMES: S.dirty is a bool\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/pick-camera", &[
+            ("pick.js", "function readPickAt(sx, sy) {}\nwindow.vs7dbg.pick = function(x, y) { return readPickAt(x, y); };\nfunction buildScene(data) { /* stub */ }\n"),
+            ("README.md", "PROVIDES: readPickAt(sx, sy); window.vs7dbg.pick(x, y)\nASSUMES: buildScene fills geoCPU\nUNFINISHED: inertia coast stop\nCHECKED_WITH: node --check pick.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/labels-brush-api", &[
+            ("labels.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: `scene.points` is an array\nUNFINISHED: none\nCHECKED_WITH: node --check labels.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec![
+                "web-viz-render".into(),
+                "web-viz-pick-camera".into(),
+                "web-viz-labels-brush-api".into(),
+            ],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/pick-camera".into(),
+                ".swarm/shards/web-viz/labels-brush-api".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.duplicates,
+            vec![(
+                "buildScene".to_string(),
+                vec![
+                    "web-viz-render".to_string(),
+                    "web-viz-pick-camera".to_string()
+                ]
+            )]
+        );
+        assert_eq!(d.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            d.signature_disagreements.len(),
+            1,
+            "{:?}",
+            d.signature_disagreements
+        );
+        assert_eq!(d.signature_disagreements[0].0, "window.vs7dbg.pick");
+        assert_eq!(d.signature_disagreements[0].2, "x, y");
+        assert_eq!(
+            d.assumptions_unmet,
+            vec![(
+                "web-viz-labels-brush-api".to_string(),
+                "scene.points is an array".to_string()
+            )]
+        );
+        assert_eq!(
+            d.unfinished,
+            vec![(
+                "web-viz-pick-camera".to_string(),
+                "inertia coast stop".to_string()
+            )]
+        );
+        assert!(d.prior_merge.is_none());
+        let brief = d.merger_brief("/run");
+        assert!(brief.contains("1. `buildScene` is defined in shards `web-viz-render` and `web-viz-pick-camera` — keep ONE"), "{brief}");
+        assert!(brief.contains("2. `window.vs7dbg.pick` is declared `pick(sx, sy) -> {id, index} | null` but shard `web-viz-pick-camera` defines it with `(x, y)`"), "{brief}");
+        assert!(brief.contains("3. shard `web-viz-labels-brush-api` ASSUMES \"scene.points is an array\" and no shard provides it"), "{brief}");
+        assert!(
+            brief.contains("4. `drawBrush` is DECLARED and defined by no shard"),
+            "{brief}"
+        );
+        assert!(
+            brief
+                .contains("5. shard `web-viz-pick-camera` left UNFINISHED: \"inertia coast stop\""),
+            "{brief}"
+        );
+        assert!(brief.contains("6. ASSEMBLE `web/viz.js` in the declared order — constants → state → render → pick → api"), "{brief}");
+        assert!(brief.contains("ASSEMBLE, DON'T RETYPE"), "{brief}");
+        assert!(brief.contains("MERGE_GAP: <what is missing"), "{brief}");
+        assert!(
+            !brief.to_lowercase().contains("merge the module"),
+            "never the generic task"
+        );
+        let summary = d.summary_json();
+        assert_eq!(summary["pieces"], 3);
+        assert_eq!(summary["duplicates"][0]["symbol"], "buildScene");
+
+        // The merger assembled a file that keeps render's buildScene, drops initGL WITHOUT saying
+        // so, writes pick with the declared params, never writes drawBrush, fills nothing, sends
+        // the inertia item out.
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(root.join("web/viz.js"), "function buildScene(data) {}\nfunction render() {}\nfunction readPickAt(sx, sy) {}\nwindow.vs7dbg = { pick(sx, sy) { return readPickAt(sx, sy); } };\nfunction updateLabels() {}\n").unwrap();
+        std::fs::write(root.join(".swarm/shards/web-viz/MERGE.md"), "KEPT: render's buildScene (the real body)\nDROPPED: none\nFILLED: none\nSENT_OUT: inertia coast stop\n").unwrap();
+        let gaps = parse_merge_gaps("Merged.\n\nMERGE_GAP: inertia coast stop — camera coast must stop under 2 deg/s (spec §8 Camera)\nMERGE_GAP: drawBrush(ids) — dim non-members to 0.30\n");
+        assert_eq!(gaps.len(), 2);
+        let check = check_merge(root, &d, super::super::TargetLang::TypeScript, &gaps).await;
+        assert!(
+            check
+                .declared_present
+                .contains(&"window.vs7dbg.pick".to_string())
+                && check.declared_present.contains(&"buildScene".to_string()),
+            "{check:?}"
+        );
+        assert_eq!(check.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            check.dropped,
+            vec![("web-viz-render".to_string(), "initGL".to_string())],
+            "an unexplained drop is named; the explained duplicate is not: {:?}",
+            check.dropped
+        );
+        assert!(
+            check.gaps_open.is_empty(),
+            "the unfinished item was sent out: {:?}",
+            check.gaps_open
+        );
+        assert!(
+            !check.promoted,
+            "a declared export is missing and gaps are out"
+        );
+        let specs = gap_specs(&merger, &files, "web-viz brief", &d, &gaps);
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].id, "web-viz-gap-4");
+        assert_eq!(
+            specs[0].owned_files,
+            vec![".swarm/shards/web-viz/gap-4/README.md"]
+        );
+        assert!(specs[0].deps.is_empty());
+        let sh = specs[0].shard_of.as_ref().unwrap();
+        assert_eq!(sh.module, "web-viz");
+        assert_eq!(sh.folder, ".swarm/shards/web-viz/gap-4");
+        assert!(specs[0]
+            .description
+            .contains("MERGE GAP — the merger of `web-viz`"));
+        assert!(specs[0].description.contains("inertia coast stop"));
+        assert!(
+            specs[0]
+                .description
+                .contains("`window.vs7dbg.pick` (function): `pick(sx, sy)"),
+            "the declaration rides"
+        );
+        assert!(
+            specs[1].description.contains("`gap-4`: MERGE GAP"),
+            "the gap siblings know each other"
+        );
+        // A second pass sees the prior merge README and the assembled file's symbols.
+        let d2 =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert!(d2.prior_merge.is_some());
+        assert!(d2.merger_brief("/run").contains("SECOND PASS"));
+        assert!(d2
+            .final_file_symbols
+            .iter()
+            .any(|s| s.name == "updateLabels"));
+    }
+
+    #[test]
+    fn merge_fields_and_gap_lines_parse_in_markdown_dress() {
+        let f = parse_fields("## KEPT\n- render's buildScene\n**DROPPED:** `initGL` (dead)\nFILLED: none\nSENT_OUT: drawBrush\n", &MERGE_FIELDS).unwrap();
+        assert_eq!(f[0], vec!["render's buildScene"]);
+        assert_eq!(f[1], vec!["initGL (dead)"]);
+        assert!(f[2].is_empty());
+        assert_eq!(f[3], vec!["drawBrush"]);
+        assert!(parse_fields("nothing here", &MERGE_FIELDS).is_none());
+        assert_eq!(
+            parse_merge_gaps("- `MERGE_GAP: a`\nMERGE_GAP: none\n**MERGE_GAP:** a\nmerge_gap: b"),
+            vec!["a", "b"]
+        );
+        assert!(parse_merge_gaps("MERGE_GAP:").is_empty());
     }
 }

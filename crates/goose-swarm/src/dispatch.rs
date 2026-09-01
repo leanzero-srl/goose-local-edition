@@ -49,6 +49,11 @@ pub struct TaskRunOutput {
     /// A stalled task that happens to have written its files is not the same event as a task that
     /// worked, and an engine that cannot tell them apart cannot be tuned on either.
     pub salvaged: bool,
+    /// THE SPLIT (2c S4): a MERGER's `MERGE_GAP` requests as fully-formed shard specs. The
+    /// scheduler splices them through the merge-gap door (its own ownership repair: same module,
+    /// files only under the module's shard folder, no deps) and re-arms the merger on them; the
+    /// merger is Done only when a completion carries none. Empty for every other task.
+    pub follow_ups: Vec<crate::dag::TaskSpec>,
 }
 
 impl From<String> for TaskRunOutput {
@@ -58,6 +63,7 @@ impl From<String> for TaskRunOutput {
             session_id: None,
             tool_calls: Vec::new(),
             salvaged: false,
+            follow_ups: Vec::new(),
         }
     }
 }

@@ -100,6 +100,20 @@ becomes the MERGER (keeps the final file, depends on every shard). At dispatch a
 shard without one is a loud `merge_note_missing{module, shard, reason}` (the deliverable gate's own retry,
 no new count). `TaskSpec`/`DispatchRequest` carry `shard_of` / `merger_of`; the scheduler copies them at claim.
 
+THE MERGER (S4) is a JUDICIOUS MODEL with a SPECIFIC brief: at its dispatch CODE builds the dossier
+(`build_merge_dossier` — parse per piece, cross-shard symbol table: duplicates, signatures disagreeing with the
+declaration, declared names nobody defines; READMEs' ASSUMES no sibling provides; UNFINISHED items; the prior
+MERGE.md on a second pass) → `merge_dossier{…}` and a NUMBERED task list (`merger_brief`: "1. `x` is defined in
+shards a and b — keep ONE…", "…ASSEMBLE, DON'T RETYPE: `cat` the pieces in the declared order, then edit the
+glue"), never "merge the module". The merger writes the final file(s) and `.swarm/shards/<module>/MERGE.md`
+(`KEPT / DROPPED / FILLED / SENT_OUT`); a gap it judges too big is a `MERGE_GAP: …` line → `gap_specs` builds a
+new shard (`gap-<k>/`) and the scheduler's `splice_merge_gaps` door (its own ownership repair; enumerated in
+`every_dag_entry_walks_through_the_same_repairs`) splices it, emits `merge_gap`, and RE-ARMS the merger on it
+(`merge_rearmed`) — continuous, never a barrier. CODE checks after (`check_merge`): parse, every declared export
+present, `merge_piece_dropped{shard, symbol}` for a piece symbol absent without a DROPPED line, `merge_gap_open`
+for an UNFINISHED item neither filled nor sent; `merge_checked{…, promoted}` and `merge_promoted` when parse +
+conformance pass with no gap open. MILD: the task completes either way; REPAIR owns what is left.
+
 ## The LLM REVIEW round is deleted (VA-014, 2026-09-01; was one round since `5173eab67`)
 
 `review_once`, `review_plan_fanned`/`review_plan_part`, `review_user_message`, `review_must_fix_block`,
