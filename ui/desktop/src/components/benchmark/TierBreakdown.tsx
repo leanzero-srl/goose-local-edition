@@ -1,4 +1,5 @@
-import { BenchmarkRow, Tier, TIER_COLORS, TIER_LABELS } from './baselines';
+import { Chip, RADIUS, SURFACE, TNUM, TONE_DOT, TYPE, WEIGHT, cx } from '../lz';
+import { BenchmarkRow, Tier } from './baselines';
 
 const TIERS: Tier[] = ['A', 'B', 'C', 'D'];
 
@@ -6,6 +7,10 @@ const TIERS: Tier[] = ['A', 'B', 'C', 'D'];
  * Per-tier bars, one row per entrant. This is the part that turns a score into a diagnosis: a build
  * can sit at A 100 / B 0 — perfectly structured with nothing flowing through it — and only the split
  * shows it. A single number would call that "9%" and tell you nothing about what to fix.
+ *
+ * Every bar is the accent. The four tiers are told apart by their COLUMN and the "A 88%" label under
+ * each bar, never by a hue — the node ramp is node identity only (ui/desktop/DESIGN.md), and a
+ * legend of coloured squares was the thing that made tiers look like nodes.
  */
 export function TierBreakdown({ rows }: { rows: BenchmarkRow[] }) {
   if (!rows.length) return null;
@@ -13,55 +18,36 @@ export function TierBreakdown({ rows }: { rows: BenchmarkRow[] }) {
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[680px]">
-        <div className="mb-3 flex flex-wrap gap-4">
-          {TIERS.map((tier) => (
-            <span key={tier} className="flex items-center gap-2 text-xs text-text-secondary">
-              <span
-                className="inline-block h-3 w-3 rounded-[2px]"
-                style={{ backgroundColor: TIER_COLORS[tier] }}
-              />
-              {TIER_LABELS[tier]}
-            </span>
-          ))}
-        </div>
-
-        {rows.map((row, i) => (
+        {rows.map((row) => (
           <div
-            key={`${row.label}-${i}`}
-            className="flex items-center gap-3 border-t border-border-primary py-2.5"
+            key={row.mine ? `mine:${row.label}` : row.label}
+            className={cx(
+              'flex items-center gap-3 border-t py-2.5 first:border-t-0',
+              SURFACE.hairline
+            )}
           >
             <div
-              className="w-[190px] shrink-0 text-[13px] text-text-primary"
-              style={{ fontWeight: row.mine ? 700 : 500 }}
-            >
-              {row.label}
-              {row.mine && (
-                <span className="ml-2 rounded-[2px] bg-[var(--color-block-teal)] px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-white">
-                  YOURS
-                </span>
+              className={cx(
+                'flex w-[190px] shrink-0 items-center gap-2',
+                TYPE.body,
+                row.mine && WEIGHT.semibold
               )}
+            >
+              <span className="truncate">{row.label}</span>
+              {row.mine && <Chip tone="accent">yours</Chip>}
             </div>
             <div className="flex flex-1 gap-2">
               {TIERS.map((tier) => {
                 const value = Math.min(1, Math.max(0, row.tiers[tier] ?? 0));
                 return (
                   <div key={tier} className="flex-1">
-                    <div
-                      className="h-2 w-full rounded-[2px]"
-                      style={{ backgroundColor: 'var(--color-background-secondary)' }}
-                    >
+                    <div className={cx('h-2 w-full', RADIUS.pill, SURFACE.inset)}>
                       <div
-                        className="h-2 rounded-[2px]"
-                        style={{
-                          width: `${Math.max(2, value * 100)}%`,
-                          backgroundColor: TIER_COLORS[tier],
-                        }}
+                        className={cx('h-2', RADIUS.pill, TONE_DOT.accent)}
+                        style={{ width: `${Math.max(2, value * 100)}%` }}
                       />
                     </div>
-                    <div
-                      className="mt-1 text-[10px] text-text-secondary"
-                      style={{ fontVariantNumeric: 'tabular-nums' }}
-                    >
+                    <div className={cx('mt-1', TYPE.meta, TNUM)}>
                       {tier} {(value * 100).toFixed(0)}%
                     </div>
                   </div>

@@ -140,11 +140,3 @@ export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
   ],
 };
 export const BASELINES: BenchmarkRow[] = BASELINES_BY_TIER[DEFAULT_TIER];
-
-/** Solid, saturated, and distinct — mirrors --color-node-* rather than tinting one hue. */
-export const TIER_COLORS: Record<Tier, string> = {
-  A: 'var(--color-node-1)',
-  B: 'var(--color-node-2)',
-  C: 'var(--color-node-4)',
-  D: 'var(--color-node-5)',
-};
