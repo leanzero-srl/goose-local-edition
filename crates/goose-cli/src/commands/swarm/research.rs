@@ -1547,10 +1547,11 @@ fn slice_decisions_block(
     let mut out = String::new();
     if !settled.is_empty() {
         out.push_str(&format!(
-            "\n\nDECISIONS SETTLED AT PLAN TIME BY RESEARCH that name this slice — the verdict, \
+            "\n\n{} BY RESEARCH that name this slice — the verdict, \
              the request-grounded lines and the paragraphs addressed to this slice, verbatim and \
              BINDING; implement each exactly as written and never substitute your own \
-             convention (a decision naming no slice is repeated in every brief):\n{settled}"
+             convention (a decision naming no slice is repeated in every brief):\n{settled}",
+            decisions::SETTLED_DECISIONS_HEADER
         ));
     }
     out.push_str(&decisions::decisions_brief_block(&without_transcript));

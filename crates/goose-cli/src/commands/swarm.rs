@@ -74,7 +74,6 @@ use research::{
     persist_request_text, persist_research_row, relay_note, relay_targets, research_dispatch_text,
     research_fan_lanes, research_prompt_head, research_request_block, research_schema,
     research_sources_block, research_system_text, ResearchQuestion, ResearchRow, REQUEST_FILE,
-    RESEARCH_ANSWERED,
 };
 mod research_plan;
 use research_plan::{covering_mini, route_questions_to_decisions};
@@ -90,6 +89,10 @@ mod plan_repairs;
 use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
+mod ledger_block;
+#[cfg(test)]
+use ledger_block::render_ledger_block;
+use ledger_block::{read_ledger_rollup, render_ledger_block_measured, truncate_block_at_line};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -22054,8 +22057,9 @@ async fn run_linear_plan(
     // second header appended to `user_decisions`) was a second rendering of the same facts on
     // every dispatch (r6c: 4,500 chars beside the brief's own 5,582-char block, in all eight
     // build prompts) and is deleted (VA-030); `user_decisions` carries the USER's own answers
-    // only. A repair shard, which has no slice brief, still reads the decisions lane's minis in
-    // its ledger block.
+    // only. A repair shard has no slice brief: it reads its OWNING task's brief block, found
+    // again in the loaded DAG (`decisions::BriefDecisions`, VA-030 D11) — the channel the
+    // deletion first left empty (the refuter's finding on D10-3).
 
     // ---- SYNTHESIS, the straight line ----------------------------------------------------------
     // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
@@ -27007,429 +27011,6 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     Some(rollup)
 }
 
-/// The roll-up as the renderers consume it. None (ledger absent/unreadable) must render as an
-/// EMPTY block downstream — the dispatch then proceeds byte-identical, never blocked.
-fn read_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
-    serde_json::from_str(&std::fs::read_to_string(root.join(".swarm").join("ledger.json")).ok()?)
-        .ok()
-}
-
-/// F196-style truncation for the ledger block: cut on a LINE boundary and say so. A block cut
-/// mid-line reads as a complete fact that is wrong; the never-drop content is rendered at the
-/// top precisely so a tail cut can only eat the droppable end.
-fn truncate_block_at_line(s: &str, budget: usize) -> String {
-    if s.chars().count() <= budget {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(budget.saturating_sub(60)).collect();
-    let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
-    format!("{whole}\n… LEDGER TRUNCATED — the full state is in .swarm/ledger.json.\n")
-}
-
-/// §II.2 MESSAGE FORMATION — the read-before-act block, one renderer for every consumer (the
-/// sink, the repair shards, a BUILD worker's don't-repeat facts). Pure over `.swarm/ledger.json`
-/// plus an optional engine-run collect-only tail the CALLER produced (keeping the render itself
-/// free of subprocesses). Absent/unreadable/empty ledger renders "" and the dispatch proceeds
-/// byte-identical — the injection IS the whole mechanism, nothing is ever blocked on it.
-///
-/// Content order is the drop order in reverse: open defects, gate findings and NOT FIXED
-/// verdicts first (never dropped), then the test table and the §II.3 don't-repeat facts, then
-/// per-class failure tails, and only then the droppables — ok-only command classes and each
-/// lane's final_text, removed in that order when over budget, with a line-boundary truncation
-/// as the last resort. No time value orders or gates anything here.
-fn render_ledger_block(
-    root: &Path,
-    task_id: &str,
-    deps: &[String],
-    all_files: &[String],
-    budget: usize,
-    collect_only: Option<&str>,
-) -> String {
-    let Some(rollup) = read_ledger_rollup(root) else {
-        return String::new();
-    };
-    let empty_map = serde_json::Map::new();
-    let tasks = rollup
-        .get("tasks")
-        .and_then(|t| t.as_object())
-        .unwrap_or(&empty_map);
-    if tasks.is_empty()
-        && rollup
-            .get("gate")
-            .and_then(|g| g.as_array())
-            .is_none_or(|v| v.is_empty())
-        && rollup
-            .pointer("/repair/rounds")
-            .and_then(|r| r.as_array())
-            .is_none_or(|v| v.is_empty())
-        // A plan-time-only ledger (research rows, nothing built yet) still INFORMS.
-        && rollup
-            .get("research")
-            .and_then(|r| r.as_array())
-            .is_none_or(|v| v.is_empty())
-    {
-        return String::new();
-    }
-    // Dependencies' rows carry the facts THIS task builds on — they render before strangers'.
-    let ordered_tasks: Vec<(&String, &serde_json::Value)> = {
-        let mut v: Vec<_> = tasks.iter().collect();
-        v.sort_by_key(|(id, _)| (!deps.contains(*id), (*id).clone()));
-        v
-    };
-
-    let mut never = String::new();
-    never.push_str(
-        "MEASURED STATE OF THIS TREE — read before acting. Every line is a stat, a command \
-         record, or a gate probe from this run's own ledger; trust it over re-deriving.\n",
-    );
-    // GEN-6a #3: an incomplete table must SAY it is incomplete — a truncated roll-up read as
-    // whole is how a dependent builds on history that is not there.
-    if let Some(dropped) = rollup.get("rows_dropped").and_then(|d| d.as_array()) {
-        if !dropped.is_empty() {
-            never.push_str(&format!(
-                "WARNING — {} ledger row(s) were UNREADABLE and are missing from this table \
-                 (the history below is INCOMPLETE): {}\n",
-                dropped.len(),
-                dropped
-                    .iter()
-                    .map(|r| {
-                        format!(
-                            "{} ({})",
-                            r.get("file").and_then(|f| f.as_str()).unwrap_or("?"),
-                            r.get("error").and_then(|e| e.as_str()).unwrap_or("?")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-        }
-    }
-    let open_defects: Vec<&str> = rollup
-        .get("open_defects")
-        .and_then(|d| d.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-        .unwrap_or_default();
-    if !open_defects.is_empty() {
-        never
-            .push_str("OPEN DEFECTS (re-stat'd at the last ledger write; a fixed one vanishes):\n");
-        for d in &open_defects {
-            never.push_str(&format!("  - {d}\n"));
-        }
-    }
-    // r5 item 3: a measured fact, deliberately NOT under "OPEN DEFECTS" — an extra file may be a
-    // documented plan decision (r5's brush.js was), so the line hands the excess to the reader
-    // with the doc as the decider, never as an instruction to delete.
-    if let Some(exceeded) = rollup.get("spec_set_exceeded").and_then(|d| d.as_array()) {
-        for f in exceeded {
-            let listify = |key: &str| -> String {
-                match f.get(key).and_then(|v| v.as_array()) {
-                    Some(a) => a
-                        .iter()
-                        .filter_map(|x| x.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    // Empty means empty: exceeded_facts builds every fact with these arrays; the
-                    // one arm without them (the unparseable-sidecar fact) carries its own `error`
-                    // field, so nothing-to-list here IS the truth, not a swallowed failure.
-                    None => String::new(),
-                }
-            };
-            never.push_str(&format!(
-                "SPEC-ENUMERATED FILE SET EXCEEDED — the spec freezes {}/ to [{}]; the tree also \
-                 holds: [{}]. An extra file may be a documented decision: verify it is named in \
-                 the delivered docs and stays inside any budget the spec counts over the frozen \
-                 set; never delete on this line alone.\n",
-                f.get("area").and_then(|a| a.as_str()).unwrap_or("?"),
-                listify("frozen"),
-                listify("extra"),
-            ));
-        }
-    }
-    if let Some(gates) = rollup.get("gate").and_then(|g| g.as_array()) {
-        if let Some(g) = gates.last() {
-            let findings: Vec<&str> = g
-                .get("findings")
-                .and_then(|f| f.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-                .unwrap_or_default();
-            if !findings.is_empty() {
-                never.push_str(&format!(
-                    "GATE (round {}) found, against the RUNNING app:\n",
-                    g.get("round").and_then(|r| r.as_u64()).unwrap_or(0)
-                ));
-                for f in &findings {
-                    never.push_str(&format!("  - {f}\n"));
-                }
-            }
-        }
-    }
-    if let Some(rounds) = rollup.pointer("/repair/rounds").and_then(|r| r.as_array()) {
-        let mut lines = String::new();
-        for r in rounds {
-            let round = r.get("round").and_then(|x| x.as_u64()).unwrap_or(0);
-            let shard = r.get("shard").and_then(|s| s.as_str()).unwrap_or("?");
-            for v in r
-                .get("verdicts")
-                .and_then(|v| v.as_array())
-                .unwrap_or(&Vec::new())
-            {
-                let verdict = v.get("verdict").and_then(|s| s.as_str()).unwrap_or("");
-                // FIXED and NOT REAL are history; NOT FIXED is a live instruction — an
-                // approach that already failed, which the next attempt must not repeat.
-                if verdict != "NOT FIXED" {
-                    continue;
-                }
-                lines.push_str(&format!(
-                    "  - round {round}, {shard}: FINDING {} NOT FIXED — {}{}\n",
-                    v.get("n").and_then(|n| n.as_u64()).unwrap_or(0),
-                    v.get("detail").and_then(|d| d.as_str()).unwrap_or(""),
-                    v.get("finding")
-                        .and_then(|f| f.as_str())
-                        .map(|f| format!(" (finding: {f})"))
-                        .unwrap_or_default(),
-                ));
-            }
-        }
-        if !lines.is_empty() {
-            never.push_str(
-                "ALREADY TRIED AND NOT FIXED (do not retry the same approach — try a different one):\n",
-            );
-            never.push_str(&lines);
-        }
-    }
-    let mut outside: std::collections::BTreeSet<String> = Default::default();
-    for (id, t) in &ordered_tasks {
-        for p in t
-            .pointer("/fs_delta/outside_manifest")
-            .and_then(|x| x.as_array())
-            .unwrap_or(&Vec::new())
-        {
-            if let Some(s) = p.as_str() {
-                outside.insert(format!("{s} (written during `{id}`)"));
-            }
-        }
-    }
-    if !outside.is_empty() {
-        never.push_str("FILES OUTSIDE THE PLAN — they exist on disk but NO task owns them:\n");
-        for o in &outside {
-            never.push_str(&format!("  - {o}\n"));
-        }
-    }
-
-    let mut mid = String::new();
-    {
-        // The test table: every test file the ledger knows, its owning lane, how often that
-        // lane ran pytest, and the lane's last recorded outcome — the state the r2 sink paid
-        // 3 whole-suite re-runs to learn.
-        let mut table = String::new();
-        for (id, t) in &ordered_tasks {
-            let owned: Vec<&str> = t
-                .get("owned_files")
-                .and_then(|o| o.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let test_files: Vec<&str> = owned
-                .iter()
-                .copied()
-                .filter(|f| {
-                    let base = f.rsplit('/').next().unwrap_or(f);
-                    base.starts_with("test_") || base.ends_with("_test.py")
-                })
-                .collect();
-            if test_files.is_empty() {
-                continue;
-            }
-            let runs = t
-                .pointer("/commands/test/count")
-                .and_then(|c| c.as_u64())
-                .unwrap_or(0);
-            let outcome = t
-                .pointer("/last_pytest_filewide/summary/raw")
-                .and_then(|r| r.as_str())
-                .or_else(|| {
-                    t.pointer("/last_pytest/summary/raw")
-                        .and_then(|r| r.as_str())
-                })
-                .map(|r| format!("last: {r}"))
-                .unwrap_or_else(|| "never run by its lane".to_string());
-            table.push_str(&format!(
-                "  - {} — lane `{id}`: pytest ran {runs}x, {outcome}\n",
-                test_files.join(" + "),
-            ));
-        }
-        if !table.is_empty() {
-            mid.push_str("TEST TABLE — this IS the suite's state:\n");
-            mid.push_str(&table);
-        }
-        if let Some(c) = collect_only {
-            mid.push_str(&format!(
-                "  `pytest --collect-only` has ALREADY been run; it FAILS at import:\n    {}\n",
-                c.trim().replace('\n', "\n    ")
-            ));
-        }
-        // §II.3 — the don't-repeat facts as INPUT, never a block: no tool is blocked, no retry
-        // refused; the model is handed the table instead of paying ~79 s a turn to re-derive it.
-        let total_runs: u64 = tasks
-            .values()
-            .filter_map(|t| t.pointer("/commands/test/count").and_then(|c| c.as_u64()))
-            .sum();
-        let lanes = tasks
-            .values()
-            .filter(|t| {
-                t.pointer("/commands/test/count")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(0)
-                    > 0
-            })
-            .count();
-        if total_runs > 0 {
-            let last = rollup
-                .pointer("/last_full_suite/summary/raw")
-                .and_then(|r| r.as_str())
-                .map(|r| format!(" Last full run: {r} — the failing names are in the table above."))
-                .unwrap_or_default();
-            mid.push_str(&format!(
-                "DO NOT RE-DERIVE: pytest already ran {total_runs} time(s) across {lanes} lane(s) \
-                 before this dispatch.{last} Do not re-run the whole suite to learn its state; run \
-                 a single test only after an edit that targets its failure.\n"
-            ));
-        }
-        // The last failure per command class, dependencies first — the error text the next
-        // action should start from instead of reproducing it.
-        let mut fails = String::new();
-        for (id, t) in &ordered_tasks {
-            for (class, c) in t
-                .get("commands")
-                .and_then(|c| c.as_object())
-                .unwrap_or(&serde_json::Map::new())
-            {
-                let tail = c
-                    .get("last_failure_tail")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("");
-                if !tail.is_empty() {
-                    fails.push_str(&format!("  - `{id}` {class}: {tail}\n"));
-                }
-            }
-        }
-        if !fails.is_empty() {
-            mid.push_str("LAST FAILURE per lane and command class (start from this error text):\n");
-            mid.push_str(&fails);
-        }
-    }
-
-    // Droppables, in drop order: the plan-time research answers go first (they are the
-    // judge_established class this slot was reserved for — settled decisions, not measured
-    // state), then ok-only command classes, then lane self-reports. Dropped whole on overflow —
-    // never a defect, a gate finding, or a NOT FIXED verdict.
-    let research_section = {
-        let mut s = String::new();
-        for r in rollup
-            .get("research")
-            .and_then(|r| r.as_array())
-            .unwrap_or(&Vec::new())
-        {
-            if r.get("status").and_then(|x| x.as_str()) != Some(RESEARCH_ANSWERED) {
-                // An unanswered question is not re-stated here: its absence already rode
-                // `research_unanswered` and the owning brief carries the raw question.
-                continue;
-            }
-            let q = r.get("question").and_then(|x| x.as_str()).unwrap_or("?");
-            let a = r.get("answer").and_then(|x| x.as_str()).unwrap_or("");
-            s.push_str(&format!(
-                "  - Q: {q}\n    A: {}\n",
-                head_to_sentence_end(a, 400).replace('\n', " ")
-            ));
-        }
-        if s.is_empty() {
-            s
-        } else {
-            format!(
-                "SETTLED AT PLAN TIME — research answers (rank below the measured state above; \
-                 the spec and USER DECISIONS outrank these):\n{s}"
-            )
-        }
-    };
-    let ok_classes = {
-        let mut s = String::new();
-        for (id, t) in &ordered_tasks {
-            let classes: Vec<String> = t
-                .get("commands")
-                .and_then(|c| c.as_object())
-                .unwrap_or(&serde_json::Map::new())
-                .iter()
-                .filter(|(_, c)| {
-                    c.get("last_failure_tail")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .is_empty()
-                })
-                .map(|(class, c)| {
-                    format!(
-                        "{class} {}x",
-                        c.get("count").and_then(|x| x.as_u64()).unwrap_or(0)
-                    )
-                })
-                .collect();
-            if !classes.is_empty() {
-                s.push_str(&format!("  - `{id}` ran clean: {}\n", classes.join(", ")));
-            }
-        }
-        if s.is_empty() {
-            s
-        } else {
-            format!("COMMANDS THAT RAN CLEAN (no need to repeat them):\n{s}")
-        }
-    };
-    let final_texts = {
-        let mut s = String::new();
-        for (id, t) in &ordered_tasks {
-            if *id == task_id {
-                continue;
-            }
-            let text = t
-                .get("final_text")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim();
-            if !text.is_empty() {
-                s.push_str(&format!("  - `{id}` said: {}\n", tail_chars(text, 200)));
-            }
-        }
-        if s.is_empty() {
-            s
-        } else {
-            format!("WHAT EACH LANE SAID IT DELIVERED (self-reports — rank below the stats above):\n{s}")
-        }
-    };
-
-    let _ = all_files; // manifest facts arrive via fs_delta's outside_manifest, computed at write
-    let full = format!("{never}{mid}{research_section}{ok_classes}{final_texts}");
-    if full.chars().count() <= budget {
-        return full;
-    }
-    // §II.2 drop order: the research answers first (settled plan-time facts, the least durable
-    // against the measured tree), then ok-only command classes, then final_text; a defect, gate
-    // finding or NOT FIXED verdict is never dropped.
-    let without_research = format!("{never}{mid}{ok_classes}{final_texts}");
-    if without_research.chars().count() <= budget {
-        return without_research;
-    }
-    let without_ok = format!("{never}{mid}{final_texts}");
-    if without_ok.chars().count() <= budget {
-        return without_ok;
-    }
-    let bare = format!("{never}{mid}");
-    if bare.chars().count() <= budget {
-        return bare;
-    }
-    truncate_block_at_line(&bare, budget)
-}
-
 /// The spec's own boot invocation for `pkg`, verbatim with its placeholders — the SHAPE of the
 /// argv `run_spec_contract` will spawn. `spec_run_argv_v2` fills the same backtick span, but
 /// calling it at dispatch would bind real ephemeral ports and create scratch dirs just to print
@@ -27636,6 +27217,9 @@ struct SinkBrief {
     /// The spec advertises nothing and the tree shows no exports either; the description
     /// states that measured absence in prose and the event carries it.
     spec_surface_empty: bool,
+    /// What the ledger block's budget removed, `(section, chars)` — the caller emits one
+    /// `ledger_block_section_dropped` per entry (VA-030 D11).
+    ledger_sections_dropped: Vec<(&'static str, usize)>,
 }
 
 fn sink_semantic_description(
@@ -27647,13 +27231,14 @@ fn sink_semantic_description(
     lang: TargetLang,
     collect_only: Option<&str>,
 ) -> SinkBrief {
-    let block = render_ledger_block(root, task_id, deps, all_files, 7_000, collect_only);
+    let block = render_ledger_block_measured(root, task_id, deps, all_files, 7_000, collect_only);
     let (description, spec_surface_empty) =
-        render_sink_description(spec, lang, root, all_files, &block);
+        render_sink_description(spec, lang, root, all_files, &block.text);
     SinkBrief {
         description,
-        ledger_empty: block.is_empty(),
+        ledger_empty: block.text.is_empty(),
         spec_surface_empty,
+        ledger_sections_dropped: block.dropped,
     }
 }
 
@@ -28081,6 +27666,14 @@ impl GooseAgentDispatcher {
                     "event": "ledger_empty_at_sink",
                     "task_id": req.task_id,
                     "spec_surface_empty": brief.spec_surface_empty,
+                }));
+            }
+            for (section, chars) in &brief.ledger_sections_dropped {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_block_section_dropped",
+                    "task_id": req.task_id,
+                    "section": section,
+                    "chars": chars,
                 }));
             }
             // The surface absence must not ride only on the near-unreachable event above: a
@@ -31976,6 +31569,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .collect(),
     );
 
+    // VA-030 D11: a REPAIR shard reads its OWNING task's decisions block, indexed from the DAG
+    // the run loads — the in-memory plan; plan_store's sidecars have no engine reader.
+    let brief_decisions = decisions::BriefDecisions::from_tasks(dag.tasks.values().map(|n| {
+        (
+            n.spec.id.as_str(),
+            n.spec.owned_files.as_slice(),
+            n.spec.description.as_str(),
+        )
+    }));
+
     // The post-REVIEW/patched/repaired form the DAG actually loaded — the second sidecar stage,
     // written only when it differs from `.swarm/plan.json` so the pair diffs to exactly what
     // review and the repairs changed. Placed BEFORE plan_evt: the json! below moves plan_json.
@@ -33134,6 +32737,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let dev = dev_id.clone();
                     // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
                     let decisions = user_decisions.clone();
+                    let fan_decisions = brief_decisions.clone();
                     let facts = doc_facts.clone();
                     let sink_r = sink.clone();
                     let summaries = fanout_over_fleet(
@@ -33149,6 +32753,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             let fan_all_files = fan_all_files.clone();
                             let dev = dev.clone();
                             let decisions = decisions.clone();
+                            let fan_decisions = fan_decisions.clone();
                             let facts = facts.clone();
                             let sink_r = sink_r.clone();
                             async move {
@@ -33159,8 +32764,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "task_id": task_id, "baseline_findings": baseline,
                                 }));
                                 let started = std::time::Instant::now();
+                                // The owning task's decisions block, as its brief rendered it (VA-030
+                                // D11) — `chars: 0` names a shard whose owners carry none.
+                                let shard_decisions = fan_decisions.for_files(&shard_owned);
+                                sink_r.write_value(serde_json::json!({
+                                    "event": "shard_decisions",
+                                    "round": round, "shard": g.file, "task_id": task_id,
+                                    "owners": shard_decisions.owners,
+                                    "chars": shard_decisions.block.chars().count(),
+                                }));
                                 let shard_desc = format!(
-                                    "{order_note}{}",
+                                    "{order_note}{}{}",
                                     smoke_fix_description(
                                         &g.findings,
                                         complete_lang,
@@ -33171,7 +32785,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             &g.findings,
                                             round as usize,
                                         ),
-                                    )
+                                    ),
+                                    shard_decisions.block
                                 );
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
@@ -36870,7 +36485,7 @@ mod audit_regressions {
             slice: "payments".into(),
             q_index: 0,
             question: "How is sync position persisted?".into(),
-            status: RESEARCH_ANSWERED.into(),
+            status: research::RESEARCH_ANSWERED.into(),
             answer: "In the SQLite meta table, key sync_cursor.".into(),
             reason: None,
             detail: None,
@@ -36884,7 +36499,7 @@ mod audit_regressions {
         };
         research::write_research_ledger(root, &row).expect("the mini writes through the funnel");
         let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
-        assert_eq!(back.status, RESEARCH_ANSWERED);
+        assert_eq!(back.status, research::RESEARCH_ANSWERED);
         assert_eq!(back.answer, row.answer);
         assert_eq!(back.question, row.question);
         assert!(
@@ -36939,7 +36554,7 @@ mod audit_regressions {
             root,
             &mk(
                 0,
-                RESEARCH_ANSWERED,
+                research::RESEARCH_ANSWERED,
                 "what shape is /api/health",
                 "A JSON object {status, last_sync}.",
             ),
