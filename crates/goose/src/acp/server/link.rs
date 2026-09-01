@@ -843,6 +843,11 @@ fn link_state_to_dto(state: LinkState, view: &HolderView) -> LeanzeroLinkStateRe
         remote_execution_allowed: remote_execution_allowed(),
         remote_execution_allowed_live,
         mesh_binaries: view.mesh_binaries.to_dto(),
+        // The two injection seams, as booted: `goosed agent` sets both; `goose serve` (the
+        // shipped desktop) sets neither today, so its `/execute` and `/mlx/*` answer 501.
+        // Shown so the panel can say "not wired" instead of discovering a 501 on use.
+        remote_execution_wired: current_executor().is_some(),
+        mlx_control_wired: current_mlx_control().is_some(),
     }
 }
 
@@ -1366,6 +1371,8 @@ mod tests {
                 tailscale: Err("could not find 'tailscale': …".to_string()),
             }
             .to_dto(),
+            remote_execution_wired: false,
+            mlx_control_wired: true,
         };
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(value["auth"]["state"], "loggedIn");
@@ -1373,6 +1380,8 @@ mod tests {
         assert_eq!(value["lastError"], "boom");
         assert_eq!(value["remoteExecutionAllowed"], true);
         assert_eq!(value["remoteExecutionAllowedLive"], false);
+        assert_eq!(value["remoteExecutionWired"], false);
+        assert_eq!(value["mlxControlWired"], true);
         assert_eq!(value["meshBinaries"]["tailscaled"]["status"], "found");
         assert_eq!(
             value["meshBinaries"]["tailscaled"]["path"],
