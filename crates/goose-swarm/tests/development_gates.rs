@@ -286,9 +286,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/opener.rs beside the new parse-time decision gate (`OpenOutputRaw::qualify`),
 /// paying for the opener prompt's open-decision contract (question + two options + citation) and
 /// the qualified parse at the OPEN call site.
+/// Tightened to 40,691 (r6e research-lane judge clause): `parse_json_lenient` /
+/// `extract_first_json_object` moved to commands/swarm/lenient_json.rs, paying for the judge
+/// contract's research-lane clause (NEXT names where to look or "emit what you have", never the
+/// answer — r6d's judge-research-ledger-core-q2 dictated the mini's content at look 1 and its
+/// opposite at look 4).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 40_716;
+    const SWARM_RS_LINE_BASELINE: usize = 40_691;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

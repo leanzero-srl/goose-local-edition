@@ -83,6 +83,8 @@ use pytest_tail::parse_pytest_summary;
 mod review_merge;
 use review_merge::{review_dedupe_key, union_lane_patches};
 mod briefs;
+mod lenient_json;
+use lenient_json::parse_json_lenient;
 mod opener;
 use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
@@ -14351,6 +14353,20 @@ impl GooseAgentDispatcher {
                          edit a file; it cannot, and it will burn its turns trying.",
                     );
                 }
+                // A RESEARCH lane's deliverable is an answer it must ESTABLISH; a supervisor that
+                // hands it the answer has replaced the reader with itself. r6d, research-ledger-core-q2:
+                // look 1's NEXT dictated all three answers ("(1) yes, note bumps version, (2) notes
+                // live in 'notes storage' per the schema line, (3) the no-event premise is wrong"),
+                // look 4 dictated the opposite on the version rule, and neither cited
+                // request.md:189-192 — the note is written THROUGH to the vendor with If-Match, which
+                // is where a version change comes from. The judge directs; only the lane answers.
+                if activity_key.is_some_and(|k| k.starts_with("research-")) {
+                    sys.push_str(
+                        "\n\nThis is a RESEARCH lane: the answer is the lane's to establish, never yours \
+                         to hand it. NEXT names WHERE TO LOOK — a request line or heading, a file, a \
+                         command — or says \"emit what you have\"; it never states the answer itself.",
+                    );
+                }
                 // ESCALATION WITHOUT A COUNTER. The judge is shown its own prior direction and whether the
                 // call obeyed it, so nudge 2 differs from nudge 1 because the evidence differs — not
                 // because a branch counted to two. This is what replaces JUDGE_NUDGE_MAX.
@@ -21482,47 +21498,6 @@ impl GooseAgentDispatcher {
         // self-instruction), named in `decision_self_resolved` and kept out of ASK and the fan.
         Ok(parsed.qualify(self.events.as_ref()))
     }
-}
-
-/// A tolerant JSON object parse: takes the first balanced `{...}` in the reply and deserialises it.
-/// The fleet wraps structured output in prose and fences often enough that a strict parse is a coin
-/// flip, and losing a whole phase to a stray "Sure — here you go:" is not a trade worth making.
-fn parse_json_lenient<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
-    if let Ok(v) = serde_json::from_str::<T>(raw) {
-        return Some(v);
-    }
-    let obj = extract_first_json_object(raw)?;
-    serde_json::from_str::<T>(&obj).ok()
-}
-
-fn extract_first_json_object(s: &str) -> Option<String> {
-    let start = s.find('{')?;
-    let b = s.as_bytes();
-    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
-    for (i, &c) in b.iter().enumerate().skip(start) {
-        if in_str {
-            if esc {
-                esc = false;
-            } else if c == b'\\' {
-                esc = true;
-            } else if c == b'"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match c {
-            b'"' => in_str = true,
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return s.get(start..=i).map(str::to_string);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// The compact index handed to SYNTHESIS. Deliberately NOT the briefs.
