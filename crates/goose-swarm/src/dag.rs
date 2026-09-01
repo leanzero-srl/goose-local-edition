@@ -347,7 +347,7 @@ impl Dag {
 /// for twenty minutes on 2026-08-29 (ee0cbfe73) until the owner's steer — "avoid making it overly
 /// deterministic and gated, be very mild" — because a refusal at the plan boundary ends a run over a
 /// flaw PLAN-REPAIR removes and the scheduler tolerates (an owns-nothing task is relaxed through
-/// failures, it just produces nothing). The engine's plan flags (`plan_synthesized`, `plan_patched`,
+/// failures, it just produces nothing). The engine's plan flags (`plan_synthesized`,
 /// `plan_repaired`) are where the reader sees it.
 pub fn tasks_owning_nothing(specs: &[TaskSpec]) -> Vec<String> {
     specs

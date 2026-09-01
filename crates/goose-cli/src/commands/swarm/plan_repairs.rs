@@ -11,6 +11,13 @@ use super::skeleton::SKELETON_ID;
 /// Rule (e)'s tail header — `decisions::brief_decisions_block` cuts a brief's decisions block
 /// before it, because the list is the owner's, not a repair shard's.
 pub(super) const UNOWNED_FILES_HEADER: &str = "FILES NAMED ABOVE THAT ANOTHER TASK OWNS";
+/// Rule (d)'s tail header — the engine-required endpoint note `repair_unassigned_endpoints`
+/// appends to an entry owner's brief. `decisions::brief_decisions_block` cuts before this one
+/// too: rule (d) runs BEFORE rule (e) in `repair_plan_flags`, so a block-carrying entry owner's
+/// brief ends `…decisions block…\n\nADVERTISED SURFACE…\n\nFILES NAMED ABOVE…`, and a cut at
+/// the unowned tail alone handed a repair shard the owner's ENTRY instruction as "decisions"
+/// (2a D11's independent refuter, 2026-09-01).
+pub(super) const ADVERTISED_SURFACE_HEADER: &str = "ADVERTISED SURFACE (engine-required)";
 use super::spec_surface::path_token_named;
 use super::string_list;
 
@@ -79,6 +86,137 @@ pub(super) fn repair_sink_files(plan: &mut serde_json::Value, actions: &mut Vec<
             "`{}` owned {moved:?}: the join owns nothing — dropped (no file-owning task to take them)",
             goose_swarm::SINK_ID
         )),
+    }
+}
+
+/// (f) THE JOIN WAITS ON EVERY TASK — structurally, whatever put the task in the plan. r6c's
+/// `integrate-verify.depends_on` was [ledgerd-api, ledgerd-core, notifierd, skeleton, web-console,
+/// web-viz]: `decisions-doc`, added by a plan patch that never touched the join's deps, was absent,
+/// so the join was Ready while a non-sink task could still be running and would have integrated
+/// an incomplete tree. `pin_sink_id` only renames; with the replanner's claim gate deleted (D11b)
+/// DAG readiness is the only predicate the join has. So, LAST in the chain (after every rule that
+/// adds or removes a task): the join's deps ∪= every non-sink task id. The join owns nothing, so a
+/// wider dependency set never cascades a failure onto it — the scheduler relaxes a file-less
+/// dependent through an upstream failure — it only makes the join wait for what it verifies.
+/// Loud: one action line and a self-describing `sink_deps_completed{added}` row when anything
+/// was added; nothing at all on a plan whose join already waits on everything (idempotent).
+pub(super) fn repair_sink_deps(
+    plan: &mut serde_json::Value,
+    actions: &mut Vec<String>,
+) -> Option<serde_json::Value> {
+    let subtasks = plan.get_mut("subtasks").and_then(|s| s.as_array_mut())?;
+    let ids: Vec<String> = subtasks
+        .iter()
+        .filter_map(|t| t.get("id").and_then(|i| i.as_str()).map(String::from))
+        .filter(|id| id != goose_swarm::SINK_ID)
+        .collect();
+    let sink = subtasks
+        .iter_mut()
+        .find(|t| t.get("id").and_then(|i| i.as_str()) == Some(goose_swarm::SINK_ID))?;
+    let obj = sink.as_object_mut()?;
+    let deps = obj
+        .entry("depends_on")
+        .or_insert_with(|| serde_json::json!([]));
+    let deps = deps.as_array_mut()?;
+    let mut added: Vec<String> = Vec::new();
+    for id in ids {
+        if !deps.iter().any(|d| d.as_str() == Some(id.as_str())) {
+            deps.push(serde_json::Value::String(id.clone()));
+            added.push(id);
+        }
+    }
+    if added.is_empty() {
+        return None;
+    }
+    actions.push(format!(
+        "`{}` did not depend on {added:?}: the join waits on every task — added",
+        goose_swarm::SINK_ID
+    ));
+    Some(serde_json::json!({
+        "event": "sink_deps_completed",
+        "task": goose_swarm::SINK_ID,
+        "added": added,
+    }))
+}
+
+/// (d) AN ADVERTISED ENDPOINT NO SERVICE BRIEF MENTIONS is appended to the brief of the task
+/// owning that service's entry file (r0 shipped `GET /` as a 404: the frontend brief said the page
+/// is served at `/`, the sink said probe it, no backend brief served it). Moved verbatim from
+/// swarm.rs under the incremental-split law, paying for rule (f)'s wiring in the root.
+pub(super) fn repair_unassigned_endpoints(
+    plan: &mut serde_json::Value,
+    spec: &str,
+    actions: &mut Vec<String>,
+) {
+    let missing = super::unassigned_endpoints(plan, spec);
+    if missing.is_empty() {
+        return;
+    }
+    let invocations = super::spec_python_invocations(spec);
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    // A row's service is the invocation whose last segment is the service's name (`ledgerd` ->
+    // `app.ledgerd`); a service the spec boots under another name falls to the first invocation.
+    let invocation_for = |service: Option<&str>| -> Option<&String> {
+        service
+            .and_then(|name| {
+                invocations
+                    .iter()
+                    .find(|inv| inv.rsplit('.').next() == Some(name))
+            })
+            .or(invocations.first())
+    };
+    let mut by_task: Vec<(usize, String, Vec<super::AdvertisedEndpoint>)> = Vec::new();
+    for ep in missing {
+        let Some(inv) = invocation_for(ep.service.as_deref()) else {
+            continue;
+        };
+        let Some(ti) = super::entry_owner_index(subtasks, inv) else {
+            continue;
+        };
+        match by_task.iter_mut().find(|(i, _, _)| *i == ti) {
+            Some((_, _, eps)) => eps.push(ep),
+            None => by_task.push((ti, inv.clone(), vec![ep])),
+        }
+    }
+    for (ti, inv, eps) in by_task {
+        let st = &mut subtasks[ti];
+        let id = st
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(desc) = st
+            .get_mut("description")
+            .and_then(|d| d.as_str().map(str::to_string))
+        else {
+            continue;
+        };
+        let rows: Vec<String> = eps
+            .iter()
+            .map(|e| match &e.expect {
+                Some(x) => format!("- `{} {}` -> EXPECT {x}", e.method, e.path),
+                None => format!("- `{} {}`", e.method, e.path),
+            })
+            .collect();
+        let note = format!(
+            "\n\n{ADVERTISED_SURFACE_HEADER}: the spec's endpoint table lists these on this \
+             service and no brief of a task owning service code mentions them, so as planned they \
+             would ship as 404s. This task owns the entry of `python -m {inv}`, so it serves each \
+             one exactly as the table says:\n{}",
+            rows.join("\n")
+        );
+        st["description"] = serde_json::Value::String(format!("{desc}{note}"));
+        actions.push(format!(
+            "`{id}` (entry of `{inv}`): appended {} advertised endpoint(s) no service brief \
+             mentioned: {}",
+            eps.len(),
+            eps.iter()
+                .map(|e| format!("{} {}", e.method, e.path))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
 }
 
@@ -236,6 +374,70 @@ mod tests {
             r.actions
         );
         goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
+    }
+
+    /// r6c's real plan shape (plan_loaded seq 1387: eight tasks, ids/files/deps verbatim): the
+    /// review patch added `decisions-doc` without touching the join's deps, so the join could
+    /// claim while decisions-doc still ran. The repair adds exactly that one id, says so, and a
+    /// second pass adds nothing. A shard/merger task added by a later patch is covered the same
+    /// way — the rule is "every non-sink task", not a list.
+    #[test]
+    fn the_join_waits_on_every_task_r6c_shape() {
+        let mut v = serde_json::json!({"subtasks": [
+            {"id": "skeleton", "files": ["app/__main__.py", "app/ledgerd/__main__.py", "app/ledgerd/__init__.py", "app/notifierd/__main__.py", "app/notifierd/__init__.py"], "depends_on": [], "description": "skeleton"},
+            {"id": "ledgerd-core", "files": ["app/ledgerd/impl.py", "app/db.py", "app/sync.py", "app/ledger.py", "app/outbox.py", "README.md"], "depends_on": ["skeleton"], "description": "core"},
+            {"id": "ledgerd-api", "files": ["app/api.py", "app/webhooks.py", "app/drafts.py", "app/auth.py"], "depends_on": ["ledgerd-core", "skeleton"], "description": "api"},
+            {"id": "notifierd", "files": ["app/notifierd/impl.py", "app/notify_store.py"], "depends_on": ["skeleton"], "description": "notifierd"},
+            {"id": "decisions-doc", "files": ["DECISIONS.md"], "depends_on": ["skeleton"], "description": "decisions"},
+            {"id": "web-console", "files": ["web/index.html", "web/styles.css", "web/app.js"], "depends_on": ["skeleton"], "description": "console"},
+            {"id": "web-viz", "files": ["web/viz.js"], "depends_on": ["skeleton"], "description": "viz"},
+            {"id": "integrate-verify", "files": [], "depends_on": ["ledgerd-core", "ledgerd-api", "notifierd", "web-console", "web-viz", "skeleton"], "description": "verify"}
+        ]});
+        let mut actions = Vec::new();
+        let row = repair_sink_deps(&mut v, &mut actions).expect("decisions-doc was missing");
+        assert_eq!(row["event"], "sink_deps_completed");
+        assert_eq!(row["added"], serde_json::json!(["decisions-doc"]));
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert!(actions[0].contains("decisions-doc"), "{actions:?}");
+        let deps = strings(&task(&v, "integrate-verify")["depends_on"]);
+        for id in [
+            "skeleton",
+            "ledgerd-core",
+            "ledgerd-api",
+            "notifierd",
+            "decisions-doc",
+            "web-console",
+            "web-viz",
+        ] {
+            assert!(deps.contains(&id.to_string()), "{id} missing from {deps:?}");
+        }
+        assert!(!deps.contains(&"integrate-verify".to_string()));
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
+        let mut again = Vec::new();
+        assert!(repair_sink_deps(&mut v, &mut again).is_none(), "idempotent");
+        assert!(again.is_empty());
+        // Through the whole chain the row rides beside the mentions and the action beside the rest.
+        let mut w = v.clone();
+        w["subtasks"][7]["depends_on"] = serde_json::json!(["skeleton"]);
+        let r = super::super::repair_plan_flags(&mut w, "");
+        assert!(
+            r.actions
+                .iter()
+                .any(|a| a.contains("the join waits on every task")),
+            "{:?}",
+            r.actions
+        );
+        assert_eq!(
+            r.mentions
+                .iter()
+                .filter(|m| m["event"] == "sink_deps_completed")
+                .count(),
+            1
+        );
+        assert_eq!(
+            strings(&task(&w, "integrate-verify")["depends_on"]).len(),
+            7
+        );
     }
 
     /// r6c web-console, verbatim (plan_loaded seq 1387, description char 1990): the brief claims a
