@@ -392,8 +392,44 @@ Another very long URL: https://www.example.com/very/long/path/with/many/segments
       expect(markdownContainer).toBeInTheDocument();
       expect(markdownContainer).toHaveClass('break-words');
       expect(markdownContainer).toHaveClass('prose-a:break-all');
-      expect(markdownContainer).toHaveClass('prose-a:overflow-wrap-anywhere');
+      // MEASURED: `prose-a:overflow-wrap-anywhere` compiles to NO rule (there is no such utility);
+      // the real long-URL rule is `prose-a:break-all`, proven through the pipeline below.
+      expect(markdownContainer).not.toHaveClass('prose-a:overflow-wrap-anywhere');
     });
+
+    it('the long-URL rule is prose-a:break-all, and it compiles; the old overflow-wrap class never did', async () => {
+      const { missingUtilities } = await import('./lz/compileStudioCss');
+      expect(await missingUtilities(['prose-a:break-all', 'break-words'])).toEqual([]);
+      expect(await missingUtilities(['prose-a:overflow-wrap-anywhere'])).toEqual([
+        'prose-a:overflow-wrap-anywhere',
+      ]);
+    });
+  });
+
+  describe('Code copy button (LeanZero Studio)', () => {
+    // The control used to be a faded tint (`bg-gray-700/50`) revealed by opacity on hover — banned
+    // (DESIGN.md ban 2) and invisible to keyboard users, who reach a button they cannot see. It is a
+    // solid Studio ghost now: surface-2 fill, ink-3 icon, a hairline, always visible.
+    it('is a solid, always-visible Studio control — no tint, no opacity reveal, and every class compiles', async () => {
+      const { missingUtilities } = await import('./lz/compileStudioCss');
+      renderWithIntl(<MarkdownContent content={'```js\nconsole.log(1);\n```'} />);
+
+      const button = await screen.findByTitle('Copy code');
+      expect(button.tagName).toBe('BUTTON');
+      expect(button.getAttribute('type')).toBe('button');
+      const cls = button.className;
+      for (const c of [
+        'bg-lz-surface-2',
+        'text-lz-ink-3',
+        'border-lz-border-strong',
+        'rounded-lz-control',
+      ]) {
+        expect(cls).toContain(c);
+      }
+      expect(cls).not.toMatch(/opacity|group-hover|\/50|bg-gray/);
+      expect(button.parentElement?.className).not.toMatch(/\bgroup\b/);
+      expect(await missingUtilities(Array.from(button.classList))).toEqual([]);
+    }, 30_000);
   });
 
   describe('Heading weights (LeanZero Studio)', () => {
