@@ -112,7 +112,13 @@ pub struct ControlConfig {
     pub mesh_ip: Option<IpAddr>,
     pub poll_interval: Duration,
     pub heartbeat_interval: Duration,
+    /// TOTAL timeout of the fabric's `/nodes` + `/sessions` polls — small, bounded
+    /// reads whose slowness IS the signal.
     pub request_timeout: Duration,
+    /// CONNECT timeout of the `/execute` and `/mlx/*` proxy POSTs — and their only
+    /// timeout. Those ops run as long as the peer's work runs (a model delete of tens
+    /// of GB, an HF fetch); a total cap would report failure while the peer completes.
+    pub connect_timeout: Duration,
     pub reconnect_backoff: Duration,
     /// Whether a same-account peer may ACT on this node: `POST /v1/swarm/execute` (run
     /// goose here) and every `POST /v1/swarm/mlx/<op>` (reshape this node's MLX engine).
@@ -132,6 +138,7 @@ impl ControlConfig {
             poll_interval: Duration::from_secs(3),
             heartbeat_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(5),
             reconnect_backoff: Duration::from_secs(2),
             allow_remote_execution: false,
         }

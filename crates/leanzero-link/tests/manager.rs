@@ -231,6 +231,8 @@ impl RemoteExecutor for RecordingExecutor {
 struct RecordingMlxControl {
     recorded: StdMutex<Vec<(MlxOp, serde_json::Value)>>,
     outcome: Result<serde_json::Value, MlxControlError>,
+    /// How long the op "works" before answering — a slow peer (model delete, HF fetch).
+    delay: Duration,
 }
 
 impl RecordingMlxControl {
@@ -238,6 +240,15 @@ impl RecordingMlxControl {
         Arc::new(Self {
             recorded: StdMutex::new(Vec::new()),
             outcome: Ok(value),
+            delay: Duration::ZERO,
+        })
+    }
+
+    fn returning_after(value: serde_json::Value, delay: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Ok(value),
+            delay,
         })
     }
 
@@ -245,6 +256,7 @@ impl RecordingMlxControl {
         Arc::new(Self {
             recorded: StdMutex::new(Vec::new()),
             outcome: Err(error),
+            delay: Duration::ZERO,
         })
     }
 }
@@ -257,6 +269,9 @@ impl MlxControl for RecordingMlxControl {
         request: serde_json::Value,
     ) -> Result<serde_json::Value, MlxControlError> {
         self.recorded.lock().unwrap().push((op, request));
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
+        }
         self.outcome.clone()
     }
 }
@@ -306,6 +321,9 @@ impl Harness {
         control.poll_interval = Duration::from_millis(50);
         control.heartbeat_interval = Duration::from_millis(200);
         control.reconnect_backoff = Duration::from_millis(50);
+        // The fabric's TOTAL poll timeout, deliberately short: a proxy POST that
+        // (wrongly) shared it would fail against the slow peer below.
+        control.request_timeout = Duration::from_millis(200);
 
         let config = LinkManagerConfig {
             worker_base_url: server.uri(),
@@ -1257,6 +1275,80 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
         }
         other => panic!("expected a verbatim BadRequest, got {other:?}"),
     }
+
+    b.shutdown();
+    manager.logout(false).await.unwrap();
+}
+
+/// R-M3: a peer whose op takes longer than the fabric's poll timeout still answers the
+/// proxy — the proxy POST has a connect timeout only, never a total cap.
+#[tokio::test]
+async fn mlx_proxy_waits_past_the_fabric_request_timeout_for_a_slow_peer() {
+    let b_payload = json!({"deleted": "org/huge-model", "freedBytes": 40_000_000_000u64});
+    // 3x the harness's 200 ms `request_timeout`.
+    let b_control =
+        RecordingMlxControl::returning_after(b_payload.clone(), Duration::from_millis(600));
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    b_config.port = 0;
+    b_config.allow_remote_execution = true;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        Some(b_control.clone()),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h
+        .manager(&server, false)
+        .with_mlx_control(RecordingMlxControl::returning(json!({})));
+    manager.connect().await.expect("A connects");
+
+    let registry = manager.active_registry().await.expect("live registry");
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b_port,
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let started = tokio::time::Instant::now();
+    let out = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager
+            .mlx_proxy(
+                "node-b",
+                MlxOp::ModelDelete,
+                json!({"modelId": "org/huge-model"}),
+            )
+            .await
+        {
+            Ok(value) => break value,
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => panic!("a slow peer must not time out the proxy: {other:?}"),
+        }
+    };
+    assert_eq!(out, b_payload, "the slow peer's payload arrived intact");
+    assert!(
+        started.elapsed() >= Duration::from_millis(600),
+        "the proxy actually waited for the peer's work"
+    );
 
     b.shutdown();
     manager.logout(false).await.unwrap();
