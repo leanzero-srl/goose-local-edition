@@ -6491,6 +6491,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "leanzero-link"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
