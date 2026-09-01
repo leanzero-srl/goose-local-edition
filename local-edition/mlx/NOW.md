@@ -1,5 +1,22 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## NEW CHAPTER (2026-09-01): LEANZERO LINK
+Mihai's five-phase spec: passwordless Resend-OTP identity (~/.leanzero/identity.json), cross-WAN
+mesh via Tailscale, idle-node execution guards, real-time session mirroring, companion-app-ready
+/v1/swarm/{nodes,sessions,stream} APIs. MEASURED HEAD START: this machine is ALREADY on a live
+tailnet (worksmacstudio 100.122.51.13 + Mihai-Macbook-2 100.83.119.44, direct connection carrying
+the benchmark; Funnel enabled; gabee NOT on the tailnet yet). Architecture decisions taken (defaults,
+Mihai can override): auth backend = self-hostable Cloudflare Worker in leanzero-link/worker/
+(holds RESEND_API_KEY/AUDIENCE_ID/LINK_JWT_SECRET/TS_API_TOKEN — secrets NEVER in the desktop);
+mesh v1 rides the EXISTING tailnet (detect via `tailscale status --json`), embedded userspace
+tailscaled-as-sidecar (goose-sidecar pattern) is the end-user path. Mirroring v1 = WS pubsub of
+session deltas + read-only mirror; full DB bidirectional sync is explicit v2. IN FLIGHT: worker
+build (docs-verified, full local test harness) + recon (session event bus, goosed HTTP surface,
+busy/idle truth sources, workspace ws/jwt deps). NEXT: Rust crates/leanzero-link control service
+(/v1/swarm/nodes idle-guard + /v1/swarm/stream WS) bound to the mesh IP; dispatcher idle-guard
+seam via swarm-surgeon; Link tab UI via panel-surgeon. Fleet benchmark still live — same
+read-only discipline.
+
 ## CURRENT CHAPTER (2026-08-31 evening): the Goose Swarm restructure
 PASS E (in flight, ~22:30, Mihai reviewing live): (1) sessions are SESSIONS not chats incl.
 default title; (2) stale swarm board GATED — a new session never shows a previous run's
