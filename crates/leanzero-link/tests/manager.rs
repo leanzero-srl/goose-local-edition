@@ -53,6 +53,10 @@ struct MeshCalls {
 struct MeshScript {
     /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
     daemon_dead: AtomicBool,
+    /// `join()` parks (yielding) until this is cleared — lets a test act mid-connect.
+    hold_join: AtomicBool,
+    /// Set by `join()` on entry so a test knows the connect is inside the mesh step.
+    join_entered: AtomicBool,
 }
 
 struct FakeMesh {
@@ -70,6 +74,10 @@ impl Mesh for FakeMesh {
             .unwrap()
             .joined
             .push((auth_key.to_string(), hostname.to_string()));
+        self.script.join_entered.store(true, Ordering::SeqCst);
+        while self.script.hold_join.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         if self.join_fails {
             Err(MeshError::JoinFailed {
                 stderr: "fake join failure".to_string(),
@@ -473,6 +481,107 @@ async fn join_key_401_expired_logs_out_and_clears_identity() {
         h.start_count.load(Ordering::SeqCst),
         0,
         "mesh never started"
+    );
+}
+
+/// R-M1: `logout()` lands while `connect()` is inside the mesh join. The connect must
+/// NOT install `Connected` over a cleared identity; the fresh connection is logged out
+/// of the tailnet and torn down, and logout's `LoggedOut` stands.
+#[tokio::test]
+async fn logout_during_connecting_aborts_the_connect_and_stays_logged_out() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    h.script.hold_join.store(true, Ordering::SeqCst);
+
+    let (connect_result, ()) = tokio::join!(manager.connect(), async {
+        wait_until("connect to reach the mesh join", || async {
+            h.script.join_entered.load(Ordering::SeqCst)
+        })
+        .await;
+        assert!(
+            matches!(manager.status().await.auth, AuthState::Connecting { .. }),
+            "mid-connect the state is Connecting"
+        );
+        manager.logout(false).await.expect("logout mid-connect");
+        assert!(matches!(manager.status().await.auth, AuthState::LoggedOut));
+        assert!(!h.identity_present(), "logout cleared the credential");
+        h.script.hold_join.store(false, Ordering::SeqCst);
+    });
+
+    let err = connect_result.expect_err("the raced connect must not report success");
+    assert!(matches!(err, LinkError::ConnectAborted), "got {err:?}");
+
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedOut),
+        "logout's state stands, got {:?}",
+        state.auth
+    );
+    assert!(state.mesh.is_none());
+    assert_eq!(state.node_count, 0);
+    assert!(
+        manager.active_registry().await.is_none(),
+        "nothing installed"
+    );
+    assert!(manager.node_token().await.is_none());
+    assert!(!h.identity_present(), "the credential stays cleared");
+    let calls = h.calls.lock().unwrap();
+    assert_eq!(
+        calls.logout_count, 1,
+        "the fresh mesh was logged out of the tailnet (node key expired), not just killed"
+    );
+}
+
+/// R-M1, failing-connect variant: a logout that races a connect which then FAILS must
+/// not flip auth back to `LoggedIn` over a credential logout already deleted.
+#[tokio::test]
+async fn logout_during_a_failing_connect_keeps_logged_out() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, /* join_fails */ true);
+    h.script.hold_join.store(true, Ordering::SeqCst);
+
+    let (connect_result, ()) = tokio::join!(manager.connect(), async {
+        wait_until("connect to reach the mesh join", || async {
+            h.script.join_entered.load(Ordering::SeqCst)
+        })
+        .await;
+        manager.logout(false).await.expect("logout mid-connect");
+        h.script.hold_join.store(false, Ordering::SeqCst);
+    });
+
+    let err = connect_result.expect_err("the join fails");
+    assert!(err.to_string().contains("fake join failure"), "{err}");
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedOut),
+        "must not resurrect LoggedIn over a cleared identity, got {:?}",
+        state.auth
+    );
+    assert!(!h.identity_present());
+    assert_eq!(
+        h.calls.lock().unwrap().shutdown_count,
+        1,
+        "the failed mesh was still torn down per-pid"
     );
 }
 
