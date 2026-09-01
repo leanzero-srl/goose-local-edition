@@ -627,3 +627,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   path traversal UNREPRESENTABLE; verified node globals are strictly typed (deliberate-error probe);
   proved the adapter serves live (health JSON) + zero secrets in the tree via a pattern scan.
   Charter gap: none.
+- 2026-09-01 link-backend (bake URL default + optional tag, 4e9d77713): CLEAN++. Baked the live
+  self-host URL as DEFAULT_WORKER_BASE_URL (env still wins); made the tag three-state (unset→default,
+  empty→untagged, set→value) with the tags field OMITTED when undefined + both bodies test-pinned;
+  ran wrangler dry-run beyond the brief to confirm the Cloudflare front door still builds; corrected
+  the now-false "always sends tags" doc comment (measure-first). Charter gap: none. NOTE: the mesh
+  mint then failed on a SEPARATE bug the orchestrator caught live — Tailscale rejects '.'/'@' in key
+  descriptions (c07bc0380 sanitizes the email); join-key now mints untagged end-to-end (verified).
