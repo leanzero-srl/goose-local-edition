@@ -107,6 +107,12 @@ pub(crate) struct ResearchRow {
     /// fact, no lane ran. Read by `briefs_from_slices` to render a fact under its own heading.
     #[serde(default)]
     pub(crate) origin: String,
+    /// C3: how many questions the lane that produced this row answered in the SAME session —
+    /// `secs` is that session's whole wall time, shared by every row of the batch, never a
+    /// per-question split (a split would be a fabricated number). 0 on a pre-cut mini, a spec
+    /// fact or a covered row (no lane).
+    #[serde(default)]
+    pub(crate) batch: usize,
 }
 
 impl ResearchRow {
@@ -130,6 +136,7 @@ impl ResearchRow {
             kind: q.kind.as_str().to_string(),
             cite: q.cite.clone(),
             origin: ORIGIN_SPEC_FACT.to_string(),
+            batch: 0,
         }
     }
 
@@ -157,24 +164,38 @@ impl ResearchRow {
             kind: q.kind.as_str().to_string(),
             cite: q.cite.clone(),
             origin: format!("{ORIGIN_COVERED_PREFIX}{original}"),
+            batch: 0,
         }
     }
 }
 
-/// The structured deliverable (A1): `{answer, raised}`. Declaring a `Response` is what arms the
-/// judge's whole ladder for these lanes — `wants_structured_reply` becomes true, the
-/// `recipe__final_output` tool exists, and (with `may_terminate: true`) the `judge_out_of_moves`
-/// ending is reachable — the progress-based terminator that makes "all questions terminal"
-/// reachable without any clock. Only `answer` is required (the permissive-schema lesson from
-/// `review_patch_schema`): `raised` legitimately defaults to empty, and an empty `answer` is
-/// classified honestly as unanswered/empty_answer rather than rejected at validation.
+/// The structured deliverable (A1, batched by C3): `{answers: [{question_index, answer,
+/// raised}]}` — ONE lane answers all of a slice's remaining questions in one session and the
+/// ledger still gets one mini per question (`fold_research_batch` keys each entry by its
+/// `[qN]` tag). Declaring a `Response` is what arms the judge's whole ladder for these lanes —
+/// `wants_structured_reply` becomes true, the `recipe__final_output` tool exists, and (with
+/// `may_terminate: true`) the `judge_out_of_moves` ending is reachable — the progress-based
+/// terminator that makes "all questions terminal" reachable without any clock. `raised`
+/// legitimately defaults to empty (the permissive-schema lesson from `review_patch_schema`); an
+/// empty or missing `answer` is classified honestly as unanswered/empty_answer rather than
+/// rejected at validation.
 pub(super) fn research_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
-        "required": ["answer"],
+        "required": ["answers"],
         "properties": {
-            "answer": {"type": "string"},
-            "raised": {"type": "array", "items": {"type": "string"}}
+            "answers": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["question_index", "answer"],
+                    "properties": {
+                        "question_index": {"type": "integer"},
+                        "answer": {"type": "string"},
+                        "raised": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            }
         }
     })
 }
@@ -223,25 +244,28 @@ pub(super) fn budget_research_answer(answer: &str, slice: &str, q_index: usize) 
     )
 }
 
-/// Fold one lane's outcome into a TERMINAL row. Pure, so the classification is testable without
-/// a model: Ok with a non-empty answer => answered; Ok with an empty/unparseable reply =>
-/// unanswered/empty_answer (never a stub answer — the fallback gate); Err from the
-/// `judge_out_of_moves` ending => unanswered/judge_ended; any other Err =>
-/// unanswered/provider_error with the error head (300, the ledger's last_failure_tail idiom).
-pub(super) fn fold_research_outcome(
-    q: &ResearchQuestion,
-    model: &str,
-    secs: u64,
-    out: Result<String, String>,
-) -> ResearchRow {
-    #[derive(serde::Deserialize, Default)]
-    struct ResearchReply {
-        #[serde(default)]
-        answer: String,
-        #[serde(default)]
-        raised: Vec<String>,
-    }
-    let mut row = ResearchRow {
+/// One entry of a lane's batched reply. `question_index` is the `[qN]` tag the prompt put on the
+/// question; absent only on the pre-C3 single shape, which a ONE-question batch still accepts.
+#[derive(serde::Deserialize, Default)]
+struct BatchAnswer {
+    #[serde(default)]
+    question_index: Option<usize>,
+    #[serde(default)]
+    answer: String,
+    #[serde(default)]
+    raised: Vec<String>,
+}
+
+/// An entry whose `question_index` is not one of the lane's tags: never silently dropped — the
+/// fan names it (`research_batch_stray_answer`) with the tag and the answer's head.
+#[derive(Clone, Debug)]
+pub(super) struct StrayAnswer {
+    pub(super) question_index: Option<usize>,
+    pub(super) answer_head: String,
+}
+
+fn unanswered_row(q: &ResearchQuestion, model: &str, secs: u64, batch: usize) -> ResearchRow {
+    ResearchRow {
         slice: q.slice.clone(),
         q_index: q.q_index,
         question: q.question.clone(),
@@ -255,40 +279,126 @@ pub(super) fn fold_research_outcome(
         kind: q.kind.as_str().to_string(),
         cite: q.cite.clone(),
         origin: String::new(),
-    };
-    match out {
-        Ok(raw) => match parse_json_lenient::<ResearchReply>(&raw) {
-            Some(reply) if !reply.answer.trim().is_empty() => {
-                row.status = RESEARCH_ANSWERED.to_string();
-                row.answer = reply.answer;
-                row.raised = reply.raised;
-            }
-            Some(reply) => {
-                // Parsed, but the deliverable slot is blank — a named absence, never a stub.
-                row.reason = Some("empty_answer".to_string());
-                row.raised = reply.raised;
-            }
-            None => {
-                // Nothing parseable in the reply. The head rides in `detail` so the operator
-                // can see WHAT came back instead of an answer (300, the last_failure_tail
-                // idiom) — the absence stays loud, nothing is substituted.
-                row.reason = Some("empty_answer".to_string());
-                row.detail = Some(raw.chars().take(300).collect());
-            }
-        },
+        batch,
+    }
+}
+
+/// Fold ONE lane's outcome — a whole slice's batch — into one TERMINAL row PER QUESTION. Pure,
+/// so the classification is testable without a model. Ok + a parseable `{answers: [...]}`:
+/// each question takes the entry whose `question_index` is its tag — non-empty => answered,
+/// blank => unanswered/empty_answer, no entry => unanswered/empty_answer with the fact stated
+/// in `detail` ("no entry for [qN]"); an entry with a tag the batch does not carry comes back
+/// as a `StrayAnswer` for the fan to name. Ok + the pre-C3 single `{answer, raised}` shape:
+/// accepted for a ONE-question batch (that is exactly what it means), and for a larger batch
+/// every question is unanswered/empty_answer with `detail` saying the lane answered N
+/// questions with one entry — never a guess at which. Ok + nothing parseable: every question
+/// unanswered/empty_answer with the raw head in `detail` (300, the last_failure_tail idiom).
+/// Err from the `judge_out_of_moves` ending => every question unanswered/judge_ended; any other
+/// Err => unanswered/provider_error with the error head. `secs` is the session's wall time on
+/// every row, `batch` its size (the row doc says why it is not split).
+pub(super) fn fold_research_batch(
+    qs: &[ResearchQuestion],
+    model: &str,
+    secs: u64,
+    out: Result<String, String>,
+) -> (Vec<ResearchRow>, Vec<StrayAnswer>) {
+    #[derive(serde::Deserialize, Default)]
+    struct BatchReply {
+        #[serde(default)]
+        answers: Vec<BatchAnswer>,
+    }
+    let n = qs.len();
+    let mut rows: Vec<ResearchRow> = qs
+        .iter()
+        .map(|q| unanswered_row(q, model, secs, n))
+        .collect();
+    let mut strays = Vec::new();
+    let raw = match out {
+        Ok(raw) => raw,
         Err(e) => {
             // The one engine terminator's own words (emitted at exactly one site, the
             // judge_out_of_moves ending): a lane the ENGINE ended is named as such, not
             // laundered into a transport failure.
-            if e.contains(JUDGE_ENDED_NEEDLE) {
-                row.reason = Some("judge_ended".to_string());
+            let reason = if e.contains(JUDGE_ENDED_NEEDLE) {
+                "judge_ended"
             } else {
-                row.reason = Some("provider_error".to_string());
+                "provider_error"
+            };
+            for row in &mut rows {
+                row.reason = Some(reason.to_string());
+                row.detail = Some(e.chars().take(300).collect());
             }
-            row.detail = Some(e.chars().take(300).collect());
+            return (rows, strays);
+        }
+    };
+    let entries: Vec<BatchAnswer> = match parse_json_lenient::<BatchReply>(&raw) {
+        Some(reply) if !reply.answers.is_empty() => reply.answers,
+        _ => match parse_json_lenient::<BatchAnswer>(&raw) {
+            // The pre-C3 single shape, or a batch reply whose `answers` is empty and that also
+            // carries a top-level `answer`: for one question it IS the answer to that question.
+            Some(single) if n == 1 && !single.answer.trim().is_empty() => vec![BatchAnswer {
+                question_index: Some(qs[0].q_index),
+                ..single
+            }],
+            Some(single) if !single.answer.trim().is_empty() => {
+                for row in &mut rows {
+                    row.reason = Some("empty_answer".to_string());
+                    row.detail = Some(format!(
+                        "the lane answered {n} questions with ONE {{answer}} entry and no \
+                         question_index — not attributed to any of them; head: {}",
+                        single.answer.chars().take(200).collect::<String>()
+                    ));
+                }
+                return (rows, strays);
+            }
+            _ => {
+                // Nothing parseable in the reply. The head rides in `detail` so the operator
+                // can see WHAT came back instead of answers — the absence stays loud, nothing
+                // is substituted.
+                for row in &mut rows {
+                    row.reason = Some("empty_answer".to_string());
+                    row.detail = Some(raw.chars().take(300).collect());
+                }
+                return (rows, strays);
+            }
+        },
+    };
+    let mut seen: Vec<usize> = Vec::new();
+    for entry in entries {
+        let Some(slot) = entry
+            .question_index
+            .and_then(|i| rows.iter().position(|r| r.q_index == i))
+            .filter(|p| !seen.contains(p))
+        else {
+            strays.push(StrayAnswer {
+                question_index: entry.question_index,
+                answer_head: entry.answer.chars().take(200).collect(),
+            });
+            continue;
+        };
+        seen.push(slot);
+        let row = &mut rows[slot];
+        if entry.answer.trim().is_empty() {
+            // Parsed, but the deliverable slot is blank — a named absence, never a stub.
+            row.reason = Some("empty_answer".to_string());
+            row.raised = entry.raised;
+        } else {
+            row.status = RESEARCH_ANSWERED.to_string();
+            row.answer = entry.answer;
+            row.raised = entry.raised;
         }
     }
-    row
+    for row in rows
+        .iter_mut()
+        .filter(|r| r.status != RESEARCH_ANSWERED && r.reason.is_none())
+    {
+        row.reason = Some("empty_answer".to_string());
+        row.detail = Some(format!(
+            "the lane's reply carried no entry for [q{}]",
+            row.q_index
+        ));
+    }
+    (rows, strays)
 }
 
 /// A panicked lane is a TERMINAL unanswered outcome like any other miss: the caller writes the
@@ -311,6 +421,7 @@ pub(super) fn fold_research_panic(q: &ResearchQuestion, error: &str) -> Research
         kind: q.kind.as_str().to_string(),
         cite: q.cite.clone(),
         origin: String::new(),
+        batch: 0,
     }
 }
 
@@ -332,6 +443,7 @@ pub(super) fn emit_research_outcome(events: &dyn EventSink, row: &ResearchRow) {
             "chars": row.answer.chars().count(),
             "raised": row.raised.len(),
             "secs": row.secs,
+            "batch": row.batch,
             "model": row.model,
         }));
     } else {
@@ -516,17 +628,35 @@ pub(super) fn research_prompt_head(
     )
 }
 
-/// The whole user text of one research call: the per-slice head, the snowball block (empty on
-/// a first dispatch — no heading, no filler), then the question VERBATIM under the label its
-/// kind carries — a slice question or an open decision the user left unanswered (the decision
-/// head, `decisions::decision_user_text`, frames the same tail).
-pub(super) fn research_user_text(head: &str, prior_block: &str, q: &ResearchQuestion) -> String {
-    let label = if q.slice == DECISION_SLICE {
-        "THE OPEN DECISION"
+/// The whole user text of one research call (C3: one lane per slice): the per-slice head, the
+/// snowball block (empty on a first dispatch — no heading, no filler), then EVERY remaining
+/// question of the slice VERBATIM, each tagged `[qN]` with its q_index — the tag the reply's
+/// `question_index` repeats, so no translation table exists between the prompt and the ledger
+/// — under the label its kind carries: slice questions, or the open decisions the user left
+/// unanswered (the decision head, `decisions::decision_user_text`, frames the same tail).
+pub(super) fn research_user_text(head: &str, prior_block: &str, qs: &[ResearchQuestion]) -> String {
+    let decisions = qs.first().is_some_and(|q| q.slice == DECISION_SLICE);
+    let label = if decisions {
+        format!(
+            "THE OPEN DECISIONS ({}) — each was put to the user and the user did not answer it; \
+             settle EVERY one in this session",
+            qs.len()
+        )
     } else {
-        "THE QUESTION"
+        format!(
+            "THE QUESTIONS ({}) — answer EVERY one of them in this session",
+            qs.len()
+        )
     };
-    format!("{head}{prior_block}\n\n{label}:\n{}", q.question)
+    let tagged: Vec<String> = qs
+        .iter()
+        .map(|q| format!("[q{}] {}", q.q_index, q.question))
+        .collect();
+    format!(
+        "{head}{prior_block}\n\n{label}. Each is tagged [qN]; your final_output carries one \
+         entry per tag with question_index = N:\n{}",
+        tagged.join("\n")
+    )
 }
 
 /// Where the fan persists the request's FULL text so a lane can READ any section its question
@@ -670,30 +800,46 @@ fn path_tokens(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Does any question of a lane's batch name a path `row`'s question names? THE ONE cross-slice
+/// link — `/api/health`, `app/db.py`, `web/` — shared by the dispatch-time snowball
+/// (`prior_minis_for`) and the late relay (`relay_targets`), so the two channels cannot
+/// disagree about which stranger's mini a lane should see.
+fn names_a_shared_path(batch: &[ResearchQuestion], row: &ResearchRow) -> bool {
+    let theirs = path_tokens(&row.question);
+    !theirs.is_empty()
+        && batch
+            .iter()
+            .any(|q| !path_tokens(&q.question).is_disjoint(&theirs))
+}
+
 /// The already-answered minis a dispatching lane should see (fix B, the snowball inside the
-/// fan): every ANSWERED row of its own slice (r6c: ledgerd-core q0 and q1 contradicted each
-/// other on cursor persistence — "in-memory per walk" vs "never held only in memory" — because
-/// neither could see the other), plus an answered row of ANOTHER slice when the two QUESTIONS
-/// name the same path (r6c: ledgerd-api-q0's question named `/api/health` and its answer
-/// carried the exact Health shape ten minutes before ledgerd-core-q2 asked what `/api/health`
-/// exposes — and invented one). Own slice first, then the path-matched strangers. Unanswered
-/// rows are never spliced: their absence already rode `research_unanswered`.
+/// fan), for the whole BATCH the lane carries: every ANSWERED row of its own slice that is not
+/// in the batch — resumed minis, or a sibling settled earlier (r6c: ledgerd-core q0 and q1
+/// contradicted each other on cursor persistence — "in-memory per walk" vs "never held only in
+/// memory" — because neither could see the other) — plus an answered row of ANOTHER slice when
+/// its question names a path one of the batch's questions names (r6c: ledgerd-api-q0's
+/// question named `/api/health` and its answer carried the exact Health shape ten minutes
+/// before ledgerd-core-q2 asked what `/api/health` exposes — and invented one). Own slice
+/// first, then the path-matched strangers, each row once. Unanswered rows are never spliced:
+/// their absence already rode `research_unanswered`.
 pub(super) fn prior_minis_for<'a>(
-    q: &ResearchQuestion,
+    batch: &[ResearchQuestion],
     rows: &'a [ResearchRow],
 ) -> Vec<&'a ResearchRow> {
-    let mine = path_tokens(&q.question);
+    let Some(slice) = batch.first().map(|q| q.slice.as_str()) else {
+        return Vec::new();
+    };
     let mut same: Vec<&ResearchRow> = Vec::new();
     let mut matched: Vec<&ResearchRow> = Vec::new();
     for r in rows {
         if r.status != RESEARCH_ANSWERED {
             continue;
         }
-        if r.slice == q.slice {
-            if r.q_index != q.q_index {
+        if r.slice == slice {
+            if !batch.iter().any(|q| q.q_index == r.q_index) {
                 same.push(r);
             }
-        } else if !mine.is_disjoint(&path_tokens(&r.question)) {
+        } else if names_a_shared_path(batch, r) {
             matched.push(r);
         }
     }
@@ -706,7 +852,7 @@ pub(super) fn prior_minis_for<'a>(
 /// or which other slice, and the durable mini), its question, and its answer under the same
 /// per-answer splice budget the brief uses (`budget_research_answer`: a render budget on the
 /// splice, never a cap; the full text is in the mini it names).
-pub(super) fn prior_minis_block(q: &ResearchQuestion, prior: &[&ResearchRow]) -> String {
+pub(super) fn prior_minis_block(slice: &str, prior: &[&ResearchRow]) -> String {
     if prior.is_empty() {
         return String::new();
     }
@@ -718,7 +864,7 @@ pub(super) fn prior_minis_block(q: &ResearchQuestion, prior: &[&ResearchRow]) ->
         prior.len()
     );
     for r in prior {
-        let from = match (r.slice == q.slice, r.slice == DECISION_SLICE) {
+        let from = match (r.slice == slice, r.slice == DECISION_SLICE) {
             (true, true) => "an earlier open decision this fan settled".to_string(),
             (true, false) => "this slice's own earlier lane".to_string(),
             (false, true) => {
@@ -726,7 +872,7 @@ pub(super) fn prior_minis_block(q: &ResearchQuestion, prior: &[&ResearchRow]) ->
                     .to_string()
             }
             (false, false) => format!(
-                "slice `{}` — its question names the same path as yours",
+                "slice `{}` — its question names the same path as one of yours",
                 r.slice
             ),
         };
@@ -740,25 +886,28 @@ pub(super) fn prior_minis_block(q: &ResearchQuestion, prior: &[&ResearchRow]) ->
     s
 }
 
-/// The dispatch-time assembly of one lane's user text, and the one `research_context` event per
-/// dispatch that lets the tick print a lane's grounding: how many prior minis it saw (and
-/// which), and how many sections the index named for it (0 when the orientation is not armed
-/// and the whole request rides inline).
+/// The dispatch-time assembly of one lane's user text (the slice's whole remaining batch), and
+/// the one `research_context` event per dispatch that lets the tick print a lane's grounding:
+/// which questions it carries, how many prior minis it saw (and which), and how many sections
+/// the index named for it (0 when the orientation is not armed and the whole request rides
+/// inline).
 pub(super) fn research_dispatch_text(
     root: &Path,
     events: &dyn EventSink,
     head: &str,
-    q: &ResearchQuestion,
+    batch: &[ResearchQuestion],
     activity_key: &str,
     index_sections: usize,
 ) -> String {
     let rows = load_research_minis(root);
-    let prior = prior_minis_for(q, &rows);
+    let prior = prior_minis_for(batch, &rows);
+    let slice = batch.first().map(|q| q.slice.as_str()).unwrap_or("");
     events.write_value(serde_json::json!({
         "event": "research_context",
         "task": activity_key,
-        "slice": q.slice,
-        "q_index": q.q_index,
+        "slice": slice,
+        "q_indexes": batch.iter().map(|q| q.q_index).collect::<Vec<_>>(),
+        "questions": batch.len(),
         "prior_minis": prior.len(),
         "prior_from": prior
             .iter()
@@ -766,7 +915,7 @@ pub(super) fn research_dispatch_text(
             .collect::<Vec<_>>(),
         "index_sections": index_sections,
     }));
-    research_user_text(head, &prior_minis_block(q, &prior), q)
+    research_user_text(head, &prior_minis_block(slice, &prior), batch)
 }
 
 /// One sibling mini handed to a still-running lane (r6e E7 — the research fan's LATE
@@ -784,37 +933,48 @@ pub(super) struct RelayNote {
     pub(super) text: String,
 }
 
-/// The lanes a just-landed mini is relayed to: every STILL-RUNNING lane of the same slice — the
-/// set `prior_minis_for` would have spliced had they dispatched a moment later. Only an answered
-/// row relays (an unanswered one already rode `research_unanswered`); a lane never receives its
-/// own row. `running` is (activity key, question) for every lane between dispatch and its row.
+/// The lanes a just-landed mini is relayed to — RE-AIMED by C3. Under one lane per slice there
+/// is no same-slice sibling left to relay to (a slice's rows all land when its one lane ends),
+/// so the E7 target rule became unreachable; the refuter confirmed E7 with that correction.
+/// The relay now uses the SAME rule the dispatch-time snowball uses for strangers
+/// (`names_a_shared_path`): every STILL-RUNNING lane of another slice whose batch names a path
+/// the landed question names — the set `prior_minis_for` would have spliced had that lane
+/// dispatched a moment later. Under C3 the first wave's lanes all dispatch at once and see NO
+/// prior minis, so this relay is the only way ledger-api's `/api/health` shape reaches a
+/// running ledger-core lane (the r6c invention). Only an answered row relays (an unanswered
+/// one already rode `research_unanswered`); a lane never receives its own row. `running` is
+/// (activity key, the lane's batch) for every lane between dispatch and its rows.
 pub(super) fn relay_targets(
     landed: &ResearchRow,
-    running: &[(String, ResearchQuestion)],
+    running: &[(String, Vec<ResearchQuestion>)],
 ) -> Vec<String> {
     if landed.status != RESEARCH_ANSWERED {
         return Vec::new();
     }
     running
         .iter()
-        .filter(|(_, q)| q.slice == landed.slice && q.q_index != landed.q_index)
+        .filter(|(_, batch)| {
+            batch.first().is_some_and(|q| q.slice != landed.slice)
+                && names_a_shared_path(batch, landed)
+        })
         .map(|(k, _)| k.clone())
         .collect()
 }
 
-/// The note itself: provenance (the durable mini), the sibling's question and its answer under
-/// the brief's splice budget (`budget_research_answer` — a render budget, never a cap; the full
-/// text is in the mini it names), and the same rule the dispatch-time block states — build on it
-/// or NAME the disagreement, never contradict it silently. The ISO stamp is data (it dates the
-/// block in the durable log); nothing reads it.
+/// The note itself: provenance (the durable mini and the slice that produced it), the
+/// question and its answer under the brief's splice budget (`budget_research_answer` — a render
+/// budget, never a cap; the full text is in the mini it names), and the same rule the
+/// dispatch-time block states — build on it or NAME the disagreement, never contradict it
+/// silently. The ISO stamp is data (it dates the block in the durable log); nothing reads it.
 pub(super) fn relay_note(landed: &ResearchRow) -> RelayNote {
     let from_mini = research_mini_name(&landed.slice, landed.q_index);
     let text = format!(
-        "SIBLING MINI LANDED ({}) — another lane of your slice `{}` settled this while you were \
-         working; it is now in .swarm/ledger/{from_mini}. Build on it: where your answer depends \
-         on it, agree with it or NAME the disagreement and the request's words that decide it (the \
-         builder receives both answers) — never contradict it silently. Continue the SAME \
-         question; do not restart.\nQ: {}\nA: {}",
+        "A MINI LANDED ({}) — the lane of slice `{}` settled this while you were working, and \
+         its question names a path one of yours names; it is now in .swarm/ledger/{from_mini}. \
+         Build on it: where an answer of yours depends on it, agree with it or NAME the \
+         disagreement and the request's words that decide it (the builder receives both \
+         answers) — never contradict it silently. Continue the SAME questions; do not restart.\n\
+         Q: {}\nA: {}",
         chrono::Utc::now().to_rfc3339(),
         landed.slice,
         landed.question,
@@ -844,6 +1004,26 @@ pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<Pa
     super::write_ledger_mini(root, &research_mini_name(&row.slice, row.q_index), &v)
 }
 
+/// C3: the fan's lanes — ONE per slice with anything left to ask, in the queue's own order (the
+/// queue is built slice by slice, decisions last, so consecutive grouping is exact), each lane
+/// carrying every remaining question of its slice and the slice's prompt head once. Never yields
+/// an empty batch. Work-stealing over the hosts is unchanged: `fanout_over_fleet` hands each
+/// lane the next free host, so 6 slices on 3 nodes run 3 + 3, not 38 single-question sessions.
+pub(super) fn batch_by_slice(
+    queue: Vec<(ResearchQuestion, String)>,
+) -> Vec<(Vec<ResearchQuestion>, String)> {
+    let mut out: Vec<(Vec<ResearchQuestion>, String)> = Vec::new();
+    for (q, head) in queue {
+        match out.last_mut() {
+            Some((batch, _)) if batch.first().is_some_and(|b| b.slice == q.slice) => {
+                batch.push(q);
+            }
+            _ => out.push((vec![q], head)),
+        }
+    }
+    out
+}
+
 /// The fan's QUEUE as one event, emitted once when it is built and before anything dispatches:
 /// how many questions reach a lane (`questions` = dispatching now + settled from the ledger on
 /// resume — the denominator tick.py's `queued` subtracts dispatched from, so a fact that never
@@ -856,6 +1036,7 @@ pub(super) fn emit_research_planned(
     dispatching: &[ResearchQuestion],
     resumed: &[ResearchRow],
     facts: usize,
+    lanes: usize,
 ) {
     let mut per_slice: std::collections::BTreeMap<&str, usize> = Default::default();
     for slice in dispatching
@@ -871,6 +1052,9 @@ pub(super) fn emit_research_planned(
         "dispatching": dispatching.len(),
         "resumed": resumed.len(),
         "facts": facts,
+        // C3: one lane per slice with anything left to ask (+1 for the open decisions) — the
+        // number of sessions the fan runs, against `dispatching` questions (r6d: 38 vs 38).
+        "lanes": lanes,
         "per_slice": per_slice,
     }));
 }
@@ -1133,30 +1317,36 @@ pub(super) fn briefs_from_slices(
 pub(super) fn announce_research_phase(events: &dyn EventSink) {
     phase_banner(
         "RESEARCH",
-        "every host answers the opener's own questions in parallel",
+        "one lane per slice answers that slice's questions in one session; slices queue across \
+         the hosts",
     );
     events.write_value(serde_json::json!({"event": "phase", "phase": "research"}));
 }
 
 pub(super) fn research_system_text() -> String {
-    "You are answering ONE question that must be settled before this software is built. Ground \
-     your answer: read the request text you were given, read the existing tree's files with your \
-     shell and tree tools, and when the request names a documentation URL, fetch it — an answer \
-     copied from the real source beats any paraphrase. Do NOT create or edit files: you have no \
-     write or edit tool, and your structured reply IS your deliverable.\n\n\
-     Your answer is a HANDOFF to the builder: name exact files, exact key/field literals, exact \
+    "You are answering the tagged QUESTIONS of ONE slice of this request — all of them, in this \
+     one session; each must be settled before the slice is built. Ground every answer: read the \
+     request text you were given, read the existing tree's files with your shell and tree \
+     tools, and when the request names a documentation URL, fetch it — an answer copied from the \
+     real source beats any paraphrase. Do NOT create or edit files: you have no write or edit \
+     tool, and your structured reply IS your deliverable.\n\n\
+     Each answer is a HANDOFF to the builder: name exact files, exact key/field literals, exact \
      endpoints or signatures where the request implies them; where the request is silent, state \
      the most CONVENTIONAL choice and say it is a convention. Before you call anything a \
      convention or raise it as not frozen, check the orientation index for a section that names \
      it and read that section from the request file named under SOURCES — silence in your \
-     excerpt is not silence in the request. If the question cannot be settled from the request \
-     or the sources, say exactly that in one line and still name the conventional choice. Keep \
-     it under a page.\n\n\
-     When you are done, call the final_output tool ONCE with {\"answer\": \"...\", \"raised\": \
-     [...]} — `raised` lists further questions you could NOT settle: do not answer them, and \
-     nothing will dispatch them; they are handed VERBATIM to the builder of this slice as open \
-     points, so phrase each as a decision that builder can make in one line, naming the \
-     conventional choice when you have one."
+     excerpt is not silence in the request. The questions of one slice overlap: settle a shared \
+     fact ONCE and let the later answers refer back to it, never contradict it. If a question \
+     cannot be settled from the request or the sources, say exactly that in one line and still \
+     name the conventional choice. Keep each answer under a page.\n\n\
+     When ALL of them are done, call the final_output tool ONCE with {\"answers\": \
+     [{\"question_index\": N, \"answer\": \"...\", \"raised\": [...]}, ...]} — one entry per \
+     [qN] tag with question_index = N, in any order. A tag you omit is recorded as UNANSWERED, \
+     so include every one, even as \"cannot be settled: <why>; convention: <choice>\". `raised` \
+     lists further questions you could NOT settle: do not answer them, and nothing will dispatch \
+     them; they are handed VERBATIM to the builder of this slice as open points, so phrase each \
+     as a decision that builder can make in one line, naming the conventional choice when you \
+     have one."
         .to_string()
 }
 
@@ -1195,11 +1385,25 @@ mod tests {
             kind: "design".to_string(),
             cite: String::new(),
             origin: String::new(),
+            batch: 0,
         }
     }
 
     fn rq(slice: &str, q_index: usize, question: &str) -> ResearchQuestion {
         ResearchQuestion::of(slice, q_index, &OpenQuestion::from(question))
+    }
+
+    /// The one-question fold the pre-C3 tests were written against: a batch of one, its row
+    /// (the run path folds through `fold_research_batch` and names strays; a one-question batch
+    /// has none worth acting on).
+    fn fold_research_outcome(
+        q: &ResearchQuestion,
+        model: &str,
+        secs: u64,
+        out: Result<String, String>,
+    ) -> ResearchRow {
+        let (mut rows, _) = fold_research_batch(std::slice::from_ref(q), model, secs, out);
+        rows.remove(0)
     }
 
     /// r6b's shape at the event layer: `research_answered.raised` carried only a COUNT (48 over
@@ -1392,7 +1596,7 @@ mod tests {
             0,
             "What is the frozen payment record structure from section 2?",
         );
-        let text = research_user_text(&head, "", &q);
+        let text = research_user_text(&head, "", std::slice::from_ref(&q));
         assert!(
             text.contains("CLAIMED_DEEP_MARKER"),
             "the claimed section's FULL text rides in"
@@ -1419,9 +1623,13 @@ mod tests {
             text.contains("USER DECISIONS") && text.contains("pipe-separated CSV"),
             "the ASK handshake's decisions inform every research call (A6)"
         );
-        assert!(text.ends_with(
-            "\n\nTHE QUESTION:\nWhat is the frozen payment record structure from section 2?"
-        ));
+        assert!(
+            text.contains("THE QUESTIONS (1) — answer EVERY one of them in this session")
+                && text.ends_with(
+                    "\n[q0] What is the frozen payment record structure from section 2?"
+                ),
+            "the batch tail, tagged by q_index:\n{text}"
+        );
         assert!(
             text.contains("app/__main__.py"),
             "the existing tree rides in"
@@ -1449,17 +1657,27 @@ mod tests {
             0,
             "What is the exact ledger.db schema and index set?",
         );
-        let first =
-            research_dispatch_text(root, &sink, "HEAD", &q0, "research-ledgerd-core-q0", 28);
-        assert_eq!(
-            first, "HEAD\n\nTHE QUESTION:\nWhat is the exact ledger.db schema and index set?",
-            "a first dispatch: head, question, nothing invented between them"
+        let first = research_dispatch_text(
+            root,
+            &sink,
+            "HEAD",
+            std::slice::from_ref(&q0),
+            "research-ledgerd-core",
+            28,
+        );
+        assert!(
+            first.starts_with("HEAD\n\nTHE QUESTIONS (1)")
+                && first.ends_with("\n[q0] What is the exact ledger.db schema and index set?")
+                && !first.contains("ALREADY ANSWERED"),
+            "a first dispatch: head, the tagged question, nothing invented between them:\n{first}"
         );
         {
             let ev = sink.0.lock().unwrap();
             assert_eq!(ev.len(), 1);
             assert_eq!(ev[0]["event"], "research_context");
-            assert_eq!(ev[0]["task"], "research-ledgerd-core-q0");
+            assert_eq!(ev[0]["task"], "research-ledgerd-core");
+            assert_eq!(ev[0]["q_indexes"], serde_json::json!([0]));
+            assert_eq!(ev[0]["questions"], 1);
             assert_eq!(ev[0]["prior_minis"], 0);
             assert_eq!(ev[0]["index_sections"], 28);
             assert_eq!(ev[0]["prior_from"], serde_json::json!([]));
@@ -1495,8 +1713,14 @@ mod tests {
             1,
             "How is sync cursor state persisted so a dropped connection resumes?",
         );
-        let second =
-            research_dispatch_text(root, &sink, "HEAD", &q1, "research-ledgerd-core-q1", 28);
+        let second = research_dispatch_text(
+            root,
+            &sink,
+            "HEAD",
+            std::slice::from_ref(&q1),
+            "research-ledgerd-core",
+            28,
+        );
         assert!(
             second.contains("ALREADY ANSWERED BY THIS FAN before your dispatch (1)"),
             "the real count:\n{second}"
@@ -1512,7 +1736,7 @@ mod tests {
             "no shared path, unrelated, and unanswered rows stay out:\n{second}"
         );
         assert!(
-            second.find("ALREADY ANSWERED").unwrap() < second.find("THE QUESTION:").unwrap(),
+            second.find("ALREADY ANSWERED").unwrap() < second.find("THE QUESTIONS (1)").unwrap(),
             "the snowball precedes the question"
         );
 
@@ -1521,13 +1745,27 @@ mod tests {
             2,
             "What does /api/health expose as the degraded state while the vendor is down?",
         );
-        let third =
-            research_dispatch_text(root, &sink, "HEAD", &q2, "research-ledgerd-core-q2", 28);
+        // C3: q1 and q2 ride ONE lane — the batch's snowball is the union: q0 (own slice, not
+        // in the batch) and api-q0 (a stranger naming q2's /api/health), each once.
+        let third = research_dispatch_text(
+            root,
+            &sink,
+            "HEAD",
+            &[q1.clone(), q2.clone()],
+            "research-ledgerd-core",
+            28,
+        );
         assert!(third.contains("before your dispatch (2)"), "{third}");
         assert!(third.contains(
-            "[slice `ledgerd-api` — its question names the same path as yours; \
+            "[slice `ledgerd-api` — its question names the same path as one of yours; \
              .swarm/ledger/research-ledgerd-api-q0.json]"
         ));
+        assert!(
+            third.contains("THE QUESTIONS (2)")
+                && third.contains("\n[q1] How is sync cursor state persisted")
+                && third.ends_with("\n[q2] What does /api/health expose as the degraded state while the vendor is down?"),
+            "both questions, tagged, in batch order:\n{third}"
+        );
         assert!(
             third.contains("\"payments\": <int>"),
             "the exact Health shape reaches the lane that invented one in r6c"
@@ -1545,6 +1783,7 @@ mod tests {
             let ev = sink.0.lock().unwrap();
             assert_eq!(ev.len(), 3);
             assert_eq!(ev[2]["prior_minis"], 2);
+            assert_eq!(ev[2]["q_indexes"], serde_json::json!([1, 2]));
             assert_eq!(
                 ev[2]["prior_from"],
                 serde_json::json!([
@@ -1553,13 +1792,131 @@ mod tests {
                 ])
             );
         }
-        let d = ResearchQuestion::decision(0, "D2: is rejected terminal?");
-        let decision = research_dispatch_text(root, &sink, "HEAD", &d, "research-decisions-q0", 0);
-        assert!(decision.ends_with("\n\nTHE OPEN DECISION:\nD2: is rejected terminal?"));
+        let d = [
+            ResearchQuestion::decision(0, "D2: is rejected terminal?"),
+            ResearchQuestion::decision(2, "D3: empty-with-progress or loading?"),
+        ];
+        let decision = research_dispatch_text(root, &sink, "HEAD", &d, "research-decisions", 0);
+        assert!(
+            decision.contains("THE OPEN DECISIONS (2)")
+                && decision.contains("\n[q0] D2: is rejected terminal?")
+                && decision.ends_with("\n[q2] D3: empty-with-progress or loading?"),
+            "{decision}"
+        );
         assert!(
             !decision.contains("ALREADY ANSWERED"),
             "no decision settled yet and no question shares a path — nothing is spliced"
         );
+    }
+
+    /// C3's fold, on a three-question batch: one answered, one blank, one the reply skipped
+    /// (named "no entry for [qN]"), plus a stray tag the batch never carried (returned, not
+    /// dropped) and a duplicate tag (the second is a stray); the pre-C3 single shape is the
+    /// answer for a ONE-question batch and an attributed-to-nobody miss for a larger one; an
+    /// Err reaches every row; `secs` is the session's on every row and `batch` its size.
+    #[test]
+    fn a_batched_reply_folds_to_one_terminal_row_per_question_and_names_strays() {
+        let qs = [
+            rq("ledger-api", 1, "sort keys?"),
+            rq("ledger-api", 2, "SSE framing?"),
+            rq("ledger-api", 4, "static hosting?"),
+        ];
+        let reply = serde_json::json!({"answers": [
+            {"question_index": 4, "answer": "text/html; charset=utf-8 for index.html", "raised": ["cache headers?"]},
+            {"question_index": 1, "answer": "   "},
+            {"question_index": 7, "answer": "an answer to a question this lane never carried"},
+            {"question_index": 4, "answer": "a second entry for q4"},
+        ]})
+        .to_string();
+        let (rows, strays) = fold_research_batch(&qs, "m", 1800, Ok(reply));
+        assert_eq!(rows.len(), 3, "one row per question, in batch order");
+        assert_eq!(rows[0].q_index, 1);
+        assert_eq!(rows[0].status, RESEARCH_UNANSWERED);
+        assert_eq!(rows[0].reason.as_deref(), Some("empty_answer"));
+        assert_eq!(rows[1].q_index, 2);
+        assert_eq!(rows[1].reason.as_deref(), Some("empty_answer"));
+        assert_eq!(
+            rows[1].detail.as_deref(),
+            Some("the lane's reply carried no entry for [q2]")
+        );
+        assert_eq!(rows[2].q_index, 4);
+        assert_eq!(rows[2].status, RESEARCH_ANSWERED);
+        assert_eq!(rows[2].answer, "text/html; charset=utf-8 for index.html");
+        assert_eq!(rows[2].raised, vec!["cache headers?".to_string()]);
+        assert!(rows
+            .iter()
+            .all(|r| r.secs == 1800 && r.batch == 3 && r.model == "m"));
+        assert_eq!(strays.len(), 2, "{strays:?}");
+        assert_eq!(strays[0].question_index, Some(7));
+        assert_eq!(
+            strays[1].question_index,
+            Some(4),
+            "a duplicate tag is a stray"
+        );
+        assert!(strays[1].answer_head.starts_with("a second entry"));
+        // The pre-C3 single shape on a one-question batch IS the answer.
+        let one = [rq("web-page", 0, "tokens?")];
+        let (rows, strays) = fold_research_batch(
+            &one,
+            "m",
+            5,
+            Ok(r##"{"answer": "#role-token input", "raised": []}"##.into()),
+        );
+        assert_eq!(rows[0].status, RESEARCH_ANSWERED);
+        assert_eq!(rows[0].answer, "#role-token input");
+        assert!(strays.is_empty());
+        assert_eq!(
+            fold_research_outcome(&one[0], "m", 5, Ok(r#"{"answer": "x"}"#.into())).answer,
+            "x",
+            "the one-question wrapper keeps its name and shape"
+        );
+        // The single shape on a larger batch attributes to nobody, and says so.
+        let (rows, _) = fold_research_batch(&qs, "m", 5, Ok(r#"{"answer": "one blob"}"#.into()));
+        assert!(rows.iter().all(|r| r.status == RESEARCH_UNANSWERED
+            && r.reason.as_deref() == Some("empty_answer")
+            && r.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("answered 3 questions with ONE"))));
+        // Nothing parseable: every row carries the raw head.
+        let (rows, _) = fold_research_batch(&qs, "m", 5, Ok("I could not decide.".into()));
+        assert!(rows
+            .iter()
+            .all(|r| r.detail.as_deref() == Some("I could not decide.")));
+        // The engine's own ending and a transport error reach every row, named apart.
+        let (rows, _) = fold_research_batch(
+            &qs,
+            "m",
+            5,
+            Err(format!("{JUDGE_ENDED_NEEDLE}: out of moves")),
+        );
+        assert!(rows
+            .iter()
+            .all(|r| r.reason.as_deref() == Some("judge_ended")));
+        let (rows, _) = fold_research_batch(&qs, "m", 5, Err("connection reset".into()));
+        assert!(rows
+            .iter()
+            .all(|r| r.reason.as_deref() == Some("provider_error")
+                && r.detail.as_deref() == Some("connection reset")));
+        // The lanes: consecutive same-slice questions group, decisions last as one lane, the
+        // head carried once, never an empty batch.
+        let queue = vec![
+            (rq("ledger-core", 0, "a"), "H-core".to_string()),
+            (rq("ledger-core", 2, "b"), "H-core".to_string()),
+            (rq("web-page", 1, "c"), "H-web".to_string()),
+            (ResearchQuestion::decision(0, "d0"), "H-dec".to_string()),
+            (ResearchQuestion::decision(1, "d1"), "H-dec".to_string()),
+        ];
+        let lanes = batch_by_slice(queue);
+        assert_eq!(lanes.len(), 3);
+        assert_eq!(
+            lanes[0].0.iter().map(|q| q.q_index).collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(lanes[0].1, "H-core");
+        assert_eq!(lanes[1].0.len(), 1);
+        assert_eq!(lanes[2].0.len(), 2);
+        assert_eq!(lanes[2].0[0].slice, DECISION_SLICE);
+        assert!(batch_by_slice(Vec::new()).is_empty());
     }
 
     /// Fix C: the SOURCES block is derived from THIS run — the request file (or its stated
@@ -1657,7 +2014,7 @@ mod tests {
             ResearchQuestion::decision(0, "d"),
         ];
         let resumed = vec![row("ledgerd-core", 0, RESEARCH_ANSWERED, &[])];
-        emit_research_planned(&sink, &dispatching, &resumed, 2);
+        emit_research_planned(&sink, &dispatching, &resumed, 2, 2);
         let ev = sink.0.lock().unwrap();
         assert_eq!(ev.len(), 1);
         assert_eq!(
@@ -1668,9 +2025,10 @@ mod tests {
                 "dispatching": 3,
                 "resumed": 1,
                 "facts": 2,
+                "lanes": 2,
                 "per_slice": {"__open_decisions__": 1, "ledgerd-core": 3},
             }),
-            "facts are counted beside the lane denominator, never inside it"
+            "facts are counted beside the lane denominator, never inside it; lanes = sessions"
         );
         let fan_src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -1754,46 +2112,87 @@ mod tests {
         );
     }
 
-    /// THE r6d SHAPE (research-ledger-core, 04:47:28Z): q2's mini lands while q5 (same slice,
-    /// dispatched 33 s earlier with prior_minis=1) and ledger-api-q0 (another slice) are running.
-    /// The relay reaches q5 and only q5 — not the stranger, not q2 itself, and never for an
-    /// unanswered row. The note carries the mini's path, the question and the budgeted answer.
+    /// THE r6c SHAPE, under C3's one-lane-per-slice: ledger-api's lane lands its q0 (the exact
+    /// /api/health shape) while the ledger-core lane (q1 cursor, q2 "what does /api/health
+    /// expose") and the web-page lane (q0 brush) are still running. The relay reaches the core
+    /// lane — one of its questions names the same path — and only it: not web-page (no shared
+    /// path), never a lane of the landed row's own slice, never for an unanswered row, never
+    /// for a landed question that names no path. The note carries the mini's path, the slice,
+    /// the question and the budgeted answer.
     #[test]
-    fn a_landed_mini_is_relayed_to_the_running_lanes_of_its_own_slice_only() {
-        let q = |slice: &str, i: usize| rq(slice, i, &format!("q{i} of {slice}?"));
+    fn a_landed_mini_is_relayed_to_running_lanes_whose_questions_name_its_path() {
         let running = vec![
-            ("research-ledger-core-q5".to_string(), q("ledger-core", 5)),
-            ("research-ledger-api-q0".to_string(), q("ledger-api", 0)),
-            ("research-ledger-core-q2".to_string(), q("ledger-core", 2)),
+            (
+                "research-ledger-core".to_string(),
+                vec![
+                    rq("ledger-core", 1, "How is sync cursor state persisted?"),
+                    rq(
+                        "ledger-core",
+                        2,
+                        "What does /api/health expose as the degraded state?",
+                    ),
+                ],
+            ),
+            (
+                "research-web-page".to_string(),
+                vec![rq(
+                    "web-page",
+                    0,
+                    "Does the brush survive a streamed mutation?",
+                )],
+            ),
+            (
+                "research-ledger-api".to_string(),
+                vec![rq(
+                    "ledger-api",
+                    3,
+                    "Which header verifies signed webhooks?",
+                )],
+            ),
         ];
-        let mut landed = row("ledger-core", 2, RESEARCH_ANSWERED, &[]);
-        landed.question = "Does a note mutate the payment row/version?".into();
-        landed.answer = "It is a write-THROUGH to the vendor with If-Match; the vendor bumps \
-                         version and the response carries the new version."
+        let mut landed = row("ledger-api", 0, RESEARCH_ANSWERED, &[]);
+        landed.question =
+            "What are the exact response shapes for /api/health, /api/summary and /api/buckets?"
+                .into();
+        landed.answer = "GET /api/health: {\"status\": \"ok\", \"payments\": <int>, \
+                         \"last_sync\": <str or null>, \"webhook\": {...}}"
             .into();
         assert_eq!(
             relay_targets(&landed, &running),
-            vec!["research-ledger-core-q5".to_string()]
+            vec!["research-ledger-core".to_string()]
         );
         let note = relay_note(&landed);
-        assert_eq!(note.from_mini, "research-ledger-core-q2.json");
-        assert!(note.text.starts_with("SIBLING MINI LANDED ("));
+        assert_eq!(note.from_mini, "research-ledger-api-q0.json");
+        assert!(note.text.starts_with("A MINI LANDED ("));
         assert!(note
             .text
-            .contains(".swarm/ledger/research-ledger-core-q2.json"));
+            .contains("the lane of slice `ledger-api` settled this"));
         assert!(note
             .text
-            .contains("Q: Does a note mutate the payment row/version?"));
-        assert!(note.text.contains("A: It is a write-THROUGH to the vendor"));
-        assert!(note.from_question.starts_with("Does a note mutate"));
-        let missed = row("ledger-core", 2, RESEARCH_UNANSWERED, &[]);
+            .contains(".swarm/ledger/research-ledger-api-q0.json"));
+        assert!(note
+            .text
+            .contains("Q: What are the exact response shapes for /api/health"));
+        assert!(note
+            .text
+            .contains("A: GET /api/health: {\"status\": \"ok\""));
+        assert!(note
+            .from_question
+            .starts_with("What are the exact response shapes"));
+        let missed = row("ledger-api", 0, RESEARCH_UNANSWERED, &[]);
         assert!(
             relay_targets(&missed, &running).is_empty(),
             "a miss relays nothing"
         );
         assert!(
             relay_targets(&landed, &[]).is_empty(),
-            "no running sibling, no relay"
+            "no running lane, no relay"
+        );
+        let mut pathless = landed.clone();
+        pathless.question = "Is the dedupe key the event seq alone?".into();
+        assert!(
+            relay_targets(&pathless, &running).is_empty(),
+            "a landed question naming no path links to nobody"
         );
     }
 
@@ -2107,6 +2506,7 @@ mod tests {
                 kind: "design".into(),
                 cite: String::new(),
                 origin: String::new(),
+                batch: 0,
             },
             ResearchRow {
                 slice: "api".into(),
@@ -2122,6 +2522,7 @@ mod tests {
                 kind: "design".into(),
                 cite: String::new(),
                 origin: String::new(),
+                batch: 0,
             },
         ];
         let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
@@ -2203,5 +2604,63 @@ mod tests {
             Some("Bta"),
             "the typo VERBATIM, so the operator can see what to fix"
         );
+    }
+
+    /// RESEARCH FAN v2, the terminal fold: every outcome — a real answer, an empty or
+    /// unparseable reply, a transport failure, the judge_out_of_moves ending — lands as a
+    /// TERMINAL row (answered | unanswered + named reason), which is what makes "all dispatched
+    /// questions terminal" reachable with no clock. A miss is a loud named absence, never a
+    /// substituted answer (the fallback gate).
+    #[test]
+    fn research_terminal_fold_classifies_every_outcome() {
+        let q = ResearchQuestion::of(
+            "payments",
+            0,
+            &OpenQuestion::from("What is the frozen payment record structure from section 2?"),
+        );
+        let ok = fold_research_outcome(
+            &q,
+            "workhorse-q",
+            7,
+            Ok(r#"{"answer":"The record is {id, amount_minor, currency}.","raised":["what about refunds?"]}"#.into()),
+        );
+        assert_eq!(ok.status, RESEARCH_ANSWERED);
+        assert!(ok.answer.contains("amount_minor"));
+        assert_eq!(
+            ok.raised,
+            vec!["what about refunds?".to_string()],
+            "raised questions are RECORDED on the row — never dispatched"
+        );
+        let empty = fold_research_outcome(&q, "m", 3, Ok(r#"{"answer":"  "}"#.into()));
+        assert_eq!(
+            (empty.status.as_str(), empty.reason.as_deref()),
+            ("unanswered", Some("empty_answer")),
+            "an empty reply is a named absence, never a stub answer"
+        );
+        let prose = fold_research_outcome(&q, "m", 3, Ok("no json at all".into()));
+        assert_eq!(prose.reason.as_deref(), Some("empty_answer"));
+        // Built FROM the shared needle, exactly as the emit site builds its Err — so this test
+        // pins emit-site==matcher. Its own copy of the words would stay green through a
+        // rewording that silently degraded every judge_ended lane to provider_error.
+        let judge = fold_research_outcome(
+            &q,
+            "m",
+            900,
+            Err(format!("call {JUDGE_ENDED_NEEDLE}: 4 nudges")),
+        );
+        assert_eq!(
+            (judge.status.as_str(), judge.reason.as_deref()),
+            ("unanswered", Some("judge_ended")),
+            "an engine-ended lane is named as such, not laundered into a transport failure"
+        );
+        let prov = fold_research_outcome(&q, "m", 3, Err("connection reset by peer".into()));
+        assert_eq!(prov.reason.as_deref(), Some("provider_error"));
+        assert_eq!(prov.detail.as_deref(), Some("connection reset by peer"));
+        for row in [&ok, &empty, &prose, &judge, &prov] {
+            assert!(
+                row.status == RESEARCH_ANSWERED || row.status == RESEARCH_UNANSWERED,
+                "every outcome is terminal"
+            );
+        }
     }
 }

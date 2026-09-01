@@ -69,10 +69,10 @@ use orientation::{
 mod research;
 use research::{
     announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
-    emit_research_planned, fold_research_outcome, fold_research_panic, load_research_mini,
-    persist_request_text, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
-    research_prompt_head, research_request_block, research_schema, research_sources_block,
-    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    emit_research_planned, fold_research_panic, load_research_mini, persist_request_text,
+    relay_note, relay_targets, research_dispatch_text, research_fan_lanes, research_prompt_head,
+    research_request_block, research_schema, research_sources_block, research_system_text,
+    write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
 mod research_plan;
 use research_plan::{covering_mini, route_questions_to_decisions};
@@ -131,10 +131,9 @@ mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
 use fleet_order::{
-    aux_candidate_models, configured_speed_weight, least_loaded_aux_model, live_fleet_slots,
-    measured_rate_for, one_lane_per_host, order_fleet_by_speed, publish_fleet_speed_weights,
-    rank_fix_target, reconcile_pool_with_fleet, resolved_fleet_speed_weights,
-    unmatched_speed_weight_patterns, InflightGuard,
+    aux_candidate_models, configured_speed_weight, fanout_over_fleet, least_loaded_aux_model,
+    live_fleet_slots, measured_rate_for, one_lane_per_host, publish_fleet_speed_weights,
+    rank_fix_target, reconcile_pool_with_fleet, unmatched_speed_weight_patterns, InflightGuard,
 };
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
@@ -12672,7 +12671,7 @@ pub struct GooseAgentDispatcher {
     /// by that lane's OWN loop at a boundary where `pending` is empty (the gate the judge's
     /// steers respect) and delivered through `Agent::steer` — one more user message in the
     /// running session, never a restream. Nothing here bounds or ends anything.
-    research_running: Mutex<HashMap<String, ResearchQuestion>>,
+    research_running: Mutex<HashMap<String, Vec<ResearchQuestion>>>,
     research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
@@ -12762,7 +12761,7 @@ impl GooseAgentDispatcher {
     /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
     /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
     fn queue_research_relay(&self, row: &ResearchRow) {
-        let running: Vec<(String, ResearchQuestion)> = self
+        let running: Vec<(String, Vec<ResearchQuestion>)> = self
             .research_running
             .lock()
             .unwrap()
@@ -13932,41 +13931,51 @@ impl GooseAgentDispatcher {
             }
             }};
         }
-        loop {
-            // r6e E7 — A SIBLING MINI THAT LANDED AFTER THIS LANE'S DISPATCH IS DELIVERED HERE, at
-            // the lane's own boundary: `pending` empty (a tool request in flight is never
-            // orphaned — the same gate the judge's steers respect), through `Agent::steer` (the
-            // stream stops at its next chunk, KEEPS the partial, and the note is the next user
-            // message — never a restream). Every note queued since the last drain rides ONE
-            // message. The lock is released before the await (a single-statement remove).
-            if let Some(key) = activity_key.filter(|k| k.starts_with("research-")) {
-                if pending.is_empty() {
-                    let notes = self.research_relay.lock().unwrap().remove(key);
-                    if let Some(notes) = notes.filter(|n| !n.is_empty()) {
-                        for n in &notes {
-                            self.events.write_value(serde_json::json!({
-                                "event": "research_mini_relayed",
-                                "to_lane": key,
-                                "from_question": n.from_question,
-                                "from_mini": n.from_mini,
-                                "chars": n.text.chars().count(),
-                            }));
-                            relayed_minis.push(format!(
-                                "{} -> .swarm/ledger/{}",
-                                n.from_question, n.from_mini
-                            ));
+        // r6e E7 — A MINI THAT LANDED AFTER THIS LANE'S DISPATCH IS DELIVERED at the lane's own
+        // boundary: `pending` empty (a tool request in flight is never orphaned — the same gate
+        // the judge's steers respect), through `Agent::steer` (the stream stops at its next
+        // chunk, KEEPS the partial, and the note is the next user message — never a restream).
+        // Every note queued since the last drain rides ONE message. The lock is released before
+        // the await (a single-statement remove). ONE macro, TWO sites (the digestStreamFields
+        // law): the loop top, and inside the judge-probe `select!` right after
+        // `process_stream_event!` — the independent refuter of E7 showed the loop-top drain is
+        // unreachable for the whole duration of a look (r6d web-page-q3's relay could never have
+        // landed while its judge was reading it), and a research lane under back-to-back looks
+        // lives in that branch.
+        macro_rules! drain_research_relay {
+            () => {{
+                if let Some(key) = activity_key.filter(|k| k.starts_with("research-")) {
+                    if pending.is_empty() {
+                        let notes = self.research_relay.lock().unwrap().remove(key);
+                        if let Some(notes) = notes.filter(|n| !n.is_empty()) {
+                            for n in &notes {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "research_mini_relayed",
+                                    "to_lane": key,
+                                    "from_question": n.from_question,
+                                    "from_mini": n.from_mini,
+                                    "chars": n.text.chars().count(),
+                                }));
+                                relayed_minis.push(format!(
+                                    "{} -> .swarm/ledger/{}",
+                                    n.from_question, n.from_mini
+                                ));
+                            }
+                            let text = notes
+                                .iter()
+                                .map(|n| n.text.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n\n");
+                            agent
+                                .steer(&session_config.id, Message::user().with_text(text))
+                                .await;
                         }
-                        let text = notes
-                            .iter()
-                            .map(|n| n.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
-                        agent
-                            .steer(&session_config.id, Message::user().with_text(text))
-                            .await;
                     }
                 }
-            }
+            }};
+        }
+        loop {
+            drain_research_relay!();
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
             // successful ToolResponse, so `message_content_is_productive` keeps resetting the progress
@@ -14705,6 +14714,9 @@ impl GooseAgentDispatcher {
                                     // so the biggest lanes showed stale reasoning, and a hard kill
                                     // would have lost every char since the last non-probe tick.
                                     process_stream_event!(ev);
+                                    // E7's second drain site — a relay must land DURING a look
+                                    // too (see the macro's doc).
+                                    drain_research_relay!();
                                     if let Some(p) = &activity_file {
                                         let due = flush_digest_now
                                             || last_digest_at
@@ -20701,122 +20713,6 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
     }
 }
 
-/// Run `items` across the fleet with at most ONE call in flight PER LIST ENTRY (work-stealing: each
-/// item grabs the next free entry and returns it on completion). Callers pass `fleet_slot_models`, so
-/// that bound is the per-device capacity the EXECUTE scheduler already honors — a weight-1 node still
-/// never has a second request queued behind the first, and a weight-2 node gets the second slot it is
-/// configured for. Results come back in item order.
-/// Returns ONE element per item, in item order — `Ok(R)` from the lane's closure, or `Err(panic
-/// message)` for a lane that panicked. The per-item slot is load-bearing twice over: the
-/// sink-review consumer zips results against its input list (a silently dropped lane would shift
-/// every later pairing), and the research consumer folds an `Err` into a terminal unanswered row.
-///
-/// A PANICKED LANE USED TO CONSUME THE WHOLE FAN, silently. The chain: the panic skipped the
-/// device push_back, breaking the permits==pool invariant; a later lane's "a device is free
-/// whenever a permit is held" expect then fired INSIDE the MutexGuard temporary, poisoning the
-/// pool; every remaining lane's `lock().unwrap()` panicked in turn; and the join's
-/// `if let Ok(r)` swallowed all of it. Three repairs, each necessary: the device rides a Drop
-/// guard back to the pool (unwind runs Drop), both lock sites recover a poisoned mutex instead
-/// of cascading (the queue holds Strings — no invariant can be torn mid-push), and the join
-/// names every lost lane with a `lane_panicked` event instead of silence.
-async fn fanout_over_fleet<T, R, F, Fut>(
-    context: &str,
-    events: &dyn EventSink,
-    devices: Vec<String>,
-    items: Vec<T>,
-    f: F,
-) -> Vec<Result<R, String>>
-where
-    T: Send + 'static,
-    R: Send + 'static,
-    F: Fn(T, String) -> Fut + Clone + Send + 'static,
-    Fut: std::future::Future<Output = R> + Send + 'static,
-{
-    use std::collections::VecDeque;
-    struct DeviceReturn {
-        pool: Arc<Mutex<VecDeque<String>>>,
-        dev: Option<String>,
-    }
-    impl Drop for DeviceReturn {
-        fn drop(&mut self) {
-            if let Some(dev) = self.dev.take() {
-                // Never a second panic inside Drop (that aborts the process): recover a
-                // poisoned lock and return the device anyway.
-                match self.pool.lock() {
-                    Ok(mut g) => g.push_back(dev),
-                    Err(poisoned) => poisoned.into_inner().push_back(dev),
-                }
-            }
-        }
-    }
-    let devices = if devices.is_empty() {
-        vec![String::new()]
-    } else {
-        // RESOLVED weights, never the raw substring map: the pool entries are MODEL ids and the
-        // map's keys are DEVICE-id fragments (r5: only "gabee" matched, the all-tie sort kept
-        // config order, and the weight-3 host idled through the round-0 fix wave).
-        order_fleet_by_speed(devices, &resolved_fleet_speed_weights(&load_config()))
-    };
-    // permits == pool size, so a permit holder is always guaranteed a free device to pop —
-    // an invariant the DeviceReturn guard keeps true through panicking lanes.
-    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
-    let pool = Arc::new(Mutex::new(
-        devices.into_iter().collect::<VecDeque<String>>(),
-    ));
-    let mut handles = Vec::with_capacity(items.len());
-    for item in items {
-        let permits = permits.clone();
-        let pool = pool.clone();
-        let f = f.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = permits
-                .acquire_owned()
-                .await
-                .expect("fleet semaphore never closed");
-            let popped = match pool.lock() {
-                Ok(mut g) => g.pop_front(),
-                Err(poisoned) => poisoned.into_inner().pop_front(),
-            };
-            // The expect fires OUTSIDE the lock: even a broken invariant costs one lane a
-            // panic (named at the join) without poisoning the pool for the rest.
-            let dev = popped.expect("a device is free whenever a permit is held");
-            let _return_guard = DeviceReturn {
-                pool,
-                dev: Some(dev.clone()),
-            };
-            f(item, dev).await
-        }));
-    }
-    let mut results = Vec::with_capacity(handles.len());
-    for h in handles {
-        match h.await {
-            Ok(r) => results.push(Ok(r)),
-            Err(e) => {
-                let error = match e.try_into_panic() {
-                    Ok(payload) => payload
-                        .downcast_ref::<&str>()
-                        .map(|s| (*s).to_string())
-                        .or_else(|| payload.downcast_ref::<String>().cloned())
-                        .unwrap_or_else(|| "panicked with a non-string payload".to_string()),
-                    Err(join_err) => join_err.to_string(),
-                };
-                events.write_value(serde_json::json!({
-                    "event": "lane_panicked",
-                    "context": context,
-                    "error": error,
-                }));
-                eprintln!(
-                    "  {} {context} lane panicked ({error}) — its slot is folded as a failure; \
-                     the other lanes' results stand",
-                    style("!").red().bold()
-                );
-                results.push(Err(error));
-            }
-        }
-    }
-    results
-}
-
 // ================================================================================================
 // THE LINEAR PLAN: OPEN -> RESEARCH -> SYNTHESIS -> REVIEW
 //
@@ -23330,15 +23226,29 @@ impl GooseAgentDispatcher {
             }));
             return Vec::new();
         }
-        // (slice, q_index, question) per dispatched item, in dispatch order, so a panicked
-        // lane's Err — which arrives positionally — can be folded into a terminal row below.
+        // Every question that reaches a lane, in dispatch order (the `research_planned`
+        // denominator), then the lanes themselves: C3 — ONE lane per slice, carrying every
+        // remaining question of that slice, plus one for the open decisions (`batch_by_slice`;
+        // the plan's own design, "1 slice per node, queued"). r6d ran 38 lanes for 38
+        // questions, ~5 minutes of read/orientation tail on each; a slice's questions share
+        // one reading of its sections. A panicked lane's Err arrives positionally, so
+        // `batches[i]` folds into terminal rows below.
         let dispatched: Vec<ResearchQuestion> =
             to_dispatch.iter().map(|(q, _)| q.clone()).collect();
-        emit_research_planned(self.events.as_ref(), &dispatched, &rows, fact_rows.len());
+        let lane_batches = research::batch_by_slice(to_dispatch);
+        let batches: Vec<Vec<ResearchQuestion>> =
+            lane_batches.iter().map(|(b, _)| b.clone()).collect();
+        emit_research_planned(
+            self.events.as_ref(),
+            &dispatched,
+            &rows,
+            fact_rows.len(),
+            lane_batches.len(),
+        );
         // The facts join the rows AFTER the queue event: they are settled, not lane work, and
         // the event's `questions` denominator is what tick.py subtracts dispatched from.
         rows.extend(fact_rows);
-        if to_dispatch.is_empty() {
+        if lane_batches.is_empty() {
             return rows;
         }
         announce_research_phase(self.events.as_ref());
@@ -23348,21 +23258,33 @@ impl GooseAgentDispatcher {
             "research",
             self.events.as_ref(),
             lanes,
-            to_dispatch,
-            move |(q, head): (ResearchQuestion, String), model: String| {
+            lane_batches,
+            move |(batch, head): (Vec<ResearchQuestion>, String), model: String| {
                 let me = me.clone();
                 async move {
-                    let key = format!("research-{}-q{}", q.slice, q.q_index);
+                    // `batch_by_slice` never yields an empty batch; the key is the slice's —
+                    // one activity digest, one transcript, one judge lane per slice.
+                    let slice = batch
+                        .first()
+                        .map(|q| q.slice.clone())
+                        .unwrap_or_else(|| decisions::DECISION_SLICE.to_string());
+                    let key = format!("research-{slice}");
+                    let mut out_rows: Vec<ResearchRow> = Vec::new();
                     // THE FAN CUT (C2b): read the minis on disk RIGHT NOW — resumed, or landed
-                    // by lanes of any slice that finished before this one got a node — and if
-                    // one already answers this question (same cite, same decision id, or a
-                    // stem past both floors; `research_plan::same_question`), its answer is
-                    // copied into this question's row with the original mini as provenance
-                    // and NO model is called. r6d: drafts-workflow-q4 asked what
+                    // by lanes of any slice that finished before this one got a node — and
+                    // every question of the batch one already answers (same cite, same
+                    // decision id, or a stem past both floors; `research_plan::same_question`)
+                    // gets that answer copied into its row with the original mini as
+                    // provenance, and leaves the batch. r6d: drafts-workflow-q4 asked what
                     // ledger-api-q5 had settled from request.md:218 (8.1 min). MILD: the three
-                    // rules are strict; anything else dispatches.
+                    // rules are strict; anything else stays in the batch and is asked.
                     let landed = research::load_research_minis(&me.working_dir);
-                    if let Some((cover, rule)) = covering_mini(&q, &landed) {
+                    let mut remaining: Vec<ResearchQuestion> = Vec::new();
+                    for q in batch {
+                        let Some((cover, rule)) = covering_mini(&q, &landed) else {
+                            remaining.push(q);
+                            continue;
+                        };
                         let row = ResearchRow::covered_by(&q, cover, rule);
                         write_research_ledger(&me.working_dir, &row);
                         me.events.write_value(serde_json::json!({
@@ -23374,28 +23296,35 @@ impl GooseAgentDispatcher {
                             "by_mini": row.origin.trim_start_matches(research::ORIGIN_COVERED_PREFIX),
                             "rule": rule,
                         }));
-                        return row;
+                        out_rows.push(row);
                     }
-                    // E7: enrolled as a relay target for the life of the call (removed at its row).
+                    if remaining.is_empty() {
+                        // Every question was covered: no model is called for this slice.
+                        return out_rows;
+                    }
+                    // E7: enrolled as a relay target for the life of the call (removed at its rows).
                     me.research_running
                         .lock()
                         .unwrap()
-                        .insert(key.clone(), q.clone());
-                    me.events.write_value(serde_json::json!({
-                        "event": "research_dispatched",
-                        "slice": q.slice,
-                        "q_index": q.q_index,
-                        // A hard head cut: this feeds an event, not a model (the
-                        // head_to_sentence_end rule's own exemption), at final_text's 200.
-                        "question": q.question.chars().take(200).collect::<String>(),
-                        "model": model,
-                        "activity_key": key,
-                    }));
+                        .insert(key.clone(), remaining.clone());
+                    for q in &remaining {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_dispatched",
+                            "slice": q.slice,
+                            "q_index": q.q_index,
+                            // A hard head cut: this feeds an event, not a model (the
+                            // head_to_sentence_end rule's own exemption), at final_text's 200.
+                            "question": q.question.chars().take(200).collect::<String>(),
+                            "model": model,
+                            "activity_key": key,
+                            "batch": remaining.len(),
+                        }));
+                    }
                     let user_text = research_dispatch_text(
                         &me.working_dir,
                         me.events.as_ref(),
                         &head,
-                        &q,
+                        &remaining,
                         &key,
                         index_sections,
                     );
@@ -23427,16 +23356,35 @@ impl GooseAgentDispatcher {
                         Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
                         Err(e) => Err(e.to_string()),
                     };
-                    let row = fold_research_outcome(&q, &model, secs, folded);
-                    // The mini is written for BOTH outcomes — the absence is a fact the ledger
-                    // holds — and the events (one funnel, `emit_research_outcome`: the
-                    // answered/unanswered row plus one `research_raised_folded` per raised
-                    // question) are the loud channel tick.py counts.
-                    write_research_ledger(&me.working_dir, &row);
-                    emit_research_outcome(me.events.as_ref(), &row);
+                    // ONE row per question of the batch, every one terminal (answered, or
+                    // unanswered with the reason — including "no entry for [qN]" when the
+                    // lane's reply skipped a tag); an entry with a tag the batch never carried
+                    // is named, never silently dropped.
+                    let (lane_rows, strays) =
+                        research::fold_research_batch(&remaining, &model, secs, folded);
+                    for s in strays {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_batch_stray_answer",
+                            "task": key,
+                            "slice": slice,
+                            "question_index": s.question_index,
+                            "answer_head": s.answer_head,
+                        }));
+                    }
                     me.research_running.lock().unwrap().remove(&key);
-                    me.queue_research_relay(&row);
-                    row
+                    for row in lane_rows {
+                        // The mini is written for BOTH outcomes — the absence is a fact the
+                        // ledger holds — and the events (one funnel, `emit_research_outcome`:
+                        // the answered/unanswered row plus one `research_raised_folded` per
+                        // raised question) are the loud channel tick.py counts. Each landed
+                        // row is relayed to the still-running lanes whose questions name a
+                        // path it names (E7, re-aimed by C3).
+                        write_research_ledger(&me.working_dir, &row);
+                        emit_research_outcome(me.events.as_ref(), &row);
+                        me.queue_research_relay(&row);
+                        out_rows.push(row);
+                    }
+                    out_rows
                 }
             },
         )
@@ -23447,15 +23395,17 @@ impl GooseAgentDispatcher {
         self.research_relay.lock().unwrap().clear();
         for (i, folded) in fan_rows.into_iter().enumerate() {
             match folded {
-                Ok(row) => rows.push(row),
+                Ok(lane_rows) => rows.extend(lane_rows),
                 Err(error) => {
-                    // A panicked lane is a TERMINAL unanswered outcome like any other miss
-                    // (`fold_research_panic`): the mini is written, the event rides the same
-                    // funnel as every other row, and the brief keeps the raw question.
-                    let row = fold_research_panic(&dispatched[i], &error);
-                    write_research_ledger(&self.working_dir, &row);
-                    emit_research_outcome(self.events.as_ref(), &row);
-                    rows.push(row);
+                    // A panicked lane is a TERMINAL unanswered outcome for EVERY question it
+                    // carried (`fold_research_panic`): each mini is written, each event rides
+                    // the same funnel as every other row, and the brief keeps the raw question.
+                    for q in &batches[i] {
+                        let row = fold_research_panic(q, &error);
+                        write_research_ledger(&self.working_dir, &row);
+                        emit_research_outcome(self.events.as_ref(), &row);
+                        rows.push(row);
+                    }
                 }
             }
         }
@@ -38894,66 +38844,6 @@ mod audit_regressions {
             .is_empty());
     }
 
-    /// RESEARCH FAN v2, the terminal fold: every outcome — a real answer, an empty or
-    /// unparseable reply, a transport failure, the judge_out_of_moves ending — lands as a
-    /// TERMINAL row (answered | unanswered + named reason), which is what makes "all dispatched
-    /// questions terminal" reachable with no clock. A miss is a loud named absence, never a
-    /// substituted answer (the fallback gate).
-    #[test]
-    fn research_terminal_fold_classifies_every_outcome() {
-        let q = ResearchQuestion::of(
-            "payments",
-            0,
-            &opener::OpenQuestion::from(
-                "What is the frozen payment record structure from section 2?",
-            ),
-        );
-        let ok = fold_research_outcome(
-            &q,
-            "workhorse-q",
-            7,
-            Ok(r#"{"answer":"The record is {id, amount_minor, currency}.","raised":["what about refunds?"]}"#.into()),
-        );
-        assert_eq!(ok.status, RESEARCH_ANSWERED);
-        assert!(ok.answer.contains("amount_minor"));
-        assert_eq!(
-            ok.raised,
-            vec!["what about refunds?".to_string()],
-            "raised questions are RECORDED on the row — never dispatched"
-        );
-        let empty = fold_research_outcome(&q, "m", 3, Ok(r#"{"answer":"  "}"#.into()));
-        assert_eq!(
-            (empty.status.as_str(), empty.reason.as_deref()),
-            ("unanswered", Some("empty_answer")),
-            "an empty reply is a named absence, never a stub answer"
-        );
-        let prose = fold_research_outcome(&q, "m", 3, Ok("no json at all".into()));
-        assert_eq!(prose.reason.as_deref(), Some("empty_answer"));
-        // Built FROM the shared needle, exactly as the emit site builds its Err — so this test
-        // pins emit-site==matcher. Its own copy of the words would stay green through a
-        // rewording that silently degraded every judge_ended lane to provider_error.
-        let judge = fold_research_outcome(
-            &q,
-            "m",
-            900,
-            Err(format!("call {JUDGE_ENDED_NEEDLE}: 4 nudges")),
-        );
-        assert_eq!(
-            (judge.status.as_str(), judge.reason.as_deref()),
-            ("unanswered", Some("judge_ended")),
-            "an engine-ended lane is named as such, not laundered into a transport failure"
-        );
-        let prov = fold_research_outcome(&q, "m", 3, Err("connection reset by peer".into()));
-        assert_eq!(prov.reason.as_deref(), Some("provider_error"));
-        assert_eq!(prov.detail.as_deref(), Some("connection reset by peer"));
-        for row in [&ok, &empty, &prose, &judge, &prov] {
-            assert!(
-                row.status == RESEARCH_ANSWERED || row.status == RESEARCH_UNANSWERED,
-                "every outcome is terminal"
-            );
-        }
-    }
-
     /// The resume watermark: a mini on disk means the question is settled history and is never
     /// re-dispatched; its sibling without a mini stays dispatchable.
     #[test]
@@ -38975,6 +38865,7 @@ mod audit_regressions {
             kind: "design".into(),
             cite: String::new(),
             origin: String::new(),
+            batch: 0,
         };
         write_research_ledger(root, &row).expect("the mini writes through the funnel");
         let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
@@ -39027,6 +38918,7 @@ mod audit_regressions {
             kind: "design".into(),
             cite: String::new(),
             origin: String::new(),
+            batch: 0,
         };
         write_research_ledger(
             root,
