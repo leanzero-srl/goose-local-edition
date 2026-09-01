@@ -22,7 +22,9 @@ use std::path::Path;
 
 use goose_swarm::{MergerOf, ShardOf};
 
-use super::shards::{parse_shard_note, SHARDS_DIR};
+use super::shards::{
+    parse_fields, parse_merge_gaps, parse_shard_note, MERGE_FIELDS, MERGE_README, SHARDS_DIR,
+};
 
 /// What CODE finds in one shard's folder at a merger seam.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +148,108 @@ pub(super) fn gap_paragraph(module: &str, states: &[ShardFolderState]) -> Option
          SENT_OUT in MERGE.md. Never list a gap as merged.",
     );
     Some(s)
+}
+
+/// At the merger's dispatch (VA-065): the dossier's `readmes_missing` had no consumer — r6e's
+/// merger dispatched over `merge_dossier{pieces: 0, readmes_missing: all 8}` and the fact sat in
+/// run.jsonl unread while the merger was told to merge. `merge_dossier_incomplete{module, task_id,
+/// missing, pieces_absent}` is the loud form, for tick.py to print; the GAP paragraph beside it is
+/// what the merger reads. MILD: no gate — the scheduler's relax rule (VA-064) and the gap door own
+/// what becomes of a hole. None when the split is clean.
+pub(super) fn dispatch_incomplete_event(
+    module: &str,
+    task_id: &str,
+    gaps: &DispatchGaps,
+) -> Option<serde_json::Value> {
+    (!gaps.is_empty()).then(|| {
+        serde_json::json!({
+            "event": "merge_dossier_incomplete",
+            "module": module,
+            "task_id": task_id,
+            "missing": gaps.readmes_missing,
+            "pieces_absent": gaps.pieces_absent,
+        })
+    })
+}
+
+/// Does `text` name `name` as a whole token (no identifier character on either side)? The
+/// same boundary rule `check_merge` uses for a referenced symbol; case-insensitive because a
+/// merger writes "Pick" for `pick` as often as not.
+fn mentions(text: &str, name: &str) -> bool {
+    let (t, n) = (text.to_lowercase(), name.to_lowercase());
+    if n.is_empty() {
+        return false;
+    }
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    t.match_indices(&n).any(|(i, _)| {
+        let (before_text, rest) = t.split_at(i);
+        let before = before_text.chars().next_back();
+        let after = rest.split_at(n.len()).1.chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
+/// At the merger's COMPLETION (VA-065, the refuter on 5f45e8ea0): `check_merge` reconciles every
+/// README's UNFINISHED item against MERGE.md's FILLED / SENT_OUT and the `MERGE_GAP:` lines —
+/// but a shard that built NOTHING has no README item to reconcile, so a merger that neither
+/// filled nor sent out that part went Done (on a prior hint alone, if need be) and the sink
+/// integrated a module with a hole, silently. This is that reconciliation for the EMPTY shards:
+/// a shard whose folder holds no piece file is a hole unless FILLED, SENT_OUT or a `MERGE_GAP:`
+/// line names it (its id or its folder's last segment, as a whole token). `readmes_missing` rides
+/// along as the handoff-less list. None when no shard is empty or every empty one is explained;
+/// the merger's Done is never touched.
+pub(super) fn merge_hole_event(
+    root: &Path,
+    merger: &MergerOf,
+    task_id: &str,
+    final_text: &str,
+) -> Option<serde_json::Value> {
+    let states = shard_folder_states(root, merger);
+    if states.iter().all(|s| !s.pieces.is_empty()) {
+        return None;
+    }
+    let merge_md = std::fs::read_to_string(
+        root.join(SHARDS_DIR)
+            .join(&merger.module)
+            .join(MERGE_README),
+    )
+    .ok();
+    let mut explained: Vec<String> = merge_md
+        .as_deref()
+        .and_then(|t| parse_fields(t, &MERGE_FIELDS))
+        .into_iter()
+        .flat_map(|fields| {
+            // 2 = FILLED, 3 = SENT_OUT (MERGE_FIELDS' order).
+            fields
+                .into_iter()
+                .skip(2)
+                .take(2)
+                .flatten()
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    explained.extend(parse_merge_gaps(final_text));
+    let shards_missing: Vec<String> = states
+        .iter()
+        .filter(|s| s.pieces.is_empty())
+        .filter(|s| {
+            let tail = s.folder.rsplit('/').next().unwrap_or(s.folder.as_str());
+            !explained
+                .iter()
+                .any(|e| mentions(e, &s.id) || mentions(e, tail))
+        })
+        .map(|s| s.id.clone())
+        .collect();
+    (!shards_missing.is_empty()).then(|| {
+        serde_json::json!({
+            "event": "merge_hole",
+            "module": merger.module,
+            "task_id": task_id,
+            "shards_missing": shards_missing,
+            "readmes_missing": states.iter().filter(|s| !s.note_present).map(|s| s.id.clone()).collect::<Vec<_>>(),
+            "merge_readme_present": merge_md.is_some(),
+        })
+    })
 }
 
 /// At a shard's completion: the `shard_note` row `record_shard_note` returned carries the
@@ -302,5 +406,89 @@ mod tests {
             shard_pieces_absent_event(&shard, "web-viz-pick", &serde_json::json!({})).is_none(),
             "an unmeasured list is not an absence"
         );
+    }
+
+    /// VA-065 at dispatch: the holes are said as one event, none when clean.
+    #[test]
+    fn the_dispatch_event_carries_both_hole_classes_and_is_absent_when_clean() {
+        let gaps = DispatchGaps {
+            readmes_missing: vec!["labels".into()],
+            pieces_absent: vec!["pick".into()],
+        };
+        let ev = dispatch_incomplete_event("web-viz", "web-viz", &gaps).expect("holes → event");
+        assert_eq!(ev["event"], "merge_dossier_incomplete");
+        assert_eq!(ev["missing"], serde_json::json!(["labels"]));
+        assert_eq!(ev["pieces_absent"], serde_json::json!(["pick"]));
+        assert!(
+            dispatch_incomplete_event("web-viz", "web-viz", &DispatchGaps::default()).is_none()
+        );
+    }
+
+    /// VA-065 at completion (the refuter's hole): `pick` built nothing and MERGE.md explains
+    /// nothing → `merge_hole{shards_missing: [pick]}`; `render` built its piece and is never a
+    /// hole. Naming `pick` under SENT_OUT, or a `MERGE_GAP:` line in the final message, closes it.
+    #[test]
+    fn an_empty_shard_neither_filled_nor_sent_out_is_a_merge_hole() {
+        let root = tmp("hole");
+        for s in ["render", "pick"] {
+            std::fs::create_dir_all(root.join(format!(".swarm/shards/web-viz/{s}"))).unwrap();
+        }
+        std::fs::write(root.join(".swarm/shards/web-viz/render/README.md"), NOTE).unwrap();
+        std::fs::write(root.join(".swarm/shards/web-viz/render/render.js"), "x\n").unwrap();
+        std::fs::write(root.join(".swarm/shards/web-viz/pick/README.md"), NOTE).unwrap();
+        let m = merger(&["render", "pick"]);
+        let merge_md = root.join(".swarm/shards/web-viz/MERGE.md");
+        std::fs::write(
+            &merge_md,
+            "KEPT: render\nDROPPED: none\nFILLED: none\nSENT_OUT: none\n",
+        )
+        .unwrap();
+
+        let ev = merge_hole_event(&root, &m, "web-viz", "merged.").expect("pick is a hole");
+        assert_eq!(ev["event"], "merge_hole");
+        assert_eq!(ev["shards_missing"], serde_json::json!(["pick"]));
+        assert_eq!(ev["readmes_missing"], serde_json::json!([]));
+        assert_eq!(ev["merge_readme_present"], true);
+
+        std::fs::write(&merge_md, "KEPT: render\nDROPPED: none\nFILLED: none\nSENT_OUT: Pick — readPickAt still to build\n").unwrap();
+        assert!(
+            merge_hole_event(&root, &m, "web-viz", "merged.").is_none(),
+            "SENT_OUT names it"
+        );
+
+        std::fs::write(
+            &merge_md,
+            "KEPT: render\nDROPPED: none\nFILLED: none\nSENT_OUT: none\n",
+        )
+        .unwrap();
+        assert!(
+            merge_hole_event(
+                &root,
+                &m,
+                "web-viz",
+                "done\nMERGE_GAP: pick's readPickAt(sx, sy)\n"
+            )
+            .is_none(),
+            "a MERGE_GAP line names it"
+        );
+        assert!(
+            merge_hole_event(&root, &m, "web-viz", "MERGE_GAP: the picker\n").is_some(),
+            "`picker` is not the token `pick`"
+        );
+    }
+
+    /// No MERGE.md at all: an empty shard is still a hole (and the event says the README is absent);
+    /// a split where every shard built something has no hole to name.
+    #[test]
+    fn a_missing_merge_readme_does_not_explain_a_hole_and_a_built_split_has_none() {
+        let root = tmp("hole-no-md");
+        std::fs::create_dir_all(root.join(".swarm/shards/web-viz/labels")).unwrap();
+        let m = merger(&["labels"]);
+        let ev = merge_hole_event(&root, &m, "web-viz", "").expect("bare folder, nothing said");
+        assert_eq!(ev["shards_missing"], serde_json::json!(["labels"]));
+        assert_eq!(ev["readmes_missing"], serde_json::json!(["labels"]));
+        assert_eq!(ev["merge_readme_present"], false);
+        std::fs::write(root.join(".swarm/shards/web-viz/labels/labels.js"), "x\n").unwrap();
+        assert!(merge_hole_event(&root, &m, "web-viz", "").is_none());
     }
 }

@@ -398,7 +398,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,622 (VA-066): the three `judge_delivery_block` tests moved to
     // commands/swarm/judge_context.rs beside the function, paying for `shard_by_task` (the
     // dispatcher's task -> ShardOf map, published with ownership) and the look site's pieces view.
-    const SWARM_RS_LINE_BASELINE: usize = 34_622;
+    // Tightened to 34,564 (VA-065): rule (a) `repair_owning_nothing` + `repoint_dependency` moved
+    // to commands/swarm/plan_repairs.rs beside rules (d)-(f), carrying THE SPLIT exemption, paying
+    // for `merge_dossier_incomplete` at the merger's dispatch and `merge_hole` at its completion.
+    const SWARM_RS_LINE_BASELINE: usize = 34_564;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

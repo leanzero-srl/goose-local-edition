@@ -4,8 +4,9 @@
 //! (development_gates::swarm_rs_line_count_only_decreases): `repair_sink_files` moved verbatim
 //! from swarm.rs with its test, paying for rule (e)'s wiring in the root.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use super::plan_shape::decomposition_of;
 use super::skeleton::SKELETON_ID;
 
 /// Rule (e)'s tail header — `decisions::brief_decisions_block` cuts a brief's decisions block
@@ -529,6 +530,115 @@ fn brief_mentions_path(brief: &str, path: &str) -> bool {
     false
 }
 
+/// Rule (a): a NON-sink task that owns no files is removed and its dependents repointed up its
+/// dependency chain (`repoint_dependency`). Measured by `decomposition_of`
+/// (`tasks_owning_nothing`) — one rule in one place — and reported, never refused (Mihai,
+/// 2026-08-29: "be very mild").
+///
+/// VA-065: THE SPLIT's tasks are EXEMPT by their markers, explicitly. A shard owns its README and
+/// a merger its module files, so today the measure never names them — but that safety is an
+/// accident of the README being owned; a marker-only shard would be removed here and the merger's
+/// `merger_of.shards` would name a task that no longer exists (the r6e shape, one door over:
+/// its shard deps were stripped as "docs-only"). A split task the measure DID name is kept and
+/// SAID in the actions, so the plan flags carry the fact.
+pub(super) fn repair_owning_nothing(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let measured = string_list(&decomposition_of(&plan.to_string())["tasks_owning_nothing"]);
+    if measured.is_empty() {
+        return;
+    }
+    let id_of = |st: &serde_json::Value| {
+        st.get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let is_split_task = |st: &serde_json::Value| {
+        ["shard_of", "merger_of"]
+            .iter()
+            .any(|k| st.get(*k).is_some_and(|v| !v.is_null()))
+    };
+    let split_ids: HashSet<String> = plan["subtasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|st| is_split_task(st))
+        .map(id_of)
+        .collect();
+    let (kept, removed_ids): (Vec<String>, Vec<String>) =
+        measured.into_iter().partition(|id| split_ids.contains(id));
+    for id in &kept {
+        actions.push(format!(
+            "kept `{id}`: it owns no files but is one of THE SPLIT's tasks (shard_of/merger_of) — \
+             never removed from under its merger"
+        ));
+    }
+    if removed_ids.is_empty() {
+        return;
+    }
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let removed_deps: HashMap<String, Vec<String>> = subtasks
+        .iter()
+        .filter(|st| removed_ids.contains(&id_of(st)))
+        .map(|st| (id_of(st), string_list(&st["depends_on"])))
+        .collect();
+    subtasks.retain(|st| !removed_deps.contains_key(&id_of(st)));
+    for id in &removed_ids {
+        actions.push(format!(
+            "removed `{id}`: it owned no files (only `{}` may)",
+            goose_swarm::SINK_ID
+        ));
+    }
+    for st in subtasks.iter_mut() {
+        let id = id_of(st);
+        let Some(deps) = st.get_mut("depends_on").and_then(|d| d.as_array_mut()) else {
+            continue;
+        };
+        let old: Vec<String> = deps
+            .iter()
+            .filter_map(|d| d.as_str().map(str::to_string))
+            .collect();
+        if !old.iter().any(|d| removed_deps.contains_key(d)) {
+            continue;
+        }
+        let mut seen = HashSet::new();
+        let mut next = Vec::new();
+        for d in &old {
+            repoint_dependency(d, &removed_deps, &mut seen, &mut next);
+        }
+        next.retain(|d| *d != id);
+        actions.push(format!(
+            "`{id}` depended on removed {:?}: now depends on {next:?}",
+            old.iter()
+                .filter(|d| removed_deps.contains_key(*d))
+                .collect::<Vec<_>>()
+        ));
+        *deps = next.into_iter().map(serde_json::Value::from).collect();
+    }
+}
+
+/// A dependency on a removed task becomes dependencies on what THAT task depended on, all the way up
+/// the removed chain; `seen` stops a cycle among removed tasks and drops duplicates.
+fn repoint_dependency(
+    dep: &str,
+    removed: &HashMap<String, Vec<String>>,
+    seen: &mut HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    if !seen.insert(dep.to_string()) {
+        return;
+    }
+    match removed.get(dep) {
+        Some(upstream) => {
+            for u in upstream {
+                repoint_dependency(u, removed, seen, out);
+            }
+        }
+        None => out.push(dep.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,5 +946,58 @@ mod tests {
             assert!(section_pointer(yes), "{yes:?} is a pointer");
             assert!(!section_pointer(no), "{no:?} is a shape");
         }
+    }
+
+    /// VA-065: rule (a) never removes one of THE SPLIT's tasks. A marker-only shard (owning
+    /// nothing — the README stripped, or never given) is KEPT and said; the plain owns-nothing
+    /// task beside it is still removed and the join's dependency on it repointed.
+    #[test]
+    fn plan_repair_keeps_a_split_task_that_owns_nothing_and_says_so() {
+        let plan = r#"{"subtasks":[
+            {"id":"skeleton","files":["app/__main__.py"],"depends_on":[],"description":"wire"},
+            {"id":"viz-render","files":[],"depends_on":[],"description":"render shard",
+             "shard_of":{"module":"web-viz","shard":"render","folder":".swarm/shards/web-viz/render"}},
+            {"id":"web-viz","files":["web/viz.js"],"depends_on":["viz-render"],"description":"merge",
+             "merger_of":{"module":"web-viz","shards":["viz-render"],"folders":[".swarm/shards/web-viz/render"]}},
+            {"id":"ghost","files":[],"depends_on":["skeleton"],"description":"owns nothing"},
+            {"id":"integrate-verify","files":[],"depends_on":["skeleton","web-viz","ghost"],"description":"v"}
+        ]}"#;
+        let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
+        let mut actions = Vec::new();
+        repair_owning_nothing(&mut v, &mut actions);
+        let ids: Vec<String> = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            ids.contains(&"viz-render".to_string()),
+            "the shard stays: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&"ghost".to_string()),
+            "the plain owns-nothing task goes: {ids:?}"
+        );
+        assert_eq!(
+            strings(&task(&v, "web-viz")["depends_on"]),
+            ["viz-render"],
+            "the merger's shard dep is intact"
+        );
+        assert_eq!(
+            strings(&task(&v, "integrate-verify")["depends_on"]),
+            ["skeleton", "web-viz"],
+            "ghost's dependent is repointed up ghost's chain (skeleton, already present)"
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.contains("kept `viz-render`") && a.contains("shard_of")),
+            "{actions:?}"
+        );
+        assert!(
+            actions.iter().any(|a| a.contains("removed `ghost`")),
+            "{actions:?}"
+        );
     }
 }
