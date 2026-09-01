@@ -584,3 +584,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   factored not_connected_to_mesh_err() so the connect-first test asserts the real literal not a
   tautology; chose isolation-safe pure tests over driving the process-wide LINK OnceLock + real
   identity file, and said why. Did not duplicate leanzeroLink/nodes. Charter gap: none.
+- 2026-09-01 panel-surgeon (delegation UI + staleness gate, 5c53641c8): CLEAN++. Busy/Offline peers
+  shown DISABLED with their state as the reason (honest, not hidden); errors verbatim via
+  RequestError.data; staleness gate debounces only the ERROR case (3 fails → reconnecting strip, no
+  flash to loggedOut) while auth transitions ride the success path; omitted a stream viewer/deep-link
+  with reasons (P4 already mirrors; a remote session has no local route). CRITICAL catch: reported
+  that NO goosed binary on the machine contains any leanzeroLink method — the bundle predates the
+  feature; end-to-end needs a fresh release-binary. Charter gap: none.
