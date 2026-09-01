@@ -820,3 +820,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   argued; then dismantled the commit's wall-clock derivation honestly (a floor built from inflated
   walls) and replaced it with a band. Named the aux-door and long-pole residuals precisely.
   Charter gap: none.
+- 2026-09-01 05:35 fix-tracer (brief fabfe962f): EXEMPLARY. Replayed all four lanes' calls files
+  to the second, found a THIRD firing event the commit missed (webhooks' forced edit), and then
+  the finding that matters: the handoff the new brief relies on is never persisted or consumed —
+  a dead letter proven from parse_finding_verdicts' tail_chars(300) and the mid-word ledger
+  detail. Corrected the commit's quote counts and order from primary data. Charter gap: none.
