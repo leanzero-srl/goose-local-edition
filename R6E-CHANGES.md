@@ -36,6 +36,7 @@ proves or refutes it. STATUS: `LANDED <sha>` · `IN FLIGHT <batch>` · `MEASURE 
 | Judge looks off the busy planner node | r6c 222/222 looks on workhorse | LANDED `8b03be2da` |
 | Pre-fix tree snapshot at the REPAIR handover | `.swarm/best-tree` is overwritten every strictly-better verify → r6c's pre-fix tree is gone; "did the waves move the score" unmeasurable | IN FLIGHT 2a D7 (`.swarm/prefix-tree`, write-once; harness `score_run.sh --prefix` landed) |
 | `spec_documented_keys` reads prose-documented keys too | keys documented as a fenced shape under a "shape below" label were invisible to the extractor (table cells only) | LANDED `857eb4ef2` |
+| Desktop shows research as it now runs | one lane per slice batch with its questions listed; "N answered from the spec (no lane)" in the Research header; the task card reads the one joined lane; the Thinking pane never shows a dead call's text | LANDED `970f4b22f` `88b1352db` `72b70ebc7` |
 | `planner_rank` matches device id | r6d aux order [workhorse, gabee, mihai] because mihai's model_id matched no pattern | IN FLIGHT 2a D9 |
 
 ## 3. THE BET — module shards + merger (Mihai's design, 2026-09-01)
