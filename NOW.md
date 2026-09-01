@@ -59,7 +59,9 @@ E1–E15 all landed (15 commits; swarm.rs 40,008). Build agent: stamped `just ma
 install. Refuter on E7/E10/E14/E15 in parallel (E7's crux: does a steer reach a zero-tool-call lane before it
 finishes?). Then: kill_run_perpid.sh r6d-KILLED-viz-brief-lacks-vs7dbg-section-cceab86eb → pkill -9 app → open new
 app w/ CDP → bench_verify_view OK → bench_dispatch → first_tick + the r6e FIRST-TICK EXPECTATIONS below.
-NEXT AFTER r6e LAUNCH (r6f batch, Mihai 09:30 "4 hours?! … isn't that a bit extreme?"): THE FAN CUT — spec-answerable
+CHANGED 09:45 (Mihai: "a research that takes 4 hours is insane… I do not want to cap it… optimizations are
+required"): THE FAN CUT LANDS BEFORE THE RELAUNCH — after the current build reports, a surgeon lands it, quick
+rebuild, then ONE kill+relaunch. THE FAN CUT — spec-answerable
 questions answered by citation at planning time (most minis were spec lookups), dedup against landed minis, per-
 slice batching on small fleets, build-as-briefs-land; plus planner_rank's device-id pattern gap. Not a cap: waste
 removal. Measure against r6e's fan (38 questions, ~4h).
