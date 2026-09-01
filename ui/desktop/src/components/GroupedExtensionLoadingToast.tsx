@@ -1,7 +1,7 @@
 import { useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { Button } from './ui/button';
+import { Button, FOCUS, MOTION, StatusDot, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from './lz';
 import { formatExtensionErrorMessage } from '../utils/extensionErrorUtils';
 import { formatExtensionName } from './settings/extensions/subcomponents/ExtensionList';
 import { defineMessages, useIntl } from '../i18n';
@@ -51,6 +51,22 @@ const i18n = defineMessages({
     id: 'groupedExtensionLoadingToast.expandDetails',
     defaultMessage: 'Expand details',
   },
+  statusLoading: {
+    id: 'groupedExtensionLoadingToast.statusLoading',
+    defaultMessage: 'Loading',
+  },
+  statusLoaded: {
+    id: 'groupedExtensionLoadingToast.statusLoaded',
+    defaultMessage: 'Loaded',
+  },
+  statusPartial: {
+    id: 'groupedExtensionLoadingToast.statusPartial',
+    defaultMessage: 'Partially loaded',
+  },
+  statusFailed: {
+    id: 'groupedExtensionLoadingToast.statusFailed',
+    defaultMessage: 'Failed',
+  },
 });
 
 export interface ExtensionLoadingStatus {
@@ -66,6 +82,12 @@ interface ExtensionLoadingToastProps {
   isComplete: boolean;
 }
 
+/**
+ * The content of the extension-loading toast. The surface (lz-surface, hairline, the overlay
+ * elevation) and the close are the toast container's; this composes the body on the same
+ * tokens: a StatusDot carries each state, type carries the hierarchy, the details are a
+ * quiet meta disclosure.
+ */
 export function GroupedExtensionLoadingToast({
   extensions,
   totalCount,
@@ -78,14 +100,21 @@ export function GroupedExtensionLoadingToast({
   const successCount = extensions.filter((ext) => ext.status === 'success').length;
   const errorCount = extensions.filter((ext) => ext.status === 'error').length;
 
-  const getStatusIcon = (status: 'loading' | 'success' | 'error') => {
+  const statusDot = (status: ExtensionLoadingStatus['status'], size: 8 | 10 = 8) => {
     switch (status) {
       case 'loading':
-        return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
+        return (
+          <StatusDot
+            tone="accent"
+            live
+            size={size}
+            label={intl.formatMessage(i18n.statusLoading)}
+          />
+        );
       case 'success':
-        return <div className="w-4 h-4 rounded-full bg-green-500" />;
+        return <StatusDot tone="ok" size={size} label={intl.formatMessage(i18n.statusLoaded)} />;
       case 'error':
-        return <div className="w-4 h-4 rounded-full bg-red-500" />;
+        return <StatusDot tone="err" size={size} label={intl.formatMessage(i18n.statusFailed)} />;
     }
   };
 
@@ -101,56 +130,61 @@ export function GroupedExtensionLoadingToast({
     return intl.formatMessage(i18n.partiallyLoaded, { successCount, totalCount });
   };
 
-  const getSummaryIcon = () => {
-    if (!isComplete) {
-      return <Loader2 className="w-5 h-5 animate-spin text-blue-500" />;
-    }
-
-    if (errorCount === 0) {
-      return <div className="w-5 h-5 rounded-full bg-green-500" />;
-    }
-
-    return <div className="w-5 h-5 rounded-full bg-yellow-500" />;
-  };
+  const summaryDot = !isComplete ? (
+    statusDot('loading', 10)
+  ) : errorCount === 0 ? (
+    statusDot('success', 10)
+  ) : (
+    <StatusDot tone="warn" size={10} label={intl.formatMessage(i18n.statusPartial)} />
+  );
 
   return (
-    <div className="w-full">
+    <div className="w-full" data-testid="extension-loading-toast">
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <div className="flex flex-col">
           {/* Main summary section - clickable */}
           <CollapsibleTrigger asChild>
-            <div className="flex items-start gap-3 pr-8 cursor-pointer hover:opacity-90 transition-opacity">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                {getSummaryIcon()}
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-base">{getSummaryText()}</div>
-                  {errorCount > 0 && (
-                    <div className="text-sm opacity-90">
-                      {intl.formatMessage(i18n.failedToLoad, { count: errorCount })}
-                    </div>
-                  )}
-                </div>
+            <div
+              className={cx(
+                'flex cursor-pointer items-start gap-3 rounded-lz-control',
+                SURFACE.hover,
+                MOTION
+              )}
+            >
+              <span className="flex h-5 shrink-0 items-center">{summaryDot}</span>
+              <div className="min-w-0 flex-1">
+                <div className={cx(TYPE.body, WEIGHT.semibold)}>{getSummaryText()}</div>
+                {errorCount > 0 && (
+                  <div className={cx('text-lz-meta', TONE_TEXT.err)}>
+                    {intl.formatMessage(i18n.failedToLoad, { count: errorCount })}
+                  </div>
+                )}
               </div>
             </div>
           </CollapsibleTrigger>
 
           {/* Expanded details section */}
           <CollapsibleContent className="overflow-hidden">
-            <div className="mt-3 pt-3 border-t border-white/20">
-              <div className="space-y-3 max-h-64 overflow-y-auto pr-2 pl-1">
+            <div className={cx('mt-3 border-t pt-3', SURFACE.hairline)}>
+              <div className="max-h-64 space-y-3 overflow-y-auto pr-2">
                 {extensions.map((ext) => {
                   const friendlyName = formatExtensionName(ext.name);
 
                   return (
                     <div key={ext.name} className="flex flex-col gap-2">
-                      <div className="flex items-center gap-3 text-sm">
-                        {getStatusIcon(ext.status)}
-                        <div className="flex-1 min-w-0 truncate">{friendlyName}</div>
+                      <div className="flex items-center gap-3">
+                        {statusDot(ext.status)}
+                        <div className={cx('min-w-0 flex-1 truncate', TYPE.body)}>
+                          {friendlyName}
+                        </div>
                       </div>
                       {ext.status === 'error' && ext.error && (
-                        <div className="ml-7 flex flex-col gap-2">
-                          <div className="text-xs opacity-75 break-words">
-                            {formatExtensionErrorMessage(ext.error, intl.formatMessage(i18n.failedToAddExtension))}
+                        <div className="ml-5 flex flex-col gap-2">
+                          <div className="break-words text-lz-meta text-lz-ink-2">
+                            {formatExtensionErrorMessage(
+                              ext.error,
+                              intl.formatMessage(i18n.failedToAddExtension)
+                            )}
                           </div>
                           {/* Pass D (owner): the "Ask goose" recovery button is gone — it
                               silently created a project-less session. Copy error remains. */}
@@ -164,7 +198,9 @@ export function GroupedExtensionLoadingToast({
                                 setTimeout(() => setCopiedExtension(null), 2000);
                               }}
                             >
-                              {copiedExtension === ext.name ? intl.formatMessage(i18n.copied) : intl.formatMessage(i18n.copyError)}
+                              {copiedExtension === ext.name
+                                ? intl.formatMessage(i18n.copied)
+                                : intl.formatMessage(i18n.copyError)}
                             </Button>
                           </div>
                         </div>
@@ -176,22 +212,35 @@ export function GroupedExtensionLoadingToast({
             </div>
           </CollapsibleContent>
 
-          {/* Toggle button */}
+          {/* Toggle: the details disclosure, in the meta register */}
           {totalCount > 0 && (
             <CollapsibleTrigger asChild>
               <button
-                className="flex items-center justify-center gap-1 text-xs opacity-60 hover:opacity-100 transition-opacity mt-2 py-1.5 w-full"
-                aria-label={isOpen ? intl.formatMessage(i18n.collapseDetails) : intl.formatMessage(i18n.expandDetails)}
+                type="button"
+                data-testid="extension-loading-toggle"
+                className={cx(
+                  'mt-2 flex h-7 w-full items-center justify-center gap-1 rounded-lz-control [&_svg]:size-3',
+                  TYPE.meta,
+                  'hover:text-lz-ink',
+                  SURFACE.hover,
+                  FOCUS,
+                  MOTION
+                )}
+                aria-label={
+                  isOpen
+                    ? intl.formatMessage(i18n.collapseDetails)
+                    : intl.formatMessage(i18n.expandDetails)
+                }
               >
                 {isOpen ? (
                   <>
                     <span>{intl.formatMessage(i18n.showLess)}</span>
-                    <ChevronUp className="w-3 h-3" />
+                    <ChevronUp />
                   </>
                 ) : (
                   <>
                     <span>{intl.formatMessage(i18n.showDetails)}</span>
-                    <ChevronDown className="w-3 h-3" />
+                    <ChevronDown />
                   </>
                 )}
               </button>

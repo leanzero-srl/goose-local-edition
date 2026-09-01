@@ -1,9 +1,28 @@
-import { toast, ToastOptions } from 'react-toastify';
-import { Button } from './components/ui/button';
+import { X } from 'lucide-react';
+import { toast, type CloseButtonProps, type ToastOptions } from 'react-toastify';
+import { Button, WEIGHT } from './components/lz';
 import {
   GroupedExtensionLoadingToast,
   ExtensionLoadingStatus,
 } from './components/GroupedExtensionLoadingToast';
+
+/**
+ * Every toast's close: a ghost icon Button on the tokens. The container is the Studio overlay
+ * surface, so the library's default close (`--text-inverse`, faded) would be white on white.
+ */
+function renderStudioCloseButton({ closeToast }: CloseButtonProps) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      iconOnly
+      aria-label="Close"
+      icon={<X />}
+      className="self-start"
+      onClick={() => closeToast()}
+    />
+  );
+}
 
 export interface ToastServiceOptions {
   silent?: boolean;
@@ -93,7 +112,7 @@ class ToastService {
           />
         ),
         autoClose,
-        closeButton: true,
+        closeButton: renderStudioCloseButton,
         closeOnClick: false,
       });
     } else {
@@ -108,7 +127,7 @@ class ToastService {
           ...commonToastOptions,
           toastId,
           autoClose,
-          closeButton: true,
+          closeButton: renderStudioCloseButton,
           closeOnClick: false, // Prevent closing when clicking to expand/collapse
         }
       );
@@ -139,7 +158,7 @@ export type { ExtensionLoadingStatus };
 
 const commonToastOptions: ToastOptions = {
   position: 'top-right',
-  closeButton: true,
+  closeButton: renderStudioCloseButton,
   hideProgressBar: true,
   closeOnClick: true,
   pauseOnHover: true,
@@ -151,7 +170,7 @@ type ToastSuccessProps = { title?: string; msg?: string; toastOptions?: ToastOpt
 export function toastSuccess({ title, msg, toastOptions = {} }: ToastSuccessProps) {
   return toast.success(
     <div>
-      {title ? <strong className="font-medium">{title}</strong> : null}
+      {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
       {title ? <div>{msg}</div> : null}
     </div>,
     { ...commonToastOptions, autoClose: 3000, ...toastOptions }
@@ -181,11 +200,15 @@ function ToastErrorContent({ title, msg, traceback }: ToastErrorProps) {
   return (
     <div className="flex gap-4 pr-8">
       <div className="flex-grow">
-        {title && <strong className="font-medium">{title}</strong>}
+        {title && <strong className={WEIGHT.semibold}>{title}</strong>}
         {msg && <div>{msg}</div>}
       </div>
       <div className="flex-none flex items-center gap-2">
-        {traceback && <Button onClick={handleCopyError}>Copy error</Button>}
+        {traceback && (
+          <Button size="sm" onClick={handleCopyError}>
+            Copy error
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -207,7 +230,7 @@ type ToastLoadingProps = {
 export function toastLoading({ title, msg, toastOptions }: ToastLoadingProps) {
   return toast.loading(
     <div>
-      {title ? <strong className="font-medium">{title}</strong> : null}
+      {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
       {title ? <div>{msg}</div> : null}
     </div>,
     { ...commonToastOptions, autoClose: false, ...toastOptions }
