@@ -147,10 +147,14 @@ fn skeleton_description(
             s.push_str(&format!("- `{row}`\n"));
         }
     }
+    // VA-023's consequence: the frontend task no longer waits behind the skeleton, so its shell
+    // page may not exist when the skeleton proves itself — `GET /` is the frontend's proof.
     s.push_str(
-        "\nDONE means: every boot command above starts and binds, every route above answers (a 501 \
-         counts, a 404 does not), and `GET /` returns the shell page. Prove it yourself before \
-         finishing: run each boot command, curl the routes, then KILL the server you started.\n",
+        "\nDONE means: every boot command above starts and binds, and every route above answers \
+         with the 501/JSON envelope from THIS task's own handlers (a 501 counts, a 404 does not). \
+         `GET /` serving the shell page is the frontend task's proof, not yours — it runs \
+         concurrently and its files may not exist yet. Prove it yourself before finishing: run \
+         each boot command, curl the routes, then KILL the server you started.\n",
     );
     s
 }
@@ -489,6 +493,21 @@ mod tests {
         ] {
             assert!(desc.contains(route), "advertised surface missing: {route}");
         }
+        // S0 (2026-09-01): DONE is proved by THIS task's own handlers; the shell page belongs to
+        // the frontend task, which runs concurrently since VA-023 and may not have landed yet.
+        for clause in [
+            "DONE means: every boot command above starts and binds, and every route above answers \
+             with the 501/JSON envelope from THIS task's own handlers (a 501 counts, a 404 does not).",
+            "`GET /` serving the shell page is the frontend task's proof, not yours — it runs \
+             concurrently and its files may not exist yet.",
+            "then KILL the server you started",
+        ] {
+            assert!(desc.contains(clause), "DONE clause missing: {clause}");
+        }
+        assert!(
+            !desc.contains("and `GET /` returns the shell page"),
+            "the old DONE clause demanded the frontend's file of the skeleton"
+        );
         // the planned module list rides along so the skeleton imports what will exist
         assert!(desc.contains("vendor-sync: app/vendor_sync.py"));
         // VA-023: a task waits on the skeleton only when it owns a file inside a package the
