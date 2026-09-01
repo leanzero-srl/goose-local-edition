@@ -93,3 +93,5 @@ tick.py rows that will now never fire, desktop `golden.ts` DEFAULTS/PRESET_KEYS 
 (run `cd ui/desktop && pnpm test` whenever a config field or lever changes — no Rust gate runs it), ribbon
 `RETIRED_PHASES`. Name every residue you leave for another file's owner in the commit message. A half-deleted
 step reads authoritative and is worse than a kept one (2a's D1–D3 left ~20 residues on 2026-09-01).
+
+When a commit touches `#[cfg(test)]` code, lint it: `cargo clippy -p <crate> --tests -- -D warnings` — the lib-only form does not see test modules (VA-045, 2026-09-01). Always `source bin/activate-hermit` first: the non-hermit cargo fails the crate on `llama-cpp-sys-2` and rebuilds every dep.
