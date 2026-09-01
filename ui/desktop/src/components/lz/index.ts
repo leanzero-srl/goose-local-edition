@@ -1,7 +1,13 @@
 export * from './tokens';
 export { PageHeader, type PageHeaderProps } from './PageHeader';
 export { SectionHeader, type SectionHeaderProps } from './SectionHeader';
-export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented';
+export {
+  Segmented,
+  type SegmentedMode,
+  type SegmentedOption,
+  type SegmentedProps,
+  type SegmentedRenderOption,
+} from './Segmented';
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button';
 export { Chip, type ChipProps } from './Chip';
 export { StatusDot, type StatusDotProps } from './StatusDot';
