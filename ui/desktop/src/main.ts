@@ -3818,7 +3818,8 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
             }
             // THE UNCLIPPED NARRATION, from the append-only transcript beside the digest.
             //
-            // `full_reasoning` inside the digest is a 24,000-char TAIL clip — the digest is rewritten
+            // `full_reasoning` inside the digest is the engine's 24,000-char answer WINDOW (a tail; the
+            // key predates the rename to `answer_window`) — the digest is rewritten
             // ~2.5x/second so it cannot grow — which is why a long call's narration begins partway
             // through. Mihai, twice, on a node whose panel started at item 25 of a 39-item list: "the
             // generations stop displaying past a certain number of characters".

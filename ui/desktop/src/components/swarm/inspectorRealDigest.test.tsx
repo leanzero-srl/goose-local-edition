@@ -36,7 +36,7 @@ const expectRollingViewIsStrictSuffix = (rollingView: string, durable: string): 
 describe('the inspector THINKING pane against real engine output', () => {
   const lane = {
     fullThinking: real.full_thinking,
-    fullReasoning: real.full_reasoning ?? undefined,
+    answerWindow: real.full_reasoning ?? undefined,
     reasoning: real.reasoning ?? undefined,
     lastThinking: real.last_thinking ?? undefined,
     lastText: real.last_text ?? undefined,
