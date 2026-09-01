@@ -40,6 +40,7 @@ use judge_context::{
     is_intentional_empty_marker, judge_delivery_block, owned_files_from_run_log, verify_owned_files,
 };
 mod ladder;
+mod levers;
 use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
     escalation_moved, nudge_arm, nudge_delivery, produced_since_look, restream_seed, steer_note,
@@ -33515,24 +33516,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
         "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
         "crate_version": env!("CARGO_PKG_VERSION"),
-        // RETIRED, NOT RESOLVED. Every lever here names a mechanism that is `#[cfg(test)]` or
-        // unreachable in this build, so there is no value to resolve — and a resolved value WAS
-        // being printed: r6c's echo said `split_fat: true` while `split_fat_modules` had been
-        // test-only since b0dd68eac (gate 1, suspect #2 — a levers echo that lies). The config
-        // fields survive for the config round-trip with false/None defaults since r6e (a `split_fat:
-        // true` default for a mechanism no run reaches was this lie at the config layer), the desktop
-        // pins neither SPLIT_FAT nor FIX_SCHED since cceab86eb, golden.generated.json is regenerated
-        // from the struct. Audited 2026-09-01 by asking, of each, which non-test caller consumes it.
-        "retired_levers": {
-            "split_fat": "split_fat_modules is #[cfg(test)] since b0dd68eac",
-            "fan_verify": "fan_verify_split is #[cfg(test)] since P1-4",
-            "fan_e2e": "no consumer; it sharded the fan fan_verify no longer builds",
-            "straggler_stop": "collect_drafts_with_straggler_stop is #[cfg(test)] since P1-4",
-            "straggler_stop_degrade": "same collector",
-            "straggler_grace_secs": "same collector",
-            "split": "scheduler.rs pins `let is_split = false`; GOOSE_SWARM_SPLIT was read by nothing but this echo",
-            "split_inherit_spec": "read only inside apply_split, which is_split = false never reaches",
-        },
+        // RETIRED, NOT RESOLVED — each row is {reason, configured}: the reason says the mechanism
+        // is dead, `configured` says whether a stale pin still names it (`levers::retired_levers`).
+        "retired_levers": levers::retired_levers(&load_config(), &|k| std::env::var(k).ok()),
         "levers": {
             // UNATTENDED OR NOT, stated in the log. `benchmark` decides whether all three ask sites route
             // to a proxy node instantly or wait five minutes on a human, and it was the one lever the run

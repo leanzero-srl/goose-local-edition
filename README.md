@@ -230,7 +230,7 @@ The engine's behaviour is governed by `GOOSE_SWARM_*` environment variables (env
 | `GOOSE_SWARM_TESTGEN=1` | idle-node test generation during tails |
 | `GOOSE_SWARM_TEMP=0.2` | impose low temperature on single-sample paths |
 
-Most mechanisms above are on by default in the shipped configuration; the levers exist so any of them can be A/B-tested off. The full set (several dozen) is documented at each `default_*` function in `crates/goose-cli/src/commands/swarm.rs`. Retired and read by the engine nowhere — listed under `retired_levers` in the run's `levers_resolved` event so a stale pin is visible rather than certified: `GOOSE_SWARM_FIX_SCHED` (the fix scheduler died in P1-9) and `GOOSE_SWARM_SPLIT_FAT` (`split_fat_modules` is test-only since b0dd68eac; the config default is false since r6e).
+Most mechanisms above are on by default in the shipped configuration; the levers exist so any of them can be A/B-tested off. The full set (several dozen) is documented at each `default_*` function in `crates/goose-cli/src/commands/swarm.rs`. Retired and read by the engine nowhere — listed under `retired_levers` in the run's `levers_resolved` event, each row `{reason, configured}` (the reason says the mechanism is dead; `configured` is the value a stale pin in config.yaml or the env still names, `null` when nothing names it), so a stale pin is visible rather than certified or silently ignored: `GOOSE_SWARM_FIX_SCHED` (the fix scheduler died in P1-9) and `GOOSE_SWARM_SPLIT_FAT` (`split_fat_modules` is test-only since b0dd68eac; the config default is false since r6e).
 
 ## Measurement discipline
 

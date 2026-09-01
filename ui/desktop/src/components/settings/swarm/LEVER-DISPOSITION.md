@@ -26,8 +26,10 @@ So: do not read "no evidence" as "no effect". Most of this panel is unmeasured, 
 ## 0. RETIRED — the engine no longer carries the mechanism (audited 2026-09-01, ee4c73d15)
 
 `levers_resolved` used to echo these as `true`; since ee4c73d15 it names them under a top-level
-`retired_levers` object instead, with the reason, because a resolved value for a mechanism that cannot run
-is a levers echo that lies (gate 1). The engine's reasons, verbatim:
+`retired_levers` object instead, each row `{reason, configured}` (since r6e E11: `configured` is the value a
+stale config.yaml/env pin still names, `null` when nothing does), because a resolved value for a mechanism
+that cannot run is a levers echo that lies (gate 1) — and a stale pin that is silently ignored is invisible
+the other way. The engine's reasons, verbatim:
 
 | Lever | Why it is retired |
 |---|---|
