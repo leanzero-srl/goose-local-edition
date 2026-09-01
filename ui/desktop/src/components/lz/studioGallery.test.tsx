@@ -48,6 +48,27 @@ function Gallery() {
         value="a"
         onChange={() => {}}
       />
+      <Segmented
+        as="buttons"
+        aria-label="seg-buttons"
+        disabled
+        options={[
+          { value: 'a', label: 'A', title: 'Locked', describedBy: 'why' },
+          { value: 'b', label: 'B' },
+        ]}
+        value="a"
+        onChange={() => {}}
+      />
+      <Segmented
+        as="tabs"
+        aria-label="seg-tabs"
+        options={[
+          { value: 'a', label: 'A', icon: <svg /> },
+          { value: 'b', label: 'B' },
+        ]}
+        value="b"
+        onChange={() => {}}
+      />
       <Button variant="primary" icon={<svg />}>
         Primary
       </Button>
