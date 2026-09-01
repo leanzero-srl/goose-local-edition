@@ -49,7 +49,9 @@ r6c web-viz = ONE 39KB file = ONE session = 519 min; ledgerd-core 431 min; 65% o
 tasks. LANDING in 2c — S1 `7894694f0` (fatness measured as spec sections per owned file, threshold from the plan's own
 distribution → a split PATCH request) and S2+S3 `3d7fc1d71` (a shard owns its FOLDER, writes pieces + a structured
 README, never the final file) and S4 `5ca441ec9` (the merger: code builds the dossier, a judicious model merges from a numbered brief, code
-checks after) are in; the repair pipeline (S5) and the deletions (S6) are being written: fatness measured as spec sections per owned file → a PATCH request to split THAT task;
+checks after) are in — the independent refuter of S4 found its after-check was a text-mention test that would green a
+wrong file, non-JS/Python pieces unchecked, and the generic prompt frame pushing the merger to retype; all of it
+(S12) lands before the build; the repair pipeline (S5) and the deletions (S6) are being written: fatness measured as spec sections per owned file → a PATCH request to split THAT task;
 each shard works in its OWN temp folder producing PIECES (functions, sections) per its split plus a structured
 README (provides / assumes / unfinished / checked-with); nobody writes the module's final file until the MERGER,
 a JUDICIOUS model task with a numbered, specific brief built from a code-produced dossier (duplicates,
