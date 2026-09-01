@@ -336,9 +336,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `ask_floor_weak_bump`, their test) moved to commands/swarm/ask_floor.rs, paying for the judge's
 /// evidence-only summon on build lanes (`ladder::judge_summon_trigger`, the forming-stall sampler) and
 /// the `node` / `secs` / `forming_bytes` / `trigger` fields on the look events.
+/// Tightened to 37,561 (VA-009 D5): `repair_sink_files` and its test moved to
+/// commands/swarm/plan_repairs.rs beside the new rule (e) `repair_brief_file_mentions`, paying for the
+/// rule's wiring in `repair_plan_flags` / `PlanRepairs.mentions` / the finalize seam's
+/// `brief_names_unowned_file` fan-out.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_649;
+    const SWARM_RS_LINE_BASELINE: usize = 37_561;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
