@@ -308,9 +308,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/plan_shape.rs, paying for the skeleton verdict rows flattened onto the sink in
 /// `finalize_plan_before_dag` (first-class `skeleton_dep_kept`/`skeleton_dep_relaxed` events) and
 /// the audit test's assertion flip (`web` owns `web/app.js` only and no longer waits on the skeleton).
+/// Tightened to 38,328 (VA-014, gate 9): the LLM REVIEW round deleted — `review_once`, the
+/// dispatcher's `review_plan`/`review_plan_fanned`/`review_plan_part`, `review_user_message`,
+/// `review_must_fix_block`, `review_patch_schema`, `cut_request_into_sections`/`_portions`,
+/// `slugify_slice_id`, the `review_fan` seam parameter and eleven tests; commands/swarm/review_merge.rs
+/// (the per-lane patch union) deleted with it. Measured: zero effective patches in three runs.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 39_482;
+    const SWARM_RS_LINE_BASELINE: usize = 38_328;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

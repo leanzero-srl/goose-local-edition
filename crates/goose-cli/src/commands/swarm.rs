@@ -88,8 +88,6 @@ mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
 use plan_shape::decomposition_of;
-mod review_merge;
-use review_merge::{review_dedupe_key, union_lane_patches};
 mod briefs;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
@@ -20759,258 +20757,6 @@ pub(crate) struct SliceBrief {
     settled: String,
 }
 
-/// A slice id for a component the model named but did not shape into a slice itself. The request's own
-/// vocabulary is kept — `notifierd` stays `notifierd` — because a component renamed into a layer word is
-/// exactly how it stops being findable in the plan.
-fn slugify_slice_id(name: &str) -> String {
-    let mut out = String::new();
-    let mut dash = false;
-    for ch in name.trim().to_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            dash = false;
-        } else if !out.is_empty() && !dash {
-            out.push('-');
-            dash = true;
-        }
-    }
-    out.trim_end_matches('-').chars().take(48).collect()
-}
-
-/// Cut a request into `n` portions of roughly equal CHARACTER COUNT, in order, never splitting a paragraph.
-///
-/// NOTHING TO DO WITH ANY DEVICE WEIGHT. This function sees only the request text and a lane count; it
-/// touches no config, no device and no scheduler state. The word is avoided deliberately, because this
-/// codebase already gives "weight" four unrelated meanings and a fifth would be a bug waiting to happen:
-///   - `SwarmDevice.weight`      max CONCURRENT tasks on a device (`in_flight < weight`)
-///   - `DeviceCfg.speed_weight`  routing preference — how fast a host is relative to its siblings
-///   - `swarm.speed_weights`     the substring map that feeds the above
-///   - `OpenSlice.weight`        the opener's own 1-5 estimate of how big a slice is
-///
-/// This is none of them. It decides only where the cuts fall in a string.
-///
-/// The fans cut by paragraph COUNT, and measured on the 2026-08-28 run that put 72 components in part 1
-/// against 9 in part 3: one lane ground for 25 minutes while two sat idle, and the deepest part of the
-/// request got the shallowest read. Paragraph count is not work — a spec's sections differ by an order of
-/// magnitude in what they ask for, and the character count tracks that far better than the newline count.
-///
-/// Greedy in document order, so part 1 is still the opening of the request and a reader is never handed a
-/// discontiguous jumble. A paragraph longer than a whole target bucket lands alone rather than being cut
-/// mid-sentence; that is the honest failure for a request written as one enormous block.
-///
-/// This is not a cap: nothing is truncated, dropped or bounded. Every character still reaches exactly one
-/// lane. It only decides WHERE the cuts fall.
-/// Cut the request into `n` portions ALONG ITS OWN SECTION HEADINGS, and name each portion after the
-/// sections it holds.
-///
-/// WHY THIS REPLACES THE CHARACTER-BALANCED CUT. Mihai, seeing three fleet lanes all reading
-/// "Review 1 / 2 / 3 · this part of the request against the whole plan":
-/// *"we have a swarm, we should be splitting this shit up, the only way that this will work is if slices
-/// are neatly done not generic … never build generic shit, never induce goose to offer generic
-/// information."*
-///
-/// He is right, and the damage is mechanical rather than cosmetic. A lane told it owns "part 2 of 3" has
-/// no idea what it is responsible for, so it re-derives scope from scratch, overlaps its neighbours, and
-/// reasons about the whole document anyway — which is exactly what the split existed to prevent. MEASURED
-/// 2026-08-28: a REVIEW fanned by character count ran 90+ minutes over five rounds without reaching a
-/// fixed point, with all three lanes arguing the same global question about frontend file counts.
-///
-/// A heading is the request's OWN statement of where one concern ends and the next begins, so cutting
-/// there gives each lane something it can name. The title travels with the body precisely so the lane can
-/// be LABELLED with it — the one-glance test is that no two lanes may read the same.
-///
-/// Falls back to the paragraph cut when a request has no headings, but still names each portion after its
-/// first line: an honest name beats "part 2 of 3" even when it is only a first line.
-fn cut_request_into_sections(text: &str, n: usize) -> Vec<(String, String)> {
-    let is_heading = |l: &str| {
-        let t = l.trim_start();
-        t.starts_with('#') && t.trim_start_matches('#').starts_with(' ')
-    };
-    let heading_text = |l: &str| {
-        l.trim_start()
-            .trim_start_matches('#')
-            .trim()
-            .chars()
-            .take(48)
-            .collect::<String>()
-    };
-
-    // Group the document into (title, body) sections at every heading.
-    let mut sections: Vec<(String, String)> = Vec::new();
-    let mut cur_title = String::new();
-    let mut cur_body: Vec<&str> = Vec::new();
-    for line in text.lines() {
-        if is_heading(line) {
-            if !cur_body.is_empty() || !cur_title.is_empty() {
-                sections.push((cur_title.clone(), cur_body.join("\n")));
-            }
-            cur_title = heading_text(line);
-            cur_body = vec![line];
-        } else {
-            cur_body.push(line);
-        }
-    }
-    if !cur_body.is_empty() || !cur_title.is_empty() {
-        sections.push((cur_title, cur_body.join("\n")));
-    }
-    sections.retain(|(t, b)| !(t.is_empty() && b.trim().is_empty()));
-
-    if sections.len() < 2 {
-        // No headings to cut on. Keep the old balance, but never call a portion "part N".
-        return cut_request_into_portions(text, n)
-            .into_iter()
-            .map(|p| {
-                let name = p
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("")
-                    .trim()
-                    .chars()
-                    .take(48)
-                    .collect::<String>();
-                (name, p)
-            })
-            .collect();
-    }
-
-    if n <= 1 || sections.len() <= n {
-        return sections;
-    }
-    // Balance by size while keeping whole sections together — the boundary is the request's, not ours.
-    let total: usize = sections.iter().map(|(_, b)| b.chars().count()).sum();
-    let target = total.div_ceil(n).max(1);
-    let mut out: Vec<(String, String)> = Vec::new();
-    let mut titles: Vec<String> = Vec::new();
-    let mut bodies: Vec<String> = Vec::new();
-    let mut cur_len = 0usize;
-    for (i, (t, b)) in sections.iter().enumerate() {
-        titles.push(t.clone());
-        bodies.push(b.clone());
-        cur_len += b.chars().count();
-        let left = sections.len() - i - 1;
-        let buckets_left = n.saturating_sub(out.len() + 1);
-        if buckets_left == 0 {
-            continue;
-        }
-        if cur_len >= target || left <= buckets_left {
-            out.push((titles.join(", "), bodies.join("\n\n")));
-            titles = Vec::new();
-            bodies = Vec::new();
-            cur_len = 0;
-        }
-    }
-    if !bodies.is_empty() {
-        out.push((titles.join(", "), bodies.join("\n\n")));
-    }
-    out
-}
-
-fn cut_request_into_portions(text: &str, n: usize) -> Vec<String> {
-    let paras: Vec<&str> = text
-        .split("\n\n")
-        .filter(|p| !p.trim().is_empty())
-        .collect();
-    if n <= 1 || paras.len() <= n {
-        return paras.iter().map(|p| p.to_string()).collect();
-    }
-    let total: usize = paras.iter().map(|p| p.chars().count()).sum();
-    let target = total.div_ceil(n).max(1);
-    let mut out: Vec<String> = Vec::new();
-    let mut cur: Vec<&str> = Vec::new();
-    let mut cur_len = 0usize;
-    for (i, p) in paras.iter().enumerate() {
-        cur.push(p);
-        cur_len += p.chars().count();
-        let paras_left = paras.len() - i - 1;
-        // Buckets still to open AFTER this one is closed.
-        let buckets_left = n.saturating_sub(out.len() + 1);
-        if buckets_left == 0 {
-            continue; // the last bucket takes the whole remainder
-        }
-        // Close when this bucket holds its share, OR when the paragraphs left would not otherwise fill
-        // the buckets left. The second rule is what makes the lane count come out right: without it a
-        // single heavy paragraph early on swallows the target and the tail rides in one bucket, so the
-        // fan silently runs on fewer lanes than the fleet has — the idle-node defect this exists to fix,
-        // reproduced by its own test at 2 portions for 3 lanes.
-        if cur_len >= target || paras_left <= buckets_left {
-            out.push(cur.join("\n\n"));
-            cur = Vec::new();
-            cur_len = 0;
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur.join("\n\n"));
-    }
-    out
-}
-
-/// COVERAGE returns the whole component -> owner TABLE, not just the gaps.
-///
-/// MEASURED across three runs: coverage was asked to "find the slice that owns" each part of the request
-/// and report what nothing owned. It reported almost nothing missing while the plan was missing webhooks,
-/// an approval workflow, a notifier daemon, an outbox, an event ledger and a 3D field — and the run scored
-/// 0.0023 against a 0.0273 target because most scorer checks came back UNAVAILABLE: the app had no such
-/// surface. Fanning it across the fleet lifted the reading ceiling (1 gap -> 5) but the named components
-/// stayed at 2 of 11, because every gap it found was a refinement of what the plan already had.
-///
-/// The mechanism is generosity, not blindness. Asked "does anything own webhooks?" against a slice list
-/// containing `api-backend`, the honest answer looks like yes. So the enumeration becomes the OUTPUT: the
-/// model must list every component its part names, say which slice owns each, and QUOTE the words in that
-/// slice's objective that prove it. A claim it cannot quote is not ownership. The engine then takes the
-/// unowned rows — it no longer depends on the model volunteering that something is missing.
-/// The REVIEW patch schema, and it must stay PERMISSIVE.
-///
-/// Review was the ONLY planner-side call passing `response: None`, and that had three consequences it
-/// took an adversarial audit to find:
-///   1. `wants_structured_reply` is `response.is_some()`, so the engine terminator for a call that owes
-///      a structured reply and never makes one was UNREACHABLE for every review lane -- the exact lane
-///      it was written for.
-///   2. The judge's `structured_block` ("your deliverable is a single structured reply, call the output
-///      tool NOW") is gated on the same flag, so review was never even told.
-///   3. Without a `Response`, `apply_recipe_components` never calls `add_final_output_tool`, so
-///      `recipe__final_output` DOES NOT EXIST on that agent. The judge spent twelve nudges telling
-///      `review-6-notifierd-the-ide` to "call `final_output` immediately" -- naming a tool the lane did
-///      not have. That is the whole of what Mihai saw in the event log.
-///
-/// PERMISSIVE IS LOAD-BEARING. The review prompt tells the model to "return empty lists for all four
-/// keys" when the plan needs no change, and `validate_json_output` REJECTS a non-conforming argument.
-/// A `required` on the top level, or on `description`/`difficulty` inside `add`, would make a clean
-/// no-change review fail validation, leave `final_output` empty, and then be ended by the very
-/// terminator this arms -- turning a lane that used to contribute findings into one that contributes
-/// nothing. Mirror `PlanPatch`'s serde defaults exactly: only `id` is ever required.
-fn review_patch_schema() -> serde_json::Value {
-    let task_add = serde_json::json!({
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-            "id": {"type": "string"},
-            "description": {"type": "string"},
-            "difficulty": {"type": "string"},
-            "model": {"type": "string"},
-            "files": {"type": "array", "items": {"type": "string"}},
-            "depends_on": {"type": "array", "items": {"type": "string"}},
-        },
-    });
-    let task_edit = serde_json::json!({
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-            "id": {"type": "string"},
-            "files": {"type": "array", "items": {"type": "string"}},
-            "depends_on": {"type": "array", "items": {"type": "string"}},
-        },
-    });
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "findings": {"type": "array", "items": {"type": "string"}},
-            "replace": {"type": "array", "items": task_edit},
-            "add": {"type": "array", "items": task_add},
-            "remove": {"type": "array", "items": {"type": "string"}},
-        },
-    })
-}
-
 /// SYNTHESIS emits only the skeleton — ids, files, deps. Hundreds of tokens, not tens of thousands.
 fn skeleton_schema() -> serde_json::Value {
     serde_json::json!({
@@ -21552,300 +21298,6 @@ fn splice_briefs(
             }));
         }
     }
-}
-
-impl GooseAgentDispatcher {
-    /// REVIEW — a fresh call on an idle node, holding the ORIGINAL request next to the plan.
-    ///
-    /// It replaces the eight deterministic plan rewrites the engine used to perform (sink injection,
-    /// the three dependency relaxations, split_fat_modules, fan_verify_split, fan_e2e_split,
-    /// normalize_plan_files_to_package). Each of those encoded a rule; here each rule is a question a
-    /// model answers, and its answer is a small patch rather than surgery.
-    ///
-    /// It NEVER rejects a plan. It can only ask for changes, and the plan proceeds either way — which
-    /// is the whole difference from the compiler that discarded six plans and never reached build.
-    pub(crate) async fn review_plan(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        plan_json: &str,
-    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
-        // A LONE REVIEW LANE IS THE ROUND. Its Err propagates to the caller, so the engine terminator
-        // must not be able to end it.
-        self.review_plan_part(planner_model, user_prompt, plan_json, None, "review", false)
-            .await
-    }
-
-    /// REVIEW, fanned across the fleet — one portion of the request per lane, each against the WHOLE plan.
-    ///
-    /// REVIEW had the identical shape to the coverage defect: one call reading a 54,000-character request
-    /// plus the entire plan, and the same generosity follows from it — what a reader cannot hold, it
-    /// cannot miss. Measured on the last run, three rounds took 07:08 to 07:40 and each read everything;
-    /// the fan gives each lane a third to read properly, and the two idle nodes stop idling.
-    ///
-    /// Patches union rather than compete: FIRST-LANE-WINS by task id, and since r6c every dropped
-    /// element is LOUD — `union_lane_patches` (commands/swarm/review_merge.rs) emits
-    /// `review_patch_dropped {lane, kind, target, reason}` and returns per-lane provenance that
-    /// rides `plan_patched.lanes`. A lane that errors contributes nothing and the round proceeds —
-    /// reviewing two thirds of a request beats failing the round.
-    pub(crate) async fn review_plan_fanned(
-        self: &Arc<Self>,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        plan_json: &str,
-    ) -> Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)> {
-        let lanes = one_lane_per_host(worker_models);
-        if lanes.len() <= 1 {
-            let m = lanes.first().cloned().unwrap_or_default();
-            let (p, f) = self.review_plan(&m, user_prompt, plan_json).await?;
-            // The lone lane goes through the same union door, so provenance has one producer and
-            // no drop is possible.
-            return Ok(union_lane_patches(
-                vec![("review".to_string(), p, f)],
-                self.events.as_ref(),
-            ));
-        }
-        // NAMED SECTIONS, NEVER "part i of n". See cut_request_into_sections for why, and for the
-        // 90-minute run that proved it. The lane's activity key carries the section names so the fleet
-        // strip says WHAT each node owns; two lanes reading the same label is the one-glance test that
-        // a fan has gone generic.
-        let parts = cut_request_into_sections(user_prompt, lanes.len().max(1));
-        let total = parts.len();
-        let me = self.clone();
-        let plan = plan_json.to_string();
-        let out = fanout_over_fleet(
-            "review",
-            self.events.as_ref(),
-            lanes,
-            parts.into_iter().enumerate().collect::<Vec<_>>(),
-            move |(i, (title, part)): (usize, (String, String)), model: String| {
-                let me = me.clone();
-                let plan = plan.clone();
-                async move {
-                    let key = if title.trim().is_empty() {
-                        format!("review-{}", i + 1)
-                    } else {
-                        format!("review-{}", slugify_slice_id(&title))
-                    };
-                    me.review_plan_part(
-                        &model,
-                        &part,
-                        &plan,
-                        Some((title, i + 1, total)),
-                        &key,
-                        // `.ok()` below: a lane that errors contributes nothing and the round proceeds
-                        // on the others, which is exactly the tolerance the terminator's safety argument
-                        // requires.
-                        true,
-                    )
-                    .await
-                    .ok()
-                    .map(|(p, f)| (key, p, f))
-                }
-            },
-        )
-        .await;
-        // Double flatten: a panicked lane (outer Err — already named by lane_panicked) and an
-        // errored lane (inner None) both contribute nothing, and the round proceeds on the rest.
-        Ok(union_lane_patches(
-            out.into_iter().flatten().flatten().collect(),
-            self.events.as_ref(),
-        ))
-    }
-
-    async fn review_plan_part(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        plan_json: &str,
-        part: Option<(String, usize, usize)>,
-        activity_key: &str,
-        // See `run_agent_in`. TRUE only from the fan, whose caller does `.ok()` on this Result and
-        // proceeds on the surviving lanes; FALSE from `review_plan`, whose Err ends the round.
-        may_terminate: bool,
-    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
-        let system = "You are REVIEWING a build plan against the request it came from. You did not write \
-             it and you are not rewriting it.\n\n\
-             EVERYTHING YOU NEED IS IN THIS MESSAGE — the request, the plan, and the list of \
-             files that exist on disk. The plan is NOT a file. There is no BUILD_PLAN.md, no \
-             plan.md and no request.md to open, and searching the filesystem for one finds \
-             nothing and wastes the round. Read what you were given and answer from it.\n\n\
-             Answer these, in order:\n\
-             1. If every task completed and I then opened this app, what would happen? Say concretely.\n\
-             2. COVERAGE, and do this one by ENUMERATION rather than impression: list the request's own \
-             sections — its numbered parts, its headings, the components it names — and against each \
-             write the task id that owns it. Any section you cannot name an owner for is a finding, and \
-             it is the most expensive kind, because a part nobody was asked to build is simply absent \
-             from the finished program and no later phase can notice. MEASURED: a plan of nine tasks \
-             passed this review with one finding while missing webhooks, an approval workflow, an \
-             idempotent consumer, an event ledger, a second service and a 3D field — six of the nine \
-             things its request named. A task list that reads like the layers of a program (client, \
-             store, html, css, js, entry, docs) rather than like the request is the signature of it.\n\
-             3. Is there exactly one task that wires the parts together, and does it own no files?\n\
-             4. Does anything wait on a test, rather than on code it needs?\n\
-             5. Which dependencies are not strictly required for the dependent's file to compile or run?\n\
-             6. Is any task much larger than the others?\n\
-             6b. DO TWO TASKS OWN THE SAME FILE? Say which, and give the file to exactly ONE of them. \
-             MEASURED: `viz-scene-rendering` and `viz-camera-picking-interaction` both owned \
-             `web/viz.js`. The scheduler serialised them, the first wrote the whole file, and the second \
-             ran with nothing left to do and completed having made ZERO tool calls. It survived only \
-             because the first task happened to implement BOTH halves — had it written only its own, the \
-             camera and picking work would have been silently absent, or overwritten. A file has one \
-             owner; the other task either gets its own file or is merged into the owner.\n\
-             7. Do the file paths match the layout already on disk? The manifest below IS that \
-             layout — answer from it, not from the filesystem.\n\n\
-             Then return a PATCH — only the tasks that must change:\n\
-             {\"replace\":[{\"id\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
-              \"add\":[{\"id\":\"...\",\"description\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
-              \"remove\":[\"...\"],\n\
-              \"findings\":[\"one line per thing you found\"]}\n\n\
-             `replace` changes ONLY files and depends_on. You may NOT rewrite a task's specification — \
-             those were written by the engineers who researched each area, and they are not yours to \
-             edit. If a SPECIFICATION is wrong, say so in findings and leave the task alone.\n\n\
-             If the message carries a MUST-FIX block, those defects were MEASURED on the plan's own \
-             JSON — they are not opinions and not yours to weigh. Your patch resolves every one of them \
-             before anything else; a patch that leaves one standing has not reviewed the plan. This is \
-             the only review the plan gets: there is no later round to catch what you leave.\n\n\
-             `findings` is for PROBLEMS ONLY — things that need changing. Do NOT list what is correct, do \
-             NOT confirm the plan is sound, do NOT summarise it back. If the plan needs no change, return \
-             empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
-             is the same as saying nothing, and it costs the fleet's whole round to say it.\n\n\
-             THE EXIT RAMP — read this twice. The numbered questions above (1-7, 6b included) are your \
-             WHOLE checklist. The moment you have walked them once and resolved any MUST-FIX, CALL THE \
-             final_output TOOL with what you have. Do not \"check if there are any other issues\": there \
-             is no question you have not been given, and the plan's other fields — summary, difficulty, \
-             slice, model, description — are NOT checks either: no question asks about them, and a \
-             reviewer was measured sweeping exactly those five fields in a verbatim cycle for 24 minutes, \
-             its review complete after the first pass and its exit never taken. \"The only review the \
-             plan gets\" means the numbered questions answered well — a second walk catches nothing the \
-             first did not. One pass, then the tool."
-            .to_string();
-        // Question 7 asks whether the plan's paths match what is on disk. Handing over that list is what
-        // makes it answerable. MEASURED 2026-08-28: without it the reviewer shelled out looking for the
-        // layout, found an almost-empty tree, concluded the plan itself must be a file it had not found,
-        // and spent the whole phase running `find / -name BUILD_PLAN.md`. The judge then read the failure
-        // as drifting and its NEXT told it to search harder — 13 re-streams, one round of findings in 45
-        // minutes, and the fleet idle. The plan was in the prompt the entire time.
-        let on_disk = existing_files_manifest(&self.working_dir);
-        let tree = if on_disk.is_empty() {
-            "## Files on disk\nNothing has been built yet — the working directory is empty. Every path in \
-             the plan is one the build will create, so no path can mismatch, and question 7 has no \
-             findings this round."
-                .to_string()
-        } else {
-            format!(
-                "## Files on disk — this list IS the layout, and it is complete\n{}",
-                on_disk
-                    .iter()
-                    .map(|f| format!("  {f}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        };
-        let out = self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                review_user_message(user_prompt, plan_json, part, &tree)?,
-                // DECLARE THE DELIVERABLE. Review was the only planner-side call passing `None` here,
-                // which left `wants_structured_reply` false and took three things with it: the engine
-                // terminator could never fire on a review lane, the judge's "call your output tool"
-                // block was never shown to one, and -- the one that explains the event log -- no
-                // `recipe__final_output` tool was ever added to the agent, so twelve nudges told a lane
-                // to call a tool it did not have. See `review_patch_schema` for why it must be
-                // permissive.
-                Some(Response {
-                    json_schema: Some(review_patch_schema()),
-                }),
-                planner_side_turns(),
-                &[],
-                None,
-                Some(activity_key),
-                true,
-                may_terminate,
-            )
-            .await?;
-        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
-        #[derive(serde::Deserialize, Default)]
-        struct ReviewOut {
-            #[serde(default)]
-            findings: Vec<String>,
-        }
-        let findings = parse_json_lenient::<ReviewOut>(&raw)
-            .unwrap_or_default()
-            .findings;
-        let patch = goose_swarm::parse_patch(&raw).unwrap_or_default();
-        Ok((patch, findings))
-    }
-}
-
-/// The plan's MEASURED structural defects, written for the reviewer as work to do rather than as
-/// something to discover. Empty when the plan carries no flag, so a clean plan's prompt says nothing.
-///
-/// MEASURED, r1 2026-08-29: REVIEW ran four rounds, 51 minutes and 209,110 reasoning characters. The
-/// one structural defect it fixed — `viz-engine` owned no files — was fixed in round 1 after roughly
-/// 25,000 characters of rediscovery, and `plan_synthesized.tasks_owning_nothing` had named it before
-/// the round began. The engine computes these flags deterministically from the plan's JSON; the
-/// reviewer was being paid to compute them again, slowly, and then to keep going.
-///
-/// The three are the same three `decomposition_of` reports — ONE rule in ONE place — so what the
-/// reviewer is told to fix is exactly what `plan_synthesized` and `plan_patched.after` measure.
-fn review_must_fix_block(plan_json: &str) -> String {
-    let d = decomposition_of(plan_json);
-    let quoted = |v: &serde_json::Value| -> Vec<String> {
-        v.as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|x| x.as_str())
-            .map(|s| format!("`{s}`"))
-            .collect()
-    };
-    let owning_nothing = quoted(&d["tasks_owning_nothing"]);
-    let shadowed = quoted(&d["module_package_collisions"]);
-    let shared: Vec<String> = d["shared_files"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|s| {
-            format!(
-                "`{}` is owned by {}",
-                s["file"].as_str().unwrap_or_default(),
-                quoted(&s["tasks"]).join(" and ")
-            )
-        })
-        .collect();
-    if owning_nothing.is_empty() && shared.is_empty() && shadowed.is_empty() {
-        return String::new();
-    }
-    let mut block = String::from(
-        "## MUST-FIX — measured on this plan\n\
-         Computed from the plan's own JSON, not observed. Each is a defect the build cannot survive, \
-         and your patch resolves every one of them before anything else.\n",
-    );
-    if !owning_nothing.is_empty() {
-        block.push_str(&format!(
-            "- Tasks that own NO files, so they are dispatched with nothing to write and complete \
-             having built nothing: {}. Give each one files no other task owns, merge it into the task \
-             whose files carry its work, or remove it.\n",
-            owning_nothing.join(", ")
-        ));
-    }
-    if !shared.is_empty() {
-        block.push_str(&format!(
-            "- Files with MORE THAN ONE owner, so the scheduler serialises the owners and the second \
-             finds nothing left to do: {}. Give every file exactly one owner.\n",
-            shared.join("; ")
-        ));
-    }
-    if !shadowed.is_empty() {
-        block.push_str(&format!(
-            "- Python modules SHADOWED by a package of the same name — `x.py` beside `x/` — so Python \
-             imports the package and the module is dead code nothing can reach: {}. Rename the module \
-             or fold it into the package.\n",
-            shadowed.join(", ")
-        ));
-    }
-    block
 }
 
 /// What the plan repair did: the measured flags before and after, and one line per change. An empty
@@ -22459,219 +21911,6 @@ fn repair_unassigned_endpoints(
     }
 }
 
-/// What one review lane is handed: the request (or the lane's own sections of it), the plan with each
-/// task's brief reduced to a summary line, the MUST-FIX block when the plan has one, and the layout on
-/// disk. A free function so the prompt can be asserted on without a model.
-fn review_user_message(
-    user_prompt: &str,
-    plan_json: &str,
-    part: Option<(String, usize, usize)>,
-    tree: &str,
-) -> Result<String> {
-    // The plan WITHOUT descriptions: the reviewer is asked about structure, and showing it the
-    // briefs would both blow up the prompt and tempt it to rewrite them.
-    let mut skeleton: serde_json::Value = serde_json::from_str(plan_json)?;
-    if let Some(tasks) = skeleton.get_mut("subtasks").and_then(|v| v.as_array_mut()) {
-        for t in tasks.iter_mut() {
-            if let Some(o) = t.as_object_mut() {
-                let short: String = o
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or_default()
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or_default()
-                    .chars()
-                    .take(160)
-                    .collect();
-                o.insert("summary".into(), serde_json::Value::from(short));
-                o.remove("description");
-            }
-        }
-    }
-    let plan = serde_json::to_string_pretty(&skeleton).unwrap_or_default();
-    // Between the plan and the tree: it is about the plan the reviewer has just read.
-    let must_fix = match review_must_fix_block(plan_json) {
-        b if b.is_empty() => String::new(),
-        b => format!("{b}\n"),
-    };
-    Ok(match part {
-        Some((title, i, n)) => format!(
-            "## YOU OWN THESE SECTIONS OF THE REQUEST: {title}\n\
-             (portion {i} of {n} — the request's OWN sections, not an arbitrary split)\n\
-             Everything below is yours to judge. A task may look unrelated to your sections \
-             and be perfectly good for another — never remove or rename on that basis. Judge \
-             only whether what YOUR SECTIONS ask for is owned, wired and buildable.\n\n\
-             {user_prompt}\n\n## The whole plan\n{plan}\n\n{must_fix}{tree}"
-        ),
-        None => format!(
-            "## The original request\n{user_prompt}\n\n## The plan\n{plan}\n\n{must_fix}{tree}"
-        ),
-    })
-}
-
-/// REVIEW is ONE round: the fleet reads the request against the plan, aimed by the MUST-FIX block at
-/// the defects the engine measured, and its patch is applied. Then the run moves on.
-///
-/// It used to loop "until a round surfaces no new finding", with a plan-state cycle detector and a
-/// same-rejection detector as terminators for when that never came. MEASURED, r1 2026-08-29: round 1
-/// new=8 (replace 3, remove 1), round 2 new=4 (replace 1), round 3 new=9 repeated=2 (replace 3),
-/// round 4 started — 51 minutes and 209,110 reasoning characters, against r0's whole REVIEW of 12
-/// minutes in two rounds. Round 1 fixed the one structural defect, and SYNTHESIS had already flagged
-/// it. Rounds 2 and 3 found dependency tweaks and "X is not explicitly owned" cross-cutting concerns.
-/// A reviewer asked what is missing always finds something: novelty does not converge, so it was never
-/// a stop condition, only a slow one.
-///
-/// This is phase structure, not a cap — OPEN and SYNTHESIS are one call each — and the one call is as
-/// uncapped as every other model call. `review` is the fleet call, injected so the round can be driven
-/// in a test without a model: given the prompt and the plan, it returns the union patch and findings.
-async fn review_once<F, Fut>(
-    mut review: F,
-    user_prompt: &str,
-    plan_json: String,
-    sink: &Arc<dyn EventSink>,
-) -> String
-where
-    F: FnMut(String, String) -> Fut,
-    Fut: std::future::Future<
-        Output = Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)>,
-    >,
-{
-    let (patch, findings, mut lane_prov) =
-        match review(user_prompt.to_string(), plan_json.clone()).await {
-            Ok(v) => v,
-            Err(e) => {
-                // A-2: proceeding on the plan as-is is right (one round, no retry ladder), but the
-                // failure lands in the run log — stderr-only meant a run whose single REVIEW round
-                // died in transport was indistinguishable from one that reviewed and found nothing.
-                sink.write_value(serde_json::json!({
-                    "event": "review_failed",
-                    "round": 1,
-                    "error": e.to_string().chars().take(400).collect::<String>(),
-                }));
-                eprintln!("  · review did not return ({e}); proceeding on the plan as-is");
-                return plan_json;
-            }
-        };
-    // THE SAME DEFECT FROM TWO LANES IS ONE FINDING. Every lane reads the whole plan, so a collision is
-    // reported by whichever lanes noticed it, each in its own words; `review_dedupe_key` is what tells
-    // a rewording from a second defect.
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let fresh: Vec<String> = findings
-        .iter()
-        .filter(|f| !f.trim().is_empty() && seen.insert(review_dedupe_key(f)))
-        .cloned()
-        .collect();
-    sink.write_value(serde_json::json!({
-        "event": "review_findings",
-        "round": 1,
-        "new": fresh.len(),
-        "repeated": findings.len().saturating_sub(fresh.len()),
-        "findings": fresh,
-        "patch_touches": patch.touched(),
-    }));
-    for f in &fresh {
-        eprintln!("  · review: {f}");
-    }
-    // FINDINGS WITHOUT A PATCH IS A CONTRADICTION, AND IT COSTS THE BUILD THE FEATURE.
-    //
-    // MEASURED, run swarm-3node-r0: `new: 4, patch_touches: 0`. The reviewer reported that an SSE
-    // streaming endpoint, a `vs7dbg` debug API, screen-space labels with occlusion culling, and a
-    // linked brush were each "not explicitly owned by any task" — and proposed no owner for any of
-    // them. The run went to CONTRACTS and BUILD with all four unowned, which means they are simply
-    // absent from the finished program and no later phase can notice: the builders build the list,
-    // the reviewer reviews the list, and the missing part is never mentioned again. This is the exact
-    // failure class that left the last published local run at 0.0273 with `GET /` 404ing.
-    //
-    // So ask ONCE, concretely, naming its own findings back to it. This is a follow-up inside the one
-    // round, not a second round: nothing is re-reviewed, it only asks for the patch the findings owe.
-    let mut patch = patch;
-    if patch.is_empty() && !fresh.is_empty() {
-        let demand = format!(
-            "You reported these {} problems with the plan and returned NO patch:\n{}\n\n\
-             A finding with no patch changes nothing — the plan proceeds exactly as it was and each \
-             of these is then absent from the finished program, with no later phase able to notice. \
-             Return ONLY a patch. For EACH problem above, do one of two things: `add` a task that \
-             owns it (id, files it owns that no other task owns, depends_on), or `replace` an \
-             existing task whose files should own it. If a problem is in fact already owned by a \
-             task, leave it out of the patch entirely — but then it was not a finding.",
-            fresh.len(),
-            fresh
-                .iter()
-                .enumerate()
-                .map(|(i, f)| format!("{}. {f}", i + 1))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-        match review(demand, plan_json.clone()).await {
-            Ok((p2, _, prov2)) => {
-                sink.write_value(serde_json::json!({
-                    "event": "review_patch_demanded",
-                    "round": 1,
-                    "findings": fresh.len(),
-                    "patch_touches": p2.touched(),
-                }));
-                eprintln!(
-                    "  · review returned {} finding(s) and no patch; demanded one, got {} touch(es)",
-                    fresh.len(),
-                    p2.touched()
-                );
-                patch = p2;
-                lane_prov = prov2;
-            }
-            Err(e) => eprintln!("  · review patch demand did not return ({e}); proceeding"),
-        }
-    }
-    if patch.is_empty() {
-        if !fresh.is_empty() {
-            eprintln!(
-                "  · review raised {} observation(s) but requested no change",
-                fresh.len()
-            );
-        }
-        return plan_json;
-    }
-    match goose_swarm::apply_patch(&plan_json, &patch) {
-        Ok(next) => {
-            eprintln!(
-                "  · review patched {} task(s): {} replaced, {} added, {} removed",
-                patch.touched(),
-                patch.replace.len(),
-                patch.add.len(),
-                patch.remove.len()
-            );
-            sink.write_value(serde_json::json!({
-                "event": "plan_patched",
-                "round": 1,
-                "replace": patch.replace.len(),
-                "add": patch.add.len(),
-                "remove": patch.remove.len(),
-                // WHICH LANE CONTRIBUTED WHICH IDS (r6c): the counts alone could not tell a
-                // conflict-resolved element from a silently-dropped one. Additive key — tick.py
-                // and useSwarmRun.ts read named keys only.
-                "lanes": lane_prov,
-                // THE STATE THE PATCH PRODUCED, not just its size. Without this the only evidence
-                // that a collision was actually resolved is the reviewer's own prose -- run 3's
-                // finding read "merged into viz-interaction" and nothing in the log could confirm
-                // the plan agreed. Follow a finding to a CHANGE, never to the event reporting it.
-                "after": decomposition_of(&next),
-            }));
-            next
-        }
-        Err(diag) => {
-            // A BAD PATCH COSTS ONE PATCH. It is dropped, the plan it was meant to fix is untouched,
-            // and the run continues — never a regeneration.
-            eprintln!("  · review patch rejected ({diag}); dropped, plan unchanged");
-            sink.write_value(serde_json::json!({
-                "event": "plan_patch_rejected",
-                "round": 1,
-                "diagnostic": diag,
-            }));
-            plan_json
-        }
-    }
-}
-
 /// Drive the STRAIGHT-LINE planner (P1-5): OPEN -> [ask handshake, only if the opener left open
 /// decisions] -> SYNTHESIS (the slices directly) -> REVIEW (one round) -> plan_repaired -> DAG,
 /// and return what the rest of the run expects. The coverage/RESEARCH fans, the resplit and the
@@ -22937,10 +22176,11 @@ async fn run_linear_plan(
         );
     }
 
-    // ---- SYNTHESIS + REVIEW, the straight line -----------------------------------------------
+    // ---- SYNTHESIS, the straight line ----------------------------------------------------------
     // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
-    // real model closures here and with fakes in its test — the fake-dispatcher seam that proves the
-    // sequence open -> synthesis -> review(1) -> plan_repaired with nothing between.
+    // real model closure here and with a fake in its test — the fake-dispatcher seam that proves the
+    // sequence open -> synthesis -> plan_repaired with nothing between (the LLM REVIEW round is
+    // deleted, VA-014: 0 effective patches in 3 runs for 28-52 wall-minutes and 4 lanes each).
     let lang = detect_language(&opts.prompt, &tree_at_start);
     let (plan_json, dag) = plan_slices_to_dag(
         opened,
@@ -22957,15 +22197,6 @@ async fn run_linear_plan(
             move |briefs: Vec<SliceBrief>, tree: Vec<String>| async move {
                 dispatcher
                     .synthesize_plan(&planner_model, &prompt, &briefs, &tree)
-                    .await
-            }
-        },
-        |prompt: String, plan: String| {
-            let dispatcher = dispatcher.clone();
-            let worker_models = worker_models.clone();
-            async move {
-                dispatcher
-                    .review_plan_fanned(worker_models, &prompt, &plan)
                     .await
             }
         },
@@ -23325,14 +22556,25 @@ impl GooseAgentDispatcher {
 }
 
 /// The straight-line planner core, from OPEN's output to a loadable DAG:
-/// SYNTHESIS -> REVIEW (one round, `review_once`, MUST-FIX flags injected) -> `plan_repaired`
-/// (finalize_plan_before_dag) -> DAG, with the flat one-task-per-slice fallback at both failure
-/// points so a bad model reply costs parallelism, never the run. `synthesize` and `review_fan`
-/// are injected so the whole sequence runs in a test without a model — the fake-dispatcher seam
-/// that proves no coverage/resplit/proxy step remains between the phases (P1-5; the v2 research
-/// fan runs BEFORE this, in `run_linear_plan`, and enters here only as data).
+/// SYNTHESIS -> `plan_repaired` (finalize_plan_before_dag: pin the sink, prepend the skeleton,
+/// the deterministic repairs of the measured flags, the entry-file injection) -> DAG, with the
+/// flat one-task-per-slice fallback at both failure points so a bad model reply costs
+/// parallelism, never the run. `synthesize` is injected so the whole sequence runs in a test
+/// without a model — the fake-dispatcher seam that proves no coverage/resplit/proxy/review step
+/// remains between the phases (P1-5; the v2 research fan runs BEFORE this, in
+/// `run_linear_plan`, and enters here only as data).
+///
+/// THE LLM REVIEW ROUND IS DELETED (VA-014, gate 9). Measured over three runs it produced ZERO
+/// effective patches: r5 (52.6 wall-min, 4 lanes) added `brush-contract` with a 658-char brief
+/// and the brush ReferenceError shipped anyway; r6c (28.1 wall-min) added `decisions-doc` with
+/// a 387-char brief that NOTHING depended on (plan_loaded: web-console.depends_on=[skeleton])
+/// while its findings claimed "both now depend on it"; r6b/r6d one finding, zero patches. Every
+/// structural defect it was aimed at (`tasks_owning_nothing`, `shared_files`,
+/// `module_package_collisions`, the join owning files, unowned advertised entries) is repaired
+/// deterministically by `repair_plan_flags` — the reviewer was paid ~140-206 node-minutes per
+/// run to rediscover flags the engine had already computed.
 #[allow(clippy::too_many_arguments)]
-async fn plan_slices_to_dag<S, SFut, R, RFut>(
+async fn plan_slices_to_dag<S, SFut>(
     opened: OpenOutput,
     user_prompt: &str,
     working_dir: &Path,
@@ -23341,16 +22583,11 @@ async fn plan_slices_to_dag<S, SFut, R, RFut>(
     research: &[ResearchRow],
     plan_decisions: &[PlanDecision],
     synthesize: S,
-    review_fan: R,
     sink: &Arc<dyn EventSink>,
 ) -> Result<(String, Dag)>
 where
     S: FnOnce(Vec<SliceBrief>, Vec<String>) -> SFut,
     SFut: std::future::Future<Output = Result<String>>,
-    R: FnMut(String, String) -> RFut,
-    RFut: std::future::Future<
-        Output = Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)>,
-    >,
 {
     let briefs = briefs_from_slices(
         &opened,
@@ -23402,9 +22639,10 @@ where
         }
     };
 
-    // THE PLAN, THE MOMENT IT EXISTS. Additive and pre-review, so it says what SYNTHESIS produced
-    // before any patch touches it, and a later diff against `plan_loaded` shows exactly what
-    // REVIEW changed. (Two runs were once killed IN REVIEW and took their plan to the grave.)
+    // THE PLAN, THE MOMENT IT EXISTS. Additive and pre-repair, so it says what SYNTHESIS produced
+    // before the repairs touch it, and a later diff against `plan_loaded` shows exactly what
+    // `finalize_plan_before_dag` changed. (Two runs were once killed between synthesis and
+    // plan_loaded and took their plan to the grave.)
     {
         let tasks: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&plan_json)
             .ok()
@@ -23464,32 +22702,22 @@ where
     }
     // The event above carries COUNTS; the full text — the briefs the workers will actually
     // receive — goes to the `.swarm/plan.json` sidecar so the vigil can read it between now and
-    // plan_loaded (r6c: 133k chars of briefs, persisted nowhere for the whole REVIEW window).
+    // plan_loaded (r6c: 133k chars of briefs, persisted nowhere for the whole planning window).
     persist_plan_sidecar(working_dir, "plan.json", &plan_json, sink.as_ref());
 
-    // ---- REVIEW (ONE round — kept, P1-5) ------------------------------------------------------
-    // r2 measured the one-round form EARNING its 7 minutes: 9 findings, 10 patch touches, and it
-    // cleared sharing/owning-nothing itself. The multi-round form is what burned r1 for 51 minutes;
-    // its deletion is REFUSED in REFUSED.md while this shape keeps proving out.
-    phase_banner(
-        "REVIEW",
-        "an idle node reads the ORIGINAL request against the plan and patches what is missing",
-    );
-    sink.write_value(serde_json::json!({"event": "phase", "phase": "review"}));
-    let mut plan_json = review_once(review_fan, user_prompt, plan_json, sink).await;
-    // (REVIEW-added tasks are no longer sent back to a research fan — RESEARCH is deleted. An
-    // added task ships with the reviewer's own description; repair rule (d) below still guarantees
-    // every advertised surface an owner.)
+    // (The LLM REVIEW round that ran here is deleted — VA-014; see this function's doc. The
+    // REFUSED.md entry's own revive-if condition — "a later run shows REVIEW's round adding wall
+    // time without changing the plan flags" — was met by r5, r6c, r6b and r6d.)
 
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
-    // exact-equality consumers read it), repairs the measured flags, injects advertised entry
-    // files, and emits `plan_repaired` every time — actions or none.
-    plan_json =
+    // exact-equality consumers read it), prepends the skeleton, repairs the measured flags,
+    // injects advertised entry files, and emits `plan_repaired` every time — actions or none.
+    let mut plan_json =
         finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
 
     // AN INVALID DAG FALLS BACK. `synthesize` returns Ok for anything lenient-parseable and does
-    // no DAG validation, so a cycle, duplicate id or dangling depends_on — including one a REVIEW
-    // patch introduced — lands here; the flat fallback costs parallelism, never the run.
+    // no DAG validation, so a cycle, duplicate id or dangling depends_on lands here; the flat
+    // fallback costs parallelism, never the run.
     let dag = match Dag::from_planner_json(&plan_json) {
         Ok(d) => d,
         Err(e) => {
@@ -35672,114 +34900,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 }
 
 #[cfg(test)]
-mod coverage_table_tests {
-    use super::*;
-
-    /// The request's own vocabulary survives into the slice id, because a component renamed into a layer
-    /// word stops being findable in the plan — which is the failure one level up.
-    #[test]
-    fn a_synthesized_slice_id_keeps_the_requests_own_words() {
-        assert_eq!(slugify_slice_id("notifierd"), "notifierd");
-        assert_eq!(slugify_slice_id("Approval workflow"), "approval-workflow");
-        assert_eq!(slugify_slice_id("  3D field / scene  "), "3d-field-scene");
-        assert_eq!(slugify_slice_id("!!!"), "");
-    }
-}
-
-#[cfg(test)]
-mod request_portion_tests {
-    use super::*;
-
-    fn para(tag: &str, n: usize) -> String {
-        format!("{tag} {}", "x".repeat(n))
-    }
-
-    /// EVERY CHARACTER REACHES EXACTLY ONE LANE. This splits work; it never bounds it. A portion cut is
-    /// not a cap, and a request must never lose a section to the fan that was meant to read it properly.
-    #[test]
-    fn nothing_is_dropped_and_order_is_preserved() {
-        let text = format!(
-            "{}\n\n{}\n\n{}\n\n{}\n\n{}",
-            para("A", 10),
-            para("B", 900),
-            para("C", 10),
-            para("D", 10),
-            para("E", 900)
-        );
-        let parts = cut_request_into_portions(&text, 3);
-        assert_eq!(parts.len(), 3, "one portion per lane: {parts:?}");
-        let rejoined: String = parts.join("\n\n");
-        for tag in ["A", "B", "C", "D", "E"] {
-            assert_eq!(
-                rejoined.matches(&format!("{tag} ")).count(),
-                1,
-                "{tag} must appear exactly once across the portions"
-            );
-        }
-        let a = rejoined.find("A ").unwrap();
-        let e = rejoined.find("E ").unwrap();
-        assert!(
-            a < e,
-            "document order is preserved so part 1 is still the opening"
-        );
-    }
-
-    /// THE DEFECT THIS FIXES, as measured: cutting by paragraph COUNT put 72 components in part 1 against
-    /// 9 in part 3. Four tiny paragraphs and one huge one must not put the huge one alone with three
-    /// crumbs beside it.
-    #[test]
-    fn a_heavy_section_does_not_leave_the_other_lanes_with_crumbs() {
-        let text = format!(
-            "{}\n\n{}\n\n{}\n\n{}",
-            para("tiny1", 20),
-            para("tiny2", 20),
-            para("tiny3", 20),
-            para("huge", 3000)
-        );
-        let by_count: Vec<usize> = text
-            .split("\n\n")
-            .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|c| c.join("\n\n").chars().count())
-            .collect();
-        let by_weight: Vec<usize> = cut_request_into_portions(&text, 2)
-            .iter()
-            .map(|p| p.chars().count())
-            .collect();
-        let spread = |v: &[usize]| v.iter().max().unwrap() / v.iter().min().unwrap().max(&1);
-        assert!(
-            spread(&by_weight) < spread(&by_count),
-            "weighted cut must be more even than the paragraph-count cut: {by_weight:?} vs {by_count:?}"
-        );
-    }
-
-    #[test]
-    fn fewer_paragraphs_than_lanes_just_gives_one_each() {
-        let text = format!("{}\n\n{}", para("A", 5), para("B", 5));
-        assert_eq!(cut_request_into_portions(&text, 5).len(), 2);
-    }
-
-    /// IT IS NOT A DEVICE WEIGHT. The only inputs are a string and a lane count — no config, no device,
-    /// no scheduler state — so it cannot perturb `SwarmDevice.weight` (concurrency),
-    /// `DeviceCfg.speed_weight` (routing), `swarm.speed_weights` (the substring map) or
-    /// `OpenSlice.weight` (the opener's size estimate). Same text and lane count, same answer, always.
-    #[test]
-    fn the_cut_depends_only_on_the_text_and_the_lane_count() {
-        let text = format!(
-            "{}\n\n{}\n\n{}",
-            para("A", 300),
-            para("B", 300),
-            para("C", 300)
-        );
-        assert_eq!(
-            cut_request_into_portions(&text, 3),
-            cut_request_into_portions(&text, 3)
-        );
-        assert_eq!(cut_request_into_portions(&text, 3).len(), 3);
-    }
-}
-
-#[cfg(test)]
 mod live_fleet_tests {
     use super::*;
 
@@ -36308,69 +35428,6 @@ mod live_fleet_tests {
         assert!(html[0].contains("missing.js"), "{html:?}");
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// THE SCHEMA MUST ACCEPT A NO-CHANGE REVIEW, AND THAT IS AN INVARIANT, NOT A STYLE CHOICE.
-    ///
-    /// The review prompt tells the model to return empty lists when the plan needs no change, and
-    /// `validate_json_output` (goose/src/agents/final_output_tool.rs:94) REJECTS a non-conforming
-    /// argument. A `required` on the top level -- or on `description` inside `add` -- would make a clean
-    /// review fail validation, leave `final_output` empty, and then be ended by the terminator that
-    /// declaring this schema just armed. A lane that used to contribute findings would contribute
-    /// nothing, and the failure would look like the model's fault.
-    ///
-    /// Asserted structurally rather than with a validator: `jsonschema` is a dependency of `goose`, not
-    /// of this crate, and the invariant worth pinning is exactly "what is required", not "does a
-    /// validator agree with itself".
-    #[test]
-    fn the_review_schema_never_requires_more_than_an_id() {
-        let schema = review_patch_schema();
-        assert!(
-            schema.get("required").is_none(),
-            "a top-level `required` rejects the no-change review the prompt explicitly asks for: {schema}"
-        );
-        for key in ["add", "replace"] {
-            let req = schema["properties"][key]["items"]["required"]
-                .as_array()
-                .unwrap_or_else(|| panic!("{key} items must state what they require"));
-            assert_eq!(
-                req.len(),
-                1,
-                "{key} may require ONLY `id` -- PlanPatch defaults every other field: {req:?}"
-            );
-            assert_eq!(req[0], "id");
-        }
-        for key in ["findings", "remove"] {
-            assert_eq!(
-                schema["properties"][key]["type"], "array",
-                "{key} must be an array"
-            );
-        }
-    }
-
-    /// The schema and the type the engine actually parses must agree, or a patch validates and then
-    /// fails to deserialize -- which reads as the reviewer returning nothing.
-    #[test]
-    fn a_patch_matching_the_schema_deserializes_into_planpatch() {
-        let real = serde_json::json!({
-            "findings": ["duplicate ownership of web/viz.js"],
-            "replace": [{ "id": "viz-interaction", "files": ["web/viz.js"] }],
-            "add": [{ "id": "sse-stream", "files": ["app/sse.py"], "depends_on": [] }],
-            "remove": ["viz-rendering"],
-        });
-        let parsed: goose_swarm::PlanPatch =
-            serde_json::from_value(real).expect("the schema and PlanPatch must agree");
-        assert_eq!(parsed.remove, vec!["viz-rendering".to_string()]);
-        assert_eq!(parsed.add.len(), 1);
-        assert_eq!(parsed.replace.len(), 1);
-
-        // And the no-change shape must deserialize to an EMPTY patch, not an error.
-        let empty: goose_swarm::PlanPatch =
-            serde_json::from_value(serde_json::json!({ "findings": [] })).expect("empty is valid");
-        assert!(
-            empty.is_empty(),
-            "a review that found nothing must produce an empty patch"
-        );
     }
 }
 
@@ -38629,89 +37686,6 @@ mod audit_regressions {
         }
     }
 
-    fn plan_with_an_orphan_task() -> String {
-        serde_json::json!({"subtasks": [
-            {"id": "viz-engine", "description": "draw the field", "files": [], "depends_on": []},
-            {"id": "api", "description": "serve records", "files": ["app/api.py"], "depends_on": []},
-            {"id": "integrate-verify", "description": "wire and verify", "files": [],
-             "depends_on": ["viz-engine", "api"]}
-        ]})
-        .to_string()
-    }
-
-    /// REVIEW IS ONE ROUND. It looped "until a round surfaces no new finding", and r1 measured what
-    /// that means with an LLM reviewer: new=8 → 4 → 9, a fourth round, 51 minutes, 209,110 reasoning
-    /// characters — and the one structural defect was fixed in round 1, from a flag SYNTHESIS had
-    /// already computed. A reviewer asked what is missing always finds something. So the patch is
-    /// applied and the phase ends; no call follows it.
-    #[tokio::test]
-    async fn review_applies_its_one_patch_and_makes_no_second_call() {
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let sink = Arc::new(RecordingSink::default());
-        let sink_dyn: Arc<dyn EventSink> = sink.clone();
-        let out = review_once(
-            |_prompt, _plan| {
-                let calls = calls.clone();
-                async move {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    let patch = goose_swarm::PlanPatch {
-                        replace: vec![goose_swarm::TaskEdit {
-                            id: "viz-engine".into(),
-                            files: Some(vec!["web/viz.js".into()]),
-                            depends_on: None,
-                        }],
-                        ..Default::default()
-                    };
-                    Ok::<_, anyhow::Error>((
-                        patch,
-                        vec![
-                            "task `viz-engine` owns no files".to_string(),
-                            "STILL: `viz-engine` owns no files".to_string(),
-                        ],
-                        serde_json::json!({}),
-                    ))
-                }
-            },
-            "build the thing",
-            plan_with_an_orphan_task(),
-            &sink_dyn,
-        )
-        .await;
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "a second review call is a second round, and rounds are gone"
-        );
-        assert!(
-            decomposition_of(&out)["tasks_owning_nothing"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "the one round's patch was applied"
-        );
-        let events = sink.0.lock().unwrap();
-        let findings = events
-            .iter()
-            .find(|e| e["event"] == "review_findings")
-            .expect("review_findings is written");
-        assert_eq!(findings["round"], 1);
-        assert_eq!(
-            findings["new"], 1,
-            "one defect worded twice by two lanes is one finding"
-        );
-        assert_eq!(findings["repeated"], 1);
-        let patched = events
-            .iter()
-            .find(|e| e["event"] == "plan_patched")
-            .expect("plan_patched is written");
-        assert_eq!(patched["round"], 1);
-        assert_eq!(patched["replace"], 1);
-        assert!(patched["after"]["tasks_owning_nothing"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-    }
-
     /// The resume watermark: a mini on disk means the question is settled history and is never
     /// re-dispatched; its sibling without a mini stays dispatchable.
     #[test]
@@ -38909,13 +37883,6 @@ mod audit_regressions {
                 ]})
                 .to_string())
             },
-            |_prompt: String, _plan: String| async move {
-                Ok((
-                    goose_swarm::PlanPatch::default(),
-                    Vec::new(),
-                    serde_json::json!({}),
-                ))
-            },
             &sink_dyn,
         )
         .await
@@ -38945,12 +37912,14 @@ mod audit_regressions {
                 .unwrap_or_else(|| panic!("missing {n} in {names:?}"))
         };
         assert!(idx("phase:synthesis") < idx("plan_synthesized"));
-        assert!(idx("plan_synthesized") < idx("phase:review"));
-        assert!(idx("phase:review") < idx("review_findings"));
-        assert!(idx("review_findings") < idx("plan_repaired"));
+        assert!(idx("plan_synthesized") < idx("plan_repaired"));
         for dead in [
             "phase:research",
             "phase:ask",
+            "phase:review",
+            "review_findings",
+            "review_failed",
+            "plan_patched",
             "coverage_gap",
             "coverage_complete",
             "coverage_late_slices",
@@ -38987,13 +37956,6 @@ mod audit_regressions {
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Err(anyhow!("the model returned prose"))
             },
-            |_prompt: String, _plan: String| async move {
-                Ok((
-                    goose_swarm::PlanPatch::default(),
-                    Vec::new(),
-                    serde_json::json!({}),
-                ))
-            },
             &sink_dyn,
         )
         .await
@@ -39021,8 +37983,8 @@ mod audit_regressions {
     /// skeleton prepended after plan_repaired — FIRST in topological order (the only zero-dep task),
     /// with every task that owns a file in a package it creates, join included, waiting on it —
     /// VA-023: `web` does not (it owns `web/app.js` only), so it keeps its planner deps and is
-    /// Ready at BUILD start. The phase line stays open → synthesis → review(1) → plan_repaired,
-    /// and the skeleton rides plan_repaired's pass; its per-task verdict rows are flattened onto
+    /// Ready at BUILD start. The phase line stays open → synthesis → plan_repaired, and the
+    /// skeleton rides plan_repaired's pass; its per-task verdict rows are flattened onto
     /// the sink as first-class `skeleton_dep_kept` / `skeleton_dep_relaxed` events.
     #[tokio::test]
     async fn the_walking_skeleton_leads_the_dag_from_the_fake_dispatcher_seam() {
@@ -39048,13 +38010,6 @@ mod audit_regressions {
                     {"id": "integrate-verify", "files": [], "depends_on": ["api", "web"]},
                 ]})
                 .to_string())
-            },
-            |_prompt: String, _plan: String| async move {
-                Ok((
-                    goose_swarm::PlanPatch::default(),
-                    Vec::new(),
-                    serde_json::json!({}),
-                ))
             },
             &sink_dyn,
         )
@@ -39115,115 +38070,6 @@ mod audit_regressions {
             .as_str()
             .unwrap()
             .contains("web/app.js"));
-    }
-
-    /// A finding with no patch changes nothing, so the round asks ONCE for the patch it is owed. That
-    /// is a follow-up carrying the round's own findings, not a second round — nothing is re-reviewed —
-    /// and whatever it returns, no call follows it.
-    #[tokio::test]
-    async fn findings_without_a_patch_are_demanded_once_and_nothing_follows() {
-        let prompts = Arc::new(Mutex::new(Vec::<String>::new()));
-        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
-        let plan = plan_with_an_orphan_task();
-        let out = review_once(
-            |prompt, _plan| {
-                let prompts = prompts.clone();
-                async move {
-                    prompts.lock().unwrap().push(prompt);
-                    Ok::<_, anyhow::Error>((
-                        goose_swarm::PlanPatch::default(),
-                        vec!["`webhooks` are not owned by any task".to_string()],
-                        serde_json::json!({}),
-                    ))
-                }
-            },
-            "build the thing",
-            plan.clone(),
-            &sink,
-        )
-        .await;
-        let prompts = prompts.lock().unwrap();
-        assert_eq!(prompts.len(), 2, "the review, then the one demand");
-        assert_eq!(prompts[0], "build the thing");
-        assert!(
-            prompts[1].starts_with("You reported these 1 problems"),
-            "{}",
-            prompts[1]
-        );
-        assert_eq!(
-            out, plan,
-            "no patch, so the plan proceeds exactly as it was"
-        );
-    }
-
-    /// The flags SYNTHESIS measures are the round's AIM, not its discovery. r1 spent ~25,000 reasoning
-    /// characters finding that `viz-engine` owned no files; `plan_synthesized.tasks_owning_nothing`
-    /// had said so before the round began.
-    #[test]
-    fn measured_plan_flags_become_a_must_fix_block_in_the_review_prompt() {
-        let flagged = serde_json::json!({"subtasks": [
-            {"id": "viz-engine", "description": "draw", "files": [], "depends_on": []},
-            {"id": "ledger-api", "description": "serve", "files": ["app/ledgerd.py"],
-             "depends_on": []},
-            {"id": "ledger-store", "description": "store", "files": ["app/ledgerd/store.py"],
-             "depends_on": []},
-            {"id": "ui-shell", "description": "shell", "files": ["web/app.js"], "depends_on": []},
-            {"id": "ui-charts", "description": "charts", "files": ["web/app.js"], "depends_on": []},
-            {"id": "integrate-verify", "description": "wire", "files": [],
-             "depends_on": ["viz-engine"]}
-        ]})
-        .to_string();
-        let tree = "## Files on disk\nNothing has been built yet";
-
-        let prompt = review_user_message("build a ledger", &flagged, None, tree).unwrap();
-        let (_, after_plan) = prompt
-            .split_once("## MUST-FIX")
-            .expect("a flagged plan carries a MUST-FIX block");
-        let block = after_plan.split("## Files on disk").next().unwrap();
-        assert!(
-            block.contains("`viz-engine`"),
-            "the task owning nothing is named: {block}"
-        );
-        assert!(
-            block.contains("`app/ledgerd.py`"),
-            "the shadowed module is named: {block}"
-        );
-        assert!(
-            block.contains("`web/app.js` is owned by `ui-shell` and `ui-charts`"),
-            "the shared file names both owners: {block}"
-        );
-        assert!(
-            !block.contains("integrate-verify"),
-            "the join owns nothing BY DESIGN and is not a defect: {block}"
-        );
-        assert!(
-            prompt.find("## MUST-FIX").unwrap() > prompt.find("## The plan").unwrap(),
-            "the block follows the plan it is about"
-        );
-
-        let fanned = review_user_message(
-            "the ledger sections",
-            &flagged,
-            Some(("Ledger".to_string(), 1, 3)),
-            tree,
-        )
-        .unwrap();
-        assert!(
-            fanned.contains("## MUST-FIX"),
-            "every lane of the fan is aimed the same way"
-        );
-
-        let clean = serde_json::json!({"subtasks": [
-            {"id": "api", "description": "serve", "files": ["app/api.py"], "depends_on": []},
-            {"id": "integrate-verify", "description": "wire", "files": [], "depends_on": ["api"]}
-        ]})
-        .to_string();
-        assert_eq!(review_must_fix_block(&clean), "");
-        let prompt = review_user_message("build a ledger", &clean, None, tree).unwrap();
-        assert!(
-            !prompt.contains("MUST-FIX"),
-            "an unflagged plan says nothing about it"
-        );
     }
 
     /// FIVE COPIES OF ONE RULE, AND THE VERIFIER WAS THE ONE THAT HAD DRIFTED. An owned empty `py.typed`
