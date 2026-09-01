@@ -17,8 +17,10 @@ Three responsibilities, each a function over the run's OWN artifacts, never a gu
                       Measured on r6c: round 1 (8 findings, 23:42:21Z) overwrote round 0 (9 findings,
                       22:15:31Z); the pre-fix tree is GONE and the survivor is byte-identical to the
                       final tree. A write-once `.swarm/prefix-tree/` (engine VA, batch 2a) takes
-                      precedence the moment the engine writes it. No source proven == REFUSE with the
-                      reason; the harness never invents a pre-fix tree.
+                      precedence the moment the engine writes it -- PROVIDED its `prefix_tree_snapshot`
+                      write event precedes the first `complete_fix_dispatched` (VA-043: a resume into
+                      REPAIR of a pre-prefix-tree run writes the dir from a post-fix tree). No source
+                      proven == REFUSE with the reason; the harness never invents a pre-fix tree.
 
   identical(a, b)     whether two trees carry the same APP bytes (the engine's F886 exclusions plus
                       scorer/harness debris ignored), so an identical pair is never scored twice and the
@@ -36,6 +38,7 @@ import argparse
 import hashlib
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -102,6 +105,13 @@ def identical(a: Path, b: Path) -> Tuple[bool, List[str]]:
     return (not diff, diff)
 
 
+def _parse_ts(raw) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def provenance(run: Path) -> dict:
     """Which on-disk tree is the pre-fix tree, and the evidence. `source` is None when none is proven."""
     ev = _events(run)
@@ -125,10 +135,36 @@ def provenance(run: Path) -> dict:
     prefix_dir = run / PREFIX_TREE
     best_dir = run / BEST_TREE
     if prefix_dir.is_dir() and any(prefix_dir.iterdir()):
+        # VA-043: the dir alone says nothing about WHEN it was written. run.jsonl is opened append-only, so a
+        # RESUME into REPAIR of a run that predates the write-once tree writes `.swarm/prefix-tree` from the
+        # CURRENT tree -- after that run's fix waves already landed -- and the same log holds both the wave
+        # dispatches and the late write. The write event (ok, not `skipped`) must precede the first
+        # complete_fix_dispatched, else the dir is a post-fix tree wearing the pre-fix name: REFUSE.
+        writes = [e for e in ev if e.get("event") == "prefix_tree_snapshot" and e.get("ok") and not e.get("skipped")]
+        first_fix = next((e for e in ev if e.get("event") == "complete_fix_dispatched"), None)
+        info["prefix_tree_written_ts"] = writes[0].get("ts") if writes else None
+        info["first_fix_dispatched_ts"] = first_fix.get("ts") if first_fix else None
+        if not writes:
+            info["reason"] = (".swarm/prefix-tree is present but run.jsonl carries no prefix_tree_snapshot WRITE "
+                              "event (ok, not skipped) -- nothing in the run's history says when it was taken")
+            return info
+        w_ts = _parse_ts(writes[0].get("ts"))
+        f_ts = _parse_ts(first_fix.get("ts")) if first_fix else None
+        if w_ts is None or (first_fix is not None and f_ts is None):
+            info["reason"] = (f"prefix_tree_snapshot ts {writes[0].get('ts')!r} / first complete_fix_dispatched ts "
+                              f"{first_fix.get('ts') if first_fix else None!r} not parseable -- timing unprovable")
+            return info
+        if f_ts is not None and not w_ts < f_ts:
+            info["reason"] = (f"NOT the pre-fix tree: .swarm/prefix-tree was written at {writes[0].get('ts')}, AFTER "
+                              f"the first complete_fix_dispatched at {first_fix.get('ts')} (round {first_fix.get('round')}) "
+                              "-- a resume into REPAIR snapshotted a tree the fix waves had already touched")
+            return info
         info["source"] = str(prefix_dir)
         info["label"] = "prefix-tree"
-        info["reason"] = ("engine wrote the write-once pre-fix tree at the INTEGRATE->REPAIR handover "
-                          "(.swarm/prefix-tree)")
+        info["reason"] = (f"engine wrote the write-once pre-fix tree at {writes[0].get('ts')}"
+                          + (f", before the first complete_fix_dispatched at {first_fix.get('ts')}" if first_fix
+                             else "; run.jsonl carries no complete_fix_dispatched (no wave ever ran)")
+                          + " (.swarm/prefix-tree)")
         return info
     if best_dir.is_dir():
         same, diff = identical(best_dir, run)
