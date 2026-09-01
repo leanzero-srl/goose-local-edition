@@ -474,7 +474,10 @@ pub(super) fn persona_runs(stack_key: &str) -> usize {
 ///  3. THE SPEC'S FRAMEWORK NAMES — an English word (angular, react, swift, flask) counts only when the
 ///     words around it frame it as a stack ("with Angular", "an Angular SPA", "React + TypeScript",
 ///     "Swift 6"), never as a bare substring; names that are not English words (fastapi, django,
-///     svelte, swiftui, vite, next.js, @angular) count on sight.
+///     svelte, swiftui, vite, next.js, @angular) count on sight — but a NEGATED name ("no FastAPI",
+///     "without Django") never keys, the stdlib statement vetoes the Python frameworks as it vetoes
+///     the JS ones, and "Swift" is matched in the spec's own case because "swift succession" and
+///     the SWIFT payments network lowercase to the same word (refuter residuals, r6e).
 ///
 /// A Python tree with plain web assets keys "python-vanilla-web"; with the spec's stdlib statement and
 /// no Python dependency manifest in the tree, "python-stdlib-vanilla-web". The two keys differ by a
@@ -488,7 +491,9 @@ pub(super) fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
     let has_file_prefix = |prefix: &str| files_l.iter().any(|f| basename(f).starts_with(prefix));
     let has_ext = |ext: &str| files_l.iter().any(|f| f.ends_with(ext));
     let spec_has = |needles: &[&str]| needles.iter().any(|n| spec_l.contains(n));
-    let framed = |name: &str| framework_framed_in(&spec_l, name);
+    let words = spec_words(&spec_l);
+    let framed = |name: &str| framework_framed_in(&words, name);
+    let named = |name: &str| framework_named_in(&words, name);
 
     // 1. FILES.
     if has_file("angular.json") {
@@ -503,21 +508,31 @@ pub(super) fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
     if has_file_prefix("svelte.config.") || has_ext(".svelte") {
         return Some("svelte".into());
     }
-    if has_file("package.swift") {
+    if has_file("package.swift") || has_ext(".swift") {
         return Some("swift-spm".into());
     }
 
-    // 2. NEGATIVES and the tree's shape.
-    let vanilla_web_stated = spec_has(&[
-        "no npm",
-        "no build step",
-        "no framework",
-        "without a framework",
-        "plain html",
-        "vanilla",
-        "no bundler",
-        "zero external code",
-    ]);
+    // 2. NEGATIVES and the tree's shape. "vanilla" vetoes the JS frameworks only when it describes
+    // the scripting, not the styling: "in Angular 17. Styling: vanilla CSS" is an Angular spec, and
+    // reading its "vanilla" as the stack keyed None from the spec-only call — the call that LOADS
+    // the skill — so such a project learned under the right key and never loaded it.
+    let vanilla_js_stated = words.iter().enumerate().any(|(i, w)| {
+        *w == "vanilla"
+            && !matches!(
+                words.get(i + 1).copied(),
+                Some("css" | "stylesheet" | "stylesheets" | "styling" | "styles" | "style")
+            )
+    });
+    let vanilla_web_stated = vanilla_js_stated
+        || spec_has(&[
+            "no npm",
+            "no build step",
+            "no framework",
+            "without a framework",
+            "plain html",
+            "no bundler",
+            "zero external code",
+        ]);
     let stdlib_stated = spec_has(&[
         "standard library only",
         "standard-library only",
@@ -561,21 +576,37 @@ pub(super) fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
             return Some("svelte".into());
         }
     }
-    if spec_has(&["package.swift", "swiftui"]) || framed("swift") {
+    // "Swift" the language is a proper noun in prose; "swift succession" is an adverb and "SWIFT"
+    // is the payments network, and all three lowercase to one word. So the language is matched in
+    // the spec's own case — a capitalised, framed `Swift` ("in Swift 6", "with Swift") — or by the
+    // names that are not English words at all (SwiftUI, Package.swift).
+    if spec_has(&["package.swift", "swiftui"]) || framework_framed_in(&spec_words(spec), "Swift") {
         return Some("swift-spm".into());
     }
-    if spec_has(&["fastapi"]) {
-        return Some("fastapi".into());
-    }
-    if framed("flask") {
-        return Some("flask".into());
-    }
-    if spec_has(&["django"]) {
-        return Some("django".into());
+    // The stdlib statement vetoes the Python frameworks the way it vetoes the JS ones, and a
+    // negated name never keys: "standard library only — no Flask, no FastAPI, no Django" keyed
+    // fastapi off the bare substring.
+    if !stdlib_stated {
+        if named("fastapi") {
+            return Some("fastapi".into());
+        }
+        if framed("flask") {
+            return Some("flask".into());
+        }
+        if named("django") {
+            return Some("django".into());
+        }
     }
 
     // 4. THE MEASURED VANILLA SHAPE. A Python backend behind plain web assets IS a stack (sb-7's).
-    if (has_py || spec_has(&["python"])) && vanilla_web {
+    // "python" is a WORD here ("Python 3", "`python -m app`" — never a substring of "python3" in a
+    // fixtures note), and a tree carrying another language's manifest with no .py source is not a
+    // Python tree whatever the spec says about fixtures: a Rust/axum tree whose spec said "python3
+    // for fixtures" keyed python-vanilla-web.
+    let other_language_manifest = has_file("cargo.toml") || has_file("go.mod");
+    let python_word = words.contains(&"python");
+    let python_tree = has_py || (python_word && !other_language_manifest);
+    if python_tree && vanilla_web {
         return Some(if stdlib_stated && !has_py_manifest {
             "python-stdlib-vanilla-web".into()
         } else {
@@ -587,41 +618,89 @@ pub(super) fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
     None
 }
 
-/// Is `name` used as a STACK in the spec's words — not as an adjective or a verb? The spec is
-/// split on whitespace with surrounding punctuation trimmed; the name counts when the word before
-/// it frames a stack (with / in / using / on / via) or the word after it does (app, spa, cli,
-/// project, frontend, component(s), workspace, framework, `+`, a version). "zero all angular
-/// velocity", "**Inertia.** Angular velocity" and "the UI must react to input" frame nothing.
-fn framework_framed_in(spec_lower: &str, name: &str) -> bool {
-    let words: Vec<&str> = spec_lower
-        .split_whitespace()
+/// The spec as words: split on whitespace AND `/` ("HTML/CSS/JS", "React/TypeScript" are lists of
+/// names), surrounding punctuation trimmed, `+` / `@` / inner `.` kept ("+", "@angular", "next.js").
+fn spec_words(spec: &str) -> Vec<&str> {
+    spec.split(|c: char| c.is_whitespace() || c == '/')
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '+' && c != '@'))
-        .collect();
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// A word that names the stack `name`: the name itself, or its `<name>.js` / `<name>js` spelling
+/// ("React.js", "ReactJS"), which is not an English word and needs no framing.
+fn names_stack(word: &str, name: &str) -> bool {
+    word == name
+        || word
+            .strip_prefix(name)
+            .is_some_and(|rest| rest == ".js" || rest == "js")
+}
+
+/// "no FastAPI", "not Flask", "without Django", "never React": the word before a name that takes it
+/// back. One negated mention vetoes the name for the whole spec — None is the safe key.
+fn negated_at(words: &[&str], i: usize) -> bool {
+    i.checked_sub(1)
+        .and_then(|j| words.get(j))
+        .is_some_and(|b| {
+            matches!(
+                b.to_ascii_lowercase().as_str(),
+                "no" | "not" | "without" | "never"
+            )
+        })
+}
+
+/// Is `name` NAMED in the spec's words, as a whole word (or its `.js`/`js` spelling), and never
+/// negated? For names that are not English words (fastapi, django) and so need no framing.
+fn framework_named_in(words: &[&str], name: &str) -> bool {
+    if (0..words.len()).any(|i| names_stack(words[i], name) && negated_at(words, i)) {
+        return false;
+    }
+    words.iter().any(|w| names_stack(w, name))
+}
+
+/// Is `name` used as a STACK in the spec's words — not as an adjective or a verb? The name counts
+/// when the word before it frames a stack (with / in / using / on / via) or the word after it does
+/// (app, spa, cli, project, frontend, component(s), workspace, framework, typescript, javascript,
+/// `+`, a version), or when it is spelled as the framework's own name ("React.js", "ReactJS") — and
+/// never when the word before it negates it. "zero all angular velocity", "**Inertia.** Angular
+/// velocity" and "the UI must react to input" frame nothing. The words are compared exactly, so a
+/// caller that passes the spec in its own case matches a proper noun only ("Swift", not "swift").
+fn framework_framed_in(words: &[&str], name: &str) -> bool {
     words.iter().enumerate().any(|(i, w)| {
-        if *w != name {
+        if !names_stack(w, name) || negated_at(words, i) {
             return false;
         }
-        let before = i.checked_sub(1).and_then(|j| words.get(j)).copied();
-        let after = words.get(i + 1).copied();
-        matches!(before, Some("with" | "in" | "using" | "on" | "via"))
-            || after.is_some_and(|a| {
-                matches!(
-                    a,
-                    "app"
-                        | "apps"
-                        | "application"
-                        | "spa"
-                        | "cli"
-                        | "project"
-                        | "frontend"
-                        | "front-end"
-                        | "component"
-                        | "components"
-                        | "workspace"
-                        | "framework"
-                        | "+"
-                ) || a.chars().next().is_some_and(|c| c.is_ascii_digit())
-            })
+        if *w != name {
+            return true; // "React.js" / "ReactJS" frame themselves
+        }
+        let before = i
+            .checked_sub(1)
+            .and_then(|j| words.get(j))
+            .map(|b| b.to_ascii_lowercase());
+        let after = words.get(i + 1).map(|a| a.to_ascii_lowercase());
+        matches!(
+            before.as_deref(),
+            Some("with" | "in" | "using" | "on" | "via")
+        ) || after.as_deref().is_some_and(|a| {
+            matches!(
+                a,
+                "app"
+                    | "apps"
+                    | "application"
+                    | "spa"
+                    | "cli"
+                    | "project"
+                    | "frontend"
+                    | "front-end"
+                    | "component"
+                    | "components"
+                    | "workspace"
+                    | "framework"
+                    | "typescript"
+                    | "javascript"
+                    | "+"
+            ) || a.chars().next().is_some_and(|c| c.is_ascii_digit())
+        })
     })
 }
 
@@ -1008,5 +1087,138 @@ mod tests {
         assert!(!shown.contains("## Proven layout"));
         // A plain lesson passes through untouched.
         assert_eq!(sanitize_reflection("use uvicorn"), "use uvicorn");
+    }
+
+    /// The refuter's four residual probes (TICK-NOTES 2026-09-01, none touching sb-7), each with its
+    /// exact sentence: (a) a bare "python" substring keyed a Rust/axum tree whose spec says
+    /// "python3 for fixtures"; (b) the stdlib negatives vetoed only the JS keys, so "no Flask, no
+    /// FastAPI, no Django" keyed fastapi; (c) "swift succession" keyed swift-spm through the "in
+    /// <name>" framing; (d) "vanilla CSS" vetoed real Angular/React specs from the spec-only call —
+    /// the one that LOADS the skill — so such projects learned under the right key and never
+    /// loaded it. sb-7's own resolution is pinned by the test above and must not move.
+    #[test]
+    fn the_refuters_four_residual_probes_resolve_from_the_words_and_the_manifest() {
+        // (a) a word, not a substring; a manifest, not a fixtures note.
+        let rust_tree: Vec<String> = ["Cargo.toml", "src/main.rs", "web/app.js", "web/index.html"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            detect_stack_key(
+                "A Rust axum service with a plain HTML/CSS/JS console; python3 for fixtures.",
+                &rust_tree
+            ),
+            None
+        );
+        assert_eq!(
+            detect_stack_key(
+                "Rust axum service; python3 for fixtures. Plain HTML, no build step.",
+                &[]
+            ),
+            None,
+            "python3 is not the word python"
+        );
+        assert_eq!(
+            detect_stack_key(
+                "Python is used for fixtures. Plain HTML/CSS/JS console.",
+                &rust_tree
+            ),
+            None,
+            "Cargo.toml and no .py source is not a Python tree"
+        );
+        let mixed = [rust_tree.clone(), vec!["tools/fixtures.py".into()]].concat();
+        assert_eq!(
+            detect_stack_key(
+                "Python is used for fixtures. Plain HTML/CSS/JS console.",
+                &mixed
+            )
+            .as_deref(),
+            Some("python-vanilla-web"),
+            "a .py source in the tree still keys"
+        );
+
+        // (b) the stdlib statement and a negated name veto the Python frameworks.
+        assert_eq!(
+            detect_stack_key(
+                "Python 3, standard library only — no Flask, no FastAPI, no Django.",
+                &[]
+            ),
+            None
+        );
+        assert_eq!(
+            detect_stack_key("A Flask app for the ops team — no FastAPI, no Django.", &[])
+                .as_deref(),
+            Some("flask")
+        );
+        assert_eq!(
+            detect_stack_key("Build a FastAPI + SQLite web app", &[]).as_deref(),
+            Some("fastapi"),
+            "the positive form still keys"
+        );
+
+        // (c) an adverb is not a language; neither is the payments network.
+        assert_eq!(
+            detect_stack_key(
+                "Events arrive in swift succession and must be applied in order.",
+                &[]
+            ),
+            None
+        );
+        assert_eq!(
+            detect_stack_key("Payments settle via SWIFT with an IBAN on each row.", &[]),
+            None
+        );
+        assert_eq!(
+            detect_stack_key("a macOS notes app in Swift 6", &[]).as_deref(),
+            Some("swift-spm")
+        );
+        assert_eq!(
+            detect_stack_key("a menu-bar app built with SwiftUI", &[]).as_deref(),
+            Some("swift-spm")
+        );
+        assert_eq!(
+            detect_stack_key("", &["Sources/App/main.swift".into()]).as_deref(),
+            Some("swift-spm")
+        );
+
+        // (d) a framed framework name wins over a "vanilla" that modifies the styling only.
+        assert_eq!(
+            detect_stack_key(
+                "Build the dashboard in Angular 17. Styling: vanilla CSS.",
+                &[]
+            )
+            .as_deref(),
+            Some("angular")
+        );
+        assert_eq!(
+            detect_stack_key("React.js dashboard with Vite", &[]).as_deref(),
+            Some("react-vite-ts")
+        );
+        assert_eq!(
+            detect_stack_key(
+                "A ReactJS SPA built with Vite; vanilla CSS, no CSS framework.",
+                &[]
+            )
+            .as_deref(),
+            Some("react-vite-ts")
+        );
+        assert_eq!(
+            detect_stack_key("React/TypeScript front-end on Vite", &[]).as_deref(),
+            Some("react-vite-ts")
+        );
+        // The whole real sb-7 spec still resolves as S4 measured, from both calls.
+        let sb7 = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        assert_eq!(
+            detect_stack_key(sb7, &[]).as_deref(),
+            Some("python-stdlib-vanilla-web")
+        );
+        // "vanilla JS" still vetoes, as it must for sb-7's class.
+        assert_eq!(
+            detect_stack_key(
+                "A console in vanilla JS; the docs mention an Angular SPA we replace.",
+                &[]
+            ),
+            None
+        );
     }
 }
