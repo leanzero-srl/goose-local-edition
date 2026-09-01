@@ -25,10 +25,23 @@ PROVEN END TO END before commit (scripts in ~/.leanzero/hs-iso-test/):
   missing libllhttp — it was flapping the worker; /usr/local/bin/node v24.15.0 works). Both services up.
 - Env: ~/.leanzero/link-worker.env adds HEADSCALE_API_URL(127.0.0.1:8790)/HEADSCALE_API_KEY/
   HEADSCALE_LOGIN_SERVER(https://worksmacstudio.tailfc4700.ts.net).
-REMAINING for OTHER real users (Mihai-side / packaging, NOT architecture): (a) verify a Resend domain so
-OTP reaches non-owner emails (test mode → only zerobarat1@gmail.com); (b) the desktop app must BUNDLE a
-tailscaled binary for machines without Homebrew (mesh.rs takes tailscaled_path from config; on this Mac
-it's /opt/homebrew/bin/tailscaled). Personal Tailscale + benchmark fleet verified UNTOUCHED throughout.
+BOTH prior "remaining for other users" items now DONE:
+- RESEND DOMAIN: verified domain `leanzero.atlascrafted.com` (sending enabled) already existed on the
+  account. LEANZERO_MAIL_FROM switched to "LeanZero Link <link@leanzero.atlascrafted.com>" (env file needs
+  QUOTES — value has spaces/<>, bash sources it). PROVEN: direct Resend send to a non-owner (gabriela@
+  leanzero.net) → HTTP 200; worker request-code → otp_issued (handler 502s loud if Resend refuses, so
+  ok:true is real). OTP now reaches any address.
+- TAILSCALED BUNDLE: binaries ship in ui/desktop/src/bin (gitignored, like the goose binary) via forge
+  extraResource; ui/desktop/scripts/fetch-tailscale.sh populates them (go build @pinned v1.98.5 if go
+  present, else copy from a system install — host arch only); `just fetch-tailscale` recipe signs them
+  ad-hoc + verifies execute, hooked into `copy-binary`. gooseServe.ts buildGooseServeEnv sets LEANZERO_
+  TAILSCALED/LEANZERO_TAILSCALE_CLI to the bundled paths WHEN PRESENT (discovery.rs env override wins;
+  absent → falls through to PATH/known — an explicit env override still wins). PROVEN: the bundled
+  src/bin/tailscaled+tailscale joined Headscale in 3s via a worker key, exact mesh.rs invocation. Cross-arch
+  (intel/universal) bundle needs Go (TS_GOARCH) — NOT auto-hooked into copy-binary-intel to avoid a silent
+  wrong-arch ship. Windows tailscaled.exe not yet bundled (mac DMG is the primary target).
+Personal Tailscale + benchmark fleet verified UNTOUCHED throughout. Brew node 25.9.0 on the Mac is BROKEN
+(missing libllhttp) — ui vitest can't run here; the bundle is proven empirically instead. `brew reinstall node`.
 
 ## NEW CHAPTER (2026-09-01): LEANZERO LINK
 ## MIHAI'S DECISIONS 2026-09-01 (post-core): build #2 and #3; #1 is his to deploy

@@ -279,3 +279,45 @@ describe('startGooseServe', () => {
     }
   });
 });
+
+describe('buildGooseServeEnv — bundled tailscaled wiring', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const tailscaledName = process.platform === 'win32' ? 'tailscaled.exe' : 'tailscaled';
+  const tailscaleName = process.platform === 'win32' ? 'tailscale.exe' : 'tailscale';
+
+  function binDirWith(files: string[]): { dir: string; goose: string } {
+    const dir = makeTempDir();
+    for (const f of files) {
+      fs.writeFileSync(path.join(dir, f), 'x');
+    }
+    return { dir, goose: path.join(dir, binaryName) };
+  }
+
+  it('points LEANZERO_TAILSCALED/CLI at the binaries bundled next to goosed', () => {
+    vi.stubEnv('LEANZERO_TAILSCALED', '');
+    vi.stubEnv('LEANZERO_TAILSCALE_CLI', '');
+    const { dir, goose } = binDirWith([binaryName, tailscaledName, tailscaleName]);
+    const env = buildGooseServeEnv('secret', goose, {});
+    expect(env.LEANZERO_TAILSCALED).toBe(path.join(dir, tailscaledName));
+    expect(env.LEANZERO_TAILSCALE_CLI).toBe(path.join(dir, tailscaleName));
+  });
+
+  it('leaves the vars unset when no binary is bundled (discovery falls through to PATH)', () => {
+    vi.stubEnv('LEANZERO_TAILSCALED', '');
+    vi.stubEnv('LEANZERO_TAILSCALE_CLI', '');
+    const { goose } = binDirWith([binaryName]);
+    const env = buildGooseServeEnv('secret', goose, {});
+    expect(env.LEANZERO_TAILSCALED).toBeFalsy();
+    expect(env.LEANZERO_TAILSCALE_CLI).toBeFalsy();
+  });
+
+  it('lets an explicit override win over the bundled binary', () => {
+    vi.stubEnv('LEANZERO_TAILSCALED', '');
+    const { goose } = binDirWith([binaryName, tailscaledName, tailscaleName]);
+    const env = buildGooseServeEnv('secret', goose, { LEANZERO_TAILSCALED: '/custom/tailscaled' });
+    expect(env.LEANZERO_TAILSCALED).toBe('/custom/tailscaled');
+  });
+});
