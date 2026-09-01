@@ -2,3 +2,7 @@ node_modules/
 .wrangler/
 dist/
 *.tsbuildinfo
+.dev.vars
+.env
+.env.*
+link-worker.env
