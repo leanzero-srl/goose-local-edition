@@ -370,17 +370,46 @@ pub enum ReplyDispatchError {
     AlreadyActive,
 }
 
-/// Releases the session's [`AgentManager`] cancel token when the reply task ends by ANY
-/// path — finish, error return, cancel, panic — the way [`RequestGuard`] releases the
-/// bus request. The token map is the busy set the LeanZero Link idle guard reads; a
-/// token left behind would report this node Busy forever and refuse every peer.
+/// The ONE owner of the session's [`AgentManager`] busy registration for a reply task.
+/// Releases the cancel token when the task ends by ANY path — finish, error return,
+/// cancel, panic — the way [`RequestGuard`] releases the bus request. The token map is
+/// the busy set the LeanZero Link idle guard reads; a token left behind would report this
+/// node Busy forever and refuse every peer.
+///
+/// Every unregister for this registration goes through the guard, and exactly one ever
+/// runs: [`Self::release`] on the normal path (awaited, so the next reply on the session
+/// is not refused by a removal that has not landed yet), or the drop net for every other
+/// exit. `unregister_cancel_token` removes whatever token the session holds with no
+/// ownership check, so a second removal after the first — a released guard's drop — would
+/// strip the token a SUCCESSOR reply registered in between and that run would report Idle
+/// mid-run. Releasing disarms the drop in the same call so that second removal cannot
+/// exist.
 struct AgentBusyGuard {
     manager: Arc<AgentManager>,
     session_id: String,
+    released: bool,
+}
+
+impl AgentBusyGuard {
+    fn new(manager: Arc<AgentManager>, session_id: String) -> Self {
+        Self {
+            manager,
+            session_id,
+            released: false,
+        }
+    }
+
+    async fn release(&mut self) {
+        self.manager.unregister_cancel_token(&self.session_id).await;
+        self.released = true;
+    }
 }
 
 impl Drop for AgentBusyGuard {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         let manager = self.manager.clone();
         let session_id = self.session_id.clone();
         tokio::spawn(async move {
@@ -435,10 +464,8 @@ pub async fn spawn_reply_task(
 
     drop(tokio::spawn(async move {
         let mut _guard = RequestGuard::new(task_bus.clone(), task_request_id.clone());
-        let _busy_guard = AgentBusyGuard {
-            manager: task_state.agent_manager.clone(),
-            session_id: task_session_id.clone(),
-        };
+        let mut busy_guard =
+            AgentBusyGuard::new(task_state.agent_manager.clone(), task_session_id.clone());
 
         let publish = |rid: Option<String>, event: MessageEvent| {
             let bus = task_bus.clone();
@@ -682,11 +709,9 @@ pub async fn spawn_reply_task(
 
         // Release the busy registration inline on the normal path so the next reply on
         // this session is not refused by a token the guard's spawned drop has not yet
-        // removed; the guard stays as the net for every other exit.
-        task_state
-            .agent_manager
-            .unregister_cancel_token(&task_session_id)
-            .await;
+        // removed; releasing disarms the guard, which stays as the net for every other
+        // exit and never removes a token again for this registration.
+        busy_guard.release().await;
         _guard.disarm();
         task_bus.cleanup_request(&task_request_id).await;
     }));
@@ -802,18 +827,98 @@ mod tests {
             .unwrap();
         assert!(state.agent_manager.is_session_busy(&session_id).await);
 
-        drop(AgentBusyGuard {
-            manager: state.agent_manager.clone(),
-            session_id: session_id.clone(),
-        });
+        drop(AgentBusyGuard::new(
+            state.agent_manager.clone(),
+            session_id.clone(),
+        ));
         // The drop spawns the release onto the runtime; poll for it to land (a yield is
         // not enough when the spawned task is scheduled on a busy worker thread).
-        for _ in 0..200 {
-            if !state.agent_manager.is_session_busy(&session_id).await {
-                return;
+        assert!(
+            token_gone_within_window(&state.agent_manager, &session_id).await,
+            "the busy token was not released after the guard dropped"
+        );
+    }
+
+    /// The R-H1 race, replayed in the production order. Reply A releases on its normal
+    /// path, reply B registers its token on the same session in the window before A's task
+    /// (and guard) ends, then A's guard drops. B's token must survive: a released guard
+    /// owns nothing any more and its drop removes nothing. The negative is proven on the
+    /// same object — an UNRELEASED guard's drop for the same session is then shown to
+    /// strip B's token inside the same poll window, so a spawned late removal was
+    /// observable had one been spawned.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_released_guards_drop_never_strips_a_successors_token() {
+        let state = AppState::new(true).await.unwrap();
+        let session_id = format!("race-{}", uuid::Uuid::new_v4());
+
+        let token_a = CancellationToken::new();
+        state
+            .agent_manager
+            .try_register_cancel_token(&session_id, token_a.clone())
+            .await
+            .unwrap();
+        let mut guard_a = AgentBusyGuard::new(state.agent_manager.clone(), session_id.clone());
+
+        guard_a.release().await;
+        assert!(
+            !state.agent_manager.is_session_busy(&session_id).await,
+            "the normal-path release is awaited: the token is gone when release returns"
+        );
+
+        let token_b = CancellationToken::new();
+        state
+            .agent_manager
+            .try_register_cancel_token(&session_id, token_b.clone())
+            .await
+            .expect("B registers in the window after A's release, before A's guard drops");
+
+        drop(guard_a);
+        assert!(
+            token_stays_for_window(&state.agent_manager, &session_id).await,
+            "A's released guard dropped and B's token was removed: the predecessor's drop stripped the successor"
+        );
+        // The token still held is B's, not a re-registration: cancelling the session
+        // through the manager fires B's token and not A's.
+        state
+            .agent_manager
+            .cancel_session(&session_id)
+            .await
+            .unwrap();
+        assert!(token_b.is_cancelled());
+        assert!(!token_a.is_cancelled());
+
+        // Positive control on the same session and window: an unreleased guard's drop DOES
+        // spawn the removal, and the window is long enough to see it land.
+        drop(AgentBusyGuard::new(
+            state.agent_manager.clone(),
+            session_id.clone(),
+        ));
+        assert!(
+            token_gone_within_window(&state.agent_manager, &session_id).await,
+            "the control failed: an unreleased guard's drop did not remove the token inside the window, so the negative above proves nothing"
+        );
+    }
+
+    const DROP_POLLS: usize = 200;
+    const DROP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+    async fn token_gone_within_window(manager: &AgentManager, session_id: &str) -> bool {
+        for _ in 0..DROP_POLLS {
+            if !manager.is_session_busy(session_id).await {
+                return true;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(DROP_POLL_INTERVAL).await;
         }
-        panic!("the busy token was not released after the guard dropped");
+        false
+    }
+
+    async fn token_stays_for_window(manager: &AgentManager, session_id: &str) -> bool {
+        for _ in 0..DROP_POLLS {
+            if !manager.is_session_busy(session_id).await {
+                return false;
+            }
+            tokio::time::sleep(DROP_POLL_INTERVAL).await;
+        }
+        true
     }
 }
