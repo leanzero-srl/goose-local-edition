@@ -532,3 +532,13 @@ research_request_block's armed-no-claimed-sections arm wording.
   named the one unverifiable sub-claim (Resend 409-on-existing) and made the code robust to either.
   Second clean link-backend pass — a THIRD link-backend brief now mints `link-backend` (this + the
   mesh pass are the two).
+- 2026-09-01 MINTED link-backend (third clean link-backend brief: mesh 8048946c2 + worker
+  410ecd910 + control 923689793). Charter carries the isolation-is-a-type-gate law, measure-first
+  with the Resend/Tailscale receipts, loud-absence states, per-pid supervision, and the
+  companion-app stateless-contract discipline. First delegation under it: the Link manager.
+- 2026-09-01 control service (general-purpose, crates/leanzero-link, 923689793): CLEAN++. Honestly
+  modeled the userspace-networking bind (mesh IP isn't a kernel address → MeshBind::
+  UserspaceForwarded, not a swallow); two REAL services peered over the real transport in-test
+  (fold + delta + flip-offline); mirrored session_event_bus's replay/seq/eviction contract exactly;
+  added ?scope=local as an echo-loop guard and said why; named the missing stable node-id as a
+  ledger item. Charter gap: none (charter now exists).

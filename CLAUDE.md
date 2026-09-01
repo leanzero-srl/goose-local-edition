@@ -50,6 +50,7 @@ thread.
 | `panel-surgeon` | desktop swarm UI (the one digest join, truth-layer rules, design bans) |
 | `bench-scorer` | scoring + harness/instrument edits (hermetic law, five wrong-number mechanisms) |
 | `mlx-backend` | goose-sidecar + mlxEngine ACP/DTO backend (measure-first, pagination honesty, loud absence) |
+| `link-backend` | LeanZero Link crate + worker (mesh isolation, measure-first, companion-app stateless API) |
 | `words-reader` | gate 7's independent reader: quotes and diagnoses model output from primary logs |
 | `fix-tracer` | gate 8's independent tracer: walks a run's real values through a change |
 | `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
