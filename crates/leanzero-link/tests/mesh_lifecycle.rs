@@ -83,12 +83,51 @@ if "logout" in args:
         os.unlink(marker)
     sys.exit(0)
 if "status" in args and "--json" in args:
+    # Test hook: with `<base>/slow-probe` present, record that a probe happened and
+    # take a while to answer — lets a daemon die DURING the readiness probe.
+    if os.path.exists(os.path.join(base, "slow-probe")):
+        with open(os.path.join(base, "probed"), "w") as f:
+            f.write("1")
+        import time
+        time.sleep(0.3)
     name = "running.json" if os.path.exists(marker) else "needs_login.json"
     with open(os.path.join(base, name)) as f:
         sys.stdout.write(f.read())
     sys.exit(0)
 print("fake tailscale: unknown args %r" % (args,), file=sys.stderr)
 sys.exit(2)
+"#;
+
+/// A daemon that creates its socket and then exits the moment the CLI records a probe
+/// (`<statedir>/probed`) — i.e. it dies while the readiness probe is being answered by
+/// the socket it left behind. Stands in for "another process's daemon owns the socket
+/// and ours lost the race".
+const FAKE_TAILSCALED_DIES_DURING_PROBE: &str = r#"#!/usr/bin/env python3
+import os, sys, time
+args = sys.argv[1:]
+def flag(name):
+    for a in args:
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+statedir = flag("--statedir"); sock = flag("--socket")
+with open(sock, "w") as f:
+    f.write("sock")
+probed = os.path.join(statedir, "probed")
+while not os.path.exists(probed):
+    time.sleep(0.01)
+print("fake tailscaled: lost the socket race, exiting", file=sys.stderr)
+sys.exit(0)
+"#;
+
+/// A daemon that leaves a `spawned` marker so a test can assert it was NEVER run.
+const FAKE_TAILSCALED_MARKING: &str = r#"#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+statedir = [a.split("=", 1)[1] for a in args if a.startswith("--statedir=")][0]
+with open(statedir + "/spawned", "w") as f:
+    f.write("1")
+sys.exit(0)
 "#;
 
 fn write_exec(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -224,6 +263,64 @@ async fn daemon_exit_during_startup_carries_stderr() {
     assert!(
         err.to_string().contains("unable to bind socket"),
         "stderr tail missing: {err}"
+    );
+}
+
+/// R-L5 (corrected): a daemon already answering on the socket — another goosed's, or a
+/// stale one — is refused BEFORE anything is spawned. Never adopted, never driven.
+#[tokio::test]
+async fn start_refuses_a_socket_another_daemon_already_answers() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    // The fake CLI answers `status --json` whenever the socket file exists — exactly
+    // what a foreign daemon on this path looks like to the engine.
+    std::fs::write(&config.socket_path, "sock").unwrap();
+    config.tailscaled_path = write_exec(
+        root.path(),
+        "fake-tailscaled-marking",
+        FAKE_TAILSCALED_MARKING,
+    );
+
+    let err = match MeshEngine::start(config.clone()).await {
+        Ok(_) => panic!("start adopted a socket it did not create"),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(&err, MeshError::AlreadyRunning { socket } if *socket == config.socket_path),
+        "{err}"
+    );
+    assert!(
+        err.to_string()
+            .contains("never adopts a daemon it did not spawn"),
+        "{err}"
+    );
+    assert!(
+        !config.state_dir.join("spawned").exists(),
+        "the daemon binary must not have been spawned at all"
+    );
+}
+
+/// R-L5 (corrected), the other half: the readiness probe is answered by the socket,
+/// but OUR child died meanwhile. `start` must not return an engine holding a corpse.
+#[tokio::test]
+async fn start_fails_loudly_when_the_daemon_dies_during_the_readiness_probe() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    std::fs::write(config.state_dir.join("slow-probe"), "1").unwrap();
+    config.tailscaled_path = write_exec(
+        root.path(),
+        "fake-tailscaled-dies-during-probe",
+        FAKE_TAILSCALED_DIES_DURING_PROBE,
+    );
+
+    let err = match MeshEngine::start(config).await {
+        Ok(_) => panic!("start returned an engine over a daemon that exited during the probe"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MeshError::DaemonExited { .. }), "{err}");
+    assert!(
+        err.to_string().contains("lost the socket race"),
+        "stderr tail carried: {err}"
     );
 }
 

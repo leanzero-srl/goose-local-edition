@@ -7,8 +7,12 @@
 //! which does not fit a unix-socket daemon whose readiness is "the local API socket
 //! answers `tailscale status --json`".
 //!
-//! Single-instance discipline (one daemon per state dir) is the caller's job; the
-//! upcoming `control` module will own that lock.
+//! Single-instance discipline: `start` probes the socket BEFORE spawning and refuses
+//! ([`MeshError::AlreadyRunning`]) when a daemon already answers there — this crate
+//! never adopts, drives, or logs out a `tailscaled` it did not spawn. (A second
+//! `tailscaled` on the same socket exits within milliseconds with "address already in
+//! use", so without the probe the readiness check would be answered by the OTHER
+//! process's daemon and `start` would return holding a dead child.)
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -59,6 +63,12 @@ pub enum MeshError {
         program: String,
         source: std::io::Error,
     },
+    #[error(
+        "a tailscaled already answers on socket '{}' — LeanZero Link never adopts a daemon it \
+         did not spawn; stop the other goose (or the stale daemon) first",
+        socket.display()
+    )]
+    AlreadyRunning { socket: PathBuf },
     /// The supervised daemon is gone — raised by `start` (died before the socket
     /// answered) and by every later `status` read (died under a live connection).
     #[error("tailscaled exited ({status}). stderr tail:\n{stderr_tail}")]
@@ -423,9 +433,20 @@ pub struct MeshEngine {
 impl MeshEngine {
     /// Spawn the goose-owned `tailscaled` and wait until its unix socket answers
     /// `status --json` (any backend state — a fresh daemon reports `NeedsLogin`).
+    ///
+    /// Before spawning, the socket is probed: a daemon already answering there is
+    /// [`MeshError::AlreadyRunning`] — never adopted. After the readiness probe answers,
+    /// the child is `try_wait`ed again: the probe proves SOMETHING answers on the
+    /// socket, not that OUR child does, so a child that died meanwhile (another process
+    /// won the socket) is [`MeshError::DaemonExited`], never an engine holding a corpse.
     pub async fn start(config: MeshConfig) -> Result<Self, MeshError> {
         config.validate()?;
         prepare_state_dir(&config.state_dir)?;
+        if config.socket_path.exists() && probe_socket(&config).await.is_ok() {
+            return Err(MeshError::AlreadyRunning {
+                socket: config.socket_path.clone(),
+            });
+        }
 
         let engine = Self {
             config,
@@ -435,38 +456,25 @@ impl MeshEngine {
 
         let started = Instant::now();
         loop {
-            if let Some(status) = handle
-                .child
-                .try_wait()
-                .map_err(|source| MeshError::CliRun {
-                    what: "try_wait on tailscaled",
-                    program: engine.config.tailscaled_path.display().to_string(),
-                    source,
-                })?
-            {
+            if let Some(status) = child_exit(&mut handle, &engine.config)? {
                 return Err(MeshError::DaemonExited {
                     status: status.to_string(),
                     stderr_tail: stderr_tail_string(&handle.stderr_tail),
                 });
             }
-            if engine.config.socket_path.exists() {
-                let probe = run_cli(
-                    "tailscale status (readiness probe)",
-                    engine.config.status_argv(),
-                    READY_PROBE_TIMEOUT,
-                )
-                .await;
-                if let Ok(output) = probe {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    if parse_status_json(&stdout).is_ok() {
-                        tracing::info!(
-                            socket = %engine.config.socket_path.display(),
-                            "leanzero-link tailscaled ready"
-                        );
-                        *engine.state.lock().await = Some(handle);
-                        return Ok(engine);
-                    }
+            if engine.config.socket_path.exists() && probe_socket(&engine.config).await.is_ok() {
+                if let Some(status) = child_exit(&mut handle, &engine.config)? {
+                    return Err(MeshError::DaemonExited {
+                        status: status.to_string(),
+                        stderr_tail: stderr_tail_string(&handle.stderr_tail),
+                    });
                 }
+                tracing::info!(
+                    socket = %engine.config.socket_path.display(),
+                    "leanzero-link tailscaled ready"
+                );
+                *engine.state.lock().await = Some(handle);
+                return Ok(engine);
             }
             if started.elapsed() >= engine.config.startup_timeout {
                 let stderr_tail = stderr_tail_string(&handle.stderr_tail);
@@ -680,6 +688,36 @@ impl Drop for MeshEngine {
         }
         // kill_on_drop(true) covers the path where the lock is held elsewhere.
     }
+}
+
+/// `try_wait` the spawned daemon; `Some(status)` means it is gone.
+fn child_exit(
+    handle: &mut ChildHandle,
+    config: &MeshConfig,
+) -> Result<Option<std::process::ExitStatus>, MeshError> {
+    handle.child.try_wait().map_err(|source| MeshError::CliRun {
+        what: "try_wait on tailscaled",
+        program: config.tailscaled_path.display().to_string(),
+        source,
+    })
+}
+
+/// Does a tailscaled answer `status --json` on the configured socket right now?
+/// `Err` carries why not (CLI failure text or the parse error) for the caller's record.
+async fn probe_socket(config: &MeshConfig) -> Result<(), String> {
+    let output = run_cli(
+        "tailscale status (readiness probe)",
+        config.status_argv(),
+        READY_PROBE_TIMEOUT,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(cli_failure_text(&output));
+    }
+    parse_status_json(&String::from_utf8_lossy(&output.stdout))
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 fn prepare_state_dir(dir: &Path) -> Result<(), MeshError> {
