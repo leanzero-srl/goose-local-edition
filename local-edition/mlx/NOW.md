@@ -1,6 +1,26 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## REVIEW + FIX CAMPAIGN (2026-09-02) — IN FLIGHT, fully autonomous ("yes do it all")
+PROGRESS (latest, 2026-09-02 ~02:00 EEST; full per-item detail in the session scratchpad review-findings-index.md):
+DONE+COMMITTED: worker (ffc2e38a0..94fa06376 + 5ab48a8c2 sweeper; LIVE, lockout gone, nodeSecret contract); swarm.rs pass 1
+(a7ffb0516 524d104c0 743c4d511 9d5958f19 7f74d3730; tracer: S-H1 premise fails on this fleet — LM Studio /v1/models answers 401 to
+the unauthenticated probe → EVERY servability consumer is "unproven" here → LM_API_TOKEN probe = wave-2 item 1); goose-sidecar
+(fcab044c0 71189f66b e09790ad0; tracer: breaker trips at the 4TH death not 3rd; lsof -ti :PORT listed CLIENTS → old reclaim could
+have SIGTERMed goosed itself, fixed w/ LISTEN filter); goose link layer (7a745914f..94fd2ccdf: key LEANZERO_LINK_ALLOW_REMOTE_EXECUTION
+default OFF, receiver's mode, validated cwd, both busy doors, no email token, status DTO remoteExecutionAllowed/Wired,
+mlxControlWired, meshBinaries); desktop logic (03b291c84..6512c99e7); design system "LeanZero Studio" (d64068fb6..77dd6f690,
+ui/desktop/DESIGN.md); stage-1 polish (575a141a3..cdcc6588c, screenshots-passE); remake: shell/nav/projects/landing
+(8ccdbd9b9..a98366653), session chrome (9ace453ee 1b0ede59d 2f13f54ba), hub+Link+nodes (e610a589d..249052a76), benchmark+settings
+(efafa4700..785defe08). IN FLIGHT: leanzero-link crate fixes (+ local_sessions→Result trait change), C2 goose-serve injection
+(link_serve.rs), Q1 MLX busy signal, wave-2 swarm pass (token probe, planner unregistered arm, canonical name w/ engine kind,
+dev-gates §4), tick.py new events, remake: MLX engine/models (+StudioSelect reuse, cloud.tsx), swarm run panel (+2 deferred
+behavior edits), chrome leftovers (+ui/button|tabs|input solid disabled, lz Button iconOnly, AppLayout frame), confirm-on-close
+dialog. AFTER ALL LAND: lz/Segmented additive extension (role/title/describedby) then swap benchmark/settings pickers; promote
+leanzero-swarm/studio.tsx controls into lz/; `pnpm i18n:extract` + validate ONCE; rebuild goosed (`just release-binary`) →
+`pnpm run package` (tailscaled bundled via fetch-tailscale) → launch packaged app on CDP 9897 → screenshots-passF light+dark
+(scratchpad/cdp-shot.mjs; hub tabs are now role=radio/data-value) → ONE REAL Link connect with receipts (identity.json + node-id +
+"tailscaled ready" + "control service listening" + <host>-<6hex> node on Headscale + /execute 202). NOTE: `just run-ui` dev mode
+is BROKEN (Vite renderer dev server closes during dep-scan) — package+CDP is the verification path.
 Branch review vs main: 6 read-only reviewers (Link Rust / Link worker / fallback-hunter / works-prover / swarm engine / desktop UI)
 → 6 adversarial refuters re-measuring from primary sources. 34 findings → 30 survived, 4 killed, 9 reviewer-proposed FIXES caught
 wrong. Full index with every refuter verdict + corrected spec: session scratchpad `review-findings-index.md` (copy the essentials
