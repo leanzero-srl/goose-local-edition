@@ -1,12 +1,10 @@
 import React from 'react';
-import { Loader2, Minus, Pause, Play, Plus, X } from 'lucide-react';
+import { Loader2, Pause, Play, X } from 'lucide-react';
 import type { MlxDownloadProgress } from '../../acp/mlx-engine';
 import {
   Button,
   Chip as StudioChip,
   StatusDot,
-  FOCUS,
-  MOTION,
   RADIUS,
   SURFACE,
   TNUM,
@@ -19,39 +17,11 @@ import {
 } from '../lz';
 
 /**
- * A thin ADAPTER over the LeanZero Studio primitives (`src/components/lz`, ui/desktop/DESIGN.md).
- * The exported names and signatures are the ones AddNodeDialog, LeanZeroLinkSection,
- * LeanZeroSwarmView, SwarmNodesSection and the tests already consume; every visual inside is a
- * Studio token or primitive. The colour constants stay CSS strings because those consumers use
- * them as inline styles; `toneForColor` is the one join that reads them back as tones.
+ * A thin ADAPTER over the LeanZero Studio primitives (`src/components/lz`, ui/desktop/DESIGN.md):
+ * the formatters, the SolidBanner MlxEngineView and ModelCardModal still consume, and the
+ * download row. Every visual inside is a Studio token or primitive — no colour constant leaves
+ * this module, so nothing here can reach the DOM as an inline style.
  */
-
-/** The single accent: primary actions, the active segment, the live progress fill. */
-export const AZURE = 'var(--color-action-solid, #1d4ed8)';
-/** Status triad FILLS — they carry white text. */
-export const GREEN = 'var(--color-status-ok-solid, #15803d)';
-export const RED = 'var(--color-status-err-solid, #dc2626)';
-export const SLATE = 'var(--color-status-stopped-solid, #475569)';
-export const AMBER = 'var(--color-status-warn, #d97706)';
-export const INK_DARK = '#1a1a1a';
-
-/** The palette constants above read back as Studio tones; anything else is not a tone. */
-export function toneForColor(color: string | undefined): Tone | null {
-  switch (color) {
-    case AZURE:
-      return 'accent';
-    case GREEN:
-      return 'ok';
-    case RED:
-      return 'err';
-    case SLATE:
-      return 'stopped';
-    case AMBER:
-      return 'warn';
-    default:
-      return null;
-  }
-}
 
 export const GB = 1024 * 1024 * 1024;
 
@@ -87,54 +57,21 @@ export function formatDate(iso: string): string {
 }
 
 /**
- * Two chip registers, both the Studio Chip. FILLED (`tone`, or a palette `color`) is for
- * SEMANTIC state — mounted, loading, failed, the single accent. QUIET (the default, or an
- * explicit `quiet`) is for METADATA: an outline in ink-3, no fill, so a row of attributes reads
- * as text, not as a pile of stickers. A colour outside the palette is metadata, not a state.
- * `ink` is accepted for the older callers; the tone token carries the measured ink.
- */
-export function Chip({
-  color,
-  tone,
-  quiet = false,
-  children,
-  title,
-}: {
-  color?: string;
-  tone?: Tone;
-  /** Accepted for older callers; the tone's own ink applies. */
-  ink?: string;
-  quiet?: boolean;
-  children: React.ReactNode;
-  title?: string;
-}) {
-  const resolved = quiet ? undefined : (tone ?? toneForColor(color) ?? undefined);
-  return (
-    <StudioChip tone={resolved} title={title}>
-      {children}
-    </StudioChip>
-  );
-}
-
-/**
  * A banner in the Studio register: a surface card carrying a solid status dot, a toned label and
- * the message in body ink. Red carries backend text VERBATIM — never paraphrased. A colour outside
- * the palette reads as err: the one such caller (AddNodeDialog's failed banner) is an error.
+ * the message in body ink. Red carries backend text VERBATIM — never paraphrased. The same
+ * markup as studio.tsx's ToneBanner, kept under this name for its two remaining importers.
  */
 export function SolidBanner({
-  color,
-  tone: toneProp,
+  tone,
   label,
   text,
   action,
 }: {
-  color?: string;
-  tone?: Tone;
+  tone: Tone;
   label: string;
   text: string;
   action?: React.ReactNode;
 }) {
-  const tone = toneProp ?? toneForColor(color) ?? 'err';
   return (
     <div
       className={cx('flex items-center gap-3 px-4 py-3', SURFACE.card)}
@@ -146,54 +83,6 @@ export function SolidBanner({
       <span className={cx('min-w-0 flex-1 break-words', TYPE.body)}>{text}</span>
       {action}
     </div>
-  );
-}
-
-const STEP_BUTTON = cx(
-  'flex size-7 shrink-0 items-center justify-center bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
-  SURFACE.outline,
-  RADIUS.control,
-  FOCUS,
-  MOTION
-);
-
-/**
- * The −/n/+ stepper for a node's relative task share (1–9). A custom control, never a native
- * slider or select; the value is the accent in tabular figures so a column of them lines up.
- * Shared by the Nodes card and the add-node dialog so both write the same range.
- */
-export function WeightStepper({
-  value,
-  onChange,
-  label = 'weight',
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  label?: string;
-}) {
-  const clamp = (v: number) => Math.max(1, Math.min(9, v));
-  return (
-    <span className="inline-flex items-center gap-1">
-      <button
-        type="button"
-        onClick={() => onChange(clamp(value - 1))}
-        className={STEP_BUTTON}
-        aria-label={`Less work (${label})`}
-      >
-        <Minus />
-      </button>
-      <span className={cx('w-6 text-center text-lz-body text-lz-accent', WEIGHT.semibold, TNUM)}>
-        {value}
-      </span>
-      <button
-        type="button"
-        onClick={() => onChange(clamp(value + 1))}
-        className={STEP_BUTTON}
-        aria-label={`More work (${label})`}
-      >
-        <Plus />
-      </button>
-    </span>
   );
 }
 
