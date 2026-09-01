@@ -604,7 +604,15 @@ pub(super) struct ConsumedSections {
 
 /// SPEC SECTIONS ROUTE TO CONSUMERS, not only to owners — THE ONE helper beside
 /// `splice_claimed_sections`, called by both the brief (`briefs_from_slices`) and the research
-/// prompt (`research_request_block`), so the routing rule cannot diverge between them.
+/// prompt (`research_request_block`), so the routing RULE cannot diverge between them. The
+/// INPUTS still can (VA-045): the brief hands `sl.objective` as the vocabulary's third source
+/// and `research_request_block` hands `""` — its one swarm.rs caller passes
+/// `files_from_objective(&sl.objective)` and never the objective — so until that one-liner lands
+/// (2c S9) a research prompt reads a smaller vocabulary than the brief of the same slice.
+/// Measured on r6c's five REAL objectives (`r6c_slices`): the same sections arrive either way
+/// (16/11/7/9/14), but notifierd's and web-viz's `Endpoints` arrive under rule (a) in the brief
+/// (the objectives name `/api/notifications`, `/api/viz/records`, `/api/stream`) and under
+/// rule (d) in the research prompt (the words `webhook`/`draft`, `stream`/`viz`).
 ///
 /// WHY (r6c, the product-killer, archive local-sb7-swarm-r6c-FINISHED-0.1420-…-build-608m):
 /// the opener claimed a perfect 28-section PARTITION (0 overlaps) and the splice gave each
@@ -864,12 +872,15 @@ pub(super) fn research_request_block(
     // slice's claims so rule (c) counts claimants across the plan, and this slice's declared
     // files so rule (a) reads the routes its files name. Before, the research prompt passed
     // only its own claims — every childless top-level section read as cross-cutting and rule
-    // (a) had no files to read. The slice's OBJECTIVE (rule d's third vocabulary source) is
-    // not in this signature: its one caller (swarm.rs, the research fan) hands
-    // `files_from_objective(&sl.objective)` and not the objective itself, so here rule (d)
-    // reads the claimed bodies and the declared files only — a smaller vocabulary, never a
-    // substituted one. Measured on r6c's five objectives the objective adds no route the
-    // bodies do not already name; the brief carries it.
+    // (a) had no files to read. The slice's OBJECTIVE (the third vocabulary source of rules
+    // (a) and (d)) is not in this signature: its one caller (swarm.rs, the research fan) hands
+    // `files_from_objective(&sl.objective)` and not the objective itself, so here rules (a) and
+    // (d) read the claimed bodies and the declared files only — a smaller vocabulary, never a
+    // substituted one, and a DIVERGENCE from the brief until 2c S9 adds the objective here.
+    // Measured on r6c's five REAL objectives (VA-045, `r6c_slices`): the objective adds no
+    // SECTION the bodies do not already route (same 16/11/7/9/14), but it does add routes —
+    // notifierd's names `/api/notifications`, web-viz's `/api/viz/records` and `/api/stream`
+    // — so those two slices' `Endpoints` arrive under (a) in the brief and under (d) here.
     let consumed =
         consumed_spec_sections(slice_id, claimed, files, "", every_claim, sections, events);
     let orientation = spec_orientation(sections);
@@ -3431,11 +3442,19 @@ mod tests {
         }
     }
 
-    /// r6c's five slices with the sections they claimed, verbatim from the run's plan_loaded
-    /// task descriptions (the `### ` headings the splice wrote — a perfect 28-section
-    /// partition, 0 overlaps) and the heads of their objectives (which declared no backticked
-    /// files: `slice_files_unnamed` fired five times in r6c, so routing rests on the claimed
-    /// BODIES exactly as it did there).
+    /// r6c's five slices with the sections they claimed AND their objectives, both verbatim from
+    /// the run's `plan_loaded.tasks[i].description` (archive
+    /// local-sb7-swarm-r6c-FINISHED-0.1420-…-build-608m/run.jsonl): the `### ` headings the
+    /// splice wrote — a perfect 28-section partition, 0 overlaps — and the description's FIRST
+    /// PARAGRAPH, which is `sl.objective` exactly as `briefs_from_slices` opens each brief with
+    /// it (2,501 / 2,719 / 1,050 / 1,528 / 2,591 chars; `include_str!` from
+    /// tests/fixtures/r6c-objective-<slice>.txt so no line is reflowed). VA-045: until then this
+    /// fixture carried 43-190-char PARAPHRASES of the objectives, and since 080c430cf the
+    /// objective is part of rule (a)/(d)'s vocabulary, so every routing trace on it ran on inputs
+    /// r6c never had — the real objectives name `GET /api/payments`, `POST /notify/events`,
+    /// `/api/viz/records`, `/api/stream` and `/api/notifications`. The objectives declared no
+    /// backticked files (`slice_files_unnamed` fired five times in r6c), so `files_from_objective`
+    /// still yields nothing and the file half of the vocabulary stays empty here as it did there.
     fn r6c_slices() -> OpenOutput {
         let slice = |id: &str, objective: &str, sections: &[&str]| OpenSlice {
             id: id.into(),
@@ -3449,9 +3468,7 @@ mod tests {
             slices: vec![
                 slice(
                     "ledgerd-core",
-                    "Own app/__main__.py (single-command wrapper that boots BOTH services), \
-                     app/ledgerd.py (ledgerd entrypoint), app/db.py (ledger.db schema), \
-                     app/sync.py, app/ledger.py, app/outbox.py.",
+                    include_str!("../../../tests/fixtures/r6c-objective-ledgerd-core.txt"),
                     &[
                         "Build `app` — Meridian Payments Console",
                         "What to build",
@@ -3469,8 +3486,7 @@ mod tests {
                 ),
                 slice(
                     "ledgerd-api",
-                    "Own app/api.py (every ledgerd endpoint from the Endpoints table), \
-                     app/webhooks.py, app/drafts.py, app/auth.py.",
+                    include_str!("../../../tests/fixtures/r6c-objective-ledgerd-api.txt"),
                     &[
                         "Endpoints",
                         "Error envelope",
@@ -3482,15 +3498,12 @@ mod tests {
                 ),
                 slice(
                     "notifierd",
-                    "Own app/notifierd.py (service entrypoint per the boot contract) and \
-                     app/notify_store.py.",
+                    include_str!("../../../tests/fixtures/r6c-objective-notifierd.txt"),
                     &["6. `notifierd` — the idempotent consumer"],
                 ),
                 slice(
                     "web-console",
-                    "Own web/index.html (structure only), web/styles.css (all styling), \
-                     web/app.js (page behavior: payments table with status/currency filters, \
-                     sorting on the instant-backed fields, pagination).",
+                    include_str!("../../../tests/fixtures/r6c-objective-web-console.txt"),
                     &[
                         "7. `web/` — the frontend",
                         "9. `DECISIONS.md` — three corners you must decide",
@@ -3498,7 +3511,7 @@ mod tests {
                 ),
                 slice(
                     "web-viz",
-                    "Own web/viz.js (the 3D engine and nothing else).",
+                    include_str!("../../../tests/fixtures/r6c-objective-web-viz.txt"),
                     &[
                         "8. The 3D field — 12,288 instances, five mechanisms",
                         "Rendering — bounded draw calls, demand rendering",
@@ -3529,6 +3542,16 @@ mod tests {
     /// §5 (its approve/reject/submit paths and the `GET /api/drafts?state=` row), still gets
     /// Endpoints under (a), and ledgerd-core receives no frontend section — §7, §8's children
     /// and §9 advertise no route, so no rule can carry them.
+    ///
+    /// VA-045: the fixture's objectives are now r6c's REAL first paragraphs (the brief opens
+    /// with `sl.objective`, and the objective is in rule (a)/(d)'s vocabulary since 080c430cf).
+    /// Measured against the paraphrased fixture: every slice receives the SAME sections
+    /// (16/11/7/9/14), but notifierd's and web-viz's `Endpoints` move from rule (d) — the words
+    /// `webhook`/`draft` and `stream`/`viz` — to rule (a): notifierd's objective says
+    /// "ledgerd's /api/notifications proxy", web-viz's "Consumes /api/viz/records and SSE
+    /// /api/stream". The objective-LESS view, what `research_request_block` hands today (its
+    /// swarm.rs caller passes no objective; 2c S9), still routes both under (d) — asserted
+    /// below on the same real bodies so the VA-044 F2 filters stay measured on r6c's words.
     #[test]
     fn r6c_s_partitioned_claims_route_each_section_to_its_consumers_too() {
         let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
@@ -3656,10 +3679,17 @@ mod tests {
         // VA-044 F2, the filters on r6c's real claims. §6 reached web-viz by "events" alone —
         // §8's "the canvas consumes its wheel events" — and every one of the five claimed bodies
         // names event/events, so the resource distinguishes nobody (filter i) and §6 no longer
-        // arrives; Endpoints still does, by `stream` and `viz` (routes web-viz really calls).
+        // arrives. Endpoints arrives under rule (a): web-viz's real objective names
+        // `/api/viz/records` and `/api/stream` (VA-045; with the paraphrased objective it came
+        // under (d) by the words `stream` and `viz`), so no resource filter is consulted for it.
         assert_eq!(
-            rule_for("web-viz", "resource_token"),
+            rule_for("web-viz", "advertised_route"),
             vec!["Endpoints".to_string()]
+        );
+        assert!(
+            rule_for("web-viz", "resource_token").is_empty(),
+            "{:?}",
+            rule_for("web-viz", "resource_token")
         );
         let filtered = |slice: &str, section: &str| -> Option<&serde_json::Value> {
             ev.iter().find(|e| {
@@ -3679,19 +3709,22 @@ mod tests {
         let viz6 = filtered("web-viz", S6_HEADING).expect("§6's words were filtered for web-viz");
         assert_eq!(words(viz6, "ubiquitous"), vec!["events"]);
         assert!(words(viz6, "carried").is_empty(), "{viz6}");
-        // notifierd: "health", "notification(s)" and "event(s)" are its OWN resources (§6's
-        // routes), filtered under (ii); "payment" is in every body (i). Endpoints still arrives
-        // on "webhook" ("like ledgerd's webhook counters") and — since F1 put `/api/drafts` in
-        // the Endpoints table — on "draft" (`draft.submitted`, `draft.approved`,
-        // `draft.rejected`). Both survive: MILD, route.
-        let nd = filtered("notifierd", "Endpoints").expect("notifierd's own words filtered");
+        // notifierd: Endpoints arrives under rule (a) — its real objective says "ledgerd's
+        // /api/notifications proxy (owned by the api slice) forwards to this service" (VA-045),
+        // so rule (d) and its filters are never consulted for it in the brief; §5 still comes
+        // under (d) by `draft` (§6's `draft.submitted`, `draft.approved`, `draft.rejected`).
         assert_eq!(
-            words(nd, "own"),
-            vec!["event", "events", "health", "notification", "notifications"]
+            rule_for("notifierd", "advertised_route"),
+            vec!["Endpoints".to_string()]
         );
-        assert_eq!(words(nd, "ubiquitous"), vec!["payment"]);
-        assert_eq!(words(nd, "carried"), vec!["draft", "webhook"]);
-        assert!(rule_for("notifierd", "resource_token").contains(&"Endpoints".to_string()));
+        assert!(
+            filtered("notifierd", "Endpoints").is_none(),
+            "rule (a) fired first; no filter event for a section it carried"
+        );
+        assert_eq!(
+            rule_for("notifierd", "resource_token"),
+            vec![S5_HEADING.to_string()]
+        );
         // web-console: §6 still arrives on "notifications" — four of five bodies say it (web-viz
         // does not), so it distinguishes; "event" (the feed's `data-event-seq`) is ubiquitous.
         let c6 = filtered("web-console", S6_HEADING).expect("web-console/§6 filtered words");
@@ -3712,6 +3745,102 @@ mod tests {
         // named as such.
         assert!(!rule_for("ledgerd-api", "advertised_route").contains(&S6_HEADING.to_string()));
         assert!(rule_for("ledgerd-api", "resource_token").contains(&S6_HEADING.to_string()));
+
+        // THE OBJECTIVE-LESS VIEW — the inputs `research_request_block` hands this helper today
+        // (its swarm.rs caller passes `files_from_objective(&sl.objective)`, never the
+        // objective; 2c S9): the same real bodies, no objective. The same sections arrive, and
+        // the two `Endpoints` the brief carries under (a) come under (d) here — the VA-044 F2
+        // filters measured on r6c's own words: notifierd's "health", "notification(s)" and
+        // "event(s)" are its OWN resources (§6's routes), filtered under (ii); "payment" is in
+        // every body (i); Endpoints arrives on "webhook" ("like ledgerd's webhook counters")
+        // and on "draft". web-viz's Endpoints arrives on `stream` and `viz`; "events" and
+        // "payment" are ubiquitous. Both survive their filters: MILD, route.
+        let every_claim: Vec<&[String]> = opened
+            .slices
+            .iter()
+            .map(|sl| sl.sections.as_slice())
+            .collect();
+        let objectiveless = ValueSink::default();
+        for sl in &opened.slices {
+            consumed_spec_sections(
+                &sl.id,
+                &sl.sections,
+                &[],
+                "",
+                &every_claim,
+                &sections,
+                &objectiveless,
+            );
+        }
+        let no_objective = objectiveless.0.lock().unwrap();
+        let no_objective_rule_for = |slice: &str, rule: &str| -> Vec<String> {
+            no_objective
+                .iter()
+                .filter(|e| {
+                    e["event"] == "spec_sections_consumed"
+                        && e["slice"] == slice
+                        && e["rule"] == rule
+                })
+                .flat_map(|e| e["sections"].as_array().unwrap().iter())
+                .map(|h| h.as_str().unwrap().to_string())
+                .collect()
+        };
+        let no_objective_filtered = |slice: &str, section: &str| -> Option<&serde_json::Value> {
+            no_objective.iter().find(|e| {
+                e["event"] == "resource_token_filtered"
+                    && e["slice"] == slice
+                    && e["section"] == section
+            })
+        };
+        assert!(no_objective_rule_for("notifierd", "advertised_route").is_empty());
+        assert_eq!(
+            no_objective_rule_for("notifierd", "resource_token"),
+            vec!["Endpoints".to_string(), S5_HEADING.to_string()]
+        );
+        let nd = no_objective_filtered("notifierd", "Endpoints")
+            .expect("notifierd's own words filtered");
+        assert_eq!(
+            words(nd, "own"),
+            vec!["event", "events", "health", "notification", "notifications"]
+        );
+        assert_eq!(words(nd, "ubiquitous"), vec!["payment"]);
+        assert_eq!(words(nd, "carried"), vec!["draft", "webhook"]);
+        assert!(no_objective_rule_for("web-viz", "advertised_route").is_empty());
+        assert_eq!(
+            no_objective_rule_for("web-viz", "resource_token"),
+            vec!["Endpoints".to_string()]
+        );
+        let vz = no_objective_filtered("web-viz", "Endpoints")
+            .expect("web-viz/Endpoints filtered words");
+        assert_eq!(words(vz, "ubiquitous"), vec!["events", "payment"]);
+        assert_eq!(words(vz, "carried"), vec!["stream", "viz"]);
+        // The other three slices route identically with or without their objective.
+        assert_eq!(
+            no_objective_rule_for("web-console", "advertised_route"),
+            vec!["Endpoints".to_string()]
+        );
+        assert_eq!(
+            no_objective_rule_for("web-console", "resource_token"),
+            vec![S5_HEADING.to_string(), S6_HEADING.to_string()]
+        );
+        assert_eq!(
+            no_objective_rule_for("ledgerd-api", "resource_token"),
+            vec![S6_HEADING.to_string()]
+        );
+        assert_eq!(
+            no_objective_rule_for("ledgerd-core", "advertised_route"),
+            vec!["Endpoints".to_string(), S6_HEADING.to_string()]
+        );
+        for sl in &opened.slices {
+            eprintln!(
+                "r6c-objectiveless {:13} a {:?} | d {:?}",
+                sl.id,
+                no_objective_rule_for(&sl.id, "advertised_route"),
+                no_objective_rule_for(&sl.id, "resource_token")
+            );
+        }
+        drop(no_objective);
+
         for sl in &opened.slices {
             for rule in [
                 "advertised_route",
@@ -4055,6 +4184,9 @@ Exact attribute names (`table-progress`, `table-empty`, `data-state` values) and
         // r6c's objectives declared no backticked files; declare web-console's and web-viz's
         // the way the opener prompt asks (NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE), so
         // the file half of the vocabulary is exercised beside the id/route/decision-id halves.
+        // This REPLACES those two slices' real objectives (VA-045): `slice_vocabulary` reads an
+        // objective's backticked files only, never its text, so the decision routing below is
+        // otherwise r6c's; the section routing of the same call is asserted in the test above.
         opened.slices[3].objective =
             "Own `web/index.html`, `web/styles.css`, `web/app.js` (page behavior).".into();
         opened.slices[4].objective = "Own `web/viz.js` (the 3D engine and nothing else).".into();
