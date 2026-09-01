@@ -17,6 +17,7 @@ import type {
   MlxEngineStatus,
   MlxLocalModel,
 } from '../../acp/mlx-engine';
+import type { NodeState, NodesResponse } from '../../acp/leanzero-link';
 
 const mockStatus = vi.fn();
 const mockMount = vi.fn();
@@ -51,6 +52,31 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineDownloadPause: (...args: unknown[]) => mockDownloadPause(...args),
   mlxEngineDownloadResume: (...args: unknown[]) => mockDownloadResume(...args),
 }));
+
+// The device picker sources the mesh roster from leanzeroLink and is gated on the
+// `leanzeroLink` capability. Default: capability OFF → the view is exactly as before, every
+// mlx op local (nodeId undefined). Tests that exercise the remote path flip mockFeatures and
+// hand the mesh a connected roster with peers.
+const mockFeatures = { leanzeroLink: false };
+vi.mock('../../contexts/FeaturesContext', () => ({
+  useFeatures: () => ({
+    localInference: true,
+    mlxEngine: true,
+    leanzeroLink: mockFeatures.leanzeroLink,
+    isLoading: false,
+  }),
+}));
+
+const mockLinkStatus = vi.fn();
+const mockLinkNodes = vi.fn();
+vi.mock('../../acp/leanzero-link', async (importActual) => {
+  const actual = await importActual<typeof import('../../acp/leanzero-link')>();
+  return {
+    ...actual,
+    leanzeroLinkStatus: (...a: unknown[]) => mockLinkStatus(...a),
+    leanzeroLinkNodes: (...a: unknown[]) => mockLinkNodes(...a),
+  };
+});
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: IntlTestWrapper });
 
@@ -110,8 +136,45 @@ function statusOf(overrides: Partial<MlxEngineStatus>): MlxEngineStatus {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Mesh roster fixtures for the device picker (leanzeroLink/nodes shape, snake_case).
+// ---------------------------------------------------------------------------
+
+const SELF_NODE: NodeState = {
+  node_id: 'self-node',
+  hostname: 'this-mac',
+  mesh_ip: '100.64.0.1',
+  status: { type: 'Idle' },
+  sessions_active: 0,
+  updated_at: '2026-09-01T12:00:00Z',
+};
+
+function peerNode(overrides: Partial<NodeState> = {}): NodeState {
+  return {
+    node_id: 'peer-workhorse',
+    hostname: 'workhorse',
+    mesh_ip: '100.64.0.2',
+    status: { type: 'Idle' },
+    sessions_active: 0,
+    updated_at: '2026-09-01T12:00:00Z',
+    ...overrides,
+  };
+}
+
+const CONNECTED = { auth: { state: 'connected', email: 'm@x.co', meshIp: '100.64.0.1' }, nodeCount: 2 };
+
+/** Turn on the capability + a connected roster with the given peers, so the picker renders. */
+function withMesh(peers: NodeState[]) {
+  mockFeatures.leanzeroLink = true;
+  mockLinkStatus.mockResolvedValue(CONNECTED);
+  mockLinkNodes.mockResolvedValue({ self: SELF_NODE, peers } as NodesResponse);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFeatures.leanzeroLink = false;
+  mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
+  mockLinkNodes.mockResolvedValue({ self: SELF_NODE, peers: [] } as NodesResponse);
   mockStatus.mockResolvedValue(statusOf({}));
   mockSettingsRead.mockResolvedValue(SETTINGS);
   mockSettingsUpdate.mockImplementation(async (s: MlxEngineSettings) => s);
@@ -343,7 +406,7 @@ describe('MlxEngineView engine tab', () => {
     await userEvent.click(screen.getByRole('button', { name: /Remount/ }));
     await waitFor(() => {
       expect(mockUnmount).toHaveBeenCalledTimes(1);
-      expect(mockMount).toHaveBeenCalledWith(QWEN);
+      expect(mockMount).toHaveBeenCalledWith(QWEN, undefined);
     });
     unmount();
   });
@@ -458,7 +521,7 @@ describe('MlxEngineView mount card truth', () => {
     expect(switchButton).toBeEnabled();
     await userEvent.click(switchButton);
     await waitFor(() => {
-      expect(mockMount).toHaveBeenCalledWith(OTHER_MODEL);
+      expect(mockMount).toHaveBeenCalledWith(OTHER_MODEL, undefined);
     });
     unmount();
   });
@@ -580,7 +643,7 @@ describe('MlxEngineView sampling tab', () => {
     await userEvent.click(screen.getByRole('button', { name: /Remount/ }));
     await waitFor(() => {
       expect(mockUnmount).toHaveBeenCalledTimes(1);
-      expect(mockMount).toHaveBeenCalledWith(QWEN);
+      expect(mockMount).toHaveBeenCalledWith(QWEN, undefined);
     });
     unmount();
   });
@@ -783,7 +846,7 @@ describe('MlxEngineView models tab', () => {
     });
     await userEvent.click(screen.getByLabelText(`Resume ${HALF}`));
     await waitFor(() => {
-      expect(mockDownloadResume).toHaveBeenCalledWith(HALF);
+      expect(mockDownloadResume).toHaveBeenCalledWith(HALF, undefined);
       expect(screen.getByTestId(`mlx-download-${HALF}`)).toBeInTheDocument();
     });
     expect(screen.getByText('3.00 GB / 6.00 GB')).toBeInTheDocument();
@@ -809,7 +872,8 @@ describe('MlxEngineView models tab', () => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
     expect(mockBrowse).toHaveBeenCalledWith(
-      expect.objectContaining({ sort: 'downloads', limit: 20 })
+      expect.objectContaining({ sort: 'downloads', limit: 20 }),
+      undefined
     );
     expect(mockBrowse.mock.calls[0][0].cursor).toBeUndefined();
     expect(screen.getByText('↓ 12.8K')).toBeInTheDocument();
@@ -820,7 +884,7 @@ describe('MlxEngineView models tab', () => {
 
     await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => {
-      expect(mockDownload).toHaveBeenCalledWith(HIT_A.id);
+      expect(mockDownload).toHaveBeenCalledWith(HIT_A.id, undefined);
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
     unmount();
@@ -876,7 +940,10 @@ describe('MlxEngineView models tab', () => {
     await waitFor(() => {
       expect(screen.getByText(HIT_B.id)).toBeInTheDocument();
     });
-    expect(mockBrowse).toHaveBeenCalledWith(expect.objectContaining({ sort: 'newest' }));
+    expect(mockBrowse).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: 'newest' }),
+      undefined
+    );
     // createdAt 2026-08-28 renders as a date in the row.
     expect(screen.getByText(/Aug 28, 2026/)).toBeInTheDocument();
     unmount();
@@ -920,7 +987,7 @@ describe('MlxEngineView models tab', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
-      expect(mockModelDelete).toHaveBeenCalledWith(HALF);
+      expect(mockModelDelete).toHaveBeenCalledWith(HALF, undefined);
     });
     expect(confirmSpy).not.toHaveBeenCalled();
     unmount();
@@ -1118,7 +1185,7 @@ describe('MlxEngineView model card modal', () => {
     await waitFor(() => {
       expect(screen.getByTestId('mlx-model-card-modal')).toBeInTheDocument();
     });
-    expect(mockModelCard).toHaveBeenCalledWith(HIT_A.id);
+    expect(mockModelCard).toHaveBeenCalledWith(HIT_A.id, undefined);
     await waitFor(() => {
       expect(screen.getByText('apache-2.0')).toBeInTheDocument();
     });
@@ -1205,14 +1272,14 @@ describe('MlxEngineView download lifecycle', () => {
 
     await userEvent.click(screen.getByLabelText(`Pause ${HIT_A.id}`));
     await waitFor(() => {
-      expect(mockDownloadPause).toHaveBeenCalledWith(HIT_A.id);
+      expect(mockDownloadPause).toHaveBeenCalledWith(HIT_A.id, undefined);
       expect(screen.getByText('paused')).toBeInTheDocument();
     });
     expect(screen.queryByLabelText(`Pause ${HIT_A.id}`)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText(`Resume ${HIT_A.id}`));
     await waitFor(() => {
-      expect(mockDownloadResume).toHaveBeenCalledWith(HIT_A.id);
+      expect(mockDownloadResume).toHaveBeenCalledWith(HIT_A.id, undefined);
       expect(screen.getByText('downloading')).toBeInTheDocument();
     });
     // The restarted-from-zero twin is visible, names in the tooltip.
@@ -1246,7 +1313,7 @@ describe('MlxEngineView download lifecycle', () => {
 
     await userEvent.click(screen.getByLabelText(`Cancel ${HIT_A.id}`));
     await waitFor(() => {
-      expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id);
+      expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id, undefined);
       expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
     });
     // The local list refreshed — the backend deleted the partial repo dir.
@@ -1278,7 +1345,7 @@ describe('MlxEngineView download lifecycle', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
-      expect(mockModelDelete).toHaveBeenCalledWith(HALF);
+      expect(mockModelDelete).toHaveBeenCalledWith(HALF, undefined);
       // Caught live: without this, the deleted model's row kept saying "done" and the
       // Download action never returned.
       expect(screen.queryByTestId(`mlx-download-${HALF}`)).not.toBeInTheDocument();
@@ -1309,7 +1376,7 @@ describe('MlxEngineView download lifecycle', () => {
       expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
     });
     mockDownloadProgress.mockClear();
-    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id), {
+    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined), {
       timeout: 3000,
     });
 
@@ -1319,6 +1386,154 @@ describe('MlxEngineView download lifecycle', () => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
     expect(screen.getByText('1.00 GB / 4.00 GB')).toBeInTheDocument();
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Device picker — manage models on ANY linked device. The picker is sourced from
+// leanzeroLink/nodes and gated on the capability + a connected mesh; every op threads
+// the selected node's id. The common case now (no worker deployed) is capability-present-
+// but-not-connected OR capability-absent: no peers, no picker, byte-identical local view.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView device picker (remote model management)', () => {
+  async function selectPeer(nodeId = 'peer-workhorse') {
+    await waitFor(() => expect(screen.getByTestId('mlx-device-target')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('mlx-device-target'));
+    await userEvent.click(screen.getByTestId(`mlx-device-target-option-${nodeId}`));
+  }
+
+  it('capability absent → no picker, every op targets THIS device (nodeId undefined)', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
+    expect(mockStatus).toHaveBeenCalledWith(undefined);
+    expect(mockModelsList).toHaveBeenCalledWith(undefined);
+    expect(mockLinkNodes).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('capability present but NOT connected → no picker, behaves exactly as today', async () => {
+    mockFeatures.leanzeroLink = true;
+    mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedIn', email: 'm@x.co' }, nodeCount: 0 });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkStatus).toHaveBeenCalled());
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('connected but zero peers → no picker (no clutter)', async () => {
+    withMesh([]);
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('lists This device + each connected peer with an idle/busy chip', async () => {
+    withMesh([
+      peerNode({ hostname: 'workhorse', node_id: 'peer-workhorse' }),
+      peerNode({ hostname: 'studio', node_id: 'peer-studio', status: { type: 'Busy', session_id: 's1' } }),
+    ]);
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(screen.getByTestId('mlx-device-target')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('mlx-device-target'));
+    expect(screen.getByTestId('mlx-device-target-option-self')).toHaveTextContent('This device');
+    const wh = screen.getByTestId('mlx-device-target-option-peer-workhorse');
+    expect(wh).toHaveTextContent('workhorse');
+    expect(wh).toHaveTextContent('idle');
+    const st = screen.getByTestId('mlx-device-target-option-peer-studio');
+    expect(st).toHaveTextContent('studio');
+    expect(st).toHaveTextContent('busy');
+    unmount();
+  });
+
+  it('selecting a peer threads its nodeId into status, models and settings, and banners the device', async () => {
+    withMesh([peerNode()]);
+    const { unmount } = render(<MlxEngineView />);
+    await selectPeer();
+    await waitFor(() => {
+      expect(mockModelsList).toHaveBeenCalledWith('peer-workhorse');
+      expect(mockStatus).toHaveBeenCalledWith('peer-workhorse');
+      expect(mockSettingsRead).toHaveBeenCalledWith('peer-workhorse');
+    });
+    expect(screen.getByText('Managing models on workhorse (remote)')).toBeInTheDocument();
+    unmount();
+  });
+
+  it("a remote node's mount-gate BLOCK renders verbatim in the existing banner", async () => {
+    const BLOCK = 'Not enough memory: model needs 22.0 GB, only 5.1 GB free';
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === 'peer-workhorse'
+        ? statusOf({ gateMessage: BLOCK, gateVerdict: 'block' })
+        : statusOf({})
+    );
+    withMesh([peerNode()]);
+    const { unmount } = render(<MlxEngineView />);
+    await selectPeer();
+    await waitFor(() => expect(screen.getByText(BLOCK)).toBeInTheDocument());
+    expect(screen.getByText('Mount blocked')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('an unreachable peer surfaces its error verbatim in the existing banner', async () => {
+    const ERR = 'not connected to the mesh';
+    mockStatus.mockImplementation(async (nodeId?: string) => {
+      if (nodeId === 'peer-workhorse') throw new Error(ERR);
+      return statusOf({});
+    });
+    withMesh([peerNode()]);
+    const { unmount } = render(<MlxEngineView />);
+    await selectPeer();
+    await waitFor(() => expect(screen.getByText(ERR)).toBeInTheDocument());
+    expect(screen.getByText('Engine unreachable')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('deleting on a remote device names the device in the confirm dialog and targets it', async () => {
+    mockModelDelete.mockResolvedValue(undefined);
+    withMesh([peerNode()]);
+    const { unmount } = render(<MlxEngineView />);
+    await selectPeer();
+    await waitFor(() =>
+      expect(screen.getByText('Managing models on workhorse (remote)')).toBeInTheDocument()
+    );
+    await openDownloadedTab();
+    await waitFor(() => expect(screen.getByLabelText(`Delete ${HALF}`)).toBeInTheDocument());
+    await userEvent.click(screen.getByLabelText(`Delete ${HALF}`));
+    // Scope to the dialog message — "on workhorse" also appears in the remote banner above.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Delete mlx-community\/Half-Model-8bit.*on workhorse/)
+      ).toBeInTheDocument()
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(mockModelDelete).toHaveBeenCalledWith(HALF, 'peer-workhorse'));
+    unmount();
+  });
+
+  it('cancelling a remote download names the device in the confirm dialog and targets it', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    withMesh([peerNode()]);
+    const { unmount } = render(<MlxEngineView />);
+    await selectPeer();
+    await openModelsTab();
+    await waitFor(() => expect(screen.getByText(HIT_A.id)).toBeInTheDocument());
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => expect(screen.getByLabelText(`Cancel ${HIT_A.id}`)).toBeInTheDocument());
+    await userEvent.click(screen.getByLabelText(`Cancel ${HIT_A.id}`));
+    // A LOCAL cancel goes straight through; a remote one asks first, naming the device.
+    // Scope to the dialog message — the remote banner also contains "on workhorse".
+    await waitFor(() =>
+      expect(screen.getByText(/Cancel the download of.*on workhorse/)).toBeInTheDocument()
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel download' }));
+    await waitFor(() =>
+      expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id, 'peer-workhorse')
+    );
     unmount();
   });
 });

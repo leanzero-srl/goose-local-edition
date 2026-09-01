@@ -224,24 +224,39 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
   return (await client.extMethod(method, params)) as unknown as T;
 }
 
-export async function mlxEngineStatus(): Promise<MlxEngineStatus> {
-  const response = await call<{ status: MlxEngineStatus }>('_goose/unstable/mlxEngine/status', {});
+/**
+ * Target a device. EVERY mlxEngine method takes an optional `nodeId`: absent (or the local
+ * node's id) runs on THIS machine, byte-identical to a call that never carried the field;
+ * a peer's node id makes goosed forward the whole op over the mesh and return ITS result.
+ * The field is OMITTED from the wire when undefined — an absent field, never `nodeId: null` —
+ * so the local path is preserved exactly. Node ids come from `leanzeroLink/nodes`.
+ */
+function withNode(params: Record<string, unknown>, nodeId?: string): Record<string, unknown> {
+  if (nodeId != null) params.nodeId = nodeId;
+  return params;
+}
+
+export async function mlxEngineStatus(nodeId?: string): Promise<MlxEngineStatus> {
+  const response = await call<{ status: MlxEngineStatus }>(
+    '_goose/unstable/mlxEngine/status',
+    withNode({}, nodeId)
+  );
   return response.status;
 }
 
 /** Returns immediately; state flips to "mounting" — poll status for running/failed. */
-export async function mlxEngineMount(modelId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/mount', { modelId });
+export async function mlxEngineMount(modelId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/mount', withNode({ modelId }, nodeId));
 }
 
-export async function mlxEngineUnmount(): Promise<void> {
-  await call('_goose/unstable/mlxEngine/unmount', {});
+export async function mlxEngineUnmount(nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/unmount', withNode({}, nodeId));
 }
 
-export async function mlxEngineSettingsRead(): Promise<MlxEngineSettings> {
+export async function mlxEngineSettingsRead(nodeId?: string): Promise<MlxEngineSettings> {
   const response = await call<{ settings: MlxEngineSettings }>(
     '_goose/unstable/mlxEngine/settingsRead',
-    {}
+    withNode({}, nodeId)
   );
   return response.settings;
 }
@@ -252,27 +267,35 @@ export async function mlxEngineSettingsRead(): Promise<MlxEngineSettings> {
  * an explicit 0 and an unset field are different facts and both survive the round trip.
  */
 export async function mlxEngineSettingsUpdate(
-  settings: MlxEngineSettings
+  settings: MlxEngineSettings,
+  nodeId?: string
 ): Promise<MlxEngineSettings> {
   const response = await call<{ settings: MlxEngineSettings }>(
     '_goose/unstable/mlxEngine/settingsUpdate',
-    { settings }
+    withNode({ settings }, nodeId)
   );
   return response.settings;
 }
 
-export async function mlxEngineModelsList(): Promise<MlxModelsList> {
-  return await call<MlxModelsList>('_goose/unstable/mlxEngine/modelsList', {});
+export async function mlxEngineModelsList(nodeId?: string): Promise<MlxModelsList> {
+  return await call<MlxModelsList>('_goose/unstable/mlxEngine/modelsList', withNode({}, nodeId));
 }
 
-export async function mlxEngineModelDelete(modelId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/modelDelete', { modelId });
+export async function mlxEngineModelDelete(modelId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/modelDelete', withNode({ modelId }, nodeId));
 }
 
-export async function mlxEngineHfSearch(query: string, limit?: number): Promise<MlxHfModelHit[]> {
+export async function mlxEngineHfSearch(
+  query: string,
+  limit?: number,
+  nodeId?: string
+): Promise<MlxHfModelHit[]> {
   const params: Record<string, unknown> = { query };
   if (limit != null) params.limit = limit;
-  const response = await call<{ hits: MlxHfModelHit[] }>('_goose/unstable/mlxEngine/hfSearch', params);
+  const response = await call<{ hits: MlxHfModelHit[] }>(
+    '_goose/unstable/mlxEngine/hfSearch',
+    withNode(params, nodeId)
+  );
   return response.hits;
 }
 
@@ -281,7 +304,10 @@ export async function mlxEngineHfSearch(query: string, limit?: number): Promise<
  * `nextCursor` back as `cursor` to append the next page. Undefined optional params are
  * omitted on the wire.
  */
-export async function mlxEngineBrowse(params: MlxBrowseParams): Promise<MlxBrowsePage> {
+export async function mlxEngineBrowse(
+  params: MlxBrowseParams,
+  nodeId?: string
+): Promise<MlxBrowsePage> {
   const payload: Record<string, unknown> = { sort: params.sort };
   if (params.query != null && params.query !== '') payload.query = params.query;
   if (params.author != null && params.author !== '') payload.author = params.author;
@@ -289,20 +315,21 @@ export async function mlxEngineBrowse(params: MlxBrowseParams): Promise<MlxBrows
   if (params.arch != null && params.arch !== '') payload.arch = params.arch;
   if (params.cursor != null) payload.cursor = params.cursor;
   if (params.limit != null) payload.limit = params.limit;
-  return await call<MlxBrowsePage>('_goose/unstable/mlxEngine/browse', payload);
+  return await call<MlxBrowsePage>('_goose/unstable/mlxEngine/browse', withNode(payload, nodeId));
 }
 
-export async function mlxEngineDownload(repoId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/download', { repoId });
+export async function mlxEngineDownload(repoId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/download', withNode({ repoId }, nodeId));
 }
 
 /** `null` when no download was ever tracked for this repo. */
 export async function mlxEngineDownloadProgress(
-  repoId: string
+  repoId: string,
+  nodeId?: string
 ): Promise<MlxDownloadProgress | null> {
   const response = await call<{ progress?: MlxDownloadProgress }>(
     '_goose/unstable/mlxEngine/downloadProgress',
-    { repoId }
+    withNode({ repoId }, nodeId)
   );
   return response.progress ?? null;
 }
@@ -312,13 +339,13 @@ export async function mlxEngineDownloadProgress(
  * repo directory. For an active task the deletion runs as the task stops (poll progress
  * until "cancelled"); for a paused/failed one it has already run when this returns.
  */
-export async function mlxEngineDownloadCancel(repoId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/downloadCancel', { repoId });
+export async function mlxEngineDownloadCancel(repoId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/downloadCancel', withNode({ repoId }, nodeId));
 }
 
 /** Pause an active download; every `.part` stays on disk for a later resume. */
-export async function mlxEngineDownloadPause(repoId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/downloadPause', { repoId });
+export async function mlxEngineDownloadPause(repoId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/downloadPause', withNode({ repoId }, nodeId));
 }
 
 /**
@@ -326,15 +353,18 @@ export async function mlxEngineDownloadPause(repoId: string): Promise<void> {
  * that was never tracked by this one. Complete files are skipped, `.part` files continue
  * via HTTP Range; a mismatched partial restarts from zero and lands in `restartedFiles`.
  */
-export async function mlxEngineDownloadResume(repoId: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/downloadResume', { repoId });
+export async function mlxEngineDownloadResume(repoId: string, nodeId?: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/downloadResume', withNode({ repoId }, nodeId));
 }
 
 /** Cached backend-side (~1h TTL) — the first call after a cold start pays the crawl. */
-export async function mlxEngineBrowseFilters(): Promise<MlxBrowseFilters> {
-  return await call<MlxBrowseFilters>('_goose/unstable/mlxEngine/browseFilters', {});
+export async function mlxEngineBrowseFilters(nodeId?: string): Promise<MlxBrowseFilters> {
+  return await call<MlxBrowseFilters>(
+    '_goose/unstable/mlxEngine/browseFilters',
+    withNode({}, nodeId)
+  );
 }
 
-export async function mlxEngineModelCard(repoId: string): Promise<MlxModelCard> {
-  return await call<MlxModelCard>('_goose/unstable/mlxEngine/modelCard', { repoId });
+export async function mlxEngineModelCard(repoId: string, nodeId?: string): Promise<MlxModelCard> {
+  return await call<MlxModelCard>('_goose/unstable/mlxEngine/modelCard', withNode({ repoId }, nodeId));
 }

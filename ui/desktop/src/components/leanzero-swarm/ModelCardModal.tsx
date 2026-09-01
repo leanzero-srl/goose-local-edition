@@ -44,6 +44,7 @@ function HeaderFact({ label, children }: { label: string; children: React.ReactN
  */
 export function ModelCardModal({
   repoId,
+  nodeId,
   onClose,
   progress,
   startError,
@@ -53,6 +54,8 @@ export function ModelCardModal({
   onCancel,
 }: {
   repoId: string;
+  /** The device the card is read from — undefined = local, byte-identical to before. */
+  nodeId?: string;
   onClose: () => void;
   progress: MlxDownloadProgress | undefined;
   startError: string | undefined;
@@ -67,7 +70,7 @@ export function ModelCardModal({
     setError(null);
     void (async () => {
       try {
-        const next = await mlxEngineModelCard(repoId);
+        const next = await mlxEngineModelCard(repoId, nodeId);
         if (!stale) setCard(next);
       } catch (e) {
         if (!stale) setError(errorMessage(e, 'Could not load the model card.'));
@@ -76,7 +79,7 @@ export function ModelCardModal({
     return () => {
       stale = true;
     };
-  }, [repoId]);
+  }, [repoId, nodeId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
