@@ -36,7 +36,6 @@ import {
   Segmented,
   StatusDot,
   Toolbar,
-  DISABLED,
   FOCUS,
   MOTION,
   RADIUS,
@@ -79,7 +78,7 @@ import {
 } from '../../acp/mlx-engine';
 import { DownloadProgressRow, SolidBanner, formatCount, formatDate, formatGb } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
-import { StudioSelect, type StudioSelectOption } from './studio';
+import { INPUT, StudioSelect, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
@@ -100,16 +99,6 @@ const STATE_TONE: Record<MlxEngineState, Tone> = {
   failed: 'err',
   stopped: 'stopped',
 };
-
-/** A 32px text input on the Studio outline — the same recipe as lz/Toolbar's search field. */
-const INPUT = cx(
-  'h-8 bg-lz-surface px-3 text-lz-body text-lz-ink placeholder:text-lz-ink-4',
-  SURFACE.outline,
-  RADIUS.control,
-  FOCUS,
-  MOTION,
-  DISABLED
-);
 
 /** A quiet table cell: the meta register in tabular figures. */
 const META = cx(TYPE.meta, TNUM);
