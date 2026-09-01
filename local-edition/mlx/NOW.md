@@ -19,6 +19,22 @@
 IN FLIGHT: node-picker UI (panel-surgeon, ui) + #22 design (swarm-surgeon, read-only). NEXT: review
 #22 design → authorize build (+#17 swarm.rs); panel-surgeon for #13 + #17 UI after node-picker lands.
 
+## LEANZERO LINK: FULLY LIVE (2026-09-01) — every layer proven end-to-end
+Worker self-hosted on the Mac (launchd com.leanzero.link-auth, KeepAlive) + Tailscale Funnel path
+/leanzero-link on :443 (Mihai's MCP funnels untouched; backup ~/.leanzero/funnel-config.backup.json).
+Public: https://worksmacstudio.tailfc4700.ts.net/leanzero-link (TS strips the prefix). health
+mail=true mesh=true audience=false. PROVEN LIVE: OTP request→Resend (test-mode delivers only to the
+Resend owner zerobarat1@gmail.com); join-key→untagged ephemeral Tailscale key (after fixes: TS_NODE_TAG
+empty=untagged, AND Tailscale rejects '.'/'@' in key descriptions → email sanitized to [A-Za-z0-9_-],
+c07bc0380). goosed points at the live worker via launchctl setenv LEANZERO_LINK_WORKER_URL (+ baked
+as DEFAULT_WORKER_BASE_URL in worker_client.rs for reboot-permanence; a niced goosed rebuild to bundle
+that was kicked — repackage to finish baking; until then the env holds it).
+TEST: app → LeanZero Swarm → LeanZero Link → email zerobarat1@gmail.com → code to that inbox → verify →
+connect. Secrets in ~/.leanzero/link-worker.env (0600). Audience id unset (sync skips; add RESEND_
+AUDIENCE_ID to enable). To use any From address, verify a Resend domain + change LEANZERO_MAIL_FROM.
+REMAINING (all Mihai-side / optional): #17 arbitrary cloud providers as nodes (own pass) + #23 add-dialog
+label; verify a Resend domain for non-owner emails; repackage to bake the URL into the bundle. #22 SHELVED.
+
 ## LEANZERO LINK — BUILDING THE DEEPER HALF (Mihai said continue, 2026-09-01)
 Both decisions → BUILD. Sequential chain (all share the goose-server↔link seam, so no parallel):
   Agent 1 (IN FLIGHT, link-backend): full per-message mirroring — goose-server process-wide delta
