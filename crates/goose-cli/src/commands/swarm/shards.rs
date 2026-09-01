@@ -139,6 +139,11 @@ pub(super) struct FatMeasure {
     pub(super) floor: f64,
     /// Indexes into `rows`, fattest first.
     pub(super) fat: Vec<usize>,
+    /// Tasks whose `slice` (or id) names NO opener slice — measured as zero sections because the
+    /// opener routed nothing to them by that name. Recorded, not defaulted away: when EVERY row
+    /// is unclaimed the opener's and the planner's slice names disagree and the split can never
+    /// fire (`fatness_unmeasurable` says so with these ids and the opener's names).
+    pub(super) unclaimed: Vec<String>,
 }
 
 /// Measure every planner task — not the join, not the skeleton, not a task already split (a shard
@@ -157,6 +162,7 @@ pub(super) fn measure_fatness(
     claims: &HashMap<String, SectionClaim>,
 ) -> FatMeasure {
     let mut rows: Vec<TaskDensity> = Vec::new();
+    let mut unclaimed: Vec<String> = Vec::new();
     for t in plan
         .get("subtasks")
         .and_then(|s| s.as_array())
@@ -182,11 +188,19 @@ pub(super) fn measure_fatness(
             .and_then(|s| s.as_str())
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(id);
-        // A task no slice claims sections for (a patch-added task, r6c's decisions-doc) measures
-        // as 0 sections — an honest zero: the opener routed no spec to it (fallback gate: empty
-        // MEANS empty here). It rides `rows` for the event's distribution but is excluded from
-        // the statistics below (`sections > 0`) and can never be fat.
-        let claim = claims.get(slice).cloned().unwrap_or_default();
+        // A task no opener slice is named for (a patch-added task, r6c's decisions-doc) measures
+        // as 0 sections — an honest zero: the opener routed no spec to it by that name — and is
+        // RECORDED in `unclaimed`, so a plan whose every task is unclaimed (the opener's and the
+        // planner's slice names disagree) is said rather than measured as a flat nothing. It
+        // rides `rows` for the event's distribution but is excluded from the statistics below
+        // (`sections > 0`) and can never be fat.
+        let claim = match claims.get(slice) {
+            Some(c) => c.clone(),
+            None => {
+                unclaimed.push(id.to_string());
+                SectionClaim::default()
+            }
+        };
         let brief_chars = t
             .get("description")
             .and_then(|d| d.as_str())
@@ -250,6 +264,7 @@ pub(super) fn measure_fatness(
         threshold,
         floor,
         fat,
+        unclaimed,
     }
 }
 
@@ -811,7 +826,34 @@ where
     let Ok(plan) = serde_json::from_str::<serde_json::Value>(&plan_json) else {
         return plan_json;
     };
-    let measure = measure_fatness(&plan, &section_claims(opened, spec));
+    let claims = section_claims(opened, spec);
+    let measure = measure_fatness(&plan, &claims);
+    // NOTHING is measurable when no row carries a section: the opener's slice names matched no
+    // plan slice (every row unclaimed) or the opener claimed no sections at all. `plan_flag`
+    // fires only for FAT rows, so this plan would otherwise pass the split in silence looking
+    // like a flat distribution (VA-080 item 3). Said with both sides' names; the plan is untouched.
+    if measure.rows.iter().all(|r| r.sections == 0) {
+        let tasks: Vec<&str> = measure.rows.iter().map(|r| r.id.as_str()).collect();
+        let mut opener_slices: Vec<&str> = claims.keys().map(String::as_str).collect();
+        opener_slices.sort_unstable();
+        let reason = if measure.rows.is_empty() {
+            "no task owns a file"
+        } else {
+            "no task carries sections"
+        };
+        eprintln!(
+            "  · fatness unmeasurable ({reason}): tasks {tasks:?}, unclaimed by any opener slice {:?}, opener slices {opener_slices:?}",
+            measure.unclaimed
+        );
+        sink.write_value(serde_json::json!({
+            "event": "fatness_unmeasurable",
+            "reason": reason,
+            "tasks": tasks,
+            "unclaimed_tasks": measure.unclaimed,
+            "opener_slices": opener_slices,
+        }));
+        return plan_json;
+    }
     if measure.fat.is_empty() {
         return plan_json;
     }
@@ -1163,6 +1205,98 @@ mod tests {
         let m = measure_fatness(&split, &claims(&[("a", 1), ("b", 1), ("c", 1), ("viz", 9)]));
         assert!(m.fat.is_empty(), "a merger is already split: {m:?}");
         assert_eq!(m.rows.len(), 3);
+    }
+
+    /// VA-080 item 3: when the opener's slice names match no plan slice, every row measures
+    /// zero and nothing is ever fat — `plan_flag` fires only for fat rows, so the plan used to
+    /// pass in silence. The measure RECORDS the unclaimed ids; `split_fat_tasks` says
+    /// `fatness_unmeasurable` with both sides' names and leaves the plan byte-identical. r6c's
+    /// shape (SOME rows carry sections) says nothing — the NET half.
+    #[tokio::test]
+    async fn a_plan_whose_slices_the_opener_never_named_is_said_unmeasurable() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let renamed = plan(&[
+            ("ledger-service", &["app/db.py", "app/ledger.py"]),
+            ("notifier-service", &["app/notifierd/impl.py"]),
+            ("console-ui", &["web/index.html", "web/app.js"]),
+            ("viz-engine", &["web/viz.js"]),
+        ]);
+        let m = measure_fatness(&renamed, &section_claims(&r6c_like_opened(), spec));
+        assert_eq!(
+            m.unclaimed,
+            vec![
+                "ledger-service",
+                "notifier-service",
+                "console-ui",
+                "viz-engine"
+            ]
+        );
+        assert!(m.fat.is_empty(), "{m:?}");
+        assert!(m.rows.iter().all(|r| r.sections == 0));
+
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let before = renamed.to_string();
+        let after = split_fat_tasks(
+            before.clone(),
+            &r6c_like_opened(),
+            spec,
+            false,
+            |_task, _density| async move { panic!("nothing measurable, nothing to split") },
+            &sink_dyn,
+        )
+        .await;
+        assert_eq!(after, before, "byte-identical");
+        let events = sink.0.lock().unwrap().clone();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let said = &events[0];
+        assert_eq!(said["event"], "fatness_unmeasurable");
+        assert_eq!(said["reason"], "no task carries sections");
+        assert_eq!(
+            string_list(&said["tasks"]),
+            vec![
+                "ledger-service",
+                "notifier-service",
+                "console-ui",
+                "viz-engine"
+            ]
+        );
+        assert_eq!(
+            string_list(&said["unclaimed_tasks"]),
+            string_list(&said["tasks"])
+        );
+        assert_eq!(
+            string_list(&said["opener_slices"]),
+            vec!["ledgerd-core", "notifierd", "web-console", "web-viz"]
+        );
+
+        // The NET half: r6c's own names — SOME rows carry sections, nothing is said.
+        let m = measure_fatness(
+            &plan(&[
+                (
+                    "ledgerd-core",
+                    &["app/db.py", "app/sync.py", "app/ledger.py"],
+                ),
+                (
+                    "notifierd",
+                    &["app/notifierd/impl.py", "app/notify_store.py"],
+                ),
+                (
+                    "web-console",
+                    &["web/index.html", "web/styles.css", "web/app.js"],
+                ),
+                ("web-viz", &["web/viz.js"]),
+                ("decisions-doc", &["DECISIONS.md"]),
+            ]),
+            &section_claims(&r6c_like_opened(), spec),
+        );
+        assert_eq!(
+            m.unclaimed,
+            vec!["decisions-doc"],
+            "one patch-added task, recorded"
+        );
+        assert!(m.rows.iter().any(|r| r.sections > 0));
+        assert_eq!(m.fat.len(), 1, "web-viz stays the one fat task: {m:?}");
     }
 
     fn viz_split() -> ModuleSplit {
