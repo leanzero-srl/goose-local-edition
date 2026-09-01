@@ -388,7 +388,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,782 (VA-081): `render_previous_attempt_block` and its test moved to
     // commands/swarm/transcripts.rs beside `read_calls_capture` (its input), paying for the worker
     // loop's `SystemNotification`/`Usage`/`HistoryReplaced` arms (`lane_compaction`/`lane_notice`).
-    const SWARM_RS_LINE_BASELINE: usize = 34_782;
+    // Tightened to 34,714 (VA-067): `render_completed_output_from_ledger` moved to
+    // commands/swarm/transcripts.rs beside `build_task_ledger_row` (the row it reads), paying for
+    // `plan_loaded.tasks[].shard_of/merger_of`.
+    const SWARM_RS_LINE_BASELINE: usize = 34_714;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
