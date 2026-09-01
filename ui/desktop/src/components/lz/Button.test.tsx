@@ -66,6 +66,39 @@ describe('lz/Button', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it('destructive is the solid err fill with white ink on the same recipe as primary — never faded', async () => {
+    const { container, getByText } = render(
+      <>
+        <Button variant="destructive">Stop and close</Button>
+        <Button variant="destructive" disabled>
+          Stopping
+        </Button>
+      </>
+    );
+    const b = getByText('Stop and close');
+    expect(b.getAttribute('data-variant')).toBe('destructive');
+    for (const c of [
+      'border-lz-err-solid',
+      'bg-lz-err-solid',
+      'text-white',
+      'hover:bg-lz-err',
+      'rounded-lz-control',
+      'h-8',
+      'px-3',
+      'text-lz-body',
+      'font-lz-medium',
+      'focus-visible:outline-ring',
+      'duration-120',
+      'disabled:bg-lz-surface-2',
+    ]) {
+      expect(b.className).toContain(c);
+    }
+    expect(b.className).not.toMatch(/opacity|\/\d+\b|bg-lz-accent/);
+    expect((getByText('Stopping') as HTMLButtonElement).disabled).toBe(true);
+    assertStudioClean(container);
+    expect(await missingUtilities(allClasses(container))).toEqual([]);
+  }, 30_000);
+
   it('forwards its ref to the DOM button — directly and through a Radix Slot (asChild)', () => {
     const direct = createRef<HTMLButtonElement>();
     const slotted = createRef<HTMLButtonElement>();
