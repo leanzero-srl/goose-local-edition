@@ -1,5 +1,6 @@
 import BottomMenuAlertPopover from './BottomMenuAlertPopover';
 import { Alert } from '../alerts';
+import { TNUM, TONE_TEXT, cx } from '../lz';
 
 interface ContextWindowIndicatorProps {
   totalTokens: number;
@@ -14,9 +15,9 @@ const formatTokenCount = (count: number): string => {
 };
 
 const getProgressColor = (percentage: number): string => {
-  if (percentage <= 75) return 'text-text-primary/70';
-  if (percentage <= 90) return 'text-orange-500';
-  return 'text-red-500';
+  if (percentage <= 75) return 'text-lz-ink-3';
+  if (percentage <= 90) return TONE_TEXT.warn;
+  return TONE_TEXT.err;
 };
 
 export function ContextWindowIndicator({
@@ -32,7 +33,7 @@ export function ContextWindowIndicator({
   return (
     <div className="flex items-center h-full">
       <BottomMenuAlertPopover alerts={alerts}>
-        <span className={`text-xs font-mono ${colorClass}`}>
+        <span className={cx('text-lz-meta', TNUM, colorClass)}>
           {formatTokenCount(totalTokens)} / {formatTokenCount(tokenLimit)}
         </span>
       </BottomMenuAlertPopover>

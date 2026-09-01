@@ -1,4 +1,4 @@
-import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink } from 'lucide-react';
+import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink, X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
 import { useFeatures } from '../../../../contexts/FeaturesContext';
@@ -19,6 +19,7 @@ import { getModelDisplayName } from '../predefinedModelsUtils';
 
 import { ModelSettingsPanel } from '../../localInference/ModelSettingsPanel';
 import { ScrollArea } from '../../../ui/scroll-area';
+import { Button as StudioButton, MOTION, SURFACE, TYPE, WEIGHT, cx } from '../../../lz';
 import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 
@@ -62,6 +63,10 @@ const i18n = defineMessages({
   resolvedModel: {
     id: 'modelsBottomBar.resolvedModel',
     defaultMessage: 'Resolved model',
+  },
+  close: {
+    id: 'modelsBottomBar.close',
+    defaultMessage: 'Close',
   },
 });
 
@@ -202,36 +207,47 @@ export default function ModelsBottomBar({
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
       <DropdownMenu>
-        <DropdownMenuTrigger className="flex items-center hover:cursor-pointer max-w-[180px] md:max-w-[200px] lg:max-w-[380px] min-w-0 text-text-primary/70 hover:text-text-primary transition-colors">
+        <DropdownMenuTrigger
+          className={cx(
+            'flex min-w-0 max-w-[180px] items-center text-lz-ink-3 hover:cursor-pointer hover:text-lz-ink md:max-w-[200px] lg:max-w-[380px]',
+            MOTION
+          )}
+        >
           <div className="flex items-center truncate max-w-[130px] md:max-w-[200px] lg:max-w-[360px] min-w-0">
             <Bot className="mr-1 h-4 w-4 flex-shrink-0" />
             {isModelLoading ? (
               <span
                 data-testid="model-loading-state"
-                className="inline-flex items-center gap-1 truncate text-xs"
+                className="inline-flex items-center gap-1 truncate text-lz-meta"
               >
                 <LoaderCircle className="h-3 w-3 animate-spin flex-shrink-0" />
                 <span className="truncate">{triggerLabel}</span>
               </span>
             ) : (
-              <span className="truncate text-xs">{triggerLabel}</span>
+              <span className="truncate text-lz-meta">{triggerLabel}</span>
             )}
           </div>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="center" className="w-64 text-sm">
-          <h6 className="text-xs text-text-primary mt-2 ml-2">
+          <h6 className={cx('mt-2 ml-2', TYPE.meta)}>
             {intl.formatMessage(i18n.currentModel)}
           </h6>
-          <p className="flex items-center justify-between text-sm mx-2 pb-2 border-b mb-2">
+          <p
+            className={cx(
+              'mx-2 mb-2 flex items-center justify-between border-b pb-2',
+              TYPE.body,
+              SURFACE.hairline
+            )}
+          >
             {menuModelLabel}
             {!isModelLoading && displayProvider && ` — ${displayProvider}`}
           </p>
           {shouldShowResolvedModel && resolvedDisplayModelName && (
-            <div className="mx-2 pb-2 border-b mb-2">
-              <h6 className="text-xs text-text-primary">
+            <div className={cx('mx-2 mb-2 border-b pb-2', SURFACE.hairline)}>
+              <h6 className={TYPE.meta}>
                 {intl.formatMessage(i18n.resolvedModel)}
               </h6>
-              <p className="text-xs text-text-primary truncate" title={resolvedModel ?? undefined}>
+              <p className="truncate text-lz-meta text-lz-ink" title={resolvedModel ?? undefined}>
                 {resolvedDisplayModelName}
               </p>
             </div>
@@ -277,19 +293,23 @@ export default function ModelsBottomBar({
 
       {isLocalModelSettingsOpen && currentModel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-background-primary border border-border-primary rounded-lg shadow-lg w-[480px] max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
-              <h3 className="text-sm font-medium text-text-default">
+          <div className={cx(SURFACE.overlay, 'flex max-h-[80vh] w-[480px] flex-col')}>
+            <div
+              className={cx('flex items-center justify-between border-b px-4 py-3', SURFACE.hairline)}
+            >
+              <h3 className={cx(TYPE.body, WEIGHT.semibold)}>
                 {intl.formatMessage(i18n.localModelSettingsTitle, {
                   modelName: getModelDisplayName(currentModel),
                 })}
               </h3>
-              <button
+              <StudioButton
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label={intl.formatMessage(i18n.close)}
+                icon={<X />}
                 onClick={() => setIsLocalModelSettingsOpen(false)}
-                className="text-text-muted hover:text-text-default text-lg leading-none"
-              >
-                ×
-              </button>
+              />
             </div>
             <ScrollArea className="flex-1 px-4 py-3 overflow-y-auto max-h-[calc(80vh-52px)]">
               <ModelSettingsPanel modelId={currentModel} />

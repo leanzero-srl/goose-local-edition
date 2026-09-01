@@ -3,6 +3,7 @@ import { render, type RenderOptions, screen, waitFor } from '@testing-library/re
 import ModelsBottomBar from './ModelsBottomBar';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
+import { assertStudioClean } from '../../../lz/assertStudioClean';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
@@ -273,5 +274,33 @@ describe('ModelsBottomBar', () => {
       expect(mockChangeModel).not.toHaveBeenCalled();
       expect(mockPollEnabled).not.toHaveBeenCalledWith(true);
     });
+  });
+});
+
+/**
+ * Studio remake: the trigger's readout is the meta step (it sits in a quiet Chip in ChatInput);
+ * the menu's labels are meta in ink-3, the current model the body step. Never
+ * `text-text-primary/70 text-xs`.
+ */
+describe('ModelsBottomBar (Studio)', () => {
+  it('the readout is the meta step; menu labels are meta over a body value', () => {
+    const { container } = renderWithIntl(
+      <ModelsBottomBar
+        sessionId="session-123"
+        dropdownRef={createDropdownRef()}
+        setView={vi.fn()}
+        sessionModel="session-model"
+        sessionProvider="session-provider"
+        onModelChanged={mockOnModelChanged}
+        sessionLoaded={true}
+      />
+    );
+    expect(screen.getByText('session-model').className).toContain('text-lz-meta');
+    const label = screen.getByText('Current model');
+    expect(label.className).toContain('text-lz-meta');
+    expect(label.className).toContain('text-lz-ink-3');
+    expect(container.querySelector('.text-xs')).toBeNull();
+    expect(container.innerHTML).not.toContain('text-text-primary/70');
+    assertStudioClean(container);
   });
 });
