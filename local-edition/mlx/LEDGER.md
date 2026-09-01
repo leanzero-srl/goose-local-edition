@@ -1,5 +1,31 @@
 # MLX engine campaign — LEDGER
 
+## 2026-09-01 — LEANZERO LINK wired into goosed (b5c0ab725); P1-P3 real, deeper half is a decision
+
+crates/goose/src/acp/server/link.rs: LinkManager global (OnceLock, lazy, rebuilds on identity-email
+change, never auto-connects), GoosedSwarmStateSource over SessionManager+AgentManager. ACP methods
+_goose/unstable/leanzeroLink/{health, requestCode{email}, verify{email,code}, connect, status,
+logout{wipe?}, nodes} + capability goose.leanzeroLink. LinkState/AuthState/MeshStatus camelCase; the
+`nodes` {self,peers} payload is snake_case NodeState verbatim (companion contract). node_token =
+HMAC-SHA256(key=email_lowercased, msg="leanzero-link/v1/node-token") hex — iOS must match. Worker URL
+= env LEANZERO_LINK_WORKER_URL else the (still-unverified) crate default. control port 41226, listens
+only while Connected.
+
+DELTA COVERAGE (honest): subscribe_local_deltas emits NodeStateChanged + SessionUpserted (session
+index + node status mirror across devices — P4's structural half). It does NOT emit per-message
+SessionDelta — the per-session MessageEvent buses live in goose-server which DEPENDS ON goose, so
+crates/goose can't pull them; full P4 needs a process-wide MessageEvent tap INJECTED from the
+goose-server side into the SwarmStateSource at boot (dependency-inversion, not a pull). No delta faked.
+
+TWO DECISIONS PUT TO MIHAI (not built speculatively — dead-enforcement ban + unscoped subsystem):
+(1) IDLE GUARD needs a cross-node task-delegation path (node A ships a task to node B's goose over
+the mesh) — that path doesn't exist yet; a guard without it is a gate nothing passes. Build the
+delegation subsystem now, or ship P1-P3 + guard-ready and defer cross-node execution?
+(2) FULL DELTA MIRRORING (per-message) = the goose-server process-wide tap above — this pass or follow-up?
+NEXT DISPATCHED: Link tab UI (panel-surgeon) — makes P1-P3 visible. Idle-guard (swarm-surgeon) waits
+on decision (1). Helpers for it already exist: link.rs fetch_local_swarm_nodes()/node_token_from_email(),
+peers[].status {type:Idle|Busy|Offline}, control port 41226.
+
 ## 2026-09-01 — LEANZERO LINK manager DONE — all 4 backend pieces landed (8b055f2f1)
 
 crates/leanzero-link now = mesh + control + identity + worker_client + manager. LinkManager is the
