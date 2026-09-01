@@ -542,3 +542,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   (fold + delta + flip-offline); mirrored session_event_bus's replay/seq/eviction contract exactly;
   added ?scope=local as an echo-loop guard and said why; named the missing stable node-id as a
   ledger item. Charter gap: none (charter now exists).
+- 2026-09-01 link-backend (manager, 8b055f2f1): CLEAN++. Introduced the Mesh/MeshFactory trait
+  seam so the connect() state machine tests never spawn a daemon (benchmark-safe) while the real
+  live path stays mesh.rs's guarded #[ignore]; audience_sync kept a String not an enum so a future
+  worker value never fails an otherwise-good sign-in (loud-absence applied to success too); flagged
+  the two integration must-dos (TLS feature, shared-not-per-node control token) AND named its own
+  low-confidence literal (the guessed worker URL) as override-me. Every typed error carries the
+  worker {error} body — no flattening. Charter gap: none.
