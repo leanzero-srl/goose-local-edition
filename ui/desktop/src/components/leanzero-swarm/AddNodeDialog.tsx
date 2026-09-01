@@ -141,7 +141,6 @@ export interface ReassignTarget {
 export interface ProviderOption {
   value: string; // 'mlx' | 'lmstudio' | cloud cli name
   label: string;
-  chip: string;
   /** Cloud rows only: does this machine hold the provider's key (acpListProviderDetails joined on
    *  CLOUD_PROVIDERS.registry)? false renders the explicit "no key — configure in Cloud Providers"
    *  state instead of the add pane. Non-cloud rows and an unreadable provider list are true — the
@@ -169,14 +168,11 @@ export function deriveProviderOptions(
   includeLmStudio: boolean
 ): ProviderOption[] {
   return [
-    { value: 'mlx', label: MLX_CHIP.seg, chip: MLX_CHIP.chip, configured: true },
-    ...(includeLmStudio
-      ? [{ value: 'lmstudio', label: LOCAL_CHIP.seg, chip: LOCAL_CHIP.chip, configured: true }]
-      : []),
+    { value: 'mlx', label: MLX_CHIP.seg, configured: true },
+    ...(includeLmStudio ? [{ value: 'lmstudio', label: LOCAL_CHIP.seg, configured: true }] : []),
     ...CLOUD_PROVIDERS.map((c) => ({
       value: c.cli,
       label: c.label,
-      chip: c.chip,
       configured: configuredRegistryIds == null ? true : configuredRegistryIds.has(c.registry),
     })),
   ];
