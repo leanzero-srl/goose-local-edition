@@ -806,12 +806,13 @@ mod tests {
             manager: state.agent_manager.clone(),
             session_id: session_id.clone(),
         });
-        // The drop spawns the release; give the runtime a turn to run it.
-        for _ in 0..50 {
+        // The drop spawns the release onto the runtime; poll for it to land (a yield is
+        // not enough when the spawned task is scheduled on a busy worker thread).
+        for _ in 0..200 {
             if !state.agent_manager.is_session_busy(&session_id).await {
                 return;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("the busy token was not released after the guard dropped");
     }
