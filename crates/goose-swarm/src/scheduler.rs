@@ -46,6 +46,9 @@ use tokio::sync::{Mutex, Notify};
 /// S12-F: is this gap the SAME work as one that already landed as a shard? The gap text rides
 /// `ShardOf.responsibility` ("MERGE GAP sent out by the merger of `m`: <text>"); the comparison
 /// strips that engine prefix and compares the merger's words, case- and whitespace-folded.
+/// MILD (S14): IDENTICAL text only — a merger that rephrases the same gap gets a second shard,
+/// which is a cost, never a refusal of real work; the door says `merge_gap_repeated` only when
+/// the words match.
 pub fn gap_already_landed(landed_responsibility: &str, new_responsibility: &str) -> bool {
     fn core(s: &str) -> String {
         let s = s.split_once(": ").map(|(_, rest)| rest).unwrap_or(s);

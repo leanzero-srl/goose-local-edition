@@ -325,6 +325,22 @@ pub(super) fn repair_brief_file_mentions(
     rows
 }
 
+/// `decomposition_of`'s own keys plus the advertised endpoints no service brief mentions, so
+/// `plan_repaired.before/after` read exactly like `plan_synthesized` and `plan_patched.after`.
+pub(super) fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
+    let mut flags = super::decomposition_of(&plan.to_string());
+    if let Some(o) = flags.as_object_mut() {
+        o.insert(
+            "unassigned_endpoints".to_string(),
+            serde_json::json!(unassigned_endpoints(plan, spec)
+                .iter()
+                .map(|e| format!("{} {}", e.method, e.path))
+                .collect::<Vec<_>>()),
+        );
+    }
+    flags
+}
+
 /// One advertised endpoint row, with the shape the spec expects of it (`spec_surface_rows`'
 /// `-> EXPECT …` tail) when the table carried one.
 pub(super) struct AdvertisedEndpoint {

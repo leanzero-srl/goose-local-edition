@@ -88,13 +88,13 @@ use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod ledger_writers;
 mod parse_checks;
 mod repair_waves;
-use parse_checks::{rust_compile_error, syntax_error};
+use parse_checks::{rust_compile_error, syntax_error, RustCheck};
 mod plan_repairs;
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
-    repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
-    unassigned_endpoints,
+    plan_flags, repair_brief_file_mentions, repair_sink_deps, repair_sink_files,
+    repair_unassigned_endpoints, unassigned_endpoints,
 };
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
@@ -21070,22 +21070,6 @@ impl PlanRepairs {
     }
 }
 
-/// `decomposition_of`'s own keys plus the advertised endpoints no service brief mentions, so
-/// `plan_repaired.before/after` read exactly like `plan_synthesized` and `plan_patched.after`.
-fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
-    let mut flags = decomposition_of(&plan.to_string());
-    if let Some(o) = flags.as_object_mut() {
-        o.insert(
-            "unassigned_endpoints".to_string(),
-            serde_json::json!(unassigned_endpoints(plan, spec)
-                .iter()
-                .map(|e| format!("{} {}", e.method, e.path))
-                .collect::<Vec<_>>()),
-        );
-    }
-    flags
-}
-
 /// Fix the plan's MEASURED structural defects deterministically, in this order:
 ///
 /// (b) a file two tasks claim stays with the FIRST claimant in plan order;
@@ -27572,7 +27556,8 @@ impl GooseAgentDispatcher {
         // prompt only — it never blocks a read. Empty when off => the worker prompt is byte-identical.
         // Never for a REPAIR shard: its file exists, and "your VERY FIRST tool call MUST be a `write`"
         // contradicts the repair order's read-the-named-part-then-edit (same disarm as the stub notes).
-        let write_first_block = if write_first_on() && !repairing {
+        // Never for the MERGER (S14-4): its first action IS reading the pieces its brief names.
+        let write_first_block = if write_first_on() && !repairing && req.merger_of.is_none() {
             "\nWRITE FIRST — before you read ANYTHING. Your VERY FIRST tool call MUST be a `write` that creates \
              one of your OWNED files as a working skeleton (its imports and the functions/classes the manifest \
              names, with minimal bodies), then fill it in. Do NOT `cat`/`ls`/`tree`/`find`/`grep`/'explore' \
@@ -28412,6 +28397,13 @@ impl GooseAgentDispatcher {
                                 sh,
                             )));
                         }
+                        if let Some(m) = &req.merger_of {
+                            // S14-4: the merger's hint is ASSEMBLE from the pieces, never the file
+                            // author's "write EACH of them IN FULL" — that is the retype.
+                            return Err(DispatchError::ContentRetry(shards::merger_missing_hint(
+                                m, &missing,
+                            )));
+                        }
                         return Err(DispatchError::ContentRetry(format!(
                             "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this \
                              attempt MUST be to `write` EACH of them IN FULL from your spec, then finish — do \
@@ -28458,7 +28450,9 @@ impl GooseAgentDispatcher {
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                     .unwrap_or(true);
                 if compile_gate_on {
-                    if let Some((f, err)) = rust_compile_error(&root, &req.owned_files).await {
+                    if let RustCheck::Ran(Some((f, err))) =
+                        rust_compile_error(&root, &req.owned_files).await
+                    {
                         eprintln!(
                             "  {} {} on {}: {f} does not compile — retry with the fix",
                             style("✗").red().bold(),

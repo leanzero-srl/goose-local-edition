@@ -463,7 +463,7 @@ pub(super) trait ShardRunner: Send + Sync + 'static {
         &self,
         f: &OpenFinding,
         slot: &str,
-        baseline: Arc<std::sync::atomic::AtomicUsize>,
+        baseline: Arc<tokio::sync::RwLock<usize>>,
     ) -> ShardOutcome;
     /// The tree's finding count NOW (None = the gate could not run).
     async fn regrade(&self) -> Option<usize>;
@@ -491,6 +491,8 @@ fn conflict_note(conflicts: &[(String, Vec<String>)]) -> String {
 /// the tree after every promotion and hand the NEW count to every shard still running (the
 /// baseline is shared, S13-b), re-shard on a handoff or a conflict at once, park a finding on the
 /// current tree when it made no progress, and stop when nothing is dispatchable and nothing runs.
+/// MILD (S14): two findings with IDENTICAL text collapse to one key — one shard fixes both, and
+/// the second row is closed by the same promotion, never dispatched twice.
 pub(super) async fn drive_wave<R: ShardRunner>(
     runner: Arc<R>,
     sink: Arc<dyn EventSink>,
@@ -499,9 +501,10 @@ pub(super) async fn drive_wave<R: ShardRunner>(
     findings: Vec<OpenFinding>,
     fleet_slots: Vec<String>,
 ) -> WaveOutcome {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     let mut open = findings;
-    let baseline = Arc::new(AtomicUsize::new(baseline));
+    // S14-5: a LOCK, not an atomic — the driver holds the WRITE guard across the regrade so a
+    // sibling finishing meanwhile parks on `read()` and compares against the re-graded count.
+    let baseline = Arc::new(tokio::sync::RwLock::new(baseline));
     let mut tree_version: u64 = 0;
     let mut outcome = WaveOutcome::default();
     let slots = if fleet_slots.is_empty() {
@@ -587,15 +590,24 @@ pub(super) async fn drive_wave<R: ShardRunner>(
             done.insert(key.clone());
             // RE-VERIFY after each promotion: the next shard — and every shard still running —
             // is judged against the tree it lands on, never the round's opening count (S13-b).
+            // The WRITE guard is held for the whole regrade (S14-5): a sibling that finishes
+            // during it parks on `baseline.read()` instead of reading the PRE-promotion count —
+            // a preview that already contains this fix graded 8 < 9 and landed a
+            // fix-one-break-one as an improvement. When the gate cannot run the previous count
+            // stays in force and the event SAYS which count that is.
+            let mut guard = baseline.write().await;
             let verified = runner.regrade().await;
             if let Some(v) = verified {
-                baseline.store(v, Ordering::SeqCst);
+                *guard = v;
             }
+            let baseline_in_force = *guard;
+            drop(guard);
             sink.write_value(serde_json::json!({
                 "event": "repair_tree_regraded",
                 "round": round,
                 "after_finding": super::findings::elide_middle(&key, 150, 400),
                 "findings": verified,
+                "baseline_in_force": baseline_in_force,
                 "tree_version": tree_version,
             }));
             // Siblings parked on the old tree may try again on the new one.
@@ -669,7 +681,7 @@ impl ShardRunner for DispatcherShardRunner {
         &self,
         f: &OpenFinding,
         slot: &str,
-        baseline: Arc<std::sync::atomic::AtomicUsize>,
+        baseline: Arc<tokio::sync::RwLock<usize>>,
     ) -> ShardOutcome {
         run_finding_shard(self, f, slot, baseline).await
     }
@@ -790,11 +802,11 @@ async fn run_finding_shard(
     r: &DispatcherShardRunner,
     f: &OpenFinding,
     model: &str,
-    baseline: Arc<std::sync::atomic::AtomicUsize>,
+    baseline: Arc<tokio::sync::RwLock<usize>>,
 ) -> ShardOutcome {
     let (sink, me, round, all_files, cwd) = (&r.sink, &r.me, r.round, &r.all_files, &r.cwd);
     let task_id = format!("complete-fix::{}#{}", f.file, f.k);
-    let baseline_at_dispatch = baseline.load(std::sync::atomic::Ordering::SeqCst);
+    let baseline_at_dispatch = *baseline.read().await;
     sink.write_value(serde_json::json!({
         "event": "complete_fix_dispatched",
         "round": round, "shard": f.file, "finding_index": f.k, "model": model,
@@ -882,7 +894,8 @@ async fn run_finding_shard(
     // S13-b: compare against the baseline AS IT IS NOW — a sibling that landed while this shard
     // ran lowered it, and a preview that already contains the sibling's fix must beat the
     // post-sibling count, never the opening one (or a regression lands as an improvement).
-    let baseline_now = baseline.load(std::sync::atomic::Ordering::SeqCst);
+    // S14-5: `read()` parks while the driver holds the write guard across a sibling's regrade.
+    let baseline_now = *baseline.read().await;
     let would_promote = shard_changed
         && !conflicted
         && !unavailable
@@ -1183,7 +1196,7 @@ mod tests {
             script: HashMap<String, (u64, bool)>,
             dispatched: Mutex<Vec<String>>,
             regrades: AtomicUsize,
-            baselines_seen: Mutex<Vec<usize>>,
+            baselines_seen: Mutex<Vec<(String, usize)>>,
         }
         #[async_trait]
         impl ShardRunner for Scripted {
@@ -1191,15 +1204,16 @@ mod tests {
                 &self,
                 f: &OpenFinding,
                 _slot: &str,
-                baseline: Arc<AtomicUsize>,
+                baseline: Arc<tokio::sync::RwLock<usize>>,
             ) -> ShardOutcome {
                 self.dispatched.lock().unwrap().push(f.text.clone());
                 let (delay, promoted) = self.script.get(&f.text).copied().unwrap_or((0, false));
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                let seen = *baseline.read().await;
                 self.baselines_seen
                     .lock()
                     .unwrap()
-                    .push(baseline.load(Ordering::SeqCst));
+                    .push((f.text.clone(), seen));
                 ShardOutcome {
                     promoted,
                     conflict_note: None,
@@ -1207,7 +1221,10 @@ mod tests {
                     handoff_files: Vec::new(),
                 }
             }
+            // S14-5: a SLOW gate — the sibling finishing during it must still read the re-graded
+            // count (the driver holds the write guard), never the pre-promotion one.
             async fn regrade(&self) -> Option<usize> {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 let n = self.regrades.fetch_add(1, Ordering::SeqCst) + 1;
                 Some(9 - n)
             }
@@ -1284,10 +1301,24 @@ mod tests {
                 .collect();
             assert_eq!(versions, vec![1, 2], "{events:?}");
             let seen = runner.baselines_seen.lock().unwrap().clone();
-            assert!(
-                seen.contains(&8),
-                "a later shard reads the refreshed baseline: {seen:?}"
+            let mut s12: Vec<usize> = seen
+                .iter()
+                .filter(|(t, _)| t == "S1" || t == "S2")
+                .map(|(_, b)| *b)
+                .collect();
+            s12.sort_unstable();
+            assert_eq!(
+                s12,
+                vec![8, 9],
+                "the second of S1/S2 finishes DURING the first's 300 ms regrade and must read the \
+                 re-graded 8, never the pre-promotion 9 ({d1},{d2}): {seen:?}"
             );
+            let in_force: Vec<u64> = events
+                .iter()
+                .filter(|e| e["event"] == "repair_tree_regraded")
+                .map(|e| e["baseline_in_force"].as_u64().unwrap())
+                .collect();
+            assert_eq!(in_force, vec![8, 7], "{events:?}");
             assert_eq!(out.findings_left, 1, "S3 stays open; S1/S2 are done");
         }
     }
