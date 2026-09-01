@@ -815,3 +815,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   amendment arm pinned byte-identical, traced two YES and two honest NO, and found the probe is a
   bare bodyless curl whose emitter drops the status/body it holds. Recovered from MY staging sweep
   cleanly. ORCHESTRATOR LESSON: `git commit --only <paths>` while any surgeon is in flight.
+- 2026-09-01 05:05 fix-tracer (placement 623ae8eef): EXEMPLARY. Replayed the OLD key against the five
+  logged devices (5/5 match) before walking the new one — the divergence point is measured, not
+  argued; then dismantled the commit's wall-clock derivation honestly (a floor built from inflated
+  walls) and replaced it with a band. Named the aux-door and long-pole residuals precisely.
+  Charter gap: none.
