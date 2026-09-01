@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  ChevronDown,
   Download,
   Folder,
   HardDrive,
@@ -18,7 +17,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { Select } from '../ui/Select';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import {
   Dialog,
@@ -42,7 +40,6 @@ import {
   FOCUS,
   MOTION,
   RADIUS,
-  ROW,
   SURFACE,
   TNUM,
   TONE_DOT,
@@ -82,6 +79,7 @@ import {
 } from '../../acp/mlx-engine';
 import { DownloadProgressRow, SolidBanner, formatCount, formatDate, formatGb } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
+import { StudioSelect, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
@@ -443,12 +441,10 @@ function NumericField({
 }
 
 // ---------------------------------------------------------------------------
-// Model pickers — the app's custom react-select wrapper, never a native <select>.
+// Model pickers — the hub's StudioSelect listbox, never a native <select>.
 // ---------------------------------------------------------------------------
 
-interface ModelOption {
-  value: string;
-  label: string;
+interface ModelOption extends StudioSelectOption {
   model: MlxLocalModel;
 }
 
@@ -462,6 +458,10 @@ function ModelOptionLabel({ option }: { option: ModelOption }) {
   );
 }
 
+/**
+ * The mount picker: a Studio listbox where an incomplete model stays visible but cannot be
+ * picked; the ghost ✕ beside it clears the selection (the picker has always been clearable).
+ */
 function ModelPicker({
   models,
   value,
@@ -477,27 +477,38 @@ function ModelPicker({
     value: model.id,
     label: model.id,
     model,
+    disabled: !model.complete,
   }));
   const selected = options.find((o) => o.value === value) ?? null;
   return (
-    <Select
-      options={options}
-      value={selected}
-      isDisabled={disabled}
-      placeholder={
-        models.length === 0 ? 'No models in the models folder yet' : 'Pick a model to mount'
-      }
-      isOptionDisabled={(o) => !(o as ModelOption).model.complete}
-      formatOptionLabel={(o) => <ModelOptionLabel option={o as ModelOption} />}
-      onChange={(o) => onChange(o ? (o as ModelOption).value : null)}
-      isClearable
-    />
+    <div className="flex items-center gap-2">
+      <StudioSelect
+        className="min-w-0 flex-1"
+        aria-label="Model to mount"
+        options={options}
+        value={selected}
+        disabled={disabled}
+        placeholder={
+          models.length === 0 ? 'No models in the models folder yet' : 'Pick a model to mount'
+        }
+        renderOption={(o) => <ModelOptionLabel option={o} />}
+        onChange={(o) => onChange(o ? o.value : null)}
+      />
+      {selected && !disabled && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<X />}
+          onClick={() => onChange(null)}
+          aria-label="Clear model selection"
+          title="Clear the selection"
+        />
+      )}
+    </div>
   );
 }
 
-interface ProfileModelOption {
-  value: string;
-  label: string;
+interface ProfileModelOption extends StudioSelectOption {
   local: boolean;
   hasProfile: boolean;
 }
@@ -545,13 +556,13 @@ function SamplingModelPicker({
   ];
   const selected = options.find((o) => o.value === value) ?? null;
   return (
-    <Select
+    <StudioSelect
       aria-label="Sampling model"
       options={options}
       value={selected}
       placeholder={options.length === 0 ? 'No local models yet' : 'Pick a model to tune'}
-      formatOptionLabel={(o) => <ProfileModelOptionLabel option={o as ProfileModelOption} />}
-      onChange={(o) => onChange(o ? (o as ProfileModelOption).value : null)}
+      renderOption={(o) => <ProfileModelOptionLabel option={o} />}
+      onChange={(o) => onChange(o ? o.value : null)}
     />
   );
 }
@@ -1877,7 +1888,7 @@ function ModelsSection({
 // ---------------------------------------------------------------------------
 // Device target picker — manage models on ANY linked device, not just the local
 // one. Node list comes from `leanzeroLink/nodes` (self + peers). Never a native
-// <select>: a Studio listbox on the overlay token.
+// <select>: the hub's StudioSelect listbox.
 // ---------------------------------------------------------------------------
 
 interface DeviceTarget {
@@ -1904,11 +1915,15 @@ function NodeStatusChip({ status }: { status: NodeStatus }) {
   return <Chip tone={v.tone}>{v.label}</Chip>;
 }
 
+interface DeviceOption extends StudioSelectOption {
+  target: DeviceTarget;
+}
+
 /**
- * The node dropdown. "This device" (self) is always first and default; each connected peer
- * follows with its hostname and a live idle/busy chip. A peer stays selectable even when busy
- * — model management (list/browse/download) works while a node runs a session; an
- * unreachable/offline peer surfaces its backend error in the ops below.
+ * The node dropdown — a Studio listbox. "This device" (self) is always first and default;
+ * each connected peer follows with its hostname and a live idle/busy chip. A peer stays
+ * selectable even when busy — model management (list/browse/download) works while a node
+ * runs a session; an unreachable/offline peer surfaces its backend error in the ops below.
  */
 function DeviceTargetPicker({
   targets,
@@ -1921,82 +1936,40 @@ function DeviceTargetPicker({
   onChange: (nodeId: string | null) => void;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocMouseDown);
-    return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [open]);
-
-  const selected = targets.find((t) => t.nodeId === value) ?? targets[0] ?? null;
-
+  const options: DeviceOption[] = targets.map((t) => ({
+    value: t.nodeId ?? 'self',
+    label: deviceLabel(t),
+    target: t,
+  }));
+  const selected = options.find((o) => o.target.nodeId === value) ?? options[0] ?? null;
   return (
-    <div ref={rootRef} className="relative min-w-[240px]">
-      <button
-        type="button"
-        data-testid="mlx-device-target"
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={cx(
-          'flex h-8 w-full items-center gap-2 bg-lz-surface px-3 text-left text-lz-body text-lz-ink [&_svg]:size-4 [&_svg]:shrink-0',
-          SURFACE.outline,
-          RADIUS.control,
-          DISABLED,
-          FOCUS,
-          MOTION
-        )}
-      >
-        <Laptop className="text-lz-ink-3" />
-        <span className={cx('min-w-0 flex-1 truncate', WEIGHT.medium)}>
-          {selected ? deviceLabel(selected) : 'This device'}
+    <StudioSelect
+      className="min-w-[240px]"
+      aria-label="Manage models on device"
+      options={options}
+      value={selected}
+      disabled={disabled}
+      placeholder="This device"
+      renderOption={(o) => (
+        <span className="flex min-w-0 items-center gap-2 [&_svg]:size-4 [&_svg]:shrink-0">
+          <Laptop className="text-lz-ink-3" />
+          <span className={cx('min-w-0 truncate', WEIGHT.medium)}>{o.label}</span>
+          {o.target.status && <NodeStatusChip status={o.target.status} />}
         </span>
-        {selected?.status && <NodeStatusChip status={selected.status} />}
-        <ChevronDown className="text-lz-ink-3" />
-      </button>
-      {open && (
-        <div
-          role="listbox"
-          aria-label="Manage models on device"
-          className={cx('absolute left-0 top-full z-[60] mt-1 w-full p-1', SURFACE.overlay)}
-        >
-          {targets.map((t) => (
-            <button
-              key={t.nodeId ?? 'self'}
-              type="button"
-              role="option"
-              aria-selected={t.nodeId === value}
-              data-testid={`mlx-device-target-option-${t.nodeId ?? 'self'}`}
-              title={deviceLabel(t)}
-              onClick={() => {
-                onChange(t.nodeId);
-                setOpen(false);
-              }}
-              className={cx(
-                'flex w-full items-center gap-2 px-2.5 text-left text-lz-body [&_svg]:size-4 [&_svg]:shrink-0',
-                ROW.dense,
-                RADIUS.control,
-                t.nodeId === value ? SURFACE.selected : cx('text-lz-ink', SURFACE.hover),
-                MOTION
-              )}
-            >
-              <Laptop />
-              <span className={cx('min-w-0 truncate', WEIGHT.medium)}>{deviceLabel(t)}</span>
-              {t.status && <NodeStatusChip status={t.status} />}
-            </button>
-          ))}
-        </div>
       )}
-    </div>
+      optionTestId={(o) => `mlx-device-target-option-${o.target.nodeId ?? 'self'}`}
+      onChange={(o) => onChange(o ? o.target.nodeId : null)}
+    />
   );
 }
 
+/**
+ * Poll the mesh roster for the device picker. Gated on the `leanzeroLink` capability and a
+ * `connected` auth state — the common case right now (no worker deployed) yields no peers, so
+ * the picker is hidden and the whole view behaves exactly as before. A transient status blip
+ * keeps the last roster rather than yanking the user's selection back to local; a definitive
+ * "not connected" clears the peers.
+ */
 function useLinkNodes(enabled: boolean): NodesResponse | null {
   const [nodes, setNodes] = useState<NodesResponse | null>(null);
   useEffect(() => {
