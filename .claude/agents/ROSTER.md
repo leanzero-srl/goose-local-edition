@@ -598,3 +598,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   route validated against MlxOp (unknown→404); documented the two honest asymmetries (no idle guard
   on management by design; remote status skips the local inventory-refresh to avoid a circular dep).
   Destructive ops warn-log on the executor. Charter gap: none.
+- 2026-09-01 panel-surgeon (node picker for remote model mgmt, 926501c01): CLEAN++. One targetNodeId
+  state threaded into all 16 calls via withNode() that OMITS the field when local (byte-identical);
+  activeNodeRef guard drops a fetch that resolves after a device switch (truth layer — stale data
+  never reads as the new node's); picker hidden unless connected+≥1 peer (local == today); remote
+  errors verbatim; destructive ops name the device. Honest live-vs-unit split (remote path needs two
+  connected nodes = a deployed worker). Charter gap: none.
