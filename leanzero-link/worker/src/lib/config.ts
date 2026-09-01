@@ -26,7 +26,7 @@ export interface Config {
   mailFrom: string | undefined;
   tsApiToken: string | undefined;
   tsTailnet: string | undefined;
-  tsNodeTag: string;
+  tsNodeTag: string | undefined;
   tsKeyExpirySeconds: number;
   tsKeyExpiryInvalid: boolean;
   allowedOrigins: string[];
@@ -59,7 +59,11 @@ export function parseConfig(env: WorkerEnvVars): Config {
     mailFrom: nonEmpty(env.LEANZERO_MAIL_FROM),
     tsApiToken: nonEmpty(env.TS_API_TOKEN),
     tsTailnet: nonEmpty(env.TS_TAILNET),
-    tsNodeTag: nonEmpty(env.TS_NODE_TAG) ?? DEFAULT_TS_NODE_TAG,
+    // Distinguish "absent" from "explicitly empty": TS_NODE_TAG unset keeps the
+    // Cloudflare-Worker default tag; TS_NODE_TAG present but empty means mint UNTAGGED
+    // (undefined) — required on a personal tailnet that doesn't own tag:leanzero-link
+    // in its ACL, where minting a tagged key is rejected but untagged succeeds.
+    tsNodeTag: env.TS_NODE_TAG === undefined ? DEFAULT_TS_NODE_TAG : nonEmpty(env.TS_NODE_TAG),
     tsKeyExpirySeconds,
     tsKeyExpiryInvalid,
     allowedOrigins: origins.length > 0 ? origins : ["*"],

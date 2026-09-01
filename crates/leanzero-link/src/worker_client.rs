@@ -13,11 +13,13 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
-/// The LeanZero-hosted worker (Cloudflare `workers.dev`, name from `wrangler.toml`).
-/// A self-hosted deployment overrides this via [`WorkerClient::new`] /
-/// `LinkManagerConfig::worker_base_url`; the exact custom domain, if one is later
-/// fronted, is a deployment detail — this constant is only the default.
-pub const DEFAULT_WORKER_BASE_URL: &str = "https://leanzero-link-auth.leanzero.workers.dev";
+/// The live LeanZero Link auth worker — the self-hosted Node deployment on the Mac
+/// Studio, reachable over Tailscale Funnel at this path on `:443`. A different
+/// deployment overrides this via [`WorkerClient::new`] /
+/// `LinkManagerConfig::worker_base_url`, and the `LEANZERO_LINK_WORKER_URL` env var
+/// always wins over this default; baking the real URL here makes login work after a
+/// reboot without the launchctl env being set.
+pub const DEFAULT_WORKER_BASE_URL: &str = "https://worksmacstudio.tailfc4700.ts.net/leanzero-link";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 

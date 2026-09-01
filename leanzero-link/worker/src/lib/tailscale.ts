@@ -22,7 +22,11 @@ export type JoinKeyMint =
 // OAuth clients — verified against https://tailscale.com/kb/1215/oauth-clients:
 //   token exchange: POST https://api.tailscale.com/api/v2/oauth/token with form-encoded
 //   client_id / client_secret / grant_type=client_credentials → { "access_token": ... }.
-//   "All auth keys created from an OAuth client must use tags" — this worker always sends tags.
+//   "All auth keys created from an OAuth client must use tags" — so an OAuth-client token
+//   REQUIRES a tag; a plain API access token (Basic auth) may mint UNTAGGED keys. When
+//   tsNodeTag is undefined (TS_NODE_TAG explicitly empty) the `tags` field is OMITTED, for
+//   personal tailnets that don't own tag:leanzero-link in their ACL (tagged mint rejected,
+//   untagged accepted — measured live).
 
 type AuthHeader = { ok: true; header: string } | { ok: false; status: number; detail: string };
 
@@ -79,7 +83,7 @@ export async function mintJoinKey(deps: Deps, email: string): Promise<JoinKeyMin
           reusable: false,
           ephemeral: true,
           preauthorized: true,
-          tags: [tsNodeTag],
+          ...(tsNodeTag ? { tags: [tsNodeTag] } : {}),
         },
       },
     },
