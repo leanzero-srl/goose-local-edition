@@ -50,12 +50,19 @@ pub(super) fn spec_surface_rows(spec: &str) -> SpecSurface {
     // "/` + `web/*"; every consumer then took its first whitespace token, "/`", and the gate curled
     // an endpoint that exists nowhere — r0's "GET /` returned 404". The REAL `/` was never emitted
     // at all, so the frontend row went unprobed while its phantom twin blocked green.
+    // A TRAILING ELLIPSIS IS THE WRITER'S "AND BENEATH", NOT PART OF THE PATH (VA-044 F1): sb-7's
+    // Endpoints table points at §5 with `| `POST/GET` | `/api/drafts...` | section 5 |`; the row
+    // advertises `/api/drafts`, and `/api/drafts...` is a route nobody serves — the same phantom
+    // class as "/`". Stripped HERE, once: `spec_get_endpoints` (swarm.rs) trims prose punctuation
+    // on its own and would have hidden it from the GET prober, while `spec_post_endpoints`,
+    // `research::advertised_paths` (rules a and d) and the plan repair read the path as emitted.
     let path_cell = |c: &str| -> String {
         let c = c.trim();
-        match c.strip_prefix('`') {
-            Some(rest) => rest.split('`').next().unwrap_or("").trim().to_string(),
-            None => c.split_whitespace().next().unwrap_or("").to_string(),
-        }
+        let path = match c.strip_prefix('`') {
+            Some(rest) => rest.split('`').next().unwrap_or("").trim(),
+            None => c.split_whitespace().next().unwrap_or(""),
+        };
+        path.trim_end_matches(['.', '…']).to_string()
     };
     // ONE SERVICE'S SURFACE, NOT THE WHOLE DOCUMENT'S. sb-7 documents two services: §3 `ledgerd`,
     // whose table the gate boots and probes, and §6 `notifierd`, whose /notify/* and /health rows
@@ -128,11 +135,25 @@ pub(super) fn spec_surface_rows(spec: &str) -> SpecSurface {
             expected_col = shape_column(&header_cells);
             continue;
         }
-        let method = unwrap_cell(cells[0]).to_uppercase();
-        if !matches!(
-            method.as_str(),
-            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
-        ) {
+        // ONE ROW PER METHOD when the cell names several (VA-044 F1): sb-7's Endpoints table
+        // writes its drafts pointer as `| `POST/GET` | `/api/drafts...` | section 5 |`, and an
+        // exact-method test classed that row as a HEADER — so the Endpoints section advertised
+        // no `/api/drafts` at all: the consumer routing's rule (a) (`research::advertised_paths`
+        // reads each SECTION's own rows) could not carry Endpoints to a slice that names the
+        // drafts path, and the GET prober never saw the bare `GET /api/drafts`. The cell is a
+        // method cell only when EVERY `/`-separated alternative is a method (the same split
+        // `spec_prose_documented_keys` applies); a mixed cell is still a header.
+        let method_cell = unwrap_cell(cells[0]).to_uppercase();
+        let methods: Vec<&str> = method_cell
+            .split('/')
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .collect();
+        if methods.is_empty()
+            || !methods
+                .iter()
+                .all(|m| matches!(*m, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"))
+        {
             header_cells = cells; // a header row, or a table that is not an endpoint table
             continue;
         }
@@ -159,14 +180,16 @@ pub(super) fn spec_surface_rows(spec: &str) -> SpecSurface {
             .filter(|i| *i < cells.len())
             .unwrap_or(cells.len() - 1);
         let expected = unwrap_cell(cells[expected_cell]);
-        rows.push((
-            service,
-            if expected.is_empty() {
-                format!("{method} {path}")
-            } else {
-                format!("{method} {path} -> EXPECT {expected}")
-            },
-        ));
+        for method in methods {
+            rows.push((
+                service.clone(),
+                if expected.is_empty() {
+                    format!("{method} {path}")
+                } else {
+                    format!("{method} {path} -> EXPECT {expected}")
+                },
+            ));
+        }
     }
     SpecSurface {
         primary: primary.map(|(_, name)| name),
@@ -644,7 +667,9 @@ mod tests {
             .filter(|(_, r)| r.contains("/api/drafts"))
             .map(|(_, r)| r.as_str())
             .collect();
-        assert_eq!(drafts.len(), 5, "{drafts:?}");
+        // §5's five rows plus the Endpoints table's `POST/GET` pointer, one row per method
+        // (VA-044 F1) — those two end in the pointer's own cell, "section 5".
+        assert_eq!(drafts.len(), 7, "{drafts:?}");
         for r in &drafts {
             assert!(
                 !r.ends_with("maker or checker")
@@ -806,5 +831,90 @@ mod tests {
         );
         assert!(resource_word_named("health", "GET /api/health"));
         assert!(!resource_word_named("", "anything"));
+    }
+
+    /// VA-044 F1, on the real sb-7 spec: the Endpoints table's drafts pointer is written
+    /// `| `POST/GET` | `/api/drafts...` | section 5 |` — a method cell naming two methods and a
+    /// path with the writer's ellipsis. It used to be classed as a header row, so the Endpoints
+    /// section advertised no `/api/drafts`. Now it is one row per method, the path is the base
+    /// the ellipsis points beneath, and every other table's row count is exactly what it was:
+    /// fourteen Endpoints rows before the pair, §5's five after it, notifierd's four.
+    #[test]
+    fn a_method_cell_naming_two_methods_is_one_row_per_method() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let SpecSurface { primary, rows } = spec_surface_rows(spec);
+        assert_eq!(rows.len(), 25, "{rows:?}");
+        let ledgerd: Vec<&str> = rows
+            .iter()
+            .filter(|(s, _)| *s == primary)
+            .map(|(_, r)| r.as_str())
+            .collect();
+        assert_eq!(ledgerd.len(), 21, "{ledgerd:?}");
+        assert!(
+            ledgerd[0].starts_with("GET / -> EXPECT"),
+            "{:?}",
+            ledgerd[0]
+        );
+        assert!(
+            ledgerd[13].starts_with("GET /api/stream -> EXPECT SSE, section 8"),
+            "the fourteen single-method Endpoints rows come first: {:?}",
+            ledgerd[13]
+        );
+        assert_eq!(ledgerd[14], "POST /api/drafts -> EXPECT section 5");
+        assert_eq!(ledgerd[15], "GET /api/drafts -> EXPECT section 5");
+        assert!(
+            ledgerd[16].starts_with("POST /api/drafts -> EXPECT create from"),
+            "§5's five rows follow, unchanged: {:?}",
+            ledgerd[16]
+        );
+        assert!(
+            ledgerd[20].starts_with("GET /api/drafts?state= -> EXPECT"),
+            "{:?}",
+            ledgerd[20]
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|(s, _)| s.as_deref() == Some("notifierd"))
+                .count(),
+            4
+        );
+        assert!(
+            !rows.iter().any(|(_, r)| {
+                r.split_whitespace()
+                    .nth(1)
+                    .is_some_and(|path| path.ends_with(['.', '…']))
+            }),
+            "the ellipsis is notation, never a path byte: {rows:?}"
+        );
+        // The mutating-path view dedups by path, so the pointer adds no second POST; the
+        // Endpoints row comes first in the document, so `/api/drafts` now precedes its
+        // templated siblings.
+        let posts = spec_post_endpoints(spec);
+        assert_eq!(
+            posts.iter().filter(|p| *p == "/api/drafts").count(),
+            1,
+            "{posts:?}"
+        );
+        assert!(
+            posts.iter().position(|p| p == "/api/drafts")
+                < posts.iter().position(|p| p == "/api/drafts/<id>/submit"),
+            "{posts:?}"
+        );
+
+        // The rule on its own: every alternative must be a method, whitespace around the
+        // slash is tolerated, and a cell that mixes a method with a non-method is a header.
+        let doc = "| Method | Path | Response |\n|---|---|---|\n\
+                   | `POST/GET` | `/api/x...` | see below |\n\
+                   | GET / HEAD | `/api/y` | `{\"y\": 1}` |\n\
+                   | `GET/foo` | `/api/z` | never |\n";
+        assert_eq!(
+            spec_advertised_surface(doc),
+            vec![
+                "POST /api/x -> EXPECT see below".to_string(),
+                "GET /api/x -> EXPECT see below".to_string(),
+                "GET /api/y -> EXPECT {\"y\": 1}".to_string(),
+                "HEAD /api/y -> EXPECT {\"y\": 1}".to_string(),
+            ]
+        );
     }
 }
