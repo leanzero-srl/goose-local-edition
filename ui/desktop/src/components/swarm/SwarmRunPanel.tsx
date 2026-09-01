@@ -64,6 +64,7 @@ import {
   Segmented,
   StatusDot,
   TNUM,
+  TONE_DOT,
   TONE_FILL,
   TONE_TEXT,
   TYPE,
@@ -3169,11 +3170,26 @@ const EventLogZone: React.FC<{
   );
 };
 
-// Threshold color for a confidence value: solid green >=70 (confident), amber 40-69 (unsure), red <40.
+/** The three verdict tones a confidence number can carry. Text, fills and bars are Studio classes
+ *  (TONE_TEXT / TONE_FILL / TONE_DOT); the SVG gauge paints strokes and fills, so it has its own
+ *  literal class maps; the token variable survives only for confColorVsFloor's pinned contract. */
+type ConfTone = 'ok' | 'warn' | 'err';
+const CONF_TONE_VAR: Record<ConfTone, string> = {
+  ok: STATUS_COLOR.done,
+  warn: AMBER,
+  err: STATUS_COLOR.error,
+};
+const CONF_STROKE: Record<ConfTone, string> = {
+  ok: 'stroke-lz-ok',
+  warn: 'stroke-lz-warn',
+  err: 'stroke-lz-err',
+};
+const CONF_FILL: Record<ConfTone, string> = { ok: 'fill-lz-ok', warn: 'fill-lz-warn', err: 'fill-lz-err' };
+
+// Threshold tone for a confidence value: solid green >=70 (confident), amber 40-69 (unsure), red <40.
 // Use this for the SUB-SIGNALS (agreement / spec-clarity), where the point is which one is lower — not
-// whether the run may proceed. For the headline number use confColorVsFloor.
-const confColor = (v: number): string =>
-  v >= 70 ? STATUS_COLOR.done : v >= 40 ? AMBER : STATUS_COLOR.error;
+// whether the run may proceed. For the headline number use confToneVsFloor.
+const confTone = (v: number): ConfTone => (v >= 70 ? 'ok' : v >= 40 ? 'warn' : 'err');
 
 /** Colour for the HEADLINE confidence, against the engine's own bar.
  *
@@ -3182,12 +3198,15 @@ const confColor = (v: number): string =>
  *  one channel a user reads before any words — while the run had stopped and asked. confVerdict was fixed
  *  for exactly this and the colour was left behind, so the pill went on being green next to text saying
  *  "Below your bar of 80". No floor = that run never asks = there is no bar = the band is all we can say. */
-export const confColorVsFloor = (v: number, floor: number | null): string => {
-  if (floor == null) return confColor(v);
-  if (v >= floor) return STATUS_COLOR.done;
+export const confToneVsFloor = (v: number, floor: number | null): ConfTone => {
+  if (floor == null) return confTone(v);
+  if (v >= floor) return 'ok';
   // Under the bar. Amber = goose asked and is waiting; red = it is not close.
-  return v >= floor - 20 ? AMBER : STATUS_COLOR.error;
+  return v >= floor - 20 ? 'warn' : 'err';
 };
+/** The same verdict as the palette's token variable — the contract confColorVsFloor.test.ts pins. */
+export const confColorVsFloor = (v: number, floor: number | null): string =>
+  CONF_TONE_VAR[confToneVsFloor(v, floor)];
 
 // One signal (agreement / spec-clarity). The value leads at full weight in its own colour, the track is a
 // real 6px bar with a SOLID fill (never a tint), and the engine's reason sits directly under it at full
@@ -3203,44 +3222,27 @@ const ConfSignal: React.FC<{
   binding: boolean;
   askFloor?: number | null;
 }> = ({ label, value, reason, binding, askFloor = null }) => {
-  const col = confColorVsFloor(value, askFloor);
+  const tone = confToneVsFloor(value, askFloor);
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline gap-2">
-        <span className={`${EYEBROW_CLASS} text-text-primary`}>
-          {label}
-        </span>
+        <span className={TYPE.zone}>{label}</span>
         {binding ? (
-          <span
-            className="text-[11px] font-lz-semibold px-1.5 py-px text-background-primary"
-            style={{ backgroundColor: col, borderRadius: CHIP_RADIUS }}
-          >
+          <span className={cx('px-1.5 py-px text-lz-meta', WEIGHT.semibold, RADIUS.control, TONE_FILL[tone])}>
             binding
           </span>
         ) : null}
-        <span
-          className="ml-auto text-[17px] font-extrabold leading-none tabular-nums"
-          style={{ color: col }}
-        >
+        <span className={cx('ml-auto text-[17px] leading-none', WEIGHT.semibold, TNUM, TONE_TEXT[tone])}>
           {value}
         </span>
       </div>
-      <div
-        className="h-1.5 bg-background-primary border border-border-primary overflow-hidden"
-        style={{ borderRadius: CHIP_RADIUS }}
-      >
+      <div className={cx('h-1.5 overflow-hidden border border-lz-border bg-lz-surface-2', RADIUS.control)}>
         <div
-          className="h-full"
-          style={{
-            width: `${Math.max(0, Math.min(100, value))}%`,
-            backgroundColor: col,
-            transition: 'width 500ms ease-out',
-          }}
+          className={cx('h-full', TONE_DOT[tone])}
+          style={{ width: `${Math.max(0, Math.min(100, value))}%`, transition: 'width 500ms ease-out' }}
         />
       </div>
-      {reason ? (
-        <div className="text-[11px] leading-snug text-text-secondary">{reason}</div>
-      ) : null}
+      {reason ? <div className="text-lz-meta leading-snug text-lz-ink-2">{reason}</div> : null}
     </div>
   );
 };
@@ -3259,7 +3261,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
   const sweep = 0.75; // 270°
   const track = sweep * circ;
   const fill = (v / 100) * sweep * circ;
-  const col = confColorVsFloor(v, askFloor);
+  const tone = confToneVsFloor(v, askFloor);
   return (
     <svg width={size} height={size} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`plan confidence ${v} of 100${askFloor != null ? `, your bar is ${askFloor}` : ''}`}>
       <circle
@@ -3267,7 +3269,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         cy="40"
         r={r}
         fill="none"
-        stroke="var(--color-border-primary)"
+        className="stroke-lz-border"
         strokeWidth="8"
         strokeDasharray={`${track} ${circ}`}
         transform="rotate(135 40 40)"
@@ -3277,7 +3279,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         cy="40"
         r={r}
         fill="none"
-        stroke={col}
+        className={CONF_STROKE[tone]}
         strokeWidth="8"
         strokeDasharray={`${fill} ${circ}`}
         transform="rotate(135 40 40)"
@@ -3291,7 +3293,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
           y="38.6"
           width="13"
           height="2.8"
-          fill="var(--color-text-primary)"
+          className="fill-lz-ink"
           transform={`rotate(${135 + (Math.max(0, Math.min(100, askFloor)) / 100) * 270} 40 40)`}
         />
       ) : null}
@@ -3300,13 +3302,8 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         y="39"
         textAnchor="middle"
         dominantBaseline="middle"
-        style={{
-          fill: col,
-          fontSize: 24,
-          fontWeight: 800,
-          letterSpacing: -0.6,
-          fontVariantNumeric: 'tabular-nums',
-        }}
+        className={cx(CONF_FILL[tone], TNUM)}
+        style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.6 }}
       >
         {v}
       </text>
@@ -3318,7 +3315,8 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         y="55.5"
         textAnchor="middle"
         dominantBaseline="middle"
-        style={{ fill: col, fontSize: 9, fontWeight: 700, letterSpacing: 0.5 }}
+        className={CONF_FILL[tone]}
+        style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5 }}
       >
         /100
       </text>
@@ -3401,18 +3399,19 @@ const ConfidenceBreakdownBody: React.FC<{
       <div className="flex items-center gap-3.5">
         <ConfGauge value={conf.final} askFloor={askFloor} />
         <div className="min-w-0">
-          <div className="text-[11px] font-lz-medium text-text-secondary">
-            Plan confidence
-          </div>
+          <div className="text-lz-meta text-lz-ink-3">Plan confidence</div>
           <div
-            className="text-[15px] font-lz-semibold leading-snug mt-1"
-            style={{ color: confColorVsFloor(conf.final, askFloor) }}
+            className={cx(
+              'mt-1 text-[15px] leading-snug',
+              WEIGHT.semibold,
+              TONE_TEXT[confToneVsFloor(conf.final, askFloor)]
+            )}
           >
             {confVerdict(conf.final, askFloor)}
           </div>
           {askFloor != null ? (
-            <div className="text-[11px] text-text-secondary mt-1">
-              Your bar is <span className="font-lz-semibold text-text-primary">{askFloor}</span> — below it, goose
+            <div className="mt-1 text-lz-meta text-lz-ink-3">
+              Your bar is <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>{askFloor}</span> — below it, goose
               asks you instead of guessing.
             </div>
           ) : null}
@@ -3420,10 +3419,7 @@ const ConfidenceBreakdownBody: React.FC<{
       </div>
       {/* Full border, never a left rail. The two signals are one group because the LOWER of them IS the
           headline score — showing them apart hides that relationship. */}
-      <div
-        className="border border-border-primary px-3 py-3 space-y-4"
-        style={{ borderRadius: CHIP_RADIUS }}
-      >
+      <div className={cx('space-y-4 border border-lz-border px-3 py-3', RADIUS.control)}>
         <ConfSignal
           label="Agreement"
           value={conf.agreement}
@@ -3440,27 +3436,27 @@ const ConfidenceBreakdownBody: React.FC<{
         />
       </div>
       <div>
-        <div className="text-[11px] font-lz-medium text-text-secondary mb-1.5">
+        <div className="mb-1.5 text-lz-meta text-lz-ink-3">
           What&apos;s holding it back
         </div>
         {showDecisions ? (
           <ul className="space-y-0.5">
             {conf.openDecisions.map((d, i) => (
-              <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
-                <span className="text-text-secondary shrink-0">·</span>
+              <li key={i} className="text-[12px] leading-relaxed text-lz-ink flex gap-1.5">
+                <span className="text-lz-ink-3 shrink-0">·</span>
                 <span>{d}</span>
               </li>
             ))}
           </ul>
         ) : (
-          <div className="text-[12px] leading-relaxed text-text-primary">{holdingBack}</div>
+          <div className="text-[12px] leading-relaxed text-lz-ink">{holdingBack}</div>
         )}
       </div>
       <div>
-        <div className="text-[11px] font-lz-medium text-text-secondary mb-1.5">
+        <div className="mb-1.5 text-lz-meta text-lz-ink-3">
           What would raise it
         </div>
-        <div className="text-[12px] leading-relaxed text-text-primary">{raiseIt}</div>
+        <div className="text-[12px] leading-relaxed text-lz-ink">{raiseIt}</div>
       </div>
       {trail && trail.length >= 2 ? (
         <div className="flex items-center gap-2">
@@ -3468,12 +3464,8 @@ const ConfidenceBreakdownBody: React.FC<{
             {trail.map((v, i) => (
               <div
                 key={i}
-                style={{
-                  width: 4,
-                  height: `${Math.max(6, v * 0.24)}px`,
-                  backgroundColor: confColor(v),
-                  borderRadius: 1,
-                }}
+                className={TONE_DOT[confTone(v)]}
+                style={{ width: 4, height: `${Math.max(6, v * 0.24)}px`, borderRadius: 1 }}
               />
             ))}
           </div>
@@ -3481,7 +3473,7 @@ const ConfidenceBreakdownBody: React.FC<{
             {trail.map((v, i) => (
               <React.Fragment key={i}>
                 {i > 0 ? ' → ' : ''}
-                <span style={i === trail.length - 1 ? { color: confColor(v) } : undefined}>{v}</span>
+                <span className={i === trail.length - 1 ? TONE_TEXT[confTone(v)] : undefined}>{v}</span>
               </React.Fragment>
             ))}
           </span>
@@ -3498,8 +3490,12 @@ const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value
     label={`Planner confidence in how it broke this app down — ${value}/100. ${confVerdict(value, askFloor)}.`}
   >
     <span
-      className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-lz-medium tabular-nums"
-      style={{ backgroundColor: confColorVsFloor(value, askFloor), borderRadius: CHIP_RADIUS }}
+      className={cx(
+        'flex shrink-0 items-center gap-1 px-1.5 py-0.5 text-lz-meta',
+        TNUM,
+        RADIUS.control,
+        TONE_FILL[confToneVsFloor(value, askFloor)]
+      )}
     >
       <Gauge className="h-2.5 w-2.5" />
       conf {value}
@@ -3572,10 +3568,10 @@ const HeaderMetrics: React.FC<{
   return (
     <span className="flex items-center gap-3 shrink-0 tabular-nums">
       <Tip label="Total wall-clock time since the run started.">
-        <span className="text-xs font-lz-semibold text-text-primary">{fmtElapsed(elapsedMin)}</span>
+        <span className="text-xs font-lz-semibold text-lz-ink">{fmtElapsed(elapsedMin)}</span>
       </Tip>
       <Tip label="A deliberately rough range — the local fleet is variable, so a precise figure would lie.">
-        <span className="text-xs text-text-secondary">{etaLabel}</span>
+        <span className="text-xs text-lz-ink-3">{etaLabel}</span>
       </Tip>
     </span>
   );
@@ -4473,7 +4469,7 @@ const ClarifyPrompt: React.FC<{
               <ul className="px-2 pb-2 space-y-0.5">
                 {plan.map((t) => (
                   <li key={t.id} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
-                    <span className="text-text-secondary shrink-0">·</span>
+                    <span className="text-lz-ink-3 shrink-0">·</span>
                     <InlineMarkdown content={t.description || t.id} />
                   </li>
                 ))}
