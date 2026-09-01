@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Plus, Server, Trash2 } from 'lucide-react';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { useConfig } from '../ConfigContext';
 import { useFleet, deviceFromModelId } from '../swarm/useFleet';
@@ -11,9 +11,23 @@ import {
   nodeRows,
   DEFAULTS,
 } from '../settings/swarm/golden';
-import { WeightStepper } from './primitives';
 import { chipFor, cloudCliErr, LOCAL_CHIP, MLX_CHIP } from './cloud';
 import AddNodeDialog, { type ReassignTarget } from './AddNodeDialog';
+import {
+  Button,
+  Chip,
+  DataTable,
+  EmptyState,
+  Panel,
+  StatusDot,
+  SURFACE,
+  TYPE,
+  WEIGHT,
+  cx,
+  type DataTableColumn,
+  type NodeIndex,
+} from '../lz';
+import { ToneBanner, WeightStepper, nodeHue } from './studio';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18nMsg = defineMessages({
@@ -52,26 +66,26 @@ const i18nMsg = defineMessages({
       'Changing what serves {id} works by REMOVING the node and RE-ADDING it under the provider you pick next. Nothing changes until the new add commits.',
   },
   reassignConfirm: { id: 'swarmSettings.reassignConfirm', defaultMessage: 'Pick new provider' },
-  noNodes: {
-    id: 'swarmSettings.noNodes',
-    defaultMessage: 'No nodes yet — add one with “Add node”.',
-  },
 });
 
-const NODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-
-/** What serves a node, as a solid chip: cloud provider > LeanZero MLX engine > LM Studio. */
-function providerChipOf(row: NodeRow): { seg: string; chip: string } {
+/** What serves a node, as its label: cloud provider > LeanZero MLX engine > LM Studio. */
+function providerLabelOf(row: NodeRow): string {
   const cloud = chipFor(row.provider);
-  if (cloud) return { seg: cloud.seg, chip: cloud.chip };
-  if (row.engine === 'mlx-sidecar') return MLX_CHIP;
-  return LOCAL_CHIP;
+  if (cloud) return cloud.seg;
+  if (row.engine === 'mlx-sidecar') return MLX_CHIP.seg;
+  return LOCAL_CHIP.seg;
+}
+
+/** A node row with its identity hue by list position — the hue is identity only, never state. */
+interface NodeView {
+  row: NodeRow;
+  hue: NodeIndex;
 }
 
 /**
  * The Swarm Settings tab — NODES ONLY, per the owner's simplification: "I just want Add node, for
  * each node choose provider, and then for all nodes choose weights. That is it." Per row: label,
- * provider chip (click = the remove+re-add reassign flow), model id, ONE stepper — the ROUTING SHARE
+ * provider (click = the remove+re-add reassign flow), model id, ONE stepper — the ROUTING SHARE
  * (SwarmDevice.speed_weight), how much of the work a node gets — remove. Concurrency
  * (SwarmDevice.weight) is left at its default and is NOT edited here.
  *
@@ -265,135 +279,144 @@ export default function SwarmNodesSection({
 
   const endpoint = cfg.endpoint ?? DEFAULTS.endpoint ?? '';
 
+  const view: NodeView[] = rows.map((row, i) => ({ row, hue: nodeHue(i) }));
+
+  const columns: DataTableColumn<NodeView>[] = [
+    {
+      key: 'node',
+      header: 'Node',
+      cell: ({ row, hue }) => {
+        const isCloud = row.provider != null;
+        const name = isCloud ? row.modelId : deviceFromModelId(row.modelId) || row.id;
+        return (
+          <span className="flex items-center gap-2">
+            <StatusDot node={hue} label={`node ${name}`} />
+            <span className={cx('truncate', WEIGHT.semibold)} title={row.modelId}>
+              {name}
+            </span>
+          </span>
+        );
+      },
+    },
+    {
+      key: 'provider',
+      header: 'Provider',
+      cell: ({ row }) => {
+        const label = providerLabelOf(row);
+        const isRemoteMlx = row.engine === 'mlx-sidecar' && row.host != null;
+        return (
+          <span className="flex items-center gap-2">
+            {row.configured ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<ArrowLeftRight />}
+                onClick={() => setPendingReassign(row)}
+                title={intl.formatMessage(i18nMsg.reassignAria)}
+                aria-label={`${label}: ${row.id}`}
+              >
+                {label}
+              </Button>
+            ) : (
+              <span className={TYPE.body}>{label}</span>
+            )}
+            {!row.configured && (
+              <Chip title={intl.formatMessage(i18nMsg.autoChipTitle)}>
+                {intl.formatMessage(i18nMsg.autoChip)}
+              </Chip>
+            )}
+            {isRemoteMlx && (
+              <span data-testid={`awaiting-routing-${row.id}`}>
+                <Chip tone="stopped" title={intl.formatMessage(i18nMsg.awaitingChipTitle)}>
+                  {intl.formatMessage(i18nMsg.awaitingChip)}
+                </Chip>
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'model',
+      header: 'Model',
+      cell: ({ row }) =>
+        row.provider != null ? (
+          <span className="text-lz-ink-4">—</span>
+        ) : (
+          <span className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3" title={row.modelId}>
+            {row.modelId}
+          </span>
+        ),
+    },
+    {
+      key: 'share',
+      header: intl.formatMessage(i18nMsg.shareLabel),
+      numeric: true,
+      cell: ({ row }) => (
+        <WeightStepper value={shareOf(row)} onChange={(v) => setNodeShare(row, v)} label={row.id} />
+      ),
+    },
+  ];
+
   return (
     <section id="swarm-nodes" className="flex flex-col gap-4 pb-8">
-      <div className="overflow-hidden rounded border border-border-primary">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-primary bg-background-secondary px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-            {intl.formatMessage(i18nMsg.nodesTitle)}
-          </span>
-          <span className="text-xs text-text-secondary">{intl.formatMessage(i18nMsg.nodesDesc)}</span>
-          <button
-            type="button"
+      <Panel
+        title={intl.formatMessage(i18nMsg.nodesTitle)}
+        count={rows.length}
+        padded={false}
+        headerRight={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus />}
             data-testid="swarm-add-node"
             onClick={() => {
               setReassignTarget(null);
               setAddOpen(true);
             }}
-            className="ml-auto flex shrink-0 items-center gap-1.5 rounded px-3 py-1.5 text-xs font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: '#2e8bff' }}
           >
-            <Plus className="h-3.5 w-3.5" />
             {intl.formatMessage(i18nMsg.addNode)}
-          </button>
-        </div>
+          </Button>
+        }
+      >
+        {nodeError && (
+          <div className="px-4 pt-4">
+            <ToneBanner tone="err" label="Nodes" text={nodeError} />
+          </div>
+        )}
 
-        <div className="flex flex-col gap-1.5 px-3 py-3">
-          {nodeError && (
-            <div
-              className="rounded px-3 py-2 text-xs font-semibold text-white"
-              style={{ backgroundColor: '#e5484d' }}
-              role="alert"
-            >
-              {nodeError}
-            </div>
-          )}
+        <DataTable
+          aria-label={intl.formatMessage(i18nMsg.nodesTitle)}
+          columns={columns}
+          rows={view}
+          rowKey={(v) => v.row.id}
+          rowAction={({ row }) =>
+            row.configured ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Trash2 />}
+                onClick={() => {
+                  setNodeError(null);
+                  setPendingRemove(row);
+                }}
+                aria-label={`${intl.formatMessage(i18nMsg.removeAria)}: ${row.id}`}
+              />
+            ) : null
+          }
+          empty={
+            <EmptyState
+              icon={<Server />}
+              title="No nodes yet"
+              body="Add one with “Add node” — it joins the pool the moment the add commits."
+            />
+          }
+        />
 
-          {rows.length === 0 ? (
-            <div className="rounded border border-border-primary px-3 py-4 text-center text-sm text-text-secondary">
-              {intl.formatMessage(i18nMsg.noNodes, { endpoint })}
-            </div>
-          ) : (
-            rows.map((row, idx) => {
-              const chip = providerChipOf(row);
-              const isCloud = row.provider != null;
-              const isRemoteMlx = row.engine === 'mlx-sidecar' && row.host != null;
-              const name = isCloud ? row.modelId : deviceFromModelId(row.modelId) || row.id;
-              return (
-                <div
-                  key={row.id}
-                  data-testid={`swarm-node-${row.id}`}
-                  className="flex items-center justify-between gap-3 rounded border border-border-primary px-2.5 py-1.5"
-                >
-                  <span className="min-w-0 flex items-center gap-2">
-                    <span className="w-12 shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-secondary">
-                      Node {NODE_LETTERS[idx] ?? '+'}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={!row.configured}
-                      onClick={() => {
-                        if (!row.configured) return;
-                        setPendingReassign(row);
-                      }}
-                      title={row.configured ? intl.formatMessage(i18nMsg.reassignAria) : undefined}
-                      aria-label={`${chip.seg}: ${row.id}`}
-                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-background-primary"
-                      style={{ backgroundColor: chip.chip }}
-                    >
-                      {chip.seg.toUpperCase()}
-                    </button>
-                    {!row.configured && (
-                      <span
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-background-primary"
-                        style={{ backgroundColor: '#64748b' }}
-                        title={intl.formatMessage(i18nMsg.autoChipTitle)}
-                      >
-                        {intl.formatMessage(i18nMsg.autoChip)}
-                      </span>
-                    )}
-                    {isRemoteMlx && (
-                      <span
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                        style={{ backgroundColor: '#f5a623', color: '#1a1a1a' }}
-                        title={intl.formatMessage(i18nMsg.awaitingChipTitle)}
-                        data-testid={`awaiting-routing-${row.id}`}
-                      >
-                        {intl.formatMessage(i18nMsg.awaitingChip)}
-                      </span>
-                    )}
-                    <span className="truncate font-mono text-sm text-text-primary" title={row.modelId}>
-                      {name}
-                    </span>
-                    {!isCloud && (
-                      <span
-                        className="hidden truncate font-mono text-xs text-text-secondary md:inline"
-                        title={row.modelId}
-                      >
-                        {row.modelId}
-                      </span>
-                    )}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary">
-                      {intl.formatMessage(i18nMsg.shareLabel)}
-                    </span>
-                    <WeightStepper
-                      value={shareOf(row)}
-                      onChange={(v) => setNodeShare(row, v)}
-                      label={row.id}
-                    />
-                    {row.configured && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNodeError(null);
-                          setPendingRemove(row);
-                        }}
-                        aria-label={`${intl.formatMessage(i18nMsg.removeAria)}: ${row.id}`}
-                        className="flex h-6 w-6 items-center justify-center rounded text-white hover:opacity-90"
-                        style={{ backgroundColor: '#e5484d' }}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    )}
-                  </span>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+        <p className={cx('border-t px-4 py-3', SURFACE.hairline, TYPE.bodyMuted)}>
+          {intl.formatMessage(i18nMsg.nodesDesc)}
+        </p>
+      </Panel>
 
       <AddNodeDialog
         open={addOpen}
