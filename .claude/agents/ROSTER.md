@@ -831,3 +831,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   check, read the `passed` emit site so the row cannot lie, and fixed two ledger-truth defects it
   found on the way (slot-header merge, artifact-inflated code counts) with replays proving the old
   numbers. Charter gap: none.
+- 2026-09-01 05:50 swarm-surgeon (gate A follow-up, afae2eb1b): EXEMPLARY — the standard for a
+  refuted-then-redone fix. Reused the tracer's replay as its harness and ran it on the REAL code
+  against the archive; derived the render source from the served page's own <script src> list
+  (no probe change, no name list); and BOOTED the archived app to replay the gate's bare curl,
+  discovering four of eight findings were probe artifacts (JSON 401 envelopes) — turning "the
+  lanes refuted the gate" from a suspicion into a measurement. Charter gap: none.

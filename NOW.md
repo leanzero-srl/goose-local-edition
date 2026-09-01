@@ -83,9 +83,9 @@ and all three fixes are in flight; NO r6d LAUNCH until each is landed with an in
   FOLLOW-UP: the endpoint probe must RECORD status+body into the finding (see TICK-NOTES).
 
 r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (INDEPENDENTLY CONFIRMED at web-viz 12:01:05.541221; −28..−42% band, unmeasured)
-· [ ] GATE A ownership: 8b7fa6c5b traced NO overall (F1 sourceless; drafts.py never a shard) — follow-up surgeon in flight, must re-run the replay · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
+· [~] GATE A ownership: afae2eb1b landed — replay on the r6c archive: 0 unowned in both rounds (F1→web/app.js via authored source; drafts.py owned via segment claims; handoff persisted+consumed); four of r6c's eight findings were probe artifacts (bare POST → JSON 401) now inconclusive-with-evidence — INDEPENDENT TRACE IN FLIGHT · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
 reproduction loops; HANDOFF was a dead letter → persistence+consumption folded into the gate-A surgeon;
-probe evidence = gap 3 there) · [ ] probe findings carry request/status/body (swarm.rs:20648, queued behind C) · [ ]
+probe evidence = gap 3 there) · [x] probe findings carry request/status/body (afae2eb1b, post_probe.rs) · [ ]
 levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set dispatch weight 1 per
 node (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) — HOW: r6c got weight 2 from
 LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by model_id > speed_weight >
