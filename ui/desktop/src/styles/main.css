@@ -414,6 +414,87 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Colour registration — self-referential like the MCP block above, so the bg-lz-, text-lz-,
+   border-lz- and ring-lz- utilities exist. Each surface token falls back to the nearest MCP
+   semantic token so a Studio primitive rendered outside .local-edition degrades to the host
+   theme instead of to a transparent (invisible) fill. */
+@theme inline {
+  --color-lz-bg: var(--color-lz-bg, var(--color-background-primary));
+  --color-lz-surface: var(--color-lz-surface, var(--color-background-primary));
+  --color-lz-surface-2: var(--color-lz-surface-2, var(--color-background-secondary));
+  --color-lz-border: var(--color-lz-border, var(--color-border-primary));
+  --color-lz-border-strong: var(--color-lz-border-strong, var(--color-border-secondary));
+  --color-lz-ink: var(--color-lz-ink, var(--color-text-primary));
+  --color-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
+  --color-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
+  --color-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
+
+  /* THE accent = the existing action fill (white ink in both themes). */
+  --color-lz-accent: var(--color-action-solid, #1d4ed8);
+  --color-lz-accent-hover: var(--color-lz-accent-hover, #1e40af);
+  --color-lz-accent-ink: #ffffff;
+  /* Secondary accent — SPARING: the reasoning/thinking channel and one secondary emphasis. */
+  --color-lz-secondary: var(--color-lz-secondary, #6d28d9);
+  --color-lz-secondary-ink: var(--color-lz-secondary-ink, #ffffff);
+
+  /* Status triad — `-solid` is a FILL carrying white ink; the bare token is for text, icons, dots. */
+  --color-lz-ok: var(--color-status-ok, #16a34a);
+  --color-lz-warn: var(--color-status-warn, #d97706);
+  --color-lz-err: var(--color-status-err, #dc2626);
+  --color-lz-stopped: var(--color-status-stopped, #475569);
+  --color-lz-ok-solid: var(--color-status-ok-solid, #15803d);
+  --color-lz-warn-solid: var(--color-status-warn-solid, #b45309);
+  --color-lz-err-solid: var(--color-status-err-solid, #dc2626);
+  --color-lz-stopped-solid: var(--color-status-stopped-solid, #475569);
+
+  /* Node identity ramp + its ink — NODE IDENTITY ONLY, never chrome, never status. */
+  --color-lz-node-1: var(--color-node-1, #1d4ed8);
+  --color-lz-node-2: var(--color-node-2, #0891b2);
+  --color-lz-node-3: var(--color-node-3, #7c3aed);
+  --color-lz-node-4: var(--color-node-4, #ea580c);
+  --color-lz-node-5: var(--color-node-5, #db2777);
+  --color-lz-node-6: var(--color-node-6, #16a34a);
+  --color-lz-node-1-ink: var(--color-node-1-ink, #ffffff);
+  --color-lz-node-2-ink: var(--color-node-2-ink, #0b0b0b);
+  --color-lz-node-3-ink: var(--color-node-3-ink, #ffffff);
+  --color-lz-node-4-ink: var(--color-node-4-ink, #0b0b0b);
+  --color-lz-node-5-ink: var(--color-node-5-ink, #ffffff);
+  --color-lz-node-6-ink: var(--color-node-6-ink, #0b0b0b);
+}
+
+/* LeanZero Studio surfaces — light. Slate neutrals shared with leanzero.net. Every value is a
+   solid 6-digit hex: no alpha, no tint, no color-mix (src/components/lz/tokens.test.tsx refuses). */
+.local-edition {
+  --color-lz-bg: #f8fafc;
+  --color-lz-surface: #ffffff;
+  --color-lz-surface-2: #f1f5f9;
+  --color-lz-border: #e2e8f0;
+  --color-lz-border-strong: #cbd5e1;
+  --color-lz-ink: #0f172a;
+  --color-lz-ink-2: #334155;
+  --color-lz-ink-3: #64748b;
+  --color-lz-ink-4: #94a3b8;
+  --color-lz-accent-hover: #1e40af;
+  --color-lz-secondary: #6d28d9;
+  --color-lz-secondary-ink: #ffffff;
+}
+
+/* LeanZero Studio surfaces — dark. */
+.dark.local-edition {
+  --color-lz-bg: #0b1220;
+  --color-lz-surface: #0f172a;
+  --color-lz-surface-2: #1e293b;
+  --color-lz-border: #1e293b;
+  --color-lz-border-strong: #334155;
+  --color-lz-ink: #f8fafc;
+  --color-lz-ink-2: #cbd5e1;
+  --color-lz-ink-3: #94a3b8;
+  --color-lz-ink-4: #64748b;
+  --color-lz-accent-hover: #2563eb;
+  --color-lz-secondary: #c084fc;
+  --color-lz-secondary-ink: #0b1220;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    6. BASE LAYER + FONTS + ANIMATIONS + COMPONENTS
    Everything below is standard Tailwind @layer base / component styles.
