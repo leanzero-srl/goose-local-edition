@@ -7,7 +7,6 @@ import LoadingGoose from './LoadingGoose';
 import ProgressiveMessageList from './ProgressiveMessageList';
 import { MainPanelLayout } from './Layout/MainPanelLayout';
 import ChatInput from './ChatInput';
-import { ChatInputCard } from './ChatInputCard';
 import { ScrollArea, ScrollAreaHandle } from './ui/scroll-area';
 import { useFileDrop } from '../hooks/useFileDrop';
 import { useEdition } from '../contexts/EditionContext';
@@ -15,7 +14,6 @@ import { ChatState } from '../types/chatState';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useNavigationContextSafe } from './Layout/NavigationContext';
-import { cn } from '../utils';
 import { useChatSession } from '../hooks/useChatSession';
 import { acpDeleteSession, acpUpdateWorkingDir } from '../acp/sessions';
 import { acpChatSessionActions } from '../acp/chatSessionStore';
@@ -43,6 +41,20 @@ import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import NodesStrip from './swarm/NodesStrip';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
+import {
+  Button,
+  Chip,
+  FOCUS,
+  MOTION,
+  Panel,
+  RADIUS,
+  StatusDot,
+  SURFACE,
+  TONE_FILL,
+  TYPE,
+  WEIGHT,
+  cx,
+} from './lz';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -66,6 +78,110 @@ const i18n = defineMessages({
     defaultMessage: 'Dismiss',
   },
 });
+
+/**
+ * The session's brand mark, top right. ONE quiet chip: the wordmark beside a solid accent mark
+ * (the LeanZero monogram on the accent fill) in the Swarm edition; the goose wordmark otherwise.
+ * The links are the ones the old cluster carried.
+ */
+export function SessionBrand({ isLocal }: { isLocal: boolean }) {
+  const anchor = cx('no-drag inline-flex', RADIUS.control, FOCUS);
+  const chip = cx(MOTION, 'hover:text-lz-ink', SURFACE.hover);
+  if (isLocal) {
+    return (
+      <a
+        href={LEANZERO_WEBSITE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={anchor}
+        title="Goose Swarm — powered by LeanZero"
+        data-testid="local-edition-badge"
+      >
+        <Chip
+          className={chip}
+          icon={
+            <span
+              data-testid="brand-mark"
+              className={cx(
+                'inline-flex size-3.5 items-center justify-center rounded-[3px]',
+                TONE_FILL.accent
+              )}
+            >
+              <LeanZero />
+            </span>
+          }
+        >
+          LeanZero Swarm
+        </Chip>
+      </a>
+    );
+  }
+  return (
+    <a
+      href="https://goose-docs.ai"
+      target="_blank"
+      rel="noopener noreferrer"
+      className={anchor}
+      data-testid="goose-brand"
+    >
+      <Chip className={chip} icon={<Goose className="goose-icon-animation" />}>
+        goose
+      </Chip>
+    </a>
+  );
+}
+
+/**
+ * A prompt that failed to submit — the socket dropped, the backend restarted, the machine slept.
+ * Deliberately a BANNER and not the full-screen wall below: the conversation is intact both in the
+ * store and on disk, and replacing it with an error page made a recoverable blip look exactly like
+ * data loss. A Panel with a warn dot, dismissible, and the history stays on screen behind it.
+ */
+export function SubmitErrorBanner({ error, onDismiss }: { error: string; onDismiss: () => void }) {
+  const intl = useIntl();
+  return (
+    <div role="status" data-testid="submit-error-banner" className="mx-4 mt-2 shrink-0">
+      <Panel padded={false}>
+        <div className="flex items-start gap-3 px-4 py-3">
+          <StatusDot tone="warn" label={intl.formatMessage(i18n.promptFailed)} className="mt-1.5" />
+          <div className="min-w-0 flex-1">
+            <p className={cx(TYPE.body, WEIGHT.semibold)}>{intl.formatMessage(i18n.promptFailed)}</p>
+            <p className={cx(TYPE.bodyMuted, 'break-words')}>{error}</p>
+            <p className={cx(TYPE.meta, 'mt-0.5')}>{intl.formatMessage(i18n.promptFailedHint)}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onDismiss}>
+            {intl.formatMessage(i18n.dismiss)}
+          </Button>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/** The session could not be loaded at all: a Panel with an err dot and the one way back. */
+export function SessionLoadErrorPanel({ error, onGoHome }: { error: string; onGoHome: () => void }) {
+  const intl = useIntl();
+  return (
+    <div data-testid="session-load-error" className="flex flex-col items-center justify-center p-8">
+      <Panel className="mb-4 w-full max-w-md">
+        <div className="flex items-start gap-3">
+          <StatusDot
+            tone="err"
+            label={intl.formatMessage(i18n.failedToLoadSession)}
+            className="mt-1.5"
+          />
+          <div className="min-w-0 flex-1">
+            <h3 className={TYPE.h2}>{intl.formatMessage(i18n.failedToLoadSession)}</h3>
+            <p className={cx(TYPE.bodyMuted, 'mt-1 break-words')}>{error}</p>
+          </div>
+        </div>
+      </Panel>
+      <Button variant="secondary" onClick={onGoHome}>
+        {intl.formatMessage(i18n.goHome)}
+      </Button>
+    </div>
+  );
+}
 
 interface BaseChatProps {
   setChat: (chat: ChatType) => void;
@@ -92,7 +208,6 @@ export default function BaseChat({
   noAutoSubmit,
   isActiveSession,
 }: BaseChatProps) {
-  const intl = useIntl();
   const location = useLocation();
   const navigate = useNavigate();
   const scrollRef = useRef<ScrollAreaHandle>(null);
@@ -107,6 +222,7 @@ export default function BaseChat({
   const setView = useNavigation();
   const isNavCollapsed = !navContext?.isNavExpanded;
   const headerSpacingClassName = isMobile || isNavCollapsed ? 'pt-16' : 'pt-12';
+  const headerBarClassName = isMobile || isNavCollapsed ? 'h-16' : 'h-12';
   const { droppedFiles, setDroppedFiles, handleDrop, handleDragOver } = useFileDrop();
   const onStreamFinish = useCallback(() => {}, []);
 
@@ -398,22 +514,12 @@ export default function BaseChat({
           {renderHeader && renderHeader()}
           <div className="flex flex-col flex-1 min-h-0 relative">
             <div className="flex-1 flex items-center justify-center">
-              <div className="flex flex-col items-center justify-center p-8">
-                <div className="text-red-700 dark:text-red-300 bg-red-400/50 p-4 rounded-lg mb-4 max-w-md">
-                  <h3 className="font-semibold mb-2">
-                    {intl.formatMessage(i18n.failedToLoadSession)}
-                  </h3>
-                  <p className="text-sm">{sessionLoadError}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    setView('chat');
-                  }}
-                  className="px-4 py-2 text-center cursor-pointer text-text-primary border border-border-primary hover:bg-background-secondary rounded-lg transition-all duration-150"
-                >
-                  {intl.formatMessage(i18n.goHome)}
-                </button>
-              </div>
+              <SessionLoadErrorPanel
+                error={sessionLoadError}
+                onGoHome={() => {
+                  setView('chat');
+                }}
+              />
             </div>
           </div>
         </MainPanelLayout>
@@ -431,7 +537,7 @@ export default function BaseChat({
     >
       <ScrollArea
         ref={scrollRef}
-        className={cn('flex-1 min-h-0 relative pr-1 pb-10', !isLocal && headerSpacingClassName)}
+        className={cx('flex-1 min-h-0 relative pr-1 pb-10', !isLocal && headerSpacingClassName)}
         autoScroll
         onDrop={handleDrop}
         onDragOver={handleDragOver}
@@ -511,9 +617,11 @@ export default function BaseChat({
         </div>
       )}
 
-      <ChatInputCard
-        className={cn(
-          'relative z-10 mx-4 mb-4',
+      <div
+        data-testid="chat-input-card"
+        className={cx(
+          SURFACE.card,
+          'relative z-10 mx-4 mb-4 overflow-hidden',
           !disableAnimation && 'animate-[fadein_400ms_ease-in_forwards]'
         )}
       >
@@ -556,7 +664,7 @@ export default function BaseChat({
           latestInference={latestInference}
           {...customChatInputProps}
         />
-      </ChatInputCard>
+      </div>
     </div>
   );
 
@@ -583,75 +691,36 @@ export default function BaseChat({
         {/* Custom header */}
         {renderHeader && renderHeader()}
 
-        {/* A prompt that failed to submit — the socket dropped, the backend restarted, the machine slept.
-            This is deliberately a BANNER and not the full-screen wall above: the conversation is intact both
-            in the store and on disk, and replacing it with an error page made a recoverable blip look
-            exactly like data loss. Solid amber, dismissible, and the history stays on screen behind it. */}
         {submitError && !sessionLoadError && (
-          <div className="mx-4 mt-2 shrink-0 bg-[#b45309] text-white px-3 py-2 flex items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold">{intl.formatMessage(i18n.promptFailed)}</p>
-              <p className="text-xs opacity-90 break-words">{submitError}</p>
-              <p className="text-xs opacity-90 mt-0.5">{intl.formatMessage(i18n.promptFailedHint)}</p>
-            </div>
-            <button
-              onClick={() => acpChatSessionActions.clearSubmitError(sessionId)}
-              className="text-xs font-bold underline shrink-0 hover:opacity-80"
-            >
-              {intl.formatMessage(i18n.dismiss)}
-            </button>
-          </div>
+          <SubmitErrorBanner
+            error={submitError}
+            onDismiss={() => acpChatSessionActions.clearSubmitError(sessionId)}
+          />
         )}
 
         {/* Chat container with sticky recipe header */}
         <div className="flex flex-col flex-1 min-h-0 relative">
-          {/* Goose watermark - top right */}
-          <div className="absolute top-[14px] right-4 z-[60] flex flex-row items-center gap-1">
-            <a
-              href="https://goose-docs.ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="no-drag flex flex-row items-center gap-1 hover:opacity-80 transition-opacity"
-            >
-              <Goose className="size-5 goose-icon-animation" />
-              <span className="text-sm leading-none text-text-secondary -translate-y-px">
-                goose
-              </span>
-            </a>
-            {isLocal && (
-              <span
-                className="text-[10px] font-bold uppercase tracking-wide text-white px-1.5 py-px no-drag"
-                style={{ backgroundColor: 'var(--color-action-solid, #1d4ed8)', borderRadius: 6 }}
-                data-testid="local-edition-badge"
-                title="Goose Swarm"
-              >
-                swarm
-              </span>
+          {/* The top bar's hairline — the session title (SessionActionsHeader) and the brand chip sit
+              on this band; it never takes a click, so the window drag region stays whole. */}
+          <div
+            aria-hidden
+            data-testid="session-topbar-hairline"
+            className={cx(
+              'pointer-events-none absolute inset-x-0 top-0 z-20 border-b',
+              headerBarClassName,
+              SURFACE.hairline
             )}
-            {isLocal && (
-              <span
-                className="no-drag flex flex-row items-center gap-1 text-[11px] leading-none text-text-secondary"
-                title="Goose Swarm — powered by LeanZero"
-              >
-                <span>powered by</span>
-                <a
-                  href={LEANZERO_WEBSITE_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-row items-center gap-1 font-medium text-text-primary hover:opacity-80 transition-opacity"
-                >
-                  <LeanZero className="size-3" />
-                  LeanZero
-                </a>
-              </span>
-            )}
+          />
+          {/* Brand — top right, one quiet chip */}
+          <div className="absolute top-[14px] right-4 z-[60] flex flex-row items-center gap-2">
+            <SessionBrand isLocal={isLocal} />
             <EnvironmentBadge className="translate-y-px" />
           </div>
 
           <SessionActionsHeader session={session} onSessionChange={updateSession} />
 
           {isLocal ? (
-            <div className={cn('flex flex-1 min-h-0 flex-col', headerSpacingClassName)}>
+            <div className={cx('flex flex-1 min-h-0 flex-col', headerSpacingClassName)}>
               <SwarmWorkspace
                 active={showSwarmWorkspace}
                 conversation={conversationPane}
