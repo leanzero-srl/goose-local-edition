@@ -1,5 +1,31 @@
 # MLX engine campaign — LEDGER
 
+## 2026-09-01 — LEANZERO LINK manager DONE — all 4 backend pieces landed (8b055f2f1)
+
+crates/leanzero-link now = mesh + control + identity + worker_client + manager. LinkManager is the
+engine goosed drives. WIRE goosed+UI build on:
+AuthState (tag "state"): LoggedOut | CodeSent{email, expires_at} | LoggedIn{email} |
+Connecting{email} | Connected{email, mesh_ip}. LinkState{auth, mesh: MeshStatus|null, node_count,
+last_error}. Methods (async): new/with_mesh_factory, health, request_code(email)→{email,
+expires_in_seconds}, verify(email,code)→{token,email,audience_sync:String}, connect(), status()→
+LinkState, logout(wipe). Identity at ~/.leanzero/identity.json (0600, atomic, absent=None,
+malformed=loud). Mesh trait + MeshFactory seam = tests never spawn tailscaled; live path stays
+mesh.rs's #[ignore]. Node hostname = machine+6hex persisted at ~/.leanzero/node-id (base≤56 so
+Tailscale's 63-char truncation keeps the suffix).
+
+GOOSE-SERVER PASS MUST (banked so it survives compaction):
+1. GoosedSwarmStateSource over SessionManager + session_event_bus (local_node busy/idle from
+   AgentManager, local_sessions from the DB, subscribe_local_deltas mapping MessageEvent→LinkEvent).
+2. Construct LinkManager, set worker_base_url to the REAL deployed worker (the crate default
+   "https://leanzero-link-auth.leanzero.workers.dev" is an UNVERIFIED guess — override explicitly).
+3. Enable leanzero-link/rustls-tls feature (else the HTTPS worker call is a loud Transport error).
+4. ControlConfig.node_token = a SHARED per-account secret (NOT the per-node JWT — each differs and
+   fails the cross-node constant-time compare). v1 answer: HMAC-SHA256(account_email, app_constant)
+   computed client-side — same for all the account's nodes, no worker round-trip; the tailnet is
+   the real isolation boundary, this is defense in depth.
+5. Expose the 9 methods as leanzeroLink/* ACP methods + boot the manager.
+NEXT after goose-server: dispatcher idle-guard (swarm-surgeon) ∥ Link tab UI (panel-surgeon).
+
 ## 2026-09-01 — LEANZERO LINK control service DONE (companion-app contract; 923689793)
 
 crates/leanzero-link control.rs+wire.rs+pubsub.rs+state.rs. WIRE (UI + swarm-surgeon idle-guard +
