@@ -143,9 +143,12 @@ export const SWARM_STATUS = {
   solidStopped: 'var(--color-status-stopped-solid, #475569)',
 } as const;
 
-/** The zone-header register every ribbon/zone label uses — 11px, semibold, uppercase, 0.08em. The ONE
- *  place uppercase + tracking is allowed; inline meta is 11px normal case on the secondary token. */
-export const EYEBROW_CLASS = 'text-[11px] font-semibold uppercase tracking-[0.08em]';
+/** The zone-header register every ribbon/zone label uses — the Studio `zone` type step (11px, 600,
+ *  +0.08em, DESIGN.md "Typography"), which is the ONE uppercase register. `font-semibold` used to carry
+ *  the weight here and compiles to NOTHING in this app (measured: the MCP theme registration sets
+ *  `--font-weight-*` to `initial`), so every zone label rendered at 400; the token step carries its own
+ *  weight. Inline meta stays 11px normal case on ink-3. */
+export const EYEBROW_CLASS = 'text-lz-zone uppercase';
 
 /** Chip and panel radii — the two values the swarm view is allowed to use. */
 export const CHIP_RADIUS = 6;
