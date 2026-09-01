@@ -35,6 +35,7 @@ use crate::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
     PeerRegistry, RemoteExecutor, SwarmStateSource,
 };
+use crate::token::node_token_from_secret;
 use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
 };
@@ -85,6 +86,11 @@ impl MeshFactory for RealMeshFactory {
 /// `identity_path` are overridable for tests; `mesh` and `control` template the mesh
 /// daemon and the `/v1/swarm` service (their `hostname` / `mesh_ip` are filled in at
 /// `connect()` time).
+///
+/// `control.node_token` is a TEMPLATE value and may be left empty: `connect()` replaces
+/// it with the token derived from the worker-issued account secret before the service
+/// starts, so the template never reaches [`ControlService::start`] — whose
+/// [`ControlError::EmptyToken`] refusal stays as the guard behind that promise.
 #[derive(Debug, Clone)]
 pub struct LinkManagerConfig {
     pub worker_base_url: String,
@@ -138,6 +144,8 @@ pub enum LinkError {
     Identity(#[from] IdentityError),
     #[error("not logged in — verify an email code first")]
     NotLoggedIn,
+    #[error("the auth worker did not issue a node secret; update the worker and sign in again")]
+    NoNodeSecret,
     #[error("busy: a connect is already in progress or the mesh is connected")]
     Busy,
     #[error("remote execution is not wired on this node")]
@@ -180,6 +188,9 @@ struct Active {
     registry: PeerRegistry,
     poll_task: JoinHandle<()>,
     mesh_ip: String,
+    /// The `/v1/swarm` bearer this connection serves AND presents to peers — derived at
+    /// connect time from the worker-issued account secret, never from the template.
+    node_token: String,
 }
 
 impl Drop for Active {
@@ -454,6 +465,20 @@ impl LinkManager {
             Err(err) => return Err(err.into()),
         };
 
+        // The node token is derived from the worker-issued account secret and nothing
+        // else. A worker that did not issue one is a loud refusal BEFORE any daemon is
+        // spawned — never a token derived from the email or the template's placeholder.
+        let secret = key
+            .node_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or(ConnectFailure {
+                error: LinkError::NoNodeSecret,
+                logout: false,
+            })?;
+        let node_token = node_token_from_secret(secret);
+
         let mut mesh_config = self.config.mesh.clone();
         mesh_config.hostname = node_hostname.clone();
         // A Headscale key carries the control server it belongs to; join against that,
@@ -506,6 +531,7 @@ impl LinkManager {
 
         let mut control_config = self.config.control.clone();
         control_config.mesh_ip = Some(mesh_ip_addr);
+        control_config.node_token = node_token.clone();
         let control = match ControlService::start(
             control_config,
             self.source.clone(),
@@ -540,6 +566,7 @@ impl LinkManager {
             registry,
             poll_task,
             mesh_ip,
+            node_token,
         })
     }
 
@@ -590,6 +617,18 @@ impl LinkManager {
             .map(|active| active.registry.clone())
     }
 
+    /// The live connection's `/v1/swarm` bearer (`None` when not connected) — what the
+    /// host's loopback proxy presents to this node's own control service. Derived from
+    /// the worker-issued account secret at connect time; never the template value.
+    pub async fn node_token(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|active| active.node_token.clone())
+    }
+
     /// Drive a remote execution: tell `target_node_id`'s goose to run `req`. This is how
     /// node A acts on node B. A `target_node_id` equal to this node's own id short-circuits
     /// to the local executor (no network hop); any other id is resolved to a peer via the
@@ -616,15 +655,12 @@ impl LinkManager {
 
         let (base_url, token) = {
             let inner = self.inner.lock().await;
-            let registry = inner
-                .active
-                .as_ref()
-                .map(|active| active.registry.clone())
-                .ok_or(LinkError::NotConnected)?;
-            let base_url = registry
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
                 .peer_base_url(target_node_id)
                 .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (base_url, self.config.control.node_token.clone())
+            (base_url, active.node_token.clone())
         };
 
         post_peer_execute(&base_url, &token, self.config.control.request_timeout, &req).await
@@ -655,15 +691,12 @@ impl LinkManager {
 
         let (base_url, token) = {
             let inner = self.inner.lock().await;
-            let registry = inner
-                .active
-                .as_ref()
-                .map(|active| active.registry.clone())
-                .ok_or(LinkError::NotConnected)?;
-            let base_url = registry
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
                 .peer_base_url(target_node_id)
                 .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (base_url, self.config.control.node_token.clone())
+            (base_url, active.node_token.clone())
         };
 
         post_peer_mlx(

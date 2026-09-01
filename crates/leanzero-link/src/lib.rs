@@ -10,8 +10,10 @@
 //! machine. [`mesh::MeshConfig::validate`] enforces this by refusing system paths, and
 //! every daemon it spawns is terminated per-pid — never by process group.
 //!
-//! Auth keys and node tokens are injected strings minted elsewhere (the LeanZero Link
-//! worker); this crate never talks to any auth backend.
+//! Auth keys are injected strings minted elsewhere (the LeanZero Link worker); the node
+//! token is derived locally ([`token::node_token_from_secret`]) from the per-account
+//! secret the worker issues with the join key. This crate never talks to any auth
+//! backend and never verifies the account JWT.
 //!
 //! The [`control`] module is the `/v1/swarm` node-to-node service: `GET /nodes`,
 //! `GET /sessions`, and the `GET /stream` WebSocket, fed by a [`state::SwarmStateSource`]
@@ -26,5 +28,6 @@ pub mod mesh;
 pub mod pubsub;
 pub mod state;
 mod subprocess;
+pub mod token;
 pub mod wire;
 pub mod worker_client;

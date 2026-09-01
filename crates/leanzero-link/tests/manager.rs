@@ -27,10 +27,15 @@ use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
     RemoteExecutor, SwarmStateSource,
 };
+use leanzero_link::token::node_token_from_secret;
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// The per-account node secret the join-key mocks issue; every node of the account
+/// derives the same `/v1/swarm` bearer from it (`node_token_from_secret`).
+const SECRET: &str = "test-secret";
 
 // ── fakes ────────────────────────────────────────────────────────────────
 
@@ -247,7 +252,10 @@ impl Harness {
         mesh.state_dir = self.state_dir.clone();
         mesh.socket_path = self.state_dir.join("tailscaled.sock");
 
-        let mut control = ControlConfig::new("shared-node-token".to_string(), None);
+        // The template token is EMPTY on purpose: connect() must replace it with the
+        // secret-derived token before the service starts (an empty token reaching
+        // `ControlService::start` is refused as `EmptyToken`).
+        let mut control = ControlConfig::new(String::new(), None);
         control.port = 0; // ephemeral loopback; peers use the shared fixed port in prod
         control.poll_interval = Duration::from_millis(50);
         control.heartbeat_interval = Duration::from_millis(200);
@@ -317,7 +325,7 @@ async fn full_flow_loggedout_to_connected_then_logout() {
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-xyz", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-xyz", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
 
@@ -430,6 +438,87 @@ async fn join_key_401_expired_logs_out_and_clears_identity() {
 }
 
 #[tokio::test]
+async fn connect_without_a_node_secret_is_loud_and_starts_no_mesh() {
+    let server = MockServer::start().await;
+    // A worker that predates `nodeSecret`: the key is fine, the secret is absent.
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+    )
+    .await;
+
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+
+    let err = manager
+        .connect()
+        .await
+        .expect_err("no node secret → no connection");
+    assert!(matches!(err, LinkError::NoNodeSecret), "got {err:?}");
+    assert!(
+        err.to_string().contains("did not issue a node secret"),
+        "loud cause: {err}"
+    );
+
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "auth is fine; only the connect is refused"
+    );
+    assert!(state.last_error.is_some());
+    assert!(h.identity_present(), "identity untouched");
+    assert_eq!(
+        h.start_count.load(Ordering::SeqCst),
+        0,
+        "refused BEFORE any daemon is spawned"
+    );
+    assert!(
+        manager.node_token().await.is_none(),
+        "no token is ever derived from anything but the worker's secret"
+    );
+}
+
+#[tokio::test]
+async fn node_token_is_none_until_connected_then_the_secret_derived_value() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": "  test-secret  ", "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    assert!(manager.node_token().await.is_none(), "not connected yet");
+
+    manager.connect().await.expect("connects");
+    let token = manager.node_token().await.expect("connected → token");
+    assert_eq!(
+        token,
+        node_token_from_secret("test-secret"),
+        "the bearer is the secret-derived value (whitespace trimmed), not the template"
+    );
+    assert_ne!(token, "", "the empty template token never survives connect");
+
+    // The control service this node serves accepts exactly that token — the loopback
+    // proxy on the host must present it.
+    let registry = manager.active_registry().await.expect("live registry");
+    drop(registry);
+    manager.logout(false).await.unwrap();
+    assert!(
+        manager.node_token().await.is_none(),
+        "gone with the connection"
+    );
+}
+
+#[tokio::test]
 async fn verify_failure_stays_logged_out_with_error() {
     let server = MockServer::start().await;
     mount(
@@ -470,7 +559,7 @@ async fn connect_failure_returns_to_logged_in_and_tears_down_mesh() {
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
 
@@ -571,7 +660,7 @@ async fn remote_execute_self_without_executor_is_loud() {
 async fn remote_execute_posts_to_a_peer_execute_route() {
     // Node B: a real control service with a recording executor, on ephemeral loopback.
     let b_executor = RecordingExecutor::new("sess-on-b");
-    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
     let b = ControlService::start(
         b_config,
@@ -592,7 +681,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
     let h = Harness::new(tempfile::tempdir().unwrap());
@@ -714,7 +803,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         "diskTotalBytes": 200
     });
     let b_control = RecordingMlxControl::returning(b_payload.clone());
-    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
     let b = ControlService::start(
         b_config,
@@ -735,7 +824,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
     let h = Harness::new(tempfile::tempdir().unwrap());
@@ -795,7 +884,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
     let b_control = RecordingMlxControl::failing(MlxControlError::BadRequest(
         "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
     ));
-    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
     let b = ControlService::start(
         b_config,
@@ -815,7 +904,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
     let h = Harness::new(tempfile::tempdir().unwrap());
@@ -865,7 +954,7 @@ async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
         "POST",
         "/v1/mesh/join-key",
         200,
-        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
     )
     .await;
     let h = Harness::new(tempfile::tempdir().unwrap());
