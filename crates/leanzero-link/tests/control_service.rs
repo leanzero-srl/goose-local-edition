@@ -56,6 +56,9 @@ struct FakeStateSource {
     hostname: String,
     updated_at: StdMutex<DateTime<Utc>>,
     sessions: StdMutex<Vec<SessionSummary>>,
+    /// When set, `local_sessions` fails with this text — the session store is
+    /// unreadable right now. `local_node` keeps answering from the live set.
+    store_error: StdMutex<Option<String>>,
     delta_tx: broadcast::Sender<LinkEvent>,
 }
 
@@ -67,6 +70,7 @@ impl FakeStateSource {
             hostname: format!("{node_id}-host"),
             updated_at: StdMutex::new(ts(1_700_000_000)),
             sessions: StdMutex::new(Vec::new()),
+            store_error: StdMutex::new(None),
             delta_tx,
         })
     }
@@ -74,6 +78,10 @@ impl FakeStateSource {
     fn set_sessions(&self, sessions: Vec<SessionSummary>) {
         *self.sessions.lock().unwrap() = sessions;
         *self.updated_at.lock().unwrap() = Utc::now();
+    }
+
+    fn set_store_error(&self, error: Option<&str>) {
+        *self.store_error.lock().unwrap() = error.map(str::to_string);
     }
 
     fn emit(&self, event: LinkEvent) {
@@ -105,8 +113,11 @@ impl SwarmStateSource for FakeStateSource {
         }
     }
 
-    async fn local_sessions(&self) -> Vec<SessionSummary> {
-        self.sessions.lock().unwrap().clone()
+    async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
+        if let Some(error) = self.store_error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        Ok(self.sessions.lock().unwrap().clone())
     }
 
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
@@ -574,6 +585,148 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
     })
     .await;
 
+    a.shutdown();
+}
+
+// ── R-M2: an unreadable session index is 503, never `[]` ────────────────
+
+#[tokio::test]
+async fn sessions_answers_503_when_the_index_is_unreadable_never_an_empty_list() {
+    let source = FakeStateSource::new("node-a");
+    source.set_sessions(vec![summary("s1", "node-a", true, 100)]);
+    let handle = spawn_node(source.clone(), mesh_v6()).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    source.set_store_error(Some("sqlx: database is locked (SQLITE_BUSY)"));
+    for path in ["/v1/swarm/sessions", "/v1/swarm/sessions?scope=local"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 503, "{path} over an unreadable store");
+        let text = resp.text().await.unwrap();
+        assert_eq!(
+            text,
+            "session index unreadable: sqlx: database is locked (SQLITE_BUSY)"
+        );
+    }
+    // /nodes stays truthful: the busy set is store-independent.
+    let nodes = get_json(&client, &format!("{base}/v1/swarm/nodes")).await;
+    assert_eq!(
+        nodes["self"]["status"],
+        serde_json::json!({"type": "Busy", "session_id": "s1"})
+    );
+
+    // Recovery: the same request answers the real list, not a cached empty one.
+    source.set_store_error(None);
+    let sessions = get_json(&client, &format!("{base}/v1/swarm/sessions")).await;
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn execute_answers_503_when_the_index_is_unreadable_and_never_calls_the_executor() {
+    let source = FakeStateSource::new("node-a"); // Idle — the guard alone would admit
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    source.set_store_error(Some("sqlx: pool timed out"));
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 503);
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "session index unreadable: sqlx: pool timed out"
+    );
+    assert_eq!(
+        executor.call_count(),
+        0,
+        "a node that cannot see its own sessions takes no work"
+    );
+
+    source.set_store_error(None);
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 202, "negative control: readable → accepted");
+    handle.shutdown();
+}
+
+/// A peer whose `/sessions` answers 503 is alive and identified: its node state is
+/// folded, its MIRROR IS KEPT (never purged over an answer that carried no sessions),
+/// and the failure rides in `last_poll_error` until the index is readable again.
+#[tokio::test]
+async fn peer_keeps_its_mirror_while_the_peers_index_is_unreadable() {
+    let source_a = FakeStateSource::new("node-a");
+    let source_b = FakeStateSource::new("node-b");
+    source_b.set_sessions(vec![summary("sb1", "node-b", true, 500)]);
+    let b = spawn_node(source_b.clone(), mesh_v6()).await;
+    let a = spawn_node(source_a.clone(), mesh_v6()).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b.local_addr().port(),
+    }]);
+
+    wait_until("A to mirror B's session", || {
+        let client = &client;
+        let base_a = &base_a;
+        async move {
+            let sessions = get_json(client, &format!("{base_a}/v1/swarm/sessions")).await;
+            sessions
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["session_id"] == "sb1")
+        }
+    })
+    .await;
+
+    // B's store goes unreadable: B's /sessions → 503; B's /nodes still says Busy.
+    source_b.set_store_error(Some("sqlx: database is locked (SQLITE_BUSY)"));
+    wait_until("A to record B's 503 without dropping the mirror", || {
+        let client = &client;
+        let base_a = &base_a;
+        async move {
+            let nodes = get_json(client, &format!("{base_a}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-b").is_some_and(|p| {
+                p["last_poll_error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("503") && e.contains("session index unreadable"))
+                    && p["status"] == serde_json::json!({"type": "Busy", "session_id": "sb1"})
+            })
+        }
+    })
+    .await;
+    // Several more polls (100 ms each) — the mirror must survive every one of them.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let sessions = get_json(&client, &format!("{base_a}/v1/swarm/sessions")).await;
+    assert!(
+        sessions
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["session_id"] == "sb1" && s["origin_node_id"] == "node-b"),
+        "the mirror of B's session was purged over a 503: {sessions}"
+    );
+
+    // Recovery clears the record.
+    source_b.set_store_error(None);
+    wait_until("the poll error to clear once B's index is readable", || {
+        let client = &client;
+        let base_a = &base_a;
+        async move {
+            let nodes = get_json(client, &format!("{base_a}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-b").is_some_and(|p| p.get("last_poll_error").is_none())
+        }
+    })
+    .await;
+
+    b.shutdown();
     a.shutdown();
 }
 

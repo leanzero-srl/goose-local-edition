@@ -5,6 +5,8 @@
 //! - `GET /v1/swarm/nodes` → [`SwarmNodesResponse`] — this node + last-known peers.
 //! - `GET /v1/swarm/sessions` → `Vec<SessionSummary>` — the mirror index
 //!   (`?scope=local` restricts to locally originated sessions; peers poll with it).
+//!   `503 session index unreadable: <err>` when the local store cannot be read right
+//!   now — never `200 []` over a failed read (peers keep their mirror on a 503).
 //! - `GET /v1/swarm/stream` (WebSocket) → [`StreamFrame`]s; `?since=<seq>` replay
 //!   cursor, `?scope=local|all`, heartbeat as ws ping. An evicted cursor gets a
 //!   close frame `code=4408, reason="ClientTooFarBehind"`.
@@ -73,7 +75,7 @@ use crate::state::{
     ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry,
     PeerRegistryConfig, PeerTarget, RemoteExecutor, SwarmStateSource,
 };
-use crate::wire::{NodeStatus, SessionSummary, StreamFrame, SwarmNodesResponse};
+use crate::wire::{NodeStatus, StreamFrame, SwarmNodesResponse};
 
 /// Fixed high default for the control service; every node on a tailnet must
 /// serve the same port so peers can derive each other's URL from the mesh IP
@@ -447,11 +449,19 @@ struct SessionsQuery {
     scope: StreamScope,
 }
 
-async fn sessions(
-    Query(query): Query<SessionsQuery>,
-    State(ctx): State<Ctx>,
-) -> Json<Vec<SessionSummary>> {
-    let mut all = ctx.source.local_sessions().await;
+fn index_unreadable(err: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("session index unreadable: {err}"),
+    )
+        .into_response()
+}
+
+async fn sessions(Query(query): Query<SessionsQuery>, State(ctx): State<Ctx>) -> Response {
+    let mut all = match ctx.source.local_sessions().await {
+        Ok(local) => local,
+        Err(err) => return index_unreadable(&err),
+    };
     if query.scope == StreamScope::All && ctx.mesh_ip.is_some() {
         all.extend(ctx.registry.peer_sessions());
     }
@@ -460,7 +470,7 @@ async fn sessions(
             .cmp(&a.updated_at)
             .then_with(|| a.session_id.cmp(&b.session_id))
     });
-    Json(all)
+    Json(all).into_response()
 }
 
 /// The HTTP status each [`ExecuteError`] maps to. The wire contract the companion app,
@@ -481,10 +491,12 @@ fn execute_error_response(error: ExecuteError) -> Response {
 /// `POST /v1/swarm/execute`: run a goose prompt on this node for a same-account peer.
 ///
 /// Gate order (each is loud, none is a fallback): `allow_remote_execution=false` → `403`;
-/// an unparseable body → `400`; the receive-side idle guard (`local_node().status !=
-/// Idle`) → `409` (a busy node refuses remote work NOW); no executor injected → `501`;
-/// otherwise the executor runs and its `202 {session_id}` (or mapped error) is returned.
-/// Auth (bearer / `?token=`, constant-time) is enforced by the router middleware.
+/// an unparseable body → `400`; a session index that cannot be read right now → `503`
+/// (a node that cannot see its own sessions does not take work — R-M2); the
+/// receive-side idle guard (`local_node().status != Idle`) → `409` (a busy node refuses
+/// remote work NOW); no executor injected → `501`; otherwise the executor runs and its
+/// `202 {session_id}` (or mapped error) is returned. Auth (bearer / `?token=`,
+/// constant-time) is enforced by the router middleware.
 async fn execute(
     State(ctx): State<Ctx>,
     body: Result<Json<ExecuteRequest>, JsonRejection>,
@@ -501,6 +513,10 @@ async fn execute(
             )));
         }
     };
+
+    if let Err(err) = ctx.source.local_sessions().await {
+        return index_unreadable(&err);
+    }
 
     // Receive-side idle guard: the node the work lands on decides, from its own live
     // session state, whether it can take work now. `local_node().status` is `Idle`/`Busy`
