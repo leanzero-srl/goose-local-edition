@@ -63,7 +63,10 @@ dispatch (no chooser, CURRENT/FROZEN badges, catalog rows, Run button). Vigil = 
 FIRST-TICK EXPECTATIONS below as its falsifier list; TICK 1 (07:24): every launch-phase falsifier PASSED (weight 1×3, retired levers, durable fields, promise
 kept → steer delivered, 0 wipes, judge looks off the busy planner node); OPEN 23.7m vs r6c 39m with per-file
 slice ownership. New r6e items E4–E6 (section matcher backticks / open_decisions schema / research judge
-must not answer) with the surgeon. WATCH: q2 mini correctness (If-Match write-through), viz-field vs7dbg text. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
+must not answer) with the surgeon. TICK 2 (07:5x): q2 mini CORRECT against the spec (the judge flipped three ways; the holds kept its wrong look
+undelivered); fan 3/38 answered, one lane per host, no idle node. Queued E7 late-snowball (q5 dispatched 33s
+before q2 landed on the same topic), E8 judge tie-break away from the worker's node, E9 judge misreads the
+worker's turn-budget line. WATCH: q5 mini (E7 proof), q0 emission, vs7dbg once a viz question dispatches. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
 
 ## THE PRIOR THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN (ALL THREE CLOSED, see checklist)
 
