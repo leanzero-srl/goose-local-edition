@@ -37,6 +37,8 @@ import LoopView from './components/loop/LoopView';
 import LeanZeroSwarmView from './components/leanzero-swarm/LeanZeroSwarmView';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
+import { ConfirmCloseRunDialog } from './components/lz-dialogs/ConfirmCloseRunDialog';
+import type { CloseRunPayload } from './utils/closeGuard';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
 import { AppLayout } from './components/Layout/AppLayout';
 import { ChatProvider, DEFAULT_CHAT_TITLE } from './contexts/ChatContext';
@@ -398,6 +400,8 @@ const ExtensionsRoute = () => {
 
 export function AppInner() {
   const [fatalError, setFatalError] = useState<string | null>(null);
+  // main's question when this window is closed with the mouse on a live swarm run (closeGuard.ts).
+  const [closeRunPrompt, setCloseRunPrompt] = useState<CloseRunPayload | null>(null);
 
   const nostrImportInFlight = useRef<string | null>(null);
 
@@ -654,6 +658,19 @@ export function AppInner() {
     return () => window.electron.off('shortcut-refused', handleShortcutRefused);
   }, [intl]);
 
+  // The mouse-close guard: main kept this window on `close` because its renderer holds a live swarm
+  // run, and asks here. The dialog answers through confirmCloseRunReply — true closes the window for
+  // real (the dialog stays up, disabled, while the window goes), false leaves everything as it was.
+  useEffect(() => {
+    const handleConfirmCloseRun = (_event: IpcRendererEvent, ...args: unknown[]) => {
+      const payload = args[0] as Partial<CloseRunPayload> | undefined;
+      if (!Array.isArray(payload?.runs)) return;
+      setCloseRunPrompt({ runs: payload.runs });
+    };
+    window.electron.on('confirm-close-run', handleConfirmCloseRun);
+    return () => window.electron.off('confirm-close-run', handleConfirmCloseRun);
+  }, []);
+
   useEffect(() => {
     const handleFocusInput = (_event: IpcRendererEvent, ..._args: unknown[]) => {
       const inputField = document.querySelector('input[type="text"], textarea') as HTMLInputElement;
@@ -699,12 +716,29 @@ export function AppInner() {
     return registerPlatformEventHandlers();
   }, []);
 
+  const closeRunDialog = closeRunPrompt ? (
+    <ConfirmCloseRunDialog
+      runs={closeRunPrompt.runs}
+      onKeepRunning={() => {
+        setCloseRunPrompt(null);
+        window.electron.confirmCloseRunReply(false);
+      }}
+      onStopAndClose={() => window.electron.confirmCloseRunReply(true)}
+    />
+  ) : null;
+
   if (fatalError) {
-    return <ErrorUI error={errorMessage(fatalError)} />;
+    return (
+      <>
+        {closeRunDialog}
+        <ErrorUI error={errorMessage(fatalError)} />
+      </>
+    );
   }
 
   return (
     <>
+      {closeRunDialog}
       <PageViewTracker />
       <ToastContainer
         aria-label="Toast notifications"
