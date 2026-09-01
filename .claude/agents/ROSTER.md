@@ -621,3 +621,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   share via the map, no CLI call); read mirrors the same precedence so a legacy map-only config shows
   the TRUE routed share (no lie); restored the live config to pristine after the write test. Flagged
   the AddNodeDialog label inconsistency (says share, sets concurrency). Charter gap: none.
+- 2026-09-01 link-backend (Node self-host port, 31cf0d872): CLEAN++. Added the Node path WITHOUT
+  touching the Workers entry/handlers/lib (reused handler tests pass as-is); fs-kv honors TTL
+  (>= edge expired) + treats corrupt files as absent+logged (never throws) + base64url keys make
+  path traversal UNREPRESENTABLE; verified node globals are strictly typed (deliberate-error probe);
+  proved the adapter serves live (health JSON) + zero secrets in the tree via a pattern scan.
+  Charter gap: none.
