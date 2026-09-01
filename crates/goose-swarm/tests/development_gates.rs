@@ -354,9 +354,10 @@ fn the_banned_integrate_template_only_shrinks() {
 /// cite on every kind.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    // Tightened to 37,117 (VA-030 D11): the ledger block renderer moved to
+    // Tightened to 37,117 (VA-030 D11a): the ledger block renderer moved to
     // `commands/swarm/ledger_block.rs`, paying for the shard decisions channel's wiring.
-    const SWARM_RS_LINE_BASELINE: usize = 37_117;
+    // Tightened to 37,068 (D11b): the replanner's bonus-task green rule and report split deleted.
+    const SWARM_RS_LINE_BASELINE: usize = 37_068;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
