@@ -560,6 +560,13 @@ pub(super) fn assemble(root: &Path, dossier: &MergeDossier) -> AssemblyOutcome {
     if !declared_missing.is_empty() {
         glue_needed.push("gaps".to_string());
     }
+    if dossier
+        .shards
+        .iter()
+        .any(|s| !s.provides_unbacked.is_empty())
+    {
+        glue_needed.push("unbacked_provides".to_string());
+    }
     if !dossier.unfinished.is_empty() {
         glue_needed.push("unfinished".to_string());
     }

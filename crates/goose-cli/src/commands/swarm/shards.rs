@@ -2505,6 +2505,10 @@ pub(super) struct ShardDossier {
     pub(super) pieces: Vec<(String, Option<String>, Vec<Symbol>)>,
     /// Merger files this shard wrote directly (its ledger row's `wrote_final`, S10(3)).
     pub(super) wrote_final: Vec<String>,
+    /// README PROVIDES items (verbatim) no piece in the folder DEFINES — promises, not deliveries
+    /// (DESIGN-SPLIT-V2 §3). Each is `shard_provides_unbacked` at the merger's dispatch and a GAP
+    /// in its brief, never a delivered part. An item naming no symbol at all is unbacked too.
+    pub(super) provides_unbacked: Vec<String>,
 }
 
 /// A shard task's ledger row as `write_task_ledger` left it — None when the row was never written
@@ -2523,13 +2527,28 @@ impl ShardDossier {
             .flat_map(|(_, _, s)| s.iter())
             .filter(|s| !s.shorthand)
     }
-    fn provides_or_defines(&self, name: &str) -> bool {
+    /// A DEFINITION in a piece — `extract_symbols`' rule, the one `check_merge` uses on the final
+    /// file. A README's PROVIDES claim is not this (v1's `provides_or_defines` let a claim stand in
+    /// for the code; r6e's eight README-only shards would have "provided" every export).
+    fn defines_name(&self, name: &str) -> bool {
         self.defines().any(|s| same_symbol(name, &s.name))
-            || self.note.as_ref().is_some_and(|n| {
-                n.provides
-                    .iter()
-                    .any(|p| ident_at(p).is_some_and(|i| same_symbol(name, i)))
-            })
+    }
+
+    /// The README's PROVIDES items no piece backs — by identifier (`ident_at`, the same reading
+    /// the assumptions use); an item with no identifier names nothing a piece could define.
+    fn unbacked_provides(&self) -> Vec<String> {
+        match &self.note {
+            Some(n) => n
+                .provides
+                .iter()
+                .filter(|p| !ident_at(p).is_some_and(|i| self.defines_name(i)))
+                .cloned()
+                .collect(),
+            // No README → no PROVIDES claims → nothing to back; the README's absence itself rode
+            // `merge_note_missing` at the shard's completion and `readmes_missing` here, so empty
+            // MEANS empty (fallback gate).
+            None => Vec::new(),
+        }
     }
 }
 
@@ -2661,7 +2680,13 @@ pub(super) async fn build_merge_dossier(
                 Some(row) => string_list(&row["wrote_final"]),
                 None => Vec::new(),
             },
+            provides_unbacked: Vec::new(),
         });
+    }
+    // PROVIDES MUST BE BACKED (DESIGN-SPLIT-V2 §3): a README item with no definition behind it
+    // is recorded per shard; the brief lists it under GAPS and the dispatch says it by name.
+    for sh in shards.iter_mut() {
+        sh.provides_unbacked = sh.unbacked_provides();
     }
     // duplicates: a name defined in two shards
     let mut by_name: Vec<(String, Vec<String>)> = Vec::new();
@@ -2705,7 +2730,10 @@ pub(super) async fn build_merge_dossier(
                 }
             }
         }
-        if !found && !shards.iter().any(|sh| sh.provides_or_defines(&e.name)) {
+        // A DEFINITION or nothing: a README's PROVIDES claim with no piece behind it is a promise
+        // (`provides_unbacked`), and a promised export is a GAP the merger must fill — v1 let the
+        // claim stand in for the code (DESIGN-SPLIT-V2 §3).
+        if !found {
             declared_missing.push(e.name.clone());
         }
     }
@@ -2726,7 +2754,7 @@ pub(super) async fn build_merge_dossier(
             for a in &n.assumes {
                 let names = candidate_names(a);
                 let met = |nm: &String| {
-                    shards.iter().any(|o| o.provides_or_defines(nm))
+                    shards.iter().any(|o| o.defines_name(nm))
                         || nm
                             .split('.')
                             .next()
@@ -2788,6 +2816,25 @@ pub(super) async fn build_merge_dossier(
 }
 
 impl MergeDossier {
+    /// One `shard_provides_unbacked{module, task_id, shard, names}` per shard whose README promises
+    /// a symbol no piece defines (DESIGN-SPLIT-V2 §3) — said at the merger's dispatch; the brief
+    /// lists the same names under GAPS.
+    pub(super) fn provides_unbacked_events(&self, task_id: &str) -> Vec<serde_json::Value> {
+        self.shards
+            .iter()
+            .filter(|s| !s.provides_unbacked.is_empty())
+            .map(|s| {
+                serde_json::json!({
+                    "event": "shard_provides_unbacked",
+                    "module": self.module,
+                    "task_id": task_id,
+                    "shard": s.id,
+                    "names": s.provides_unbacked,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn summary_json(&self) -> serde_json::Value {
         serde_json::json!({
             "module": self.module,
@@ -2800,6 +2847,7 @@ impl MergeDossier {
             "signature_disagreements": self.signature_disagreements.iter().map(|(n, d, f, s)| serde_json::json!({"symbol": n, "declared": d, "found_params": f, "shard": s})).collect::<Vec<_>>(),
             "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
+            "provides_unbacked": self.shards.iter().filter(|s| !s.provides_unbacked.is_empty()).map(|s| serde_json::json!({"shard": s.id, "names": s.provides_unbacked})).collect::<Vec<_>>(),
             "second_pass": self.prior_merge.is_some(),
             "final_on_disk": self.final_on_disk.iter().map(|(f, n, w)| serde_json::json!({"path": f, "bytes": n, "written_by_shard": w})).collect::<Vec<_>>(),
         })
@@ -2917,8 +2965,23 @@ impl MergeDossier {
                 ));
             }
             if let Some(n) = &sh.note {
-                if !n.provides.is_empty() {
-                    s.push_str(&format!("  PROVIDES: {}\n", n.provides.join("; ")));
+                let backed: Vec<&str> = n
+                    .provides
+                    .iter()
+                    .filter(|p| !sh.provides_unbacked.contains(*p))
+                    .map(String::as_str)
+                    .collect();
+                if !backed.is_empty() {
+                    s.push_str(&format!(
+                        "  PROVIDES (each backed by a definition above): {}\n",
+                        backed.join("; ")
+                    ));
+                }
+                if !sh.provides_unbacked.is_empty() {
+                    s.push_str(&format!(
+                        "  PROVIDES WITHOUT A DEFINITION (promises — GAPS below, not deliveries): {}\n",
+                        sh.provides_unbacked.join("; ")
+                    ));
                 }
                 if !n.assumes.is_empty() {
                     s.push_str(&format!("  ASSUMES: {}\n", n.assumes.join("; ")));
@@ -2991,6 +3054,16 @@ impl MergeDossier {
             item(&mut s, format!(
                 "`{name}` is DECLARED and defined by no shard — write it yourself if it is small, else send it out (MERGE_GAP below)."
             ));
+        }
+        for sh in &self.shards {
+            if !sh.provides_unbacked.is_empty() {
+                item(&mut s, format!(
+                    "shard `{}`'s README PROVIDES {} but no piece in `{cwd}/{}` DEFINES them — promises, not deliveries: they are GAPS. Write each yourself if it is small, else send it out (MERGE_GAP below); never list one under KEPT.",
+                    sh.id,
+                    sh.provides_unbacked.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", "),
+                    sh.folder
+                ));
+            }
         }
         for (shard, u) in &self.unfinished {
             item(&mut s, format!(
@@ -3476,6 +3549,9 @@ impl GooseAgentDispatcher {
             o.insert("task_id".into(), req.task_id.clone().into());
         }
         self.events.write_value(ev);
+        for unbacked in dossier.provides_unbacked_events(&req.task_id) {
+            self.events.write_value(unbacked);
+        }
         // ASSEMBLE, THEN GLUE (DESIGN-SPLIT-V2 §1): code places every piece's definitions in the
         // declared order before the model runs, and the brief names the glue as the merger's job.
         // Unavailable — no parser for the module's extension, no piece of its language — is SAID
@@ -4347,5 +4423,104 @@ mod merger_tests {
         assert_eq!(ev["duplicates"][0]["name"], "buildScene");
         assert!(merger_missing_hint(&merger, &files).contains("ASSEMBLED.<ext>"));
         assert!(merger_owner_body().contains("START FROM IT"));
+    }
+
+    /// DESIGN-SPLIT-V2 §3, PROVIDES must be BACKED: `render` defines `buildScene` and promises
+    /// `initGL()` and `drawBrush(ids)` it never wrote (r6e's shape in miniature — its eight shards
+    /// promised in READMEs and delivered no piece). The dossier names the two promises per shard,
+    /// the declared `drawBrush` is MISSING (a claim no longer stands in for the code), a sibling's
+    /// ASSUMES about `initGL` is UNMET (a promise provides nothing), the brief lists the promises
+    /// under GAPS and not under PROVIDES, the dispatch says them by name, and the assembly's glue
+    /// list carries `unbacked_provides`.
+    #[tokio::test]
+    async fn a_readme_provides_without_a_definition_is_unbacked_and_briefed_as_a_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "function buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\n- initGL()\n- drawBrush(ids)\n- the render loop\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/labels", &[
+            ("labels.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: initGL() has run before updateLabels\nUNFINISHED: none\nCHECKED_WITH: node --check labels.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-labels".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/labels".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.shards[0].provides_unbacked,
+            vec!["initGL()", "drawBrush(ids)", "the render loop"],
+            "{:?}",
+            d.shards[0]
+        );
+        assert!(d.shards[1].provides_unbacked.is_empty());
+        assert!(
+            d.declared_missing.contains(&"drawBrush".to_string()),
+            "a promised export is missing, not provided: {:?}",
+            d.declared_missing
+        );
+        assert_eq!(
+            d.assumptions_unmet,
+            vec![(
+                "web-viz-labels".to_string(),
+                "initGL() has run before updateLabels".to_string()
+            )],
+            "a promise meets no assumption"
+        );
+        let events = d.provides_unbacked_events("web-viz");
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "shard_provides_unbacked");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["shard"], "web-viz-render");
+        assert_eq!(
+            events[0]["names"],
+            serde_json::json!(["initGL()", "drawBrush(ids)", "the render loop"])
+        );
+        assert_eq!(
+            d.summary_json()["provides_unbacked"][0]["shard"],
+            "web-viz-render"
+        );
+        let brief = d.merger_brief("/run", None);
+        assert!(
+            brief.contains("  PROVIDES (each backed by a definition above): buildScene(data)\n"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("  PROVIDES WITHOUT A DEFINITION (promises — GAPS below, not deliveries): initGL(); drawBrush(ids); the render loop\n"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("shard `web-viz-render`'s README PROVIDES `initGL()`, `drawBrush(ids)`, `the render loop` but no piece in `/run/.swarm/shards/web-viz/render` DEFINES them — promises, not deliveries: they are GAPS."),
+            "{brief}"
+        );
+        let gap_item = brief.find("'s README PROVIDES").unwrap();
+        let missing_item = brief
+            .find("`drawBrush` is DECLARED and defined by no shard")
+            .unwrap();
+        assert!(missing_item < gap_item, "promises follow the declared gaps");
+        let assembly::AssemblyOutcome::Assembled(a) = assembly::assemble(root, &d) else {
+            panic!("js assembles");
+        };
+        assert!(
+            a.glue_needed.contains(&"unbacked_provides".to_string()),
+            "{:?}",
+            a.glue_needed
+        );
     }
 }
