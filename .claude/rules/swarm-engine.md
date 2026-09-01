@@ -88,9 +88,15 @@ residue task and the cross-file join twin are gone.
 ## THE SPLIT — shards in temp folders, a merger owns the file (2c S1–S3, 2026-09-01)
 
 `commands/swarm/shards.rs`. After the first `finalize_plan_before_dag`, fatness is MEASURED — spec sections
-claimed per owned file, threshold mean + one stddev of the plan's own distribution (r6c web-viz 7.0/file vs
-4.3; r5 viz-field 11 vs 6.0) — and a fat task gets ONE split request to synthesis (`plan_flag{kind: fat_task}`
-→ `plan_patched{source: split}` or `split_declined`). The patch adds N SHARD tasks owning only
+claimed per owned file; FAT = above mean + one stddev of the plan's section-claiming tasks AND ≥ 2× their
+median (r6c web-viz 7.0/file vs threshold 4.73 / floor 3.0; r5 viz-field 11 vs 6.56 / 3.17; r6c WITHOUT web-viz:
+ledgerd-core 2.0 clears the 1.78 threshold but not the 2.17 floor — mean + stddev alone flags the maximum of
+almost any plan). A fat task gets ONE split request to synthesis (`plan_flag{kind: fat_task, median, floor,
+threshold, claimed_sections}`; the request lists the CLAIMED headings as the partition, the brief is context)
+→ `plan_patched{source: split}` or `split_declined{task, reason}` (the prompt's own ramp: ONE shard named
+`whole` carrying the reason; the plan stays byte-identical). A shard that writes the merger's file directly is
+`shard_wrote_final_file{module, shard, path}` at completion; its ledger row carries `wrote_final` and the
+merger's dossier lists the file as one more piece to reconcile (`final_on_disk`), never as the finished module. The patch adds N SHARD tasks owning only
 `.swarm/shards/<module>/<shard>/README.md`, `depends_on: []`, briefs carrying the DECLARED INTERFACE (exports,
 signatures, shared state, layout — plan text, never a stub file) and the module brief whole; the module task
 becomes the MERGER (keeps the final file, depends on every shard). At dispatch a shard's YOU OWN is its FOLDER

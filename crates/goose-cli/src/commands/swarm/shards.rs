@@ -12,15 +12,20 @@
 //! WHAT THIS DOES, in the one door every task enters the DAG through (`plan_slices_to_dag`, right
 //! after the first `finalize_plan_before_dag`):
 //!
-//! 1. MEASURE — per task, spec sections claimed per owned file (and claimed chars per file). The
-//!    threshold is derived from the plan's own distribution — mean + one standard deviation of
-//!    sections-per-file across the measured tasks — never a literal; the median rides the event so
-//!    the reader sees the multiple. A task above it is a loud `plan_flag{kind: fat_task, …}`.
+//! 1. MEASURE — per task, spec sections claimed per owned file (and claimed chars per file). FAT
+//!    is TWO plan-derived tests, both required: sections-per-file ABOVE mean + one standard
+//!    deviation of the tasks that claim any section, AND at least 2× their median. Mean+stddev
+//!    alone flags the maximum of almost any plan (r6c without web-viz: ledgerd-core 2.0/file vs a
+//!    1.78 threshold); the median floor is what makes "fat" mean "twice the typical task". Never a
+//!    literal; median, floor and threshold ride the event. A fat task is a loud
+//!    `plan_flag{kind: fat_task, …}`.
 //! 2. REQUEST — ONE split request to synthesis per fat task (a PATCH, invariant 3, never a
 //!    re-emission): the planner DECLARES the module's interface as plan text — exported names,
-//!    kinds, signatures, the shared-state shape, the assembly order — and partitions the claimed
-//!    sections into SHARDS. Declining (unparseable, fewer than two shards) is allowed and loud
-//!    (`split_declined`); the flag stays.
+//!    kinds, signatures, the shared-state shape, the assembly order — and partitions the CLAIMED
+//!    headings the request lists (not every `###` block of the brief, which also carries consumed
+//!    context) into SHARDS. Declining is a ramp, not a failure: ONE shard with id `whole` and the
+//!    reason, or an unparseable reply, is loud (`split_declined{task, reason}`), the plan stays
+//!    byte-identical and the flag stays.
 //! 3. PATCH — CODE builds the `PlanPatch`: N SHARD tasks, each owning only its temp folder's
 //!    `README.md` under `.swarm/shards/<module>/<shard>/`, depending on nothing (shards of one
 //!    module are independent by construction), whose brief carries the SAME declaration and the
@@ -60,6 +65,8 @@ pub(super) const SHARDS_DIR: &str = ".swarm/shards";
 pub(super) struct SectionClaim {
     pub(super) sections: usize,
     pub(super) chars: usize,
+    /// The claimed headings verbatim — the split request lists THESE as the sections to partition.
+    pub(super) headings: Vec<String>,
 }
 
 /// Slice id → its claimed sections, measured against the request's OWN sections (the same
@@ -85,6 +92,7 @@ pub(super) fn section_claims(opened: &OpenOutput, spec: &str) -> HashMap<String,
                 SectionClaim {
                     sections: sl.sections.len(),
                     chars,
+                    headings: sl.sections.clone(),
                 },
             )
         })
@@ -101,6 +109,7 @@ pub(super) struct TaskDensity {
     pub(super) brief_chars: usize,
     pub(super) sections_per_file: f64,
     pub(super) chars_per_file: f64,
+    pub(super) headings: Vec<String>,
 }
 
 impl TaskDensity {
@@ -109,6 +118,7 @@ impl TaskDensity {
             "task": self.id,
             "files": self.files,
             "sections": self.sections,
+            "claimed_sections": self.headings,
             "section_chars": self.section_chars,
             "brief_chars": self.brief_chars,
             "sections_per_file": self.sections_per_file,
@@ -125,17 +135,23 @@ pub(super) struct FatMeasure {
     pub(super) mean: f64,
     pub(super) stddev: f64,
     pub(super) threshold: f64,
+    /// 2× the median — the second test; both are required.
+    pub(super) floor: f64,
     /// Indexes into `rows`, fattest first.
     pub(super) fat: Vec<usize>,
 }
 
 /// Measure every planner task — not the join, not the skeleton, not a task already split (a shard
-/// or a merger), not a task owning nothing (rule (a) removes those) — and derive the fatness
-/// threshold from the distribution: mean + one population standard deviation of
-/// sections-per-file. No literal decides: a flat plan (stddev 0) flags nothing because no task is
-/// strictly above its own mean; two tasks cannot flag (mean + stddev IS the max); r6c's six rows
-/// put the threshold at 4.3 (web-viz 7.0 flagged, ledgerd-core 2.0 not) and r5's seven at 6.0
-/// (viz-field 11.0 flagged, ledgerd-service 1.75 not).
+/// or a merger), not a task owning nothing (rule (a) removes those) — and derive BOTH fatness tests
+/// from the distribution of the tasks that claim any section: sections-per-file strictly above
+/// mean + one population standard deviation, AND at least 2× the median. No literal decides. What
+/// each test does on the measured plans: mean + stddev alone flags the maximum of almost any
+/// plan — r6c WITHOUT web-viz puts ledgerd-core (2.0/file) above a 1.78 threshold — so it cannot
+/// mean "fat" by itself; the median floor (2.17 there) is what says "twice the typical task". On
+/// r6c's five section-claiming rows the pair is threshold 4.73 / floor 3.0 (web-viz 7.0 flagged,
+/// ledgerd-core 2.0 not); on r5's six it is 6.56 / 3.17 (viz-field 11.0 flagged, ledgerd-service
+/// 1.75 not). A flat plan (stddev 0) flags nothing (no task is strictly above its own mean); two
+/// tasks cannot flag (mean + stddev IS the max).
 pub(super) fn measure_fatness(
     plan: &serde_json::Value,
     claims: &HashMap<String, SectionClaim>,
@@ -166,9 +182,10 @@ pub(super) fn measure_fatness(
             .and_then(|s| s.as_str())
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(id);
-        // A task no slice claims sections for (a patch-added task) measures as 0 sections — an
-        // honest zero: the opener routed no spec to it (fallback gate: empty MEANS empty here;
-        // such a task cannot be fat and is excluded from the distribution below).
+        // A task no slice claims sections for (a patch-added task, r6c's decisions-doc) measures
+        // as 0 sections — an honest zero: the opener routed no spec to it (fallback gate: empty
+        // MEANS empty here). It rides `rows` for the event's distribution but is excluded from
+        // the statistics below (`sections > 0`) and can never be fat.
         let claim = claims.get(slice).cloned().unwrap_or_default();
         let brief_chars = t
             .get("description")
@@ -184,9 +201,14 @@ pub(super) fn measure_fatness(
             brief_chars,
             sections_per_file: claim.sections as f64 / n,
             chars_per_file: claim.chars as f64 / n,
+            headings: claim.headings,
         });
     }
-    let mut sorted: Vec<f64> = rows.iter().map(|r| r.sections_per_file).collect();
+    let mut sorted: Vec<f64> = rows
+        .iter()
+        .filter(|r| r.sections > 0)
+        .map(|r| r.sections_per_file)
+        .collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = match sorted.len() {
         0 => 0.0,
@@ -205,10 +227,13 @@ pub(super) fn measure_fatness(
         (sorted.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / count).sqrt()
     };
     let threshold = mean + stddev;
+    let floor = 2.0 * median;
     let mut fat: Vec<usize> = rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| r.sections_per_file > threshold)
+        .filter(|(_, r)| {
+            r.sections > 0 && r.sections_per_file > threshold && r.sections_per_file >= floor
+        })
         .map(|(i, _)| i)
         .collect();
     fat.sort_by(|a, b| {
@@ -223,6 +248,7 @@ pub(super) fn measure_fatness(
         mean,
         stddev,
         threshold,
+        floor,
         fat,
     }
 }
@@ -255,6 +281,7 @@ impl FatMeasure {
                     o.insert("mean".into(), self.mean.into());
                     o.insert("stddev".into(), self.stddev.into());
                     o.insert("threshold".into(), self.threshold.into());
+                    o.insert("floor".into(), self.floor.into());
                     o.insert("distribution".into(), serde_json::json!(distribution));
                 }
                 ev
@@ -342,20 +369,28 @@ pub(super) fn split_system_prompt() -> String {
         constants, state, helpers, mechanisms, the exported API, boot). Names you declare are \
         BINDING on every shard and the merger, so declare real, complete signatures, not \
         placeholders.\n\
-     2. PARTITION the task's spec sections into 2 or more SHARDS that can be written independently \
-        and in parallel — usually one per mechanism or section group. Each shard: a short kebab-case \
-        id, one sentence of responsibility, the exact spec section headings it implements (every \
-        section of the task goes to exactly one shard), and the declared names it provides. Shards \
-        write PIECES (functions/classes) in private folders; a MERGER assembles the final file from \
-        them afterwards — so no shard needs another shard's file to exist.\n\n\
+     2. PARTITION the CLAIMED SECTIONS the request lists — those exact headings, not every `###` \
+        block of the brief (the brief also carries consumed context) — into 2 or more SHARDS that \
+        can be written independently and in parallel — usually one per mechanism or section group. \
+        Each shard: a short kebab-case id, one sentence of responsibility, the exact claimed \
+        headings it implements (every claimed heading goes to exactly one shard), and the declared \
+        names it provides. Shards write PIECES (functions/classes) in private folders; a MERGER \
+        assembles the final file from them afterwards — so no shard needs another shard's file to \
+        exist.\n\n\
+     IF THIS TASK SHOULD NOT BE SPLIT — its sections are one mechanism no two people could write \
+     apart, or the measurement is an artifact (a few short sections on one small file) — do not \
+     invent shards: return exactly ONE shard with id `whole`, its responsibility stating the reason \
+     in one sentence, and an empty interface; the plan then stays exactly as it is.\n\n\
      Do not restate the spec and do not write code. Call the final_output tool once with \
      {interface: {exports: [{name, kind, signature, purpose}], shared_state, layout: []}, \
      shards: [{id, responsibility, sections: [], provides: []}]}."
         .to_string()
 }
 
-/// The split request's body: THIS task's facts — id, files, the measured density, the brief whole
-/// (its claimed sections are spliced in it verbatim, so the planner partitions real headings).
+/// The split request's body: THIS task's facts — id, files, the measured density, the CLAIMED
+/// headings as the list to partition (S10: the brief's `###` blocks also carry consumed context,
+/// and a planner told to partition "the `###` blocks" partitioned those too), then the brief whole
+/// as context.
 pub(super) fn split_user_text(task: &serde_json::Value, density: &serde_json::Value) -> String {
     let id = task.get("id").and_then(|i| i.as_str()).unwrap_or("?");
     let files = string_list(&task["files"]);
@@ -363,11 +398,15 @@ pub(super) fn split_user_text(task: &serde_json::Value, density: &serde_json::Va
         .get("description")
         .and_then(|d| d.as_str())
         .unwrap_or("");
+    let claimed = string_list(&density["claimed_sections"]);
     format!(
         "## The fat task\nid: `{id}`\nfiles (the module's FINAL files — the merger writes these; \
          shards write pieces in their own folders): {}\nmeasured: {} spec sections for {} file(s) = \
-         {:.2} sections per file (plan median {:.2}, threshold {:.2}); brief {} chars\n\n## Its \
-         brief (the spec sections it must implement are the `###` blocks)\n{desc}",
+         {:.2} sections per file (plan median {:.2}, floor 2×median {:.2}, mean+stddev threshold \
+         {:.2}); brief {} chars\n\n## The sections to partition — the opener's {} claimed \
+         heading(s) for this task; every one goes to exactly one shard\n{}\n\n## Its brief \
+         (context — the `###` blocks it consumed are spliced in; partition the headings above, not \
+         these)\n{desc}",
         files
             .iter()
             .map(|f| format!("`{f}`"))
@@ -377,18 +416,39 @@ pub(super) fn split_user_text(task: &serde_json::Value, density: &serde_json::Va
         files.len(),
         density["sections_per_file"].as_f64().unwrap_or(0.0),
         density["median"].as_f64().unwrap_or(0.0),
+        density["floor"].as_f64().unwrap_or(0.0),
         density["threshold"].as_f64().unwrap_or(0.0),
         density["brief_chars"].as_u64().unwrap_or(0),
+        claimed.len(),
+        claimed
+            .iter()
+            .map(|h| format!("- {h}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
 }
 
 /// Parse the planner's reply. Refuses (loudly, for `split_declined`) anything that cannot be
-/// built into shards: no JSON, fewer than two shards, a shard without an id.
+/// built into shards: no JSON, fewer than two shards, a shard without an id — and the prompt's
+/// own decline ramp, ONE shard named `whole` whose responsibility is the reason.
 pub(super) fn parse_module_split(reply: &str) -> Result<ModuleSplit, String> {
     let v = super::parse_json_lenient(reply)
         .ok_or_else(|| "no JSON object in the reply".to_string())?;
     let split: ModuleSplit =
         serde_json::from_value(v).map_err(|e| format!("split is not the declared shape: {e}"))?;
+    if let [only] = split.shards.as_slice() {
+        if only.id.trim().eq_ignore_ascii_case("whole") {
+            let reason = only.responsibility.trim();
+            return Err(format!(
+                "declined by synthesis: {}",
+                if reason.is_empty() {
+                    "(no reason given)"
+                } else {
+                    reason
+                }
+            ));
+        }
+    }
     if split.shards.len() < 2 {
         return Err(format!(
             "{} shard(s) — a split needs at least two",
@@ -630,6 +690,7 @@ pub(super) fn apply_module_split(
                 folder: folder.clone(),
                 responsibility: shard.responsibility.trim().to_string(),
                 interface: split.interface.clone(),
+                module_files: module_files.clone(),
             },
         ));
         shard_ids.push(id);
@@ -758,14 +819,16 @@ where
         if let Some(o) = density.as_object_mut() {
             o.insert("median".into(), measure.median.into());
             o.insert("threshold".into(), measure.threshold.into());
+            o.insert("floor".into(), measure.floor.into());
         }
         eprintln!(
-            "  · fat task `{}`: {} spec sections for {} file(s) = {:.1}/file (median {:.1}, threshold {:.1}) — asking synthesis for a split patch",
+            "  · fat task `{}`: {} spec sections for {} file(s) = {:.1}/file (median {:.1}, floor {:.1}, threshold {:.1}) — asking synthesis for a split patch",
             row.id,
             row.sections,
             row.files.len(),
             row.sections_per_file,
             measure.median,
+            measure.floor,
             measure.threshold
         );
         let declined = |reason: String, sink: &Arc<dyn EventSink>| {
@@ -829,6 +892,7 @@ mod tests {
                     SectionClaim {
                         sections: *n,
                         chars: n * 1000,
+                        headings: (1..=*n).map(|k| format!("### {k}. Section {k}")).collect(),
                     },
                 )
             })
@@ -899,9 +963,12 @@ mod tests {
         assert_eq!(m.rows.len(), 6, "the join is not measured");
         let fat: Vec<&str> = m.fat.iter().map(|i| m.rows[*i].id.as_str()).collect();
         assert_eq!(fat, vec!["web-viz"], "{m:?}");
-        assert!((m.median - 1.0833).abs() < 0.01, "median {}", m.median);
+        // decisions-doc claims no section: it rides the distribution row but not the statistics
+        // (five section-claiming rows: 0.5, 0.667, 1.5, 2.0, 7.0).
+        assert!((m.median - 1.5).abs() < 1e-9, "median {}", m.median);
+        assert!((m.floor - 3.0).abs() < 1e-9, "floor {}", m.floor);
         assert!(
-            m.threshold > 2.0 && m.threshold < 7.0,
+            m.threshold > 4.7 && m.threshold < 4.8,
             "threshold {}",
             m.threshold
         );
@@ -910,7 +977,34 @@ mod tests {
         assert_eq!(ev["kind"], "fat_task");
         assert_eq!(ev["task"], "web-viz");
         assert_eq!(ev["sections_per_file"], 7.0);
+        assert_eq!(ev["floor"], 3.0);
+        assert_eq!(ev["claimed_sections"].as_array().unwrap().len(), 7);
         assert_eq!(ev["distribution"].as_array().unwrap().len(), 6);
+
+        // S10(2): the same plan WITHOUT web-viz — mean + stddev alone (1.78) would flag
+        // ledgerd-core (2.0/file, the new maximum); the 2×median floor (2.17) is what says no.
+        let mut r6c_minus = r6c.clone();
+        r6c_minus["subtasks"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|t| t["id"] != "web-viz");
+        let m = measure_fatness(
+            &r6c_minus,
+            &claims(&[
+                ("ledgerd-core", 12),
+                ("ledgerd-api", 6),
+                ("notifierd", 1),
+                ("web-console", 2),
+            ]),
+        );
+        let core = m.rows.iter().find(|r| r.id == "ledgerd-core").unwrap();
+        assert!(
+            core.sections_per_file > m.threshold,
+            "mean+stddev alone flags the maximum: 2.0 vs {}",
+            m.threshold
+        );
+        assert!(core.sections_per_file < m.floor, "floor {}", m.floor);
+        assert!(m.fat.is_empty(), "{m:?}");
 
         let r5 = plan(&[
             (
@@ -960,6 +1054,67 @@ mod tests {
         );
         let fat: Vec<&str> = m.fat.iter().map(|i| m.rows[*i].id.as_str()).collect();
         assert_eq!(fat, vec!["viz-field"], "{m:?}");
+        assert!((m.floor - 3.1667).abs() < 0.001, "floor {}", m.floor);
+        assert!(
+            m.threshold > 6.5 && m.threshold < 6.6,
+            "threshold {}",
+            m.threshold
+        );
+    }
+
+    /// S10(1)+(2): the request lists the CLAIMED headings as the partition (the brief is context),
+    /// and the prompt's decline ramp — one shard named `whole` — parses as a loud decline with the
+    /// planner's reason, so `split_fat_tasks` emits `split_declined` and leaves the plan alone.
+    #[test]
+    fn the_split_request_partitions_the_claimed_headings_and_whole_declines_with_a_reason() {
+        let task = serde_json::json!({
+            "id": "web-viz",
+            "files": ["web/viz.js"],
+            "description": "### 4. Boot\nconsumed context\n\n### 7. WebGL field\nthe work",
+        });
+        let density = serde_json::json!({
+            "sections": 2,
+            "claimed_sections": ["### 7. WebGL field", "### 8. Picking & camera"],
+            "sections_per_file": 2.0,
+            "median": 1.0,
+            "floor": 2.0,
+            "threshold": 1.8,
+            "brief_chars": 60,
+        });
+        let text = split_user_text(&task, &density);
+        let partition = text
+            .split("## The sections to partition")
+            .nth(1)
+            .and_then(|t| t.split("## Its brief").next())
+            .expect("the partition section precedes the brief");
+        assert!(partition.contains("- ### 7. WebGL field"), "{text}");
+        assert!(partition.contains("- ### 8. Picking & camera"), "{text}");
+        assert!(
+            !partition.contains("### 4. Boot"),
+            "consumed context is not a heading to partition: {text}"
+        );
+        assert!(text.contains("2 claimed heading(s)"), "{text}");
+        assert!(text.contains("floor 2×median 2.00"), "{text}");
+        assert!(split_system_prompt().contains("return exactly ONE shard with id `whole`"));
+
+        let declined = parse_module_split(
+            r#"{"interface": {"exports": [], "shared_state": "", "layout": []}, "shards": [{"id": "whole", "responsibility": "one render loop; the seven sections share every buffer", "sections": [], "provides": []}]}"#,
+        );
+        assert_eq!(
+            declined,
+            Err(
+                "declined by synthesis: one render loop; the seven sections share every buffer"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_module_split(r#"{"shards": [{"id": "WHOLE", "responsibility": ""}]}"#),
+            Err("declined by synthesis: (no reason given)".to_string())
+        );
+        assert_eq!(
+            parse_module_split(r#"{"shards": [{"id": "render", "responsibility": "x"}]}"#),
+            Err("1 shard(s) — a split needs at least two".to_string())
+        );
     }
 
     /// No literal decides: a flat plan and a two-task plan flag nothing; a shard or merger already
@@ -1494,18 +1649,68 @@ pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
     })
 }
 
+/// S10(3): the module's FINAL files as they stand when a shard lane is dispatched — the bytes, or
+/// None when the file is not readable (nobody has written it yet is the expected case; a
+/// permission fault surfaces loudly at the merger's own read, never here). Paired with
+/// `final_files_written` at the lane's completion.
+pub(super) fn snapshot_final_files(
+    root: &std::path::Path,
+    shard: Option<&ShardOf>,
+) -> Vec<(String, Option<Vec<u8>>)> {
+    match shard {
+        Some(sh) => sh
+            .module_files
+            .iter()
+            .map(|f| (f.clone(), std::fs::read(root.join(f)).ok()))
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// The final files a shard lane changed: readable now and absent at dispatch or different from
+/// then. A shard's write surface is its folder; a write here is the merger's file authored
+/// outside the piece protocol — reported (`shard_wrote_final_file`), never refused (MILD).
+pub(super) fn final_files_written(
+    root: &std::path::Path,
+    before: &[(String, Option<Vec<u8>>)],
+) -> Vec<String> {
+    before
+        .iter()
+        .filter(|(f, was)| {
+            std::fs::read(root.join(f))
+                .ok()
+                .is_some_and(|now| was.as_ref() != Some(&now))
+        })
+        .map(|(f, _)| f.clone())
+        .collect()
+}
+
 impl GooseAgentDispatcher {
     /// S3, at a shard's completion: read `<folder>/README.md` (the file is the handoff; the final
     /// message is the fallback when the file carries no field), emit `shard_note{…}` or
     /// `merge_note_missing{…}`, and return the extra keys for the shard's ledger row —
-    /// `shard_note` and its `handoffs` through the existing channel (`parse_handoffs`).
+    /// `shard_note` and its `handoffs` through the existing channel (`parse_handoffs`), plus
+    /// `wrote_final` (S10(3)): every merger file this lane wrote directly, each also a
+    /// `shard_wrote_final_file{module, shard, task_id, path}` event; the merger's dossier reads
+    /// the row and lists the file as one more piece to reconcile.
     pub(super) fn record_shard_note(
         &self,
         shard: &ShardOf,
         req: &goose_swarm::DispatchRequest,
         root: &std::path::Path,
         final_text: &str,
+        final_before: &[(String, Option<Vec<u8>>)],
     ) -> serde_json::Value {
+        let wrote_final = final_files_written(root, final_before);
+        for path in &wrote_final {
+            self.events.write_value(serde_json::json!({
+                "event": "shard_wrote_final_file",
+                "module": shard.module,
+                "shard": shard.shard,
+                "task_id": req.task_id,
+                "path": path,
+            }));
+        }
         let readme_path = root.join(&shard.folder).join("README.md");
         let readme = std::fs::read_to_string(&readme_path).ok();
         let (note, source) = match readme.as_deref().and_then(parse_shard_note) {
@@ -1561,6 +1766,7 @@ impl GooseAgentDispatcher {
             "shard_note_source": source,
             "pieces": pieces,
             "handoffs": handoffs,
+            "wrote_final": wrote_final,
         })
     }
 }
@@ -1576,6 +1782,7 @@ mod dispatch_tests {
             folder: ".swarm/shards/web-viz/render".into(),
             responsibility: "programs and geometry".into(),
             interface: ModuleInterface::default(),
+            module_files: vec!["web/viz.js".into()],
         }
     }
 
@@ -1952,6 +2159,17 @@ pub(super) struct ShardDossier {
     pub(super) note: Option<ShardNote>,
     /// (relative piece path, parse verdict — None = parsed / unchecked, Some(err) = error, symbols)
     pub(super) pieces: Vec<(String, Option<String>, Vec<Symbol>)>,
+    /// Merger files this shard wrote directly (its ledger row's `wrote_final`, S10(3)).
+    pub(super) wrote_final: Vec<String>,
+}
+
+/// A shard task's ledger row as `write_task_ledger` left it — None when the row was never written
+/// (the dossier then says "writer not recorded", never guesses).
+fn shard_ledger_row(root: &std::path::Path, task_id: &str) -> Option<serde_json::Value> {
+    let path = root
+        .join(super::LEDGER_DIR)
+        .join(format!("{}.json", super::activity_digest_key(task_id)));
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
 impl ShardDossier {
@@ -1987,6 +2205,9 @@ pub(super) struct MergeDossier {
     pub(super) unfinished: Vec<(String, String)>,
     pub(super) prior_merge: Option<String>,
     pub(super) final_file_symbols: Vec<Symbol>,
+    /// (final file, bytes, writer shard id — None = not recorded in the ledger): files already on
+    /// disk at the merger's dispatch that no merge wrote (S10(3), `shard_wrote_final_file`).
+    pub(super) final_on_disk: Vec<(String, u64, Option<String>)>,
 }
 
 fn candidate_names(item: &str) -> Vec<String> {
@@ -2086,6 +2307,10 @@ pub(super) async fn build_merge_dossier(
             readme_present: readme.as_ref().is_some_and(|r| !r.trim().is_empty()),
             note,
             pieces,
+            wrote_final: match shard_ledger_row(root, id) {
+                Some(row) => string_list(&row["wrote_final"]),
+                None => Vec::new(),
+            },
         });
     }
     // duplicates: a name defined in two shards
@@ -2179,6 +2404,23 @@ pub(super) async fn build_merge_dossier(
             final_file_symbols.extend(extract_symbols(&src, lang));
         }
     }
+    // S10(3): a final file on disk BEFORE any merge was written by someone else — a shard that
+    // wrote outside the piece protocol (its row names it) or a writer the ledger did not record
+    // (said as such). On a second pass the merger's own file is expected and only a shard-claimed
+    // write is listed.
+    let mut final_on_disk: Vec<(String, u64, Option<String>)> = Vec::new();
+    for f in module_files {
+        let Ok(meta) = std::fs::metadata(root.join(f)) else {
+            continue;
+        };
+        let writer = shards
+            .iter()
+            .find(|sh| sh.wrote_final.iter().any(|w| w == f))
+            .map(|sh| sh.id.clone());
+        if writer.is_some() || prior_merge.is_none() {
+            final_on_disk.push((f.clone(), meta.len(), writer));
+        }
+    }
     MergeDossier {
         module: merger.module.clone(),
         files: module_files.to_vec(),
@@ -2191,6 +2433,7 @@ pub(super) async fn build_merge_dossier(
         unfinished,
         prior_merge,
         final_file_symbols,
+        final_on_disk,
     }
 }
 
@@ -2208,6 +2451,7 @@ impl MergeDossier {
             "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
             "second_pass": self.prior_merge.is_some(),
+            "final_on_disk": self.final_on_disk.iter().map(|(f, n, w)| serde_json::json!({"path": f, "bytes": n, "written_by_shard": w})).collect::<Vec<_>>(),
         })
     }
 
@@ -2221,9 +2465,25 @@ impl MergeDossier {
             .map(|f| format!("`{f}`"))
             .collect::<Vec<_>>()
             .join(", ");
+        let on_disk = if self.final_on_disk.is_empty() {
+            format!("NOBODY has written {final_files}")
+        } else {
+            self.final_on_disk
+                .iter()
+                .map(|(f, n, w)| match w {
+                    Some(w) => format!(
+                        "shard `{w}` wrote `{f}` DIRECTLY ({n} bytes) — one more piece to reconcile, not the finished module"
+                    ),
+                    None => format!(
+                        "`{f}` is already on disk ({n} bytes) and no shard's ledger row claims it — one more piece to reconcile, not the finished module"
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
         let mut s = format!(
             "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
-             its own folder under `{cwd}/{dir}/{module}/`; NOBODY has written {final_files} — you do, \
+             its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
              from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
              fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
             module = self.module,
@@ -2302,6 +2562,21 @@ impl MergeDossier {
             k += 1;
             s.push_str(&format!("{k}. {text}\n"));
         };
+        for (f, n, w) in &self.final_on_disk {
+            let names: Vec<String> = self
+                .final_file_symbols
+                .iter()
+                .map(|x| format!("`{}`", x.name))
+                .collect();
+            item(&mut s, format!(
+                "`{cwd}/{f}` already exists ({n} bytes; {}) — it was written outside the piece protocol. Read it as ONE MORE PIECE: check its definitions ({}) against the declaration and the other shards' pieces, keep what is right and name it under KEPT, then REBUILD the file in the declared order from the pieces; do not treat it as finished.",
+                match w {
+                    Some(w) => format!("written by shard `{w}`"),
+                    None => "writer not recorded in the ledger".to_string(),
+                },
+                if names.is_empty() { "none found".to_string() } else { names.join(", ") }
+            ));
+        }
         for (name, owners) in &self.duplicates {
             item(&mut s, format!(
                 "`{name}` is defined in shards {} — keep ONE definition (or rename if they are different things), name which and why under KEPT/DROPPED.",
@@ -2498,6 +2773,7 @@ pub(super) fn gap_specs(
                     folder,
                     responsibility: p.responsibility.clone(),
                     interface: merger.interface.clone(),
+                    module_files: module_files.to_vec(),
                 }),
                 merger_of: None,
             }
@@ -3301,5 +3577,103 @@ mod merger_tests {
             vec!["a", "b"]
         );
         assert!(parse_merge_gaps("MERGE_GAP:").is_empty());
+    }
+
+    /// S10(3): a shard that writes the merger's file directly is said at its completion
+    /// (`final_files_written` over `snapshot_final_files`), rides its ledger row as `wrote_final`,
+    /// and the merger's dossier lists the file as ONE MORE PIECE — attributed when a shard's row
+    /// names the write, "not recorded" when no row does, and not at all on the merger's own
+    /// second pass (its file is expected then).
+    #[tokio::test]
+    async fn a_shard_that_wrote_the_final_file_is_named_to_the_merger() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let shard = ShardOf {
+            module: "web-viz".into(),
+            shard: "render".into(),
+            folder: ".swarm/shards/web-viz/render".into(),
+            responsibility: "programs".into(),
+            interface: viz_interface(),
+            module_files: vec!["web/viz.js".into()],
+        };
+        let before = snapshot_final_files(root, Some(&shard));
+        assert_eq!(before, vec![("web/viz.js".to_string(), None)]);
+        assert!(final_files_written(root, &before).is_empty());
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(root.join("web/viz.js"), "function render() {}\n").unwrap();
+        assert_eq!(
+            final_files_written(root, &before),
+            vec!["web/viz.js".to_string()]
+        );
+        let after = snapshot_final_files(root, Some(&shard));
+        assert!(
+            final_files_written(root, &after).is_empty(),
+            "unchanged since the snapshot"
+        );
+        assert!(snapshot_final_files(root, None).is_empty());
+
+        let ledger = root.join(super::super::LEDGER_DIR);
+        std::fs::create_dir_all(&ledger).unwrap();
+        std::fs::write(
+            ledger.join(format!(
+                "{}.json",
+                super::super::activity_digest_key("web-viz-render")
+            )),
+            serde_json::json!({"wrote_final": ["web/viz.js"]}).to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".swarm/shards/web-viz/render")).unwrap();
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into()],
+            folders: vec![".swarm/shards/web-viz/render".into()],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.final_on_disk,
+            vec![(
+                "web/viz.js".to_string(),
+                21,
+                Some("web-viz-render".to_string())
+            )]
+        );
+        let brief = d.merger_brief("/cwd");
+        assert!(
+            brief.contains("shard `web-viz-render` wrote `web/viz.js` DIRECTLY (21 bytes)"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains(
+                "`/cwd/web/viz.js` already exists (21 bytes; written by shard `web-viz-render`)"
+            ),
+            "{brief}"
+        );
+        assert!(!brief.contains("NOBODY has written"), "{brief}");
+        assert_eq!(
+            d.summary_json()["final_on_disk"][0]["written_by_shard"],
+            "web-viz-render"
+        );
+
+        std::fs::remove_dir_all(&ledger).unwrap();
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(d.final_on_disk, vec![("web/viz.js".to_string(), 21, None)]);
+        assert!(d
+            .merger_brief("/cwd")
+            .contains("no shard's ledger row claims it"));
+
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/MERGE.md"),
+            "KEPT: render\nDROPPED: none\nFILLED: none\nSENT_OUT: none\n",
+        )
+        .unwrap();
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert!(d.final_on_disk.is_empty(), "{:?}", d.final_on_disk);
+        assert!(d.merger_brief("/cwd").contains("SECOND PASS"));
+        assert!(d.merger_brief("/cwd").contains("NOBODY has written"));
     }
 }

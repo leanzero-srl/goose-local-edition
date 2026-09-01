@@ -94,6 +94,7 @@ mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
     repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
+    unassigned_endpoints,
 };
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
@@ -21377,149 +21378,6 @@ fn string_list(v: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-struct AdvertisedEndpoint {
-    service: Option<String>,
-    method: String,
-    path: String,
-    expect: Option<String>,
-}
-
-/// The spec's endpoint rows that no brief of a task owning service code mentions.
-///
-/// "Service code" is any file under a `python -m` invocation's top-level package (the module form
-/// `X.py` included), and with no invocation in the spec, any file at all. That restriction is the whole
-/// finding from r0: `index-html`'s brief said the page is served at `/` and the sink's brief said to
-/// probe it, and neither task can serve anything — `GET /` was mentioned twice and implemented nowhere.
-fn unassigned_endpoints(plan: &serde_json::Value, spec: &str) -> Vec<AdvertisedEndpoint> {
-    let SpecSurface { rows, .. } = spec_surface_rows(spec);
-    if rows.is_empty() {
-        return Vec::new();
-    }
-    let Some(subtasks) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return Vec::new();
-    };
-    let roots: Vec<String> = spec_python_invocations(spec)
-        .iter()
-        .map(|inv| inv.split('.').next().unwrap_or(inv).to_string())
-        .collect();
-    let serves = |file: &str| {
-        roots.is_empty()
-            || roots
-                .iter()
-                .any(|r| file.starts_with(&format!("{r}/")) || file == format!("{r}.py"))
-    };
-    let serving_briefs: Vec<&str> = subtasks
-        .iter()
-        .filter(|st| {
-            st.get("files")
-                .and_then(|f| f.as_array())
-                .is_some_and(|a| a.iter().any(|f| f.as_str().is_some_and(serves)))
-        })
-        .filter_map(|st| st.get("description").and_then(|d| d.as_str()))
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    rows.into_iter()
-        .filter_map(|(service, row)| {
-            let mut it = row.splitn(3, ' ');
-            let (method, path) = (it.next()?.to_string(), it.next()?.to_string());
-            let expect = it
-                .next()
-                .and_then(|rest| rest.strip_prefix("-> EXPECT "))
-                .map(str::to_string);
-            seen.insert(format!("{method} {path}"))
-                .then_some(AdvertisedEndpoint {
-                    service,
-                    method,
-                    path,
-                    expect,
-                })
-        })
-        .filter(|e| {
-            !serving_briefs
-                .iter()
-                .any(|d| brief_mentions_path(d, &e.path))
-        })
-        .collect()
-}
-
-/// Whether a brief names an advertised path: `/api/payments` inside a longer path (`/api/payments/x`,
-/// `app/api/payments`) does not count, a parameter segment (`<id>`, `{id}`, `:id`) matches any one
-/// segment, a query string is ignored, and a lone `/` counts only when it is spelled the way the
-/// endpoint table spells it — backticked, after an HTTP method, or closing a URL — because a slash
-/// between two words is punctuation.
-fn brief_mentions_path(brief: &str, path: &str) -> bool {
-    let path = path.split('?').next().unwrap_or(path);
-    let is_path_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-');
-    let is_param = |seg: &str| seg.contains(['<', '{', ':']);
-    let segments: Vec<&str> = path.split('/').skip(1).collect();
-    let from = |pos: usize| brief.get(pos..).unwrap_or("");
-    let last_before = |pos: usize| brief.get(..pos).and_then(|s| s.chars().next_back());
-    for (start, _) in brief.match_indices('/') {
-        let prev = last_before(start);
-        if prev.is_some_and(|c| is_path_char(c) && !c.is_ascii_digit()) {
-            continue;
-        }
-        let mut pos = start;
-        let mut matched = true;
-        for seg in &segments {
-            if !from(pos).starts_with('/') {
-                matched = false;
-                break;
-            }
-            pos += 1;
-            if is_param(seg) {
-                let n = from(pos)
-                    .chars()
-                    .take_while(|c| {
-                        !matches!(c, '/' | '`' | '"' | '\'' | ')' | ']' | ',' | '?' | '#')
-                            && !c.is_whitespace()
-                    })
-                    .map(char::len_utf8)
-                    .sum::<usize>();
-                if n == 0 {
-                    matched = false;
-                    break;
-                }
-                pos += n;
-            } else if from(pos).starts_with(seg) {
-                pos += seg.len();
-            } else {
-                matched = false;
-                break;
-            }
-        }
-        if !matched {
-            continue;
-        }
-        if from(pos).chars().next().is_some_and(is_path_char) {
-            continue;
-        }
-        if path == "/" {
-            let before = brief.get(..start).unwrap_or("").trim_end();
-            let word = before
-                .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
-                .rsplit(|c: char| !c.is_ascii_alphabetic())
-                .next()
-                .unwrap_or_default()
-                .to_ascii_uppercase();
-            let standalone_tick = prev == Some('`')
-                && from(pos).starts_with('`')
-                && last_before(start - 1).is_none_or(|c| c.is_whitespace() || c == '(');
-            let anchored = standalone_tick
-                || prev.is_some_and(|c| c.is_ascii_digit())
-                || matches!(
-                    word.as_str(),
-                    "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
-                );
-            if !anchored {
-                continue;
-            }
-        }
-        return true;
-    }
-    false
-}
-
 /// Drive the STRAIGHT-LINE planner (P1-5): OPEN -> [ask handshake, only if the opener left open
 /// decisions] -> RESEARCH FAN -> SYNTHESIS (the slices directly) -> plan_repaired -> DAG, and
 /// return what the rest of the run expects. The coverage/RESEARCH fans, the resplit and the ASK
@@ -27205,6 +27063,7 @@ impl GooseAgentDispatcher {
         // README; the arms below that reason about `owned_files` see one README path and stay
         // byte-identical for every other task.
         let shard = req.shard_of.as_ref();
+        let shard_final_before = shards::snapshot_final_files(&root, shard);
         // GEN-4: whether the dependency-API section below carries REAL source, recorded so the
         // judge's deterministic hint can assert only what this prompt actually delivered.
         let mut dep_apis_delivered = false;
@@ -28627,7 +28486,9 @@ impl GooseAgentDispatcher {
                 // THE SPLIT (S3): a shard's README is its handoff to the merger — read the file
                 // first, the final message second, persist the fields in the task's ledger row
                 // beside its handoffs, and name the absence (`merge_note_missing`).
-                let shard_note = shard.map(|sh| self.record_shard_note(sh, &req, &root, &out.text));
+                let shard_note = shard.map(|sh| {
+                    self.record_shard_note(sh, &req, &root, &out.text, &shard_final_before)
+                });
                 // THE SPLIT (S4): a merger's gaps become follow-up shard specs for the scheduler's
                 // merge-gap door; with none, CODE checks the merge and reports.
                 let follow_ups = match &req.merger_of {
@@ -33392,48 +33253,6 @@ mod live_fleet_tests {
         assert!(strings(&r.after["module_package_collisions"]).is_empty());
         assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
         goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
-    }
-
-    #[test]
-    fn plan_repair_brief_mentions_path_truth_table() {
-        let yes = [
-            ("serve `GET /` from web/", "/"),
-            ("the page at http://127.0.0.1:8080/ loads", "/"),
-            ("the table says `/` is the frontend", "/"),
-            (
-                "fetch `/api/payments?limit=5`",
-                "/api/payments?limit=<int>&offset=<int>",
-            ),
-            (
-                "`/api/payments/{id}/note` with If-Match",
-                "/api/payments/<id>/note",
-            ),
-            ("POST /api/payments/:id/note", "/api/payments/<id>/note"),
-            ("GET /api/health returns", "/api/health"),
-            ("(see /api/health)", "/api/health"),
-        ];
-        for (brief, path) in yes {
-            assert!(
-                brief_mentions_path(brief, path),
-                "{brief:?} should mention {path}"
-            );
-        }
-        let no = [
-            ("`.cur-total`/`.rev-total` elements", "/"),
-            ("`except:`/`except: pass`", "/"),
-            ("maker / checker", "/"),
-            ("GET /api/payments/<id>", "/api/payments"),
-            ("app/api/payments", "/api/payments"),
-            ("/api/payments/<id>", "/api/payments/<id>/note"),
-            ("/api/v12", "/api/v1"),
-            ("/api/healthz", "/api/health"),
-        ];
-        for (brief, path) in no {
-            assert!(
-                !brief_mentions_path(brief, path),
-                "{brief:?} must not mention {path}"
-            );
-        }
     }
 
     /// The verifier must be RIGHT, because unlike the judge its findings are facts and will be acted on

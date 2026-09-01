@@ -379,7 +379,7 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,254 (2c S12): the thin-brief floor (`THIN_BRIEF_MIN_CHARS`,
     // `thin_brief_missing`) and its test moved to commands/swarm/briefs.rs, paying for the
     // merger's frame arms (owner body, reading rule, the ACT-NOW skip).
-    const SWARM_RS_LINE_BASELINE: usize = 36_254;
+    const SWARM_RS_LINE_BASELINE: usize = 36_073;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

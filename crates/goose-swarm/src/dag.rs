@@ -77,6 +77,10 @@ pub struct ShardOf {
     pub responsibility: String,
     #[serde(default)]
     pub interface: ModuleInterface,
+    /// The module's FINAL files (the merger's), so a shard lane can tell at completion that it
+    /// wrote one directly (`shard_wrote_final_file`) instead of a piece in its folder.
+    #[serde(default)]
+    pub module_files: Vec<String>,
 }
 
 /// A merger task's identity: the module, its shard task ids and their folders (the dossier reads

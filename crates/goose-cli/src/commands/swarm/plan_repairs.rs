@@ -18,7 +18,7 @@ pub(super) const UNOWNED_FILES_HEADER: &str = "FILES NAMED ABOVE THAT ANOTHER TA
 /// the unowned tail alone handed a repair shard the owner's ENTRY instruction as "decisions"
 /// (2a D11's independent refuter, 2026-09-01).
 pub(super) const ADVERTISED_SURFACE_HEADER: &str = "ADVERTISED SURFACE (engine-required)";
-use super::spec_surface::path_token_named;
+use super::spec_surface::{path_token_named, spec_surface_rows, SpecSurface};
 use super::string_list;
 
 /// THE JOIN OWNS NOTHING — structurally, at repair time, whatever synthesis said. r4 (2026-08-30)
@@ -167,7 +167,7 @@ pub(super) fn repair_unassigned_endpoints(
             })
             .or(invocations.first())
     };
-    let mut by_task: Vec<(usize, String, Vec<super::AdvertisedEndpoint>)> = Vec::new();
+    let mut by_task: Vec<(usize, String, Vec<AdvertisedEndpoint>)> = Vec::new();
     for ep in missing {
         let Some(inv) = invocation_for(ep.service.as_deref()) else {
             continue;
@@ -323,6 +323,194 @@ pub(super) fn repair_brief_file_mentions(
         }
     }
     rows
+}
+
+/// One advertised endpoint row, with the shape the spec expects of it (`spec_surface_rows`'
+/// `-> EXPECT …` tail) when the table carried one.
+pub(super) struct AdvertisedEndpoint {
+    pub(super) service: Option<String>,
+    pub(super) method: String,
+    pub(super) path: String,
+    pub(super) expect: Option<String>,
+}
+
+/// The spec's endpoint rows that no brief of a task owning service code mentions.
+///
+/// "Service code" is any file under a `python -m` invocation's top-level package (the module form
+/// `X.py` included), and with no invocation in the spec, any file at all. That restriction is the whole
+/// finding from r0: `index-html`'s brief said the page is served at `/` and the sink's brief said to
+/// probe it, and neither task can serve anything — `GET /` was mentioned twice and implemented nowhere.
+pub(super) fn unassigned_endpoints(
+    plan: &serde_json::Value,
+    spec: &str,
+) -> Vec<AdvertisedEndpoint> {
+    let SpecSurface { rows, .. } = spec_surface_rows(spec);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let Some(subtasks) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return Vec::new();
+    };
+    let roots: Vec<String> = super::spec_python_invocations(spec)
+        .iter()
+        .map(|inv| inv.split('.').next().unwrap_or(inv).to_string())
+        .collect();
+    let serves = |file: &str| {
+        roots.is_empty()
+            || roots
+                .iter()
+                .any(|r| file.starts_with(&format!("{r}/")) || file == format!("{r}.py"))
+    };
+    let serving_briefs: Vec<&str> = subtasks
+        .iter()
+        .filter(|st| {
+            st.get("files")
+                .and_then(|f| f.as_array())
+                .is_some_and(|a| a.iter().any(|f| f.as_str().is_some_and(serves)))
+        })
+        .filter_map(|st| st.get("description").and_then(|d| d.as_str()))
+        .collect();
+    // One row per METHOD + PATH (query string ignored, as `brief_mentions_path` ignores it). The
+    // FIRST row used to win outright, so sb-7's overview table (line 129: `POST/GET |
+    // /api/drafts... | section 5`) shadowed §5's own rows (316: `create from {...} →
+    // draft.created`; 320: `GET /api/drafts?state=` → `{"data": [...], "total": <int>}`) and the
+    // builder read a pointer as the response contract (S11). A shape-bearing row REPLACES a
+    // `section N` / `§N` pointer row — path and all, the section's row is the authoritative one;
+    // otherwise the first row stays.
+    let sans_query = |path: &str| path.split('?').next().unwrap_or(path).to_string();
+    let mut kept: Vec<AdvertisedEndpoint> = Vec::new();
+    for (service, row) in rows {
+        let mut it = row.splitn(3, ' ');
+        let (Some(method), Some(path)) = (it.next(), it.next()) else {
+            continue;
+        };
+        let expect = it
+            .next()
+            .and_then(|rest| rest.strip_prefix("-> EXPECT "))
+            .map(str::to_string);
+        let this = AdvertisedEndpoint {
+            service,
+            method: method.to_string(),
+            path: path.to_string(),
+            expect,
+        };
+        match kept
+            .iter_mut()
+            .find(|k| k.method == this.method && sans_query(&k.path) == sans_query(&this.path))
+        {
+            Some(k) => {
+                let kept_is_pointer = k.expect.as_deref().is_some_and(section_pointer);
+                let this_is_shape = this.expect.as_deref().is_some_and(|x| !section_pointer(x));
+                if kept_is_pointer && this_is_shape {
+                    *k = this;
+                }
+            }
+            None => kept.push(this),
+        }
+    }
+    kept.into_iter()
+        .filter(|e| {
+            !serving_briefs
+                .iter()
+                .any(|d| brief_mentions_path(d, &e.path))
+        })
+        .collect()
+}
+
+/// An EXPECT cell that points at a spec section instead of stating a shape: `section 5`,
+/// `§5`, `see section 3.2`, `sections 5-6`. Anything with a word of its own is a shape.
+pub(super) fn section_pointer(expect: &str) -> bool {
+    let e = expect.trim().to_ascii_lowercase();
+    let e = e.strip_prefix("see ").unwrap_or(&e).trim();
+    let rest = e
+        .strip_prefix('§')
+        .or_else(|| e.strip_prefix("sections"))
+        .or_else(|| e.strip_prefix("section"))
+        .map(str::trim);
+    rest.is_some_and(|r| {
+        !r.is_empty()
+            && r.chars().any(|c| c.is_ascii_digit())
+            && r.chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '-' | '&' | '§'))
+    })
+}
+
+/// Whether a brief names an advertised path: `/api/payments` inside a longer path (`/api/payments/x`,
+/// `app/api/payments`) does not count, a parameter segment (`<id>`, `{id}`, `:id`) matches any one
+/// segment, a query string is ignored, and a lone `/` counts only when it is spelled the way the
+/// endpoint table spells it — backticked, after an HTTP method, or closing a URL — because a slash
+/// between two words is punctuation.
+fn brief_mentions_path(brief: &str, path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    let is_path_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-');
+    let is_param = |seg: &str| seg.contains(['<', '{', ':']);
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    let from = |pos: usize| brief.get(pos..).unwrap_or("");
+    let last_before = |pos: usize| brief.get(..pos).and_then(|s| s.chars().next_back());
+    for (start, _) in brief.match_indices('/') {
+        let prev = last_before(start);
+        if prev.is_some_and(|c| is_path_char(c) && !c.is_ascii_digit()) {
+            continue;
+        }
+        let mut pos = start;
+        let mut matched = true;
+        for seg in &segments {
+            if !from(pos).starts_with('/') {
+                matched = false;
+                break;
+            }
+            pos += 1;
+            if is_param(seg) {
+                let n = from(pos)
+                    .chars()
+                    .take_while(|c| {
+                        !matches!(c, '/' | '`' | '"' | '\'' | ')' | ']' | ',' | '?' | '#')
+                            && !c.is_whitespace()
+                    })
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+                if n == 0 {
+                    matched = false;
+                    break;
+                }
+                pos += n;
+            } else if from(pos).starts_with(seg) {
+                pos += seg.len();
+            } else {
+                matched = false;
+                break;
+            }
+        }
+        if !matched {
+            continue;
+        }
+        if from(pos).chars().next().is_some_and(is_path_char) {
+            continue;
+        }
+        if path == "/" {
+            let before = brief.get(..start).unwrap_or("").trim_end();
+            let word = before
+                .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
+                .rsplit(|c: char| !c.is_ascii_alphabetic())
+                .next()
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            let standalone_tick = prev == Some('`')
+                && from(pos).starts_with('`')
+                && last_before(start - 1).is_none_or(|c| c.is_whitespace() || c == '(');
+            let anchored = standalone_tick
+                || prev.is_some_and(|c| c.is_ascii_digit())
+                || matches!(
+                    word.as_str(),
+                    "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+                );
+            if !anchored {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -533,5 +721,104 @@ mod tests {
                 .count(),
             1
         );
+    }
+    #[test]
+    fn plan_repair_brief_mentions_path_truth_table() {
+        let yes = [
+            ("serve `GET /` from web/", "/"),
+            ("the page at http://127.0.0.1:8080/ loads", "/"),
+            ("the table says `/` is the frontend", "/"),
+            (
+                "fetch `/api/payments?limit=5`",
+                "/api/payments?limit=<int>&offset=<int>",
+            ),
+            (
+                "`/api/payments/{id}/note` with If-Match",
+                "/api/payments/<id>/note",
+            ),
+            ("POST /api/payments/:id/note", "/api/payments/<id>/note"),
+            ("GET /api/health returns", "/api/health"),
+            ("(see /api/health)", "/api/health"),
+        ];
+        for (brief, path) in yes {
+            assert!(
+                brief_mentions_path(brief, path),
+                "{brief:?} should mention {path}"
+            );
+        }
+        let no = [
+            ("`.cur-total`/`.rev-total` elements", "/"),
+            ("`except:`/`except: pass`", "/"),
+            ("maker / checker", "/"),
+            ("GET /api/payments/<id>", "/api/payments"),
+            ("app/api/payments", "/api/payments"),
+            ("/api/payments/<id>", "/api/payments/<id>/note"),
+            ("/api/v12", "/api/v1"),
+            ("/api/healthz", "/api/health"),
+        ];
+        for (brief, path) in no {
+            assert!(
+                !brief_mentions_path(brief, path),
+                "{brief:?} must not mention {path}"
+            );
+        }
+    }
+
+    /// S11 — sb-7's `/api/drafts` appears twice: the overview table (spec line 129) points at
+    /// `section 5`, §5's own table (line 316) states the shape. One rule: a shape-bearing EXPECT
+    /// replaces a pointer, whatever the row order; a task owning ledgerd's service file whose
+    /// brief names nothing therefore inherits the shape, never the pointer.
+    #[test]
+    fn a_shape_bearing_expect_replaces_a_section_pointer_on_sb7s_drafts_pair() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let plan = serde_json::json!({"subtasks": [
+            {"id": "ledgerd-core", "description": "the ledger service", "files": ["app/ledgerd/impl.py"], "depends_on": []},
+        ]});
+        let missing = unassigned_endpoints(&plan, spec);
+        let drafts: Vec<&AdvertisedEndpoint> = missing
+            .iter()
+            .filter(|e| e.method == "POST" && e.path == "/api/drafts")
+            .collect();
+        assert_eq!(drafts.len(), 1, "one row per METHOD PATH");
+        let expect = drafts[0].expect.as_deref().expect("§5 states a shape");
+        assert!(
+            expect.contains("draft.created"),
+            "the shape row wins over the pointer: {expect:?}"
+        );
+        assert!(!section_pointer(expect), "{expect:?}");
+        // The GET pair differs by query string (`/api/drafts` vs §5's `/api/drafts?state=`): one
+        // endpoint, so one row — the section's, path and shape.
+        let get: Vec<&AdvertisedEndpoint> = missing
+            .iter()
+            .filter(|e| e.method == "GET" && e.path.starts_with("/api/drafts"))
+            .collect();
+        assert_eq!(
+            get.len(),
+            1,
+            "{:?}",
+            missing
+                .iter()
+                .map(|e| format!("{} {}", e.method, e.path))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(get[0].path, "/api/drafts?state=");
+        assert!(
+            get[0]
+                .expect
+                .as_deref()
+                .is_some_and(|x| x.contains("\"total\"")),
+            "{:?}",
+            get[0].expect
+        );
+        for (yes, no) in [
+            ("section 5", "maker or checker"),
+            ("§5", "{\"accepted\": true}"),
+            ("see section 3.2", "create from {...} → draft.created"),
+            ("sections 5-6", "5 items"),
+            ("Section 5 & 6", "section-scoped list"),
+        ] {
+            assert!(section_pointer(yes), "{yes:?} is a pointer");
+            assert!(!section_pointer(no), "{no:?} is a shape");
+        }
     }
 }
