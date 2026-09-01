@@ -164,10 +164,13 @@ pub(super) fn json_object(body: &str) -> Option<serde_json::Map<String, serde_js
 }
 
 /// Is `key` present ANYWHERE in the value — top level or nested? The spec's documented keys
-/// are read from ONE table cell by a `"key":` regex (`spec_documented_keys`), which flattens
-/// a nested shape: sb-7's `/api/drafts` row documents `counterparty: {name, country}`, so
-/// `name` and `country` are documented keys that a CORRECT response carries one level down.
-/// A top-level-only check would file "does not carry `name`" against a handler that does.
+/// are read from the RESPONSE side of ONE table cell by a `"key":` regex (`spec_documented_keys`,
+/// S6), which flattens a nested shape: sb-7's `GET /notify/notifications` row documents
+/// `{"data": [{"id", "event_seq", "kind", "message", "at"}...], "total"}`, so `id`..`at` are
+/// documented keys that a CORRECT response carries one level down inside `data`. (The
+/// `/api/drafts` row's `counterparty: {name, country}` is its REQUEST body; since S6 that row
+/// documents no response key at all.) A top-level-only check would file "does not carry `id`"
+/// against a handler that does.
 fn json_has_key(v: &serde_json::Value, key: &str) -> bool {
     match v {
         serde_json::Value::Object(o) => {
@@ -420,24 +423,18 @@ mod tests {
     }
 
     /// The documented keys are checked ANYWHERE in the body, because the spec's key regex
-    /// flattens nested shapes (`counterparty: {name, country}` documents `name` and `country`
-    /// one level down). The 401 envelope misses all six; a correct draft misses none.
+    /// flattens nested RESPONSE shapes: sb-7's `GET /notify/notifications` row documents
+    /// `{"data": [{"id", "event_seq", "kind", "message", "at"}...], "total"}`, so `id`..`at` sit
+    /// one level down inside `data`. The 401 envelope misses all seven; a correct page misses none.
     #[test]
     fn missing_documented_keys_reads_nested_shapes_honestly() {
-        let documented: Vec<String> = [
-            "amount_minor",
-            "currency",
-            "counterparty",
-            "name",
-            "country",
-            "note",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let draft = r#"{"id": "draft_1", "amount_minor": 4500, "currency": "EUR",
-                       "counterparty": {"name": "Smoke Co", "country": "DE"}, "note": "repro"}"#;
-        assert!(missing_documented_keys(draft, &documented).is_empty());
+        let documented: Vec<String> = ["data", "id", "event_seq", "kind", "message", "at", "total"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let page = r#"{"data": [{"id": "n_1", "event_seq": 7, "kind": "draft.created",
+                      "message": "draft d_1 created", "at": "2026-09-01T00:00:00Z"}], "total": 1}"#;
+        assert!(missing_documented_keys(page, &documented).is_empty());
         let env = r#"{"error": {"code": "unauthorized"}}"#;
         assert_eq!(missing_documented_keys(env, &documented), documented);
         assert_eq!(
