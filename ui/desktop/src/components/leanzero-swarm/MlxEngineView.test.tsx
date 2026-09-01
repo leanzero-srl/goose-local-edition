@@ -1396,8 +1396,10 @@ describe('MlxEngineView download lifecycle', () => {
 
 describe('MlxEngineView device picker (remote model management)', () => {
   async function selectPeer(nodeId = 'peer-workhorse') {
-    await waitFor(() => expect(screen.getByTestId('mlx-device-target')).toBeInTheDocument());
-    await userEvent.click(screen.getByTestId('mlx-device-target'));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Manage models on device' })).toBeInTheDocument()
+    );
+    await userEvent.click(screen.getByRole('combobox', { name: 'Manage models on device' }));
     await userEvent.click(screen.getByTestId(`mlx-device-target-option-${nodeId}`));
   }
 
@@ -1443,8 +1445,10 @@ describe('MlxEngineView device picker (remote model management)', () => {
       }),
     ]);
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(screen.getByTestId('mlx-device-target')).toBeInTheDocument());
-    await userEvent.click(screen.getByTestId('mlx-device-target'));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Manage models on device' })).toBeInTheDocument()
+    );
+    await userEvent.click(screen.getByRole('combobox', { name: 'Manage models on device' }));
     expect(screen.getByTestId('mlx-device-target-option-self')).toHaveTextContent('This device');
     const wh = screen.getByTestId('mlx-device-target-option-peer-workhorse');
     expect(wh).toHaveTextContent('workhorse');
@@ -1622,19 +1626,9 @@ describe('MlxEngineView browser — one accent, neutral columns', () => {
 // ---------------------------------------------------------------------------
 
 describe('MlxEngineView — Studio clean on every tab', () => {
-  /** lucide stamps its icon name on each <svg>; react-select emits emotion hashes. Neither is a utility. */
-  const utilities = () =>
-    allClasses(document.body).filter((c) => !c.startsWith('lucide') && !c.startsWith('css-'));
-  /**
-   * The bans over everything the remake renders. The one host node excluded is react-select's
-   * own search <input> (the app's ui/Select, kept for the two model pickers): it carries
-   * `opacity: 1` inline — not a fade, and not remake markup.
-   */
-  const studioClean = () => {
-    const clone = document.body.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('input[id^="react-select"]').forEach((el) => el.remove());
-    assertStudioClean(clone);
-  };
+  /** lucide stamps its icon name on each <svg>; that is an identity, not a utility. */
+  const utilities = () => allClasses(document.body).filter((c) => !c.startsWith('lucide'));
+  const studioClean = () => assertStudioClean(document.body);
 
   it('engine tab: banners, the status KeyValue, the mount controls', async () => {
     mockStatus.mockResolvedValue(
