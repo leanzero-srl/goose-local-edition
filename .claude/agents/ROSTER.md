@@ -604,3 +604,14 @@ research_request_block's armed-no-claimed-sections arm wording.
   never reads as the new node's); picker hidden unless connected+≥1 peer (local == today); remote
   errors verbatim; destructive ops name the device. Honest live-vs-unit split (remote path needs two
   connected nodes = a deployed worker). Charter gap: none.
+- 2026-09-01 swarm-surgeon (#22 graft DESIGN, read-only, no edits): CLEAN++ (exemplary). Verified
+  in-tree that the mesh mirrors EVENTS not FILES + the swarm's unit of completion is a LOCAL file
+  (verify_owned_files) → proved framing (A) build-fan is a silent-break (missing file as success =
+  FALLBACK shape), disqualified it with the mechanism; found the safe real scope (B1: mesh peers as
+  read-only supervision devices for the input-embedding advisory calls review_dimension/
+  verify_finding — no files cross); mapped every seam as a third instance of the EngineKind pattern
+  with a byte-identical None-gated default + a real TRACE; per-invariant + per-gate preservation;
+  and — the load-bearing honesty — flagged LOW confidence on REACHABILITY (goose swarm run is a
+  standalone CLI with NO mesh handle; LinkManager is a private OnceLock needing connect()),
+  recommending an S0 spike BEFORE any S1-S5 code. Read-only respected. This is the model of a
+  design-first pass on the sacred engine.
