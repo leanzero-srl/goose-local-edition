@@ -132,8 +132,8 @@ const GEN_TEXT = 'var(--color-text-primary)';
 const nodeSlot = (index: number): NodeIndex => ((index % 6) + 1) as NodeIndex;
 
 /** Node identity: a small SOLID dot in the node's ramp hue beside its name — the same identity the
- *  lettered ⬢ glyph and the avatar squares carried, with less sticker. The letter survives in the
- *  aria-label so a reader still hears "node A". The hue is the `bg-lz-node-N` token utility. */
+ *  old lettered hexagon glyph and the avatar squares carried, with less sticker. The letter survives
+ *  in the aria-label so a reader still hears "node A". The hue is the `bg-lz-node-N` token utility. */
 const NodeDot: React.FC<{ index: number; letter: string; size?: 8 | 10; className?: string }> = ({
   index,
   letter,
