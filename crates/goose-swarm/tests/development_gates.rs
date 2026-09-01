@@ -376,7 +376,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,336 (2c S5d+S8): `render_repair_history` moved to commands/swarm/
     // ledger_block.rs beside the roll-up it reads, paying for the gate-evidence and the
     // forming-reset lines.
-    const SWARM_RS_LINE_BASELINE: usize = 36_336;
+    // Tightened to 36,254 (2c S12): the thin-brief floor (`THIN_BRIEF_MIN_CHARS`,
+    // `thin_brief_missing`) and its test moved to commands/swarm/briefs.rs, paying for the
+    // merger's frame arms (owner body, reading rule, the ACT-NOW skip).
+    const SWARM_RS_LINE_BASELINE: usize = 36_254;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -420,7 +423,11 @@ fn do_everything_never_reaches_a_model() {
 /// one, prove the empty MEANS empty in a comment at the call site (honest-empty exemplar:
 /// scheduler.rs hashes "ABSENT" distinctly instead of hashing nothing) and adjust the baseline in
 /// the SAME commit — the diff then shows the proof next to the licence.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 127;
+// Tightened to 120 (2c S12-D): shards.rs's `parse_shard_note` destructures its four field lists
+// (a wrong count is a `?`, not four empty defaults) and an unreadable piece is SAID
+// (`unreadable: <err>`), never rendered as "parses — no definitions found"; the survivors in
+// shards.rs each carry their empty-means-empty proof comment.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 120;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {

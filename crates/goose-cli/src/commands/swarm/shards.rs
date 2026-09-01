@@ -167,7 +167,8 @@ pub(super) fn measure_fatness(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(id);
         // A task no slice claims sections for (a patch-added task) measures as 0 sections — an
-        // honest zero: the opener routed no spec to it.
+        // honest zero: the opener routed no spec to it (fallback gate: empty MEANS empty here;
+        // such a task cannot be fat and is excluded from the distribution below).
         let claim = claims.get(slice).cloned().unwrap_or_default();
         let brief_chars = t
             .get("description")
@@ -1481,11 +1482,10 @@ impl ShardNote {
 /// `README_FIELDS`). None when no field line exists — the caller names that absence
 /// (`merge_note_missing`), never a default note.
 pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
-    let mut lists = parse_fields(text, &README_FIELDS)?;
-    let checked_with = lists.pop().unwrap_or_default();
-    let unfinished = lists.pop().unwrap_or_default();
-    let assumes = lists.pop().unwrap_or_default();
-    let provides = lists.pop().unwrap_or_default();
+    let lists = parse_fields(text, &README_FIELDS)?;
+    // `parse_fields` returns exactly one list per field — a different length is a programming
+    // error, and `?` says so rather than defaulting a field to empty.
+    let [provides, assumes, unfinished, checked_with]: [Vec<String>; 4] = lists.try_into().ok()?;
     Some(ShardNote {
         provides,
         assumes,
@@ -1728,17 +1728,31 @@ const JS_KEYWORDS: [&str; 16] = [
 /// Python: `def`/`async def`/`class`. Other languages: `fn`/`func` heads.
 pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symbol> {
     let mut out: Vec<Symbol> = Vec::new();
+    // JS object-literal depth, so `{ pick, brush }` shorthand PROPERTIES (references to symbols
+    // the object exports) count as definitions of those names on the object (S12-A) — a text
+    // scan would also count `// TODO drawBrush`; this arm counts only property positions.
+    let mut object_depth: i32 = 0;
     let mut push = |name: &str, params: Option<String>, line: usize| {
         let name = name.trim_end_matches('.').to_string();
         if name.is_empty() || JS_KEYWORDS.contains(&name.as_str()) {
             return;
         }
-        if !out.iter().any(|s| s.name == name) {
-            out.push(Symbol {
+        match out.iter_mut().find(|s| s.name == name) {
+            // A definition WITH parameters outranks a shorthand property of the same name (the
+            // property is the export, the function is its signature).
+            Some(existing) => {
+                if existing.params.is_empty() {
+                    if let Some(p) = params.filter(|p| !p.is_empty()) {
+                        existing.params = p;
+                    }
+                }
+            }
+            None => out.push(Symbol {
                 name,
+                // A class or a property has no parameter list — empty MEANS empty (fallback gate).
                 params: params.unwrap_or_default(),
                 line,
-            });
+            }),
         }
     };
     for (i, raw) in source.lines().enumerate() {
@@ -1776,6 +1790,57 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                 }
             }
             _ => {
+                // object-literal shorthand properties: `pick,` / `pick, brush` / `{ pick, brush }`
+                // on a line inside an object literal opened by `= {` / `return {` / `: {`.
+                let opens_object = t.ends_with("= {")
+                    || t.ends_with("return {")
+                    || t.ends_with(": {")
+                    || t.ends_with("({")
+                    || t == "{";
+                if object_depth > 0 {
+                    let inner = t
+                        .trim_start_matches('{')
+                        .trim_end_matches(['}', ';', ','])
+                        .trim();
+                    let props: Vec<&str> = inner.split(',').map(str::trim).collect();
+                    if !inner.is_empty()
+                        && props.iter().all(|p| {
+                            !p.is_empty()
+                                && p.chars().next().is_some_and(is_ident_start)
+                                && p.chars().all(is_ident_char)
+                                && !JS_KEYWORDS.contains(p)
+                        })
+                    {
+                        for prop in props {
+                            push(prop, None, line);
+                        }
+                    }
+                }
+                // Methods written INLINE on the object's own line — `X = { pick(sx, sy) { … } }`.
+                if let Some((_, after_brace)) = t.split_once('{') {
+                    if t.contains("= {") || t.contains("return {") || object_depth > 0 {
+                        let mut rest = after_brace;
+                        while let Some(pos) = rest.find(|c: char| is_ident_start(c)) {
+                            let cand = rest.split_at(pos).1;
+                            let Some(name) = ident_at(cand) else { break };
+                            let after = cand.split_at(name.len()).1.trim_start();
+                            if after.starts_with('(')
+                                && !name.contains('.')
+                                && !JS_KEYWORDS.contains(&name)
+                                && after_params(after)
+                                    .is_some_and(|r| r.trim_start().starts_with('{'))
+                            {
+                                push(name, params_after(after), line);
+                            }
+                            rest = cand.split_at(name.len()).1;
+                        }
+                    }
+                }
+                if opens_object {
+                    object_depth += 1;
+                } else if t.starts_with('}') && object_depth > 0 {
+                    object_depth -= 1;
+                }
                 // function name(
                 for head in [
                     "async function ",
@@ -1853,6 +1918,9 @@ fn last_segment(name: &str) -> &str {
 
 /// Same symbol? Exact, or the declared dotted name's last segment equals the definition (a
 /// declared `window.vs7dbg.pick` is met by a method `pick(sx, sy)` on the object the pieces build).
+/// MILD by design: the last-segment rule also lets `window.vs7dbg.pick` match a `foo.pick` — a
+/// false "present"/"disagreement" the merger reads and dismisses in one line, preferred over a
+/// false "missing" that would send a real export out as a gap.
 fn same_symbol(declared: &str, found: &str) -> bool {
     declared == found
         || last_segment(declared) == found
@@ -1932,7 +2000,9 @@ fn candidate_names(item: &str) -> Vec<String> {
         }
     }
     if out.is_empty() {
-        for tok in item.split(|c: char| c.is_whitespace() || ",;:()[]{}\"'".contains(c)) {
+        // `(` stays IN the token so `drawBrush(ids)` reads as a function reference (S12-E: the
+        // old split set ate the parens and no un-backticked function was ever a candidate).
+        for tok in item.split(|c: char| c.is_whitespace() || ",;:[]{}\"'".contains(c)) {
             if tok.contains('(') || tok.contains('.') {
                 if let Some(id) = ident_at(tok) {
                     out.push(id.trim_end_matches('.').to_string());
@@ -1967,7 +2037,10 @@ pub(super) async fn parse_piece(path: &std::path::Path) -> Option<String> {
                 Err(_) => Some("node not available — unchecked".to_string()),
             }
         }
-        _ => None,
+        // S12-B: a file with no per-file parser is UNCHECKED, said verbatim — never "parses".
+        // (`.rs` is checked at merge time by `rust_compile_error` over the module's files.)
+        Some(ext) => Some(format!("unchecked ({ext}) — no per-file parser")),
+        None => Some("unchecked (no extension) — no per-file parser".to_string()),
     }
 }
 
@@ -1999,9 +2072,12 @@ pub(super) async fn build_merge_dossier(
         names.sort();
         for n in names {
             let path = dir.join(&n);
-            let src = std::fs::read_to_string(&path).unwrap_or_default();
-            let verdict = parse_piece(&path).await;
-            let symbols = extract_symbols(&src, lang);
+            // An unreadable piece (non-UTF-8, a permission error) is SAID — never rendered as
+            // "parses — no definitions found" (fallback gate, S12-D).
+            let (verdict, symbols) = match std::fs::read_to_string(&path) {
+                Ok(src) => (parse_piece(&path).await, extract_symbols(&src, lang)),
+                Err(e) => (Some(format!("unreadable: {e}")), Vec::new()),
+            };
             pieces.push((format!("{folder}/{n}"), verdict, symbols));
         }
         shards.push(ShardDossier {
@@ -2268,7 +2344,7 @@ impl MergeDossier {
             }
         }
         let order = if self.interface.layout.is_empty() {
-            "the order the module's brief implies (constants, state, helpers, mechanisms, the exported API, boot)".to_string()
+            "NO LAYOUT DECLARED — synthesis named no assembly order; choose the order the module's brief implies and say the order you chose under KEPT".to_string()
         } else {
             self.interface.layout.join(" → ")
         };
@@ -2298,6 +2374,27 @@ impl MergeDossier {
         s
     }
 }
+
+/// The MERGER's owner body — replaces the file author's WRITE FIRST / STATIC ASSETS scripts,
+/// whose every clause ("write your owned file IN FULL from the spec", "NEVER `cat` the module",
+/// "`node --check` … nothing else") is the retype the numbered brief forbids (S12-C).
+pub(super) fn merger_owner_body() -> String {
+    "YOU ARE THE MERGER. Your task statement below is a NUMBERED list built by the engine from the \
+     shards' pieces and READMEs — work it in order. READ every piece folder and README it names \
+     (that reading IS the job, not over-reading); ASSEMBLE the final file(s) by concatenating the \
+     piece files in the declared order with the shell, then EDIT the result for the glue; never \
+     retype the module from memory — the pieces are the source. Check the assembled file parses, \
+     every declared export is DEFINED with its declared signature, write MERGE.md (KEPT / DROPPED \
+     / FILLED / SENT_OUT), and put one `MERGE_GAP:` line per gap you send out in your final \
+     message.\n\n"
+        .to_string()
+}
+
+/// The merger's reading rule for the system prompt's rules block (S12-C): the kind-generic "Read
+/// AT MOST the ONE file you will edit" is wrong-job text for a task whose job is reading N folders.
+pub(super) const MERGER_READING_RULE: &str = "- READ EVERY PIECE FOLDER AND README your task \
+     names — the merge IS reading them. Then assemble by shell and edit the glue. Do not re-read \
+     the rest of the project.\n";
 
 /// `MERGE_GAP: …` lines in the merger's final message, in order, deduped.
 pub(super) fn parse_merge_gaps(text: &str) -> Vec<String> {
@@ -2351,6 +2448,8 @@ pub(super) fn gap_specs(
                 .filter(|p| !p.is_empty())
                 .unwrap_or_else(|| format!("(no README) pieces in {}", sh.folder)),
             sections: Vec::new(),
+            // No README → no PROVIDES list; the absence itself rode `merge_note_missing` at the
+            // shard's completion, so empty MEANS empty here (fallback gate).
             provides: sh
                 .note
                 .as_ref()
@@ -2410,9 +2509,14 @@ pub(super) fn gap_specs(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct MergeCheck {
     pub(super) parse_errors: Vec<(String, String)>,
+    /// Final files no parser could check (said, and they block `promoted`).
+    pub(super) unchecked: Vec<(String, String)>,
     pub(super) declared_present: Vec<String>,
     pub(super) declared_missing: Vec<String>,
-    pub(super) dropped: Vec<(String, String)>,
+    /// (name, declared signature, params found on the definition)
+    pub(super) signature_mismatch: Vec<(String, String, String)>,
+    /// (shard, symbol, referenced-but-undefined in the final file)
+    pub(super) dropped: Vec<(String, String, bool)>,
     pub(super) gaps_open: Vec<(String, String)>,
     pub(super) merge_readme_present: bool,
     pub(super) promoted: bool,
@@ -2425,14 +2529,30 @@ pub(super) async fn check_merge(
     gaps_sent: &[String],
 ) -> MergeCheck {
     let mut parse_errors = Vec::new();
+    let mut unchecked: Vec<(String, String)> = Vec::new();
     let mut final_symbols: Vec<Symbol> = Vec::new();
     let mut final_text = String::new();
+    // S12-B: `.rs` has no per-file parser — the crate check over the module's files is its parse.
+    let rust_error = if dossier.files.iter().any(|f| f.ends_with(".rs")) {
+        super::parse_checks::rust_compile_error(root, &dossier.files).await
+    } else {
+        None
+    };
+    let cargo_present = root.join("Cargo.toml").is_file();
     for f in &dossier.files {
         let path = root.join(f);
-        if let Some(e) = parse_piece(&path).await {
-            if !e.contains("unchecked") {
-                parse_errors.push((f.clone(), e));
+        match parse_piece(&path).await {
+            Some(e) if e.contains("unchecked") => {
+                if f.ends_with(".rs") && cargo_present {
+                    if let Some((file, err)) = rust_error.as_ref().filter(|(file, _)| file == f) {
+                        parse_errors.push((file.clone(), err.clone()));
+                    }
+                } else {
+                    unchecked.push((f.clone(), e));
+                }
             }
+            Some(e) => parse_errors.push((f.clone(), e)),
+            None => {}
         }
         if let Ok(src) = std::fs::read_to_string(&path) {
             final_symbols.extend(extract_symbols(&src, lang));
@@ -2440,23 +2560,41 @@ pub(super) async fn check_merge(
             final_text.push('\n');
         }
     }
-    let mentions = |name: &str| -> bool {
+    // S12-A: conformance is a DEFINITION in the final file (`extract_symbols`, the same extractor
+    // the dossier used on the pieces) — never a text mention: `// TODO drawBrush` and a dangling
+    // `initGL()` call both mention a name and define nothing.
+    let defined = |name: &str| -> Option<&Symbol> {
+        final_symbols.iter().find(|s| same_symbol(name, &s.name))
+    };
+    let referenced = |name: &str| -> bool {
         let seg = last_segment(name);
-        final_symbols.iter().any(|s| same_symbol(name, &s.name))
-            || final_text.match_indices(seg).any(|(i, _)| {
-                let (before_text, rest) = final_text.split_at(i);
-                let before = before_text.chars().next_back();
-                let after = rest.split_at(seg.len()).1.chars().next();
-                !before.is_some_and(is_ident_char) && !after.is_some_and(is_ident_char)
-            })
+        final_text.match_indices(seg).any(|(i, _)| {
+            let (before_text, rest) = final_text.split_at(i);
+            let before = before_text.chars().next_back();
+            let after = rest.split_at(seg.len()).1.chars().next();
+            !before.is_some_and(is_ident_char) && !after.is_some_and(is_ident_char)
+        })
     };
     let mut declared_present = Vec::new();
     let mut declared_missing = Vec::new();
+    let mut signature_mismatch = Vec::new();
     for e in &dossier.interface.exports {
-        if mentions(&e.name) {
-            declared_present.push(e.name.clone());
-        } else {
-            declared_missing.push(e.name.clone());
+        match defined(&e.name) {
+            Some(sym) => {
+                declared_present.push(e.name.clone());
+                if let Some(declared_params) = params_after(&e.signature) {
+                    let d = normalize_params(&declared_params);
+                    let f = normalize_params(&sym.params);
+                    if !d.is_empty() && !f.is_empty() && d != f {
+                        signature_mismatch.push((
+                            e.name.clone(),
+                            e.signature.clone(),
+                            sym.params.clone(),
+                        ));
+                    }
+                }
+            }
+            None => declared_missing.push(e.name.clone()),
         }
     }
     let merge_readme = std::fs::read_to_string(
@@ -2465,6 +2603,8 @@ pub(super) async fn check_merge(
             .join(MERGE_README),
     )
     .ok();
+    // No MERGE.md (or one with no field) → no explanations; `merge_readme_present` reports the
+    // absence and `promoted` requires the README, so empty MEANS empty here (fallback gate).
     let merge_fields = merge_readme
         .as_deref()
         .and_then(|t| parse_fields(t, &MERGE_FIELDS))
@@ -2477,8 +2617,9 @@ pub(super) async fn check_merge(
     let mut dropped = Vec::new();
     for sh in &dossier.shards {
         for s in sh.defines() {
-            if !mentions(&s.name) && !explained(&s.name, 1) {
-                dropped.push((sh.id.clone(), s.name.clone()));
+            if defined(&s.name).is_none() && !explained(&s.name, 1) {
+                // referenced-but-undefined is the WORST drop: the merged file CALLS what it lost.
+                dropped.push((sh.id.clone(), s.name.clone(), referenced(&s.name)));
             }
         }
     }
@@ -2502,15 +2643,23 @@ pub(super) async fn check_merge(
             gaps_open.push((sh.clone(), u.clone()));
         }
     }
+    // Promotion is a LABEL (no consumer acts on it yet; REPAIR owns what is left): parse ran and
+    // passed on every final file, every declared export is DEFINED with its declared signature,
+    // no gap open or out, and the merger wrote its MERGE.md.
     let promoted = parse_errors.is_empty()
+        && unchecked.is_empty()
         && declared_missing.is_empty()
+        && signature_mismatch.is_empty()
         && gaps_open.is_empty()
         && gaps_sent.is_empty()
+        && merge_readme.is_some()
         && !dossier.files.iter().any(|f| !root.join(f).is_file());
     MergeCheck {
         parse_errors,
+        unchecked,
         declared_present,
         declared_missing,
+        signature_mismatch,
         dropped,
         gaps_open,
         merge_readme_present: merge_readme.is_some(),
@@ -2630,9 +2779,11 @@ impl GooseAgentDispatcher {
         let dossier = build_merge_dossier(root, merger, &req.owned_files, lang).await;
         let gaps = parse_merge_gaps(final_text);
         let follow_ups = gap_specs(merger, &req.owned_files, &req.description, &dossier, &gaps);
+        // The DOOR emits `merge_gap` once it has validated and spliced the shard; this is the
+        // REQUEST as the merger phrased it (S12-F: one event per fact, never two for one).
         for (spec, gap) in follow_ups.iter().zip(gaps.iter()) {
             self.events.write_value(serde_json::json!({
-                "event": "merge_gap",
+                "event": "merge_gap_requested",
                 "module": merger.module,
                 "shard": spec.id,
                 "task_id": req.task_id,
@@ -2641,13 +2792,24 @@ impl GooseAgentDispatcher {
             }));
         }
         let check = check_merge(root, &dossier, lang, &gaps).await;
-        for (shard, symbol) in &check.dropped {
+        for (shard, symbol, referenced) in &check.dropped {
             self.events.write_value(serde_json::json!({
                 "event": "merge_piece_dropped",
                 "module": merger.module,
                 "task_id": req.task_id,
                 "shard": shard,
                 "symbol": symbol,
+                "referenced": referenced,
+            }));
+        }
+        for (symbol, declared, found) in &check.signature_mismatch {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_signature_mismatch",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "symbol": symbol,
+                "declared": declared,
+                "found": found,
             }));
         }
         for (shard, item) in &check.gaps_open {
@@ -2665,9 +2827,13 @@ impl GooseAgentDispatcher {
             "task_id": req.task_id,
             "files": req.owned_files,
             "parse_errors": check.parse_errors.iter().map(|(f, e)| serde_json::json!({"file": f, "error": e})).collect::<Vec<_>>(),
+            "parse": if check.unchecked.is_empty() { "checked" } else { "unchecked" },
+            "unchecked": check.unchecked.iter().map(|(f, e)| serde_json::json!({"file": f, "why": e})).collect::<Vec<_>>(),
             "declared_present": check.declared_present,
             "declared_missing": check.declared_missing,
+            "signature_mismatch": check.signature_mismatch.len(),
             "dropped": check.dropped.len(),
+            "dropped_referenced": check.dropped.iter().filter(|(_, _, r)| *r).count(),
             "gaps_open": check.gaps_open.len(),
             "gaps_sent": gaps,
             "merge_readme_present": check.merge_readme_present,
@@ -2893,7 +3059,7 @@ mod merger_tests {
         assert_eq!(check.declared_missing, vec!["drawBrush".to_string()]);
         assert_eq!(
             check.dropped,
-            vec![("web-viz-render".to_string(), "initGL".to_string())],
+            vec![("web-viz-render".to_string(), "initGL".to_string(), false)],
             "an unexplained drop is named; the explained duplicate is not: {:?}",
             check.dropped
         );
@@ -2942,6 +3108,182 @@ mod merger_tests {
             .any(|s| s.name == "updateLabels"));
     }
 
+    /// S12-A/B (the refuter's measured trivialization): a final file that CALLS `initGL()` without
+    /// defining it, mentions `drawBrush` in a comment only, and has no MERGE.md must NOT read as
+    /// conforming or promoted — conformance is a DEFINITION, a referenced-but-undefined piece
+    /// symbol is the worst drop, MERGE.md is required; a `.rs` module with no Cargo.toml is
+    /// UNCHECKED, never "parses".
+    #[tokio::test]
+    async fn a_dangling_call_a_comment_mention_and_no_merge_readme_never_promote() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".swarm/shards/web-viz/render")).unwrap();
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/render/render.js"),
+            "function buildScene(data) {}\nfunction initGL() {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".swarm/shards/web-viz/render/README.md"), "PROVIDES: buildScene(data)\n- initGL()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check\n").unwrap();
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into()],
+            folders: vec![".swarm/shards/web-viz/render".into()],
+            interface: ModuleInterface {
+                exports: vec![
+                    DeclaredExport {
+                        name: "window.vs7dbg.pick".into(),
+                        kind: "function".into(),
+                        signature: "pick(sx, sy) -> {id, index} | null".into(),
+                        purpose: "pick".into(),
+                    },
+                    DeclaredExport {
+                        name: "drawBrush".into(),
+                        kind: "function".into(),
+                        signature: "drawBrush(ids) -> void".into(),
+                        purpose: "dim".into(),
+                    },
+                    DeclaredExport {
+                        name: "buildScene".into(),
+                        kind: "function".into(),
+                        signature: "buildScene(data) -> void".into(),
+                        purpose: "fill".into(),
+                    },
+                ],
+                shared_state: String::new(),
+                layout: Vec::new(),
+            },
+        };
+        let files = vec!["web/viz.js".to_string()];
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(root.join("web/viz.js"), "function buildScene(data, extra) { initGL(); }\n// TODO drawBrush\nwindow.vs7dbg = {\n  pick,\n};\nfunction pick(x, y) { return null; }\n").unwrap();
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        let check = check_merge(root, &d, super::super::TargetLang::TypeScript, &[]).await;
+        assert_eq!(
+            check.declared_missing,
+            vec!["drawBrush".to_string()],
+            "a comment mention is not a definition: {check:?}"
+        );
+        assert!(
+            check
+                .declared_present
+                .contains(&"window.vs7dbg.pick".to_string()),
+            "the shorthand property + the function define it: {check:?}"
+        );
+        assert!(check.declared_present.contains(&"buildScene".to_string()));
+        assert_eq!(
+            check.signature_mismatch.len(),
+            2,
+            "buildScene(data, extra) vs (data); pick(x, y) vs (sx, sy): {:?}",
+            check.signature_mismatch
+        );
+        assert_eq!(
+            check.dropped,
+            vec![("web-viz-render".to_string(), "initGL".to_string(), true)],
+            "a dangling call is the referenced drop: {:?}",
+            check.dropped
+        );
+        assert!(!check.merge_readme_present);
+        assert!(!check.promoted);
+        assert!(
+            check.unchecked.is_empty() && check.parse_errors.is_empty(),
+            "{check:?}"
+        );
+        // A module in a language with no per-file parser is UNCHECKED, said, and never promotes.
+        let rs = vec!["src/lib.rs".to_string()];
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn broken( {").unwrap();
+        let merger_rs = MergerOf {
+            module: "lib".into(),
+            shards: vec![],
+            folders: vec![],
+            interface: ModuleInterface::default(),
+        };
+        let d_rs = build_merge_dossier(root, &merger_rs, &rs, super::super::TargetLang::Rust).await;
+        let check_rs = check_merge(root, &d_rs, super::super::TargetLang::Rust, &[]).await;
+        assert_eq!(check_rs.unchecked.len(), 1, "{check_rs:?}");
+        assert!(
+            check_rs.unchecked[0].1.contains("unchecked (rs)"),
+            "{check_rs:?}"
+        );
+        assert!(!check_rs.promoted);
+        assert_eq!(
+            parse_piece(std::path::Path::new("x.txt")).await.as_deref(),
+            Some("unchecked (txt) — no per-file parser")
+        );
+        // The dossier says an unreadable piece is unreadable, never "parses — no definitions".
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/render/bad.js"),
+            [0xff, 0xfe, 0xfd],
+        )
+        .unwrap();
+        let d2 =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        let bad = d2.shards[0]
+            .pieces
+            .iter()
+            .find(|(p, _, _)| p.ends_with("bad.js"))
+            .unwrap();
+        assert!(
+            bad.1
+                .as_deref()
+                .is_some_and(|v| v.starts_with("unreadable:")),
+            "{bad:?}"
+        );
+    }
+
+    /// S12-E: an un-backticked ASSUMES about a function is a candidate too; S12-C: the merger's
+    /// frame carries none of the author scripts' retype phrases.
+    #[test]
+    fn candidate_names_read_both_forms_and_the_merger_frame_never_orders_a_retype() {
+        assert_eq!(
+            candidate_names("drawBrush(ids) dims non-members"),
+            vec!["drawBrush"]
+        );
+        assert_eq!(
+            candidate_names("`scene.points` is an array"),
+            vec!["scene.points"]
+        );
+        assert_eq!(
+            candidate_names("S.dirty is cleared by render()"),
+            vec!["S.dirty", "render"]
+        );
+        assert!(candidate_names("the brush stays").is_empty());
+        let body = merger_owner_body();
+        for banned in [
+            "IN FULL from the spec",
+            "NEVER `cat`",
+            "nothing else",
+            "write it now, in one `write`",
+        ] {
+            assert!(
+                !body.contains(banned),
+                "the merger frame must not say: {banned}"
+            );
+        }
+        assert!(body.contains("never retype the module from memory"));
+        assert!(MERGER_READING_RULE.contains("READ EVERY PIECE FOLDER AND README"));
+        // The frame in run_task_inner takes the merger arms (source tripwire: the prompt is
+        // assembled inside the dispatcher and has no seam a unit test can render).
+        let src = include_str!("../swarm.rs");
+        assert!(src.contains("} else if req.merger_of.is_some() {\n                    shards::merger_owner_body()"), "owner_body's merger arm");
+        assert!(
+            src.contains("&& req.merger_of.is_none()\n            && !req.owned_files.is_empty()"),
+            "the ACT-NOW nudge skips the merger"
+        );
+        assert!(
+            src.contains("shards::MERGER_READING_RULE"),
+            "the merger's reading rule"
+        );
+        // extract_symbols: shorthand properties inside an object literal define the exported names.
+        let syms = extract_symbols(
+            "window.vs7dbg = {\n  pick,\n  brush, layout\n};\nconst x = { if, y };\n",
+            super::super::TargetLang::TypeScript,
+        );
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["pick", "brush", "layout"], "{syms:?}");
+    }
+
     #[test]
     fn merge_fields_and_gap_lines_parse_in_markdown_dress() {
         let f = parse_fields("## KEPT\n- render's buildScene\n**DROPPED:** `initGL` (dead)\nFILLED: none\nSENT_OUT: drawBrush\n", &MERGE_FIELDS).unwrap();
@@ -2950,6 +3292,10 @@ mod merger_tests {
         assert!(f[2].is_empty());
         assert_eq!(f[3], vec!["drawBrush"]);
         assert!(parse_fields("nothing here", &MERGE_FIELDS).is_none());
+        // Non-ASCII prefixes never panic (byte-index safety) and never match a field.
+        assert!(parse_fields("Résumé: done\nVoilà — done\n", &MERGE_FIELDS).is_none());
+        assert!(parse_shard_note("Résumé: done").is_none());
+        assert!(parse_fields("PROVIDÉS: x", &MERGE_FIELDS).is_none());
         assert_eq!(
             parse_merge_gaps("- `MERGE_GAP: a`\nMERGE_GAP: none\n**MERGE_GAP:** a\nmerge_gap: b"),
             vec!["a", "b"]
