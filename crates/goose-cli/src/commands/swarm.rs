@@ -33,9 +33,9 @@ use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
-    drop_unservable_devices_per_engine, engines_for_run, live_fleet_slots, merge_sidecar_devices,
-    planner_fallback, prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine,
-    EngineKind, Engines, LmsProcess,
+    drop_unservable_devices_per_engine, engines_for_run, live_fleet_slots, local_request_params,
+    merge_sidecar_devices, planner_fallback, prewarm_pool, reconcile_pool_with_fleet,
+    require_servable, served_by_engine, EngineKind, Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -153,15 +153,16 @@ fn default_best_of_n_skeletons() -> usize {
 
 /// Imposed sampling parameters for the local models — the lever for steadying weak models (lower
 /// temperature for more deterministic tool-calling, etc.). `temperature` is a first-class ModelConfig
-/// field; `top_p`/`top_k`/`min_p`/`repeat_penalty` are merged into the request body (LM Studio accepts
-/// them). All None = use the model/server defaults (no change).
+/// field; `top_p`/`top_k`/`min_p`/`repeat_penalty` are merged into the request body under the
+/// ENGINE's own names (`swarm_engine::local_request_params`). All None = use the model/server
+/// defaults (no change).
 #[derive(Clone, Default)]
 pub struct SamplingParams {
-    temperature: Option<f32>,
-    top_p: Option<f32>,
-    top_k: Option<i32>,
-    min_p: Option<f32>,
-    repeat_penalty: Option<f32>,
+    pub(super) temperature: Option<f32>,
+    pub(super) top_p: Option<f32>,
+    pub(super) top_k: Option<i32>,
+    pub(super) min_p: Option<f32>,
+    pub(super) repeat_penalty: Option<f32>,
 }
 
 /// When the swarm runs a parallel research phase before planning.
@@ -15822,41 +15823,24 @@ impl GooseAgentDispatcher {
         // None unless the swarm config explicitly sets one. None clears any inherited GOOSE_TEMPERATURE
         // default so the request omits temperature entirely and the LM Studio per-model setting applies.
         model_config = model_config.with_temperature(temp_override.or(self.sampling.temperature));
-        let mut extra = std::collections::HashMap::new();
-        // The sampling knobs and the openai-format prefill/force-tool keys are LM STUDIO request-body
-        // params; a cloud provider (bedrock) neither understands nor needs them, so a cloud model's
-        // config carries only the temperature.
-        if !self.cloud_models.contains_key(model_id) {
-            if let Some(body) = load_config().lm_extra_body {
-                for (k, v) in body {
-                    extra.insert(k, v);
-                }
-            }
-            if let Some(v) = self.sampling.top_p {
-                extra.insert("top_p".to_string(), serde_json::json!(v));
-            }
-            if let Some(v) = self.sampling.top_k {
-                extra.insert("top_k".to_string(), serde_json::json!(v));
-            }
-            if let Some(v) = self.sampling.min_p {
-                extra.insert("min_p".to_string(), serde_json::json!(v));
-            }
-            if let Some(v) = self.sampling.repeat_penalty {
-                extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
-            }
-            if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
-                extra.insert(
-                    goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY.to_string(),
-                    serde_json::json!(tool),
-                );
-            }
-            if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
-                extra.insert(
-                    goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
-                    serde_json::json!(text),
-                );
-            }
-        }
+        // The sampling knobs and the openai-format prefill/force-tool keys are LOCAL-ENGINE
+        // request-body params, spelled in the serving engine's own names; a cloud provider
+        // (bedrock) neither understands nor needs them, so a cloud model's config carries only
+        // the temperature. Absent from engine_models = the default LM Studio engine, definitionally.
+        let extra = if self.cloud_models.contains_key(model_id) {
+            std::collections::HashMap::new()
+        } else {
+            local_request_params(
+                self.engine_models
+                    .get(model_id)
+                    .copied()
+                    .unwrap_or(EngineKind::LmStudio),
+                &self.sampling,
+                load_config().lm_extra_body,
+                force_tool_until_act,
+                prefill_assistant,
+            )
+        };
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }

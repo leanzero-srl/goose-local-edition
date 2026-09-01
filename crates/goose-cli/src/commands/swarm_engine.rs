@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use console::style;
 
-use super::swarm::{gen_entry_id, SwarmConfig, SwarmDevice};
+use super::swarm::{gen_entry_id, SamplingParams, SwarmConfig, SwarmDevice};
 
 /// One resident/served model row as an engine's probe reports it — the exchange type every
 /// catalog probe returns and the pool builder consumes.
@@ -413,6 +413,62 @@ pub(super) fn live_fleet_slots(
     } else {
         live
     }
+}
+
+/// The request-body extras for a LOCAL model call, spelled in the serving ENGINE's own names.
+///
+/// The sampling knobs went on the wire under LM Studio's names whatever engine served the model.
+/// rapid-mlx (0.13.1, models.py:1588) reads `repetition_penalty`, has no `repeat_penalty`, and
+/// its request model is Pydantic `extra=ignore` — so a sidecar device's repeat penalty was
+/// dropped silently with a 200, and `lm_extra_body` (an LM Studio body by definition) rode along
+/// with it. Per engine: LM Studio devices get the previous block byte-for-byte; a sidecar device
+/// gets the rapid-mlx key and no LM Studio body. The openai-format prefill/force-tool keys are
+/// goose's own request-param protocol (consumed by the provider, not the server) and apply to
+/// both.
+pub(super) fn local_request_params(
+    kind: EngineKind,
+    sampling: &SamplingParams,
+    lm_extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    force_tool_until_act: Option<&str>,
+    prefill_assistant: Option<&str>,
+) -> HashMap<String, serde_json::Value> {
+    let mut extra = HashMap::new();
+    if kind == EngineKind::LmStudio {
+        if let Some(body) = lm_extra_body {
+            for (k, v) in body {
+                extra.insert(k, v);
+            }
+        }
+    }
+    if let Some(v) = sampling.top_p {
+        extra.insert("top_p".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = sampling.top_k {
+        extra.insert("top_k".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = sampling.min_p {
+        extra.insert("min_p".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = sampling.repeat_penalty {
+        let key = match kind {
+            EngineKind::LmStudio => "repeat_penalty",
+            EngineKind::MlxSidecar => "repetition_penalty",
+        };
+        extra.insert(key.to_string(), serde_json::json!(v));
+    }
+    if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
+        extra.insert(
+            goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY.to_string(),
+            serde_json::json!(tool),
+        );
+    }
+    if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
+        extra.insert(
+            goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
+            serde_json::json!(text),
+        );
+    }
+    extra
 }
 
 /// The one engine today. Construct through `default_engine` so every call site shares the seam
@@ -1643,6 +1699,90 @@ mod tests {
                 "gabee-qwen3.8-27b".to_string()
             ))
         );
+    }
+
+    /// S-M5: the wire shape per engine. LM Studio keeps the previous block byte-for-byte
+    /// (`repeat_penalty`, the configured `lm_extra_body` merged first); the sidecar gets rapid-mlx's
+    /// `repetition_penalty` and never sees the LM Studio body. The goose-side prefill/force-tool
+    /// keys reach both.
+    #[test]
+    fn local_request_params_spell_the_knobs_in_each_engines_own_names() {
+        let sampling = SamplingParams {
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            top_k: Some(40),
+            min_p: Some(0.05),
+            repeat_penalty: Some(1.1),
+        };
+        let body = || {
+            let mut m = serde_json::Map::new();
+            m.insert("ttl".to_string(), serde_json::json!(3600));
+            Some(m)
+        };
+        let force = goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY;
+        let prefill = goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY;
+
+        let lm = local_request_params(
+            EngineKind::LmStudio,
+            &sampling,
+            body(),
+            Some("shell"),
+            Some("<think>"),
+        );
+        let mut lm_keys: Vec<&str> = lm.keys().map(String::as_str).collect();
+        lm_keys.sort_unstable();
+        let mut want = vec![
+            "ttl",
+            "top_p",
+            "top_k",
+            "min_p",
+            "repeat_penalty",
+            force,
+            prefill,
+        ];
+        want.sort_unstable();
+        assert_eq!(lm_keys, want, "LM Studio: the previous block, verbatim");
+        assert_eq!(lm["repeat_penalty"], serde_json::json!(1.1f32));
+        assert_eq!(lm["ttl"], serde_json::json!(3600));
+
+        let sc = local_request_params(
+            EngineKind::MlxSidecar,
+            &sampling,
+            body(),
+            Some("shell"),
+            Some("<think>"),
+        );
+        let mut sc_keys: Vec<&str> = sc.keys().map(String::as_str).collect();
+        sc_keys.sort_unstable();
+        let mut want = vec![
+            "top_p",
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            force,
+            prefill,
+        ];
+        want.sort_unstable();
+        assert_eq!(
+            sc_keys, want,
+            "sidecar: rapid-mlx's repetition_penalty, no repeat_penalty, no LM Studio body"
+        );
+        assert_eq!(sc["repetition_penalty"], serde_json::json!(1.1f32));
+        assert!(!sc.contains_key("repeat_penalty"));
+        assert!(!sc.contains_key("ttl"));
+
+        // Nothing configured → nothing sent, on either engine; empty prefill/force strings are
+        // not keys.
+        for kind in [EngineKind::LmStudio, EngineKind::MlxSidecar] {
+            assert!(local_request_params(
+                kind,
+                &SamplingParams::default(),
+                None,
+                Some(""),
+                Some("")
+            )
+            .is_empty());
+        }
     }
 
     /// The config contract of step B: a device yaml WITHOUT the engine key deserializes to None

@@ -192,9 +192,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// swarm_engine::planner_fallback, keyed on the engine of the pool device carrying the planner.
 /// Tightened to 44,953 (S-H2): `live_fleet_slots` moved to swarm_engine.rs and made per-engine
 /// (a partition whose probe cannot answer keeps its snapshot slots).
+/// Tightened to 44,937 (S-M5): the request-body extras block became
+/// swarm_engine::local_request_params (per-engine knob names).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_953;
+    const SWARM_RS_LINE_BASELINE: usize = 44_937;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
