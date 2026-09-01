@@ -29,7 +29,20 @@ pub(super) struct SpecSurface {
 }
 
 pub(super) fn spec_surface_rows(spec: &str) -> SpecSurface {
-    let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
+    // A cell is unwrapped ONLY when it is one whole code span (`GET`, `/api/health`,
+    // `{"status": "ok"}`): it starts and ends with a backtick and holds no other. A MIXED cell —
+    // prose around one or more spans — is kept verbatim: `trim_matches` used to strip its outer
+    // backticks and leave the inner ones dangling, so sb-7's §5 row rendered as
+    // `EXPECT create from `{...}` → `draft.created` (one backtick short) and the §6 row
+    // `` `{"events": [...]}` → `{"accepted": ...}` `` lost both ends — an unbalanced shape handed
+    // to the builder as the response contract (r6e refuter E12).
+    let unwrap_cell = |c: &str| {
+        let c = c.trim();
+        match c.strip_prefix('`').and_then(|r| r.strip_suffix('`')) {
+            Some(inner) if !inner.contains('`') => inner.trim().to_string(),
+            _ => c.to_string(),
+        }
+    };
     // THE PATH IS THE FIRST BACKTICKED TOKEN when the cell opens with a backtick, else the first
     // whitespace token. sb-7's row `| `GET` | `/` + `web/*` | …` stripped by `unwrap_cell` to
     // "/` + `web/*"; every consumer then took its first whitespace token, "/`", and the gate curled
@@ -296,14 +309,31 @@ mod tests {
         );
         assert!(rows[0].contains("draft.created"), "{:?}", rows[0]);
         assert!(!rows[0].contains("maker or checker"), "{:?}", rows[0]);
+        // E12: a MIXED cell keeps every backtick — the old strip left `draft.created` open.
+        assert!(rows[0].ends_with("→ `draft.created`"), "{:?}", rows[0]);
+        assert_eq!(rows[0].matches('`').count() % 2, 0, "{:?}", rows[0]);
+        // E12: the mixed cell keeps its span intact (the old strip ate the leading backtick and
+        // left the closing one dangling).
         assert!(
             rows[1].starts_with(
-                "GET /api/drafts?state= -> EXPECT {\"data\": [...], \"total\": <int>}"
+                "GET /api/drafts?state= -> EXPECT `{\"data\": [...], \"total\": <int>}`, filtered"
             ),
             "{:?}",
             rows[1]
         );
+        assert_eq!(rows[1].matches('`').count(), 2, "{:?}", rows[1]);
         assert!(!rows[1].contains("any role"), "{:?}", rows[1]);
+
+        // E12, the §6 shape: a cell that starts AND ends with a backtick but holds two spans is
+        // not one code span — kept verbatim, both ends intact, backticks balanced.
+        let six = "### 6. `notifierd`\n\n| Method | Path | Response |\n|---|---|---|\n\
+                   | `POST` | `/notify/events` | `{\"events\": [...]}` → `{\"accepted\": [<seq>...], \"duplicate\": [<seq>...]}` |\n";
+        let rows6 = spec_advertised_surface(six);
+        assert_eq!(
+            rows6,
+            vec!["POST /notify/events -> EXPECT `{\"events\": [...]}` → `{\"accepted\": [<seq>...], \"duplicate\": [<seq>...]}`".to_string()]
+        );
+        assert_eq!(rows6[0].matches('`').count(), 4, "{:?}", rows6[0]);
 
         // Three columns: the header names `Response` at index 2, as before.
         let three = "| Method | Path | Response |\n|---|---|---|\n\
