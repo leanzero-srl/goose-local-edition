@@ -84,9 +84,19 @@ fn looks_like_test_file(f: &str) -> bool {
         || lower.contains("/test/")
 }
 
-/// A test subtask: id mentions "test", or every owned file looks like a test file. Test tasks are never
-/// salvaged (a spinning test is not "done", and tests do not block integrate-verify).
-fn is_test_task(id: &str, owned_files: &[String]) -> bool {
+/// A test subtask: id mentions "test", or every owned file looks like a test file. Its one consumer is
+/// `should_degrade_on_stall`: a test task is never salvaged to Done(degraded) — a spinning test is not
+/// "done". (Whether a FAILED task blocks the green is goose-cli's `green_blocking_failed`, keyed on
+/// owns-nothing, not on this predicate.)
+///
+/// A SHARD or a MERGER (`is_split_role`, VA-064) is never a test task: the model names the shards, so
+/// `viz3d-engine-test-hooks` or `…-latest` would otherwise be classed a test and left un-salvaged with
+/// its README on disk while its merger and the sink wait on it. The substring rule is unchanged for
+/// every other task.
+fn is_test_task(id: &str, owned_files: &[String], is_split_role: bool) -> bool {
+    if is_split_role {
+        return false;
+    }
     id.to_lowercase().contains("test")
         || (!owned_files.is_empty() && owned_files.iter().all(|f| looks_like_test_file(f)))
 }
@@ -440,8 +450,9 @@ fn should_degrade_on_stall(
     is_content: bool,
     id: &str,
     owned_files: &[String],
+    is_split_role: bool,
 ) -> bool {
-    if !enabled || is_content || is_test_task(id, owned_files) {
+    if !enabled || is_content || is_test_task(id, owned_files, is_split_role) {
         return false;
     }
     // A task that OWNS NOTHING produces no artifact, so there is no half-written file to promote and
@@ -1630,6 +1641,7 @@ impl State {
                                 is_content,
                                 &n.spec.id,
                                 &n.spec.owned_files,
+                                n.spec.shard_of.is_some() || n.spec.merger_of.is_some(),
                             )
                         });
                     let attempts = self.attempt_log[tid].len() as u32;
@@ -1994,10 +2006,6 @@ impl State {
         // On a twin Err: the primary keeps running; the twin's own device was already released above.
     }
 
-    /// M3 task-splitting: replace a too-big task with the judge's proposed children that PARTITION its
-    /// owned files. Returns true if a VALID split was applied (worker aborted, children injected, the
-    /// original's dependents re-pointed onto ALL children); false if the proposal is malformed — the caller
-    /// then takes no action and the worker keeps running, so a bad proposal can never corrupt the DAG.
     /// THE MERGE-GAP DOOR (2c S4; gate 6, the r4 class). A MERGER's completion may carry gap shard
     /// specs the CLI built from its `MERGE_GAP:` lines. This is a task-adding door, so it carries
     /// its OWN ownership repair before it reaches `splice_specs`: every follow-up must be a shard
@@ -2018,14 +2026,19 @@ impl State {
         dev_id: &Option<String>,
         model_id: &Option<String>,
     ) -> bool {
-        // S12-F, the re-arm cycle's PROGRESS terminator: a gap whose text already landed as a shard
-        // of this module is not a new gap — it is the merger asking for the same work twice. It is
-        // refused by name (`merge_gap_repeated`, never a count); a batch of only repeats re-arms
-        // nothing and the merger completes.
+        // S12-F, the re-arm cycle's PROGRESS terminator: a gap whose text already LANDED — a shard
+        // that is Done with the same responsibility — is not a new gap — it is the merger asking for
+        // the same work twice. It is refused by name (`merge_gap_repeated`, never a count); a batch
+        // of only repeats re-arms nothing and the merger completes. A Failed or Pending shard has
+        // NOT landed (VA-064): the merger reaches this door past a failed shard precisely because
+        // `fail_descendants` relaxed it, and re-doing that shard's piece is the real gap the door
+        // exists for. (The responsibility text is compared across every shard in the dag, not only
+        // this module's.)
         let landed: Vec<(String, String)> = self
             .dag
             .tasks
             .values()
+            .filter(|n| n.state == TaskState::Done)
             .filter_map(|n| {
                 n.spec
                     .shard_of
@@ -2216,11 +2229,33 @@ impl State {
             // during it. The failed dependency is threaded into prior_hints so the verifier
             // names what it is verifying around; write-owning dependents still fail exactly as
             // before.
-            if n.spec.owned_files.is_empty() {
-                let hint = format!(
-                    "dependency '{parent}' FAILED — verify the tree that exists and report what \
-                     its absence breaks"
-                );
+            //
+            // THE ONE write-owning exception (VA-064): a MERGER whose failed dependency is one of
+            // ITS OWN SHARDS. The merger owns the module's final file, so the rule above would
+            // cascade it Failed on one failed shard, and the file-less sink would then relax and
+            // integrate WITHOUT the module. The merger's dossier already reports the shard's
+            // folder under `readmes_missing`, and its gap door (`splice_merge_gaps`) is how a
+            // missing piece is re-done — so the merger dispatches against the shards that landed.
+            // A merger whose failed dependency is NOT one of its shards cascades like any other
+            // file-owning task.
+            let is_merger_of_failed_shard = n
+                .spec
+                .merger_of
+                .as_ref()
+                .is_some_and(|m| m.shards.contains(&parent));
+            if n.spec.owned_files.is_empty() || is_merger_of_failed_shard {
+                let hint = if is_merger_of_failed_shard {
+                    format!(
+                        "shard '{parent}' FAILED — its folder has no README (the dossier lists it \
+                         under readmes_missing); merge the shards that landed and send its piece \
+                         out as a `MERGE_GAP:` line, or fill it yourself if it is small"
+                    )
+                } else {
+                    format!(
+                        "dependency '{parent}' FAILED — verify the tree that exists and report \
+                         what its absence breaks"
+                    )
+                };
                 let deps_relaxed = {
                     if n.indegree_remaining > 0 {
                         n.indegree_remaining -= 1;
@@ -2947,18 +2982,48 @@ mod salvage_tests {
         // A non-test entry task is salvageable; test tasks and empty-owned tasks are not.
         assert!(!is_test_task(
             "cli-app",
-            &["habits/commands.py".into(), "habits/__main__.py".into()]
+            &["habits/commands.py".into(), "habits/__main__.py".into()],
+            false
         ));
         assert!(is_test_task(
             "tests-advanced",
-            &["tests/test_advanced.py".into()]
+            &["tests/test_advanced.py".into()],
+            false
         ));
         assert!(is_test_task(
             "unit",
-            &["tests/test_a.py".into(), "tests/test_b.py".into()]
+            &["tests/test_a.py".into(), "tests/test_b.py".into()],
+            false
         ));
         // id mentions test even if a file does not look like one.
-        assert!(is_test_task("integration-test", &["run_it.py".into()]));
+        assert!(is_test_task(
+            "integration-test",
+            &["run_it.py".into()],
+            false
+        ));
+        // VA-064: a SHARD or MERGER is never a test task, whatever the model named it — the same
+        // ids without the split role keep the substring rule.
+        let readme = ".swarm/shards/viz3d-engine/test-hooks/README.md".to_string();
+        assert!(!is_test_task(
+            "viz3d-engine-test-hooks",
+            std::slice::from_ref(&readme),
+            true
+        ));
+        assert!(is_test_task(
+            "viz3d-engine-test-hooks",
+            std::slice::from_ref(&readme),
+            false
+        ));
+        assert!(!is_test_task(
+            "viz3d-engine-latest",
+            &["web/viz.js".into()],
+            true
+        ));
+        assert!(is_test_task(
+            "viz3d-engine-latest",
+            &["web/viz.js".into()],
+            false
+        ));
     }
 
     // A fresh temp dir + a helper to write/skip owned files, so the on-disk degrade predicate is exercised for
@@ -3038,7 +3103,13 @@ mod salvage_tests {
         // With the lever OFF, no on-disk state can flip the decision -> exhausted arm stays fail_descendants.
         let dir = degrade_fixture("off");
         let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
-        assert!(!should_degrade_on_stall(false, false, "cli-entry", &[main]));
+        assert!(!should_degrade_on_stall(
+            false,
+            false,
+            "cli-entry",
+            &[main],
+            false
+        ));
     }
 
     /// THE SINK IS THE TASK THIS EXISTS FOR, AND IT WAS THE ONE TASK EXCLUDED.
@@ -3126,7 +3197,7 @@ mod salvage_tests {
         // The sink, the per-module verifies and the e2e shards all own nothing.
         for id in ["integrate-verify", "verify::store", "verify-e2e::2"] {
             assert!(
-                should_degrade_on_stall(true, false, id, &[]),
+                should_degrade_on_stall(true, false, id, &[], false),
                 "{id} owns nothing: a transient stall must record it unfinished, not restart it"
             );
         }
@@ -3136,13 +3207,15 @@ mod salvage_tests {
             false,
             false,
             "integrate-verify",
-            &[]
+            &[],
+            false
         ));
         assert!(!should_degrade_on_stall(
             true,
             true,
             "integrate-verify",
-            &[]
+            &[],
+            false
         ));
     }
 
@@ -3155,7 +3228,8 @@ mod salvage_tests {
             true,
             false,
             "cli-entry",
-            std::slice::from_ref(&main)
+            std::slice::from_ref(&main),
+            false
         ));
         // A missing critical file must NOT degrade (the test4 failure: shipping with no entrypoint).
         let missing = dir.join("gone.go").to_string_lossy().into_owned();
@@ -3163,11 +3237,18 @@ mod salvage_tests {
             true,
             false,
             "cli-entry",
-            &[missing]
+            &[missing],
+            false
         ));
         // An empty critical file is not "written".
         let empty = write_file(&dir, "empty.go", "");
-        assert!(!should_degrade_on_stall(true, false, "cli-entry", &[empty]));
+        assert!(!should_degrade_on_stall(
+            true,
+            false,
+            "cli-entry",
+            &[empty],
+            false
+        ));
     }
 
     #[test]
@@ -3179,11 +3260,18 @@ mod salvage_tests {
             true,
             true,
             "cli-entry",
-            std::slice::from_ref(&main)
+            std::slice::from_ref(&main),
+            false
         ));
         // A test task is never salvaged/degraded, even with its file on disk.
         let tf = write_file(&dir, "miner_test.go", "package miner\n");
-        assert!(!should_degrade_on_stall(true, false, "miner-tests", &[tf]));
+        assert!(!should_degrade_on_stall(
+            true,
+            false,
+            "miner-tests",
+            &[tf],
+            false
+        ));
     }
 
     #[test]
@@ -3192,7 +3280,13 @@ mod salvage_tests {
         // gate on); it is not a source task, so this cannot ship a broken entrypoint.
         let dir = degrade_fixture("manifest");
         let gomod = write_file(&dir, "go.mod", "module x\n");
-        assert!(should_degrade_on_stall(true, false, "manifest", &[gomod]));
+        assert!(should_degrade_on_stall(
+            true,
+            false,
+            "manifest",
+            &[gomod],
+            false
+        ));
         // But a manifest-only task with an EMPTY manifest still fails (nothing on disk).
         let dir2 = degrade_fixture("manifest2");
         let empty_mod = write_file(&dir2, "go.mod", "");
@@ -3200,7 +3294,8 @@ mod salvage_tests {
             true,
             false,
             "manifest",
-            &[empty_mod]
+            &[empty_mod],
+            false
         ));
     }
 }
