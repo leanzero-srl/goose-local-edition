@@ -52,10 +52,11 @@ mod decisions;
 use decisions::PlanDecision;
 mod supervision;
 use supervision::{
-    call_objective, fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_contract,
-    judge_lane_key, me_events_skip, omni_judge_says_looping, parse_judge_eta_mins,
-    parse_judge_reply, prereview_lane_key, render_forming_file, replan_lane_key,
-    schedjudge_lane_key, superseded_from_prior, supervised_reply_text, supervision_lane_kind,
+    call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
+    is_agent_loop_filler, judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping,
+    parse_judge_eta_mins, parse_judge_reply, prereview_lane_key, render_forming_file,
+    replan_lane_key, said_kind_of, schedjudge_lane_key, structured_reply_block,
+    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_chars,
     tail_review_lane_key, verify_lane_key, write_forming_atomic, FormingGuard, FormingReport,
     FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
     REFLECT_LANE,
@@ -69,10 +70,10 @@ mod research;
 use research::{
     announce_research_phase, budget_research_answer, emit_research_outcome, emit_research_planned,
     fold_research_outcome, fold_research_panic, load_research_mini, persist_request_text,
-    raised_questions_brief_block, research_dispatch_text, research_fan_lanes, research_mini_name,
-    research_prompt_head, research_request_block, research_schema, research_sources_block,
-    research_system_text, splice_claimed_sections, ResearchQuestion, ResearchRow,
-    RESEARCH_ANSWERED,
+    raised_questions_brief_block, relay_note, relay_targets, research_dispatch_text,
+    research_fan_lanes, research_prompt_head, research_request_block, research_schema,
+    research_sources_block, research_system_text, splice_claimed_sections, write_research_ledger,
+    ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
@@ -97,7 +98,8 @@ use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_ro
 mod transcripts;
 use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_reasoning_transcript,
-    append_thinking_transcript, build_task_ledger_row, read_calls_capture,
+    append_thinking_transcript, build_task_ledger_row, inflight_args_preview, inflight_rows,
+    read_calls_capture, InflightCall,
 };
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
@@ -3368,6 +3370,7 @@ mod tests {
     use super::supervision::{
         forming_preview, forming_tmp, FORMING_PREVIEW_MAX, FORMING_TAIL_KEEP,
     };
+    use super::transcripts::INFLIGHT_PREVIEW_MAX;
     use super::*;
 
     /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
@@ -11714,18 +11717,6 @@ fn summarize_tool_call(_name: &str, args: &serde_json::Value) -> String {
     }
 }
 
-/// Keep the last `max` chars of a snippet, with a leading ellipsis when clipped. Tail, not head, because
-/// the informative part of tool output (the pass/fail line, the traceback, the printed value) is at the end.
-fn clip_tail(s: &str, max: usize) -> String {
-    let s = s.trim();
-    let n = s.chars().count();
-    if n > max {
-        format!("…{}", s.chars().skip(n - max).collect::<String>())
-    } else {
-        s.to_string()
-    }
-}
-
 /// The text a tool call produced (its output), tail-capped for the run panel — this is the real "what
 /// happened": pytest results, a traceback, a printed value. Empty for image/resource-only results.
 fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> String {
@@ -11804,16 +11795,6 @@ const USER_DECISIONS_HEADER: &str = "\n\n## USER DECISIONS — BINDING\n\
      default, or an order, use THAT one verbatim. These override any conflicting habit or default you \
      would otherwise pick:\n";
 
-/// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
-pub(super) fn tail_chars(s: &str, max: usize) -> String {
-    let n = s.chars().count();
-    if n > max {
-        s.chars().skip(n - max).collect()
-    } else {
-        s.to_string()
-    }
-}
-
 /// Build the worker's live reasoning from its text chunks, dropping the trivial fragments (a lone ".",
 /// "`", a stray word) these coder models emit between tool calls — so the run panel shows real narration
 /// or nothing, never a box holding a single dot. Keeps the last few substantive chunks, tail-capped.
@@ -11850,112 +11831,6 @@ fn activity_digest_key(task_id: &str) -> String {
         .replace('~', "~t")
         .replace('/', "~s")
         .replace('\\', "~b")
-}
-
-/// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
-/// request id the stream will answer with.
-#[derive(Clone, Debug)]
-struct InflightCall {
-    name: String,
-    is_mcp: bool,
-    fetched_external: bool,
-    summary: String,
-    args_preview: String,
-    since: String,
-}
-
-const INFLIGHT_PREVIEW_MAX: usize = 240;
-
-/// What a tool request is ABOUT, readable before its result exists: the path and size of a write,
-/// the shape of an edit, the head of a shell line. Mihai, watching the inspector's WORK pane: *"the
-/// tool calls the writing, reading whatnot in the work is not displayed realtime how they're forming
-/// and what is happening. they're appearing as items only after they're complete."* The engine has
-/// the arguments the instant the request enters the stream; this is the bounded rendering of them.
-/// Content itself is never carried — a write's `content` is the file, and the digest is rewritten on a
-/// hot timer — so sizes stand in for it.
-fn inflight_args_preview(name: &str, args: &serde_json::Value) -> String {
-    let obj = args.as_object();
-    let get = |k: &str| obj.and_then(|o| o.get(k)).and_then(|v| v.as_str());
-    let count = |s: &str| (s.lines().count(), s.len());
-    let raw = match (get("path"), get("command")) {
-        (Some(path), _) if name == "write" || name.ends_with("__write") => match get("content") {
-            Some(content) => {
-                let (lines, bytes) = count(content);
-                format!("write {path} ({lines} lines, {bytes} bytes)")
-            }
-            None => format!("write {path}"),
-        },
-        (Some(path), _) if name == "edit" || name.ends_with("__edit") => {
-            match (get("before"), get("after")) {
-                (Some(before), Some(after)) => format!(
-                    "edit {path} ({} lines → {} lines)",
-                    count(before).0,
-                    count(after).0
-                ),
-                _ => format!("edit {path}"),
-            }
-        }
-        // developer__text_editor shape: `command` is the verb and `path` the target.
-        (Some(path), Some(verb)) => format!("{verb} {path}"),
-        (Some(path), None) => format!("{name} {path}"),
-        (None, Some(command)) => format!("{name}: {}", command.trim()),
-        (None, None) => format!("{name} {}", summarize_tool_call(name, args)),
-    };
-    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() > INFLIGHT_PREVIEW_MAX {
-        format!(
-            "{}…",
-            flat.chars()
-                .take(INFLIGHT_PREVIEW_MAX - 1)
-                .collect::<String>()
-        )
-    } else {
-        flat
-    }
-}
-
-/// The `inflight` rows of a digest: one per request without a result, oldest first. The map is
-/// unordered, so sort by arrival or the panel would reshuffle rows on every rewrite.
-fn inflight_rows(pending: &HashMap<String, InflightCall>) -> Vec<serde_json::Value> {
-    let mut rows: Vec<(&String, &InflightCall)> = pending.iter().collect();
-    rows.sort_by(|a, b| a.1.since.cmp(&b.1.since).then_with(|| a.0.cmp(b.0)));
-    rows.into_iter()
-        .map(|(id, c)| {
-            serde_json::json!({
-                "id": id,
-                "tool": c.name,
-                "args": c.args_preview,
-                "since": c.since,
-            })
-        })
-        .collect()
-}
-
-/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
-/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
-/// that reach the answer channel without the model having said them, so "does `last_text` end with
-/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
-/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
-/// is what the agent appends LAST before breaking the stream.
-const AGENT_ERROR_CLOSERS: [&str; 3] = [
-    "Please resend your message to try again.",
-    "Please retry if you think this is a transient or recoverable error.",
-    "resending this conversation is likely to be refused again.",
-];
-
-/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
-/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
-/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
-/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
-/// "this text is a dead attempt's transport error", because the digest never said which kind of
-/// text it was carrying.
-fn said_kind_of(last_text: &str) -> &'static str {
-    let t = last_text.trim_end();
-    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
-        "error"
-    } else {
-        "said"
-    }
 }
 
 // A-2's `supervision_reply` (the error-closer gate alone) is absorbed into
@@ -12790,6 +12665,14 @@ pub struct GooseAgentDispatcher {
     /// already trying; sending it ONCE is new information. Nothing here can end a task, burn an attempt
     /// or bound anything — a defect that is never fixed simply stops being mentioned.
     defects_told: Mutex<HashMap<String, std::collections::HashSet<String>>>,
+    /// r6e E7 — the research fan's LATE snowball. `research_running`: activity key -> question
+    /// for every research lane between its dispatch and its row (the relay's target set,
+    /// `research::relay_targets`); `research_relay`: target key -> notes queued for it, drained
+    /// by that lane's OWN loop at a boundary where `pending` is empty (the gate the judge's
+    /// steers respect) and delivered through `Agent::steer` — one more user message in the
+    /// running session, never a restream. Nothing here bounds or ends anything.
+    research_running: Mutex<HashMap<String, ResearchQuestion>>,
+    research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
@@ -12872,6 +12755,30 @@ impl GooseAgentDispatcher {
     /// `avoid` is the SUPERVISED lane's model (the omni-look passes its worker's; the replanner
     /// has none): ranked last among equal loads, never excluded — r6d's q0 looks all landed on
     /// q0's own node while another sat as idle (`least_loaded_aux_model`).
+    /// r6e E7: hand a just-landed mini to every still-running lane of its slice
+    /// (`relay_targets`); the target's own loop delivers it and names the delivery
+    /// (`research_mini_relayed`). MEASURED: r6d research-ledger-core-q5 dispatched 04:46:55Z,
+    /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
+    /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
+    fn queue_research_relay(&self, row: &ResearchRow) {
+        let running: Vec<(String, ResearchQuestion)> = self
+            .research_running
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, q)| (k.clone(), q.clone()))
+            .collect();
+        let targets = relay_targets(row, &running);
+        if targets.is_empty() {
+            return;
+        }
+        let note = relay_note(row);
+        let mut inbox = self.research_relay.lock().unwrap();
+        for t in targets {
+            inbox.entry(t).or_default().push(note.clone());
+        }
+    }
+
     fn aux_model_for_call(&self, avoid: Option<&str>) -> (String, u32) {
         // Same poison-recovery idiom as `fleet_order::InflightGuard`'s enter/Drop arms: the map
         // holds plain u32 counters, so a panic mid-increment leaves at worst an off-by-one that
@@ -12938,6 +12845,8 @@ impl GooseAgentDispatcher {
             owned_files_by_task: Mutex::new(HashMap::new()),
             dispatched_tasks: Mutex::new(std::collections::HashSet::new()),
             defects_told: Mutex::new(HashMap::new()),
+            research_running: Mutex::new(HashMap::new()),
+            research_relay: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
             aux_models,
@@ -13553,6 +13462,9 @@ impl GooseAgentDispatcher {
         let mut recur = RecurrenceMeter::new();
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, InflightCall> = HashMap::new();
+        // E7: the sibling minis relayed to THIS research lane so far (question -> mini), so the
+        // judge's look can point at them.
+        let mut relayed_minis: Vec<String> = Vec::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         // Parallel history to tool_calls that keeps, per call: a short summary of its arguments (the shell
         // line, edited path, query…) AND a snippet of its output, so the desktop run panel shows both what
@@ -14020,6 +13932,40 @@ impl GooseAgentDispatcher {
             }};
         }
         loop {
+            // r6e E7 — A SIBLING MINI THAT LANDED AFTER THIS LANE'S DISPATCH IS DELIVERED HERE, at
+            // the lane's own boundary: `pending` empty (a tool request in flight is never
+            // orphaned — the same gate the judge's steers respect), through `Agent::steer` (the
+            // stream stops at its next chunk, KEEPS the partial, and the note is the next user
+            // message — never a restream). Every note queued since the last drain rides ONE
+            // message. The lock is released before the await (a single-statement remove).
+            if let Some(key) = activity_key.filter(|k| k.starts_with("research-")) {
+                if pending.is_empty() {
+                    let notes = self.research_relay.lock().unwrap().remove(key);
+                    if let Some(notes) = notes.filter(|n| !n.is_empty()) {
+                        for n in &notes {
+                            self.events.write_value(serde_json::json!({
+                                "event": "research_mini_relayed",
+                                "to_lane": key,
+                                "from_question": n.from_question,
+                                "from_mini": n.from_mini,
+                                "chars": n.text.chars().count(),
+                            }));
+                            relayed_minis.push(format!(
+                                "{} -> .swarm/ledger/{}",
+                                n.from_question, n.from_mini
+                            ));
+                        }
+                        let text = notes
+                            .iter()
+                            .map(|n| n.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        agent
+                            .steer(&session_config.id, Message::user().with_text(text))
+                            .await;
+                    }
+                }
+            }
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
             // successful ToolResponse, so `message_content_is_productive` keeps resetting the progress
@@ -14233,6 +14179,15 @@ impl GooseAgentDispatcher {
                          to hand it. NEXT names WHERE TO LOOK — a request line or heading, a file, a \
                          command — or says \"emit what you have\"; it never states the answer itself.",
                     );
+                    // E7: the sibling minis this lane has received since its dispatch, so WHERE TO
+                    // LOOK can name one of them (r6d q5 never saw q2's write-through mini).
+                    if !relayed_minis.is_empty() {
+                        sys.push_str(&format!(
+                            "\nSibling minis RELAYED to this lane since its dispatch — it received \
+                             each as a note and can read the mini: {}. NEXT may point at one.",
+                            relayed_minis.join("; ")
+                        ));
+                    }
                 }
                 // ESCALATION WITHOUT A COUNTER. The judge is shown its own prior direction and whether the
                 // call obeyed it, so nudge 2 differs from nudge 1 because the evidence differs — not
@@ -14514,35 +14469,12 @@ impl GooseAgentDispatcher {
                 // two of three nodes sat idle waiting on it. Every verdict was DRIFTING, never LOOPING,
                 // because it genuinely produced ~4,000 FRESH characters between looks. It was not looping.
                 // It was enumerating forever into a channel that is not the deliverable.
-                let structured_block = if wants_structured_reply && call_records.is_empty() {
-                    format!(
-                        "\n\nTHIS CALL'S DELIVERABLE IS A SINGLE STRUCTURED REPLY, made by calling its \
-                         output tool. IT HAS NOT CALLED IT ONCE, and it has written \
-                         {thinking_chars} characters of reasoning instead. Reasoning is not the \
-                         deliverable here and no later phase can read it — if this call ends without that \
-                         tool call, everything it worked out is discarded and the phase gets nothing. \
-                         Whatever it has enumerated so far is enough to submit: tell it to call the \
-                         output tool NOW with what it already has. A partial table that exists beats a \
-                         complete one that is still being composed."
-                    )
-                } else {
-                    String::new()
-                };
-                let earlier_block = match recur.earlier() {
-                    Some(e) => format!(
-                        "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
-                         ago):\n{e}\n\
-                         COMPARE this earlier span with the 'Most recent reasoning' below — that \
-                         comparison is why you are shown both. If the call is walking the SAME items to \
-                         the SAME conclusions again — however coherent each sentence reads on its own — \
-                         it is re-emitting, not advancing: the verdict is LOOPING, and NEXT names the \
-                         exit (call the output tool with what it already has). MEASURED (r4b): a \
-                         reviewer cycled one ten-item checklist verbatim for 24 minutes and every \
-                         2k-char window of it read as coherent checking; only the two windows side by \
-                         side showed the loop.",
-                    ),
-                    None => String::new(),
-                };
+                let structured_block = structured_reply_block(
+                    wants_structured_reply,
+                    call_records.is_empty(),
+                    thinking_chars,
+                );
+                let earlier_block = earlier_span_block(recur.earlier());
                 let user = format!(
                     "THIS CALL'S JOB: {}\n\n\
                      Judge it against THAT job, not against the wider build. A call doing its own job \
@@ -23534,6 +23466,11 @@ impl GooseAgentDispatcher {
                 let me = me.clone();
                 async move {
                     let key = format!("research-{}-q{}", q.slice, q.q_index);
+                    // E7: enrolled as a relay target for the life of the call (removed at its row).
+                    me.research_running
+                        .lock()
+                        .unwrap()
+                        .insert(key.clone(), q.clone());
                     me.events.write_value(serde_json::json!({
                         "event": "research_dispatched",
                         "slice": q.slice,
@@ -23587,11 +23524,17 @@ impl GooseAgentDispatcher {
                     // question) are the loud channel tick.py counts.
                     write_research_ledger(&me.working_dir, &row);
                     emit_research_outcome(me.events.as_ref(), &row);
+                    me.research_running.lock().unwrap().remove(&key);
+                    me.queue_research_relay(&row);
                     row
                 }
             },
         )
         .await;
+        // The fan is over: no lane is running, so no relay can land — a panicked lane's stale key
+        // and any undrained note go with it (nothing reads either after this point).
+        self.research_running.lock().unwrap().clear();
+        self.research_relay.lock().unwrap().clear();
         for (i, folded) in fan_rows.into_iter().enumerate() {
             match folded {
                 Ok(row) => rows.push(row),
@@ -28190,22 +28133,6 @@ fn write_gate_ledger(
         "verified": verified,
     });
     write_ledger_mini(root, &format!("gate-r{round}.json"), &row)
-}
-
-/// RESEARCH FAN v2's row, through the same funnel as every other mini so idempotency and the
-/// rollup rebuild come free. Written for answered AND unanswered outcomes — the absence is a
-/// fact the ledger holds (the fallback gate) — and the mini's presence is the resume watermark
-/// `load_research_mini` reads. `ts` is provenance (data, never an input to anything).
-fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<std::path::PathBuf> {
-    let mut v = serde_json::to_value(row).ok()?;
-    if let Some(o) = v.as_object_mut() {
-        o.insert("kind".to_string(), serde_json::json!("research"));
-        o.insert(
-            "ts".to_string(),
-            serde_json::json!(chrono::Utc::now().to_rfc3339()),
-        );
-    }
-    write_ledger_mini(root, &research_mini_name(&row.slice, row.q_index), &v)
 }
 
 /// What one repair shard reported, verdict lines parsed and PAIRED with the findings they judge
