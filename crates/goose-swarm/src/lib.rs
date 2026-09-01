@@ -17,8 +17,9 @@ pub mod scheduler;
 pub use coherence::{extract_signatures, SigLang};
 pub use context::SharedContext;
 pub use dag::{
-    expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
-    Node, TaskId, TaskSpec, TaskState,
+    expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag,
+    DeclaredExport, Difficulty, MergerOf, ModuleInterface, Node, ShardOf, TaskId, TaskSpec,
+    TaskState,
 };
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 pub use event::{EventSink, NullSink, SwarmEvent};

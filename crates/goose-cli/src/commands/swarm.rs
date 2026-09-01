@@ -86,6 +86,7 @@ use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod plan_repairs;
+mod shards;
 use plan_repairs::{
     repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
 };
@@ -1006,8 +1007,10 @@ pub struct SwarmConfig {
     /// nothing.
     #[serde(default = "default_true")]
     pub degrade_on_stall: bool,
-    /// RETIRED (r6e) — `split_fat_modules` is #[cfg(test)] since b0dd68eac; default false, kept for the config
-    /// round-trip. Was (F873): FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into
+    /// RETIRED (r6e) — `split_fat_modules` was #[cfg(test)] since b0dd68eac and is DELETED with 2c S1; the
+    /// measured split lives in commands/swarm/shards.rs (spec sections per owned file, requested from synthesis
+    /// as a patch, merged by a model). This field survives for the config round-trip and the `retired_levers`
+    /// echo of a stale pin. Was (F873): FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into
     /// per-concern child tasks at planning time, so each gets its own small contract stub instead of one
     /// whole-package stub that times out and cascades an API divergence. Baked ON with threshold 3 after the
     /// waste mine measured the 3-file web triplet paying a deterministic ~700s judge-split tax in 9 of the
@@ -1349,8 +1352,9 @@ impl Default for SwarmConfig {
             read_on_fix: true,
             kind_prompt: true,
             degrade_on_stall: true,
-            // RETIRED (r6e): split_fat_modules is #[cfg(test)] since b0dd68eac, so this is false —
-            // a true here certified a mechanism no run reaches. Was BAKED ON (F873 waste mine): the
+            // RETIRED (r6e): split_fat_modules was #[cfg(test)] since b0dd68eac (deleted, 2c S1 —
+            // the measured split is shards.rs), so this is false — a true here certified a
+            // mechanism no run reaches. Was BAKED ON (F873 waste mine): the
             // vendorsync spec demands a 3-file web triplet "each owned and written separately", yet
             // 22 of 41 archived plans shipped ONE
             // `web` task owning all three — and 9 of the last 10 runs replayed the same
@@ -4966,118 +4970,6 @@ mod tests {
         assert_eq!(no_sink, before, "no sink -> plan left byte-identical");
     }
 
-    #[test]
-    fn split_fat_module_partitions_by_concern() {
-        let mut plan: serde_json::Value = serde_json::from_str(
-            r#"{"subtasks":[
-                {"id":"core-miner","depends_on":["types"],"files":["internal/miner/masker.go","internal/miner/tree.go","internal/miner/miner.go","internal/miner/miner_test.go","internal/miner/diff.go"],"difficulty":"hard"},
-                {"id":"types","depends_on":[],"files":["internal/miner/types.go"],"difficulty":"easy"},
-                {"id":"integrate-verify","depends_on":["core-miner","types"],"files":[]}
-            ]}"#,
-        )
-        .unwrap();
-        let n = split_fat_modules(&mut plan, TargetLang::Go, 4);
-        assert_eq!(n, 1, "one fat module split");
-        assert!(fv_task(&plan, "core-miner").is_none(), "fat parent removed");
-        for cid in [
-            "core-miner-masker",
-            "core-miner-tree",
-            "core-miner-miner",
-            "core-miner-diff",
-        ] {
-            assert!(fv_task(&plan, cid).is_some(), "{cid} child created");
-            assert_eq!(
-                fv_deps(&plan, cid),
-                "types",
-                "{cid} carries the parent's external dep"
-            );
-        }
-        // impl + its test land in the SAME child (both map to role 'miner').
-        let miner_files: Vec<String> = fv_task(&plan, "core-miner-miner").unwrap()["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|f| f.as_str().unwrap().to_string())
-            .collect();
-        assert!(
-            miner_files.iter().any(|f| f.ends_with("miner.go"))
-                && miner_files.iter().any(|f| f.ends_with("miner_test.go")),
-            "impl + its test stay together"
-        );
-        // Every dependent of the parent re-points onto ALL children; the non-parent dep survives.
-        let iv = fv_deps(&plan, "integrate-verify");
-        for cid in [
-            "core-miner-masker",
-            "core-miner-tree",
-            "core-miner-miner",
-            "core-miner-diff",
-        ] {
-            assert!(iv.contains(cid), "integrate-verify depends on {cid}");
-        }
-        assert!(iv.contains("types"), "non-parent dep preserved");
-        assert!(
-            iv.split(',').all(|d| d != "core-miner"),
-            "the fat parent id is no longer a dependency"
-        );
-    }
-
-    #[test]
-    fn split_fat_splits_the_three_file_web_triplet() {
-        // F873: the spec demands three separately-owned web files; 22 of 41 archived plans
-        // shipped ONE `web` task owning all three and paid ~700s of judge-split tax. At the
-        // new default threshold (3) the triplet must split at PLAN time into per-role
-        // children with the parent's deps preserved.
-        let mut plan: serde_json::Value = serde_json::from_str(
-            r#"{"subtasks":[
-                {"id":"api","depends_on":[],"files":["vendorsync/api.py"],"difficulty":"hard"},
-                {"id":"web","depends_on":["api"],"difficulty":"hard",
-                 "files":["vendorsync/web/index.html","vendorsync/web/styles.css","vendorsync/web/app.js"]},
-                {"id":"integrate-verify","depends_on":["api","web"],"files":[]}
-            ]}"#,
-        )
-        .unwrap();
-        let n = split_fat_modules(&mut plan, TargetLang::Python, 3);
-        assert_eq!(
-            n, 1,
-            "the 3-file multi-role web task must split at threshold 3"
-        );
-        let ids: Vec<String> = plan["subtasks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|s| s["id"].as_str().unwrap_or("").to_string())
-            .collect();
-        assert!(
-            !ids.contains(&"web".to_string()),
-            "the fat parent is replaced"
-        );
-        let children: Vec<&String> = ids.iter().filter(|i| i.starts_with("web-")).collect();
-        assert!(
-            children.len() >= 2,
-            "per-role children must exist (html/css/js roles): {ids:?}"
-        );
-    }
-
-    #[test]
-    fn split_fat_noops_below_threshold_and_when_not_hard() {
-        // Below the file threshold -> untouched, byte-identical.
-        let mut small: serde_json::Value = serde_json::from_str(
-            r#"{"subtasks":[{"id":"m","depends_on":[],"files":["a.go","b.go"],"difficulty":"hard"},{"id":"integrate-verify","depends_on":["m"],"files":[]}]}"#,
-        )
-        .unwrap();
-        let before = small.clone();
-        assert_eq!(split_fat_modules(&mut small, TargetLang::Go, 4), 0);
-        assert_eq!(small, before, "below threshold -> byte-identical");
-        // Not `hard` -> untouched even when it owns many files.
-        let mut easy: serde_json::Value = serde_json::from_str(
-            r#"{"subtasks":[{"id":"m","depends_on":[],"files":["a.go","b.go","c.go","d.go","e.go"],"difficulty":"medium"},{"id":"integrate-verify","depends_on":["m"],"files":[]}]}"#,
-        )
-        .unwrap();
-        let before2 = easy.clone();
-        assert_eq!(split_fat_modules(&mut easy, TargetLang::Go, 4), 0);
-        assert_eq!(easy, before2, "not hard -> byte-identical");
-    }
-
     // ---- QUEUED USER NOTES ------------------------------------------------------------------
     #[test]
     fn user_notes_are_read_in_order_and_never_block_or_vanish() {
@@ -7679,6 +7571,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             owned_files: files.iter().map(|s| s.to_string()).collect(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
             subsplit: Vec::new(),
+            shard_of: None,
+            merger_of: None,
         }
     }
 
@@ -22008,6 +21902,19 @@ async fn run_linear_plan(
                     .await
             }
         },
+        {
+            let dispatcher = dispatcher.clone();
+            let planner_model = cfg.planner_model.clone();
+            move |task: serde_json::Value, density: serde_json::Value| {
+                let dispatcher = dispatcher.clone();
+                let planner_model = planner_model.clone();
+                async move {
+                    dispatcher
+                        .request_module_split(&planner_model, &task, &density)
+                        .await
+                }
+            }
+        },
         sink,
     )
     .await?;
@@ -22376,7 +22283,9 @@ impl GooseAgentDispatcher {
 
 /// The straight-line planner core, from OPEN's output to a loadable DAG:
 /// SYNTHESIS -> `plan_repaired` (finalize_plan_before_dag: pin the sink, prepend the skeleton,
-/// the deterministic repairs of the measured flags, the entry-file injection) -> DAG, with the
+/// the deterministic repairs of the measured flags, the entry-file injection) -> THE SPLIT
+/// (`shards::split_fat_tasks`: a fat task, measured, gets ONE split patch and the plan walks the
+/// door again) -> DAG, with the
 /// flat one-task-per-slice fallback at both failure points so a bad model reply costs
 /// parallelism, never the run. `synthesize` is injected so the whole sequence runs in a test
 /// without a model — the fake-dispatcher seam that proves no coverage/resplit/proxy/review step
@@ -22393,7 +22302,7 @@ impl GooseAgentDispatcher {
 /// deterministically by `repair_plan_flags` — the reviewer was paid ~140-206 node-minutes per
 /// run to rediscover flags the engine had already computed.
 #[allow(clippy::too_many_arguments)]
-async fn plan_slices_to_dag<S, SFut>(
+async fn plan_slices_to_dag<S, SFut, P, PFut>(
     opened: OpenOutput,
     user_prompt: &str,
     working_dir: &Path,
@@ -22402,11 +22311,16 @@ async fn plan_slices_to_dag<S, SFut>(
     research: &[ResearchRow],
     plan_decisions: &[PlanDecision],
     synthesize: S,
+    // THE SPLIT (VA-021): one split request per fat task, injected like `synthesize` so the
+    // measure → flag → patch → re-finalize sequence runs in a test without a model.
+    split: P,
     sink: &Arc<dyn EventSink>,
 ) -> Result<(String, Dag)>
 where
     S: FnOnce(Vec<SliceBrief>, Vec<String>) -> SFut,
     SFut: std::future::Future<Output = Result<String>>,
+    P: Fn(serde_json::Value, serde_json::Value) -> PFut,
+    PFut: std::future::Future<Output = Result<String>>,
 {
     let briefs = briefs_from_slices(
         &opened,
@@ -22531,8 +22445,23 @@ where
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
     // exact-equality consumers read it), prepends the skeleton, repairs the measured flags,
     // injects advertised entry files, and emits `plan_repaired` every time — actions or none.
-    let mut plan_json =
+    let plan_json =
         finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
+
+    // THE SPLIT (VA-021 / VA-024): on the finalized plan, spec sections per owned file are
+    // measured against the plan's own distribution; a fat task (r6c web-viz: 7 sections → 1 file →
+    // 519 min) gets ONE patch request to synthesis — shards in temp folders + the module as merger,
+    // the interface declared as plan text — and the patched plan walks the one door again
+    // (`plan_repaired{source: split}`). No fat task → byte-identical, no event. `shards.rs`.
+    let mut plan_json = shards::split_fat_tasks(
+        plan_json,
+        &opened,
+        user_prompt,
+        every_decision_settled,
+        split,
+        sink,
+    )
+    .await;
 
     // AN INVALID DAG FALLS BACK. `synthesize` returns Ok for anything lenient-parseable and does
     // no DAG validation, so a cycle, duplicate id or dangling depends_on lands here; the flat
@@ -35604,153 +35533,6 @@ fn spec_sized_count_clause() -> String {
 }
 
 #[cfg(test)]
-/// SINK DECOMPOSITION (Phase-1, GOOSE_SWARM_FAN_VERIFY). Split the monolithic `integrate-verify` sink — which
-/// depends on EVERY module and does ALL verification serially in one model turn-loop on one node (it stalls) —
-/// into a fannable per-module half plus a thin serial join. For every file-owning, non-test module M it adds a
-/// scoped read-only `verify::<M>` task depending only on M (owns no files → co-run race-free, fans across the
-/// fleet exactly like the build tasks that succeed), then rewrites the existing `integrate-verify` sink KEEPING
-/// its exact id (`sink_in_flight` hardcodes it): its module deps are re-pointed onto the matching `verify::<M>`
-/// tasks (non-module deps preserved) and its description becomes the thin whole-program join. The join stays
-/// the SOLE end-to-end oracle.
-///
-/// Only ever called when the flag is ON; the default path never invokes it, so OFF is byte-identical. No-op
-/// (returns 0) when there is no sink, no fannable module, or the split was already applied. Returns the number
-/// of per-module verify tasks created. Pure — unit-tested without a model.
-/// GOOSE_SWARM_SPLIT_FAT (#131, Mihai's finer-slicing): deterministically split a FAT module — a `hard` task owning
-/// MANY source files (the whole package as ONE task) — into one child per cohesive concern (canonical role, with a
-/// file and its `_test` kept together), each getting its OWN small contract stub. A fat task's single whole-package
-/// stub TIMED OUT on the 262k fleet (measured mustsolve-test5/6: `core-miner` produced NO stub → the package's files
-/// diverged on type names → the app did not compile). Runs in the plan-transform pipeline BEFORE contracts +
-/// fan-verify, so each child auto-gets its own detailer spec, contract stub, and `verify::` task — no extra plumbing.
-/// Children carry the parent's EXTERNAL deps and rely on each other's FROZEN CONTRACTS (not files), exactly like
-/// relax_contracted_deps. Only splits a hard module with >= `min_files` source files that fall into >= 2 roles.
-/// Returns the number of parent modules split; OFF (not called) => byte-identical.
-fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: usize) -> usize {
-    fn id_of(s: &serde_json::Value) -> String {
-        s.get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-    fn base_of(f: &str) -> &str {
-        f.rsplit('/').next().unwrap_or(f)
-    }
-    fn files_of(s: &serde_json::Value) -> Vec<String> {
-        s.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    // Group key: canonical role with any `_test` suffix / `test_` prefix stripped, so an impl file and its test
-    // land in the SAME child (a worker owns a concern end-to-end).
-    fn split_key(f: &str) -> String {
-        let r = canonical_role(f);
-        let r = r.strip_suffix("_test").unwrap_or(&r);
-        let r = r.strip_prefix("test_").unwrap_or(r);
-        r.to_string()
-    }
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    struct Fat {
-        id: String,
-        difficulty: String,
-        deps: Vec<serde_json::Value>,
-        groups: Vec<(String, Vec<String>)>,
-    }
-    let mut fats: Vec<Fat> = Vec::new();
-    for s in arr {
-        let id = id_of(s);
-        if id == "integrate-verify" || id.starts_with("verify::") {
-            continue;
-        }
-        if s.get("difficulty").and_then(|d| d.as_str()) != Some("hard") {
-            continue;
-        }
-        let files = files_of(s);
-        let source: Vec<&String> = files
-            .iter()
-            .filter(|f| !lang.is_test_file(base_of(f)))
-            .collect();
-        if source.len() < min_files {
-            continue;
-        }
-        let mut map: std::collections::BTreeMap<String, Vec<String>> =
-            std::collections::BTreeMap::new();
-        for f in &files {
-            map.entry(split_key(f)).or_default().push(f.clone());
-        }
-        if map.len() < 2 {
-            continue; // one cohesive concern — nothing to gain by splitting
-        }
-        let deps = s
-            .get("depends_on")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default();
-        fats.push(Fat {
-            id,
-            difficulty: "hard".to_string(),
-            deps,
-            groups: map.into_iter().collect(),
-        });
-    }
-    if fats.is_empty() {
-        return 0;
-    }
-    let split_ids: std::collections::HashSet<String> = fats.iter().map(|f| f.id.clone()).collect();
-    let mut parent_children: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut new_children: Vec<serde_json::Value> = Vec::new();
-    for fat in &fats {
-        let mut kids = Vec::new();
-        for (role, files) in &fat.groups {
-            let cid = format!("{}-{}", fat.id, role);
-            kids.push(cid.clone());
-            new_children.push(serde_json::json!({
-                "id": cid,
-                "description": format!(
-                    "(split of {}) the `{}` concern — own ONLY: {}. Use the FROZEN CONTRACTS of sibling concerns \
-                     for their types/functions; do NOT redefine them. Keep the package's exported names consistent \
-                     with those contracts.",
-                    fat.id, role, files.join(", ")
-                ),
-                "depends_on": fat.deps.clone(),
-                "files": files.clone(),
-                "difficulty": fat.difficulty,
-            }));
-        }
-        parent_children.insert(fat.id.clone(), kids);
-    }
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        arr.retain(|s| !split_ids.contains(&id_of(s)));
-        for s in arr.iter_mut() {
-            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
-                let mut new_deps: Vec<serde_json::Value> = Vec::new();
-                for d in deps {
-                    match d.as_str() {
-                        Some(ds) if parent_children.contains_key(ds) => {
-                            for c in &parent_children[ds] {
-                                new_deps.push(serde_json::json!(c));
-                            }
-                        }
-                        _ => new_deps.push(d.clone()),
-                    }
-                }
-                s["depends_on"] = serde_json::json!(new_deps);
-            }
-        }
-        arr.extend(new_children);
-    }
-    fats.len()
-}
-
-#[cfg(test)]
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
 /// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
 /// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
@@ -36556,6 +36338,9 @@ mod audit_regressions {
                 ]})
                 .to_string())
             },
+            |_task: serde_json::Value, _density: serde_json::Value| async move {
+                unreachable!("no fat task in this plan — the split is never requested")
+            },
             &sink_dyn,
         )
         .await
@@ -36592,7 +36377,8 @@ mod audit_regressions {
             "phase:review",
             "review_findings",
             "review_failed",
-            "plan_patched",
+            // (`plan_patched` is NOT in this list: since 2c S1 it is the SPLIT's event, emitted only
+            // when a fat task exists — none here, so `shards.rs` asserts its own sequence.)
             "coverage_gap",
             "coverage_complete",
             "coverage_late_slices",
@@ -36628,6 +36414,9 @@ mod audit_regressions {
             &[],
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Err(anyhow!("the model returned prose"))
+            },
+            |_task: serde_json::Value, _density: serde_json::Value| async move {
+                unreachable!("no fat task in this plan — the split is never requested")
             },
             &sink_dyn,
         )
@@ -36683,6 +36472,9 @@ mod audit_regressions {
                     {"id": "integrate-verify", "files": [], "depends_on": ["api", "web"]},
                 ]})
                 .to_string())
+            },
+            |_task: serde_json::Value, _density: serde_json::Value| async move {
+                unreachable!("no fat task in this plan — the split is never requested")
             },
             &sink_dyn,
         )
