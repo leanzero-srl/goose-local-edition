@@ -22,6 +22,14 @@ import fsSync from 'node:fs';
 import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
 import { resolveSwarmDir } from './utils/swarmRunDir';
 import { SwarmWatchRegistry } from './utils/swarmWatch';
+import type { SwarmWatchTarget } from './utils/swarmWatch';
+import {
+  CONFIRM_CLOSE_RUN_CHANNEL,
+  CONFIRM_CLOSE_RUN_REPLY_CHANNEL,
+  ConfirmedCloses,
+  decideClose,
+} from './utils/closeGuard';
+import type { CloseRunPayload } from './utils/closeGuard';
 import { benchRunArgvTokens, pidsMatchingTokens } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
@@ -1538,9 +1546,38 @@ const createChat = async (
 
   windowMap.set(windowId, mainWindow);
 
+  // THE MOUSE CLOSE. The traffic-light button, File > Close by click, and the app quitting through
+  // this window all arrive here; Cmd+W does not (the accelerator guard refuses it before close() is
+  // ever called). While this window's renderer holds a live swarm run, `closed` would release the
+  // goose serve lease and its cleanup would SIGTERM goosed's process group — the run dies with the
+  // window. So a PROTECTED window is kept and the question goes to its renderer, which shows a
+  // custom Studio dialog (never a native one). PROTECTED is the accelerator guard's own predicate:
+  // windowHoldsLiveRun over the same swarmRunStamps cache, decaying by SWARM_HEARTBEAT_STALE_MS
+  // through engineLiveness — no second rule, no seconds literal here. `close` cannot wait for the
+  // answer, so the renderer's confirmed reply (CONFIRM_CLOSE_RUN_REPLY_CHANNEL) sets the pass-through
+  // flag and closes the window again; that second `close` goes through. "Keep running" replies
+  // false and nothing happens.
+  //
+  // FAIL OPEN: a destroyed or crashed webContents can neither mount the dialog nor reply, so its
+  // window closes untouched rather than standing forever over a run nobody can see (decideClose).
+  mainWindow.on('close', (event) => {
+    const contents = mainWindow.webContents;
+    const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
+    const verdict = decideClose({
+      confirmed: confirmedCloses.take(windowId),
+      windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(mainWindow),
+      rendererCanAnswer,
+    });
+    if (verdict === 'pass') return;
+    event.preventDefault();
+    const payload: CloseRunPayload = { runs: windowLiveRuns(mainWindow) };
+    contents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
+  });
+
   // Handle window closure
   mainWindow.on('closed', () => {
     windowMap.delete(windowId);
+    confirmedCloses.forget(windowId);
 
     pendingInitialMessages.delete(windowId);
     pendingDeepLinks.delete(windowId);
@@ -3317,20 +3354,37 @@ const swarmWatchers = new SwarmWatchRegistry();
 // targets its directory; the sweep in liveSwarmRunDirs drops the rest.
 const swarmRunStamps = new Map<string, SwarmRunStamp>();
 
-/** Run directories a live subscription targets AND whose cached stamp says the engine is alive. */
-const liveSwarmRunDirs = (match: (subscriber: string) => boolean): string[] => {
+/** Live subscriptions whose cached stamp says the engine behind their run directory is alive. */
+const liveSwarmRunTargets = (match: (subscriber: string) => boolean): SwarmWatchTarget[] => {
   const targeted = new Set(swarmWatchers.targetsWhere(() => true).map((t) => t.swarmDir));
   for (const dir of [...swarmRunStamps.keys()]) if (!targeted.has(dir)) swarmRunStamps.delete(dir);
   const now = Date.now();
   return swarmWatchers
     .targetsWhere(match)
-    .map((t) => t.swarmDir)
-    .filter((dir) => isSwarmRunStampAlive(swarmRunStamps.get(dir), now));
+    .filter((t) => isSwarmRunStampAlive(swarmRunStamps.get(t.swarmDir), now));
 };
+/** Run directories of those subscriptions. */
+const liveSwarmRunDirs = (match: (subscriber: string) => boolean): string[] =>
+  liveSwarmRunTargets(match).map((t) => t.swarmDir);
 const anySessionRunLive = (): boolean => liveSwarmRunDirs(() => true).length > 0;
 /** Subscription keys are `${webContentsId}::${workingDir}` (see read-swarm-run). */
 const windowHoldsLiveRun = (win: BrowserWindow | null): boolean =>
   win !== null && liveSwarmRunDirs((s) => s.startsWith(`${win.webContents.id}::`)).length > 0;
+/** What the close-run dialog names: every live run this window's renderer is watching, once each. */
+const windowLiveRuns = (win: BrowserWindow): CloseRunPayload['runs'] => {
+  const seen = new Set<string>();
+  const runs: CloseRunPayload['runs'] = [];
+  for (const t of liveSwarmRunTargets((s) => s.startsWith(`${win.webContents.id}::`))) {
+    if (seen.has(t.swarmDir)) continue;
+    seen.add(t.swarmDir);
+    runs.push({ runId: t.runId, runDir: path.dirname(t.swarmDir), workingDir: t.workingDir });
+  }
+  return runs;
+};
+
+// The pass-through flags of the mouse-close guard (closeGuard.ts): a window whose renderer answered
+// "Stop run and close" gets exactly one `close` through. See mainWindow.on('close') in createChat.
+const confirmedCloses = new ConfirmedCloses();
 
 let lastSwarmReadErrorLogMs = 0;
 ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
@@ -4667,6 +4721,17 @@ async function appMain() {
     if (window && !window.isDestroyed()) {
       window.close();
     }
+  });
+
+  // The renderer's answer to CONFIRM_CLOSE_RUN_CHANNEL (the mouse-close guard: mainWindow.on('close')
+  // in createChat). `true`: flag the window and close it again — the flag lets this second `close`
+  // through. Anything else is "Keep running": nothing happens and the window stays.
+  ipcMain.on(CONFIRM_CLOSE_RUN_REPLY_CHANNEL, (event, confirmed: unknown) => {
+    if (confirmed !== true) return;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed()) return;
+    confirmedCloses.confirm(window.id);
+    window.close();
   });
 
   ipcMain.on('notify', (event, data) => {

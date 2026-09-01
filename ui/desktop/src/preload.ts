@@ -4,6 +4,7 @@ import type { GooseApp } from './types/apps';
 import type { ProjectEntry } from './utils/projectDirs';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
+import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -303,6 +304,8 @@ type ElectronAPI = {
   getAutoDownloadDisabled: () => Promise<boolean>;
   // Recipe warning functions
   closeWindow: () => void;
+  /** The answer to main's `confirm-close-run` (closeGuard.ts): true = stop the run and close. */
+  confirmCloseRunReply: (confirmed: boolean) => void;
   hasAcceptedRecipeBefore: (recipe: Recipe) => Promise<boolean>;
   recordRecipeHash: (recipe: Recipe) => Promise<boolean>;
   openDirectoryInExplorer: (directoryPath: string) => Promise<boolean>;
@@ -522,6 +525,8 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke('get-auto-download-disabled');
   },
   closeWindow: () => ipcRenderer.send('close-window'),
+  confirmCloseRunReply: (confirmed: boolean) =>
+    ipcRenderer.send(CONFIRM_CLOSE_RUN_REPLY_CHANNEL, confirmed),
   hasAcceptedRecipeBefore: (recipe: Recipe) =>
     ipcRenderer.invoke('has-accepted-recipe-before', recipe),
   recordRecipeHash: (recipe: Recipe) => ipcRenderer.invoke('record-recipe-hash', recipe),
