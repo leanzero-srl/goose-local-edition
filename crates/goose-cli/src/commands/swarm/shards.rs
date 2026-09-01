@@ -2858,6 +2858,11 @@ pub(super) struct MergeDossier {
     pub(super) final_on_disk: Vec<(String, u64, Option<String>)>,
     /// (shared state, shard ids) — states more than one README's WRITES names (split v2 §4).
     pub(super) shared_state_writers: Vec<(String, Vec<String>)>,
+    /// (shard, ASSUMES item, its candidate names) — assumptions the DECLARED interface does not
+    /// cover: no export they name, no declared shared-state root (split v2 §5). Coordination
+    /// outside the declaration, met by a sibling or not; measured so the declaration can be judged
+    /// before it moves into synthesis's own call.
+    pub(super) interface_leaks: Vec<(String, String, Vec<String>)>,
 }
 
 fn candidate_names(item: &str) -> Vec<String> {
@@ -3023,6 +3028,7 @@ pub(super) async fn build_merge_dossier(
     }
     let mut assumptions_unmet = Vec::new();
     let mut unfinished = Vec::new();
+    let mut interface_leaks: Vec<(String, String, Vec<String>)> = Vec::new();
     // An assumption about the DECLARED shared state (`S.dirty` when the declaration names `S`)
     // is met by the declaration — the merger reconciles the shape; only a name no sibling
     // provides and no declaration carries is unmet.
@@ -3046,6 +3052,29 @@ pub(super) async fn build_merge_dossier(
                 };
                 if !names.is_empty() && !names.iter().any(met) {
                     assumptions_unmet.push((sh.id.clone(), a.clone()));
+                }
+                // INTERFACE LEAK (split v2 §5): does the DECLARATION cover this assumption — an
+                // export it names (any word of it, `same_symbol`) or a declared shared-state root?
+                // If not, the shards coordinated outside the declaration, whether or not a sibling
+                // happens to define the name; a prose assumption naming nothing is a leak with no
+                // names. Measured, never refused.
+                let mentions: Vec<&str> = a
+                    .split(|c: char| c.is_whitespace() || ",;:\"'()[]{}`".contains(c))
+                    .filter(|t| !t.is_empty())
+                    .chain(names.iter().map(String::as_str))
+                    .collect();
+                let covered = mentions.iter().any(|m| {
+                    merger
+                        .interface
+                        .exports
+                        .iter()
+                        .any(|e| same_symbol(&e.name, m))
+                        || m.split('.')
+                            .next()
+                            .is_some_and(|root| declared_roots.iter().any(|r| r == root))
+                });
+                if !covered {
+                    interface_leaks.push((sh.id.clone(), a.clone(), names.clone()));
                 }
             }
             for u in &n.unfinished {
@@ -3103,6 +3132,7 @@ pub(super) async fn build_merge_dossier(
         final_file_symbols,
         final_on_disk,
         shared_state_writers,
+        interface_leaks,
     }
 }
 
@@ -3126,6 +3156,24 @@ impl MergeDossier {
             .collect()
     }
 
+    /// One `interface_leak{module, task_id, shard, assumption, names}` per ASSUMES item the declared
+    /// interface does not cover (split v2 §5) — at the merger's dispatch, an instrument only.
+    pub(super) fn interface_leak_events(&self, task_id: &str) -> Vec<serde_json::Value> {
+        self.interface_leaks
+            .iter()
+            .map(|(shard, assumption, names)| {
+                serde_json::json!({
+                    "event": "interface_leak",
+                    "module": self.module,
+                    "task_id": task_id,
+                    "shard": shard,
+                    "assumption": assumption,
+                    "names": names,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn summary_json(&self) -> serde_json::Value {
         serde_json::json!({
             "module": self.module,
@@ -3140,6 +3188,7 @@ impl MergeDossier {
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
             "provides_unbacked": self.shards.iter().filter(|s| !s.provides_unbacked.is_empty()).map(|s| serde_json::json!({"shard": s.id, "names": s.provides_unbacked})).collect::<Vec<_>>(),
             "shared_state_writers": self.shared_state_writers.iter().map(|(st, sh)| serde_json::json!({"state": st, "shards": sh})).collect::<Vec<_>>(),
+            "interface_leaks": self.interface_leaks.iter().map(|(sh, a, names)| serde_json::json!({"shard": sh, "assumes": a, "names": names})).collect::<Vec<_>>(),
             "second_pass": self.prior_merge.is_some(),
             "final_on_disk": self.final_on_disk.iter().map(|(f, n, w)| serde_json::json!({"path": f, "bytes": n, "written_by_shard": w})).collect::<Vec<_>>(),
         })
@@ -3587,6 +3636,36 @@ pub(super) fn gap_specs(
         .collect()
 }
 
+/// Does a merger's `MERGE_GAP:` line name a README's UNFINISHED item — a symbol the item names,
+/// or either text inside the other? The rule `check_merge` reconciles `gaps_open` with;
+/// `predictable_gaps` reads it the other way round.
+pub(super) fn gap_covers_unfinished(gap: &str, unfinished: &str) -> bool {
+    candidate_names(unfinished)
+        .iter()
+        .any(|n| gap.contains(n.as_str()))
+        || gap.contains(unfinished)
+        || unfinished.contains(gap)
+}
+
+/// Split v2 §5, the other half of the interface-fidelity measure: a gap the merger sent out that
+/// some README had ALREADY listed UNFINISHED was predictable before the merger started — the
+/// shard said it and the engine could have dispatched it beside the merge; a gap no README foresaw
+/// was discovered at the merge. (gap, shard, unfinished item) per predictable gap.
+pub(super) fn predictable_gaps(
+    dossier: &MergeDossier,
+    gaps: &[String],
+) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for g in gaps {
+        for (sh, u) in &dossier.unfinished {
+            if gap_covers_unfinished(g, u) {
+                out.push((g.clone(), sh.clone(), u.clone()));
+            }
+        }
+    }
+    out
+}
+
 /// What CODE found after the merge (MILD — reported, never a refusal).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct MergeCheck {
@@ -3713,11 +3792,7 @@ pub(super) async fn check_merge(
     }
     let mut gaps_open = Vec::new();
     for (sh, u) in &dossier.unfinished {
-        let sent = gaps_sent.iter().any(|g| {
-            candidate_names(u).iter().any(|n| g.contains(n))
-                || g.contains(u.as_str())
-                || u.contains(g.as_str())
-        });
+        let sent = gaps_sent.iter().any(|g| gap_covers_unfinished(g, u));
         let filled = merge_fields.get(2).is_some_and(|items| {
             items.iter().any(|it| {
                 it.contains(u.as_str()) || candidate_names(u).iter().any(|n| it.contains(n))
@@ -3858,6 +3933,9 @@ impl GooseAgentDispatcher {
         ) {
             self.events.write_value(writers);
         }
+        for leak in dossier.interface_leak_events(&req.task_id) {
+            self.events.write_value(leak);
+        }
         // ASSEMBLE, THEN GLUE (DESIGN-SPLIT-V2 §1): code places every piece's definitions in the
         // declared order before the model runs, and the brief names the glue as the merger's job.
         // Unavailable — no parser for the module's extension, no piece of its language — is SAID
@@ -3905,6 +3983,17 @@ impl GooseAgentDispatcher {
         let dossier = build_merge_dossier(root, merger, &req.owned_files, lang).await;
         let gaps = parse_merge_gaps(final_text);
         let follow_ups = gap_specs(merger, &req.owned_files, &req.description, &dossier, &gaps);
+        // Split v2 §5: a gap a README already listed UNFINISHED was predictable before the merge.
+        for (item, shard, unfinished) in predictable_gaps(&dossier, &gaps) {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_gap_predictable",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "item": item,
+                "shard": shard,
+                "unfinished": unfinished,
+            }));
+        }
         // The DOOR emits `merge_gap` once it has validated and spliced the shard; this is the
         // REQUEST as the merger phrased it (S12-F: one event per fact, never two for one).
         for (spec, gap) in follow_ups.iter().zip(gaps.iter()) {
@@ -4903,5 +4992,103 @@ mod merger_tests {
         assert!(!d
             .merger_brief("/run", None)
             .contains("is WRITTEN by shards"));
+    }
+
+    /// Split v2 §5, the interface-fidelity instruments. `labels` ASSUMES four things: `S.dirty`
+    /// (the declared shared state's root — covered), "buildScene fills geoCPU" (a declared export
+    /// named in prose — covered), "scene.points is an array" (no export, no declared root — a
+    /// LEAK even though `pick` defines `points`: coordination outside the declaration, which the
+    /// unmet-assumptions check cannot see) and "the canvas is square" (a prose leak with no
+    /// names). The gap the merger sends out for `pick`'s UNFINISHED "inertia coast stop" was
+    /// PREDICTABLE — the README said it; `drawBrush(ids)` was discovered at the merge.
+    #[tokio::test]
+    async fn an_assumption_outside_the_declaration_leaks_and_an_unfinished_gap_is_predictable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/pick", &[
+            ("pick.js", "function readPickAt(sx, sy) {}\nfunction points() {}\n"),
+            ("README.md", "PROVIDES: readPickAt(sx, sy)\n- points()\nASSUMES: none\nUNFINISHED: inertia coast stop\nCHECKED_WITH: node --check pick.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/labels", &[
+            ("labels.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: S.dirty is cleared by the render loop\n- buildScene fills geoCPU before labels run\n- scene.points is an array\n- the canvas is square\nUNFINISHED: none\nCHECKED_WITH: node --check labels.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-pick".into(), "web-viz-labels".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/pick".into(),
+                ".swarm/shards/web-viz/labels".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.interface_leaks,
+            vec![
+                (
+                    "web-viz-labels".to_string(),
+                    "scene.points is an array".to_string(),
+                    vec!["scene.points".to_string()]
+                ),
+                (
+                    "web-viz-labels".to_string(),
+                    "the canvas is square".to_string(),
+                    vec![]
+                ),
+            ],
+            "{:?}",
+            d.interface_leaks
+        );
+        assert!(
+            d.assumptions_unmet.is_empty(),
+            "`points` is defined by pick and prose names nothing — unmet sees neither leak: {:?}",
+            d.assumptions_unmet
+        );
+        let events = d.interface_leak_events("web-viz");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event"], "interface_leak");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["shard"], "web-viz-labels");
+        assert_eq!(events[0]["assumption"], "scene.points is an array");
+        assert_eq!(events[0]["names"], serde_json::json!(["scene.points"]));
+        assert_eq!(events[1]["names"], serde_json::json!([]));
+        assert_eq!(
+            d.summary_json()["interface_leaks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let gaps = parse_merge_gaps(
+            "Merged.\nMERGE_GAP: inertia coast stop — the coast must stop under 2 deg/s\nMERGE_GAP: drawBrush(ids) — dim non-members to 0.30\n",
+        );
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(
+            predictable_gaps(&d, &gaps),
+            vec![(
+                "inertia coast stop — the coast must stop under 2 deg/s".to_string(),
+                "web-viz-pick".to_string(),
+                "inertia coast stop".to_string()
+            )]
+        );
+        assert!(gap_covers_unfinished(
+            "drawBrush(ids) — dim non-members",
+            "drawBrush the non-members"
+        ));
+        assert!(!gap_covers_unfinished(
+            "drawBrush(ids) — dim non-members to 0.30",
+            "inertia coast stop"
+        ));
     }
 }
