@@ -281,7 +281,7 @@ impl GoosedSwarmStateSource {
 /// [`SessionSummary`]. `live` is `is_session_busy` (an in-flight reply); a read failure
 /// is logged LOUDLY and yields an empty index for this tick — never a faked list.
 async fn snapshot_sessions(
-    agent_manager: &AgentManager,
+    agent_manager: &Arc<AgentManager>,
     session_manager: &SessionManager,
     node_id: &str,
 ) -> Vec<SessionSummary> {
@@ -293,15 +293,7 @@ async fn snapshot_sessions(
         }
     };
 
-    // A session can only be busy (hold an in-flight cancel token) while its agent is
-    // loaded, so the busy set is a subset of the active (loaded) ids — probe only those,
-    // not every session on disk.
-    let mut busy: HashSet<String> = HashSet::new();
-    for id in agent_manager.list_active_session_ids().await {
-        if agent_manager.is_session_busy(&id).await {
-            busy.insert(id);
-        }
-    }
+    let busy = busy_session_ids(agent_manager).await;
 
     sessions
         .into_iter()
@@ -316,6 +308,27 @@ async fn snapshot_sessions(
             live: busy.contains(&session.id),
         })
         .collect()
+}
+
+/// The busy set: every session id holding an in-flight cancel token, read from the token
+/// maps alone — never from the session store or the agent cache. Both reply doors
+/// register there (the ACP `on_prompt` run and goose-server's `spawn_reply_task`), as do
+/// the orchestrator's subagent runs.
+///
+/// Two managers can exist in one process: the ACP server builds its own
+/// (`GooseAcpAgent::new`), while goose-server's `AppState` holds the
+/// [`AgentManager::instance`] singleton — so under `goosed agent` a REST reply or a
+/// remote-executed prompt runs on a manager this source was not built from. The union is
+/// this machine's truth; the singleton is only READ if it was already built, never
+/// constructed by asking.
+async fn busy_session_ids(agent_manager: &Arc<AgentManager>) -> HashSet<String> {
+    let mut busy: HashSet<String> = agent_manager.busy_session_ids().await.into_iter().collect();
+    if let Some(shared) = AgentManager::instance_if_built() {
+        if !Arc::ptr_eq(&shared, agent_manager) {
+            busy.extend(shared.busy_session_ids().await);
+        }
+    }
+    busy
 }
 
 /// The node's own [`NodeState`]. `mesh_ip` is left `None`: the source does not know the
@@ -1237,6 +1250,227 @@ mod tests {
         assert!(names.contains("First") && names.contains("Second"));
         let dirs: HashSet<&str> = sessions.iter().map(|s| s.working_dir.as_str()).collect();
         assert!(dirs.contains("/tmp/project") && dirs.contains("/tmp/other"));
+    }
+
+    #[tokio::test]
+    async fn a_registered_cancel_token_makes_the_session_live_and_the_node_busy() {
+        let (_temp, source) = seeded_source().await;
+        let session = source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "First".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        source
+            .agent_manager
+            .try_register_cancel_token(&session.id, CancellationToken::new())
+            .await
+            .unwrap();
+
+        let node = source.local_node().await;
+        assert_eq!(
+            node.status,
+            NodeStatus::Busy {
+                session_id: session.id.clone()
+            },
+            "a session holding a cancel token is the busy one"
+        );
+        assert_eq!(node.sessions_active, 1);
+        let live: Vec<String> = source
+            .local_sessions()
+            .await
+            .into_iter()
+            .filter(|s| s.live)
+            .map(|s| s.session_id)
+            .collect();
+        assert_eq!(live, vec![session.id.clone()]);
+
+        source
+            .agent_manager
+            .unregister_cancel_token(&session.id)
+            .await;
+        assert_eq!(source.local_node().await.status, NodeStatus::Idle);
+    }
+
+    /// A scheduler that schedules nothing: `GooseAcpAgent::new` requires one and the
+    /// ACP-door test below never touches it.
+    struct NoScheduler;
+
+    #[async_trait::async_trait]
+    impl crate::scheduler_trait::SchedulerTrait for NoScheduler {
+        async fn add_scheduled_job(
+            &self,
+            job: crate::scheduler::ScheduledJob,
+            _copy_recipe: bool,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(job.id))
+        }
+        async fn schedule_recipe(
+            &self,
+            recipe_path: PathBuf,
+            _cron_schedule: Option<String>,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                recipe_path.display().to_string(),
+            ))
+        }
+        async fn list_scheduled_jobs(&self) -> Vec<crate::scheduler::ScheduledJob> {
+            Vec::new()
+        }
+        async fn remove_scheduled_job(
+            &self,
+            id: &str,
+            _remove_recipe: bool,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                id.to_string(),
+            ))
+        }
+        async fn pause_schedule(&self, id: &str) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                id.to_string(),
+            ))
+        }
+        async fn unpause_schedule(&self, id: &str) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                id.to_string(),
+            ))
+        }
+        async fn run_now(&self, id: &str) -> Result<String, crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                id.to_string(),
+            ))
+        }
+        async fn sessions(
+            &self,
+            sched_id: &str,
+            _limit: usize,
+        ) -> Result<Vec<(String, crate::session::Session)>, crate::scheduler::SchedulerError>
+        {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                sched_id.to_string(),
+            ))
+        }
+        async fn update_schedule(
+            &self,
+            sched_id: &str,
+            _new_cron: String,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                sched_id.to_string(),
+            ))
+        }
+        async fn kill_running_job(
+            &self,
+            sched_id: &str,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                sched_id.to_string(),
+            ))
+        }
+        async fn get_running_job_info(
+            &self,
+            sched_id: &str,
+        ) -> Result<Option<(String, DateTime<Utc>)>, crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                sched_id.to_string(),
+            ))
+        }
+    }
+
+    async fn acp_agent() -> (tempfile::TempDir, GooseAcpAgent) {
+        use crate::agents::GoosePlatform;
+        let temp = tempfile::TempDir::new().unwrap();
+        let provider_factory: AcpProviderFactory = Arc::new(|_name, _extensions, _dir| {
+            Box::pin(async { Err(anyhow::anyhow!("no provider in this test")) })
+        });
+        let agent = GooseAcpAgent::new(GooseAcpAgentOptions {
+            provider_factory,
+            builtins: Vec::new(),
+            data_dir: temp.path().to_path_buf(),
+            config_dir: temp.path().to_path_buf(),
+            disable_session_naming: true,
+            goose_platform: GoosePlatform::GooseCli,
+            additional_source_roots: Vec::new(),
+            scheduler: Arc::new(NoScheduler),
+        })
+        .await
+        .unwrap();
+        (temp, agent)
+    }
+
+    /// The ACP `on_prompt` door: `start_active_run` registers the run's token with the
+    /// AgentManager (the busy set the link source and the idle guard read) and
+    /// `clear_active_run` releases it — the hole that left every desktop chat Idle.
+    #[tokio::test]
+    async fn the_acp_prompt_door_registers_and_releases_the_busy_token() {
+        let (_temp, agent) = acp_agent().await;
+        let session = agent
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "Chat".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        let source = agent.link_source();
+
+        agent
+            .start_active_run(&session.id, "run_1".to_string(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(agent.agent_manager.is_session_busy(&session.id).await);
+        assert_eq!(
+            source.local_node().await.status,
+            NodeStatus::Busy {
+                session_id: session.id.clone()
+            },
+            "an ACP prompt run is visible to the link source as Busy"
+        );
+
+        agent.clear_active_run(&session.id, "run_1").await;
+        assert!(!agent.agent_manager.is_session_busy(&session.id).await);
+        assert_eq!(source.local_node().await.status, NodeStatus::Idle);
+    }
+
+    /// A token held by the OTHER door (goose-server's reply route, a subagent run) refuses
+    /// the ACP prompt instead of running a second reply on the session, and leaves no
+    /// half-registered active run behind.
+    #[tokio::test]
+    async fn the_acp_prompt_door_refuses_a_session_busy_in_another_run() {
+        let (_temp, agent) = acp_agent().await;
+        agent
+            .agent_manager
+            .try_register_cancel_token("s-other-door", CancellationToken::new())
+            .await
+            .unwrap();
+
+        let error = agent
+            .start_active_run(
+                "s-other-door",
+                "run_2".to_string(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("a session busy in another run is refused");
+        assert!(
+            err_text(&error).contains("busy in another run"),
+            "got {}",
+            err_text(&error)
+        );
+        assert!(
+            agent.active_prompt_runs.lock().await.is_empty(),
+            "a refused run must not be recorded as active"
+        );
+        // The other door's token is untouched by the refusal.
+        assert!(agent.agent_manager.is_session_busy("s-other-door").await);
     }
 
     #[tokio::test]

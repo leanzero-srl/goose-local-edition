@@ -2317,6 +2317,21 @@ impl GooseAcpAgent {
             )));
         }
 
+        // The manager's token map is the busy set every other reader consults — LeanZero
+        // Link's receive-side idle guard, `cancel_session`, the orchestrator's subagent
+        // gate. An ACP prompt run registers there too, under the `active_prompt_runs`
+        // lock so the two registrations never split. A token already present means
+        // another door (goose-server's reply route, a subagent run) holds this session:
+        // refuse, never run two replies on one session.
+        if let Err(error) = self
+            .agent_manager
+            .try_register_cancel_token(session_id, cancel_token.clone())
+            .await
+        {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data(format!("session is busy in another run: {error}")));
+        }
+
         active_prompt_runs.insert(
             session_id.to_string(),
             ActivePromptRun {
@@ -2339,6 +2354,9 @@ impl GooseAcpAgent {
             }
 
             active_prompt_runs.remove(session_id);
+            // Release the manager-side registration made in `start_active_run`, under the
+            // same lock, so the busy set flips Idle exactly when the run is gone.
+            self.agent_manager.unregister_cancel_token(session_id).await;
         }
 
         let agent = {
