@@ -49,7 +49,7 @@ pub(super) const DUPLICATE_MARKER: &str = "MERGE_DUPLICATE";
 
 /// One top-level block of a piece, verbatim.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Segment {
+pub(crate) struct Segment {
     /// The non-shorthand names `extract_symbols` finds in the block — empty for an import or a
     /// top-level statement (state, wiring, boot).
     pub(super) names: Vec<String>,
@@ -274,7 +274,7 @@ pub(super) fn segments(source: &str, lang: TargetLang) -> Vec<Segment> {
 
 /// What CODE assembled — the facts the event and the merger's brief carry.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Assembly {
+pub(crate) struct Assembly {
     /// Relative to the run root: `.swarm/shards/<module>/ASSEMBLED.<ext>`.
     pub(super) path: String,
     pub(super) ext: String,

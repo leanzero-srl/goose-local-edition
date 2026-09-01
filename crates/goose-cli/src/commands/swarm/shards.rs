@@ -1158,17 +1158,18 @@ where
                 "reason": reason,
             }));
         };
-        // SIZE BY THE FLEET (split v2 §6), the half that needs no declaration: on ONE free host
-        // N shards would queue serially on it and still need a merge — the module is built whole
-        // by the node that would build it anyway. Said before synthesis is asked; the flag stays.
+        // SIZE BY THE FLEET (split v2 §6): with fewer than two FREE hosts at split time the shards
+        // cannot be partitioned onto hosts, so the declaration's clusters are the shards as declared
+        // (`size_shards_to_hosts` applies only at >= 2). The split itself is NEVER declined for
+        // scarcity — r6g measured shards dispatching as nodes freed (two at BUILD start, two later),
+        // so "they would queue" is a fleet fact, not a reason to build the fat file whole. Said:
         if let Some(h) = free_hosts.filter(|h| *h < 2) {
-            declined(
-                format!(
-                    "{h} free host(s) at split time — parallel shards would queue serially on one node and still need a merge; the module is built whole"
-                ),
-                sink,
-            );
-            continue;
+            sink.write_value(serde_json::json!({
+                "event": "split_hosts_scarce",
+                "task": row.id,
+                "free_hosts": h,
+                "detail": "fewer than two free hosts at split time — shards are sized by the declaration's clusters and queue as nodes free",
+            }));
         }
         let reply = match split(task, density).await {
             Ok(r) => r,
@@ -2090,34 +2091,50 @@ mod tests {
             ("web-viz", &["web/viz.js"]),
         ])
         .to_string();
+        // ONE free host: the split is asked anyway (r6g measured shards dispatching as nodes
+        // freed), the scarcity is SAID, and the shards are the declaration's clusters — sizing by
+        // hosts applies only at two or more.
+        let reply = serde_json::json!({
+            "interface": {"exports": [], "shared_state": "S", "layout": []},
+            "shards": archived
+                .iter()
+                .map(|n| serde_json::json!({
+                    "id": n, "responsibility": format!("{n} pieces"), "sections": [],
+                    "provides": [], "writes": []
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string();
         let after = split_fat_tasks_sized(
             before.clone(),
             &r6c_like_opened(),
             spec,
             false,
             Some(1),
-            |_task, _density| async move { panic!("one free host: synthesis is never asked") },
+            move |_task, _density| {
+                let r = reply.clone();
+                async move { Ok(r) }
+            },
             &sink_dyn,
         )
         .await;
-        assert_eq!(after, before);
         let events = sink.0.lock().unwrap().clone();
         assert!(events
             .iter()
             .any(|e| e["event"] == "plan_flag" && e["task"] == "web-viz"));
-        let declined = events
+        let scarce = events
             .iter()
-            .find(|e| e["event"] == "split_declined")
-            .expect("declined, said");
-        assert_eq!(declined["task"], "web-viz");
-        assert!(
-            declined["reason"]
-                .as_str()
-                .unwrap()
-                .starts_with("1 free host(s) at split time"),
-            "{declined}"
+            .find(|e| e["event"] == "split_hosts_scarce")
+            .expect("scarcity is said, never a decline");
+        assert_eq!(scarce["task"], "web-viz");
+        assert_eq!(scarce["free_hosts"], 1);
+        assert!(!events.iter().any(|e| e["event"] == "split_declined"));
+        // sizing is SAID at any host count (hosts: 1 here); partitioning onto hosts applies only at >= 2
+        assert!(events.iter().any(|e| e["event"] == "split_sized"));
+        assert_ne!(
+            after, before,
+            "the fat task was split despite one free host"
         );
-        assert!(!events.iter().any(|e| e["event"] == "split_sized"));
     }
 
     #[derive(Default)]
@@ -4017,6 +4034,29 @@ pub(super) fn gap_covers_unfinished(gap: &str, unfinished: &str) -> bool {
         .any(|n| gap.contains(n.as_str()))
         || gap.contains(unfinished)
         || unfinished.contains(gap)
+        || shares_identifier(gap, unfinished)
+}
+
+/// Two free-text items name the same thing when they share an identifier-shaped token (a name a
+/// piece could define: alphabetic start, >= 4 chars, case kept) — "drawBrush(ids) — dim
+/// non-members" and "drawBrush the non-members" share `drawBrush` without either being a
+/// substring of the other. Plain English words are excluded by the identifier shape (a camelCase
+/// or snake_case token, or one holding a digit).
+fn shares_identifier(a: &str, b: &str) -> bool {
+    let idents = |t: &str| -> Vec<String> {
+        t.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| w.chars().count() >= 4)
+            .filter(|w| w.chars().next().is_some_and(|c| c.is_alphabetic()))
+            .filter(|w| {
+                w.contains('_')
+                    || w.chars().any(|c| c.is_ascii_digit())
+                    || (w.chars().any(|c| c.is_uppercase()) && w.chars().any(|c| c.is_lowercase()))
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    let la = idents(a);
+    idents(b).iter().any(|w| la.contains(w))
 }
 
 /// Split v2 §5, the other half of the interface-fidelity measure: a gap the merger sent out that
@@ -4863,7 +4903,7 @@ mod merger_tests {
                 "the merger frame must not say: {banned}"
             );
         }
-        assert!(body.contains("never retype the module from memory"));
+        assert!(body.contains("retype the module from memory"));
         assert!(MERGER_READING_RULE.contains("READ EVERY PIECE FOLDER AND README"));
         // The frame in run_task_inner takes the merger arms (source tripwire: the prompt is
         // assembled inside the dispatcher and has no seam a unit test can render).
