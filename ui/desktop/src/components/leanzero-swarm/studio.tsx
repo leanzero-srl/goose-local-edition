@@ -187,8 +187,8 @@ export interface StudioSelectProps<T extends StudioSelectOption> {
   disabled?: boolean;
   /** The trigger shows a spinner and does not open. */
   loading?: boolean;
-  /** Custom option/value rendering; defaults to the label. */
-  renderOption?: (option: T) => ReactNode;
+  /** Custom rendering; defaults to the label. `where` says whether this is a listbox option or the trigger's value. */
+  renderOption?: (option: T, where: 'option' | 'value') => ReactNode;
   /** A per-option test id (the listbox pattern keeps `role="option"` for locators). */
   optionTestId?: (option: T) => string;
   className?: string;
@@ -285,7 +285,7 @@ export function StudioSelect<T extends StudioSelectOption>({
         )}
       >
         <span className="min-w-0 flex-1 truncate">
-          {value ? render(value) : <span className="text-lz-ink-4">{placeholder}</span>}
+          {value ? render(value, 'value') : <span className="text-lz-ink-4">{placeholder}</span>}
         </span>
         {loading ? <Loader2 className="animate-spin text-lz-ink-3" /> : <ChevronDown />}
       </button>
@@ -324,7 +324,7 @@ export function StudioSelect<T extends StudioSelectOption>({
                   MOTION
                 )}
               >
-                {render(o)}
+                {render(o, 'option')}
               </button>
             );
           })}

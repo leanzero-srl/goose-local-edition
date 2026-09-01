@@ -8,9 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Select } from '../ui/Select';
 import { errorMessage } from '../../utils/conversionUtils';
 import {
   mlxEngineModelsList,
@@ -19,7 +16,8 @@ import {
   type MlxLocalModel,
 } from '../../acp/mlx-engine';
 import { sanitizeSettingsForWrite } from './MlxEngineView';
-import { AMBER, AZURE, GREEN, INK_DARK, SolidBanner, WeightStepper } from './primitives';
+import { Button, Chip, TYPE, WEIGHT, cx } from '../lz';
+import { FIELD_LABEL, INPUT, StudioSelect, ToneBanner, WeightStepper } from './studio';
 import { CLOUD_PROVIDERS, CloudPane, MLX_CHIP, LOCAL_CHIP, type CloudProviderDef } from './cloud';
 import {
   addableMlxMachines,
@@ -417,181 +415,155 @@ export default function AddNodeDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[640px]">
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className={TYPE.h1}>
             {reassign
               ? intl.formatMessage(i18n.reassignTitle, { id: reassign.id })
               : intl.formatMessage(i18n.title)}
           </DialogTitle>
-          <DialogDescription>{intl.formatMessage(i18n.description)}</DialogDescription>
+          <DialogDescription className={TYPE.bodyMuted}>
+            {intl.formatMessage(i18n.description)}
+          </DialogDescription>
         </DialogHeader>
 
         {reassign && (
-          <SolidBanner
-            color={AMBER}
-            label="reassign"
+          <ToneBanner
+            tone="warn"
+            label="Reassign"
             text={intl.formatMessage(i18n.reassignNotice, { id: reassign.id })}
           />
         )}
 
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-            {intl.formatMessage(i18n.providerLabel)}
-          </span>
-          <Select
+        <div className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>{intl.formatMessage(i18n.providerLabel)}</span>
+          <StudioSelect
             aria-label={intl.formatMessage(i18n.providerLabel)}
             options={providerOptions}
             value={selectedProvider}
             placeholder={intl.formatMessage(i18n.providerPlaceholder)}
-            formatOptionLabel={(o) => {
-              const opt = o as ProviderOption;
-              return (
-                <span className="flex items-center gap-2">
-                  <span
-                    className="inline-block h-3 w-3 shrink-0 rounded-sm"
-                    style={{ backgroundColor: opt.chip }}
-                  />
-                  <span className="text-sm">{opt.label}</span>
-                  {!opt.configured && (
-                    <span
-                      className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                      style={{ backgroundColor: AMBER, color: INK_DARK }}
-                      data-testid={`provider-no-key-${opt.value}`}
-                    >
-                      {intl.formatMessage(i18n.noKeyBadge)}
+            renderOption={(opt, where) => (
+              <span className="flex items-center gap-2">
+                <span>{opt.label}</span>
+                {!opt.configured &&
+                  (where === 'option' ? (
+                    <span data-testid={`provider-no-key-${opt.value}`}>
+                      <Chip tone="warn">{intl.formatMessage(i18n.noKeyBadge)}</Chip>
                     </span>
-                  )}
-                </span>
-              );
-            }}
+                  ) : (
+                    <Chip tone="warn">{intl.formatMessage(i18n.noKeyBadge)}</Chip>
+                  ))}
+              </span>
+            )}
             onChange={(o) => {
-              setProvider(o ? (o as ProviderOption).value : null);
+              setProvider(o ? o.value : null);
               setError(null);
             }}
           />
-          <span className="text-xs text-text-secondary">
-            {intl.formatMessage(i18n.providersCaption)}
-          </span>
+          <span className={TYPE.meta}>{intl.formatMessage(i18n.providersCaption)}</span>
         </div>
 
         {provider === 'mlx' && (
           <div className="flex flex-col gap-3" data-testid="add-node-mlx-pane">
-            <SolidBanner
-              color={MLX_CHIP.chip}
+            <ToneBanner
+              tone="accent"
               label={MLX_CHIP.seg}
               text={intl.formatMessage(i18n.mlxOneModel)}
             />
 
             {machines == null ? (
-              <span className="text-sm text-text-secondary">
-                <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />…
+              <span className={cx('flex items-center gap-2', TYPE.bodyMuted)}>
+                <Loader2 className="size-3.5 animate-spin text-lz-accent" />…
               </span>
             ) : manualLocalPath ? (
               <>
-                <span className="text-sm text-text-secondary">
+                <span className={TYPE.bodyMuted}>
                   {intl.formatMessage(i18n.machineNoneDiscovered)}
                 </span>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                    {intl.formatMessage(i18n.mlxLabelLabel)}
-                  </span>
-                  <Input
+                <div className="flex flex-col gap-1.5">
+                  <span className={FIELD_LABEL}>{intl.formatMessage(i18n.mlxLabelLabel)}</span>
+                  <input
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
                     placeholder={intl.formatMessage(i18n.mlxLabelPlaceholder)}
-                    className="rounded font-mono text-sm"
+                    className={cx(INPUT, 'w-full font-mono')}
                     aria-label={intl.formatMessage(i18n.mlxLabelLabel)}
                   />
                 </div>
               </>
             ) : machineOptions.length === 0 ? (
-              <span className="text-sm font-semibold" style={{ color: AMBER }}>
+              <span className={cx('text-lz-body text-lz-warn', WEIGHT.medium)}>
                 {intl.formatMessage(i18n.machineAllTaken)}
               </span>
             ) : (
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                  {intl.formatMessage(i18n.machineLabel)}
-                </span>
-                <Select
+              <div className="flex flex-col gap-1.5">
+                <span className={FIELD_LABEL}>{intl.formatMessage(i18n.machineLabel)}</span>
+                <StudioSelect
                   aria-label={intl.formatMessage(i18n.machineLabel)}
                   options={machineOptions}
                   value={selectedMachine}
                   placeholder={intl.formatMessage(i18n.machinePlaceholder)}
-                  formatOptionLabel={(o) => {
-                    const opt = o as MachineOption;
-                    return (
-                      <span className="flex items-center gap-2">
-                        <span className="font-mono text-sm">{opt.label}</span>
-                        <span
-                          className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            backgroundColor: opt.local ? GREEN : AMBER,
-                            color: opt.local ? '#fff' : INK_DARK,
-                          }}
-                        >
-                          {opt.local
-                            ? intl.formatMessage(i18n.machineLocalTag)
-                            : intl.formatMessage(i18n.machineRemoteTag)}
-                        </span>
-                      </span>
-                    );
-                  }}
-                  onChange={(o) => setMachine(o ? (o as MachineOption).value : null)}
+                  renderOption={(opt) => (
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono text-lz-mono">{opt.label}</span>
+                      {opt.local ? (
+                        <Chip tone="ok">{intl.formatMessage(i18n.machineLocalTag)}</Chip>
+                      ) : (
+                        <Chip>{intl.formatMessage(i18n.machineRemoteTag)}</Chip>
+                      )}
+                    </span>
+                  )}
+                  onChange={(o) => setMachine(o ? o.value : null)}
                 />
-                <span className="text-xs text-text-secondary">
+                <span className={TYPE.meta}>
                   {intl.formatMessage(i18n.machineCap, { count: machineOptions.length })}
                 </span>
               </div>
             )}
 
             {machine != null && !selectedMachineIsLocal && (
-              <SolidBanner
-                color={AMBER}
+              <ToneBanner
+                tone="stopped"
                 label="awaiting fleet routing"
                 text={intl.formatMessage(i18n.remoteAwaiting)}
               />
             )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                  {intl.formatMessage(i18n.mlxModelLabel)}
-                </span>
+              <div className="flex flex-col gap-1.5">
+                <span className={FIELD_LABEL}>{intl.formatMessage(i18n.mlxModelLabel)}</span>
                 {mlxModels != null && mlxOptions.length === 0 && !mlxModelsError ? (
-                  <span className="text-sm text-text-secondary">
-                    {intl.formatMessage(i18n.mlxNoModels)}
-                  </span>
+                  <span className={TYPE.bodyMuted}>{intl.formatMessage(i18n.mlxNoModels)}</span>
                 ) : (
-                  <Select
+                  <StudioSelect
                     aria-label={intl.formatMessage(i18n.mlxModelLabel)}
                     options={mlxOptions}
                     value={selectedMlxModel}
-                    isLoading={mlxModels == null}
+                    loading={mlxModels == null}
                     placeholder={intl.formatMessage(i18n.mlxModelPlaceholder)}
-                    onChange={(o) => setMlxModelId(o ? (o as MlxModelOption).value : null)}
+                    renderOption={(opt) => (
+                      <span className="truncate font-mono text-lz-mono">{opt.label}</span>
+                    )}
+                    onChange={(o) => setMlxModelId(o ? o.value : null)}
                   />
                 )}
                 {mlxModelsError && (
-                  <span className="text-xs font-semibold" style={{ color: '#e5484d' }}>
+                  <span className={cx('text-lz-meta text-lz-err', WEIGHT.medium)}>
                     {mlxModelsError}
                   </span>
                 )}
               </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                  {intl.formatMessage(i18n.weightLabel)}
-                </span>
+              <div className="flex flex-col gap-1.5">
+                <span className={FIELD_LABEL}>{intl.formatMessage(i18n.weightLabel)}</span>
                 <WeightStepper value={weight} onChange={setWeight} />
               </div>
             </div>
 
             {aliasPreview && (
-              <span className="font-mono text-xs" style={{ color: AZURE }}>
+              <span className="font-mono text-lz-mono text-lz-accent">
                 {intl.formatMessage(i18n.mlxAliasPreview, { alias: aliasPreview })}
               </span>
             )}
             {duplicateMlxId && (
-              <span className="text-xs font-semibold" style={{ color: '#e5484d' }}>
+              <span className={cx('text-lz-meta text-lz-err', WEIGHT.medium)}>
                 {intl.formatMessage(i18n.duplicateId, { id: duplicateMlxId.id })}
               </span>
             )}
@@ -600,37 +572,31 @@ export default function AddNodeDialog({
 
         {provider === 'lmstudio' && (
           <div className="flex flex-col gap-2">
-            <p className="text-sm text-text-secondary">
+            <p className={TYPE.bodyMuted}>
               {intl.formatMessage(i18n.lmstudioAuto, { endpoint: fleetEndpoint })}
             </p>
-            <span
-              className="self-start rounded px-2 py-0.5 text-xs font-bold"
-              style={{
-                backgroundColor: fleetOnline ? GREEN : AMBER,
-                color: fleetOnline ? '#fff' : INK_DARK,
-              }}
-            >
+            <Chip tone={fleetOnline ? 'ok' : 'warn'} className="self-start">
               {fleetOnline
                 ? intl.formatMessage(i18n.lmstudioLive, { count: fleetCount })
                 : intl.formatMessage(i18n.lmstudioOffline)}
-            </span>
+            </Chip>
           </div>
         )}
 
         {activeCloudUnconfigured && activeCloud && (
           <div className="flex flex-col gap-3" data-testid="add-node-no-key-pane">
-            <SolidBanner
-              color={AMBER}
+            <ToneBanner
+              tone="warn"
               label={intl.formatMessage(i18n.noKeyBadge)}
               text={intl.formatMessage(i18n.noKeyPane, { label: activeCloud.label })}
             />
             <Button
+              variant="primary"
               onClick={() => {
                 onClose();
                 onOpenCloudProviders?.();
               }}
-              className="self-start rounded font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: activeCloud.chip }}
+              className="self-start"
               data-testid="add-node-configure-cloud"
             >
               {intl.formatMessage(i18n.configureCloud)}
@@ -641,9 +607,7 @@ export default function AddNodeDialog({
         {activeCloud && !activeCloudUnconfigured && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                {intl.formatMessage(i18n.weightLabel)}
-              </span>
+              <span className={FIELD_LABEL}>{intl.formatMessage(i18n.weightLabel)}</span>
               <WeightStepper value={weight} onChange={setWeight} />
             </div>
             <CloudPane
@@ -657,21 +621,20 @@ export default function AddNodeDialog({
           </div>
         )}
 
-        {error && <SolidBanner color="#e5484d" label="failed" text={error} />}
+        {error && <ToneBanner tone="err" label="Failed" text={error} />}
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
             {activeCloud ? intl.formatMessage(i18n.done) : intl.formatMessage(i18n.cancel)}
           </Button>
           {provider === 'mlx' && (
             <Button
+              variant="primary"
               onClick={() => void addMlx()}
               disabled={!mlxReady}
-              className="rounded font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: MLX_CHIP.chip }}
               data-testid="add-node-mlx-submit"
+              icon={busy ? <Loader2 className="animate-spin" /> : undefined}
             >
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {reassign
                 ? intl.formatMessage(i18n.reassignButton)
                 : intl.formatMessage(i18n.addButton)}
