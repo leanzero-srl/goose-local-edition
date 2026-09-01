@@ -2226,6 +2226,7 @@ mod tests {
                     .unwrap())
                 }
             },
+            0, // free_hosts: a test passes 0 (SPLIT v2 §6; run_linear_plan measures the pool)
             &sink_dyn,
         )
         .await
@@ -3943,18 +3944,17 @@ pub(super) fn gap_specs(
                 .filter(|p| !p.is_empty())
                 .unwrap_or_else(|| format!("(no README) pieces in {}", sh.folder)),
             sections: Vec::new(),
-            // No README → no PROVIDES list; the absence itself rode `merge_note_missing` at the
-            // shard's completion, so empty MEANS empty here (fallback gate).
-            provides: sh
-                .note
-                .as_ref()
-                .map(|n| n.provides.clone())
-                .unwrap_or_default(),
-            writes: sh
-                .note
-                .as_ref()
-                .map(|n| n.writes.clone())
-                .unwrap_or_default(),
+            // No README → no PROVIDES / WRITES lists; the absence itself rode `merge_note_missing`
+            // at the shard's completion, so empty MEANS empty here (fallback gate) — one match, no
+            // silent default.
+            provides: match sh.note.as_ref() {
+                Some(n) => n.provides.clone(),
+                None => Vec::new(),
+            },
+            writes: match sh.note.as_ref() {
+                Some(n) => n.writes.clone(),
+                None => Vec::new(),
+            },
         })
         .collect();
     let base = merger.shards.len();

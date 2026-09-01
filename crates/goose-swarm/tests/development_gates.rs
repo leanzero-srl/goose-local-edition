@@ -487,7 +487,7 @@ fn do_everything_never_reaches_a_model() {
 // To 96 (VA-080 item 3): shards.rs's `measure_fatness` RECORDS a task no opener slice is named
 // for (`FatMeasure::unclaimed`) instead of defaulting its claim away; a plan whose every row is
 // unclaimed is said (`fatness_unmeasurable`) rather than measured as a flat nothing.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 96;
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 95; // r6h-staging: shards.rs sibling constructor rewritten as one match (provides + writes), 97 → 95
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
