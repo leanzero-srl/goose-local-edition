@@ -137,9 +137,11 @@ use post_probe::{
     split_curl_status, RepeatedPost,
 };
 mod findings;
+#[cfg(test)]
+use findings::engine_critical;
 use findings::{
-    dedupe_findings_exact, elide_middle, engine_critical, parse_finding_verdicts,
-    parse_numbered_findings, partition_by_engine_critical, FindingProvenance, FindingSource,
+    console_error_is_exception, dedupe_findings_exact, elide_middle, missing_deliverable_finding,
+    parse_finding_verdicts, parse_numbered_findings, FindingProvenance, FindingSource,
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
@@ -1756,7 +1758,11 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
         existing.len()
     );
     let r = run_spec_contract(&tree, &spec_text, lang).await;
-    let criticals: Vec<&String> = r.findings.iter().filter(|f| engine_critical(f)).collect();
+    let criticals: Vec<&String> = r
+        .findings
+        .iter()
+        .filter(|f| r.provenance.is_critical(f))
+        .collect();
     let tree_read = tree.clone();
     // The runner-up map is dispatch-side ownership only (resolve_shard_ownership); the replay
     // reports grouping, which is unchanged by it.
@@ -19594,31 +19600,44 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                      {exemplar}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
-                                     not a blank page. GATE COMMAND (run it yourself against your \
-                                     booted app; it prints renderedRowCount and consoleErrors): \
+                                     not a blank page. GATE COMMAND (boot exactly as the gate did \
+                                     — `{boot_line}` — then run it yourself; it prints \
+                                     renderedRowCount and consoleErrors): \
                                      `{node} {probe} load http://127.0.0.1:{port}`.{rows_suffix}"
                                     ),
                                 );
                             } else if console > 0 {
+                                let first_text = match attributable {
+                                    Some((i, text, _)) if i != 0 => text,
+                                    _ => v
+                                        .pointer("/consoleErrors/texts/0")
+                                        .and_then(|x| x.as_str())
+                                        .unwrap_or(""),
+                                };
                                 let exemplar = match attributable {
-                                    Some((i, text, _)) if i != 0 => {
-                                        format!("first attributable: {text}")
+                                    Some((i, _, _)) if i != 0 => {
+                                        format!("first attributable: {first_text}")
                                     }
-                                    _ => format!(
-                                        "first: {}",
-                                        v.pointer("/consoleErrors/texts/0")
-                                            .and_then(|x| x.as_str())
-                                            .unwrap_or("")
-                                    ),
+                                    _ => format!("first: {first_text}"),
+                                };
+                                // VA-006: an uncaught exception in the page's boot path is the
+                                // engine-observed CRITICAL class (r5's ReferenceError shipped as a
+                                // minor); a resource failure stays a console error. The authoring
+                                // branch is named from the probe's own line (findings.rs).
+                                let source = if console_error_is_exception(first_text) {
+                                    FindingSource::RenderGateException
+                                } else {
+                                    FindingSource::RenderGateConsole
                                 };
                                 prov.push(
                                     &mut findings,
-                                    FindingSource::RenderGateConsole,
+                                    source,
                                     format!(
                                     "the page renders but the browser console carries {console} \
                                      error(s) in normal use ({exemplar}) — fix the JS \
                                      errors; users hit them as broken interactions. GATE COMMAND \
-                                     (run it yourself; it prints consoleErrors.texts): `{node} \
+                                     (boot exactly as the gate did — `{boot_line}` — then run it \
+                                     yourself; it prints consoleErrors.texts): `{node} \
                                      {probe} load http://127.0.0.1:{port}`.{src_suffix}"
                                 ),
                                 );
@@ -19679,11 +19698,16 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                 prov.push(
                                                     &mut findings,
                                                     FindingSource::RenderGateRows,
+                                                    format!(
                                                     "the page has no working SYNC control — the probe \
                                                      could not find a control to start a sync, so a \
                                                      user has no way to load data at all. The page \
-                                                     must expose the sync action the spec describes."
-                                                        .to_string(),
+                                                     must expose the sync action the spec describes. \
+                                                     GATE COMMAND (boot exactly as the gate did — \
+                                                     `{boot_line}` — then run it yourself; it prints \
+                                                     found/completed/rowCountAfter): `{node} {probe} \
+                                                     sync http://127.0.0.1:{port}`."
+                                                    ),
                                                 );
                                             } else if completed && after == 0 {
                                                 // r6c F1: this finding named NO file and rode
@@ -19701,7 +19725,11 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                      After the sync completes, re-fetch the payments \
                                                      endpoint and RENDER the returned rows into the \
                                                      table, and update the last-synced/count readouts \
-                                                     from that same response. {}{page_suffix}",
+                                                     from that same response. GATE COMMAND (boot \
+                                                     exactly as the gate did — `{boot_line}` — then run \
+                                                     it yourself; it prints found/completed/rowCountAfter): \
+                                                     `{node} {probe} sync http://127.0.0.1:{port}`. \
+                                                     {}{page_suffix}",
                                                     page_sources.evidence_sentence()
                                                     ),
                                                 );
@@ -27726,74 +27754,11 @@ fn swarm_repeat_penalty_resolved(cfg: Option<f32>) -> Option<f32> {
     env_f32_clamped("GOOSE_SWARM_REPEAT_PENALTY", 0.5, 2.0).or(cfg)
 }
 
-/// ONE RULER (F862). Grades a tree by the SAME categories the round's complete_verify counts:
-/// smoke + spec_contract (when the round runs it) + http_timeout_scan + cross_module_drift (when
-/// its lever is on) + the missing-deliverables stat (when the round gates on it). The r1
-/// forensics proved the cost of a subset ruler in its worst form: a twin with ZERO shadow edits
-/// graded baseline-3 (the three timeout findings were invisible to smoke+spec_contract), claimed
-/// "strictly better", cancelled the two twins that were actually editing, and promoted twelve
-/// byte-identical files — the wave then went 6→6 flat and the run stalled out red. Any category
-/// the round counts and the grade cannot see converts real work into an invisible delta, in BOTH
-/// directions. Returns (None, false) when the smoke gate cannot run (the vacuous-pass trap);
-/// `established` folds spec_contract's inconclusive legs in, so a blinded probe cannot license
-/// an early-close claim.
-async fn one_ruler_grade(
-    root: &std::path::Path,
-    prompt: &str,
-    lang: TargetLang,
-    all_files: &[String],
-    composite: bool,
-    missing_gate: bool,
-) -> (Option<usize>, bool) {
-    let g = run_smoke_gate(root, lang).await;
-    if !g.ran {
-        return (None, false);
-    }
-    let mut est = g.established();
-    let mut n = g.findings.len();
-    if composite {
-        let sc = run_spec_contract(root, prompt, lang).await;
-        est = est && sc.inconclusive.is_empty();
-        n += sc.findings.len();
-    }
-    let app_only: Vec<String> = all_files
-        .iter()
-        .filter(|f| !is_test_path(lang, f))
-        .cloned()
-        .collect();
-    n += http_timeout_scan(root, lang, &app_scope_py(root, &app_only))
-        .await
-        .findings
-        .len();
-    n += dom_id_scan(root, all_files).await.findings.len();
-    n += css_coherence_scan(root, all_files).await.findings.len();
-    if swarm_gate_cfg(
-        "GOOSE_SWARM_CROSS_MODULE_CHECK",
-        load_config().cross_module_check,
-    ) {
-        n += cross_module_drift(root, lang, &app_scope_py(root, all_files))
-            .await
-            .findings
-            .len();
-    }
-    if missing_gate {
-        n += all_files
-            .iter()
-            .filter(|f| {
-                lang.is_source_file(f) && !lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
-            })
-            .filter(|f| !is_intentional_empty_marker(f))
-            .filter(|f| {
-                !root
-                    .join(f)
-                    .metadata()
-                    .map(|m| m.len() > 0)
-                    .unwrap_or(false)
-            })
-            .count();
-    }
-    (Some(n), est)
-}
+// ONE RULER (F862) — `repair_waves::one_ruler_grade`, moved with REPAIR v2 (VA-087): it grades a
+// tree by the SAME checks the round's complete_verify composes, now PER CHECK with each finding's
+// provenance instead of a count. The r1 forensics that made a subset ruler unacceptable stand: a
+// twin with ZERO shadow edits graded baseline-3 (three timeout findings invisible to
+// smoke+spec_contract), claimed "strictly better", and promoted twelve byte-identical files.
 
 /// Name a MALFORMED tool call for the digest. There is no parsed call to read a name from — the name may
 /// itself be the invalid part — so recover it from the provider's error text when it quotes one, and fall
@@ -29785,6 +29750,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut known_active_bugs: Vec<String> = Vec::new();
         // Parallel severity labels (provenance-derived) for the same list, in the same order.
         let mut known_active_bugs_severities: Vec<String> = Vec::new();
+        // VA-006: how many of the known active bugs the browser probe authored — `passed` is
+        // false while any stands, whatever the API answered.
+        let mut render_class_known_bugs: usize = 0;
         // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
         // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
         // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
@@ -29930,14 +29898,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // writing it" and burned a whole fix round re-creating a file that was never wrong. The
                 // owned-file salvage path already exempts these two names; this now matches it.
                 .filter(|f| !is_intentional_empty_marker(f))
-                .filter(|f| !cwd.join(f).metadata().map(|meta| meta.len() > 0).unwrap_or(false))
-                .map(|f| {
-                    format!(
-                        "planned deliverable `{f}` is MISSING or EMPTY — a task was marked done without \
-                         writing it. Create it (the simplest version that satisfies the spec) so the app is \
-                         complete and runnable."
-                    )
+                .filter(|f| {
+                    !cwd.join(f)
+                        .metadata()
+                        .map(|meta| meta.len() > 0)
+                        .unwrap_or(false)
                 })
+                .map(|f| missing_deliverable_finding(f.as_str()))
                 .collect();
             m.sort();
             m.dedup();
@@ -30252,10 +30219,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // model-observed defects, none of which were acted on, while the deterministic gate
             // above had already found 37 — including the scored GET / 404 — and RATE's 7.6-minute
             // triage reached no consumer at all. Every finding in `verdict` is now an engine
-            // measurement; criticality is the engine's own wording (`engine_critical`), not a
-            // model's opinion of it.
-            // DE-DUPLICATE BEFORE ANYTHING COUNTS — the count is the ruler for green and for
-            // shard_beats_baseline's baseline, so a duplicate is charged twice.
+            // measurement; criticality is the engine's own wording (`engine_critical`) plus the
+            // browser probe's app-unusable class (`partition_criticals`), not a model's opinion.
+            // DE-DUPLICATE BEFORE ANYTHING COUNTS — the count is the ruler for green and seeds
+            // the wave's per-check baseline (`TreeGrade`), so a duplicate is charged twice.
             {
                 let before = verdict.findings.len();
                 verdict.findings =
@@ -30378,14 +30345,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "ok": ok,
                 }));
             }
-            // CRITICALITY DECIDES GREEN, not completeness — and it is the ENGINE'S OWN WORDING
-            // that decides criticality now (P1-9: RATE is deleted; its measured 7.6 minutes of
-            // triage reached no consumer). An empty findings set is green as before. A non-empty
-            // one is partitioned by `engine_critical`: a finding whose text says the app does not
-            // run/build/answer is a measurement and blocks the green claim; everything else ships
-            // as a KNOWN ACTIVE BUG — reported, never hidden, and still fed to the repair wave
-            // below, because a fixable bug should not wait on a verdict about whether it may be.
-            let (criticals, minors) = partition_by_engine_critical(&verdict.findings);
+            // CRITICALITY DECIDES GREEN, not completeness — and it is the ENGINE'S OWN
+            // MEASUREMENT that decides criticality (P1-9: RATE is deleted; its measured 7.6
+            // minutes of triage reached no consumer). An empty findings set is green as before.
+            // A non-empty one is partitioned by `partition_criticals`: a finding whose text says
+            // the app does not run/build/answer, or that the browser probe of an advertised
+            // surface authored as app-unusable — no rows in a real browser, an uncaught
+            // exception in the page's boot path (VA-006: r5 shipped `passed:true` over a
+            // ReferenceError filed minor, r6c over `Illegal invocation` and an empty table) —
+            // blocks the green claim; everything else ships as a KNOWN ACTIVE BUG — reported,
+            // never hidden, and still fed to the repair wave below, because a fixable bug should
+            // not wait on a verdict about whether it may be.
+            let (criticals, minors) = prov.partition_criticals(&verdict.findings);
             if !verdict.findings.is_empty() {
                 // The severity sort above already fanned the severest first (a dead app never
                 // waits behind a cosmetic defect: every engine_critical author ranks CRITICAL
@@ -30416,9 +30387,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         minors.len()
                     );
                 }
-                // `passed` means THE GATE'S CRITICALS ARE CLOSED — assigned every round, never
-                // latched, so a late-surfacing critical flips it back honestly.
-                final_passed = criticals.is_empty();
+                // `passed` means THE GATE'S CRITICALS ARE CLOSED AND NO RENDER-CLASS FINDING
+                // SHIPS AS A KNOWN BUG (VA-006) — assigned every round, never latched, so a
+                // late-surfacing critical flips it back honestly.
+                render_class_known_bugs = minors.iter().filter(|m| prov.is_render_class(m)).count();
+                final_passed = criticals.is_empty() && render_class_known_bugs == 0;
                 final_verified = verdict.established();
             }
             if verdict.findings.is_empty() {
@@ -30457,6 +30430,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 last_findings.clear();
                 known_active_bugs.clear();
                 known_active_bugs_severities.clear();
+                render_class_known_bugs = 0;
                 if verdict.ran {
                     eprintln!(
                         "{}",
@@ -30573,7 +30547,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }
                 }
                 if !groups.is_empty() {
-                    let baseline = verdict.findings.len();
+                    // REPAIR v2 §2: the round's opening gate graded PER CHECK — a shard promotes
+                    // when its own finding's check flips on the merged preview, never on a count.
+                    let baseline = repair_waves::TreeGrade::of(&verdict.findings, &prov);
                     // Fix-1 seam (r5 F4): ownership resolves SEQUENTIALLY here, before the
                     // concurrent fan — pairings and the attribution runner-up claim in group
                     // order, so every shard of one file carries the same resolved ownership.
@@ -30593,14 +30569,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // S5d (ii): probe/render findings need a QUOTED replay to be dismissed.
                         &|t: &str| {
                             prov.source_of(t).is_some_and(|src| {
-                                src.is_server_response_probe()
-                                    || matches!(
-                                        src,
-                                        FindingSource::RenderGateRows
-                                            | FindingSource::RenderGateConsole
-                                    )
+                                src.is_server_response_probe() || src.is_render_probe()
                             })
                         },
+                        // REPAIR v2 §1: the finding's check — the brief's first action and the
+                        // promoter's ruler; None (unsourced) is said as `finding_unverifiable`.
+                        &|t: &str| prov.check_of(t),
                     );
                     sink.write_value(serde_json::json!({
                         "event": "finding_shards",
@@ -30660,8 +30634,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "event": "complete_fix_converged",
                     "round": round,
                     "findings": verdict.findings.len(),
-                    "detail": "the wave changed nothing on the tree (no shard graded strictly \
-                               better than baseline, or nothing attributed to a file) — the phase \
+                    "detail": "the wave changed nothing on the tree (no shard's finding flipped \
+                               on its merged preview, or nothing attributed to a file) — the phase \
                                ends here instead of re-measuring an identical tree",
                 }));
                 eprintln!(
@@ -30825,11 +30799,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         ov_verified = final_verified;
         sink.write_value(serde_json::json!({
             "event": "complete_result",
-            // P1-9: `passed` means THE GATE'S CRITICALS CLOSED — the deterministic
-            // engine_critical partition over the final verify, not a model's triage and not
-            // findings==0. Non-critical findings ship as known_active_bugs, honestly listed.
+            // P1-9 + VA-006: `passed` means THE GATE'S CRITICALS CLOSED — the deterministic
+            // partition over the final verify (engine_critical wording + the browser probe's
+            // app-unusable findings) — AND no render-class finding ships as a known bug; not a
+            // model's triage and not findings==0. Other findings ship as known_active_bugs,
+            // honestly listed.
             "passed": final_passed,
-            "passed_means": "the gate's criticals closed (engine_critical partition; minors ship as known_active_bugs)",
+            "passed_means": "the gate's criticals closed (engine_critical wording + render-probe criticals: no rows in a browser, an uncaught exception in the page's boot path) AND zero render-class findings among known_active_bugs; other minors ship as known_active_bugs",
+            "render_class_known_bugs": render_class_known_bugs,
             "verified": final_verified,
             "remaining_findings": if shipped_desc == "final tree" {
                 last_findings.len()
@@ -33832,10 +33809,11 @@ mod audit_regressions {
         assert!(finding.contains("`POST /api/sync`"));
     }
 
-    /// P1-9: a NON-IMPROVING shard is never promoted — `None` (no shadow / gate could not run)
-    /// is UNKNOWN and promotes nothing; equal-to-baseline promotes nothing; only strictly
-    /// better lands. This composition is the whole tree-based terminator: zero promotions
-    /// means the tree is byte-identical to what the round's opening gate measured.
+    /// REPAIR v2 (VA-087): the count rule is no longer THE promotion rule — a shard promotes when
+    /// its own finding's check flips on the merged preview (`repair_waves::decide_promotion`).
+    /// `shard_beats_baseline` survives only as the LABELLED fallback for a finding with no
+    /// authoring check (`finding_unverifiable`), and its truth table is unchanged: `None` is
+    /// UNKNOWN and promotes nothing; equal promotes nothing; only strictly lower does.
     #[test]
     fn a_non_improving_shard_is_not_promoted() {
         assert!(shard_beats_baseline(Some(2), 3));

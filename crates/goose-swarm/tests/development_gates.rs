@@ -401,7 +401,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,564 (VA-065): rule (a) `repair_owning_nothing` + `repoint_dependency` moved
     // to commands/swarm/plan_repairs.rs beside rules (d)-(f), carrying THE SPLIT exemption, paying
     // for `merge_dossier_incomplete` at the merger's dispatch and `merge_hole` at its completion.
-    const SWARM_RS_LINE_BASELINE: usize = 34_564;
+    // Tightened to 34,542 (VA-087, REPAIR v2): `one_ruler_grade` moved to commands/swarm/
+    // repair_waves.rs (per-check `TreeGrade`), paying for the render gate's exception branch, the
+    // sync findings' GATE COMMAND and the VA-006 partition/`passed` wiring.
+    const SWARM_RS_LINE_BASELINE: usize = 34_542;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
