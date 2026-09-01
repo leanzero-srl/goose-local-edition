@@ -328,6 +328,9 @@ pub(super) struct ShardPlan {
     pub(super) sections: Vec<String>,
     #[serde(default)]
     pub(super) provides: Vec<String>,
+    /// The shared state this shard is the single WRITER of (split v2 §4); a pure reader lists none.
+    #[serde(default)]
+    pub(super) writes: Vec<String>,
 }
 
 pub(super) fn split_schema() -> serde_json::Value {
@@ -360,12 +363,13 @@ pub(super) fn split_schema() -> serde_json::Value {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["id", "responsibility", "sections", "provides"],
+                    "required": ["id", "responsibility", "sections", "provides", "writes"],
                     "properties": {
                         "id": {"type": "string"},
                         "responsibility": {"type": "string"},
                         "sections": {"type": "array", "items": {"type": "string"}},
-                        "provides": {"type": "array", "items": {"type": "string"}}
+                        "provides": {"type": "array", "items": {"type": "string"}},
+                        "writes": {"type": "array", "items": {"type": "string"}}
                     }
                 }
             }
@@ -383,9 +387,12 @@ pub(super) fn split_system_prompt() -> String {
      Do TWO things and nothing else:\n\
      1. DECLARE THE MODULE'S INTERFACE as plan text: every exported/public name the module must \
         define (functions, classes, the debug/graded API's methods, event handlers wired at load), \
-        each with its kind, exact signature (parameters, return shape) and one-line purpose; the \
-        SHARED STATE shape every part reads or writes (object/record names and their fields and \
-        types); and the LAYOUT — the final file(s) in assembly order (which regions come first: \
+        each with its kind, exact signature (parameters, return shape) and one-line purpose; EVERY \
+        SHARED STATE (an object, record or typed array more than one part reads or writes) with its \
+        name, its exact SHAPE — fields and types, and for a typed array its stride and offsets — \
+        and the ONE shard that WRITES it (every other shard only reads; two shards that would both \
+        write one state are one shard, not two — merge them); and the LAYOUT — the final file(s) in \
+        assembly order (which regions come first: \
         constants, state, helpers, mechanisms, the exported API, boot). Names you declare are \
         BINDING on every shard and the merger, so declare real, complete signatures, not \
         placeholders.\n\
@@ -393,8 +400,9 @@ pub(super) fn split_system_prompt() -> String {
         block of the brief (the brief also carries consumed context) — into 2 or more SHARDS that \
         can be written independently and in parallel — usually one per mechanism or section group. \
         Each shard: a short kebab-case id, one sentence of responsibility, the exact claimed \
-        headings it implements (every claimed heading goes to exactly one shard), and the declared \
-        names it provides. Shards write PIECES (functions/classes) in private folders; a MERGER \
+        headings it implements (every claimed heading goes to exactly one shard), the declared \
+        names it provides, and `writes`: the shared-state names it is the single writer of (an \
+        empty list for a pure reader). Shards write PIECES (functions/classes) in private folders; a MERGER \
         assembles the final file from them afterwards — so no shard needs another shard's file to \
         exist.\n\n\
      IF THIS TASK SHOULD NOT BE SPLIT — its sections are one mechanism no two people could write \
@@ -403,7 +411,7 @@ pub(super) fn split_system_prompt() -> String {
      in one sentence, and an empty interface; the plan then stays exactly as it is.\n\n\
      Do not restate the spec and do not write code. Call the final_output tool once with \
      {interface: {exports: [{name, kind, signature, purpose}], shared_state, layout: []}, \
-     shards: [{id, responsibility, sections: [], provides: []}]}."
+     shards: [{id, responsibility, sections: [], provides: [], writes: []}]}."
         .to_string()
 }
 
@@ -540,8 +548,16 @@ pub(super) fn render_interface(interface: &ModuleInterface) -> String {
 }
 
 /// The README every shard leaves — STRUCTURED, one line per item, so the engine and the merger
-/// read it without guessing (S3 parses these lines into the handoff channel).
-pub(super) const README_FIELDS: [&str; 4] = ["PROVIDES", "ASSUMES", "UNFINISHED", "CHECKED_WITH"];
+/// read it without guessing (S3 parses these lines into the handoff channel). `WRITES` (split v2
+/// §4): the shared state this shard is the ONE writer of — two shards naming the same state is
+/// `shard_shared_state_writers`, the `cooperate` edge the declaration should have merged.
+pub(super) const README_FIELDS: [&str; 5] = [
+    "PROVIDES",
+    "ASSUMES",
+    "UNFINISHED",
+    "CHECKED_WITH",
+    "WRITES",
+];
 
 /// A shard's brief, assembled by CODE from this run's facts: its split, its siblings' splits, the
 /// declared interface, its folder, the README contract, and the module's whole brief (the settled
@@ -594,19 +610,39 @@ pub(super) fn shard_brief(
                 .join(", ")
         ));
     }
+    if !shard.writes.is_empty() {
+        s.push_str(&format!(
+            "You are the ONLY WRITER of shared state: {} — every sibling reads it through the \
+             declared shape and writes it nowhere; declare each under {w}: in your README with the \
+             shape you write.\n",
+            shard
+                .writes
+                .iter()
+                .map(|st| format!("`{st}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            w = README_FIELDS[4]
+        ));
+    }
     let others: Vec<&ShardPlan> = siblings.iter().filter(|o| o.id != shard.id).collect();
     if !others.is_empty() {
         s.push_str("Your SIBLINGS implement the rest — read their split so you neither duplicate nor depend on writing it:\n");
         for o in others {
+            let mut detail = String::new();
+            if !o.provides.is_empty() {
+                detail.push_str(&format!(" (provides {})", o.provides.join(", ")));
+            }
+            if !o.writes.is_empty() {
+                detail.push_str(&format!(
+                    " (the ONLY writer of {} — you read it, never write it)",
+                    o.writes.join(", ")
+                ));
+            }
             s.push_str(&format!(
                 "- `{}`: {}{}\n",
                 o.id,
                 o.responsibility.trim(),
-                if o.provides.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (provides {})", o.provides.join(", "))
-                }
+                detail
             ));
         }
     }
@@ -624,13 +660,17 @@ pub(super) fn shard_brief(
          {a}: <what you assume about a sibling's symbol or the shared state> — one per line\n\
          {u}: <what you did not finish> — one per line, or `{u}: none`\n\
          {c}: <the parse/lint command you ran and what it printed>\n\
-         End your final message with the same four fields (they are your HANDOFF to the merger).\n\n\
+         {w}: <a shared state you WRITE, with the shape you write (fields/types, stride/offsets)> — \
+         one per line, or `{w}: none`; you write ONLY the state your split names you the writer of, \
+         every other state you read\n\
+         End your final message with the same five fields (they are your HANDOFF to the merger).\n\n\
          THE MODULE'S BRIEF — whole. Your split is the part named above; the rest is the context \
          your siblings implement and the answers you all build to:\n\n{module_brief}",
         p = README_FIELDS[0],
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     ));
     s
 }
@@ -766,6 +806,22 @@ pub(super) fn apply_module_split(
             "reason": "the module task carries no difficulty; its shards carry none either and the DAG reads both as its default",
         }));
     }
+    // ONE WRITER PER SHARED STATE (split v2 §4): the declaration names each state's single writer;
+    // two shards claiming one state is the `cooperate` edge synthesis should have merged into one
+    // shard. Said here from the declaration and again from the READMEs at the merger's dispatch;
+    // the patch applies either way (MILD).
+    let declared_writers: Vec<(String, Vec<String>)> = split
+        .shards
+        .iter()
+        .zip(shard_ids.iter())
+        .map(|(s, id)| (id.clone(), s.writes.clone()))
+        .collect();
+    events.extend(shared_state_writer_events(
+        module_id,
+        &shared_state_writers(&declared_writers),
+        "declaration",
+        None,
+    ));
     events.push(serde_json::json!({
         "event": "plan_patched",
         "source": "split",
@@ -1610,6 +1666,79 @@ mod tests {
         goose_swarm::Dag::from_planner_json(&finalized).expect("loads");
     }
 
+    /// Split v2 §4, at the declaration: synthesis is asked for every shared state's shape and its
+    /// ONE writer (`writes` per shard, required by the schema); a shard's brief names it the only
+    /// writer and its siblings read; two shards declaring the same state is
+    /// `shard_shared_state_writers{source: declaration}` before `plan_patched` — said, the patch
+    /// applies.
+    #[test]
+    fn two_declared_writers_of_one_shared_state_are_said_and_the_brief_names_the_writer() {
+        assert!(split_system_prompt().contains("the ONE shard that WRITES it"));
+        assert!(split_system_prompt().contains("provides: [], writes: []"));
+        assert!(split_schema()["properties"]["shards"]["items"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r == "writes"));
+        let mut split = viz_split();
+        split.shards[0].writes = vec!["S.brush".into(), "instanceData".into()];
+        split.shards[2].writes = vec!["S.brush".into()];
+        let p = plan(&[
+            ("web-console", &["web/app.js"]),
+            ("web-viz", &["web/viz.js"]),
+        ]);
+        let (out, events) = apply_module_split(&p.to_string(), "web-viz", &split).unwrap();
+        let said: Vec<&serde_json::Value> = events
+            .iter()
+            .filter(|e| e["event"] == "shard_shared_state_writers")
+            .collect();
+        assert_eq!(said.len(), 1, "{events:?}");
+        assert_eq!(said[0]["module"], "web-viz");
+        assert_eq!(said[0]["state"], "S.brush");
+        assert_eq!(
+            said[0]["shards"],
+            serde_json::json!(["web-viz-render", "web-viz-labels-brush-api"])
+        );
+        assert_eq!(said[0]["source"], "declaration");
+        assert!(said[0]["task_id"].is_null(), "no task exists at plan time");
+        assert_eq!(events.last().unwrap()["event"], "plan_patched");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let brief_of = |id: &str| {
+            v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .and_then(|t| t["description"].as_str())
+                .unwrap_or_else(|| panic!("{id}"))
+                .to_string()
+        };
+        let render = brief_of("web-viz-render");
+        assert!(
+            render.contains("You are the ONLY WRITER of shared state: `S.brush`, `instanceData`"),
+            "{render}"
+        );
+        assert!(
+            render.contains("WRITES: <a shared state you WRITE, with the shape you write"),
+            "{render}"
+        );
+        assert!(
+            render.contains("End your final message with the same five fields"),
+            "{render}"
+        );
+        let pick = brief_of("web-viz-pick-camera");
+        assert!(
+            pick.contains("`render`: WebGL programs, instanced geometry, demand rendering (provides initGL, render, buildScene) (the ONLY writer of S.brush, instanceData — you read it, never write it)"),
+            "{pick}"
+        );
+        assert!(!pick.contains("You are the ONLY WRITER"), "{pick}");
+        // A declaration with one writer per state says nothing.
+        let (_, quiet) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        assert!(!quiet
+            .iter()
+            .any(|e| e["event"] == "shard_shared_state_writers"));
+    }
+
     #[test]
     fn a_split_reply_needs_two_shards_with_ids_and_responsibilities() {
         assert!(parse_module_split("no json here").is_err());
@@ -1882,10 +2011,10 @@ pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
          from every shard's pieces; a shard that writes it overwrites its siblings. Do not run the \
          app or the test suite (your pieces cannot run alone); CHECK each piece with a parse/lint \
          (`node --check`, `python3 -m py_compile`, the language's equivalent) and record the \
-         command and its result. FINISH by writing `README.md` in your folder with the four \
-         fields — {p}: / {a}: / {u}: / {c}: — one item per line, and end your final message with \
-         the same four fields (they are your handoff to the merger). A turn that ends without the \
-         README FAILS and is retried.\n\n",
+         command and its result. FINISH by writing `README.md` in your folder with the five \
+         fields — {p}: / {a}: / {u}: / {c}: / {w}: — one item per line, and end your final message \
+         with the same five fields (they are your handoff to the merger). A turn that ends without \
+         the README FAILS and is retried.\n\n",
         shard = shard.shard,
         module = shard.module,
         responsibility = shard.responsibility.trim(),
@@ -1893,21 +2022,24 @@ pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     )
 }
 
 /// The deliverable gate's hint for a shard that finished without its README.
 pub(super) fn readme_missing_hint(shard: &ShardOf) -> String {
     format!(
-        "You finished WITHOUT `{folder}/README.md`. Write it NOW with the four fields — {p}: \
+        "You finished WITHOUT `{folder}/README.md`. Write it NOW with the five fields — {p}: \
          (every symbol you defined, with its signature), {a}: (what you assume about siblings' \
          symbols and the shared state), {u}: (what you did not finish, or `none`), {c}: (the \
-         parse/lint command you ran and its result) — then finish. Do not rewrite your pieces.",
+         parse/lint command you ran and its result), {w}: (the shared state you write, with its \
+         shape, or `none`) — then finish. Do not rewrite your pieces.",
         folder = shard.folder,
         p = README_FIELDS[0],
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     )
 }
 
@@ -1936,6 +2068,10 @@ pub(super) struct ShardNote {
     pub(super) assumes: Vec<String>,
     pub(super) unfinished: Vec<String>,
     pub(super) checked_with: Vec<String>,
+    /// The shared state this shard WRITES (`WRITES:` lines, split v2 §4) — empty for a pure
+    /// reader, and for a README that carries no WRITES line at all; the dossier only ever compares
+    /// non-empty lists, so an absent line can never manufacture a conflict.
+    pub(super) writes: Vec<String>,
 }
 
 impl ShardNote {
@@ -1945,6 +2081,7 @@ impl ShardNote {
             "assumes": self.assumes,
             "unfinished": self.unfinished,
             "checked_with": self.checked_with,
+            "writes": self.writes,
         })
     }
 }
@@ -1956,13 +2093,82 @@ pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
     let lists = parse_fields(text, &README_FIELDS)?;
     // `parse_fields` returns exactly one list per field — a different length is a programming
     // error, and `?` says so rather than defaulting a field to empty.
-    let [provides, assumes, unfinished, checked_with]: [Vec<String>; 4] = lists.try_into().ok()?;
+    let [provides, assumes, unfinished, checked_with, writes]: [Vec<String>; 5] =
+        lists.try_into().ok()?;
     Some(ShardNote {
         provides,
         assumes,
         unfinished,
         checked_with,
+        writes,
     })
+}
+
+/// The state a WRITES item names: the text before its shape (` — `, `: `, ` (`), trimmed —
+/// `S.brush — Set<id>` and `S.brush: the brushed ids` are one state; `S.brush` and `S.yaw` two;
+/// compared case-insensitively, reported as first written.
+fn state_key(item: &str) -> Option<(String, String)> {
+    let mut name = item.trim();
+    for sep in [" — ", " – ", ": ", " (", " - "] {
+        if let Some((head, _)) = name.split_once(sep) {
+            name = head;
+        }
+    }
+    let name = name.trim().trim_end_matches(':').trim();
+    (!name.is_empty()).then(|| (name.to_string(), name.to_lowercase()))
+}
+
+/// ONE WRITER PER SHARED STATE (split v2 §4): every state more than one shard WRITES, from
+/// `(shard id, its WRITES items)` pairs — the declaration's `writes` at plan time or the READMEs'
+/// lines at the merger's dispatch. Two writers is the `cooperate` edge the research names (SpecDB:
+/// modules that must be co-designed are one unit); said, never refused.
+pub(super) fn shared_state_writers(
+    writers: &[(String, Vec<String>)],
+) -> Vec<(String, Vec<String>)> {
+    let mut by_state: Vec<(String, String, Vec<String>)> = Vec::new();
+    for (shard, writes) in writers {
+        for w in writes {
+            let Some((display, key)) = state_key(w) else {
+                continue;
+            };
+            match by_state.iter_mut().find(|(_, k, _)| *k == key) {
+                Some((_, _, shards)) => {
+                    if !shards.contains(shard) {
+                        shards.push(shard.clone());
+                    }
+                }
+                None => by_state.push((display, key, vec![shard.clone()])),
+            }
+        }
+    }
+    by_state
+        .into_iter()
+        .filter(|(_, _, s)| s.len() > 1)
+        .map(|(display, _, s)| (display, s))
+        .collect()
+}
+
+/// `shard_shared_state_writers{module, task_id, state, shards, source}` per conflicting state;
+/// `source` is `declaration` (plan time, no task) or `readme` (the merger's dispatch).
+pub(super) fn shared_state_writer_events(
+    module: &str,
+    conflicts: &[(String, Vec<String>)],
+    source: &str,
+    task_id: Option<&str>,
+) -> Vec<serde_json::Value> {
+    conflicts
+        .iter()
+        .map(|(state, shards)| {
+            serde_json::json!({
+                "event": "shard_shared_state_writers",
+                "module": module,
+                "task_id": task_id,
+                "state": state,
+                "shards": shards,
+                "source": source,
+            })
+        })
+        .collect()
 }
 
 /// S10(3): the module's FINAL files as they stand when a shard lane is dispatched — the bytes, or
@@ -2065,7 +2271,7 @@ impl GooseAgentDispatcher {
                 let reason = if readme.is_none() {
                     "no README.md in the shard folder and no field in the final message"
                 } else {
-                    "README.md carries none of PROVIDES/ASSUMES/UNFINISHED/CHECKED_WITH"
+                    "README.md carries none of PROVIDES/ASSUMES/UNFINISHED/CHECKED_WITH/WRITES"
                 };
                 self.events
                     .write_value(merge_note_missing_event(shard, &req.task_id, reason));
@@ -2156,6 +2362,82 @@ mod dispatch_tests {
         assert_eq!(ev["event"], "merge_note_missing");
         assert_eq!(ev["module"], "web-viz");
         assert_eq!(ev["shard"], "render");
+    }
+
+    /// Split v2 §4: the WRITES line parses (bullets continue it; a README written without the
+    /// field reads as writing nothing — never a manufactured conflict); the state is the text
+    /// before its shape, so `S.brush — Set<id>` and `S.brush: the brushed ids` are ONE state
+    /// written by two shards, `instanceData` and `labelSlots` single-writer; the event carries the
+    /// state as first written, the shards, and the source.
+    #[test]
+    fn writes_lines_parse_and_two_readme_writers_of_one_state_are_said() {
+        let n = parse_shard_note(
+            "PROVIDES: a()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: x\nWRITES: S.brush — Set<id> of brushed ids\n- instanceData: Float32Array stride 8\n",
+        )
+        .unwrap();
+        assert_eq!(
+            n.writes,
+            vec![
+                "S.brush — Set<id> of brushed ids",
+                "instanceData: Float32Array stride 8"
+            ]
+        );
+        assert_eq!(
+            n.to_json()["writes"][1],
+            "instanceData: Float32Array stride 8"
+        );
+        let before_the_field =
+            parse_shard_note("PROVIDES: a()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: x\n")
+                .unwrap();
+        assert!(before_the_field.writes.is_empty());
+        assert!(parse_shard_note("PROVIDES: a()\nWRITES: none\n")
+            .unwrap()
+            .writes
+            .is_empty());
+
+        let conflicts = shared_state_writers(&[
+            (
+                "web-viz-render".to_string(),
+                vec![
+                    "S.brush — Set<id> of brushed ids".to_string(),
+                    "instanceData: Float32Array stride 8".to_string(),
+                ],
+            ),
+            (
+                "web-viz-brush".to_string(),
+                vec!["s.brush: the brushed ids".to_string()],
+            ),
+            (
+                "web-viz-labels".to_string(),
+                vec!["labelSlots (Float32Array)".to_string()],
+            ),
+        ]);
+        assert_eq!(
+            conflicts,
+            vec![(
+                "S.brush".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-brush".to_string()]
+            )]
+        );
+        assert!(shared_state_writers(&[
+            ("a".to_string(), vec!["S.brush".to_string()]),
+            ("b".to_string(), vec!["S.yaw".to_string()]),
+        ])
+        .is_empty());
+        let events = shared_state_writer_events("web-viz", &conflicts, "readme", Some("web-viz"));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], "shard_shared_state_writers");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["task_id"], "web-viz");
+        assert_eq!(events[0]["state"], "S.brush");
+        assert_eq!(
+            events[0]["shards"],
+            serde_json::json!(["web-viz-render", "web-viz-brush"])
+        );
+        assert_eq!(events[0]["source"], "readme");
+        let sh = shard();
+        assert!(shard_owner_body(&sh).contains("/ CHECKED_WITH: / WRITES:"));
+        assert!(readme_missing_hint(&sh).contains("WRITES: (the shared state you write"));
     }
 }
 
@@ -2574,6 +2856,8 @@ pub(super) struct MergeDossier {
     /// (final file, bytes, writer shard id — None = not recorded in the ledger): files already on
     /// disk at the merger's dispatch that no merge wrote (S10(3), `shard_wrote_final_file`).
     pub(super) final_on_disk: Vec<(String, u64, Option<String>)>,
+    /// (shared state, shard ids) — states more than one README's WRITES names (split v2 §4).
+    pub(super) shared_state_writers: Vec<(String, Vec<String>)>,
 }
 
 fn candidate_names(item: &str) -> Vec<String> {
@@ -2799,6 +3083,12 @@ pub(super) async fn build_merge_dossier(
             final_on_disk.push((f.clone(), meta.len(), writer));
         }
     }
+    let shared_state_writers = shared_state_writers(
+        &shards
+            .iter()
+            .filter_map(|sh| sh.note.as_ref().map(|n| (sh.id.clone(), n.writes.clone())))
+            .collect::<Vec<_>>(),
+    );
     MergeDossier {
         module: merger.module.clone(),
         files: module_files.to_vec(),
@@ -2812,6 +3102,7 @@ pub(super) async fn build_merge_dossier(
         prior_merge,
         final_file_symbols,
         final_on_disk,
+        shared_state_writers,
     }
 }
 
@@ -2848,6 +3139,7 @@ impl MergeDossier {
             "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
             "provides_unbacked": self.shards.iter().filter(|s| !s.provides_unbacked.is_empty()).map(|s| serde_json::json!({"shard": s.id, "names": s.provides_unbacked})).collect::<Vec<_>>(),
+            "shared_state_writers": self.shared_state_writers.iter().map(|(st, sh)| serde_json::json!({"state": st, "shards": sh})).collect::<Vec<_>>(),
             "second_pass": self.prior_merge.is_some(),
             "final_on_disk": self.final_on_disk.iter().map(|(f, n, w)| serde_json::json!({"path": f, "bytes": n, "written_by_shard": w})).collect::<Vec<_>>(),
         })
@@ -3043,6 +3335,12 @@ impl MergeDossier {
         for (name, declared, found, shard) in &self.signature_disagreements {
             item(&mut s, format!(
                 "`{name}` is declared `{declared}` but shard `{shard}` defines it with `({found})` — reconcile to the DECLARED signature and fix every caller."
+            ));
+        }
+        for (state, writers) in &self.shared_state_writers {
+            item(&mut s, format!(
+                "shared state `{state}` is WRITTEN by shards {} (their READMEs' WRITES) — the declaration names ONE writer per state; keep one shard's writes and route the other's through it (or the declared API), and say which under KEPT/DROPPED.",
+                writers.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(" and ")
             ));
         }
         for (shard, assumption) in &self.assumptions_unmet {
@@ -3551,6 +3849,14 @@ impl GooseAgentDispatcher {
         self.events.write_value(ev);
         for unbacked in dossier.provides_unbacked_events(&req.task_id) {
             self.events.write_value(unbacked);
+        }
+        for writers in shared_state_writer_events(
+            &merger.module,
+            &dossier.shared_state_writers,
+            "readme",
+            Some(&req.task_id),
+        ) {
+            self.events.write_value(writers);
         }
         // ASSEMBLE, THEN GLUE (DESIGN-SPLIT-V2 §1): code places every piece's definitions in the
         // declared order before the model runs, and the brief names the glue as the merger's job.
@@ -4522,5 +4828,80 @@ mod merger_tests {
             "{:?}",
             a.glue_needed
         );
+    }
+
+    /// Split v2 §4 at the merger's dispatch: two READMEs WRITE `S.brush` → the dossier names the
+    /// state and both shards, the brief carries a numbered reconcile item, the summary and the
+    /// `readme`-sourced event say the same; a lone writer says nothing.
+    #[tokio::test]
+    async fn two_readme_writers_of_one_state_reach_the_dossier_and_the_brief() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "function buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\nWRITES: S.brush — Set<id>\n- instanceData: Float32Array stride 8\n"),
+        ]);
+        mk(".swarm/shards/web-viz/brush", &[
+            ("brush.js", "function drawBrush(ids) {}\n"),
+            ("README.md", "PROVIDES: drawBrush(ids)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check brush.js\nWRITES: S.brush: the brushed ids\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-brush".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/brush".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.shared_state_writers,
+            vec![(
+                "S.brush".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-brush".to_string()]
+            )]
+        );
+        assert_eq!(
+            d.summary_json()["shared_state_writers"][0]["state"],
+            "S.brush"
+        );
+        let brief = d.merger_brief("/run", None);
+        assert!(
+            brief.contains("shared state `S.brush` is WRITTEN by shards `web-viz-render` and `web-viz-brush` (their READMEs' WRITES) — the declaration names ONE writer per state"),
+            "{brief}"
+        );
+        let events = shared_state_writer_events(
+            &merger.module,
+            &d.shared_state_writers,
+            "readme",
+            Some("web-viz"),
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["source"], "readme");
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/brush/README.md"),
+            "PROVIDES: drawBrush(ids)\nASSUMES: S.brush is a Set<id>\nUNFINISHED: none\nCHECKED_WITH: node --check brush.js\nWRITES: none\n",
+        )
+        .unwrap();
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert!(
+            d.shared_state_writers.is_empty(),
+            "{:?}",
+            d.shared_state_writers
+        );
+        assert!(!d
+            .merger_brief("/run", None)
+            .contains("is WRITTEN by shards"));
     }
 }
