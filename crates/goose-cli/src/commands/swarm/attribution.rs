@@ -6,7 +6,7 @@
 //! possessive-apostrophe cut in `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep
 //! hit zero files, and 6 of 8 round-0 findings misrouted to the entry file).
 
-use super::findings::FileGroup;
+use super::findings::{FileGroup, FindingProvenance};
 
 /// P1-3, half one: the ENDPOINT LITERAL FORMS a gate finding names, most specific first. The
 /// deterministic gate's own emitters write `GET <path> returned <code>` / `POST <path> …`, so
@@ -277,17 +277,29 @@ pub(super) fn attribute_findings(
 ) -> (
     Vec<FileGroup>,
     Vec<String>,
-    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, Vec<String>>,
 ) {
     let (mut groups, unassigned) = super::findings::group_findings_by_file(findings, all_files);
     let mut known_bugs: Vec<String> = Vec::new();
-    let mut runner_ups: std::collections::HashMap<String, String> =
+    // ALL runner-ups per winner file, not the first — r6c: a winner with SEVERAL findings for
+    // the SAME endpoint (each its own literal form, e.g. `/api/drafts` and
+    // `/api/drafts/<id>/submit`) can rank a DIFFERENT second-best file per finding, and a
+    // single-slot map silently kept only the first. A client file (`web/app.js`, calling the
+    // endpoint) can legitimately win the grep over the server file that actually SERVES it
+    // (`app/drafts.py`) when the server composes the route from a blueprint prefix the file
+    // itself never spells verbatim — the runner-up pass is exactly the widening built for this
+    // (`an_endpoint_shard_owns_winner_and_unclaimed_runner_up`), and it must not drop candidates
+    // to a map slot that filled on an unrelated finding first.
+    let mut runner_ups: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for f in unassigned {
         match attribute_gate_finding_ranked(&f, all_files, read_source) {
             Some((file, ru)) => {
                 if let Some(ru) = ru {
-                    runner_ups.entry(file.clone()).or_insert(ru);
+                    let slot = runner_ups.entry(file.clone()).or_default();
+                    if !slot.contains(&ru) {
+                        slot.push(ru);
+                    }
                 }
                 match groups.iter_mut().find(|g| g.file == file) {
                     Some(g) => g.findings.push(f),
@@ -313,7 +325,7 @@ pub(super) fn attribute_findings(
 pub(super) fn resolve_shard_ownership(
     groups: &[FileGroup],
     all_files: &[String],
-    runner_ups: &std::collections::HashMap<String, String>,
+    runner_ups: &std::collections::HashMap<String, Vec<String>>,
 ) -> Vec<Vec<String>> {
     let mut taken: std::collections::HashSet<String> =
         groups.iter().map(|g| g.file.clone()).collect();
@@ -321,7 +333,8 @@ pub(super) fn resolve_shard_ownership(
         .iter()
         .map(|g| {
             let mut owned = super::shard_owned_files(&g.file, all_files, &taken);
-            if let Some(ru) = runner_ups.get(&g.file) {
+            // ALL of this winner's runner-ups claim, not the first — see attribute_findings.
+            for ru in runner_ups.get(&g.file).into_iter().flatten() {
                 if !taken.contains(ru) && !owned.contains(ru) {
                     owned.push(ru.clone());
                 }
@@ -331,6 +344,27 @@ pub(super) fn resolve_shard_ownership(
             }
             owned
         })
+        .collect()
+}
+
+/// The wave's own backstop, not a substitute for attributing better: which of THIS round's
+/// `unassigned` findings are provenance-CRITICAL (RenderGateRows, SyncAcquisition, BootProbe,
+/// …) — the class that means the app is unusable — and therefore got NO shard this round.
+/// `group_findings_by_file`/`attribute_gate_finding_ranked` can both legitimately decline (a
+/// finding that genuinely names no file), so this never gates or refuses; it only makes the
+/// silence LOUD (the fallback gate: a missing owner is a named absence-event, never quiet). r6c:
+/// a render-gate critical rode `unassigned` for two full rounds with zero shards' logs ever
+/// mentioning it — findings.rs's reverse-suffix resolve closes the specific URL-basename case
+/// that caused it; this is the general backstop for whatever still slips through (a second
+/// ambiguous basename, a check with no file-naming evidence at all).
+pub(super) fn criticals_left_unassigned(
+    prov: &FindingProvenance,
+    unassigned: &[String],
+) -> Vec<String> {
+    unassigned
+        .iter()
+        .filter(|f| prov.severity_label(f) == "critical")
+        .cloned()
         .collect()
 }
 
@@ -724,8 +758,8 @@ mod tests {
         assert_eq!(
             runner_ups
                 .get("app/ledgerd/__init__.py")
-                .map(|s| s.as_str()),
-            Some("app/httpapi.py")
+                .map(|v| v.as_slice()),
+            Some(["app/httpapi.py".to_string()].as_slice())
         );
         let owned = resolve_shard_ownership(&groups, &all, &runner_ups);
         assert_eq!(
@@ -745,6 +779,45 @@ mod tests {
         let owned2 = resolve_shard_ownership(&groups2, &all, &runner_ups2);
         assert_eq!(owned2[0], vec!["app/ledgerd/__init__.py".to_string()]);
         assert_eq!(owned2[1], vec!["app/httpapi.py".to_string()]);
+    }
+
+    /// r6c ownership fix: one winner file (e.g. a client that calls several endpoints) can rank
+    /// a DIFFERENT second-best SERVER file per finding. A single-slot runner-up map kept only
+    /// the FIRST, so a shard's `owned_files` stopped growing after the first — the real fix a
+    /// worker made to the SECOND endpoint's server file landed in its shadow and never rode the
+    /// promote copy (a verified fix dying at promotion: `changed_samples` nonzero, `promoted:
+    /// false`, because the fix lived outside `owned_files`). `resolve_shard_ownership` must
+    /// claim EVERY runner-up a winner's findings produced, not the first.
+    #[test]
+    fn a_winner_with_two_findings_claims_both_runner_ups_not_just_the_first() {
+        let groups = vec![FileGroup {
+            file: "web/app.js".to_string(),
+            findings: vec!["finding A".to_string(), "finding B".to_string()],
+        }];
+        let all = vec![
+            "web/app.js".to_string(),
+            "app/ledgerd/__init__.py".to_string(),
+            "app/drafts.py".to_string(),
+        ];
+        let mut runner_ups: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        runner_ups.insert(
+            "web/app.js".to_string(),
+            vec![
+                "app/ledgerd/__init__.py".to_string(),
+                "app/drafts.py".to_string(),
+            ],
+        );
+        let owned = resolve_shard_ownership(&groups, &all, &runner_ups);
+        assert_eq!(
+            owned,
+            vec![vec![
+                "web/app.js".to_string(),
+                "app/ledgerd/__init__.py".to_string(),
+                "app/drafts.py".to_string(),
+            ]],
+            "every runner-up must be claimed, not just the first"
+        );
     }
 
     /// P1-3 fixture: r0's real finding shapes against the ARCHIVED r0 tree, read-only. The tree
@@ -866,5 +939,69 @@ mod tests {
         let none = serde_json::json!({"consoleErrors": {"count": 2,
             "texts": ["a", "b"], "sources": ["", ""]}});
         assert_eq!(console_error_source(&none), None);
+    }
+
+    /// r6c: the backstop that makes an unowned critical LOUD instead of silent. A provenance-
+    /// critical finding left in `unassigned` after both attribution passes must be reported; a
+    /// medium left there (the expected, non-blocking residue class) must not.
+    #[test]
+    fn criticals_left_unassigned_reports_only_the_critical_class() {
+        use super::super::findings::{FindingProvenance, FindingSource};
+        let critical =
+            "the served page renders NO data rows in a real browser (in `viz.js`)".to_string();
+        let medium = "POST /api/drafts's response is missing field `amount_minor`".to_string();
+        let mut prov = FindingProvenance::default();
+        prov.tag(
+            FindingSource::RenderGateRows,
+            std::slice::from_ref(&critical),
+        );
+        prov.tag(
+            FindingSource::EndpointContractProbe,
+            std::slice::from_ref(&medium),
+        );
+        let unassigned = vec![critical.clone(), medium];
+        assert_eq!(
+            criticals_left_unassigned(&prov, &unassigned),
+            vec![critical],
+            "only the provenance-critical finding is a stuck-critical event"
+        );
+        assert!(criticals_left_unassigned(&prov, &[]).is_empty());
+    }
+
+    /// THE ROUND LOOP'S SHAPE, pinned. r6c's operator narrative was "viz.js got RETIRED from
+    /// redispatch because its shard promoted last round" — the walk found no such mechanism:
+    /// `attribute_findings` is a PURE function of THIS round's own findings, called fresh every
+    /// round on `verdict.findings` from a fresh gate run, with no promoted-file exclusion list
+    /// anywhere in the call chain. This test pins that shape directly: round 1's OWN findings
+    /// (not round 0's) decide round 1's shard set — a file whose finding SURVIVED into round
+    /// 1's fresh verdict gets a shard again regardless of what promoted last round; a file whose
+    /// finding is simply ABSENT from round 1 (fixed, or never existed) gets none, and that is
+    /// the ONLY reason it drops out — never a memory of its own prior promotion.
+    #[test]
+    fn a_rounds_shard_set_is_its_own_findings_never_a_memory_of_prior_promotion() {
+        let all = vec!["app/drafts.py".to_string(), "web/viz.js".to_string()];
+        let read = |_: &str| -> Option<String> { Some(String::new()) };
+
+        // Round 0: both files have open findings and (per the r6c narrative) both get shards.
+        let round0 = vec![
+            "`app/drafts.py` raises KeyError on an empty JSON body".to_string(),
+            "console error (in `web/viz.js`)".to_string(),
+        ];
+        let (g0, _, _) = attribute_findings(&round0, &all, &read);
+        assert_eq!(g0.len(), 2, "round 0 shards both files");
+
+        // Round 1's OWN fresh gate run: drafts.py's finding is GONE (round 0 fixed it — a
+        // genuinely cleared file); viz.js's finding SURVIVED (round 0's fix did not close it).
+        let round1 = vec!["console error (in `web/viz.js`)".to_string()];
+        let (g1, unassigned1, _) = attribute_findings(&round1, &all, &read);
+        assert_eq!(
+            g1.iter().map(|g| g.file.as_str()).collect::<Vec<_>>(),
+            vec!["web/viz.js"],
+            "the surviving critical's file reappears in round 1's set — nothing retires it"
+        );
+        assert!(
+            unassigned1.is_empty(),
+            "drafts.py is simply absent from round 1's own findings, not excluded by a promotion memory"
+        );
     }
 }
