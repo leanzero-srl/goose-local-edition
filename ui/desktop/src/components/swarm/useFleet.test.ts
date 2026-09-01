@@ -1,17 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { chatCompletionsUrl, deviceFromModelId, modelsUrl } from './useFleet';
 
-/** U-M3: every probe URL is derived from the configured host base — never a pinned 127.0.0.1. */
+/** U-M3: every probe URL is derived from the configured host base — never a pinned 127.0.0.1 — and
+ *  (gate 8 refutation of 949d3fa6e) a LOOPBACK base fetches 127.0.0.1, the one loopback origin the static
+ *  meta CSP in index.html allows; the display text (`FleetState.endpoint`) stays the configured base. */
 describe('probe URLs derive from the configured swarm endpoint (a host base)', () => {
   it('appends the LM Studio routes to the endpoint ORIGIN, whatever path or slash it carries', () => {
-    expect(modelsUrl('http://localhost:1234')).toBe('http://localhost:1234/api/v0/models');
     expect(modelsUrl('http://192.168.8.220:1234/')).toBe('http://192.168.8.220:1234/api/v0/models');
     expect(modelsUrl('http://192.168.8.220:1234/v1')).toBe('http://192.168.8.220:1234/api/v0/models');
-    expect(chatCompletionsUrl('http://localhost:1234')).toBe('http://localhost:1234/v1/chat/completions');
+    expect(chatCompletionsUrl('http://192.168.8.220:1234')).toBe(
+      'http://192.168.8.220:1234/v1/chat/completions'
+    );
   });
 
-  it('keeps the configured host verbatim — the settings message and the probe name the SAME host', () => {
-    expect(modelsUrl('http://localhost:1234')).not.toContain('127.0.0.1');
+  it('probes the live default `http://localhost:1234` at 127.0.0.1 — the URL the meta CSP allows', () => {
+    expect(modelsUrl('http://localhost:1234')).toBe('http://127.0.0.1:1234/api/v0/models');
+    expect(chatCompletionsUrl('http://localhost:1234')).toBe('http://127.0.0.1:1234/v1/chat/completions');
+    expect(modelsUrl('http://127.0.0.1:1234')).toBe('http://127.0.0.1:1234/api/v0/models');
   });
 
   it('refuses to guess a host for an unparseable endpoint', () => {

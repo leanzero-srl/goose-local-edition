@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { acpReadConfig } from '../../acp/config';
+import { cspSafe } from '../../utils/csp';
 import { DEFAULTS, type SwarmConfig } from '../settings/swarm/golden';
 import { NodeLane, NodeStatus } from './FanInCard';
 
@@ -14,8 +15,13 @@ import { NodeLane, NodeStatus } from './FanInCard';
  * fleet configured on another machine read "offline" here while the engine was building on it, and the
  * settings card named one host in its message and probed another. Every URL below is DERIVED from the
  * configured endpoint, which is a HOST BASE (`http://localhost:1234`, golden.ts DEFAULTS — the engine's
- * baked default_endpoint); main adds that origin to the renderer CSP (csp.ts) so a non-loopback host is
- * reachable at all.
+ * baked default_endpoint).
+ *
+ * LOOPBACK (restored 2026-09-02 after gate 8 refuted 949d3fa6e): the renderer's CSP is the INTERSECTION of
+ * index.html's static meta (`connect-src 'self' http://127.0.0.1:* https: ws: wss:`) and main's header, so
+ * a `localhost` probe is blocked no matter what the header allows — the default install read "offline"
+ * with the right host name. The fetch URL is loopback-normalised to 127.0.0.1 (`cspSafe`), the display
+ * text is not.
  */
 
 /** The engine's own default host base — what an absent `swarm.endpoint` means, not a UI fallback. */
@@ -32,14 +38,18 @@ function swarmOriginOf(endpoint: string): string {
   return url.origin;
 }
 
-/** `<origin>/api/v0/models` from a host base. */
+/** `<origin>/api/v0/models` from a host base — the FETCH url. A `localhost` base fetches 127.0.0.1
+ *  (csp.ts `cspSafe`: the static meta CSP in index.html allows `http://127.0.0.1:*` and blocks the
+ *  `localhost` origin — measured d28443d90, regressed 949d3fa6e). The DISPLAY text (`FleetState.endpoint`)
+ *  stays the configured host base verbatim; loopback is loopback either way. */
 export function modelsUrl(endpoint: string): string {
-  return `${swarmOriginOf(endpoint)}/api/v0/models`;
+  return cspSafe(`${swarmOriginOf(endpoint)}/api/v0/models`);
 }
 
-/** `<origin>/v1/chat/completions` from a host base — LM Studio's OpenAI-compatible chat route. */
+/** `<origin>/v1/chat/completions` from a host base — LM Studio's OpenAI-compatible chat route; the same
+ *  loopback rewrite as `modelsUrl`. */
 export function chatCompletionsUrl(endpoint: string): string {
-  return `${swarmOriginOf(endpoint)}/v1/chat/completions`;
+  return cspSafe(`${swarmOriginOf(endpoint)}/v1/chat/completions`);
 }
 
 /** The configured `swarm.endpoint`, or the engine's default when the key is absent. An unreadable
