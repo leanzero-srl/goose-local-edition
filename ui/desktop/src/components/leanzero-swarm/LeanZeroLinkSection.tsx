@@ -10,23 +10,34 @@ import {
   Mail,
   Play,
   RefreshCw,
-  Wifi,
-  WifiOff,
+  Users,
 } from 'lucide-react';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { defineMessages, useIntl } from '../../i18n';
 import {
-  AZURE,
-  GREEN,
-  AMBER,
-  RED,
-  SLATE,
-  INK_DARK,
+  Button,
   Chip,
-  SolidBanner,
-} from './primitives';
+  DataTable,
+  EmptyState,
+  KeyValue,
+  Panel,
+  StatusDot,
+  DISABLED,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  ROW,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+  type DataTableColumn,
+  type Tone,
+} from '../lz';
+import { FIELD_LABEL, INPUT, TEXTAREA, ToneBanner, nodeHue } from './studio';
 import {
   leanzeroLinkConnect,
   leanzeroLinkHealth,
@@ -101,7 +112,7 @@ function formatLastSeen(iso: string | undefined, now: number): string {
 }
 
 interface StatusVisual {
-  color: string;
+  tone: Extract<Tone, 'ok' | 'warn' | 'stopped'>;
   label: string;
   sessionId?: string;
 }
@@ -109,84 +120,39 @@ interface StatusVisual {
 function nodeStatusVisual(status: NodeStatus): StatusVisual {
   switch (status.type) {
     case 'Idle':
-      return { color: GREEN, label: 'idle' };
+      return { tone: 'ok', label: 'idle' };
     case 'Busy':
-      return { color: AMBER, label: 'busy', sessionId: status.session_id };
+      return { tone: 'warn', label: 'busy', sessionId: status.session_id };
     case 'Offline':
     default:
-      return { color: SLATE, label: 'offline' };
+      return { tone: 'stopped', label: 'offline' };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Shared card chrome (benchmark register: full borders, solid fills, no rails/tints).
+// Shared chrome (LeanZero Studio: Panels, status triad, one accent, custom controls).
 // Declared at module scope — never inside a render body.
 // ---------------------------------------------------------------------------
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="overflow-hidden rounded border border-border-primary">{children}</div>;
-}
-
-function CardHeader({ label, right }: { label: string; right?: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border-primary bg-background-secondary px-3 py-2">
-      <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-        {label}
-      </span>
-      {right != null && <span className="ml-auto flex items-center gap-2">{right}</span>}
-    </div>
-  );
-}
 
 function StatusChip({ status }: { status: NodeStatus }) {
   const v = nodeStatusVisual(status);
   return (
-    <Chip
-      color={v.color}
-      ink={v.color === AMBER ? INK_DARK : '#ffffff'}
-      title={v.sessionId ? `busy on session ${v.sessionId}` : v.label}
-    >
+    <Chip tone={v.tone} title={v.sessionId ? `busy on session ${v.sessionId}` : v.label}>
       {v.label}
       {v.sessionId ? ` · ${v.sessionId.slice(0, 8)}` : ''}
     </Chip>
   );
 }
 
-function DeviceRow({
-  node,
-  now,
-  isSelf,
-}: {
-  node: NodeState;
-  now: number;
-  isSelf: boolean;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5"
-      data-testid={isSelf ? 'link-self' : `link-peer-${node.node_id}`}
-    >
-      <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
-      <span className="min-w-0 truncate text-sm font-bold text-text-primary">{node.hostname}</span>
-      <StatusChip status={node.status} />
-      <span className="font-mono text-xs text-text-secondary">
-        {node.mesh_ip ?? 'no mesh IP'}
-      </span>
-      {node.sessions_active > 0 && (
-        <span className="text-xs font-semibold" style={{ color: AZURE }}>
-          {node.sessions_active} active
-        </span>
-      )}
-      {!isSelf && (
-        <span className="ml-auto text-xs text-text-secondary">
-          {formatLastSeen(node.updated_at, now)}
-        </span>
-      )}
-    </div>
+function MeshIp({ ip }: { ip: string | undefined }) {
+  return ip ? (
+    <span className="font-mono text-lz-mono text-lz-ink">{ip}</span>
+  ) : (
+    <span className="text-lz-ink-4">no mesh IP</span>
   );
 }
 
-// Custom checkbox (no native input, per the design bans). Solid AZURE fill when checked.
+// Custom checkbox (no native input, per the design bans). Solid accent fill when checked.
 function WipeCheckbox({
   checked,
   onChange,
@@ -202,16 +168,17 @@ function WipeCheckbox({
       role="checkbox"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="flex items-center gap-2 text-left text-sm text-text-primary"
+      className={cx('flex items-center gap-2 text-left', TYPE.body, FOCUS)}
       data-testid="link-wipe-checkbox"
     >
       <span
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-          checked ? '' : 'border-border-primary'
-        }`}
-        style={checked ? { backgroundColor: AZURE, borderColor: AZURE } : undefined}
+        className={cx(
+          'flex size-4 shrink-0 items-center justify-center rounded-[4px] border [&_svg]:size-3',
+          checked ? 'border-lz-accent bg-lz-accent text-lz-accent-ink' : 'border-lz-border-strong bg-lz-surface',
+          MOTION
+        )}
       >
-        {checked && <Check className="h-3 w-3 text-white" />}
+        {checked && <Check />}
       </span>
       <span>{label}</span>
     </button>
@@ -267,22 +234,29 @@ function LoginCard({ auth, submitting, error, onRequestCode, onVerify }: LoginCa
 
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-login-card">
-      <Card>
-        <div className="flex flex-col items-center gap-1 border-b border-border-primary bg-background-secondary px-6 py-5 text-center">
+      <Panel padded={false}>
+        <div
+          className={cx(
+            'flex flex-col items-center gap-2 border-b px-6 py-6 text-center',
+            SURFACE.hairline
+          )}
+        >
           <span
-            className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded"
-            style={{ backgroundColor: AZURE }}
+            aria-hidden
+            className={cx(
+              'mb-1 flex size-12 items-center justify-center [&_svg]:size-6',
+              RADIUS.card,
+              TONE_FILL.accent
+            )}
           >
-            <Link2 className="h-6 w-6 text-white" />
+            <Link2 />
           </span>
-          <h2 className="text-lg font-bold text-text-primary">LeanZero Link</h2>
-          <p className="max-w-[42ch] text-sm text-text-secondary">
-            {intl.formatMessage(i18n.tagline)}
-          </p>
+          <h2 className={TYPE.h1}>LeanZero Link</h2>
+          <p className={cx(TYPE.bodyMuted, 'max-w-[42ch]')}>{intl.formatMessage(i18n.tagline)}</p>
         </div>
 
         <div className="flex flex-col gap-4 px-6 py-6">
-          {error && <SolidBanner color={RED} label="Sign-in" text={error} />}
+          {error && <ToneBanner tone="err" label="Sign-in" text={error} />}
 
           {!codeStage ? (
             <form
@@ -292,13 +266,10 @@ function LoginCard({ auth, submitting, error, onRequestCode, onVerify }: LoginCa
                 void submitEmail();
               }}
             >
-              <label
-                htmlFor="link-email-input"
-                className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
-              >
+              <label htmlFor="link-email-input" className={FIELD_LABEL}>
                 Email
               </label>
-              <Input
+              <input
                 id="link-email-input"
                 data-testid="link-email-input"
                 type="email"
@@ -308,47 +279,49 @@ function LoginCard({ auth, submitting, error, onRequestCode, onVerify }: LoginCa
                 value={email}
                 disabled={submitting}
                 onChange={(e) => setEmail(e.target.value)}
+                className={cx(INPUT, 'w-full')}
               />
               <Button
+                variant="primary"
                 type="submit"
                 disabled={submitting || email.trim() === ''}
                 data-testid="link-send-code"
-                className="w-full rounded font-bold text-white hover:opacity-90"
-                style={{ backgroundColor: AZURE }}
+                className="w-full"
+                icon={submitting ? <Loader2 className="animate-spin" /> : <Mail />}
               >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Mail className="h-4 w-4" />
-                )}
                 Send code
               </Button>
             </form>
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-text-secondary">
+                <span className={TYPE.bodyMuted}>
                   Code sent to{' '}
-                  <span className="font-semibold text-text-primary" data-testid="link-masked-email">
+                  <span
+                    className={cx('text-lz-ink', WEIGHT.semibold)}
+                    data-testid="link-masked-email"
+                  >
                     {maskEmail(codeEmail)}
                   </span>
                 </span>
                 <span
-                  className="rounded px-2 py-0.5 text-sm font-bold tabular-nums"
-                  style={{ backgroundColor: expired ? RED : AZURE, color: '#ffffff' }}
                   data-testid="link-countdown"
+                  className={cx(
+                    'inline-flex h-6 items-center px-2 text-lz-body',
+                    WEIGHT.semibold,
+                    TNUM,
+                    RADIUS.control,
+                    expired ? TONE_FILL.err : TONE_FILL.accent
+                  )}
                   title={expired ? 'the code has expired' : 'time until the code expires'}
                 >
                   {formatCountdown(remainingSecs)}
                 </span>
               </div>
-              <label
-                htmlFor="link-code-input"
-                className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
-              >
+              <label htmlFor="link-code-input" className={FIELD_LABEL}>
                 6-digit code
               </label>
-              <Input
+              <input
                 id="link-code-input"
                 data-testid="link-code-input"
                 inputMode="numeric"
@@ -361,40 +334,46 @@ function LoginCard({ auth, submitting, error, onRequestCode, onVerify }: LoginCa
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && canVerify) void onVerify(codeEmail, digits);
                 }}
-                className="text-center font-mono text-2xl tracking-[0.5em]"
+                className={cx(
+                  'h-11 w-full bg-lz-surface px-3 text-center font-mono text-[22px] tracking-[0.5em] text-lz-ink placeholder:text-lz-ink-4',
+                  SURFACE.outline,
+                  RADIUS.control,
+                  FOCUS,
+                  MOTION,
+                  DISABLED
+                )}
               />
               {expired && (
-                <span className="text-xs font-semibold" style={{ color: RED }}>
+                <span className={cx('text-lz-meta', WEIGHT.medium, TONE_TEXT.err)}>
                   This code has expired — send a new one.
                 </span>
               )}
               <Button
+                variant="primary"
                 type="button"
                 disabled={!canVerify}
                 data-testid="link-verify"
                 onClick={() => void onVerify(codeEmail, digits)}
-                className="w-full rounded font-bold text-white hover:opacity-90"
-                style={{ backgroundColor: AZURE }}
+                className="w-full"
+                icon={submitting ? <Loader2 className="animate-spin" /> : <Check />}
               >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Check className="h-4 w-4" />
-                )}
                 Verify
               </Button>
-              <div className="flex items-center justify-between gap-2 text-xs">
-                <button
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   data-testid="link-resend"
                   disabled={submitting}
                   onClick={() => void onRequestCode(codeEmail)}
-                  className="flex items-center gap-1 font-semibold text-text-secondary hover:text-text-primary disabled:opacity-50"
+                  icon={<RefreshCw />}
                 >
-                  <RefreshCw className="h-3 w-3" />
                   Send a new code
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   data-testid="link-different-email"
                   disabled={submitting}
@@ -402,16 +381,15 @@ function LoginCard({ auth, submitting, error, onRequestCode, onVerify }: LoginCa
                     setBackToEmail(true);
                     setCode('');
                   }}
-                  className="flex items-center gap-1 font-semibold text-text-secondary hover:text-text-primary disabled:opacity-50"
+                  icon={<ArrowLeft />}
                 >
-                  <ArrowLeft className="h-3 w-3" />
                   Use a different email
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
-      </Card>
+      </Panel>
     </div>
   );
 }
@@ -435,53 +413,53 @@ function ConnectCard({
 }) {
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connect-card">
-      <Card>
-        <CardHeader label="Signed in" />
-        <div className="flex flex-col gap-4 px-6 py-6">
-          <div className="flex items-center gap-3">
-            <span
-              className="inline-flex h-9 w-9 items-center justify-center rounded"
-              style={{ backgroundColor: GREEN }}
-            >
-              <Mail className="h-5 w-5 text-white" />
-            </span>
-            <span className="min-w-0 truncate text-sm font-bold text-text-primary">{email}</span>
-          </div>
+      <Panel title="Signed in">
+        <div className="flex flex-col gap-4">
+          <KeyValue
+            aria-label="Account"
+            items={[
+              { key: 'account', label: 'Account', value: email },
+              {
+                key: 'mesh',
+                label: 'Mesh',
+                value: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <StatusDot tone="stopped" label="not connected" />
+                    not connected
+                  </span>
+                ),
+              },
+            ]}
+          />
 
           {audienceSyncFailed && (
-            <div
-              className="rounded px-3 py-2 text-xs font-semibold"
-              style={{ backgroundColor: AMBER, color: INK_DARK }}
-              data-testid="link-audience-note"
-            >
-              Signed in, but syncing your contact info to LeanZero didn&apos;t go through. Your
-              account works — this is just the mailing audience.
-            </div>
+            <ToneBanner
+              tone="warn"
+              label="Audience"
+              text="Signed in, but syncing your contact info to LeanZero didn't go through. Your account works — this is just the mailing audience."
+              testId="link-audience-note"
+            />
           )}
 
-          {error && <SolidBanner color={RED} label="Connect failed" text={error} />}
+          {error && <ToneBanner tone="err" label="Connect failed" text={error} />}
 
-          <p className="text-sm text-text-secondary">
+          <p className={TYPE.bodyMuted}>
             Bring this Mac onto your private mesh so your linked devices can see each other.
           </p>
 
           <Button
+            variant="primary"
             type="button"
             disabled={connecting}
             data-testid="link-connect"
             onClick={onConnect}
-            className="w-full rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: AZURE }}
+            className="w-full"
+            icon={connecting ? <Loader2 className="animate-spin" /> : <Link2 />}
           >
-            {connecting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Link2 className="h-4 w-4" />
-            )}
             {error ? 'Retry connect' : 'Connect to mesh'}
           </Button>
         </div>
-      </Card>
+      </Panel>
     </div>
   );
 }
@@ -489,14 +467,13 @@ function ConnectCard({
 function ConnectingCard({ email }: { email: string }) {
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connecting">
-      <Card>
-        <CardHeader label="Connecting" />
-        <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
-          <Loader2 className="h-8 w-8 animate-spin" style={{ color: AZURE }} />
-          <span className="text-sm font-bold text-text-primary">Joining your private mesh</span>
-          <span className="text-xs text-text-secondary">{email}</span>
+      <Panel title="Connecting">
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <Loader2 className="size-8 animate-spin text-lz-accent" />
+          <span className={cx(TYPE.body, WEIGHT.semibold)}>Joining your private mesh</span>
+          <span className={TYPE.meta}>{email}</span>
         </div>
-      </Card>
+      </Panel>
     </div>
   );
 }
@@ -524,7 +501,7 @@ function targetLabel(opt: RunTargetOption): string {
 /**
  * Custom device dropdown — never a native <select>. Busy/Offline peers are rendered
  * DISABLED (honest: shown, not hidden) with their live state as the reason; self and Idle
- * peers are pickable. Solid benchmark chrome: full border, status chips, no rails/tints.
+ * peers are pickable. Studio chrome: the outline control, status chips, the overlay surface.
  */
 function NodeSelect({
   options,
@@ -560,20 +537,30 @@ function NodeSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded border border-border-primary bg-background-secondary px-3 py-2 text-left text-sm font-semibold text-text-primary transition-colors hover:border-text-secondary disabled:opacity-60"
+        className={cx(
+          'flex h-9 w-full items-center gap-2 bg-lz-surface px-3 text-left text-lz-body text-lz-ink [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
+          SURFACE.outline,
+          RADIUS.control,
+          DISABLED,
+          FOCUS,
+          MOTION
+        )}
       >
-        <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
-        <span className="min-w-0 truncate">
+        <Laptop />
+        <span className={cx('min-w-0 truncate', WEIGHT.medium)}>
           {selected ? targetLabel(selected) : 'No runnable device'}
         </span>
         {selected && <StatusChip status={selected.status} />}
-        <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-text-secondary" />
+        <ChevronDown className="ml-auto" />
       </button>
       {open && (
         <div
           role="listbox"
           aria-label="Target device"
-          className="absolute left-0 top-full z-[60] mt-1 w-full overflow-hidden rounded border border-border-primary bg-background-primary shadow-lg"
+          className={cx(
+            'absolute left-0 top-full z-[60] mt-1 w-full overflow-hidden p-1',
+            SURFACE.overlay
+          )}
         >
           {options.map((opt) => (
             <button
@@ -590,19 +577,19 @@ function NodeSelect({
                 onChange(opt.nodeId);
                 setOpen(false);
               }}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                opt.nodeId === value ? 'bg-background-secondary' : 'hover:bg-background-secondary'
-              } disabled:cursor-not-allowed disabled:opacity-60`}
+              className={cx(
+                'flex w-full items-center gap-2 px-2.5 text-left text-lz-body text-lz-ink disabled:cursor-not-allowed disabled:text-lz-ink-3 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
+                ROW.dense,
+                RADIUS.control,
+                opt.nodeId === value ? SURFACE.inset : SURFACE.hover,
+                MOTION
+              )}
             >
-              <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="min-w-0 truncate font-semibold text-text-primary">
-                {targetLabel(opt)}
-              </span>
+              <Laptop />
+              <span className={cx('min-w-0 truncate', WEIGHT.medium)}>{targetLabel(opt)}</span>
               <StatusChip status={opt.status} />
               {!opt.selectable && opt.reason && (
-                <span className="ml-auto shrink-0 text-xs font-semibold text-text-secondary">
-                  can&apos;t run — {opt.reason}
-                </span>
+                <span className={cx('ml-auto shrink-0', TYPE.meta)}>can&apos;t run — {opt.reason}</span>
               )}
             </button>
           ))}
@@ -690,16 +677,10 @@ function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
     }
   }, [inFlight, targetNodeId, trimmedPrompt, selectedSelectable, options, workingDir]);
 
-  const inputBase =
-    'w-full rounded border border-border-primary bg-background-primary px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-secondary focus:border-text-secondary';
-
   return (
-    <Card>
-      <CardHeader label="Run a prompt on a linked device" />
-      <div className="flex flex-col gap-3 px-3 py-3" data-testid="link-run-card">
-        <label className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-          Device
-        </label>
+    <Panel title="Run a prompt on a linked device">
+      <div className="flex flex-col gap-3" data-testid="link-run-card">
+        <span className={FIELD_LABEL}>Device</span>
         <NodeSelect
           options={options}
           value={targetNodeId}
@@ -707,10 +688,7 @@ function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
           disabled={inFlight}
         />
 
-        <label
-          htmlFor="link-run-prompt"
-          className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
-        >
+        <label htmlFor="link-run-prompt" className={FIELD_LABEL}>
           Prompt
         </label>
         <textarea
@@ -721,13 +699,10 @@ function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
           disabled={inFlight}
           placeholder="Describe what this device should do…"
           onChange={(e) => setPrompt(e.target.value)}
-          className={`${inputBase} resize-y font-mono`}
+          className={TEXTAREA}
         />
 
-        <label
-          htmlFor="link-run-workdir"
-          className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
-        >
+        <label htmlFor="link-run-workdir" className={FIELD_LABEL}>
           Working directory (optional)
         </label>
         <input
@@ -738,49 +713,78 @@ function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
           disabled={inFlight}
           placeholder="defaults to the device's home"
           onChange={(e) => setWorkingDir(e.target.value)}
-          className={`${inputBase} font-mono`}
+          className={cx(INPUT, 'w-full font-mono')}
         />
 
         {error && (
           <div data-testid="link-run-error">
-            <SolidBanner color={RED} label="Run" text={error} />
+            <ToneBanner tone="err" label="Run" text={error} />
           </div>
         )}
 
         {result && (
-          <div
-            className="flex items-center gap-2 rounded px-4 py-3"
-            style={{ backgroundColor: GREEN }}
-            role="status"
-            data-testid="link-run-success"
-          >
-            <Check className="h-4 w-4 shrink-0 text-white" />
-            <span className="min-w-0 flex-1 break-words text-sm font-semibold text-white">
-              Started session {result.sessionId} on {result.hostname} — its activity will mirror
-              here.
-            </span>
-          </div>
+          <ToneBanner
+            tone="ok"
+            label="Started"
+            text={`Started session ${result.sessionId} on ${result.hostname} — its activity will mirror here.`}
+            testId="link-run-success"
+          />
         )}
 
         <Button
+          variant="primary"
           type="button"
           disabled={!canRun}
           data-testid="link-run-submit"
           onClick={() => void run()}
-          className="w-full rounded font-bold text-white hover:opacity-90 disabled:opacity-60"
-          style={{ backgroundColor: AZURE }}
+          className="w-full"
+          icon={inFlight ? <Loader2 className="animate-spin" /> : <Play />}
         >
-          {inFlight ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           Run
         </Button>
       </div>
-    </Card>
+    </Panel>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Connected dashboard.
 // ---------------------------------------------------------------------------
+
+/** A peer row in the Linked devices table, with its identity hue by list position. */
+interface PeerRow {
+  node: NodeState;
+  hue: ReturnType<typeof nodeHue>;
+}
+
+const PEER_COLUMNS = (now: number): DataTableColumn<PeerRow>[] => [
+  {
+    key: 'device',
+    header: 'Device',
+    cell: ({ node, hue }) => (
+      <span className="flex items-center gap-2">
+        <StatusDot node={hue} label={`node ${node.hostname}`} />
+        <span className={cx('truncate', WEIGHT.semibold)}>{node.hostname}</span>
+      </span>
+    ),
+  },
+  { key: 'status', header: 'Status', cell: ({ node }) => <StatusChip status={node.status} /> },
+  { key: 'ip', header: 'Mesh IP', cell: ({ node }) => <MeshIp ip={node.mesh_ip} /> },
+  {
+    key: 'sessions',
+    header: 'Sessions',
+    numeric: true,
+    cell: ({ node }) => node.sessions_active,
+  },
+  {
+    key: 'seen',
+    header: 'Last seen',
+    align: 'right',
+    cell: ({ node }) => (
+      <span className={cx(TYPE.meta, TNUM)}>{formatLastSeen(node.updated_at, now)}</span>
+    ),
+  },
+];
 
 function ConnectedView({
   email,
@@ -799,101 +803,111 @@ function ConnectedView({
 }) {
   const mesh = linkState.mesh;
   const peers = nodes?.peers ?? [];
+  const peerRows: PeerRow[] = peers.map((node, i) => ({ node, hue: nodeHue(i + 1) }));
+  const columns = useMemo(() => PEER_COLUMNS(now), [now]);
+  const self = nodes?.self;
 
   return (
     <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
       {stale && (
-        <div
-          className="flex items-center gap-2 rounded px-4 py-3"
-          style={{ backgroundColor: AMBER }}
-          role="status"
-          data-testid="link-reconnecting"
-        >
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: INK_DARK }} />
-          <span className="text-sm font-semibold" style={{ color: INK_DARK }}>
-            Reconnecting… (lost contact with the local node)
-          </span>
-        </div>
-      )}
-      <Card>
-        <CardHeader
-          label="Account"
-          right={
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              data-testid="link-logout"
-              onClick={onLogout}
-              className="rounded font-bold"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Log out / Switch account
-            </Button>
-          }
+        <ToneBanner
+          tone="warn"
+          label="Reconnecting"
+          text="Reconnecting… (lost contact with the local node)"
+          live
+          testId="link-reconnecting"
         />
-        <div className="flex flex-wrap items-center gap-3 px-3 py-3">
-          <span
-            className="inline-flex h-8 w-8 items-center justify-center rounded"
-            style={{ backgroundColor: GREEN }}
-          >
-            <Mail className="h-4 w-4 text-white" />
-          </span>
-          <span className="min-w-0 truncate text-sm font-bold text-text-primary">{email}</span>
-          <span
-            className="ml-auto flex items-center gap-1.5 text-xs font-semibold"
-            data-testid="link-mesh-line"
-            style={{ color: mesh?.online ? GREEN : SLATE }}
-          >
-            {mesh?.online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-            mesh {mesh?.backendState ?? 'unknown'}
-            {mesh?.online ? ' · online' : ' · offline'}
-            {' · '}
-            {linkState.nodeCount} node{linkState.nodeCount === 1 ? '' : 's'}
-          </span>
-        </div>
-      </Card>
-
-      {linkState.lastError && (
-        <SolidBanner color={RED} label="Mesh" text={linkState.lastError} />
       )}
+      <Panel
+        title="Account"
+        headerRight={
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            data-testid="link-logout"
+            onClick={onLogout}
+            icon={<LogOut />}
+          >
+            Log out / Switch account
+          </Button>
+        }
+      >
+        <KeyValue
+          aria-label="Account"
+          items={[
+            { key: 'account', label: 'Account', value: email },
+            {
+              key: 'mesh',
+              label: 'Mesh',
+              value: (
+                <span className="inline-flex items-center gap-1.5" data-testid="link-mesh-line">
+                  <StatusDot
+                    tone={mesh?.online ? 'ok' : 'stopped'}
+                    label={mesh?.online ? 'mesh online' : 'mesh offline'}
+                  />
+                  mesh {mesh?.backendState ?? 'unknown'}
+                  {mesh?.online ? ' · online' : ' · offline'}
+                  {' · '}
+                  {linkState.nodeCount} node{linkState.nodeCount === 1 ? '' : 's'}
+                </span>
+              ),
+            },
+          ]}
+        />
+      </Panel>
 
-      <Card>
-        <CardHeader label="This device" />
-        {nodes?.self ? (
-          <DeviceRow node={nodes.self} now={now} isSelf />
+      {linkState.lastError && <ToneBanner tone="err" label="Mesh" text={linkState.lastError} />}
+
+      <Panel title="This device">
+        {self ? (
+          <div data-testid="link-self">
+            <KeyValue
+              aria-label="This device"
+              items={[
+                {
+                  key: 'device',
+                  label: 'Device',
+                  value: (
+                    <span className="inline-flex items-center gap-2">
+                      <StatusDot node={nodeHue(0)} label={`node ${self.hostname}`} />
+                      {self.hostname}
+                    </span>
+                  ),
+                },
+                { key: 'state', label: 'State', value: <StatusChip status={self.status} /> },
+                { key: 'ip', label: 'Mesh IP', value: <MeshIp ip={self.mesh_ip} /> },
+                { key: 'sessions', label: 'Sessions active', value: self.sessions_active },
+              ]}
+            />
+          </div>
         ) : (
-          <div className="flex items-center gap-2 px-3 py-3 text-sm text-text-secondary">
-            <Loader2 className="h-4 w-4 animate-spin" />
+          <div className={cx('flex items-center gap-2', TYPE.bodyMuted)}>
+            <Loader2 className="size-4 animate-spin text-lz-accent" />
             Reading this device&apos;s state…
           </div>
         )}
-      </Card>
+      </Panel>
 
-      <Card>
-        <CardHeader
-          label="Linked devices"
-          right={
-            <span className="text-xs font-bold tabular-nums" style={{ color: AZURE }}>
-              {peers.length}
-            </span>
-          }
-        />
-        {peers.length === 0 ? (
-          <div
-            className="px-3 py-6 text-center text-sm text-text-secondary"
-            data-testid="link-peers-empty"
-          >
-            No other devices linked yet — sign in on another Mac to see it here.
-          </div>
-        ) : (
-          <div className="divide-y divide-border-primary" data-testid="link-peers">
-            {peers.map((peer) => (
-              <DeviceRow key={peer.node_id} node={peer} now={now} isSelf={false} />
-            ))}
-          </div>
-        )}
-      </Card>
+      <Panel title="Linked devices" count={peers.length} padded={false}>
+        <div data-testid="link-peers">
+          <DataTable
+            aria-label="Linked devices"
+            columns={columns}
+            rows={peerRows}
+            rowKey={(r) => r.node.node_id}
+            empty={
+              <div data-testid="link-peers-empty">
+                <EmptyState
+                  icon={<Users />}
+                  title="No other devices linked yet"
+                  body="Sign in on another Mac to see it here."
+                />
+              </div>
+            }
+          />
+        </div>
+      </Panel>
 
       <RunPromptCard nodes={nodes} />
     </div>
@@ -1119,17 +1133,15 @@ const LeanZeroLinkSection: React.FC = () => {
   return (
     <div className="flex flex-col gap-4 pb-8">
       {deployBanner && (
-        <div data-testid="link-deploy-banner">
-          <SolidBanner color={AMBER} label="Deployment" text={deployBanner} />
-        </div>
+        <ToneBanner tone="warn" label="Deployment" text={deployBanner} testId="link-deploy-banner" />
       )}
       {statusError && auth == null && (
-        <SolidBanner color={RED} label="Link status" text={statusError} />
+        <ToneBanner tone="err" label="Link status" text={statusError} />
       )}
 
       {auth == null && !statusError ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
+        <div className={cx('flex items-center justify-center gap-2 py-16', TYPE.bodyMuted)}>
+          <Loader2 className="size-4 animate-spin text-lz-accent" />
           Checking your LeanZero Link status…
         </div>
       ) : null}

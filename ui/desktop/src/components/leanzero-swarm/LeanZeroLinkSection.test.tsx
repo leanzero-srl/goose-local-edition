@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
 import type { LinkHealth, LinkState, NodesResponse } from '../../acp/leanzero-link';
+import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 
 // Stub the seven network fns; keep the REAL error helpers (linkBannerText/linkErrorText),
 // which the component relies on to render backend text verbatim.
@@ -39,6 +41,15 @@ class ResizeObserverMock {
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
 const render = () => rtlRender(<LeanZeroLinkSection />, { wrapper: IntlTestWrapper });
+
+/** A peer's row in the Linked-devices DataTable, keyed by node id (rows carry `data-key`). */
+const peerRow = (nodeId: string): HTMLElement => {
+  const el = document.querySelector<HTMLElement>(
+    `[data-testid="link-peers"] [data-testid="lz-row"][data-key="${nodeId}"]`
+  );
+  if (!el) throw new Error(`no peer row for ${nodeId}`);
+  return el;
+};
 
 /** A RequestError carries the backend sentence in `.data` (SDK `.message` is generic). */
 function rpcError(data: string): Error {
@@ -281,7 +292,7 @@ describe('LeanZeroLinkSection — connect lifecycle', () => {
     resolveConnect(CONNECTED);
 
     expect(await screen.findByTestId('link-connected')).toBeInTheDocument();
-    expect(screen.getByTestId('link-peer-mihai-macbook-2-ff99aa')).toBeInTheDocument();
+    expect(peerRow('mihai-macbook-2-ff99aa')).toBeInTheDocument();
   });
 
   it('connect failure renders lastError in a solid banner and stays on the Connect card', async () => {
@@ -313,9 +324,9 @@ describe('LeanZeroLinkSection — connected dashboard', () => {
     expect(self).toHaveTextContent('works-mac-studio');
     expect(self).toHaveTextContent('busy');
 
-    const idlePeer = screen.getByTestId('link-peer-mihai-macbook-2-ff99aa');
+    const idlePeer = peerRow('mihai-macbook-2-ff99aa');
     expect(idlePeer).toHaveTextContent('idle');
-    const offlinePeer = screen.getByTestId('link-peer-studio-b-771122');
+    const offlinePeer = peerRow('studio-b-771122');
     expect(offlinePeer).toHaveTextContent('offline');
   });
 
@@ -629,4 +640,34 @@ describe('LeanZeroLinkSection — connected-view staleness gate', () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe('LeanZeroLinkSection — LeanZero Studio register', () => {
+  it('the sign-in card is Studio-clean and every class compiles', async () => {
+    currentState = LOGGED_OUT;
+    const { container } = render();
+    await screen.findByTestId('link-login-card');
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  it('the connected dashboard (peers table, this-device panel, run card) is Studio-clean and compiles', async () => {
+    currentState = { ...CONNECTED, lastError: 'mesh hiccup' };
+    mockNodes.mockResolvedValue(NODES_WITH_PEERS);
+    mockHealth.mockResolvedValue({
+      ok: true,
+      version: '1.0.0',
+      capabilities: { mail: false, audience: true, mesh: true },
+    });
+    const { container } = render();
+    await screen.findByTestId('link-connected');
+    await screen.findByTestId('link-deploy-banner');
+    expect(peerRow('mihai-macbook-2-ff99aa')).toBeInTheDocument();
+    // The Linked devices header counts what the table shows.
+    expect(screen.getByTestId('lz-section-count')).toHaveTextContent('2');
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
 });
