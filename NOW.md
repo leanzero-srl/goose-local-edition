@@ -74,7 +74,9 @@ slice ownership. New r6e items E4–E6 (section matcher backticks / open_decisio
 must not answer) with the surgeon. TICK 2 (07:5x): q2 mini CORRECT against the spec (the judge flipped three ways; the holds kept its wrong look
 undelivered); fan 3/38 answered, one lane per host, no idle node. Queued E7 late-snowball (q5 dispatched 33s
 before q2 landed on the same topic), E8 judge tie-break away from the worker's node, E9 judge misreads the
-worker's turn-budget line. WATCH: q5 mini (E7 proof), q0 emission, vs7dbg once a viz question dispatches. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
+worker's turn-budget line. TICK 3 (09:05): fan 19/16/0 at 6.25 min/answer (research ~4h; viz/web questions dispatch LAST); E7 real but no
+wrong mini (a hedge); the judge turn-budget misread (E9) is in three judges and one is dithering toward RESTART.
+WATCH: notifierd-q0 judge verdict; first viz-field dispatch (vs7dbg awareness). Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
 
 ## THE PRIOR THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN (ALL THREE CLOSED, see checklist)
 
