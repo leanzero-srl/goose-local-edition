@@ -2968,7 +2968,6 @@ const EventLogZone: React.FC<{
   return (
     <div className="border-t border-border-primary">
       <ZoneHeader
-        hue={ZONE_HUES.log}
         label="Event log"
         explain="everything the engine reported, in order"
         collapsed={!open}
@@ -3983,7 +3982,6 @@ const WorkZone: React.FC<{
   return (
     <div className="border-t border-border-primary">
       <ZoneHeader
-        hue={ZONE_HUES.work}
         label="Work"
         explain="the plan as a live board — running, queued, done"
         right={
@@ -4522,7 +4520,6 @@ const PlanningZone: React.FC<{
   return (
     <div className="border-t border-border-primary">
       <ZoneHeader
-        hue={ZONE_HUES.planning}
         label="Planning"
         explain={explain}
         collapsed={!open}
@@ -4645,7 +4642,6 @@ const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
   return (
     <div className="border-t border-border-primary">
       <ZoneHeader
-        hue={SWARM_STATUS.running}
         label="Known active bugs"
         explain="the run passed — these are what it passed WITH"
         collapsed={!open}
@@ -4688,7 +4684,6 @@ const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
   return (
     <div className="border-t border-border-primary" data-testid="swarm-qa">
       <ZoneHeader
-        hue={SWARM_STATUS.action}
         label="Questions answered"
         explain="questions dropped to the running swarm, and its answers"
         collapsed={!open}
@@ -5456,7 +5451,6 @@ export const SwarmRunPanel: React.FC<{
       {deviceOrder.length > 0 ? (
         <div className="border-t border-border-primary">
           <ZoneHeader
-            hue={ZONE_HUES.fleet}
             label="Fleet"
             explain="what each node is doing right now"
             right={
