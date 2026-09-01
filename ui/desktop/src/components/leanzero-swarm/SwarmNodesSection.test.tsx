@@ -6,6 +6,8 @@ import SwarmNodesSection from './SwarmNodesSection';
 import { deriveProviderOptions, SHOW_LMSTUDIO_PROVIDER } from './AddNodeDialog';
 import { CLOUD_PROVIDERS } from './cloud';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 
 // ---------------------------------------------------------------------------
 // The Swarm Settings tab, post-amendment: NODES ONLY. These tests pin
@@ -74,6 +76,15 @@ class ResizeObserverMock {
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
 const render = () => rtlRender(<SwarmNodesSection />, { wrapper: IntlTestWrapper });
+
+/** A node's row in the Nodes DataTable, keyed by node id (rows carry `data-key`). */
+const nodeRowOrNull = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-testid="lz-row"][data-key="${id}"]`);
+const nodeRow = (id: string): HTMLElement => {
+  const el = nodeRowOrNull(id);
+  if (!el) throw new Error(`no node row for ${id}`);
+  return el;
+};
 
 const HF = 'mlx-community/Qwen3.5-9B-MLX-4bit';
 
@@ -156,31 +167,31 @@ describe('the simplified Nodes tab', () => {
   it('lists ONLY configured rows by default — LM Studio-discovered rows stay hidden (setting off)', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+      expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
     expect(
-      within(screen.getByTestId('swarm-node-workhorse-mlx')).getByText('LEANZERO MLX')
+      within(nodeRow('workhorse-mlx')).getByText('LeanZero MLX')
     ).toBeInTheDocument();
-    expect(within(screen.getByTestId('swarm-node-zai-glm')).getByText('Z.AI')).toBeInTheDocument();
-    expect(screen.queryByTestId('swarm-node-gabee-qwen3.8-27b')).toBeNull();
-    expect(screen.queryByText('LM STUDIO')).toBeNull();
+    expect(within(nodeRow('zai-glm')).getByText('Z.ai')).toBeInTheDocument();
+    expect(nodeRowOrNull('gabee-qwen3.8-27b')).toBeNull();
+    expect(screen.queryByText('LM Studio')).toBeNull();
   });
 
   it('discovered LM Studio rows RETURN when showLmStudioFleet is on (the visible twin)', async () => {
     lmStudioVisible = true;
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-gabee-qwen3.8-27b')).toBeInTheDocument();
+      expect(nodeRow('gabee-qwen3.8-27b')).toBeInTheDocument();
     });
-    const discovered = screen.getByTestId('swarm-node-gabee-qwen3.8-27b');
-    expect(within(discovered).getByText('LM STUDIO')).toBeInTheDocument();
+    const discovered = nodeRow('gabee-qwen3.8-27b');
+    expect(within(discovered).getByText('LM Studio')).toBeInTheDocument();
     expect(within(discovered).getByText('auto')).toBeInTheDocument();
   });
 
   it('renders NO tunable beyond weight: no switches, no golden formula, no planner, no timeouts', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+      expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
     // the amendment: label + provider + weight + remove, and NOTHING else
     expect(screen.queryAllByRole('switch')).toHaveLength(0);
@@ -199,7 +210,7 @@ describe('the simplified Nodes tab', () => {
     expect(screen.getAllByRole('button', { name: /More work/ }).length).toBeGreaterThanOrEqual(2);
   });
 
-  it('a REMOTE mlx row (host set) wears the solid amber awaiting-routing chip', async () => {
+  it('a REMOTE mlx row (host set) wears the awaiting-routing chip (tone stopped)', async () => {
     mockRead.mockResolvedValue({
       ...BASE_CFG,
       devices: [
@@ -226,10 +237,11 @@ describe('the simplified Nodes tab', () => {
   it('the stepper is labeled Share, and mounting untouched nodes writes NOTHING', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+      expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
-    // the column/stepper reads Share — one per configured row
-    expect(screen.getAllByText('Share').length).toBeGreaterThanOrEqual(2);
+    // the stepper column reads Share, and every configured row carries a stepper
+    expect(screen.getByRole('columnheader', { name: 'Share' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /More work/ }).length).toBeGreaterThanOrEqual(2);
     // no node is persisted a share until the user changes one (no mass-write on load)
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockSwarmCloud).not.toHaveBeenCalledWith('zai', expect.anything());
@@ -238,10 +250,10 @@ describe('the simplified Nodes tab', () => {
   it('a share edit on a configured row writes speed_weight, leaving concurrency (weight) untouched', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+      expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
     await userEvent.click(
-      within(screen.getByTestId('swarm-node-workhorse-mlx')).getByRole('button', {
+      within(nodeRow('workhorse-mlx')).getByRole('button', {
         name: 'More work (workhorse-mlx)',
       })
     );
@@ -262,7 +274,7 @@ describe('the simplified Nodes tab', () => {
     lmStudioVisible = true;
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-gabee-qwen3.8-27b')).toBeInTheDocument();
+      expect(nodeRow('gabee-qwen3.8-27b')).toBeInTheDocument();
     });
     await userEvent.click(
       screen.getByRole('button', { name: 'More work (gabee-qwen3.8-27b)' })
@@ -282,7 +294,7 @@ describe('the simplified Nodes tab', () => {
   it('a share edit on a CLOUD row writes the speed_weights map — never the CLI, never a device mutation', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-zai-glm')).toBeInTheDocument();
+      expect(nodeRow('zai-glm')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: 'More work (zai-glm)' }));
     await waitFor(() => {
@@ -305,7 +317,7 @@ describe('the simplified Nodes tab', () => {
     mockRead.mockResolvedValue({ ...BASE_CFG, speed_weights: { zai: 1 } });
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-zai-glm')).toBeInTheDocument();
+      expect(nodeRow('zai-glm')).toBeInTheDocument();
     });
     // the stepper reflects the map value (1), so More work -> 2
     await userEvent.click(screen.getByRole('button', { name: 'More work (zai-glm)' }));
@@ -319,10 +331,10 @@ describe('the simplified Nodes tab', () => {
   it('removing a CLOUD node drives the CLI (rm) and never a device upsert', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-zai-glm')).toBeInTheDocument();
+      expect(nodeRow('zai-glm')).toBeInTheDocument();
     });
     await userEvent.click(
-      within(screen.getByTestId('swarm-node-zai-glm')).getByRole('button', {
+      within(nodeRow('zai-glm')).getByRole('button', {
         name: 'Remove node: zai-glm',
       })
     );
@@ -336,10 +348,10 @@ describe('the simplified Nodes tab', () => {
   it('removing a LOCAL node splices the device row via the config write', async () => {
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+      expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
     await userEvent.click(
-      within(screen.getByTestId('swarm-node-workhorse-mlx')).getByRole('button', {
+      within(nodeRow('workhorse-mlx')).getByRole('button', {
         name: 'Remove node: workhorse-mlx',
       })
     );
@@ -545,5 +557,50 @@ describe('Add node — cloud path (the invariant)', () => {
     });
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockRead).toHaveBeenCalled();
+  });
+});
+
+describe('the Nodes tab — LeanZero Studio register', () => {
+  it('the node table (with a remote row) is Studio-clean, its header counts the rows, and every class compiles', async () => {
+    mockRead.mockResolvedValue({
+      ...BASE_CFG,
+      devices: [
+        ...(BASE_CFG.devices as SwarmDeviceRow[]),
+        {
+          id: 'mihai-mlx',
+          model_id: 'mihai-qwen3.5-9b-4bit-mlx',
+          weight: 2,
+          enabled: true,
+          instances: 1,
+          engine: 'mlx-sidecar',
+          host: 'mihai',
+        },
+      ],
+    });
+    const { container } = render();
+    await waitFor(() => {
+      expect(screen.getByTestId('awaiting-routing-mihai-mlx')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('lz-section-count')).toHaveTextContent('3');
+    // the anti-claim chip is the stopped tone, never an amber fill
+    expect(within(screen.getByTestId('awaiting-routing-mihai-mlx')).getByTestId('lz-chip')).toHaveAttribute(
+      'data-tone',
+      'stopped'
+    );
+    // a node-hue dot per row, identity only
+    expect(screen.getAllByTestId('lz-status-dot')).toHaveLength(3);
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  it('with no nodes the table renders the EmptyState under a header counting 0', async () => {
+    mockRead.mockResolvedValue({ ...BASE_CFG, devices: [] });
+    render();
+    await waitFor(() => {
+      expect(screen.getByTestId('lz-empty-state')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('lz-section-count')).toHaveTextContent('0');
+    expect(screen.getByText('No nodes yet')).toBeInTheDocument();
   });
 });
