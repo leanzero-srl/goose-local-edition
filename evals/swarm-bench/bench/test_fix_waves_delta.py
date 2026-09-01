@@ -14,6 +14,9 @@ SNAP0 = {"event": "best_tree_snapshot", "round": 0, "findings": 9, "established"
          "ts": "2026-08-31T22:15:31.602697+00:00"}
 SNAP1 = {"event": "best_tree_snapshot", "round": 1, "findings": 8, "established": True, "ok": True,
          "ts": "2026-08-31T23:42:21.309858+00:00"}
+# r6c's real handover/dispatch stamps: phase repair 22:13:50Z, first complete_fix_dispatched 22:15:31.608581Z.
+PFX_WRITE = {"event": "prefix_tree_snapshot", "ok": True, "files": 3, "ts": "2026-08-31T22:13:50.500000+00:00"}
+FIX0 = {"event": "complete_fix_dispatched", "round": 0, "shard": "web/viz.js", "ts": "2026-08-31T22:15:31.608581+00:00"}
 
 
 def _v(seed, inner, mult, score, crits):
@@ -87,8 +90,35 @@ def test_a_surviving_snapshot_that_differs_says_by_how_much(tmp_path):
 
 
 def test_engine_prefix_tree_wins_over_best_tree(tmp_path):
-    info = fwd.provenance(_run(tmp_path, [SNAP0, SNAP1], prefix=True))
+    info = fwd.provenance(_run(tmp_path, [PFX_WRITE, SNAP0, FIX0, SNAP1], prefix=True))
     assert info["label"] == "prefix-tree"
+    assert "before the first complete_fix_dispatched" in info["reason"]
+
+
+def test_prefix_tree_written_after_the_first_fix_dispatch_is_refused(tmp_path):
+    # VA-043 (D7 refuter edge): a RESUME into REPAIR of a pre-prefix-tree run writes the dir from a tree the
+    # waves already touched -- the write event lands AFTER the run's first complete_fix_dispatched.
+    late = dict(PFX_WRITE, ts="2026-09-01T02:00:00.000000+00:00")
+    info = fwd.provenance(_run(tmp_path, [SNAP0, FIX0, SNAP1, late], prefix=True))
+    assert info["source"] is None
+    assert "AFTER the first complete_fix_dispatched" in info["reason"]
+    assert info["prefix_tree_written_ts"] == late["ts"] and info["first_fix_dispatched_ts"] == FIX0["ts"]
+
+
+def test_prefix_tree_dir_without_its_write_event_is_refused(tmp_path):
+    info = fwd.provenance(_run(tmp_path, [SNAP0, FIX0], prefix=True))
+    assert info["source"] is None and "no prefix_tree_snapshot WRITE event" in info["reason"]
+
+
+def test_a_skipped_prefix_snapshot_is_not_a_write(tmp_path):
+    skipped = dict(PFX_WRITE, skipped="already present", ts="2026-09-01T02:00:00.000000+00:00")
+    info = fwd.provenance(_run(tmp_path, [SNAP0, FIX0, skipped], prefix=True))
+    assert info["source"] is None and "no prefix_tree_snapshot WRITE event" in info["reason"]
+
+
+def test_prefix_tree_with_no_wave_dispatched_is_proven(tmp_path):
+    info = fwd.provenance(_run(tmp_path, [PFX_WRITE], prefix=True))
+    assert info["label"] == "prefix-tree" and "no wave ever ran" in info["reason"]
 
 
 def test_no_snapshot_event_is_refused(tmp_path):
