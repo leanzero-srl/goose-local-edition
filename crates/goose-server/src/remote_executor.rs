@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use goose::acp::server::{ExecuteAccepted, ExecuteError, ExecuteRequest, RemoteExecutor};
-use goose::config::GooseMode;
+use goose::config::{Config, GooseMode};
 use goose::conversation::message::Message;
 use goose::session::session_manager::SessionType;
 
@@ -37,14 +37,48 @@ impl GoosedRemoteExecutor {
         Self { state }
     }
 
-    /// Default working directory for a remote-created session when the request names none:
-    /// the node's `$HOME` (the link workspace), falling back to the process cwd. Documented
-    /// so the companion app / dispatcher can rely on it.
-    fn default_working_dir() -> PathBuf {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."))
+    /// The working directory a remote-created session runs in: the request's, or `$HOME`
+    /// (the link workspace) when it names none. A requested path must be ABSOLUTE and an
+    /// EXISTING DIRECTORY on this node — a peer's cwd is not this machine's, and a session
+    /// bound to a path that does not exist here would run its shell tools somewhere the
+    /// caller never chose. Anything else is a loud `BadRequest`.
+    fn resolve_working_dir(requested: Option<&str>) -> Result<PathBuf, ExecuteError> {
+        let Some(raw) = requested else {
+            return Self::default_working_dir();
+        };
+        let path = PathBuf::from(raw);
+        if !path.is_absolute() {
+            return Err(ExecuteError::BadRequest(format!(
+                "working_dir must be an absolute path on the target node, got '{raw}'"
+            )));
+        }
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.is_dir() => Ok(path),
+            Ok(_) => Err(ExecuteError::BadRequest(format!(
+                "working_dir '{raw}' exists on the target node but is not a directory"
+            ))),
+            Err(error) => Err(ExecuteError::BadRequest(format!(
+                "working_dir '{raw}' is not usable on the target node: {error}"
+            ))),
+        }
+    }
+
+    /// `$HOME` only. A node with no home directory has nowhere sanctioned to place a
+    /// remote session, and that is an error — never the process cwd or `"."`, which would
+    /// bind the session to wherever goosed happened to be started from.
+    fn default_working_dir() -> Result<PathBuf, ExecuteError> {
+        std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+            ExecuteError::Internal(
+                "no $HOME on this node to place a remote-created session in".to_string(),
+            )
+        })
+    }
+
+    /// The mode a remote-created session runs under: this RECEIVING node's own configured
+    /// mode, read exactly as the local new-session path reads it (`new_session.rs`), so a
+    /// user on Approve/Chat is never handed an Auto session by a peer.
+    fn receiver_goose_mode() -> GooseMode {
+        Config::global().get_goose_mode().unwrap_or_default()
     }
 }
 
@@ -70,11 +104,7 @@ impl RemoteExecutor for GoosedRemoteExecutor {
                 id
             }
             None => {
-                let working_dir = req
-                    .working_dir
-                    .clone()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(Self::default_working_dir);
+                let working_dir = Self::resolve_working_dir(req.working_dir.as_deref())?;
                 let session = self
                     .state
                     .session_manager()
@@ -82,7 +112,7 @@ impl RemoteExecutor for GoosedRemoteExecutor {
                         working_dir,
                         remote_session_name(&req.prompt),
                         SessionType::User,
-                        GooseMode::default(),
+                        Self::receiver_goose_mode(),
                     )
                     .await
                     .map_err(|e| ExecuteError::Internal(format!("creating a session: {e}")))?;
@@ -142,6 +172,7 @@ mod tests {
         let executor = GoosedRemoteExecutor::new(state.clone());
 
         let working_dir = std::env::temp_dir().join("leanzero-link-remote-exec-test");
+        std::fs::create_dir_all(&working_dir).unwrap();
         let accepted = executor
             .execute(ExecuteRequest {
                 prompt: "say hello".to_string(),
@@ -159,6 +190,11 @@ mod tests {
             .expect("the remote-created session exists");
         assert_eq!(session.working_dir, working_dir);
         assert!(session.name.starts_with("Link:"), "name: {}", session.name);
+        assert_eq!(
+            session.goose_mode,
+            GoosedRemoteExecutor::receiver_goose_mode(),
+            "a remote-created session runs under the RECEIVER's configured mode"
+        );
 
         // A run was dispatched: the reply plumbing allocated the session's event bus. We
         // assert this durable fact rather than the in-flight request set, which the
@@ -184,6 +220,40 @@ mod tests {
             .await
             .expect_err("an empty prompt is a loud BadRequest");
         assert!(matches!(err, ExecuteError::BadRequest(_)), "got {err:?}");
+    }
+
+    /// R-H3: a peer's working_dir is validated on THIS node — relative, missing, or a file
+    /// is a loud BadRequest; nothing is created and nothing runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_rejects_a_working_dir_that_is_not_an_existing_directory_here() {
+        let state = AppState::new(true).await.unwrap();
+        let executor = GoosedRemoteExecutor::new(state);
+
+        let file = std::env::temp_dir().join("leanzero-link-remote-exec-not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        let missing = std::env::temp_dir().join(format!(
+            "leanzero-link-remote-exec-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
+
+        for (label, dir) in [
+            ("relative", "relative/path".to_string()),
+            ("missing", missing.to_string_lossy().into_owned()),
+            ("a file", file.to_string_lossy().into_owned()),
+        ] {
+            let err = executor
+                .execute(ExecuteRequest {
+                    prompt: "hi".to_string(),
+                    working_dir: Some(dir),
+                    session_id: None,
+                })
+                .await
+                .expect_err(label);
+            assert!(
+                matches!(err, ExecuteError::BadRequest(_)),
+                "{label}: got {err:?}"
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -31,6 +31,7 @@
 
 use super::*;
 
+use crate::config::ConfigError;
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
@@ -69,6 +70,12 @@ pub use leanzero_link::state::{MlxControl, MlxControlError, MlxOp};
 /// peer poll cadence (`ControlConfig::poll_interval` default) so a busy/idle transition
 /// surfaces to peers on the same order of latency whether via our stream or their poll.
 const LINK_DELTA_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// The user's remote-execution switch: a goose config key (`config.yaml`), or the same
+/// name as an env override — `Config::get_param` upper-cases the key, so file key and
+/// env name coincide. Absent = OFF: a node is observe-only until its owner opts in, and
+/// the control service then answers `403` to `/execute` and every `/mlx/*` op.
+pub const ALLOW_REMOTE_EXECUTION_KEY: &str = "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION";
 
 /// Compile-time app constant folded into the control `node_token`. The token is
 /// `HMAC-SHA256(key = account_email_lowercased, message = this constant)`, hex-encoded.
@@ -507,15 +514,56 @@ fn current_identity_email() -> Option<String> {
     }
 }
 
+/// Read the switch. `NotFound` is the documented default (OFF); any other error — an
+/// unparseable value, an unreadable config file — is logged and read as OFF: fail
+/// closed, never silently open.
+fn remote_execution_allowed() -> bool {
+    allow_from_config(Config::global().get_param::<bool>(ALLOW_REMOTE_EXECUTION_KEY))
+}
+
+fn allow_from_config(read: Result<bool, ConfigError>) -> bool {
+    match read {
+        Ok(value) => value,
+        Err(ConfigError::NotFound(_)) => false,
+        Err(error) => {
+            warn!(
+                %error,
+                key = ALLOW_REMOTE_EXECUTION_KEY,
+                "leanzeroLink: the remote-execution setting is unreadable; treating it as OFF"
+            );
+            false
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// The process-wide LinkManager (lazily built, rebuilt on identity-email change).
+// The process-wide LinkManager (lazily built, rebuilt when its build key changes).
 // ---------------------------------------------------------------------------
 
+/// The inputs a manager is built from. A change to any of them means the cached manager
+/// no longer reflects the identity on disk or the user's settings, so it is rebuilt — but
+/// only while NOT Connecting/Connected: a rebuild drops the live mesh, so a live manager
+/// keeps serving and the new key applies at its next connect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkBuildKey {
+    /// The account email (lowercased) on disk, or `None` when logged out.
+    email: Option<String>,
+    /// [`ALLOW_REMOTE_EXECUTION_KEY`] at build time — what the control service enforces.
+    allow_remote_execution: bool,
+}
+
+fn current_build_key() -> LinkBuildKey {
+    LinkBuildKey {
+        email: current_identity_email(),
+        allow_remote_execution: remote_execution_allowed(),
+    }
+}
+
 struct LinkHolder {
-    /// The account email (lowercased) the current manager's `node_token` was derived
-    /// from, so a login/identity change forces a rebuild.
-    email_key: Option<String>,
+    key: LinkBuildKey,
     manager: Arc<LinkManager>,
+    /// Set once per deferred rebuild so a live mesh does not log the deferral every poll.
+    stale_logged: bool,
 }
 
 static LINK: OnceLock<StdMutex<LinkHolder>> = OnceLock::new();
@@ -538,8 +586,9 @@ fn resolve_worker_base_url() -> String {
 }
 
 fn build_link_config(
-    email: Option<&str>,
+    key: &LinkBuildKey,
 ) -> Result<LinkManagerConfig, agent_client_protocol::Error> {
+    let email = key.email.as_deref();
     let worker_base_url = resolve_worker_base_url();
     let identity_path = identity::default_identity_path()
         .internal_err_ctx("resolving the LeanZero Link identity path")?;
@@ -555,7 +604,9 @@ fn build_link_config(
     let mesh = MeshConfig::new(tailscaled, tailscale_cli, stable_node_id())
         .internal_err_ctx("building the LeanZero Link mesh config")?;
 
-    let control = ControlConfig::new(node_token_from_email(email), None);
+    let mut control = ControlConfig::new(node_token_from_email(email), None);
+    // The crate's default is observe-only; only the user's own setting opts a node in.
+    control.allow_remote_execution = key.allow_remote_execution;
 
     Ok(LinkManagerConfig {
         worker_base_url,
@@ -644,12 +695,26 @@ fn mesh_status_to_dto(mesh: MeshStatus) -> LeanzeroLinkMeshStatusDto {
     }
 }
 
+/// The status DTO: the crate's [`LinkState`] plus what this layer knows about the manager
+/// it built. `remote_execution_allowed` is the user's setting NOW (what a toggle shows);
+/// `remote_execution_allowed_live` is the value the RUNNING control service enforces,
+/// present only while Connected — so a toggle flipped mid-connection reads as "applies at
+/// the next connect" instead of lying in either direction.
 fn link_state_to_dto(state: LinkState) -> LeanzeroLinkStateResponse {
+    let built_allow = LINK
+        .get()
+        .map(|holder| holder.lock().unwrap().key.allow_remote_execution);
+    let remote_execution_allowed_live = match (&state.auth, built_allow) {
+        (AuthState::Connected { .. }, Some(built)) => Some(built),
+        _ => None,
+    };
     LeanzeroLinkStateResponse {
         auth: auth_state_to_dto(state.auth),
         mesh: state.mesh.map(mesh_status_to_dto),
         node_count: state.node_count,
         last_error: state.last_error,
+        remote_execution_allowed: remote_execution_allowed(),
+        remote_execution_allowed_live,
     }
 }
 
@@ -743,9 +808,9 @@ impl GooseAcpAgent {
 
     fn build_link_manager(
         &self,
-        email: Option<&str>,
+        key: &LinkBuildKey,
     ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
-        let config = build_link_config(email)?;
+        let config = build_link_config(key)?;
         let source = self.link_source();
         let mut manager = LinkManager::new(config, source)
             .internal_err_ctx("constructing the LeanZero Link manager")?;
@@ -763,47 +828,67 @@ impl GooseAcpAgent {
     }
 
     /// The process-wide [`LinkManager`], built on first use in whatever auth state the
-    /// identity file implies (it does NOT auto-connect). Rebuilt when the on-disk
-    /// identity email changes so the account-derived `node_token` is always current — a
-    /// change that can only happen while NOT connected (verify/connect are refused once
-    /// Connecting/Connected, and logout clears the identity), so a rebuild never drops a
-    /// live mesh.
-    fn link_manager(&self) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
-        let current = current_identity_email();
+    /// identity file implies (it does NOT auto-connect). Rebuilt when its
+    /// [`LinkBuildKey`] changes — the identity email on disk, the remote-execution
+    /// setting — so the manager always carries what the user configured; a manager that
+    /// is Connecting/Connected is never replaced (that would drop the live mesh), the new
+    /// key applies at its next connect and the status DTO shows both values meanwhile.
+    async fn link_manager(&self) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+        let key = current_build_key();
 
-        if let Some(holder) = LINK.get() {
-            {
-                let guard = holder.lock().unwrap();
-                if guard.email_key == current {
-                    return Ok(guard.manager.clone());
-                }
+        let holder = match LINK.get() {
+            Some(holder) => holder,
+            None => {
+                let manager = self.build_link_manager(&key)?;
+                let holder = StdMutex::new(LinkHolder {
+                    key: key.clone(),
+                    manager,
+                    stale_logged: false,
+                });
+                // Losing the init race is fine: the winner's holder is resolved below.
+                let _ = LINK.set(holder);
+                LINK.get().expect("LINK was set by this or a racing call")
             }
-            let manager = self.build_link_manager(current.as_deref())?;
+        };
+
+        let current = {
+            let guard = holder.lock().unwrap();
+            if guard.key == key {
+                return Ok(guard.manager.clone());
+            }
+            guard.manager.clone()
+        };
+
+        if matches!(
+            current.status().await.auth,
+            AuthState::Connecting { .. } | AuthState::Connected { .. }
+        ) {
             let mut guard = holder.lock().unwrap();
-            if guard.email_key != current {
-                guard.email_key = current;
-                guard.manager = manager;
+            if !guard.stale_logged {
+                info!(
+                    ?key,
+                    "leanzeroLink: settings changed under a live mesh; they apply at the next connect"
+                );
+                guard.stale_logged = true;
             }
             return Ok(guard.manager.clone());
         }
 
-        let manager = self.build_link_manager(current.as_deref())?;
-        let holder = StdMutex::new(LinkHolder {
-            email_key: current,
-            manager,
-        });
-        match LINK.set(holder) {
-            Ok(()) => Ok(LINK.get().unwrap().lock().unwrap().manager.clone()),
-            // Lost the init race; the fast path now resolves against the winner.
-            Err(_) => self.link_manager(),
+        let rebuilt = self.build_link_manager(&key)?;
+        let mut guard = holder.lock().unwrap();
+        if guard.key != key {
+            guard.key = key;
+            guard.manager = rebuilt;
+            guard.stale_logged = false;
         }
+        Ok(guard.manager.clone())
     }
 
     pub(super) async fn on_leanzero_link_health(
         &self,
         _req: LeanzeroLinkHealthRequest,
     ) -> Result<LeanzeroLinkHealthResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         let health = manager.health().await.internal_err()?;
         Ok(LeanzeroLinkHealthResponse {
             ok: health.ok,
@@ -816,7 +901,7 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkRequestCodeRequest,
     ) -> Result<LeanzeroLinkRequestCodeResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         let result = manager.request_code(&req.email).await.map_err(link_err)?;
         Ok(LeanzeroLinkRequestCodeResponse {
             email: result.email,
@@ -828,7 +913,7 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkVerifyRequest,
     ) -> Result<LeanzeroLinkVerifyResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         let result = manager
             .verify(&req.email, &req.code)
             .await
@@ -845,7 +930,7 @@ impl GooseAcpAgent {
         &self,
         _req: LeanzeroLinkConnectRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         manager.connect().await.map_err(link_err)?;
         Ok(link_state_to_dto(manager.status().await))
     }
@@ -854,7 +939,7 @@ impl GooseAcpAgent {
         &self,
         _req: LeanzeroLinkStatusRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         Ok(link_state_to_dto(manager.status().await))
     }
 
@@ -862,7 +947,7 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkLogoutRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         manager.logout(req.wipe).await.map_err(link_err)?;
         Ok(link_state_to_dto(manager.status().await))
     }
@@ -871,7 +956,7 @@ impl GooseAcpAgent {
         &self,
         _req: LeanzeroLinkNodesRequest,
     ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         if let AuthState::Connected { .. } = manager.status().await.auth {
             match fetch_local_swarm_nodes().await {
                 Ok(response) => return Ok(response),
@@ -892,7 +977,7 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkRemoteExecuteRequest,
     ) -> Result<LeanzeroLinkRemoteExecuteResponse, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
             return Err(not_connected_to_mesh_err());
         }
@@ -933,7 +1018,7 @@ impl GooseAcpAgent {
         op: MlxOp,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, agent_client_protocol::Error> {
-        let manager = self.link_manager()?;
+        let manager = self.link_manager().await?;
         if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
             return Err(not_connected_to_mesh_err());
         }
@@ -1116,13 +1201,35 @@ mod tests {
             mesh: None,
             node_count: 2,
             last_error: Some("boom".to_string()),
+            remote_execution_allowed: true,
+            remote_execution_allowed_live: Some(false),
         };
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(value["auth"]["state"], "loggedIn");
         assert_eq!(value["nodeCount"], 2);
         assert_eq!(value["lastError"], "boom");
+        assert_eq!(value["remoteExecutionAllowed"], true);
+        assert_eq!(value["remoteExecutionAllowedLive"], false);
         let back: LeanzeroLinkStateResponse = serde_json::from_value(value).unwrap();
         assert_eq!(back.node_count, 2);
+        assert_eq!(back.remote_execution_allowed_live, Some(false));
+    }
+
+    /// R-H3: the switch defaults OFF when unset and fails CLOSED on an unreadable value;
+    /// only an explicit `true` opts the node in.
+    #[test]
+    fn remote_execution_switch_defaults_off_and_fails_closed() {
+        assert!(!allow_from_config(Err(ConfigError::NotFound(
+            ALLOW_REMOTE_EXECUTION_KEY.to_string()
+        ))));
+        assert!(allow_from_config(Ok(true)));
+        assert!(!allow_from_config(Ok(false)));
+        let unparseable: Result<bool, ConfigError> =
+            serde_json::from_value::<bool>(serde_json::json!("yes-ish")).map_err(Into::into);
+        assert!(
+            !allow_from_config(unparseable),
+            "an unparseable value must not open the node"
+        );
     }
 
     #[test]
