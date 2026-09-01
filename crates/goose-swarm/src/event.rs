@@ -140,28 +140,6 @@ pub enum SwarmEvent {
         task_id: String,
         error: String,
     },
-    /// An idle node ran a correctness PRE-REVIEW of a completed task on a spare device (concurrently with
-    /// the judge). Makes idle-node utilization observable in the jsonl; `had_findings` = a defect was found
-    /// (persisted to `.swarm/prereview/<task>.json` for integrate-verify).
-    PreReview {
-        task_id: String,
-        device: String,
-        had_findings: bool,
-        /// How long the job HELD ITS FLEET SLOT. A pre-review claims the same `in_flight` permit a
-        /// task dispatch does and can hold it for up to `planner_timeout_secs` (900s), but the event
-        /// fired only on completion with no start and no duration — so the one idle-node mechanism
-        /// that can block a real dispatch for a quarter of an hour was the one nobody could measure.
-        /// Its slot-time had to be ESTIMATED from same-device inter-arrival gaps, which is a guess.
-        secs: f64,
-    },
-    /// A-2: the pre-review call itself failed in transport. Distinct from `PreReview` with no findings,
-    /// which is a REVIEW that read the code and cleared it — r2 logged provider errors as exactly that.
-    PreReviewFailed {
-        task_id: String,
-        device: String,
-        error: String,
-        secs: f64,
-    },
     /// A device was ADMITTED to a run already in progress — a fleet node that came back after the
     /// pool was resolved. The pool is read once from `lms ps` at run start, so before this event
     /// existed a returning node was invisible in both directions: it took no calls and the log said

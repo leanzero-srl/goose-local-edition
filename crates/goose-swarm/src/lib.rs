@@ -26,7 +26,7 @@ pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
+    JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
 };
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
 pub use replan::{ReplanAnswer, ReplanContext, Replanner};

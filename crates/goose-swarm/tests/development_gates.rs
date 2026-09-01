@@ -313,9 +313,15 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `review_must_fix_block`, `review_patch_schema`, `cut_request_into_sections`/`_portions`,
 /// `slugify_slice_id`, the `review_fan` seam parameter and eleven tests; commands/swarm/review_merge.rs
 /// (the per-lane patch union) deleted with it. Measured: zero effective patches in three runs.
+/// Tightened to 38,043 (VA-014 D1, second half): the M5 completion-time pre-review deleted —
+/// `PreReviewer::pre_review`, `read_prereview_findings` and its sink injection, the `.swarm/prereview`
+/// channel, `prereview_dim`, the GOOSE_SWARM_PREREVIEW gate (the trait's other idle jobs attach
+/// unconditionally behind their own gates); scheduler.rs lost `pick_prereview_request`, the M5 loop
+/// arm and `pre_reviewed`; event.rs lost `PreReview`/`PreReviewFailed`. Zero `pre_review` events in
+/// r5/r6c/r6d — off in every measured run.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 38_328;
+    const SWARM_RS_LINE_BASELINE: usize = 38_043;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

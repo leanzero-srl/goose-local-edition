@@ -443,37 +443,14 @@ pub trait Judge: Send + Sync {
     async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String>;
 }
 
-/// What the scheduler hands an idle-node PRE-REVIEWER (M5): a COMPLETED task to correctness-check while a
-/// node would otherwise idle. The implementation runs the task's tests + exercises its primary feature on
-/// a golden input and persists findings where integrate-verify will read them.
-pub struct PreReviewRequest {
-    pub task_id: TaskId,
-    pub description: String,
-    pub owned_files: Vec<String>,
-    pub goal: String,
-    /// LM Link model id of the idle device to run the review on.
-    pub reviewer_model_id: String,
-}
-
-/// Outcome of a pre-review. Findings are persisted by the implementation (for integrate-verify to consume);
-/// `had_findings` lets the scheduler log whether a defect was flagged.
-pub struct PreReviewOutput {
-    pub had_findings: bool,
-    pub summary: String,
-}
-
-/// Runs on an idle node when NO in-flight worker needs judging: correctness-checks a COMPLETED task's
-/// output — the deepest review finding is that passing tests hide a wrong default-path, so this exercises
-/// the REAL feature — and records findings for integrate-verify. Opt-in like the judge (off by default).
+/// The idle-node jobs a scheduler can hand its dispatcher when a node would otherwise sit idle:
+/// the operator Q&A, the sink-tail dimension review and testgen — each a default no-op, each gated
+/// in the scheduler. The M5 completion-time pre-review that named this trait is deleted (VA-014 D1:
+/// zero `pre_review` events in every measured run); the name stays so the attach seam is one line.
 #[async_trait]
 pub trait PreReviewer: Send + Sync {
-    /// `Err(error)` = the review call itself failed in transport. Same rule as [`Judge::judge`]: the
-    /// scheduler emits `pre_review_failed` and records NO review — r2's tail reviews logged provider
-    /// errors as clean `had_findings: false` rows, which is a claim about the code nobody made.
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String>;
-
-    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO and pre-review is
-    /// exhausted, an otherwise-idle node runs a READ-ONLY whole-tree correctness review along ONE dimension
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO, an
+    /// otherwise-idle node runs a READ-ONLY whole-tree correctness review along ONE dimension
     /// (by rotating index) and ACCUMULATES any finding inside the dispatcher for run_swarm to drain +
     /// re-verify against the FINAL tree after the sink. Read-only (no tools) so it never races the sink's
     /// writes; a stale/torn read just yields a finding the post-sink re-verify refutes. Default no-op.

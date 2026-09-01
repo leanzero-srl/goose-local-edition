@@ -21,8 +21,8 @@ use goose::session::SessionManager;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAnswer, ReplanContext,
-    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, ToolCallRecord,
+    NullSink, PreReviewer, ReplanAnswer, ReplanContext, Replanner, Scheduler, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,12 +54,11 @@ mod supervision;
 use supervision::{
     call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
     is_agent_loop_filler, judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping,
-    parse_judge_eta_mins, parse_judge_reply, prereview_lane_key, render_forming_file,
-    replan_lane_key, said_kind_of, schedjudge_lane_key, structured_reply_block,
-    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_chars,
-    tail_review_lane_key, verify_lane_key, write_forming_atomic, FormingGuard, FormingReport,
-    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
-    REFLECT_LANE,
+    parse_judge_eta_mins, parse_judge_reply, render_forming_file, replan_lane_key, said_kind_of,
+    schedjudge_lane_key, structured_reply_block, superseded_from_prior, supervised_reply_text,
+    supervision_lane_kind, tail_chars, tail_review_lane_key, verify_lane_key, write_forming_atomic,
+    FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE,
+    JUDGE_PROBE_TURNS, PILLARS_LANE, REFLECT_LANE,
 };
 mod orientation;
 use orientation::{
@@ -12572,12 +12571,6 @@ pub struct GooseAgentDispatcher {
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
     sink_review_findings: Mutex<Vec<String>>,
-    /// Q2 pre-review rotation: which REVIEW_DIMENSIONS brief the NEXT pre-review runs. Pre-review is the
-    /// one idle mechanism that scales with the fleet (measured 2.0x/run at one node vs 10.2x at three,
-    /// F670) and its prompt asked for exactly TWO defect classes — neither of them the Tier-B behaviour
-    /// classes that are half of every score lost. The five dimension briefs already existed, wired only
-    /// into the never-run sink_review path; rotating them here points the scaling mechanism at the loss.
-    prereview_dim: std::sync::atomic::AtomicUsize,
     /// Surgeon #9's find (r6 addendum): the mid-run replanner reads `Scheduler::goal` (the spec
     /// copy), which carries USER answers but never the research-settled conventions — so a replan
     /// round could re-open a convention the plan-time fan had settled (the r4 shadow class, by a
@@ -12826,7 +12819,6 @@ impl GooseAgentDispatcher {
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
-            prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             settled_decisions: Mutex::new(String::new()),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
@@ -22939,11 +22931,8 @@ impl GooseAgentDispatcher {
     }
 }
 
-/// M5: read all `.swarm/prereview/<task>.json` findings under `cwd` into a worker-prompt block for the
-/// integrate-verify sink (CONFIRM + FIX). Returns "" when the dir is absent or no findings were recorded.
-/// D5: a cheap stable content hash (FNV-1a) — provenance, not cryptography. A finding is about the
-/// BYTES the reviewer read; when those change, the finding describes a file that no longer exists
-/// and must stop being injected as a mandatory repair order.
+/// A cheap stable content hash (FNV-1a) — provenance, not cryptography (the `desc_sha` a brief is
+/// stamped with).
 fn content_hash(bytes: &[u8]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -22953,57 +22942,12 @@ fn content_hash(bytes: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-fn read_prereview_findings(cwd: &std::path::Path) -> String {
-    let entries = match std::fs::read_dir(cwd.join(".swarm").join("prereview")) {
-        Ok(e) => e,
-        Err(_) => return String::new(),
-    };
-    let mut findings = String::new();
-    for e in entries.flatten() {
-        if let Some(v) = std::fs::read_to_string(e.path())
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        {
-            // D5 EXPIRY: skip a finding whose reviewed file changed since the review — the fix
-            // loop or a re-dispatch rewrote it, and a stale mandatory order re-litigates a closed
-            // defect. Findings WITHOUT provenance (pre-D5 files) are kept: expiring on absence
-            // would drop every legacy finding, and the fail-open direction is inject-as-before.
-            let stale = v.get("files").and_then(|x| x.as_object()).is_some_and(|m| {
-                !m.is_empty()
-                    && m.iter().any(|(f, h)| {
-                        std::fs::read(cwd.join(f))
-                            .map(|b| h.as_str() != Some(content_hash(&b).as_str()))
-                            .unwrap_or(true)
-                    })
-            });
-            if stale {
-                continue;
-            }
-            if let (Some(t), Some(f)) = (
-                v.get("task_id").and_then(|x| x.as_str()),
-                v.get("findings").and_then(|x| x.as_str()),
-            ) {
-                findings.push_str(&format!("- {t}: {f}\n"));
-            }
-        }
-    }
-    if findings.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "## Pre-review findings — an idle reviewer flagged likely defects in completed work; CONFIRM \
-             each against the spec and FIX it before you finish:\n{findings}\n"
-        )
-    }
-}
-
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
 
     #[test]
-    fn a_prereview_finding_expires_with_its_file() {
-        // D5 both directions, at the hash level (the fs walk is a thin wrapper over it).
+    fn content_hash_is_stable_and_separates_bytes() {
         let v1 = content_hash(b"def f(): return 41");
         let v2 = content_hash(b"def f(): return 42");
         assert_ne!(v1, v2, "different bytes must hash apart");
@@ -23935,182 +23879,6 @@ impl PreReviewer for GooseAgentDispatcher {
             .remove(&q_path.to_string_lossy().to_string());
     }
 
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
-        let none = Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        });
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let mut files_block = String::new();
-        for f in &req.owned_files {
-            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
-                if c.trim().is_empty() {
-                    continue;
-                }
-                // HEAD-TRUNCATION HERE MANUFACTURED A PHANTOM AND SHIPPED IT AS AN ORDER.
-                //
-                // `chars().take(2400)` with NO marker told the reviewer nothing had been cut, so the
-                // model reported what it saw. MEASURED on retarget_off-n3-r0 (the run that scored
-                // 0.6720, the worst of three): the reviewer said of `api.py` "the file is truncated
-                // mid-function ... none of the handler methods (`_handle_health`, `_handle_payments`,
-                // `_handle_summary`, `_handle_sync`, `_handle_index`) nor the `serve()` function are
-                // defined — so the API is never actually wired up and would crash on any request."
-                //
-                // `api.py` is 5731 chars and every one of those is defined: _handle_health at char
-                // 2561, _handle_payments 2787, _handle_summary 3736, _handle_sync 4689, _handle_index
-                // 5177, serve 5407 — ALL of them past the 2400-char cut. The finding is an artefact of
-                // this line. It was then persisted to `.swarm/prereview/` and injected into the sink's
-                // prompt under "CONFIRM each against the spec and FIX it before you finish": a
-                // mandatory repair order, against working code, at the head of the run's longest and
-                // most expensive task.
-                //
-                // `review_file_excerpt` already solves this and its two sibling reviewers both call it
-                // (`:20138`, `:20220`). It shows any file under 6000 chars WHOLE — so `api.py` would
-                // have arrived complete and the phantom could not have formed — and for larger files
-                // keeps head AND tail with an explicit `[middle elided]` marker, so the model is told
-                // what it is missing instead of inferring absence. This site was the only one still
-                // head-truncating: the same one-rule-two-implementations defect this codebase keeps
-                // producing, and the more expensive half was the copy nobody updated.
-                let body = review_file_excerpt(&c);
-                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
-            }
-        }
-        if files_block.is_empty() {
-            return none; // nothing on disk to review
-        }
-        // Q2 RE-AIM: rotate the five REVIEW_DIMENSIONS briefs instead of hard-coding two of them.
-        // The old prompt asked for exactly `correctness` + `wiring` — real classes, but neither is
-        // pagination, totals, UTC bounds, input validation or interface drift, i.e. the Tier-B
-        // behaviour classes measured as HALF of every score lost. The briefs for those already
-        // existed and were reachable only through the never-run sink_review path. Pre-review fires
-        // ~10x per 3-node run (the ONLY idle mechanism that scales with the fleet), so the rotation
-        // covers every dimension twice per run where the old prompt covered two classes ten times.
-        // GOOSE_SWARM_PREREVIEW_DIMS=0 restores the legacy two-class prompt verbatim.
-        // swarm_gate_cfg, NOT swarm_gate: the second arg there is assured-bundle membership, so
-        // `true` would mean "on only under GOOSE_SWARM_ASSURED" — a silent default-OFF, the exact
-        // stale-config-key class that reverted the repair-budget fix (34359b8b7). Here `true` is a
-        // real default with the env var as the escape hatch.
-        let dims_on = swarm_gate_cfg("GOOSE_SWARM_PREREVIEW_DIMS", true);
-        let (dim_id, system) = if dims_on {
-            let i = self
-                .prereview_dim
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dim = &REVIEW_DIMENSIONS[i % REVIEW_DIMENSIONS.len()];
-            // The domain lens is only as good as the ground truth it checks against — same
-            // injection the sink_review path documents (a 27B given the list flagged cronmate's
-            // exact dow off-by-one; without it the lens re-derives the code's own wrong convention).
-            let pitfalls = if dim.id == "domain-conventions" {
-                format!("\n\nKNOWN-CORRECT CONVENTIONS to check against:\n{DOMAIN_PITFALLS}")
-            } else {
-                String::new()
-            };
-            (
-                dim.id,
-                format!(
-                    "You review one COMPLETED subtask of a larger build, BEFORE final integration, on a \
-                     spare node, along ONE dimension: {brief}{pitfalls}\n\nA passing test suite does NOT \
-                     prove this dimension holds. Read the files against the GOAL and the subtask, and find \
-                     ANY concrete defect of that kind. Reply with EXACTLY one line `STATUS|findings`: \
-                     STATUS is OK or ISSUES; findings = specific, actionable corrections (what is wrong + \
-                     which file), empty when OK. Be conservative — only ISSUES when you can point to a \
-                     real defect.",
-                    brief = dim.brief,
-                ),
-            )
-        } else {
-            (
-                "legacy",
-                "You CORRECTNESS-review one COMPLETED subtask of a larger build, BEFORE final \
-                 integration, on a spare node. A passing test suite does NOT prove correctness: the deepest \
-                 failure mode is code whose DEFAULT/primary path produces WRONG output (wrong constants/params) \
-                 or a spec deliverable that is built but never WIRED into the program's entry point. Read the \
-                 files against the GOAL and the subtask, and find ANY concrete defect of that kind. Reply with \
-                 EXACTLY one line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable \
-                 corrections (what is wrong + which file), empty when OK. Be conservative — only ISSUES when you \
-                 can point to a real defect."
-                    .to_string(),
-            )
-        };
-        // GOOSE_SWARM_GOALS (part 5): let the correctness pre-review catch a concrete pillar violation
-        // (wrong interface/command name, or a deliverable not wired to the pillar's entry) as an ISSUE.
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| {
-                    format!(
-                        "\n{p}(Flag as an ISSUE any concrete violation of a pillar above — a wrong command \
-                         name/argument order, or a shared data shape that disagrees with a pillar — naming the \
-                         file. Stay conservative: only a defect you can point to.)"
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        let user = format!(
-            "GOAL: {goal}{pillars_block}\n\nSUBTASK: {desc}\n\nFiles produced:\n{files}\n\nYour one-line review:",
-            goal = req.goal,
-            desc = req.description,
-            files = files_block,
-        );
-        // A-2: a transport failure — the Err, or the agent loop's error-closer TEXT — is a review
-        // that never read the code. The old `.ok()…unwrap_or_default()` parsed it as `("OK", "")`,
-        // i.e. a clean clear, which is how r2 logged provider errors as no-finding reviews.
-        // Keyed `prereview-<task>` (r6 supervision lanes): the digest/transcripts capture what the
-        // reviewer generates, and the shared builders stamp it `"supervision": true`.
-        let lane = prereview_lane_key(&req.task_id);
-        let text = self
-            .run_agent(
-                &req.reviewer_model_id,
-                system,
-                user,
-                None,
-                2,
-                &[],
-                Some(&lane),
-            )
-            .await
-            .map_err(|e| clip_tail(&e.to_string(), 400))?
-            .text;
-        // `supervised_reply_text` also strips a trailing turn-cap filler (r6c seq 312's class) so
-        // ISSUES findings persisted below never carry the engine's sentence into the sink's
-        // prompt, and a filler-only reply is a PreReviewFailed, not a clean clear.
-        let text = supervised_reply_text(&text).map_err(|e| e.to_string())?;
-        let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
-        let findings = findings.trim();
-        let had_findings = status.to_uppercase().contains("ISSUE") && !findings.is_empty();
-        if had_findings {
-            // Persist for integrate-verify to consume (M5 increment 2b wires the injection).
-            let dir = cwd.join(".swarm").join("prereview");
-            let _ = std::fs::create_dir_all(&dir);
-            // `dimension` is provenance for the finding's whole downstream life: the sink's
-            // injection, the expiry/dedup work, and every analysis that asks WHICH lens finds
-            // real defects — a question that was unanswerable while all findings looked alike.
-            // D5: `files` records WHAT BYTES the reviewer read (path -> hash), so the finding
-            // expires the moment its file changes — the never-expiring pile injected stale
-            // mandatory-repair orders about files long since rewritten.
-            let file_hashes: serde_json::Map<String, serde_json::Value> = req
-                .owned_files
-                .iter()
-                .filter_map(|f| {
-                    std::fs::read(cwd.join(f))
-                        .ok()
-                        .map(|b| (f.clone(), serde_json::json!(content_hash(&b))))
-                })
-                .collect();
-            let _ = std::fs::write(
-                dir.join(format!("{}.json", activity_digest_key(&req.task_id))),
-                serde_json::json!({"task_id": req.task_id, "findings": findings, "dimension": dim_id,
-                                   "files": file_hashes})
-                    .to_string(),
-            );
-        }
-        Ok(PreReviewOutput {
-            had_findings,
-            summary: findings.chars().take(200).collect(),
-        })
-    }
-
     async fn idle_dimension_review(&self, model_id: &str, goal: &str, dim_index: usize) {
         // Read-only whole-tree review along ONE rotating dimension, on an idle node while the sink runs.
         // Reuses review_dimension (empty extensions => physically cannot write, so it never races the sink).
@@ -24143,38 +23911,13 @@ impl PreReviewer for GooseAgentDispatcher {
                 return;
             }
         };
-        // ROUTE IT TO THE ONE CONSUMER THAT EXISTS. This reviewer is default-ON and saturates every
-        // free node each scheduler tick — measured as the single largest class of model-seconds in a
-        // run — and it pushed its findings into a Mutex with exactly two drains: one that logs the
-        // count as `review_findings_dropped` and BINS them, and one gated on `sink_review`, which has
-        // never fired in 21,805 recorded runs. So the fleet's biggest supervision spend produced
-        // findings nobody has ever read; the ledger even quoted the discard counter as proof the
-        // mechanism was working. `.swarm/prereview/` is the channel that IS read — pre-review
-        // findings are injected into the sink with content-hash provenance and staleness expiry —
-        // so the review's output now lands there, in the same shape, and the vector keeps its
-        // legacy drain for the gated path. It also gets an EVENT: it was invisible in the log and in
-        // levers_resolved, which is why every previous waste audit missed it entirely.
+        // The finding rides `sink_review_findings`, drained and re-verified by run_swarm after the
+        // sink; the `.swarm/prereview/` file channel it also wrote into died with the M5 pre-review
+        // (VA-014 D1: 0 pre_review events in r5/r6c/r6d — the layer was off in every measured run,
+        // REFUSED.md II-15 had already parked it for deletion). It gets an EVENT because it was
+        // invisible in the log and in levers_resolved, which is why every earlier waste audit missed it.
         let secs = started.elapsed().as_secs();
         if let Some(finding) = found {
-            let dir = cwd.join(".swarm").join("prereview");
-            if std::fs::create_dir_all(&dir).is_ok() {
-                let file_hashes: serde_json::Map<String, serde_json::Value> = files
-                    .iter()
-                    .filter_map(|f| {
-                        std::fs::read(cwd.join(f))
-                            .ok()
-                            .map(|b| (f.clone(), serde_json::json!(content_hash(&b))))
-                    })
-                    .collect();
-                let key = activity_digest_key(&format!("tail-review-{}", dim.id));
-                let _ = std::fs::write(
-                    dir.join(format!("{key}.json")),
-                    serde_json::json!({"task_id": format!("tail-review::{}", dim.id),
-                                       "findings": finding, "dimension": dim.id,
-                                       "files": file_hashes})
-                    .to_string(),
-                );
-            }
             self.events.write_value(serde_json::json!({
                 "event": "tail_review", "dimension": dim.id, "secs": secs, "had_findings": true,
             }));
@@ -28771,28 +28514,6 @@ impl GooseAgentDispatcher {
                      {owner_body}"
                 )
             };
-            // M5: inject idle-node PRE-REVIEW findings into the integrate-verify sink — whether or not it
-            // happens to own files (a model-authored sink can own files) — so it CONFIRMS + FIXES the
-            // flagged defects, not merely greens the suite. read_prereview_findings returns "" if none.
-            //
-            // The comment above states the intent — THE SINK — and the predicate over-matched it. Every
-            // fanned `verify::<M>` and `verify-e2e::<i>` also owns nothing, so each was handed findings
-            // framed as "confirm and FIX" while its own task statement says it must write no files. This
-            // is the THIRD site with this exact shape: the same over-broad owns-nothing predicate was
-            // fixed at 18306 (fix_directive) and again in layout_block's owned_part, and I found the
-            // first two and missed this one. Same lever, same predicate, so there is one classifier and
-            // not three that can drift apart. The sink and genuine fix workers are unaffected —
-            // integrate-verify is not a read-only shard.
-            let owned_part = if !(read_only_shard && kind_prompt_on)
-                && (req.owned_files.is_empty() || req.task_id == "integrate-verify")
-            {
-                format!(
-                    "{owned_part}{}",
-                    read_prereview_findings(std::path::Path::new(&cwd))
-                )
-            } else {
-                owned_part
-            };
             // SINK PREBUILD (GOOSE_SWARM_SINK_PREBUILD, default OFF): hand the integrate-verify sink the
             // BUILT entry's REAL `--help` before it authors a single golden check.
             //
@@ -31399,9 +31120,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     publish_current_run(&spawn_dir, &working_dir, &run_id);
     // No turn cap. A worker ends when it finishes, when the judge redirects it, or when the socket dies.
     let worker_max_turns = 100_000;
-    // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
-    // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
-    let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
     let log_path: Option<PathBuf> = if opts.no_log {
         None
     } else {
@@ -32803,17 +32521,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         scheduler =
             scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
-    // M5: idle-node correctness PRE-REVIEW of completed tasks (findings feed integrate-verify). DEFAULT-ON
-    // for the local fleet so a node never sleeps while completed work is unreviewed (it now runs CONCURRENTLY
-    // with the judge, bounded by idle_capacity, instead of being starved by the single judge slot). Opt out
-    // with GOOSE_SWARM_PREREVIEW=0.
-    let prereview_on = std::env::var("GOOSE_SWARM_PREREVIEW")
-        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-        .unwrap_or(true);
-    if prereview_on {
-        eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
-        scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
-    }
+    // The idle-node jobs the scheduler can hand this dispatcher: the operator Q&A (GOOSE_SWARM_QA),
+    // the sink-tail dimension review (GOOSE_SWARM_SINK_REVIEW, default off) and testgen
+    // (GOOSE_SWARM_TESTGEN, default off) — each carries its own gate inside the scheduler. The M5
+    // completion-time pre-review that used to ride here behind GOOSE_SWARM_PREREVIEW is deleted
+    // (VA-014 D1): r5/r6c/r6d ran with it off and emitted zero `pre_review` events, so its findings
+    // channel into the sink had zero happy paths in every measured run.
+    scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
     // GOOSE_SWARM_SPECULATE (default-OFF, experimental): when a node would otherwise idle at a serial
     // chokepoint, race a TWIN of the longest-running in-flight task on the idle device (first-to-finish wins).
     // OFF until the Phase-2 dispatcher shadow-isolation is verified — with it off the scheduler is unchanged.

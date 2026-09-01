@@ -15,8 +15,7 @@ use crate::dispatch::{
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::judge::{
-    skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer,
-    Verdict,
+    skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
 };
 use crate::replan::{ReplanAnswer, ReplanContext, Replanner};
 use anyhow::{bail, Result};
@@ -2338,48 +2337,12 @@ impl State {
         Some((req, attempt, claimed_device))
     }
 
-    /// M5: pick a COMPLETED-but-unreviewed task (that owns files) for an idle-node correctness pre-review,
-    /// claiming one idle-job slot (does NOT take the single-judge flag, so it runs concurrently with the
-    /// judge on a different free node). Returns the request, or None if no idle device is free, nothing is
-    /// reviewable, or all idle slots are taken. Marks the task pre_reviewed up front so it is picked at most
-    /// once even while the review is in flight.
-    fn pick_prereview_request(&mut self) -> Option<(PreReviewRequest, usize)> {
-        let claimed_device = self.least_loaded_free_device()?;
-        let reviewer_model_id = self.devices[claimed_device].cfg.model_id.clone();
-        let tid = self
-            .dag
-            .tasks
-            .iter()
-            .find(|(_, n)| {
-                n.state == TaskState::Done && !n.pre_reviewed && !n.spec.owned_files.is_empty()
-            })
-            .map(|(id, _)| id.clone())?;
-        let (description, owned_files) = {
-            let n = &self.dag.tasks[&tid];
-            (n.spec.description.clone(), n.spec.owned_files.clone())
-        };
-        self.dag.tasks.get_mut(&tid).unwrap().pre_reviewed = true;
-        self.idle_jobs += 1;
-        // Claim the idle device's slot so a worker dispatch + the next idle-job avoid this node. Released by
-        // the IdleSlotGuard.
-        self.devices[claimed_device].in_flight += 1;
-        Some((
-            PreReviewRequest {
-                task_id: tid,
-                description,
-                owned_files,
-                goal: self.goal.clone(),
-                reviewer_model_id,
-            },
-            claimed_device,
-        ))
-    }
-
-    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO and pre-review is
-    /// exhausted, claim a genuinely-free device (never the sink's — it is at weight) for a READ-ONLY
-    /// whole-tree dimension review, rotating the dimension. Returns (model_id, dim_index, goal, device).
-    /// None unless the flag is on AND the sink is in flight AND a device is free (mirrors pick_prereview's
-    /// claim so it never oversubscribes). Released by the IdleSlotGuard.
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO, claim a
+    /// genuinely-free device (never the sink's — it is at weight) for a READ-ONLY whole-tree
+    /// dimension review, rotating the dimension. Returns (model_id, dim_index, goal, device).
+    /// None unless the flag is on AND the sink is in flight AND a device is free (the same claim
+    /// discipline as every idle job — idle_jobs + in_flight, so it never oversubscribes). Released
+    /// by the IdleSlotGuard.
     fn pick_sink_review(&mut self) -> Option<(String, usize, String, usize)> {
         // ONE default, shared with the consumer. These two halves disagreed: this producer defaulted
         // OFF while run_swarm's drain and `levers_resolved` both defaulted ON — so every run REPORTED
@@ -2480,8 +2443,8 @@ impl State {
 
     /// S7 (GOOSE_SWARM_TESTGEN): claim an idle device for one contract-derived test-generation
     /// job. Fires only when at least one task is DONE — before that there is no agreed contract
-    /// worth testing against and the fan needs every slot. Mirrors pick_prereview's claim
-    /// discipline exactly (idle_jobs + in_flight, released by the IdleSlotGuard); the seq is the
+    /// worth testing against and the fan needs every slot. The same idle-job claim discipline
+    /// (idle_jobs + in_flight, released by the IdleSlotGuard); the seq is the
     /// landed filename's suffix, so replicates of a run produce the same names.
     fn pick_testgen(&mut self) -> Option<(String, u32, usize)> {
         if self.fix_round || !testgen_enabled() || self.testgen_count >= TESTGEN_CAP {
@@ -3202,9 +3165,6 @@ impl State {
         if let Some(n) = self.dag.tasks.get_mut(tid) {
             n.attempts += 1;
             n.state = TaskState::Done;
-            // The split shell is superseded by its children — mark it reviewed so the idle pre-reviewer
-            // (M5) never picks this phantom (Done + owns the union files) and reviews a partial file set.
-            n.pre_reviewed = true;
         }
         // ---- enqueue the children that are immediately ready ----
         for id in newly_ready {
@@ -3607,23 +3567,24 @@ impl Scheduler {
         self
     }
 
-    /// Attach an idle-node PRE-REVIEWER (M5): when a node would otherwise idle and NO in-flight worker
-    /// needs judging, it correctness-checks a COMPLETED-but-unreviewed task's output and records findings
-    /// for integrate-verify. OFF by default — with none attached the scheduler is unchanged.
+    /// Attach the idle-node job runner: operator Q&A, the sink-tail dimension review and testgen,
+    /// each behind its own gate. (The M5 completion-time pre-review that named this trait is
+    /// deleted — VA-014 D1; the trait keeps its name so the attach seam stays one line.) With none
+    /// attached the scheduler is unchanged.
     pub fn with_pre_reviewer(mut self, pre_reviewer: Arc<dyn PreReviewer>) -> Self {
         self.pre_reviewer = Some(pre_reviewer);
         self
     }
 
     /// Enable SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE): when a node would otherwise idle at a serial
-    /// chokepoint (no ready task, no pre-review work) a TWIN of the longest-running in-flight task is raced
+    /// chokepoint (no ready task, no idle job) a TWIN of the longest-running in-flight task is raced
     /// on the idle device, first-to-finish wins. OFF by default — with it off no twin is ever spawned and
     /// the scheduler is byte-identical. The twin spawns ONLY on a genuinely idle device (1 task per node).
     /// F883/E8: a FIX-ROUND scheduler run must not fill idle slots with test GENERATION. The
     /// testgen path writes landed files to the REAL tree, and a fix round's whole discipline is
     /// that nothing reaches the real tree except a graded promote — a generated test landing
     /// mid-wave shifts every in-flight shard's baseline under it, and the per-round seq reset
-    /// can overwrite the main run's landed generated tests. Pre-review idle-fill stays: read-only.
+    /// can overwrite the main run's landed generated tests. Read-only idle jobs stay.
     pub fn for_fix_round(mut self) -> Self {
         self.fix_round = true;
         self
@@ -4167,9 +4128,9 @@ impl Scheduler {
                     });
                 }
             }
-            // F790-3 Q&A (GOOSE_SWARM_QA, default ON) — DELIBERATELY AHEAD of pre-review: an
-            // operator question is rare, one turn, and HUMAN-BLOCKING, while pre-review is
-            // continuous background. MEASURED (F795): behind pre-review, a live question
+            // F790-3 Q&A (GOOSE_SWARM_QA, default ON) — DELIBERATELY FIRST among the idle jobs: an
+            // operator question is rare, one turn, and HUMAN-BLOCKING, while the others are
+            // continuous background. MEASURED (F795): behind the old pre-review, a live question
             // starved 65+ minutes while reviews won nine freed slots in a row. An operator
             // question in the inbox is
             // answered on an idle node with the run's own state as context. One at a time (the
@@ -4179,7 +4140,7 @@ impl Scheduler {
                 if qa_enabled() && pr.has_pending_question() {
                     let pick = {
                         let mut s = state.lock().await;
-                        // A-3 (r3) ready-work yield — see the pre-review block below.
+                        // A-3 (r3) ready-work yield — see the sink-review block below.
                         if !s.ready.is_empty() && !s.has_free_supervision_device() {
                             None
                         } else {
@@ -4203,81 +4164,8 @@ impl Scheduler {
                     }
                 }
             }
-            // M5: put any STILL-idle node (beyond the one the judge took) on a correctness PRE-REVIEW of a
-            // completed-but-unreviewed task (findings feed integrate-verify). Judge + pre-review now run
-            // CONCURRENTLY, bounded by idle_capacity() so each free node gets one idle job and none is
-            // oversubscribed; multiple pre-reviews can run at once (each on a distinct task, marked
-            // pre_reviewed up front). Off unless a pre-reviewer is attached; None when all idle slots taken.
-            if let Some(pr) = &self.pre_reviewer {
-                let req = {
-                    let mut s = state.lock().await;
-                    // Idle-jobs now CLAIM a device (bump in_flight), so idle_capacity() already reflects them
-                    // — fire a pre-review iff a device is genuinely free. (The old `idle_jobs >= idle_capacity`
-                    // double-counted once claiming was added, blocking the concurrent pre-review.)
-                    //
-                    // A-3 (r3) ready-work yield: NO idle-fill claim while ANY real task waits.
-                    // pick_assignments ran first this pass, so a non-empty ready set here means tasks
-                    // exist that could not be placed. The old rule only reserved the LAST free slot
-                    // (`idle_capacity() <= 1`), and r2 measured why that is not enough: idle-fill
-                    // claims taken while ready work waited held nodes through the sink's body-drop
-                    // retry — 11 minutes (21:26:35Z -> 21:37:37Z) with zero events, one pre_review
-                    // call alone holding a node for 7,535s. An idle job is postponable by
-                    // construction; a real task's dispatch never is — so real work outranks every
-                    // idle-fill claim, not just the final slot. A free supervision device escapes
-                    // the yield: `least_loaded_free_device` claims supervision-first, so that claim
-                    // never competes with build dispatch.
-                    if !s.has_free_supervision_device()
-                        && (s.idle_capacity() == 0 || !s.ready.is_empty())
-                    {
-                        None
-                    } else {
-                        s.pick_prereview_request()
-                    }
-                };
-                if let Some((req, claimed_device)) = req {
-                    let pr = pr.clone();
-                    let st = state.clone();
-                    let nt = notify.clone();
-                    tokio::spawn(async move {
-                        // The IdleSlotGuard is the SOLE releaser of this idle_jobs slot AND the claimed device
-                        // slot — decrement-ONCE on both normal and panic exit (is_judge=false leaves
-                        // judge_running untouched). Do NOT also decrement explicitly here: that double-counts
-                        // the slot and oversubscribes.
-                        let _slot = IdleSlotGuard {
-                            state: st.clone(),
-                            is_judge: false,
-                            claimed_device: Some(claimed_device),
-                            notify: Some(nt),
-                        };
-                        let tid = req.task_id.clone();
-                        let dev = req.reviewer_model_id.clone();
-                        let started = std::time::Instant::now();
-                        let out = pr.pre_review(req).await;
-                        // Emit so idle-node utilization is OBSERVABLE in the jsonl (it was previously invisible
-                        // — a pre-review only left a file when it found ISSUES, so "ran + OK" looked like "never
-                        // ran"). One quick sync emit under the lock, same as the judge's verdict emit.
-                        // A-2: a review that never read the code records a FAILURE, not a clear —
-                        // r2's tail reviews logged provider errors as clean no-finding rows.
-                        let ev = match out {
-                            Ok(out) => SwarmEvent::PreReview {
-                                task_id: tid,
-                                device: dev,
-                                had_findings: out.had_findings,
-                                secs: started.elapsed().as_secs_f64(),
-                            },
-                            Err(error) => SwarmEvent::PreReviewFailed {
-                                task_id: tid,
-                                device: dev,
-                                error,
-                                secs: started.elapsed().as_secs_f64(),
-                            },
-                        };
-                        st.lock().await.sink.emit(&ev);
-                    });
-                }
-            }
-            // SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): when the integrate-verify SINK runs solo and
-            // pre-review is exhausted, put an otherwise-idle node on a READ-ONLY whole-tree dimension review.
+            // SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): when the integrate-verify SINK runs solo, put an
+            // otherwise-idle node on a READ-ONLY whole-tree dimension review.
             // Findings accumulate in the dispatcher; run_swarm drains + re-verifies them after the sink. The
             // IdleSlotGuard releases the claimed device. Off by default (pick_sink_review returns None).
             if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
@@ -4287,9 +4175,16 @@ impl Scheduler {
                 loop {
                     let pick = {
                         let mut s = state.lock().await;
-                        // A-3 (r3): same ready-work yield as pre-review — inert during a normal
-                        // sink window (ready is empty by construction) but load-bearing if a
-                        // replan injects work mid-sink.
+                        // A-3 (r3) ready-work yield: NO idle-fill claim while ANY real task waits.
+                        // pick_assignments ran first this pass, so a non-empty ready set here means
+                        // tasks exist that could not be placed. r2 measured why the LAST-slot rule
+                        // was not enough: idle-fill claims taken while ready work waited held nodes
+                        // through the sink's body-drop retry — 11 minutes (21:26:35Z -> 21:37:37Z)
+                        // with zero events, one idle call alone holding a node for 7,535s. An idle
+                        // job is postponable by construction; a real task's dispatch never is. A
+                        // free supervision device escapes the yield: `least_loaded_free_device`
+                        // claims supervision-first, so that claim never competes with build dispatch.
+                        // Inert during a normal sink window (ready is empty by construction).
                         if !s.ready.is_empty() && !s.has_free_supervision_device() {
                             None
                         } else {
@@ -4347,7 +4242,7 @@ impl Scheduler {
                     });
                 }
             }
-            // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and
+            // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after Q&A and
             // sink-review got first refusal, spend it generating contract-derived tests — the one
             // idle job with ZERO merge surface (new files, pytest-collected). Same ready-work yield
             // as its siblings; the IdleSlotGuard releases the claim. Default OFF -> pick_testgen
@@ -4379,8 +4274,8 @@ impl Scheduler {
                     });
                 }
             }
-            // SPECULATIVE EXECUTION: when speculation is ON and a node is STILL idle (runs AFTER pre-review,
-            // so pre-review gets first refusal of the idle slot), race a TWIN of the longest-running in-flight
+            // SPECULATIVE EXECUTION: when speculation is ON and a node is STILL idle (runs AFTER the idle
+            // jobs above, which get first refusal of the slot), race a TWIN of the longest-running in-flight
             // task on a free device — first-to-finish wins. Gated on spare capacity beyond the running idle
             // jobs (so it never oversubscribes) and no ready work. OFF by default -> the block is skipped and
             // pick_speculation_target / spec_* are never touched (byte-identical).

@@ -31,14 +31,8 @@ pub(super) fn replan_lane_key(round: u32) -> String {
     format!("replan-r{round}")
 }
 
-/// A completion-time pre-review's lane, one per reviewed task.
-pub(super) fn prereview_lane_key(task_id: &str) -> String {
-    format!("prereview-{task_id}")
-}
-
 /// The sink-tail dimension review's lane — keyed by review dimension (it reviews the whole tree,
-/// not one task), matching the `tail_review` events and the `.swarm/prereview/tail-review-<dim>`
-/// findings file it already writes.
+/// not one task), matching the `tail_review` events.
 pub(super) fn tail_review_lane_key(dim_id: &str) -> String {
     format!("tail-review-{dim_id}")
 }
@@ -82,7 +76,7 @@ pub(super) const REFLECT_LANE: &str = "reflect";
 /// keys replaced were never judged either (behavior parity).
 ///
 /// Derivation is by the exact shapes the mint fns above produce. A MODEL-chosen task id starting
-/// with `judge-`/`prereview-`/`tail-review-` would be misclassified — the same accepted hazard
+/// with `judge-`/`tail-review-` would be misclassified — the same accepted hazard
 /// `engine_owned_activity_keys_cannot_collide_with_a_model_chosen_task_id` documents for
 /// `call_objective` (live plans name tasks after modules); the replan shape is digit-exact, so the
 /// measured bonus-task fixture id `replan-extra` stays a worker lane.
@@ -94,9 +88,6 @@ pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
         if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
             return Some("replan");
         }
-    }
-    if key.starts_with("prereview-") {
-        return Some("prereview");
     }
     if key.starts_with("tail-review-") {
         return Some("tailreview");
@@ -136,10 +127,6 @@ mod tests {
             Some("judge")
         );
         assert_eq!(supervision_lane_kind(&replan_lane_key(0)), Some("replan"));
-        assert_eq!(
-            supervision_lane_kind(&prereview_lane_key("store-core")),
-            Some("prereview")
-        );
         assert_eq!(
             supervision_lane_kind(&tail_review_lane_key("wiring")),
             Some("tailreview")
