@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Input } from '../ui/input';
+import { Loader2 } from 'lucide-react';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
+import {
+  Button,
+  Chip,
+  DataTable,
+  KeyValue,
+  Panel,
+  StatusDot,
+  SURFACE,
+  TYPE,
+  cx,
+  type DataTableColumn,
+  type KeyValueItem,
+} from '../lz';
+import { INPUT, ToneBanner } from './studio';
 
 /** The last CLI error line, human-readable — the engine prints one-line `Error: …` messages. */
 export function cloudCliErr(r: { stdout: string; stderr: string; error: string | null }): string {
@@ -16,10 +30,42 @@ export function cloudCliErr(r: { stdout: string; stderr: string; error: string |
  *  table — when the engine grows a cloud family, it is added HERE and nowhere else. Distinct
  *  SOLID chip hues per provider, per the UI rules. */
 export const CLOUD_PROVIDERS = [
-  { seg: 'Bedrock', cli: 'bedrock', registry: 'aws_bedrock', label: 'Amazon Bedrock', keyPlaceholder: 'Bedrock API key (ABSK…)', region: true, chip: '#8e4ec6' },
-  { seg: 'Z.ai', cli: 'zai', registry: 'zai', label: 'Z.ai', keyPlaceholder: 'Z.ai API key', region: false, chip: '#f76b15' },
-  { seg: 'Gemini', cli: 'google', registry: 'google', label: 'Google Gemini', keyPlaceholder: 'Gemini API key (AIza…)', region: false, chip: '#12a594' },
-  { seg: 'DeepSeek', cli: 'deepseek', registry: 'custom_deepseek', label: 'DeepSeek', keyPlaceholder: 'DeepSeek API key (sk-…)', region: false, chip: '#d6409f' },
+  {
+    seg: 'Bedrock',
+    cli: 'bedrock',
+    registry: 'aws_bedrock',
+    label: 'Amazon Bedrock',
+    keyPlaceholder: 'Bedrock API key (ABSK…)',
+    region: true,
+    chip: '#8e4ec6',
+  },
+  {
+    seg: 'Z.ai',
+    cli: 'zai',
+    registry: 'zai',
+    label: 'Z.ai',
+    keyPlaceholder: 'Z.ai API key',
+    region: false,
+    chip: '#f76b15',
+  },
+  {
+    seg: 'Gemini',
+    cli: 'google',
+    registry: 'google',
+    label: 'Google Gemini',
+    keyPlaceholder: 'Gemini API key (AIza…)',
+    region: false,
+    chip: '#12a594',
+  },
+  {
+    seg: 'DeepSeek',
+    cli: 'deepseek',
+    registry: 'custom_deepseek',
+    label: 'DeepSeek',
+    keyPlaceholder: 'DeepSeek API key (sk-…)',
+    region: false,
+    chip: '#d6409f',
+  },
 ] as const;
 export type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
 
@@ -160,160 +206,184 @@ export function CloudPane({
     (m) => !filter.trim() || m.toLowerCase().includes(filter.trim().toLowerCase())
   );
   const keyEntry = (
-    <div className="space-y-2">
-      <div className="text-xs text-text-secondary max-w-[92ch]">
+    <div className="flex flex-col gap-2">
+      <p className={TYPE.bodyMuted}>
         Paste a {def.label} API key. goose validates it live first — the key is stored (encrypted,
         in your goose secret store) only when {def.label} accepts it, and the models it can run
         auto-populate below.
-      </div>
-      <div className="flex items-center gap-2">
-        <Input
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
           type="password"
-          className="flex-1"
-          style={{ borderRadius: 3 }}
+          className={cx(INPUT, 'min-w-[220px] flex-1')}
           placeholder={def.keyPlaceholder}
           value={keyText}
           onChange={(e) => setKeyText(e.target.value)}
+          aria-label={`${def.label} API key`}
+          autoComplete="off"
         />
         {def.region && (
-          <Input
-            className="w-28"
-            style={{ borderRadius: 3 }}
+          <input
+            className={cx(INPUT, 'w-28')}
             placeholder="region"
             value={region}
             onChange={(e) => setRegion(e.target.value)}
+            aria-label="Region"
+            autoComplete="off"
           />
         )}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           disabled={busy === 'validate' || !keyText.trim()}
           onClick={() => void validateKey()}
-          className="px-3 py-1.5 text-xs font-semibold text-background-primary disabled:opacity-50"
-          style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
+          icon={busy === 'validate' ? <Loader2 className="animate-spin" /> : undefined}
         >
           {busy === 'validate' ? 'Validating…' : 'Validate & save'}
-        </button>
+        </Button>
       </div>
     </div>
   );
 
+  const keyFacts: KeyValueItem[] = [
+    {
+      key: 'key',
+      label: 'API key',
+      value: (
+        <span className="inline-flex items-center gap-2">
+          <StatusDot tone="ok" label="key valid" />
+          key valid
+        </span>
+      ),
+      tone: 'ok',
+    },
+    { key: 'region', label: 'Region', value: region, mono: true },
+    {
+      key: 'models',
+      label: 'Models available',
+      value: `${roster.length} model${roster.length === 1 ? '' : 's'}`,
+    },
+  ];
+
+  const deviceColumns: DataTableColumn<SwarmDeviceRow>[] = [
+    {
+      key: 'model',
+      header: 'Model',
+      cell: (d) => (
+        <span className="flex min-w-0 items-center gap-2">
+          <Chip>{def.seg}</Chip>
+          <span className="truncate font-mono text-lz-mono text-lz-ink" title={d.model_id}>
+            {d.model_id}
+          </span>
+        </span>
+      ),
+    },
+  ];
+
+  const rosterColumns: DataTableColumn<string>[] = [
+    {
+      key: 'model',
+      header: 'Model',
+      cell: (m) => (
+        <span className="truncate font-mono text-lz-mono text-lz-ink" title={m}>
+          {m}
+        </span>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-3">
       {phase === 'checking' ? (
-        <div className="text-sm text-text-secondary">Checking for a stored {def.label} key…</div>
+        <p className={cx('flex items-center gap-2', TYPE.meta)}>
+          <Loader2 className="size-3 animate-spin" />
+          Checking for a stored {def.label} key…
+        </p>
       ) : phase === 'no-key' || editKey ? (
         keyEntry
       ) : (
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs">
-            <span style={{ color: '#2ecc71' }} className="font-semibold">
-              key valid
-            </span>
-            <span className="text-text-secondary">
-              {' '}
-              · {region} · {roster.length} model{roster.length === 1 ? '' : 's'} available
-            </span>
-          </span>
-          <button
-            type="button"
-            onClick={() => setEditKey(true)}
-            className="px-2.5 py-1 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors"
-            style={{ borderRadius: 3 }}
-          >
-            Replace key
-          </button>
-        </div>
+        <Panel
+          title={`${def.label} key`}
+          headerRight={
+            <Button size="sm" variant="ghost" onClick={() => setEditKey(true)}>
+              Replace key
+            </Button>
+          }
+          padded={false}
+        >
+          <div className="px-4">
+            <KeyValue dense items={keyFacts} aria-label={`${def.label} key status`} />
+          </div>
+        </Panel>
       )}
 
-      {error && (
-        <div
-          className="text-xs font-semibold px-3 py-2 text-background-primary"
-          style={{ backgroundColor: '#e5484d', borderRadius: 3 }}
-        >
-          {error}
-        </div>
-      )}
+      {error && <ToneBanner tone="err" label={def.label} text={error} />}
 
       {devices.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-xs text-text-secondary">Cloud nodes in your swarm pool:</div>
-          {devices.map((d) => (
-            <div
-              key={d.id}
-              className="flex items-center justify-between gap-3 border border-border-primary px-2.5 py-1.5"
-              style={{ borderRadius: 3 }}
-            >
-              <span className="min-w-0 flex items-center gap-2">
-                <span
-                  className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                  style={{ backgroundColor: def.chip, borderRadius: 3 }}
-                >
-                  {def.seg.toUpperCase()}
-                </span>
-                <span className="text-xs font-mono text-text-primary truncate" title={d.model_id}>
-                  {d.model_id}
-                </span>
-              </span>
-              <button
-                type="button"
+        <Panel title="Cloud nodes in your swarm pool" count={devices.length} padded={false}>
+          <DataTable
+            dense
+            aria-label={`${def.label} nodes in the pool`}
+            columns={deviceColumns}
+            rows={devices}
+            rowKey={(d) => d.id}
+            rowAction={(d) => (
+              <Button
+                size="sm"
+                variant="ghost"
                 disabled={busy === d.model_id}
                 onClick={() => void rmNode(d.model_id)}
-                className="px-2 py-0.5 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors shrink-0 disabled:opacity-50"
-                style={{ borderRadius: 3 }}
               >
                 {busy === d.model_id ? 'Removing…' : 'Remove'}
-              </button>
-            </div>
-          ))}
-        </div>
+              </Button>
+            )}
+          />
+        </Panel>
       )}
 
       {phase === 'ready' && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-text-secondary">
-              Available models — <span className="text-text-primary font-medium">add one as a swarm node</span>:
-            </div>
-            <Input
-              className="w-44"
-              style={{ borderRadius: 3 }}
+        <Panel
+          title="Available models"
+          count={shown.length}
+          headerRight={
+            <input
+              className={cx(INPUT, 'w-44')}
               placeholder="filter…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
+              aria-label={`Filter ${def.label} models`}
+              autoComplete="off"
+            />
+          }
+          padded={false}
+        >
+          <p className={cx('border-b px-4 py-2', TYPE.meta, SURFACE.hairline)}>
+            What this key can actually invoke — add one as a swarm node.
+          </p>
+          <div className="max-h-52 overflow-y-auto">
+            <DataTable
+              dense
+              aria-label={`${def.label} models`}
+              columns={rosterColumns}
+              rows={shown}
+              rowKey={(m) => m}
+              rowAction={(m) =>
+                configured.has(m) ? (
+                  <Chip tone="ok">in pool</Chip>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy === m}
+                    onClick={() => void addNode(m)}
+                  >
+                    {busy === m ? 'Adding…' : '+ Add'}
+                  </Button>
+                )
+              }
+              empty={<p className={TYPE.meta}>no model matches the filter</p>}
             />
           </div>
-          <div
-            className="max-h-52 overflow-y-auto border border-border-primary divide-y divide-border-primary"
-            style={{ borderRadius: 3 }}
-          >
-            {shown.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-text-secondary">no model matches the filter</div>
-            ) : (
-              shown.map((m) => (
-                <div key={m} className="flex items-center justify-between gap-3 px-2.5 py-1.5">
-                  <span className="text-xs font-mono text-text-primary truncate" title={m}>
-                    {m}
-                  </span>
-                  {configured.has(m) ? (
-                    <span className="text-[10px] font-bold shrink-0" style={{ color: '#2ecc71' }}>
-                      IN POOL
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy === m}
-                      onClick={() => void addNode(m)}
-                      className="px-2 py-0.5 text-xs font-semibold text-background-primary shrink-0 disabled:opacity-50"
-                      style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
-                    >
-                      {busy === m ? 'Adding…' : '+ Add'}
-                    </button>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        </Panel>
       )}
     </div>
   );
