@@ -8,17 +8,18 @@
 //! declarative `omlx` provider) — constructed ONLY when the config declares `mlx_engine` settings
 //! AND a pool device is tagged for it, so an untagged pool stays byte-identical.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
 use goose_swarm::DeviceCfg;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Command as ProcCommand;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use console::style;
 
-use super::swarm::{gen_entry_id, SamplingParams, SwarmConfig, SwarmDevice};
+use super::swarm::{SamplingParams, SwarmConfig, SwarmDevice};
 
 /// One resident/served model row as an engine's probe reports it — the exchange type every
 /// catalog probe returns and the pool builder consumes.
@@ -84,11 +85,19 @@ pub trait SwarmEngine: Send + Sync {
     fn provider_name(&self) -> &'static str;
     /// The engine's HTTP host (base URL) for catalog probes.
     fn http_host(&self) -> String;
-    /// Resident-model state straight from the engine's native catalog endpoint.
-    fn catalog_probe(&self) -> Vec<LmsProcess>;
+    /// Resident-model state straight from the engine's native catalog endpoint. `Err` = the
+    /// probe could not answer (unreachable, refused, unparseable); `Ok(empty)` = it answered
+    /// that nothing is loaded.
+    fn catalog_probe(&self) -> Result<Vec<LmsProcess>>;
     /// The model ids the endpoint will actually SERVE. `None` means the probe itself failed —
     /// NOT "no models" — and callers must never gate on it (see `endpoint_model_ids` below).
     fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>>;
+    /// The named probe absences recorded since the last drain (`lm-probe-unauthorized` class):
+    /// facts about why a probe could not answer, for the run to write to run.jsonl. An engine
+    /// that records none drains empty.
+    fn take_probe_absences(&self) -> Vec<serde_json::Value> {
+        Vec::new()
+    }
     /// Currently-loaded instance count for a model across the fleet.
     fn loaded_instance_count(&self, model_id: &str) -> usize;
     /// JIT warm-up: ensure up to `instances` copies are loaded, never more than already present.
@@ -164,6 +173,16 @@ impl Engines {
     /// (planner pre-warm and the `lms ps` pool build; a sidecar planner is unresolved behavior).
     pub fn lmstudio(&self) -> Arc<dyn SwarmEngine> {
         self.lmstudio.clone()
+    }
+
+    /// Drain every registered engine's named probe absences — the run writes them to run.jsonl
+    /// at its two probe seams (the pre-sink pool build, then `live_fleet_slots` per phase).
+    pub(super) fn take_probe_absences(&self) -> Vec<serde_json::Value> {
+        let mut out = self.lmstudio.take_probe_absences();
+        for e in self.sidecars.values() {
+            out.extend(e.take_probe_absences());
+        }
+        out
     }
 
     /// The engine that hosts THIS device's model — `None` for a device naming an engine kind
@@ -461,12 +480,18 @@ pub(super) fn local_request_params(
     extra
 }
 
-/// The one engine today. Construct through `default_engine` so every call site shares the seam
-/// a second engine will slot into.
-pub struct LmStudioEngine;
+/// The LM Studio engine. Construct through `default_engine` so every call site shares the seam
+/// a second engine slots into. Carries the run's named probe absences: an HTTP probe that LM
+/// Studio refuses for want of a token (`lm-probe-unauthorized`) is said ONCE per engine object —
+/// one per run, one per `swarm pool` command — and drained by the run into run.jsonl.
+#[derive(Default)]
+pub struct LmStudioEngine {
+    unauthorized_said: AtomicBool,
+    absences: Mutex<Vec<serde_json::Value>>,
+}
 
 pub fn default_engine() -> Arc<dyn SwarmEngine> {
-    Arc::new(LmStudioEngine)
+    Arc::new(LmStudioEngine::default())
 }
 
 impl SwarmEngine for LmStudioEngine {
@@ -476,11 +501,11 @@ impl SwarmEngine for LmStudioEngine {
     fn http_host(&self) -> String {
         lms_http_host()
     }
-    fn catalog_probe(&self) -> Vec<LmsProcess> {
-        probe_lms_http()
+    fn catalog_probe(&self) -> Result<Vec<LmsProcess>> {
+        self.probe_lms_http_at(&lms_http_host(), lm_api_token().as_deref())
     }
     fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
-        endpoint_model_ids()
+        self.endpoint_model_ids_at(&lms_http_host(), lm_api_token().as_deref())
     }
     fn loaded_instance_count(&self, model_id: &str) -> usize {
         loaded_instance_count(model_id)
@@ -489,10 +514,13 @@ impl SwarmEngine for LmStudioEngine {
         ensure_loaded(model_id, instances)
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
-        probe_lms_processes()
+        self.probe_lms_processes()
     }
     fn probe_report(&self) {
-        probe_fleet()
+        self.probe_fleet()
+    }
+    fn take_probe_absences(&self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut *self.absences.lock().unwrap())
     }
 }
 
@@ -527,6 +555,80 @@ fn lms_http_host() -> String {
         .unwrap_or_else(|| "http://localhost:1234".to_string())
 }
 
+/// The key the CHAT path authenticates LM Studio with: the declarative `lmstudio` provider
+/// (goose-providers `declarative/definitions/lmstudio.json`, `api_key_env`, `requires_auth:
+/// false`) resolves it through `ConfigKeyResolver` → `Config::get_secret`, i.e. the environment
+/// first, the goose secret store second. The probes read the SAME key by the SAME resolver, so
+/// what they send is exactly what the dispatcher's provider sends.
+pub(super) const LM_API_TOKEN_KEY: &str = "LMSTUDIO_API_KEY";
+
+/// The LM Studio API token as the chat path would resolve it, or `None` when none is configured
+/// (an unauthenticated server needs none; an authenticated one answers 401, which the probes
+/// NAME — see `LmStudioEngine::note_unauthorized`). A store read that fails for a reason other
+/// than absence is said on stderr, never folded into a quiet None.
+fn lm_api_token() -> Option<String> {
+    match goose::config::Config::global().get_secret::<String>(LM_API_TOKEN_KEY) {
+        Ok(k) if !k.trim().is_empty() => Some(k),
+        Ok(_) | Err(goose::config::ConfigError::NotFound(_)) => None,
+        Err(e) => {
+            eprintln!(
+                "lm-token-unreadable: {LM_API_TOKEN_KEY} could not be read from the goose secret \
+                 store ({e}) — probing LM Studio without a bearer"
+            );
+            None
+        }
+    }
+}
+
+/// The probe's curl argv: silent; a transport max-time (a dead endpoint is transport, never
+/// model work); the HTTP status on its own last line so a refusal is classified by STATUS and
+/// not by guessing at the body; and the bearer header iff a token exists — the same
+/// `Authorization: Bearer` the chat path sends.
+fn probe_curl_args(url: &str, token: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["-s", "--max-time", "6", "-w", "\n%{http_code}"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    if let Some(t) = token {
+        args.push("-H".to_string());
+        args.push(format!("Authorization: Bearer {t}"));
+    }
+    args.push(url.to_string());
+    args
+}
+
+/// One HTTP catalog probe's outcome, classified by the status curl reported.
+#[derive(Debug)]
+enum LmProbe {
+    /// 2xx with a JSON body.
+    Answered(serde_json::Value),
+    /// 401/403: the server wants a token the probe did not carry, or rejected the one it did.
+    Unauthorized,
+    /// curl could not run, the server was unreachable, a non-2xx other than a refusal, or a
+    /// body that was not JSON — the probe cannot answer.
+    Failed(String),
+}
+
+fn classify_probe_output(stdout: &[u8]) -> LmProbe {
+    let text = String::from_utf8_lossy(stdout);
+    let Some((body, code)) = text.rsplit_once('\n') else {
+        return LmProbe::Failed("curl wrote no status line".to_string());
+    };
+    let status: u16 = match code.trim().parse() {
+        Ok(s) => s,
+        Err(_) => return LmProbe::Failed(format!("unparseable HTTP status '{}'", code.trim())),
+    };
+    match status {
+        0 => LmProbe::Failed("unreachable (no HTTP response)".to_string()),
+        401 | 403 => LmProbe::Unauthorized,
+        200..=299 => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(v) => LmProbe::Answered(v),
+            Err(e) => LmProbe::Failed(format!("HTTP {status} but the body was not JSON: {e}")),
+        },
+        other => LmProbe::Failed(format!("HTTP {other}")),
+    }
+}
+
 /// The no-start guard (#128) is ON unless explicitly killed. It only ever ADDS a refusal on a PROVEN negative,
 /// so the safe direction is on; the kill-switch exists so a misfiring probe can be worked around without a
 /// rebuild. Env only (not a persisted config field) on purpose: a safety guard should not be silently disabled
@@ -553,105 +655,191 @@ pub(super) fn device_from_lms_id(id: &str) -> Option<String> {
     seg.split_once('-').map(|(prefix, _)| prefix.to_string())
 }
 
-/// Discover loaded models straight from the LM Studio HTTP server (native /api/v0/models) — the fallback
-/// for when the `lms` CLI is missing/unreachable (a Finder-launched desktop app has no lms on PATH). The
-/// HTTP server MUST be up for the swarm to call the models at all, so it is the robust source. Uses `curl`
-/// (a system binary present on the minimal GUI PATH) to avoid a blocking HTTP call inside the async
-/// runtime. Returns loaded, non-embedding models as LmsProcess entries (device derived from the id prefix).
-fn probe_lms_http() -> Vec<LmsProcess> {
-    let url = format!("{}/api/v0/models", lms_http_host().trim_end_matches('/'));
-    let Ok(out) = ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &url])
-        .output()
-    else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-        return Vec::new();
-    };
-    let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter(|m| {
-            m.get("state").and_then(|v| v.as_str()) == Some("loaded")
-                && m.get("type").and_then(|v| v.as_str()) != Some("embeddings")
-        })
-        .filter_map(|m| {
-            let id = m
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if id.is_empty() {
-                return None;
+impl LmStudioEngine {
+    /// One HTTP catalog probe of `url` on `host`, carrying `token` as the chat path would. A
+    /// refusal (401/403) is recorded through `note_unauthorized`; the caller still sees only an
+    /// unproven outcome — a refused probe is never a proven negative.
+    fn lm_probe(&self, url: &str, host: &str, token: Option<&str>) -> LmProbe {
+        let probe = match ProcCommand::new("curl")
+            .args(probe_curl_args(url, token))
+            .output()
+        {
+            Ok(out) => classify_probe_output(&out.stdout),
+            Err(e) => LmProbe::Failed(format!("curl could not run: {e}")),
+        };
+        if matches!(probe, LmProbe::Unauthorized) {
+            self.note_unauthorized(host, token.is_some());
+        }
+        probe
+    }
+
+    /// The named absence for a refused probe, said ONCE per engine object: the yellow stderr line
+    /// and an `lm-probe-unauthorized{host, token_key, token_present}` event for run.jsonl. Every
+    /// later refusal in the same run is the same fact and stays quiet.
+    fn note_unauthorized(&self, host: &str, token_present: bool) {
+        if self.unauthorized_said.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let why = if token_present {
+            format!("the {LM_API_TOKEN_KEY} it carried was rejected")
+        } else {
+            format!("no {LM_API_TOKEN_KEY} is set in the environment or the goose secret store")
+        };
+        eprintln!(
+            "{}",
+            style(format!(
+                "lm-probe-unauthorized: {host} wants an API token ({why}) — its residency and \
+                 servability probes cannot answer this run, so every LM Studio device stays \
+                 UNPROVEN (never dropped, never proven servable); set {LM_API_TOKEN_KEY} to the \
+                 token LM Studio's server settings show"
+            ))
+            .yellow()
+            .bold()
+        );
+        self.absences.lock().unwrap().push(serde_json::json!({
+            "event": "lm-probe-unauthorized",
+            "host": host,
+            "token_key": LM_API_TOKEN_KEY,
+            "token_present": token_present,
+        }));
+    }
+
+    /// Discover loaded models straight from the LM Studio HTTP server (native /api/v0/models) —
+    /// the fallback for when the `lms` CLI is missing/unreachable (a Finder-launched desktop app
+    /// has no lms on PATH). The HTTP server MUST be up for the swarm to call the models at all,
+    /// so it is the robust source. Uses `curl` (a system binary present on the minimal GUI PATH)
+    /// to avoid a blocking HTTP call inside the async runtime. `Ok` carries the loaded,
+    /// non-embedding models as LmsProcess entries (device derived from the id prefix) — empty
+    /// when the server answered that nothing is loaded; `Err` when it could not answer (refused,
+    /// unreachable, not JSON, no `data` list).
+    fn probe_lms_http_at(&self, host: &str, token: Option<&str>) -> Result<Vec<LmsProcess>> {
+        let url = format!("{}/api/v0/models", host.trim_end_matches('/'));
+        let json = match self.lm_probe(&url, host, token) {
+            LmProbe::Answered(v) => v,
+            LmProbe::Unauthorized => {
+                bail!("{url}: HTTP 401 — LM Studio wants an API token ({LM_API_TOKEN_KEY})")
             }
-            Some(LmsProcess {
-                device: device_from_lms_id(&id),
-                identifier: id,
-                status: "loaded".to_string(),
-                parallel: None,
-                loaded_context_length: m.get("loaded_context_length").and_then(|v| v.as_u64()),
+            LmProbe::Failed(why) => bail!("{url}: {why}"),
+        };
+        let arr = json
+            .get("data")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow!("{url}: answered without a `data` list"))?;
+        Ok(arr
+            .iter()
+            .filter(|m| {
+                m.get("state").and_then(|v| v.as_str()) == Some("loaded")
+                    && m.get("type").and_then(|v| v.as_str()) != Some("embeddings")
             })
-        })
-        .collect()
-}
-
-/// The model ids the ENDPOINT will actually serve — i.e. the only ids a worker can dispatch to.
-///
-/// `None` means the probe itself failed (endpoint down, curl missing, unparseable body). That is NOT the
-/// same as "no models", and the caller must never gate on it: an instrument reporting zero has been wrong
-/// seven times in this project, and gating a whole run off a failed probe would be the eighth.
-///
-/// WHY THIS IS NOT `lms ps`: `lms ps` lists what is RESIDENT; `/v1/models` lists what is SERVABLE, and they
-/// disagree in exactly the case that costs a run. MEASURED 2026-07-17: `lms ps` showed
-/// `workhorse-qwopus3.6-27b-coder-mlx` IDLE and loaded, while POSTing to it returned
-/// `400 Invalid model identifier` — the Mac Studio had dropped off the LAN and LM Link had withdrawn the
-/// alias, but the resident list still carried it. The pool is built from `lms ps`, so the swarm cheerfully
-/// dispatched a third of its tasks into an instant 400.
-fn endpoint_model_ids() -> Option<std::collections::HashSet<String>> {
-    let url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
-    let out = ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &url])
-        .output()
-        .ok()?;
-    let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
-    let arr = json.get("data")?.as_array()?;
-    let ids: std::collections::HashSet<String> = arr
-        .iter()
-        .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
-        .collect();
-    if ids.is_empty() {
-        return None;
+            .filter_map(|m| {
+                let id = m
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if id.is_empty() {
+                    return None;
+                }
+                Some(LmsProcess {
+                    device: device_from_lms_id(&id),
+                    identifier: id,
+                    status: "loaded".to_string(),
+                    parallel: None,
+                    loaded_context_length: m.get("loaded_context_length").and_then(|v| v.as_u64()),
+                })
+            })
+            .collect())
     }
-    Some(ids)
-}
 
-fn probe_fleet() {
-    println!("\n{}", style("lms ps:").bold());
-    match ProcCommand::new(resolve_lms()).arg("ps").output() {
-        Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
-        Err(e) => println!("  (lms ps failed: {e})"),
+    /// The model ids the ENDPOINT will actually serve — i.e. the only ids a worker can dispatch to.
+    ///
+    /// `None` means the probe itself failed (endpoint down, token refused, curl missing,
+    /// unparseable body). That is NOT the same as "no models", and the caller must never gate on
+    /// it: an instrument reporting zero has been wrong seven times in this project, and gating a
+    /// whole run off a failed probe would be the eighth. A refusal is additionally NAMED (once)
+    /// through `note_unauthorized` — measured 2026-09-01 on the 3-node fleet: LM Studio answered
+    /// `401 invalid_api_key` to a bare probe, so `served[LmStudio]` was None on every run and
+    /// every servability consumer sat permanently "unproven" with no event saying why.
+    ///
+    /// WHY THIS IS NOT `lms ps`: `lms ps` lists what is RESIDENT; `/v1/models` lists what is
+    /// SERVABLE, and they disagree in exactly the case that costs a run. MEASURED 2026-07-17:
+    /// `lms ps` showed `workhorse-qwopus3.6-27b-coder-mlx` IDLE and loaded, while POSTing to it
+    /// returned `400 Invalid model identifier` — the Mac Studio had dropped off the LAN and LM
+    /// Link had withdrawn the alias, but the resident list still carried it. The pool is built
+    /// from `lms ps`, so the swarm cheerfully dispatched a third of its tasks into an instant 400.
+    fn endpoint_model_ids_at(&self, host: &str, token: Option<&str>) -> Option<HashSet<String>> {
+        let url = format!("{}/v1/models", host.trim_end_matches('/'));
+        let LmProbe::Answered(json) = self.lm_probe(&url, host, token) else {
+            return None;
+        };
+        let arr = json.get("data")?.as_array()?;
+        let ids: HashSet<String> = arr
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+            .collect();
+        if ids.is_empty() {
+            return None;
+        }
+        Some(ids)
     }
-    println!("{}", style("endpoint model ids:").bold());
-    let models_url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
-    match ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &models_url])
-        .output()
-    {
-        Ok(out) => {
-            let body = String::from_utf8_lossy(&out.stdout);
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
-                    for m in arr {
-                        if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
-                            println!("  {id}");
-                        }
+
+    fn probe_lms_processes(&self) -> Result<Vec<LmsProcess>> {
+        // Primary: the `lms` CLI (richest — carries DEVICE + PARALLEL). Resolve its real path
+        // since a Finder-launched app has no lms on PATH.
+        let mut lms_answered_empty = false;
+        if let Ok(out) = ProcCommand::new(resolve_lms()).arg("ps").output() {
+            if out.status.success() {
+                if let Ok(procs) = parse_lms_ps(&String::from_utf8_lossy(&out.stdout)) {
+                    if !procs.is_empty() {
+                        return Ok(procs);
                     }
+                    lms_answered_empty = true;
                 }
             }
         }
-        Err(e) => println!("  (curl failed: {e})"),
+        // Fallback: the LM Studio HTTP server (no lms CLI needed), with the chat path's token.
+        match self.probe_lms_http_at(&lms_http_host(), lm_api_token().as_deref()) {
+            Ok(procs) => Ok(procs),
+            // `lms ps` itself ANSWERED — an empty table is a measured empty, and the HTTP call
+            // was only corroboration (a refusal was named above). Its failure does not overturn
+            // the CLI's answer. Only when lms was missing or failing too is the probe an Err.
+            Err(_) if lms_answered_empty => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn probe_fleet(&self) {
+        println!("\n{}", style("lms ps:").bold());
+        match ProcCommand::new(resolve_lms()).arg("ps").output() {
+            Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
+            Err(e) => println!("  (lms ps failed: {e})"),
+        }
+        println!("{}", style("endpoint model ids:").bold());
+        let host = lms_http_host();
+        let token = lm_api_token();
+        let url = format!("{}/v1/models", host.trim_end_matches('/'));
+        match self.lm_probe(&url, &host, token.as_deref()) {
+            LmProbe::Answered(v) => {
+                for id in v
+                    .get("data")
+                    .and_then(|d| d.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                {
+                    println!("  {id}");
+                }
+            }
+            LmProbe::Unauthorized => println!(
+                "  (HTTP 401 — {host} wants an API token; {})",
+                if token.is_some() {
+                    format!("the {LM_API_TOKEN_KEY} set here was rejected")
+                } else {
+                    format!("set {LM_API_TOKEN_KEY}")
+                }
+            ),
+            LmProbe::Failed(why) => println!("  (probe failed: {why})"),
+        }
     }
 }
 
@@ -677,22 +865,6 @@ fn ensure_loaded(model_id: &str, instances: u32) {
             .args(["load", model_id, "-y", "--ttl", "3600"])
             .output();
     }
-}
-
-fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
-    // Primary: the `lms` CLI (richest — carries DEVICE + PARALLEL). Resolve its real path since a
-    // Finder-launched app has no lms on PATH.
-    if let Ok(out) = ProcCommand::new(resolve_lms()).arg("ps").output() {
-        if out.status.success() {
-            if let Ok(procs) = parse_lms_ps(&String::from_utf8_lossy(&out.stdout)) {
-                if !procs.is_empty() {
-                    return Ok(procs);
-                }
-            }
-        }
-    }
-    // Fallback: the LM Studio HTTP server (no lms CLI needed). Empty if the server is unreachable too.
-    Ok(probe_lms_http())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -796,8 +968,11 @@ impl SwarmEngine for SidecarEngine {
     fn http_host(&self) -> String {
         self.base_url.clone()
     }
-    fn catalog_probe(&self) -> Vec<LmsProcess> {
-        self.served_entries()
+    fn catalog_probe(&self) -> Result<Vec<LmsProcess>> {
+        // `served_entries` collapses an unreachable/unparseable catalog to empty (its own
+        // documented semantics, unchanged here), so this arm never errs.
+        Ok(self
+            .served_entries()
             .into_iter()
             .map(|(id, context_window)| LmsProcess {
                 device: device_from_lms_id(&id),
@@ -808,7 +983,7 @@ impl SwarmEngine for SidecarEngine {
                 parallel: None,
                 loaded_context_length: context_window,
             })
-            .collect()
+            .collect())
     }
     fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
         // Identical None semantics to LM Studio's probe: empty/unreachable is "cannot answer",
@@ -876,7 +1051,7 @@ impl SwarmEngine for SidecarEngine {
         }
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
-        Ok(self.catalog_probe())
+        self.catalog_probe()
     }
     fn probe_report(&self) {
         println!("{}", style("mlx-sidecar:").bold());
@@ -975,6 +1150,38 @@ pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_m
     }
 }
 
+fn short_model(identifier: &str) -> String {
+    identifier
+        .rsplit('/')
+        .next()
+        .unwrap_or(identifier)
+        .to_lowercase()
+        .chars()
+        .take(28)
+        .collect()
+}
+
+/// A pool entry's id for a discovered model: `<device>-<short model>`, de-duplicated against the
+/// configured devices with a numeric suffix. No device label (empty means exactly that — the
+/// probe row carried none) yields the bare short model.
+pub(super) fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
+    let dev = device
+        .map(|d| d.split('.').next().unwrap_or(d).to_lowercase())
+        .unwrap_or_default();
+    let base = if dev.is_empty() {
+        short_model(identifier)
+    } else {
+        format!("{dev}-{}", short_model(identifier))
+    };
+    let mut id = base.clone();
+    let mut n = 2;
+    while cfg.devices.iter().any(|d| d.id == id) {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    id
+}
+
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the
 /// LM Studio fleet (`lms ps` through the engine's own probe chain) so the swarm runs on what's
 /// actually loaded, not (possibly stale) configured model_ids. LM-Studio-only BY CONSTRUCTION:
@@ -988,7 +1195,19 @@ pub(super) fn reconcile_pool_with_fleet(
 ) -> (Vec<SwarmDevice>, Option<String>) {
     let procs = match engines.lmstudio().resident_processes() {
         Ok(p) => p,
-        Err(_) => return (Vec::new(), None),
+        Err(e) => {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "fleet-probe-failed: the LM Studio residency probe could not answer ({e:#}) \
+                     — no LM Studio device discovered this run; the pool falls to the configured \
+                     devices (allow_model_load) or the cloud nodes"
+                ))
+                .yellow()
+                .bold()
+            );
+            return (Vec::new(), None);
+        }
     };
     // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
     let mut seen = std::collections::HashSet::new();
@@ -1416,6 +1635,12 @@ mod tests {
     /// One-thread HTTP stub serving a fixed body on every request (each probe curls separately).
     /// The detached accept loop lives for the test binary — harmless on an ephemeral port.
     fn serve_stub(body: &'static str) -> u16 {
+        serve_stub_status("200 OK", body)
+    }
+
+    /// The same stub with a chosen status line — a 401 stub is how the LM Studio refusal is
+    /// reproduced without a token-guarded server.
+    fn serve_stub_status(status: &'static str, body: &'static str) -> u16 {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
         let port = listener.local_addr().expect("local addr").port();
@@ -1425,7 +1650,8 @@ mod tests {
                 let mut buf = [0u8; 1024];
                 let _ = stream.read(&mut buf);
                 let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    status,
                     body.len(),
                     body
                 );
@@ -1433,6 +1659,100 @@ mod tests {
             }
         });
         port
+    }
+
+    #[test]
+    fn probe_curl_args_carry_the_bearer_only_when_a_token_exists() {
+        let url = "http://h:1234/v1/models";
+        let with = probe_curl_args(url, Some("tok-1"));
+        let pos = with.iter().position(|a| a == "-H").expect("-H present");
+        assert_eq!(with[pos + 1], "Authorization: Bearer tok-1");
+        assert_eq!(with.last().map(String::as_str), Some(url));
+        let without = probe_curl_args(url, None);
+        assert!(
+            !without
+                .iter()
+                .any(|a| a == "-H" || a.starts_with("Authorization")),
+            "no token, no header: {without:?}"
+        );
+        assert!(
+            without
+                .windows(2)
+                .any(|w| w[0] == "-w" && w[1] == "\n%{http_code}"),
+            "the status rides on its own last line so a refusal is classified by status"
+        );
+    }
+
+    #[test]
+    fn a_probe_answer_is_classified_by_status_never_by_body_shape() {
+        assert!(matches!(
+            classify_probe_output(br#"{"error":{"code":"invalid_api_key"}}"#.iter().chain(b"\n401").copied().collect::<Vec<u8>>().as_slice()),
+            LmProbe::Unauthorized
+        ));
+        assert!(matches!(
+            classify_probe_output(b"\n000"),
+            LmProbe::Failed(_)
+        ));
+        assert!(matches!(
+            classify_probe_output(b"not json\n200"),
+            LmProbe::Failed(_)
+        ));
+        assert!(matches!(
+            classify_probe_output(b"{\"data\":[]}\n200"),
+            LmProbe::Answered(_)
+        ));
+        assert!(matches!(
+            classify_probe_output(b"{\"data\":[]}\n503"),
+            LmProbe::Failed(_)
+        ));
+        assert!(matches!(classify_probe_output(b""), LmProbe::Failed(_)));
+    }
+
+    /// The 3-node fleet's shape on 2026-09-01: LM Studio answers `401 invalid_api_key` to a bare
+    /// probe. The servable probe stays None (unproven — never a proven negative), the residency
+    /// fallback errs with the reason, the absence is NAMED exactly once per engine object, and a
+    /// catalog that answers to the bearer proves the set.
+    #[test]
+    fn a_401_from_lm_studio_is_a_named_absence_once_and_never_a_proven_negative() {
+        const UNAUTHORIZED: &str = r#"{"error":{"type":"invalid_request","code":"invalid_api_key","message":"An LM Studio API token is required to make requests to this server"}}"#;
+        let port = serve_stub_status("401 Unauthorized", UNAUTHORIZED);
+        let host = format!("http://127.0.0.1:{port}");
+        let engine = LmStudioEngine::default();
+        assert_eq!(engine.endpoint_model_ids_at(&host, None), None);
+        let err = engine
+            .probe_lms_http_at(&host, None)
+            .expect_err("a refused residency probe is an Err, not an empty fleet");
+        assert!(err.to_string().contains("401"), "{err}");
+        let absences = engine.take_probe_absences();
+        assert_eq!(
+            absences.len(),
+            1,
+            "two refusals, ONE named absence: {absences:?}"
+        );
+        assert_eq!(absences[0]["event"], "lm-probe-unauthorized");
+        assert_eq!(absences[0]["host"], host);
+        assert_eq!(absences[0]["token_key"], LM_API_TOKEN_KEY);
+        assert_eq!(absences[0]["token_present"], false);
+        assert!(engine.take_probe_absences().is_empty(), "drained");
+        assert_eq!(
+            engine.endpoint_model_ids_at(&host, Some("wrong-token")),
+            None
+        );
+        assert!(
+            engine.take_probe_absences().is_empty(),
+            "said once per engine object, never per probe"
+        );
+
+        const FLEET: &str = r#"{"object":"list","data":[{"id":"gabee-qwen3.8-27b"},{"id":"mihai-qwen3.8-27b"},{"id":"workhorse-qwen3.8-27b"}]}"#;
+        let port = serve_stub_status("200 OK", FLEET);
+        let host = format!("http://127.0.0.1:{port}");
+        let engine = LmStudioEngine::default();
+        let served = engine
+            .endpoint_model_ids_at(&host, Some("tok"))
+            .expect("a catalog that answers proves the set");
+        assert_eq!(served.len(), 3);
+        assert!(served.contains("workhorse-qwen3.8-27b"));
+        assert!(engine.take_probe_absences().is_empty());
     }
 
     fn sidecar_on(port: u16) -> SidecarEngine {
@@ -1554,8 +1874,8 @@ mod tests {
         fn http_host(&self) -> String {
             self.host.to_string()
         }
-        fn catalog_probe(&self) -> Vec<LmsProcess> {
-            Vec::new()
+        fn catalog_probe(&self) -> Result<Vec<LmsProcess>> {
+            Ok(Vec::new())
         }
         fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
             None
