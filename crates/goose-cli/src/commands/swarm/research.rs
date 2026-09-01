@@ -661,6 +661,81 @@ pub(super) fn research_dispatch_text(
     research_user_text(head, &prior_minis_block(q, &prior), q)
 }
 
+/// One sibling mini handed to a still-running lane (r6e E7 — the research fan's LATE
+/// snowball). `prior_minis_block` splices the minis answered BEFORE a lane's dispatch and
+/// nothing else: r6d dispatched research-ledger-core-q5 at 04:46:55Z with prior_minis=1 (q4);
+/// q2's write-through mini landed 33 s later (04:47:28Z) and never reached it, and q5's own
+/// mini then HEDGED against the version rule q2 had settled ("re-sending the identical snapshot
+/// is harmless" while request.md:189-194 has the vendor bump version on every note write). A
+/// relay note is the same fact at the same splice budget, delivered as the lane's next user
+/// message through the existing steer channel — never a restream, never a bound on anything.
+#[derive(Clone, Debug)]
+pub(super) struct RelayNote {
+    pub(super) from_mini: String,
+    pub(super) from_question: String,
+    pub(super) text: String,
+}
+
+/// The lanes a just-landed mini is relayed to: every STILL-RUNNING lane of the same slice — the
+/// set `prior_minis_for` would have spliced had they dispatched a moment later. Only an answered
+/// row relays (an unanswered one already rode `research_unanswered`); a lane never receives its
+/// own row. `running` is (activity key, question) for every lane between dispatch and its row.
+pub(super) fn relay_targets(
+    landed: &ResearchRow,
+    running: &[(String, ResearchQuestion)],
+) -> Vec<String> {
+    if landed.status != RESEARCH_ANSWERED {
+        return Vec::new();
+    }
+    running
+        .iter()
+        .filter(|(_, q)| q.slice == landed.slice && q.q_index != landed.q_index)
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+/// The note itself: provenance (the durable mini), the sibling's question and its answer under
+/// the brief's splice budget (`budget_research_answer` — a render budget, never a cap; the full
+/// text is in the mini it names), and the same rule the dispatch-time block states — build on it
+/// or NAME the disagreement, never contradict it silently. The ISO stamp is data (it dates the
+/// block in the durable log); nothing reads it.
+pub(super) fn relay_note(landed: &ResearchRow) -> RelayNote {
+    let from_mini = research_mini_name(&landed.slice, landed.q_index);
+    let text = format!(
+        "SIBLING MINI LANDED ({}) — another lane of your slice `{}` settled this while you were \
+         working; it is now in .swarm/ledger/{from_mini}. Build on it: where your answer depends \
+         on it, agree with it or NAME the disagreement and the request's words that decide it (the \
+         builder receives both answers) — never contradict it silently. Continue the SAME \
+         question; do not restart.\nQ: {}\nA: {}",
+        chrono::Utc::now().to_rfc3339(),
+        landed.slice,
+        landed.question,
+        budget_research_answer(&landed.answer, &landed.slice, landed.q_index)
+    );
+    RelayNote {
+        from_mini,
+        from_question: head_to_sentence_end(&landed.question, 200),
+        text,
+    }
+}
+
+/// RESEARCH FAN v2's row, through the same funnel as every other mini so idempotency and the
+/// rollup rebuild come free. Written for answered AND unanswered outcomes — the absence is a
+/// fact the ledger holds (the fallback gate) — and the mini's presence is the resume watermark
+/// `load_research_mini` reads. `ts` is provenance (data, never an input to anything). (Moved
+/// verbatim from swarm.rs under the incremental-split law, paying for E7's relay wiring.)
+pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<PathBuf> {
+    let mut v = serde_json::to_value(row).ok()?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("kind".to_string(), serde_json::json!("research"));
+        o.insert(
+            "ts".to_string(),
+            serde_json::json!(chrono::Utc::now().to_rfc3339()),
+        );
+    }
+    super::write_ledger_mini(root, &research_mini_name(&row.slice, row.q_index), &v)
+}
+
 /// The fan's QUEUE as one event, emitted once when it is built and before anything dispatches:
 /// how many questions the opener left (`questions`), how many of them dispatch now versus
 /// arrive settled from the ledger on resume, and the per-slice count — every number derived
@@ -1328,6 +1403,53 @@ mod tests {
             super::super::unclaimed_sections(&opened, &sections).is_empty(),
             "{:?}",
             super::super::unclaimed_sections(&opened, &sections)
+        );
+    }
+
+    /// THE r6d SHAPE (research-ledger-core, 04:47:28Z): q2's mini lands while q5 (same slice,
+    /// dispatched 33 s earlier with prior_minis=1) and ledger-api-q0 (another slice) are running.
+    /// The relay reaches q5 and only q5 — not the stranger, not q2 itself, and never for an
+    /// unanswered row. The note carries the mini's path, the question and the budgeted answer.
+    #[test]
+    fn a_landed_mini_is_relayed_to_the_running_lanes_of_its_own_slice_only() {
+        let q = |slice: &str, i: usize| ResearchQuestion {
+            slice: slice.to_string(),
+            q_index: i,
+            question: format!("q{i} of {slice}?"),
+        };
+        let running = vec![
+            ("research-ledger-core-q5".to_string(), q("ledger-core", 5)),
+            ("research-ledger-api-q0".to_string(), q("ledger-api", 0)),
+            ("research-ledger-core-q2".to_string(), q("ledger-core", 2)),
+        ];
+        let mut landed = row("ledger-core", 2, RESEARCH_ANSWERED, &[]);
+        landed.question = "Does a note mutate the payment row/version?".into();
+        landed.answer = "It is a write-THROUGH to the vendor with If-Match; the vendor bumps \
+                         version and the response carries the new version."
+            .into();
+        assert_eq!(
+            relay_targets(&landed, &running),
+            vec!["research-ledger-core-q5".to_string()]
+        );
+        let note = relay_note(&landed);
+        assert_eq!(note.from_mini, "research-ledger-core-q2.json");
+        assert!(note.text.starts_with("SIBLING MINI LANDED ("));
+        assert!(note
+            .text
+            .contains(".swarm/ledger/research-ledger-core-q2.json"));
+        assert!(note
+            .text
+            .contains("Q: Does a note mutate the payment row/version?"));
+        assert!(note.text.contains("A: It is a write-THROUGH to the vendor"));
+        assert!(note.from_question.starts_with("Does a note mutate"));
+        let missed = row("ledger-core", 2, RESEARCH_UNANSWERED, &[]);
+        assert!(
+            relay_targets(&missed, &running).is_empty(),
+            "a miss relays nothing"
+        );
+        assert!(
+            relay_targets(&landed, &[]).is_empty(),
+            "no running sibling, no relay"
         );
     }
 }

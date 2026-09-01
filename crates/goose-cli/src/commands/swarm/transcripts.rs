@@ -747,3 +747,87 @@ mod tests {
         );
     }
 }
+
+// The in-flight tool-request cluster (the struct the worker loop's `pending` map holds, and its
+// two digest renderers) — moved verbatim from swarm.rs under the incremental-split law, paying
+// for r6e E7's relay wiring.
+/// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
+/// request id the stream will answer with.
+#[derive(Clone, Debug)]
+pub(super) struct InflightCall {
+    pub(super) name: String,
+    pub(super) is_mcp: bool,
+    pub(super) fetched_external: bool,
+    pub(super) summary: String,
+    pub(super) args_preview: String,
+    pub(super) since: String,
+}
+
+pub(super) const INFLIGHT_PREVIEW_MAX: usize = 240;
+
+/// What a tool request is ABOUT, readable before its result exists: the path and size of a write,
+/// the shape of an edit, the head of a shell line. Mihai, watching the inspector's WORK pane: *"the
+/// tool calls the writing, reading whatnot in the work is not displayed realtime how they're forming
+/// and what is happening. they're appearing as items only after they're complete."* The engine has
+/// the arguments the instant the request enters the stream; this is the bounded rendering of them.
+/// Content itself is never carried — a write's `content` is the file, and the digest is rewritten on a
+/// hot timer — so sizes stand in for it.
+pub(super) fn inflight_args_preview(name: &str, args: &serde_json::Value) -> String {
+    let obj = args.as_object();
+    let get = |k: &str| obj.and_then(|o| o.get(k)).and_then(|v| v.as_str());
+    let count = |s: &str| (s.lines().count(), s.len());
+    let raw = match (get("path"), get("command")) {
+        (Some(path), _) if name == "write" || name.ends_with("__write") => match get("content") {
+            Some(content) => {
+                let (lines, bytes) = count(content);
+                format!("write {path} ({lines} lines, {bytes} bytes)")
+            }
+            None => format!("write {path}"),
+        },
+        (Some(path), _) if name == "edit" || name.ends_with("__edit") => {
+            match (get("before"), get("after")) {
+                (Some(before), Some(after)) => format!(
+                    "edit {path} ({} lines → {} lines)",
+                    count(before).0,
+                    count(after).0
+                ),
+                _ => format!("edit {path}"),
+            }
+        }
+        // developer__text_editor shape: `command` is the verb and `path` the target.
+        (Some(path), Some(verb)) => format!("{verb} {path}"),
+        (Some(path), None) => format!("{name} {path}"),
+        (None, Some(command)) => format!("{name}: {}", command.trim()),
+        (None, None) => format!("{name} {}", super::summarize_tool_call(name, args)),
+    };
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > INFLIGHT_PREVIEW_MAX {
+        format!(
+            "{}…",
+            flat.chars()
+                .take(INFLIGHT_PREVIEW_MAX - 1)
+                .collect::<String>()
+        )
+    } else {
+        flat
+    }
+}
+
+/// The `inflight` rows of a digest: one per request without a result, oldest first. The map is
+/// unordered, so sort by arrival or the panel would reshuffle rows on every rewrite.
+pub(super) fn inflight_rows(
+    pending: &std::collections::HashMap<String, InflightCall>,
+) -> Vec<serde_json::Value> {
+    let mut rows: Vec<(&String, &InflightCall)> = pending.iter().collect();
+    rows.sort_by(|a, b| a.1.since.cmp(&b.1.since).then_with(|| a.0.cmp(b.0)));
+    rows.into_iter()
+        .map(|(id, c)| {
+            serde_json::json!({
+                "id": id,
+                "tool": c.name,
+                "args": c.args_preview,
+                "since": c.since,
+            })
+        })
+        .collect()
+}

@@ -659,6 +659,105 @@ pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
     }
 }
 
+/// The judge's STRUCTURED-REPLY block — the same blindness `owned_block` covers for files, for a
+/// call whose deliverable is a structured reply. MEASURED, run swarm-3node-r0: `open-coverage-1`
+/// reached 144,935 characters with ZERO tool calls across five nudges — the last two literally
+/// "call final_output NOW" — while two of three nodes sat idle waiting on it. Every verdict was
+/// DRIFTING, never LOOPING, because it genuinely produced ~4,000 FRESH characters between looks.
+/// It was not looping. It was enumerating forever into a channel that is not the deliverable.
+/// Empty unless the call owes a structured reply and has called nothing. (Moved verbatim from
+/// swarm.rs's omni-look under the incremental-split law, paying for E7's relay wiring.)
+pub(super) fn structured_reply_block(
+    wants_structured_reply: bool,
+    no_calls_yet: bool,
+    thinking_chars: usize,
+) -> String {
+    if wants_structured_reply && no_calls_yet {
+        format!(
+            "\n\nTHIS CALL'S DELIVERABLE IS A SINGLE STRUCTURED REPLY, made by calling its \
+             output tool. IT HAS NOT CALLED IT ONCE, and it has written \
+             {thinking_chars} characters of reasoning instead. Reasoning is not the \
+             deliverable here and no later phase can read it — if this call ends without that \
+             tool call, everything it worked out is discarded and the phase gets nothing. \
+             Whatever it has enumerated so far is enough to submit: tell it to call the \
+             output tool NOW with what it already has. A partial table that exists beats a \
+             complete one that is still being composed."
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// The judge's EARLIER-SPAN block: a verbatim span from tens of thousands of characters back,
+/// with the compare instruction (gate 7 — the judge is shown the WORDS across looks). Empty
+/// when the meter holds no earlier span yet. (Moved verbatim from swarm.rs's omni-look.)
+pub(super) fn earlier_span_block(earlier: Option<&str>) -> String {
+    match earlier {
+        Some(e) => format!(
+            "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
+             ago):\n{e}\n\
+             COMPARE this earlier span with the 'Most recent reasoning' below — that \
+             comparison is why you are shown both. If the call is walking the SAME items to \
+             the SAME conclusions again — however coherent each sentence reads on its own — \
+             it is re-emitting, not advancing: the verdict is LOOPING, and NEXT names the \
+             exit (call the output tool with what it already has). MEASURED (r4b): a \
+             reviewer cycled one ten-item checklist verbatim for 24 minutes and every \
+             2k-char window of it read as coherent checking; only the two windows side by \
+             side showed the loop.",
+        ),
+        None => String::new(),
+    }
+}
+
+/// Keep the last `max` chars of a snippet, with a leading ellipsis when clipped. Tail, not head, because
+/// the informative part of tool output (the pass/fail line, the traceback, the printed value) is at the end.
+pub(super) fn clip_tail(s: &str, max: usize) -> String {
+    let s = s.trim();
+    let n = s.chars().count();
+    if n > max {
+        format!("…{}", s.chars().skip(n - max).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
+pub(super) fn tail_chars(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n > max {
+        s.chars().skip(n - max).collect()
+    } else {
+        s.to_string()
+    }
+}
+
+/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
+/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
+/// that reach the answer channel without the model having said them, so "does `last_text` end with
+/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
+/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
+/// is what the agent appends LAST before breaking the stream.
+pub(super) const AGENT_ERROR_CLOSERS: [&str; 3] = [
+    "Please resend your message to try again.",
+    "Please retry if you think this is a transient or recoverable error.",
+    "resending this conversation is likely to be refused again.",
+];
+
+/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
+/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
+/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
+/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
+/// "this text is a dead attempt's transport error", because the digest never said which kind of
+/// text it was carrying.
+pub(super) fn said_kind_of(last_text: &str) -> &'static str {
+    let t = last_text.trim_end();
+    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
+        "error"
+    } else {
+        "said"
+    }
+}
+
 /// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
 /// the log and the one number that matters — how often the supervisor actually formed a judgement —
 /// cannot be attributed to a cause. (Moved verbatim from swarm.rs under the incremental-split law,
@@ -727,10 +826,8 @@ impl std::fmt::Display for SupervisedReplyError {
 ///   3. what remains must not BE the filler (`is_agent_loop_filler`: empty, or the filler phrases
 ///      anywhere — the same over-broad-but-safe contract the schedjudge arm already applies).
 pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedReplyError> {
-    if super::said_kind_of(text) == "error" {
-        return Err(SupervisedReplyError::ProviderError(super::clip_tail(
-            text, 400,
-        )));
+    if said_kind_of(text) == "error" {
+        return Err(SupervisedReplyError::ProviderError(clip_tail(text, 400)));
     }
     let t = text.trim_end();
     let cleaned = t
