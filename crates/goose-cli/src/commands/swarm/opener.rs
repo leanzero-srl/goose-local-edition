@@ -139,14 +139,20 @@ pub(super) fn qualify_open_decisions(
 ) -> Vec<String> {
     let mut out = Vec::new();
     for entry in raw {
-        let (question, options, cite) = match entry {
+        // `miss` is the schema-miss shape when the entry was not the framed object.
+        let (question, options, cite, miss) = match entry {
             OpenDecisionRaw::Framed {
                 question,
                 options,
                 cite,
-            } => (question, options, cite),
-            OpenDecisionRaw::Bare(q) => (q, Vec::new(), String::new()),
-            OpenDecisionRaw::Other(v) => (v.to_string(), Vec::new(), String::new()),
+            } => (question, options, cite, None),
+            OpenDecisionRaw::Bare(q) => (q, Vec::new(), String::new(), Some("bare_string")),
+            OpenDecisionRaw::Other(v) => (
+                v.to_string(),
+                Vec::new(),
+                String::new(),
+                Some("other_value"),
+            ),
         };
         let question = question.split_whitespace().collect::<Vec<_>>().join(" ");
         let options: Vec<String> = options
@@ -155,12 +161,29 @@ pub(super) fn qualify_open_decisions(
             .filter(|o| !o.is_empty())
             .collect();
         if options.len() < 2 {
+            // THE SHAPE NAMES WHOSE MISS IT IS (r6e refuter E13): a bare string or a stray value
+            // is the MODEL ignoring the schema — a question may be hiding in it — while a framed
+            // entry with fewer than two options is the opener saying the request decides it.
+            // Both are dropped from ASK and the fan (the downgrade is the same); the tick must
+            // not read the first as "self-resolved".
+            let shape = match (miss, options.len()) {
+                (Some(m), _) => m,
+                (None, 0) => "framed_no_options",
+                (None, _) => "framed_one_option",
+            };
+            let reason = if miss.is_none() {
+                "fewer than two options — the request or the opener already decides it; not \
+                 asked, not researched"
+            } else {
+                "schema miss — not a {question, options, cite} object, so no options exist to \
+                 ask; not asked, not researched (a model miss, not a resolved decision)"
+            };
             events.write_value(serde_json::json!({
                 "event": "decision_self_resolved",
                 "question": question,
                 "options": options,
-                "reason": "fewer than two options — the request or the opener already decides \
-                           it; not asked, not researched",
+                "shape": shape,
+                "reason": reason,
             }));
             continue;
         }
@@ -246,6 +269,11 @@ mod tests {
         assert_eq!(events[0]["event"], "decision_self_resolved");
         assert_eq!(events[0]["question"], d123);
         assert_eq!(events[0]["options"], serde_json::json!([]));
+        assert_eq!(events[0]["shape"], "framed_no_options");
+        assert!(events[0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("fewer than two options"));
 
         // The shape r6d actually emitted — bare strings, no options anywhere — is three downgrades
         // and an empty ASK; one option is still not a choice; an odd value cannot fail the parse.
@@ -257,7 +285,33 @@ mod tests {
         let sink = ValueSink::default();
         let out = raw.qualify(&sink);
         assert!(out.open_decisions.is_empty(), "{:?}", out.open_decisions);
-        assert_eq!(sink.0.lock().unwrap().len(), 5);
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 5);
+        // E13: the shape says whose miss it is — three schema misses, one real one-option entry,
+        // one stray value — so the tick's DECISIONS SELF-RESOLVED row cannot launder a model
+        // miss as a resolved decision.
+        let shapes: Vec<&str> = events
+            .iter()
+            .map(|e| e["shape"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            shapes,
+            vec![
+                "bare_string",
+                "bare_string",
+                "bare_string",
+                "framed_one_option",
+                "other_value"
+            ]
+        );
+        assert!(events[0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("schema miss"));
+        assert!(events[3]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("fewer than two options"));
     }
 
     /// The schema holds the opener to the object shape: `question` and `options` are required.
