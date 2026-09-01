@@ -153,3 +153,17 @@ broadly by default. A tick that re-verifies yesterday's minis is waste, not rigo
 After your report, one line: what you could NOT verify this tick (a lane whose transcript was
 missing, a mini you could not parse, a checkpoint whose field was absent) — the orchestrator
 needs the holes named, not papered.
+
+## Shard and merger lanes (added 2026-09-01 19:5x after the r6e kill)
+
+A SHARD task (`<module>-<shard>`, `shard_of` in the raw plan) owns only `.swarm/shards/<module>/<shard>/README.md`;
+its CODE is written as unowned pieces in that folder, and the engine's `fs_delta`/judge skip `.swarm` — **the
+instruments cannot see a shard's delivery; you read it.** For every moved shard lane: `ls -la .swarm/shards/<m>/<s>/`,
+quote the README's PROVIDES/ASSUMES/UNFINISHED lines, open the largest piece and quote its exported names against the
+declared interface in the split patch (`plan_patched{source: split}` → the merger's brief lists the exports). A shard
+whose folder holds only a README, or whose piece defines names the interface never declared, is the finding — say
+which. The MERGER lane (the module id, `merger_of`) must dispatch only after every shard is Done: `task_dispatched
+<merger>` with any shard not `task_completed` is the r6e kill signature; read `merge_dossier{pieces, readmes_missing,
+duplicates, undefined, signature_mismatches}` and quote what the merger's brief tells it to do with each; then read
+its words for JUDICIOUS merging (Mihai: "not just go in and copy") vs retyping. `merge_gap` must dispatch to a FREE node
+within the tick; `merge_gap_repeated` is a refusal to read.
