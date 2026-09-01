@@ -126,6 +126,32 @@ pub(super) fn head_to_sentence_end(body: &str, min_chars: usize) -> String {
     chars[..end].iter().collect()
 }
 
+/// The key a claimed heading and a spec heading are compared on, at BOTH matching sites (the
+/// splice and the coverage gap): markdown decoration goes — backticks, bold/italic stars, a
+/// leading `#` run, trailing punctuation — the dash variants fold to one, whitespace collapses
+/// and case folds. Letters stay: a typo is still a miss ("Bta" never becomes "Beta").
+///
+/// r6d's first tick: the opener claimed "vs7dbg — REQUIRED and graded" for web-page AND
+/// viz-field against request.md:718 "#### `vs7dbg` — REQUIRED and graded", and the exact
+/// string compare missed twice (`slice_claimed_section_unmatched` ×2): the 1,148-char section
+/// of the graded debug API reached neither brief nor either slice's research prompts, while
+/// every backtick-free heading the same slices claimed spliced fine.
+pub(super) fn heading_key(heading: &str) -> String {
+    let folded: String = heading
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| !matches!(c, '`' | '*'))
+        .map(|c| if matches!(c, '—' | '–') { '-' } else { c })
+        .collect::<String>()
+        .to_lowercase();
+    folded
+        .trim_end_matches(['.', ':', ';', ',', '!', '?'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The section headings NO slice claimed — the coverage gap, measured deterministically so it
 /// can be an event instead of a hope that the opener's own read-back caught it.
 pub(super) fn unclaimed_sections(opened: &OpenOutput, sections: &[SpecSection]) -> Vec<String> {
@@ -133,12 +159,12 @@ pub(super) fn unclaimed_sections(opened: &OpenOutput, sections: &[SpecSection]) 
         .slices
         .iter()
         .flat_map(|sl| sl.sections.iter())
-        .map(|h| h.trim().to_lowercase())
+        .map(|h| heading_key(h))
         .collect();
     sections
         .iter()
         .filter(|s| !s.heading.is_empty())
-        .filter(|s| !claimed.contains(&s.heading.trim().to_lowercase()))
+        .filter(|s| !claimed.contains(&heading_key(&s.heading)))
         .map(|s| s.heading.clone())
         .collect()
 }

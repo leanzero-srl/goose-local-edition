@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::decisions::DECISION_SLICE;
+use super::orientation::heading_key;
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
 use super::{EventSink, SpecSection};
@@ -309,7 +310,9 @@ pub(super) fn research_tree_block(tree_at_start: &[String]) -> String {
 /// r5's boot slice claimed a typo'd heading and lost 3,501 chars from BOTH its research
 /// prompts and its brief, surfacing only through the generic `spec_sections_unclaimed` on the
 /// real heading. Each miss emits `slice_claimed_section_unmatched{slice, claimed}` — loud,
-/// MILD, never blocks; the matching sections still splice.
+/// MILD, never blocks; the matching sections still splice. Both sides are compared on
+/// `heading_key` — decoration folds (r6d: "vs7dbg — REQUIRED and graded" claimed against
+/// "#### `vs7dbg` — REQUIRED and graded" missed twice), letters do not.
 pub(super) fn splice_claimed_sections(
     slice_id: &str,
     claimed: &[String],
@@ -318,11 +321,8 @@ pub(super) fn splice_claimed_sections(
 ) -> String {
     let mut spliced = String::new();
     for want in claimed {
-        let key = want.trim().to_lowercase();
-        match sections
-            .iter()
-            .find(|s| s.heading.trim().to_lowercase() == key)
-        {
+        let key = heading_key(want);
+        match sections.iter().find(|s| heading_key(&s.heading) == key) {
             Some(sec) => {
                 spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
             }
@@ -1258,6 +1258,76 @@ mod tests {
             fan_src.matches("emit_research_planned(").count(),
             1,
             "one emission site, when the fan's queue is built"
+        );
+    }
+
+    /// r6d's first tick (run swarm-20260901-035310576, seq 93/94): the opener claimed
+    /// "vs7dbg — REQUIRED and graded" for web-page AND viz-field; request.md:718 reads
+    /// "#### `vs7dbg` — REQUIRED and graded" and the exact-string compare missed twice, so the
+    /// 1,148-char section of the graded debug API reached neither brief (the splice returns
+    /// only matched sections — an unmatched claim contributes NOTHING to the brief) nor either
+    /// slice's research prompts. The heading and the claim below are r6d's, verbatim.
+    #[test]
+    fn a_claim_without_the_headings_backticks_still_splices_its_section() {
+        let spec = "### 8. The 3D field — 12,288 instances, five mechanisms\nfield intro\n\n\
+                    #### `vs7dbg` — REQUIRED and graded\n\
+                    A global `vs7dbg` object with all-synchronous methods.\n\n\
+                    ### 9. `DECISIONS.md` — three corners you must decide\ndecide three\n";
+        let sections = spec_sections(spec);
+        let sink = ValueSink::default();
+        let claimed = [
+            "vs7dbg — REQUIRED and graded".to_string(),
+            // dash variant, bold, trailing colon, leading hashes: decoration, not identity
+            "8. The 3D field - 12,288 instances, five mechanisms".to_string(),
+            "#### **9. `DECISIONS.md` — three corners you must decide**:".to_string(),
+        ];
+        let spliced = splice_claimed_sections("viz-field", &claimed, &sections, &sink);
+        assert!(spliced.contains("all-synchronous methods"), "{spliced}");
+        assert!(spliced.contains("field intro"), "{spliced}");
+        assert!(spliced.contains("decide three"), "{spliced}");
+        assert!(
+            spliced.contains("### `vs7dbg` — REQUIRED and graded"),
+            "the spec's own heading is what the brief shows: {spliced}"
+        );
+        assert!(
+            sink.0.lock().unwrap().is_empty(),
+            "no miss: {:?}",
+            sink.0.lock().unwrap()
+        );
+        // A typo is still a miss — letters do not fold.
+        let typo = ["vs7dgb — REQUIRED and graded".to_string()];
+        assert!(splice_claimed_sections("viz-field", &typo, &sections, &sink).is_empty());
+        assert_eq!(sink.0.lock().unwrap().len(), 1);
+        // On the real sb-7 spec (line 718 is that heading), r6d's exact claim splices the section.
+        let sb7 = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let real = splice_claimed_sections(
+            "viz-field",
+            &["vs7dbg — REQUIRED and graded".to_string()],
+            &spec_sections(sb7),
+            &ValueSink::default(),
+        );
+        assert!(real.contains("vs7dbg"), "{real}");
+        assert!(
+            real.chars().count() > 1_000,
+            "the whole graded-API section, not an excerpt: {} chars",
+            real.chars().count()
+        );
+        // The coverage gap agrees: the backtick-free claims cover the decorated headings.
+        let opened = OpenOutput {
+            slices: vec![OpenSlice {
+                id: "viz-field".to_string(),
+                title: String::new(),
+                objective: String::new(),
+                questions: Vec::new(),
+                weight: 5,
+                sections: claimed.to_vec(),
+            }],
+            open_decisions: Vec::new(),
+        };
+        assert!(
+            super::super::unclaimed_sections(&opened, &sections).is_empty(),
+            "{:?}",
+            super::super::unclaimed_sections(&opened, &sections)
         );
     }
 }
