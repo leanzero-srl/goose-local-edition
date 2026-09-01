@@ -21506,7 +21506,7 @@ impl GooseAgentDispatcher {
 /// The straight-line planner core, from OPEN's output to a loadable DAG:
 /// SYNTHESIS -> `plan_repaired` (finalize_plan_before_dag: pin the sink, prepend the skeleton,
 /// the deterministic repairs of the measured flags, the entry-file injection) -> THE SPLIT
-/// (`shards::split_fat_tasks`: a fat task, measured, gets ONE split patch and the plan walks the
+/// (`shards::split_fat_tasks_sized`: a fat task, measured, gets ONE split patch and the plan walks the
 /// door again) -> DAG, with the
 /// flat one-task-per-slice fallback at both failure points so a bad model reply costs
 /// parallelism, never the run. `synthesize` is injected so the whole sequence runs in a test

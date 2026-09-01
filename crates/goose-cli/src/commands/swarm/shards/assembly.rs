@@ -156,7 +156,8 @@ impl Open {
             _ => {
                 let ticks = line
                     .match_indices('`')
-                    .filter(|(i, _)| !line[..*i].ends_with('\\'))
+                    // `match_indices`/`rfind` offsets are char boundaries; `split_at` indexes nothing.
+                    .filter(|(i, _)| !line.split_at(*i).0.ends_with('\\'))
                     .count();
                 if ticks % 2 == 1 {
                     self.backtick = !self.backtick;
@@ -165,7 +166,7 @@ impl Open {
                     if self.block_comment {
                         self.block_comment = !line.contains("*/");
                     } else if let Some(p) = line.rfind("/*") {
-                        self.block_comment = !line[p..].contains("*/");
+                        self.block_comment = !line.split_at(p).1.contains("*/");
                     }
                 }
             }
@@ -250,7 +251,7 @@ pub(super) fn segments(source: &str, lang: TargetLang) -> Vec<Segment> {
             let first_code = body.iter().map(|l| l.trim()).find(|t| {
                 !t.is_empty()
                     && !is_comment_line(t, lang)
-                    && !(lang == TargetLang::Python && t.starts_with('@'))
+                    && (lang != TargetLang::Python || !t.starts_with('@'))
             });
             let import = first_code.is_some_and(|t| is_import(t, lang));
             let names: Vec<String> = if import {
@@ -304,7 +305,7 @@ pub(crate) struct Assembly {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AssemblyOutcome {
-    Assembled(Assembly),
+    Assembled(Box<Assembly>),
     /// Said, never faked: the reason names what is missing (a parser for `ext`, a piece of the
     /// module's language, a writable folder).
     Unavailable {
@@ -592,7 +593,7 @@ pub(super) fn assemble(root: &Path, dossier: &MergeDossier) -> AssemblyOutcome {
             reason: format!("cannot write `{rel}`: {e}"),
         };
     }
-    AssemblyOutcome::Assembled(Assembly {
+    AssemblyOutcome::Assembled(Box::new(Assembly {
         path: rel,
         ext,
         pieces,
@@ -608,7 +609,7 @@ pub(super) fn assemble(root: &Path, dossier: &MergeDossier) -> AssemblyOutcome {
         glue_needed,
         bytes: out.len(),
         lines: out.lines().count(),
-    })
+    }))
 }
 
 pub(super) fn assembled_event(module: &str, task_id: &str, a: &Assembly) -> serde_json::Value {
@@ -1109,7 +1110,7 @@ mod tests {
         let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
         let first_def = position(&text, "\n// shard: ");
         assert!(
-            text[first_def..].starts_with("\n// shard: viz3d-engine-vs7dbg-boot (.swarm/shards/viz3d-engine/vs7dbg-boot/boot.js:1) — layout, sceneDigest, camera, setCamera, pick, pickPixel, brush, frames\nwindow.vs7dbg = {"),
+            text.split_at(first_def).1.starts_with("\n// shard: viz3d-engine-vs7dbg-boot (.swarm/shards/viz3d-engine/vs7dbg-boot/boot.js:1) — layout, sceneDigest, camera, setCamera, pick, pickPixel, brush, frames\nwindow.vs7dbg = {"),
             "the vs7dbg object leads, via exports[1]: {text}"
         );
         let viz3d = position(&text, "window.viz3d = {");

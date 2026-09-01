@@ -1007,7 +1007,7 @@ async fn run_finding_shard(
     let finding_short = super::findings::elide_middle(&f.text, 150, 400);
     let (repro_event, repro_detail) = match repro_verdict(&rows, f.check.as_ref()) {
         Repro::Confirmed { call } => ("repro_confirmed", serde_json::json!({ "call": call })),
-        Repro::EditBeforeRepro { first_edit } => (
+        Repro::EditedFirst { first_edit } => (
             "edit_before_repro",
             serde_json::json!({ "first_edit": first_edit }),
         ),
@@ -1480,7 +1480,7 @@ pub(super) enum Repro {
     /// A shell call re-ran the finding's check before any edit.
     Confirmed { call: String },
     /// The first edit came before any re-run of the check.
-    EditBeforeRepro { first_edit: String },
+    EditedFirst { first_edit: String },
     /// Neither: the shard never re-ran the check and never edited.
     NeverRan,
     /// The finding carries no command to re-run by hand.
@@ -1557,13 +1557,12 @@ pub(super) fn shell_reruns_check(shell_line: &str, command: &str) -> bool {
         if t.starts_with('-') {
             continue;
         }
-        if let Some(i) = t.find("://") {
-            let rest = &t[i + 3..];
-            url_path = rest.find('/').map(|j| {
-                rest[j..]
-                    .trim_end_matches(['\'', '"', '`', ';'])
-                    .to_lowercase()
-            });
+        if let Some((_, rest)) = t.split_once("://") {
+            // `find` offsets are char boundaries; `get` says so — `None` leaves no path, as an absent `/` does.
+            url_path = rest
+                .find('/')
+                .and_then(|j| rest.get(j..))
+                .map(|p| p.trim_end_matches(['\'', '"', '`', ';']).to_lowercase());
             continue;
         }
         if t.chars().any(|c| c.is_ascii_digit()) || t.contains(['%', '{', '}', '\\']) {
@@ -1580,7 +1579,7 @@ pub(super) fn shell_reruns_check(shell_line: &str, command: &str) -> bool {
 }
 
 /// REPAIR v2 §1, the reading: walk the shard's calls in order — a shell re-run of the check before
-/// the first edit is `Confirmed`; an edit first is `EditBeforeRepro`; neither is `NeverRan`.
+/// the first edit is `Confirmed`; an edit first is `EditedFirst`; neither is `NeverRan`.
 pub(super) fn repro_verdict(rows: &[CallRow], check: Option<&FindingCheck>) -> Repro {
     let Some(command) = check.and_then(|c| c.command.as_deref()) else {
         return Repro::NoCommand;
@@ -1595,7 +1594,7 @@ pub(super) fn repro_verdict(rows: &[CallRow], check: Option<&FindingCheck>) -> R
             };
         }
         if is_edit_call(row) {
-            return Repro::EditBeforeRepro {
+            return Repro::EditedFirst {
                 first_edit: row.summary.clone(),
             };
         }
@@ -1618,7 +1617,8 @@ fn sibling_search_stem(name: &str) -> String {
         .map(|(i, _)| i)
         .collect();
     match cuts.pop() {
-        Some(last) if !cuts.is_empty() || last > 1 => name[..last].to_string(),
+        // `last` is a `char_indices` offset, so a char boundary by construction.
+        Some(last) if !cuts.is_empty() || last > 1 => name.split_at(last).0.to_string(),
         _ => name.to_string(),
     }
 }
@@ -1688,14 +1688,13 @@ pub(super) fn localization_hints(text: &str) -> Vec<String> {
             }
         }
     }
-    if let Some(i) = text.find(" is not a function") {
-        let before = &text[..i];
-        if let Some(x) = before
+    if let Some((before, _)) = text.split_once(" is not a function") {
+        let callee = before
             .split_whitespace()
             .next_back()
             .map(ident)
-            .filter(|x| !x.is_empty())
-        {
+            .filter(|x| !x.is_empty());
+        if let Some(x) = callee {
             let last = x.rsplit('.').next().unwrap_or(&x).to_string();
             hints.push(format!(
                 "`{x}` exists where it is called but is not callable (the TypeError): `grep -n '{last}'` \
@@ -2318,7 +2317,7 @@ mod tests {
 
     /// REPAIR v2 §1: the shard's own calls say whether it re-ran the check before it edited.
     /// The render probe re-run on the shard's own port is a re-run; a grep is not; an edit
-    /// before any re-run is `EditBeforeRepro`; the POST probe's replay is its LAST span (the
+    /// before any re-run is `EditedFirst`; the POST probe's replay is its LAST span (the
     /// curl), never the boot; rows are this attempt's only, the `attempt_end` snapshot is not a
     /// call, and a corrupt line is counted, not dropped.
     #[test]
@@ -2357,7 +2356,7 @@ mod tests {
         ];
         assert_eq!(
             repro_verdict(&edited_first, Some(&check)),
-            Repro::EditBeforeRepro {
+            Repro::EditedFirst {
                 first_edit: "str_replace web/viz.js".into()
             }
         );
@@ -2438,7 +2437,7 @@ mod tests {
         ];
         assert_eq!(
             repro_verdict(&r6c_viz, Some(&check)),
-            Repro::EditBeforeRepro {
+            Repro::EditedFirst {
                 first_edit: "/var/folders/T/.tmpWtl6Iu/web/index.html".into()
             },
             "the archive's `edit` row is an edit"

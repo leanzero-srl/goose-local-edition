@@ -1030,45 +1030,15 @@ pub(super) fn sized_event(module: &str, sizing: &Sizing) -> serde_json::Value {
 /// `request_module_split`; a test hands back a canned reply) so the whole sequence runs without a
 /// model. A plan with no fat task returns byte-identical and emits nothing.
 ///
-/// SIZE BY THE FLEET (split v2 §6) needs the free host count at split time — the pool `run_swarm`
-/// resolved (`pool_resolved.worker_count`; r6e: 3), all free during planning by construction. It
-/// is not reachable from here, so this signature stays for `plan_slices_to_dag`'s one call and
-/// passes NONE, which `split_fat_tasks_sized` SAYS (`split_sized{hosts: null, source:
-/// "declaration — free host count not passed…"}`) and leaves the shard count as declared — never
-/// a literal in its place.
-/// TODO(swarm.rs surgeon): caller passes free_hosts — thread `Some(<resolved pool>.len())` from
-/// `run_swarm` through `run_linear_plan` → `plan_slices_to_dag` → the one call site
-/// (`let mut plan_json = shards::split_fat_tasks(` in `plan_slices_to_dag`), call
-/// `split_fat_tasks_sized` there, then delete this wrapper.
-pub(super) async fn split_fat_tasks<P, PFut>(
-    plan_json: String,
-    opened: &OpenOutput,
-    spec: &str,
-    every_decision_settled: bool,
-    split: P,
-    sink: &Arc<dyn EventSink>,
-) -> String
-where
-    P: Fn(serde_json::Value, serde_json::Value) -> PFut,
-    PFut: std::future::Future<Output = Result<String>>,
-{
-    split_fat_tasks_sized(
-        plan_json,
-        opened,
-        spec,
-        every_decision_settled,
-        None,
-        split,
-        sink,
-    )
-    .await
-}
-
-/// `split_fat_tasks` with the fleet: `free_hosts` is the pool free at split time (None = the
-/// caller did not pass it — said, see the wrapper). One free host declines every split before
-/// synthesis is asked (N shards would queue serially on it and still need a merge — the module is
-/// built whole by the node that would build it anyway; the flag stays); otherwise the declared
-/// clusters are sized onto the hosts (`size_shards_to_hosts`, `split_sized`) before the patch.
+/// SIZE BY THE FLEET (split v2 §6): `free_hosts` is the pool free at split time — the pool
+/// `run_swarm` resolved (`pool_resolved.worker_count`; r6e: 3), all free during planning by
+/// construction, threaded to the one call in `plan_slices_to_dag`. `None` = the caller did not
+/// pass it, which is SAID (`split_sized{hosts: null, source: "declaration — free host count not
+/// passed…"}`) and leaves the shard count as declared — never a literal in its place. One free
+/// host declines every split before synthesis is asked (N shards would queue serially on it and
+/// still need a merge — the module is built whole by the node that would build it anyway; the
+/// flag stays); otherwise the declared clusters are sized onto the hosts (`size_shards_to_hosts`,
+/// `split_sized`) before the patch.
 pub(super) async fn split_fat_tasks_sized<P, PFut>(
     plan_json: String,
     opened: &OpenOutput,
@@ -1400,7 +1370,7 @@ mod tests {
 
     /// S10(1)+(2): the request lists the CLAIMED headings as the partition (the brief is context),
     /// and the prompt's decline ramp — one shard named `whole` — parses as a loud decline with the
-    /// planner's reason, so `split_fat_tasks` emits `split_declined` and leaves the plan alone.
+    /// planner's reason, so `split_fat_tasks_sized` emits `split_declined` and leaves the plan alone.
     #[test]
     fn the_split_request_partitions_the_claimed_headings_and_whole_declines_with_a_reason() {
         let task = serde_json::json!({
@@ -1483,7 +1453,7 @@ mod tests {
 
     /// VA-080 item 3: when the opener's slice names match no plan slice, every row measures
     /// zero and nothing is ever fat — `plan_flag` fires only for fat rows, so the plan used to
-    /// pass in silence. The measure RECORDS the unclaimed ids; `split_fat_tasks` says
+    /// pass in silence. The measure RECORDS the unclaimed ids; `split_fat_tasks_sized` says
     /// `fatness_unmeasurable` with both sides' names and leaves the plan byte-identical. r6c's
     /// shape (SOME rows carry sections) says nothing — the NET half.
     #[tokio::test]
@@ -1511,11 +1481,12 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn EventSink> = sink.clone();
         let before = renamed.to_string();
-        let after = split_fat_tasks(
+        let after = split_fat_tasks_sized(
             before.clone(),
             &r6c_like_opened(),
             spec,
             false,
+            None,
             |_task, _density| async move { panic!("nothing measurable, nothing to split") },
             &sink_dyn,
         )
@@ -2345,11 +2316,12 @@ mod tests {
             ("web-viz", &["web/viz.js"]),
         ])
         .to_string();
-        let after = split_fat_tasks(
+        let after = split_fat_tasks_sized(
             before.clone(),
             &r6c_like_opened(),
             spec,
             false,
+            None,
             |_task, _density| async move { Ok("I would rather not.".to_string()) },
             &sink_dyn,
         )
@@ -4360,7 +4332,7 @@ impl GooseAgentDispatcher {
                 }
                 self.events
                     .write_value(assembly::assembled_event(&merger.module, &req.task_id, a));
-                Some(a)
+                Some(a.as_ref())
             }
             assembly::AssemblyOutcome::Unavailable { ext, reason } => {
                 self.events.write_value(assembly::unavailable_event(

@@ -422,8 +422,8 @@ pub(super) fn check_key(source: FindingSource, text: &str) -> String {
 /// carries no command — said as such, never invented.
 pub(super) fn check_command(text: &str) -> Option<String> {
     for marker in ["GATE COMMAND", "REPLAY IT:"] {
-        if let Some(i) = text.find(marker) {
-            let rest = &text[i..];
+        // `find` offsets are char boundaries; `get` says so — `None` falls through as an absent marker does.
+        if let Some(rest) = text.find(marker).and_then(|i| text.get(i..)) {
             let rest = rest.rsplit_once(" (in `").map(|(a, _)| a).unwrap_or(rest);
             return Some(rest.trim().trim_end_matches('.').to_string());
         }
