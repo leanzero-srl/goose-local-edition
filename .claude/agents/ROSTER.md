@@ -892,4 +892,5 @@ research_request_block's armed-no-claimed-sections arm wording.
 - `refuter` as brief-composition measurer: excellent; REFUTED two of the orchestrator's claims (auth never attached; brief size → thinking). Keep the "measure, do not theorize" framing.
 - `fix-tracer` on VA-008: excellent — replayed 28 sections through a Python port, refuted a sub-claim of the composition report (web-viz DID get linked brush), gave anchors + test. Charter gap: none.
 - `Explore` agenda audit: good; 12 rows with shas. Charter fine for doc sweeps.
+- `panel-surgeon` 24k clip (a8dd8974e): good — kept a measured load-bearing fallback (39 pre-08-29 archives without .log) instead of deleting blind; new drift-guard tests. PROCESS FAULT: ran a whole-tree `git stash`/`stash pop` with another surgeon in flight (popped clean, but it swept their files). Charter amended: no whole-tree git operations (stash, checkout ., reset --hard, clean) while any other agent is in flight — `git show HEAD:path` for HEAD comparisons. Unbriefed finds queued as VA-025/026.
 

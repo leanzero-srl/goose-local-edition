@@ -38,3 +38,11 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Shared working tree — no whole-tree git operations (added 2026-09-01)
+
+Other surgeons edit `crates/` in the SAME working tree while you edit `ui/desktop`. Never run `git stash`,
+`git checkout .`, `git reset --hard`, `git clean` or any other whole-tree operation — a stash/pop on
+2026-09-01 briefly swept another surgeon's uncommitted files (it popped clean; it might not have). To
+compare against HEAD use `git show HEAD:<path> | prettier --stdin-filepath <path>`; to commit use
+`git commit --only <your paths>`; verify `git diff --cached --stat` names only your files.
