@@ -1,5 +1,8 @@
 # NOW — what we are researching and doing, this week
 
+> **10:02 2026-09-01 — r6d KILLED on Mihai's order** ("if it has no chance, let's not waste time please let's stop it"): research 165m, 38-question fan, viz brief lacks the graded vs7dbg section (refuter-proven under cceab86eb) → no realistic chance of beating r5 0.3609. Archive `~/goose-builds/local-sb7-swarm-r6d-KILLED-no-chance-vs-r5-fan-38q-research-165m-viz-brief-lacks-vs7dbg-cceab86eb`, per-pid TERM, orphans 0. **NEW DIRECTION (Mihai): 'r5 with repair phase and some better node handling'** — r5 = 701m (open 68 · synthesis 16 · review 52 · build 325 · integrate 92 · fix 144), briefs 6k, NO research phase; r6c = 1101m (research fan 126 · build 608 · fix 215), briefs 21k, thinking 1.65×. Achieved BY SUBTRACTION ON HEAD, never by reverting: (1) the fan cut (surgeon in flight: spec facts no lane / decisions once + dedup / one lane per slice) → research back near r5's zero; (2) a BRIEF DIET measured against r5 (refuter measuring 21k vs 6k composition now); (3) keep ownership afae2eb1b, placement 623ae8eef + weight 1×3, vs7dbg claims. r6e binary e640f6c03 is built+installed but WAITS for (1)(2). E7 refuted CONFIRMED-WITH-CORRECTION (agent.rs `Some(None) if has_pending_steers` arm; drain inside the probe select) — handed to the surgeon.
+
+
 **Read this FIRST, at every tick, before `SWARM-AGENDA.md`.** The agenda is 2,400 lines of campaign
 history and it is the record; this file is the *current thread* and it is short on purpose. Compaction
 has repeatedly destroyed the answer to "what were we in the middle of", and that is the only question
