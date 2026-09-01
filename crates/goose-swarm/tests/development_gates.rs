@@ -295,9 +295,15 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/research.rs beside the rows it partitions (-312 net), paying for the opener's
 /// question contract at the OPEN call (request file + SOURCES before the opener runs, the
 /// kind/cite/fact paragraph) and the fan's cited-fact arm — r6d's 13 spec lookups, 201 lane-min.
+/// Held at 39,696 (the fan cut, C2): `files_from_objective` moved to research.rs beside its one
+/// caller (-42), paying for the decision routing call and the covered-mini check at the lane.
+/// Tightened to 39,588 (the fan cut, C3): `fanout_over_fleet` moved to commands/swarm/
+/// fleet_order.rs (-116) and the terminal-fold test to research.rs beside its fold, paying for
+/// the one-lane-per-slice fan (batches, per-question rows, strays named) and E7's second drain
+/// site inside the judge-probe select! (the loop-top drain was unreachable during a look).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 39_696;
+    const SWARM_RS_LINE_BASELINE: usize = 39_588;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

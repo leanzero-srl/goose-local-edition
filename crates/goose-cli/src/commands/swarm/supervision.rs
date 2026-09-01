@@ -636,11 +636,12 @@ pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
              the implementation."
         }
         Some(k) if k.starts_with("research-") => {
-            "answer ONE named question about the request as a HANDOFF — exact files, exact \
-             key/field literals, conventions stated as conventions. It must NOT write code and \
-             has no file-writing tools; its structured reply IS its deliverable. Different \
-             research questions legitimately cover similar ground — it is stuck only if its OWN \
-             answer stops advancing."
+            "answer its slice's TAGGED questions — all of them, in this one session — about the \
+             request as HANDOFFS: exact files, exact key/field literals, conventions stated as \
+             conventions, one entry per [qN] tag in its final_output. It must NOT write code and \
+             has no file-writing tools; its structured reply IS its deliverable. The questions \
+             of one slice legitimately cover similar ground and it may settle a shared fact once \
+             and refer back to it — it is stuck only if its OWN answers stop advancing."
         }
         Some(k) if k.starts_with("apptest-") => {
             "exercise the BUILT app from one angle and report the defects it observes, with the files \

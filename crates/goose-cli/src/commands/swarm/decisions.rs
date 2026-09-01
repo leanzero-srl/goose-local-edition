@@ -217,12 +217,13 @@ pub(super) fn research_settled_worker_block(decisions: &[PlanDecision]) -> Strin
     out
 }
 
-/// One decision lane's prompt HEAD (the fan adds the snowball block and the decision text under
-/// THE OPEN DECISION at dispatch through `research_user_text`, exactly as the slice path does
-/// for its question). The full request rides whole: a decision is global — no claimed-section
-/// subset exists to splice — and "answer strictly from the request" requires the request.
-/// User-settled decisions ride under the ONE `USER_DECISIONS_HEADER` constant so settled
-/// choices inform the still-open ones; the SOURCES block is the same one every slice lane gets.
+/// The decisions lane's prompt HEAD (the fan adds the snowball block and EVERY still-open
+/// decision, tagged, under THE OPEN DECISIONS at dispatch through `research_user_text`, exactly
+/// as a slice lane carries its batch — C3: one lane settles them all in one session). The full
+/// request rides whole: a decision is global — no claimed-section subset exists to splice — and
+/// "answer strictly from the request" requires the request. User-settled decisions ride under
+/// the ONE `USER_DECISIONS_HEADER` constant so settled choices inform the still-open ones; the
+/// SOURCES block is the same one every slice lane gets.
 pub(super) fn decision_user_text(
     spec: &str,
     user_decisions: &str,
@@ -345,6 +346,7 @@ mod tests {
             kind: "design".to_string(),
             cite: String::new(),
             origin: String::new(),
+            batch: 0,
         }
     }
 

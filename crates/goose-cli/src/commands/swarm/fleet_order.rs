@@ -9,7 +9,8 @@
 use console::style;
 use goose_swarm::DeviceCfg;
 
-use super::{gen_entry_id, probe_lms_processes, LmsProcess, SwarmDevice};
+use super::{gen_entry_id, load_config, probe_lms_processes, EventSink, LmsProcess, SwarmDevice};
+use std::sync::{Arc, Mutex};
 
 /// A device id to its configured `speed_weight` — substring match against the `speed_weights` map
 /// (e.g. `{"worksmacstudio":3,"local":2,"gabee":1}`); default 1 = equal share.
@@ -1233,4 +1234,120 @@ mod aux_routing_tests {
         assert_eq!(map.lock().unwrap().get("m1"), Some(&0));
         assert_eq!(map.lock().unwrap().get("m2"), Some(&0));
     }
+}
+
+/// Run `items` across the fleet with at most ONE call in flight PER LIST ENTRY (work-stealing: each
+/// item grabs the next free entry and returns it on completion). Callers pass `fleet_slot_models`, so
+/// that bound is the per-device capacity the EXECUTE scheduler already honors — a weight-1 node still
+/// never has a second request queued behind the first, and a weight-2 node gets the second slot it is
+/// configured for. Results come back in item order.
+/// Returns ONE element per item, in item order — `Ok(R)` from the lane's closure, or `Err(panic
+/// message)` for a lane that panicked. The per-item slot is load-bearing twice over: the
+/// sink-review consumer zips results against its input list (a silently dropped lane would shift
+/// every later pairing), and the research consumer folds an `Err` into a terminal unanswered row.
+///
+/// A PANICKED LANE USED TO CONSUME THE WHOLE FAN, silently. The chain: the panic skipped the
+/// device push_back, breaking the permits==pool invariant; a later lane's "a device is free
+/// whenever a permit is held" expect then fired INSIDE the MutexGuard temporary, poisoning the
+/// pool; every remaining lane's `lock().unwrap()` panicked in turn; and the join's
+/// `if let Ok(r)` swallowed all of it. Three repairs, each necessary: the device rides a Drop
+/// guard back to the pool (unwind runs Drop), both lock sites recover a poisoned mutex instead
+/// of cascading (the queue holds Strings — no invariant can be torn mid-push), and the join
+/// names every lost lane with a `lane_panicked` event instead of silence.
+pub(super) async fn fanout_over_fleet<T, R, F, Fut>(
+    context: &str,
+    events: &dyn EventSink,
+    devices: Vec<String>,
+    items: Vec<T>,
+    f: F,
+) -> Vec<Result<R, String>>
+where
+    T: Send + 'static,
+    R: Send + 'static,
+    F: Fn(T, String) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = R> + Send + 'static,
+{
+    use std::collections::VecDeque;
+    struct DeviceReturn {
+        pool: Arc<Mutex<VecDeque<String>>>,
+        dev: Option<String>,
+    }
+    impl Drop for DeviceReturn {
+        fn drop(&mut self) {
+            if let Some(dev) = self.dev.take() {
+                // Never a second panic inside Drop (that aborts the process): recover a
+                // poisoned lock and return the device anyway.
+                match self.pool.lock() {
+                    Ok(mut g) => g.push_back(dev),
+                    Err(poisoned) => poisoned.into_inner().push_back(dev),
+                }
+            }
+        }
+    }
+    let devices = if devices.is_empty() {
+        vec![String::new()]
+    } else {
+        // RESOLVED weights, never the raw substring map: the pool entries are MODEL ids and the
+        // map's keys are DEVICE-id fragments (r5: only "gabee" matched, the all-tie sort kept
+        // config order, and the weight-3 host idled through the round-0 fix wave).
+        order_fleet_by_speed(devices, &resolved_fleet_speed_weights(&load_config()))
+    };
+    // permits == pool size, so a permit holder is always guaranteed a free device to pop —
+    // an invariant the DeviceReturn guard keeps true through panicking lanes.
+    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
+    let pool = Arc::new(Mutex::new(
+        devices.into_iter().collect::<VecDeque<String>>(),
+    ));
+    let mut handles = Vec::with_capacity(items.len());
+    for item in items {
+        let permits = permits.clone();
+        let pool = pool.clone();
+        let f = f.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = permits
+                .acquire_owned()
+                .await
+                .expect("fleet semaphore never closed");
+            let popped = match pool.lock() {
+                Ok(mut g) => g.pop_front(),
+                Err(poisoned) => poisoned.into_inner().pop_front(),
+            };
+            // The expect fires OUTSIDE the lock: even a broken invariant costs one lane a
+            // panic (named at the join) without poisoning the pool for the rest.
+            let dev = popped.expect("a device is free whenever a permit is held");
+            let _return_guard = DeviceReturn {
+                pool,
+                dev: Some(dev.clone()),
+            };
+            f(item, dev).await
+        }));
+    }
+    let mut results = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(r) => results.push(Ok(r)),
+            Err(e) => {
+                let error = match e.try_into_panic() {
+                    Ok(payload) => payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "panicked with a non-string payload".to_string()),
+                    Err(join_err) => join_err.to_string(),
+                };
+                events.write_value(serde_json::json!({
+                    "event": "lane_panicked",
+                    "context": context,
+                    "error": error,
+                }));
+                eprintln!(
+                    "  {} {context} lane panicked ({error}) — its slot is folded as a failure; \
+                     the other lanes' results stand",
+                    style("!").red().bold()
+                );
+                results.push(Err(error));
+            }
+        }
+    }
+    results
 }
