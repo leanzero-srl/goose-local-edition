@@ -15,9 +15,10 @@ const NEEDS_LOGIN_JSON: &str = include_str!("fixtures/status_needs_login.json");
 
 /// Verifies the exact argv the engine promises (--tun=userspace-networking, --statedir,
 /// --socket, --no-logs-no-support) actually reaches the daemon, then behaves like one:
-/// creates the socket file after a short delay, removes it on SIGTERM.
+/// LISTENS on the unix socket after a short delay (a real listener, so the engine's
+/// peer-credential proof sees THIS process as the owner), removes it on SIGTERM.
 const FAKE_TAILSCALED: &str = r#"#!/usr/bin/env python3
-import os, signal, sys, time
+import os, signal, socket, sys, time
 args = sys.argv[1:]
 def flag(name):
     for a in args:
@@ -34,14 +35,20 @@ if "--no-logs-no-support" not in args:
 print("fake tailscaled starting", file=sys.stderr)
 sys.stderr.flush()
 time.sleep(0.3)
-with open(sock, "w") as f:
-    f.write("sock")
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(sock)
+srv.listen(8)
+srv.settimeout(0.1)
 def bye(signum, frame):
     os.unlink(sock)
     sys.exit(0)
 signal.signal(signal.SIGTERM, bye)
 while True:
-    time.sleep(0.1)
+    try:
+        c, _ = srv.accept()
+        c.close()
+    except socket.timeout:
+        pass
 "#;
 
 /// Answers like the real CLI: refuses when the socket file is absent, validates the
@@ -83,6 +90,13 @@ if "logout" in args:
         os.unlink(marker)
     sys.exit(0)
 if "status" in args and "--json" in args:
+    # Test hook: `<base>/probe-fail-once` makes exactly one probe fail the way a loaded
+    # machine's CLI does (transport error), then vanishes.
+    fail_once = os.path.join(base, "probe-fail-once")
+    if os.path.exists(fail_once):
+        os.unlink(fail_once)
+        print("dial unix %s: connect: connection refused" % sock, file=sys.stderr)
+        sys.exit(1)
     # Test hook: with `<base>/slow-probe` present, record that a probe happened and
     # take a while to answer — lets a daemon die DURING the readiness probe.
     if os.path.exists(os.path.join(base, "slow-probe")):
@@ -103,7 +117,7 @@ sys.exit(2)
 /// the socket it left behind. Stands in for "another process's daemon owns the socket
 /// and ours lost the race".
 const FAKE_TAILSCALED_DIES_DURING_PROBE: &str = r#"#!/usr/bin/env python3
-import os, sys, time
+import os, socket, sys, time
 args = sys.argv[1:]
 def flag(name):
     for a in args:
@@ -111,8 +125,9 @@ def flag(name):
             return a.split("=", 1)[1]
     return None
 statedir = flag("--statedir"); sock = flag("--socket")
-with open(sock, "w") as f:
-    f.write("sock")
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(sock)
+srv.listen(8)
 probed = os.path.join(statedir, "probed")
 while not os.path.exists(probed):
     time.sleep(0.01)
@@ -120,15 +135,66 @@ print("fake tailscaled: lost the socket race, exiting", file=sys.stderr)
 sys.exit(0)
 "#;
 
-/// A daemon that leaves a `spawned` marker so a test can assert it was NEVER run.
-const FAKE_TAILSCALED_MARKING: &str = r#"#!/usr/bin/env python3
-import sys
-args = sys.argv[1:]
-statedir = [a.split("=", 1)[1] for a in args if a.startswith("--statedir=")][0]
-with open(statedir + "/spawned", "w") as f:
-    f.write("1")
-sys.exit(0)
+/// A daemon that never owns the socket: it records its pid in `<statedir>/spawned` and
+/// idles — so a test can assert it was NEVER run, or that the engine terminated it
+/// per-pid after proving the socket belongs to someone else. A shell script, not
+/// python: the engine kills a useless spawn within a few ms of the probe, before a
+/// python interpreter could even write the marker (measured: 6/6 misses).
+const FAKE_TAILSCALED_MARKING: &str = r#"#!/bin/sh
+for a in "$@"; do case "$a" in --statedir=*) statedir="${a#--statedir=}";; esac; done
+echo $$ > "$statedir/spawned"
+exec sleep 1000
 "#;
+
+/// Execute a freshly written script once, in a throwaway dir, before the engine does.
+/// Measured on macOS 26: the FIRST exec of a newly created script is held ~100-300 ms
+/// by the system's exec-time assessment (the process sits in state S having run no
+/// line) — long enough for the engine to refuse and terminate it before it writes its
+/// marker. Warming makes the marker deterministic; it is a test-environment artifact,
+/// not engine behavior.
+async fn warm_exec(script: &Path) {
+    let warm = tempfile::tempdir().unwrap();
+    let mut child = tokio::process::Command::new(script)
+        .arg(format!("--statedir={}", warm.path().display()))
+        .kill_on_drop(true)
+        .spawn()
+        .expect("warm exec spawns");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !warm.path().join("spawned").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "warm exec never ran {}",
+            script.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    child.kill().await.unwrap();
+}
+
+/// A process that is NOT the engine's child, listening on the engine's socket path —
+/// another goosed's daemon. Killed on drop.
+async fn spawn_foreign_listener(sock: &Path) -> tokio::process::Child {
+    let script = format!(
+        "import socket\ns = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\ns.bind({sock:?})\ns.listen(8)\ns.settimeout(0.1)\nwhile True:\n    try:\n        c, _ = s.accept()\n        c.close()\n    except socket.timeout:\n        pass\n",
+        sock = sock.display().to_string()
+    );
+    let child = tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .kill_on_drop(true)
+        .spawn()
+        .expect("foreign listener spawns");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !sock.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "foreign listener never bound {}",
+            sock.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    child
+}
 
 fn write_exec(dir: &Path, name: &str, content: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -272,32 +338,84 @@ async fn daemon_exit_during_startup_carries_stderr() {
 async fn start_refuses_a_socket_another_daemon_already_answers() {
     let root = tempfile::tempdir().unwrap();
     let mut config = fake_config(root.path());
-    // The fake CLI answers `status --json` whenever the socket file exists — exactly
-    // what a foreign daemon on this path looks like to the engine.
-    std::fs::write(&config.socket_path, "sock").unwrap();
+    let mut foreign = spawn_foreign_listener(&config.socket_path).await;
     config.tailscaled_path = write_exec(
         root.path(),
         "fake-tailscaled-marking",
         FAKE_TAILSCALED_MARKING,
     );
 
-    let err = match MeshEngine::start(config.clone()).await {
+    let result = MeshEngine::start(config.clone()).await;
+    assert!(
+        !config.state_dir.join("spawned").exists(),
+        "the daemon binary must not have been spawned at all"
+    );
+    let err = match result {
         Ok(_) => panic!("start adopted a socket it did not create"),
         Err(e) => e,
     };
-    assert!(
-        matches!(&err, MeshError::AlreadyRunning { socket } if *socket == config.socket_path),
-        "{err}"
-    );
+    match &err {
+        MeshError::AlreadyRunning {
+            socket,
+            listener_pid,
+        } => {
+            assert_eq!(*socket, config.socket_path);
+            assert_eq!(
+                *listener_pid,
+                foreign.id(),
+                "the refusal names the foreign listener's pid"
+            );
+        }
+        other => panic!("expected AlreadyRunning, got {other}"),
+    }
     assert!(
         err.to_string()
             .contains("never adopts a daemon it did not spawn"),
         "{err}"
     );
-    assert!(
-        !config.state_dir.join("spawned").exists(),
-        "the daemon binary must not have been spawned at all"
+    foreign.kill().await.unwrap();
+}
+
+/// R-L5 (corrected), the structural half: even when the pre-spawn probe is fooled (one
+/// transient CLI failure, the loaded-machine shape measured in this suite), readiness
+/// is PROVEN by the socket's listener pid — a foreign listener is refused, and the
+/// engine's own useless spawn is terminated per-pid.
+#[tokio::test]
+async fn start_refuses_a_foreign_listener_even_when_the_pre_spawn_probe_fails_once() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    let mut foreign = spawn_foreign_listener(&config.socket_path).await;
+    std::fs::write(config.state_dir.join("probe-fail-once"), "1").unwrap();
+    config.tailscaled_path = write_exec(
+        root.path(),
+        "fake-tailscaled-marking",
+        FAKE_TAILSCALED_MARKING,
     );
+    warm_exec(&config.tailscaled_path).await;
+
+    let err = match MeshEngine::start(config.clone()).await {
+        Ok(_) => panic!("start adopted a foreign listener after a transient probe failure"),
+        Err(e) => e,
+    };
+    match &err {
+        MeshError::AlreadyRunning { listener_pid, .. } => {
+            assert_eq!(*listener_pid, foreign.id(), "named the foreign listener");
+        }
+        other => panic!("expected AlreadyRunning, got {other}"),
+    }
+    let spawned = std::fs::read_to_string(config.state_dir.join("spawned"))
+        .expect("the probe failure DID let the engine spawn its own daemon");
+    let our_pid: u32 = spawned.trim().parse().unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !process_alive(our_pid),
+        "the engine's own spawn (pid {our_pid}) must be terminated per-pid, not leaked"
+    );
+    assert!(
+        process_alive(foreign.id().unwrap()),
+        "the foreign daemon is never touched"
+    );
+    foreign.kill().await.unwrap();
 }
 
 /// R-L5 (corrected), the other half: the readiness probe is answered by the socket,
