@@ -3,6 +3,7 @@ mod configuration;
 mod error;
 mod logging;
 mod openapi;
+mod remote_executor;
 mod routes;
 mod session_delta_tap;
 mod session_event_bus;

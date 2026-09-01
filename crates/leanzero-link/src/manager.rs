@@ -31,7 +31,9 @@ use tokio::task::JoinHandle;
 use crate::control::{ControlConfig, ControlError, ControlHandle, ControlService};
 use crate::identity::{Identity, IdentityError, IdentityStore};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
-use crate::state::{PeerRegistry, SwarmStateSource};
+use crate::state::{
+    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerRegistry, RemoteExecutor, SwarmStateSource,
+};
 use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
 };
@@ -137,6 +139,16 @@ pub enum LinkError {
     NotLoggedIn,
     #[error("busy: a connect is already in progress or the mesh is connected")]
     Busy,
+    #[error("remote execution is not wired on this node")]
+    ExecutorUnavailable,
+    #[error("not connected to the mesh — cannot reach peers for remote execution")]
+    NotConnected,
+    #[error("no known mesh peer with node id '{0}'")]
+    UnknownPeer(String),
+    #[error(transparent)]
+    Execute(#[from] ExecuteError),
+    #[error("remote execute request to a peer failed: {0}")]
+    RemoteExecute(String),
     #[error("mesh joined but reported no IP — cannot compose a Connected state")]
     NoMeshIp,
     #[error("mesh reported an unparseable self IP '{ip}': {source}")]
@@ -232,6 +244,11 @@ pub struct LinkManager {
     worker: WorkerClient,
     mesh_factory: Arc<dyn MeshFactory>,
     source: Arc<dyn SwarmStateSource>,
+    /// The local remote-execute seam, injected beside `source` (mirroring how the
+    /// [`SwarmStateSource`] is threaded). `None` → this node cannot run remote prompts
+    /// (self short-circuit and the control route both answer as unavailable). goose-server
+    /// supplies the real one via `set_executor` before the manager is built.
+    executor: Option<Arc<dyn RemoteExecutor>>,
     inner: Mutex<Inner>,
 }
 
@@ -265,12 +282,22 @@ impl LinkManager {
             worker,
             mesh_factory,
             source,
+            executor: None,
             inner: Mutex::new(Inner {
                 auth,
                 last_error: None,
                 active: None,
             }),
         })
+    }
+
+    /// Attach the local [`RemoteExecutor`] (goose-server's `GoosedRemoteExecutor`). Used
+    /// by the `POST /v1/swarm/execute` route this node serves AND by the self short-circuit
+    /// in [`Self::remote_execute`]. A builder-style setter rather than a constructor arg so
+    /// the existing construction paths (and their tests) stay unchanged.
+    pub fn with_executor(mut self, executor: Arc<dyn RemoteExecutor>) -> Self {
+        self.executor = Some(executor);
+        self
     }
 
     /// A default config: production worker URL, `~/.leanzero/identity.json`, and the
@@ -447,13 +474,16 @@ impl LinkManager {
 
         let mut control_config = self.config.control.clone();
         control_config.mesh_ip = Some(mesh_ip_addr);
-        let control = match ControlService::start(control_config, self.source.clone()).await {
-            Ok(control) => control,
-            Err(err) => {
-                mesh.shutdown().await;
-                return Err(err.into());
-            }
-        };
+        let control =
+            match ControlService::start(control_config, self.source.clone(), self.executor.clone())
+                .await
+            {
+                Ok(control) => control,
+                Err(err) => {
+                    mesh.shutdown().await;
+                    return Err(err.into());
+                }
+            };
 
         // Peers are reached at the SHARED, fixed control port on their mesh IP, not at
         // this node's (possibly ephemeral) local port.
@@ -510,6 +540,58 @@ impl LinkManager {
             node_count,
             last_error: live_error.or(persisted_error),
         }
+    }
+
+    /// The live peer-fabric registry while connected (`None` otherwise). Exposed so the
+    /// swarm dispatcher / UI can read peer node states (and their Idle/Busy status) before
+    /// dispatching, and so [`Self::remote_execute`] can resolve a target's URL.
+    pub async fn active_registry(&self) -> Option<PeerRegistry> {
+        self.inner
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|active| active.registry.clone())
+    }
+
+    /// Drive a remote execution: tell `target_node_id`'s goose to run `req`. This is how
+    /// node A acts on node B. A `target_node_id` equal to this node's own id short-circuits
+    /// to the local executor (no network hop); any other id is resolved to a peer via the
+    /// fabric registry and reached with `POST <peer>/v1/swarm/execute` (bearer node_token).
+    ///
+    /// The RECEIVE-side idle guard + `allow_remote_execution` gate live on the peer's route
+    /// (a busy/observe-only peer answers `409`/`403`, surfaced here as
+    /// [`LinkError::Execute`]). Callers SHOULD still read the peer's Idle status from
+    /// [`Self::active_registry`] first and pick an Idle node — the route guard is the
+    /// backstop, not the scheduler.
+    pub async fn remote_execute(
+        &self,
+        target_node_id: &str,
+        req: ExecuteRequest,
+    ) -> Result<ExecuteAccepted, LinkError> {
+        let self_node_id = self.source.local_node().await.node_id;
+        if target_node_id == self_node_id {
+            let executor = self
+                .executor
+                .clone()
+                .ok_or(LinkError::ExecutorUnavailable)?;
+            return Ok(executor.execute(req).await?);
+        }
+
+        let (base_url, token) = {
+            let inner = self.inner.lock().await;
+            let registry = inner
+                .active
+                .as_ref()
+                .map(|active| active.registry.clone())
+                .ok_or(LinkError::NotConnected)?;
+            let base_url = registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (base_url, self.config.control.node_token.clone())
+        };
+
+        post_peer_execute(&base_url, &token, self.config.control.request_timeout, &req).await
     }
 
     /// Tear down the connection (per-pid), clear the stored identity, and drop to
@@ -661,6 +743,46 @@ fn fresh_suffix() -> String {
         bytes.copy_from_slice(&mix.to_le_bytes()[..3]);
     }
     format!("{:02x}{:02x}{:02x}", bytes[0], bytes[1], bytes[2])
+}
+
+/// `POST <base_url>/v1/swarm/execute` with the bearer node_token, mapping the peer's
+/// status back to a typed result: `202` → the accepted body; `403`/`409`/`400` → the
+/// corresponding [`ExecuteError`] (Disabled/Busy/BadRequest, so the receive-side gates
+/// surface intact); `501` → [`LinkError::ExecutorUnavailable`]; anything else →
+/// [`LinkError::RemoteExecute`] carrying the code and body. Never a silent success.
+async fn post_peer_execute(
+    base_url: &str,
+    token: &str,
+    timeout: Duration,
+    req: &ExecuteRequest,
+) -> Result<ExecuteAccepted, LinkError> {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|err| LinkError::RemoteExecute(err.to_string()))?;
+    let response = client
+        .post(format!("{base_url}/v1/swarm/execute"))
+        .bearer_auth(token)
+        .json(req)
+        .send()
+        .await
+        .map_err(|err| LinkError::RemoteExecute(err.to_string()))?;
+
+    let status = response.status();
+    if status.is_success() {
+        return response.json::<ExecuteAccepted>().await.map_err(|err| {
+            LinkError::RemoteExecute(format!("peer accepted but its body did not parse: {err}"))
+        });
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    Err(match status.as_u16() {
+        403 => LinkError::Execute(ExecuteError::Disabled),
+        409 => LinkError::Execute(ExecuteError::Busy),
+        400 => LinkError::Execute(ExecuteError::BadRequest(body)),
+        501 => LinkError::ExecutorUnavailable,
+        code => LinkError::RemoteExecute(format!("peer returned {code}: {body}")),
+    })
 }
 
 async fn peer_sync_loop(

@@ -92,7 +92,10 @@ mod elicitation;
 mod extensions;
 mod fork_session;
 mod link;
-pub use link::{set_delta_source, DeltaInput, DeltaSource, SessionDeltaKind};
+pub use link::{
+    set_delta_source, set_executor, DeltaInput, DeltaSource, ExecuteAccepted, ExecuteError,
+    ExecuteRequest, RemoteExecutor, SessionDeltaKind,
+};
 mod list_sessions;
 mod load_session;
 mod local_inference;

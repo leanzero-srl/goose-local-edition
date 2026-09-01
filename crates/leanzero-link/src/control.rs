@@ -8,6 +8,17 @@
 //! - `GET /v1/swarm/stream` (WebSocket) → [`StreamFrame`]s; `?since=<seq>` replay
 //!   cursor, `?scope=local|all`, heartbeat as ws ping. An evicted cursor gets a
 //!   close frame `code=4408, reason="ClientTooFarBehind"`.
+//! - `POST /v1/swarm/execute` → `202 {session_id}` — cross-node remote execution: one
+//!   same-account device tells this node's goose to run a prompt; results stream back
+//!   over `/v1/swarm/stream` (the P4 mirror), not a separate channel. SECURITY: a remote
+//!   execute runs goose (shell/file tools) on THIS machine. It is gated only by (a)
+//!   tailnet membership — the mesh is account-isolated, joined via the worker's ephemeral
+//!   key — and (b) the [`ControlConfig::node_token`] bearer (HMAC of the account email,
+//!   same-account). This is intentional for a personal fleet. [`ControlConfig::allow_remote_execution`]
+//!   (default `true`) flips the node observe-only: when `false` the route answers `403`.
+//!   The receive-side idle guard is real: a node whose [`SwarmStateSource::local_node`]
+//!   reports non-`Idle` answers `409` and refuses the work now. No executor injected →
+//!   `501` (loud-absent, never a fake accept). The bearer check is never weakened here.
 //!
 //! Listeners: 127.0.0.1 always (the local desktop), plus the mesh IP when one is
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
@@ -21,12 +32,13 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use futures::stream::{SplitSink, StreamExt};
@@ -39,7 +51,10 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
-use crate::state::{PeerRegistry, PeerRegistryConfig, PeerTarget, SwarmStateSource};
+use crate::state::{
+    ExecuteError, ExecuteRequest, PeerRegistry, PeerRegistryConfig, PeerTarget, RemoteExecutor,
+    SwarmStateSource,
+};
 use crate::wire::{NodeStatus, SessionSummary, StreamFrame, SwarmNodesResponse};
 
 /// Fixed high default for the control service; every node on a tailnet must
@@ -78,6 +93,12 @@ pub struct ControlConfig {
     pub heartbeat_interval: Duration,
     pub request_timeout: Duration,
     pub reconnect_backoff: Duration,
+    /// Whether `POST /v1/swarm/execute` may run goose on this node. Default `true` — the
+    /// personal-fleet model, where every same-account device may drive every other.
+    /// Setting it `false` makes the node OBSERVE-ONLY: it still mirrors sessions and
+    /// serves `/nodes` `/sessions` `/stream`, but the execute route answers `403` and
+    /// no remote prompt ever runs here.
+    pub allow_remote_execution: bool,
 }
 
 impl ControlConfig {
@@ -90,6 +111,7 @@ impl ControlConfig {
             heartbeat_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(5),
             reconnect_backoff: Duration::from_secs(2),
+            allow_remote_execution: true,
         }
     }
 }
@@ -120,6 +142,11 @@ struct Ctx {
     registry: PeerRegistry,
     mesh_ip: Option<IpAddr>,
     heartbeat_interval: Duration,
+    /// `None` → `POST /v1/swarm/execute` answers `501` (execution not wired). Injected
+    /// beside `source`, exactly as [`SwarmStateSource`] is — the executor is the seam
+    /// goose-server implements; this crate never spawns an agent.
+    executor: Option<Arc<dyn RemoteExecutor>>,
+    allow_remote_execution: bool,
 }
 
 pub struct ControlService;
@@ -127,10 +154,13 @@ pub struct ControlService;
 impl ControlService {
     /// Bind the listeners, start the peer fabric and the local delta pump, and
     /// return a handle. Peers are attached afterwards via
-    /// [`ControlHandle::set_peers`] as mesh status evolves.
+    /// [`ControlHandle::set_peers`] as mesh status evolves. `executor` is injected beside
+    /// `source` (mirroring how [`SwarmStateSource`] is threaded); `None` leaves the
+    /// execute route answering `501`.
     pub async fn start(
         config: ControlConfig,
         source: Arc<dyn SwarmStateSource>,
+        executor: Option<Arc<dyn RemoteExecutor>>,
     ) -> Result<ControlHandle, ControlError> {
         if config.node_token.trim().is_empty() {
             return Err(ControlError::EmptyToken);
@@ -153,6 +183,8 @@ impl ControlService {
             registry: registry.clone(),
             mesh_ip: config.mesh_ip,
             heartbeat_interval: config.heartbeat_interval,
+            executor,
+            allow_remote_execution: config.allow_remote_execution,
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
 
@@ -282,6 +314,7 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         .route("/v1/swarm/nodes", get(nodes))
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
+        .route("/v1/swarm/execute", post(execute))
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -379,6 +412,66 @@ async fn sessions(
             .then_with(|| a.session_id.cmp(&b.session_id))
     });
     Json(all)
+}
+
+/// The HTTP status each [`ExecuteError`] maps to. The wire contract the companion app,
+/// the swarm dispatcher, and [`crate::manager::LinkManager::remote_execute`] all read.
+pub fn execute_error_status(error: &ExecuteError) -> StatusCode {
+    match error {
+        ExecuteError::Busy => StatusCode::CONFLICT,
+        ExecuteError::Disabled => StatusCode::FORBIDDEN,
+        ExecuteError::BadRequest(_) => StatusCode::BAD_REQUEST,
+        ExecuteError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn execute_error_response(error: ExecuteError) -> Response {
+    (execute_error_status(&error), error.to_string()).into_response()
+}
+
+/// `POST /v1/swarm/execute`: run a goose prompt on this node for a same-account peer.
+///
+/// Gate order (each is loud, none is a fallback): `allow_remote_execution=false` → `403`;
+/// an unparseable body → `400`; the receive-side idle guard (`local_node().status !=
+/// Idle`) → `409` (a busy node refuses remote work NOW); no executor injected → `501`;
+/// otherwise the executor runs and its `202 {session_id}` (or mapped error) is returned.
+/// Auth (bearer / `?token=`, constant-time) is enforced by the router middleware.
+async fn execute(
+    State(ctx): State<Ctx>,
+    body: Result<Json<ExecuteRequest>, JsonRejection>,
+) -> Response {
+    if !ctx.allow_remote_execution {
+        return execute_error_response(ExecuteError::Disabled);
+    }
+
+    let Json(req) = match body {
+        Ok(json) => json,
+        Err(rejection) => {
+            return execute_error_response(ExecuteError::BadRequest(format!(
+                "invalid execute request body: {rejection}"
+            )));
+        }
+    };
+
+    // Receive-side idle guard: the node the work lands on decides, from its own live
+    // session state, whether it can take work now. `local_node().status` is `Idle`/`Busy`
+    // (the source never fabricates `Offline` — that is a mesh-level verdict).
+    if ctx.source.local_node().await.status != NodeStatus::Idle {
+        return execute_error_response(ExecuteError::Busy);
+    }
+
+    let Some(executor) = ctx.executor.as_ref() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "remote execution not wired on this node".to_string(),
+        )
+            .into_response();
+    };
+
+    match executor.execute(req).await {
+        Ok(accepted) => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
+        Err(error) => execute_error_response(error),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

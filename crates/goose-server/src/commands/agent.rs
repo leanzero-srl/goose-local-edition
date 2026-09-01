@@ -63,6 +63,15 @@ pub async fn run() -> Result<()> {
         app_state.session_delta_tap(),
     ));
 
+    // Inject the LeanZero Link remote executor (also in `goose`, which cannot reach the
+    // reply machinery that lives here). Once set, this node's `POST /v1/swarm/execute`
+    // route — and `LinkManager::remote_execute`'s self short-circuit — run a real goose
+    // reply and mirror its deltas over `/v1/swarm/stream`. Without this path the link
+    // layer answers `501` (execution not wired) — loud-absent, not broken.
+    goose::acp::server::set_executor(crate::remote_executor::GoosedRemoteExecutor::new(
+        app_state.clone(),
+    ));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)

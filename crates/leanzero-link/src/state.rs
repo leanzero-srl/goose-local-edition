@@ -20,6 +20,8 @@ use std::time::Duration;
 use chrono::Utc;
 use futures::stream::BoxStream;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::task::JoinHandle;
 
 use crate::mesh::MeshPeer;
@@ -37,6 +39,53 @@ pub trait SwarmStateSource: Send + Sync + 'static {
     async fn local_node(&self) -> NodeState;
     async fn local_sessions(&self) -> Vec<SessionSummary>;
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent>;
+}
+
+/// Body of `POST /v1/swarm/execute`: one node's request that THIS node run a goose
+/// prompt. Field names are the wire contract the iOS companion and the swarm dispatcher
+/// send. `working_dir`/`session_id` are optional: absent `working_dir` defaults to the
+/// node's link workspace (the executor decides — goose-server uses `$HOME`), and absent
+/// `session_id` creates a fresh session; a present one reuses that session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecuteRequest {
+    pub prompt: String,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+/// `202` body of `POST /v1/swarm/execute`: the run was accepted and is now streaming its
+/// per-message deltas over `/v1/swarm/stream` (the P4 mirror) — there is no separate
+/// result channel. `session_id` is the session the run drives (created or reused).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecuteAccepted {
+    pub session_id: String,
+}
+
+/// A remote-execute failure. Each variant maps to one HTTP status on the control route
+/// (see `control::execute_error_status`): `Busy` → 409, `Disabled` → 403,
+/// `BadRequest` → 400, `Internal` → 500. Never an empty-success or a fabricated accept.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ExecuteError {
+    #[error("node is busy")]
+    Busy,
+    #[error("remote execution disabled on this node")]
+    Disabled,
+    #[error("bad request: {0}")]
+    BadRequest(String),
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+/// What the control service needs to actually RUN a remote prompt on this machine.
+/// goose-server implements it (`GoosedRemoteExecutor`) over its reply machinery; the
+/// control route calls it after the receive-side gates pass. The trait is the seam —
+/// this crate never spawns an agent itself. Injected into the control service beside the
+/// [`SwarmStateSource`]; `None` there means the route answers `501` (never a fake accept).
+#[async_trait::async_trait]
+pub trait RemoteExecutor: Send + Sync + 'static {
+    async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError>;
 }
 
 /// One mesh peer as a polling/subscription target. `mesh_ip: None` (tailscaled
@@ -245,6 +294,24 @@ impl PeerRegistry {
                 .then_with(|| a.session_id.cmp(&b.session_id))
         });
         all
+    }
+
+    /// Base URL (`http://<mesh_ip>:<port>`) of the peer identified by `node_id` — the
+    /// address [`LinkManager::remote_execute`](crate::manager::LinkManager::remote_execute)
+    /// POSTs `/v1/swarm/execute` to. Matches on the peer's folded `node_id` first, then on
+    /// the registry key / reported hostname (so a target is reachable even before the first
+    /// poll has folded its self-reported id). `None` when no such peer is known or it
+    /// reports no mesh IP (a permanently `Offline` row is not a POST target).
+    pub fn peer_base_url(&self, node_id: &str) -> Option<String> {
+        let peers = self.inner.peers.lock().unwrap();
+        peers
+            .values()
+            .find(|entry| {
+                entry.state.node_id == node_id
+                    || entry.target.hostname == node_id
+                    || entry.state.hostname == node_id
+            })
+            .and_then(|entry| entry.target.base_url())
     }
 
     /// Abort every peer task and clear the view.
