@@ -73,7 +73,8 @@ use research::{
     emit_research_planned, files_from_objective, fold_research_panic, load_research_mini,
     persist_request_text, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
     research_prompt_head, research_request_block, research_schema, research_sources_block,
-    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, REQUEST_FILE,
+    RESEARCH_ANSWERED,
 };
 mod research_plan;
 use research_plan::{covering_mini, route_questions_to_decisions};
@@ -87,6 +88,8 @@ mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod plan_repairs;
 use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
+mod tree;
+use tree::snapshot_tree_files;
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -11966,47 +11969,6 @@ fn render_previous_attempt_block(calls_jsonl: &str, current_attempt: u32) -> Opt
          shows was done.",
     );
     Some(block)
-}
-
-/// II-1 fs_delta, half 1: a cheap (path → mtime secs, size) map of the tree, taken at attempt
-/// start. Excludes the engine's own bookkeeping and cache dirs so the delta is the APP's files.
-fn snapshot_tree_files(root: &Path) -> std::collections::BTreeMap<String, (i64, u64)> {
-    const SKIP_DIRS: [&str; 6] = [
-        ".swarm",
-        ".git",
-        "__pycache__",
-        "node_modules",
-        ".venv",
-        "target",
-    ];
-    let mut out = std::collections::BTreeMap::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
-                if !SKIP_DIRS.contains(&name.as_str()) {
-                    stack.push(path);
-                }
-                continue;
-            }
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.insert(rel.to_string_lossy().into_owned(), (mtime, meta.len()));
-            }
-        }
-    }
-    out
 }
 
 /// II-1 fs_delta, half 2: what appeared/changed during THIS attempt's window, and which of those
@@ -28180,6 +28142,31 @@ impl GooseAgentDispatcher {
         } else {
             format!("{}\n\n", req.doc_facts.trim())
         };
+        // VA-008 adjunct (D6): the FULL request has been on disk at `.swarm/request.md` since OPEN
+        // (`persist_request_text`), and only research lanes were ever told. r6c web-viz spent ~160
+        // minutes extracting the 53k-char spec out of run.jsonl with python because nobody said
+        // the file exists. ONE line names the path — absolute, like the YOU OWN list, and the real
+        // tree's copy (a repair shard's shadow has no .swarm) — never the spec text itself. Gate 1:
+        // a missing file is a named absence event, never a pointer at nothing.
+        let request_file_block = {
+            let path = self.working_dir.join(REQUEST_FILE);
+            if path.is_file() {
+                format!(
+                    "THE FULL REQUEST is on disk at `{}` — the complete original text (your task \
+                     statement quotes the sections that concern you). When you need a section you were \
+                     not handed, `grep -n` that file and `sed -n 'A,Bp'` the lines; never reconstruct \
+                     the request from run logs.\n\n",
+                    path.display()
+                )
+            } else {
+                self.events.write_value(serde_json::json!({
+                    "event": "request_file_absent_at_dispatch",
+                    "task_id": req.task_id,
+                    "path": path.display().to_string(),
+                }));
+                String::new()
+            }
+        };
         // Hand the worker the AGREED layout: the full file manifest (so imports match where modules
         // actually live) and its OWN exact paths (so it never writes a divergent copy to the cwd root).
         // Gated on the manifest, not owned_files — integrate-verify owns nothing but most needs the map.
@@ -29140,11 +29127,12 @@ impl GooseAgentDispatcher {
              expected for a new project: just create your files, do not go looking elsewhere.\n\
              - NEVER read the swarm's/harness's OWN artifacts that may sit in this directory or its parent: \
              `out.json`, any `*out.json`, `*progress*.log`, `plan.json`, `prompt.txt`, or the `.swarm/` \
-             folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
-             you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
-             completely and also do NOT create a `plan.json`.\n\
+             folder — with ONE exception, `.swarm/request.md`, which is the request itself (named below \
+             when it exists). They are run logs / the plan / the task prompt — NOT project files; cat-ing \
+             them tells you nothing and wastes turns (workers have looped 10+ times on `plan.json`). \
+             Ignore them completely and also do NOT create a `plan.json`.\n\
              {reading_rules}{stopping_rules}{HANDOFF_RULE}{supervisor_rules}\
-             \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{context_block}"
+             \n{write_first_block}{request_file_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
