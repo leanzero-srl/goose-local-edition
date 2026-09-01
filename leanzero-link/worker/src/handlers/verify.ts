@@ -1,8 +1,9 @@
-import { JWT_TTL_SECONDS, OTP_MAX_ATTEMPTS } from "../lib/config";
-import type { Deps } from "../lib/deps";
+import { JWT_TTL_SECONDS, OTP_MAX_ATTEMPTS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIMIT } from "../lib/config";
+import type { Deps, KVStore } from "../lib/deps";
 import { jsonResponse, readJsonBody } from "../lib/http";
 import { signJwt } from "../lib/jwt";
 import { constantTimeEqual, hashOtp } from "../lib/otp";
+import { bumpFixedWindow } from "../lib/ratelimit";
 import { upsertAudienceContact } from "../lib/resend";
 import { normalizeCode, normalizeEmail } from "../lib/validate";
 import { otpKey, type OtpRecord } from "./requestCode";
@@ -27,6 +28,47 @@ function parseOtpRecord(raw: string): OtpRecord | null {
   }
 }
 
+type Claim =
+  | { kind: "absent" }
+  | { kind: "corrupt" }
+  | { kind: "expired" }
+  | { kind: "exhausted" }
+  | { kind: "claimed"; record: OtpRecord };
+
+/// Spend one attempt on the email's code BEFORE the hash is compared, as one atomic
+/// step on the record: N concurrent guesses claim N attempts (up to the cap), never one.
+/// The get→compare→put shape this replaces recorded 500 concurrent wrong codes as a
+/// single attempt and then accepted the correct code (measured).
+async function claimAttempt(kv: KVStore, key: string, nowMs: number): Promise<Claim> {
+  let claim: Claim = { kind: "absent" };
+  await kv.update(key, (raw) => {
+    if (raw === null) {
+      claim = { kind: "absent" };
+      return "keep";
+    }
+    const record = parseOtpRecord(raw);
+    if (record === null) {
+      claim = { kind: "corrupt" };
+      return "delete";
+    }
+    if (nowMs >= record.expiresAtMs) {
+      claim = { kind: "expired" };
+      return "delete";
+    }
+    if (record.attempts >= OTP_MAX_ATTEMPTS) {
+      claim = { kind: "exhausted" };
+      return "keep";
+    }
+    claim = { kind: "claimed", record };
+    const remainingSeconds = Math.ceil((record.expiresAtMs - nowMs) / 1000);
+    return {
+      value: JSON.stringify({ ...record, attempts: record.attempts + 1 } satisfies OtpRecord),
+      expirationTtl: Math.max(remainingSeconds, 60),
+    };
+  });
+  return claim;
+}
+
 export async function handleVerify(request: Request, deps: Deps): Promise<Response> {
   const secret = deps.config.jwtSecret;
   if (!secret) {
@@ -47,30 +89,33 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
     return jsonResponse(400, { error: "code must be a 6-digit string" });
   }
 
+  const verifyLimit = await bumpFixedWindow(deps.kv, `rl:verify:${email}`, VERIFY_RATE_LIMIT, RATE_WINDOW_SECONDS, deps.now());
+  if (verifyLimit.limited) {
+    deps.log("rate_limited", { scope: "verify", email, retryAfterSeconds: verifyLimit.retryAfterSeconds });
+    return jsonResponse(
+      429,
+      { error: "rate limited", scope: "email", retryAfterSeconds: verifyLimit.retryAfterSeconds },
+      { "Retry-After": String(verifyLimit.retryAfterSeconds) },
+    );
+  }
+
   const key = otpKey(email);
-  const raw = await deps.kv.get(key);
-  if (raw === null) {
-    return jsonResponse(401, { error: "invalid or expired code" });
-  }
-  const record = parseOtpRecord(raw);
-  if (record === null) {
-    deps.log("otp_record_corrupt", { email });
-    await deps.kv.delete(key);
-    return jsonResponse(401, { error: "invalid or expired code" });
-  }
-  if (deps.now() >= record.expiresAtMs) {
-    await deps.kv.delete(key);
-    return jsonResponse(401, { error: "invalid or expired code" });
-  }
-  if (record.attempts >= OTP_MAX_ATTEMPTS) {
-    deps.log("otp_attempts_exhausted", { email });
-    return jsonResponse(429, { error: "too many attempts; request a new code" });
+  const claim = await claimAttempt(deps.kv, key, deps.now());
+  switch (claim.kind) {
+    case "absent":
+    case "expired":
+      return jsonResponse(401, { error: "invalid or expired code" });
+    case "corrupt":
+      deps.log("otp_record_corrupt", { email });
+      return jsonResponse(401, { error: "invalid or expired code" });
+    case "exhausted":
+      deps.log("otp_attempts_exhausted", { email });
+      return jsonResponse(429, { error: "too many attempts; request a new code" });
+    case "claimed":
+      break;
   }
   const submittedHash = await hashOtp(email, code);
-  if (!constantTimeEqual(submittedHash, record.hash)) {
-    const updated: OtpRecord = { ...record, attempts: record.attempts + 1 };
-    const remainingSeconds = Math.ceil((record.expiresAtMs - deps.now()) / 1000);
-    await deps.kv.put(key, JSON.stringify(updated), { expirationTtl: Math.max(remainingSeconds, 60) });
+  if (!constantTimeEqual(submittedHash, claim.record.hash)) {
     return jsonResponse(401, { error: "invalid or expired code" });
   }
 

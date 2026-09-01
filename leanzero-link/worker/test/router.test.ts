@@ -59,9 +59,11 @@ describe("router + CORS", () => {
 
   it("converts an unhandled handler crash into a logged 500", async () => {
     const h = makeHarness();
-    h.deps.kv.get = async () => {
+    const unbound = async (): Promise<never> => {
       throw new Error("KV binding LINK_KV is not configured");
     };
+    h.deps.kv.get = unbound;
+    h.deps.kv.update = unbound;
     const response = await handleRequest(
       postJson("/v1/auth/request-code", { email: "user@example.com" }, { "CF-Connecting-IP": "203.0.113.7" }),
       h.deps,
