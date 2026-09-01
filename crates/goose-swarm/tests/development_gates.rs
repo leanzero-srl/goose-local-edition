@@ -346,9 +346,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 37,514 (VA-027 D7): the two inline rsync argument lists (best-tree snapshot and
 /// restore) collapsed into `tree::rsync_app_tree` over ONE exclusion list, paying for the write-once
 /// `.swarm/prefix-tree` snapshot at the INTEGRATE -> REPAIR handover (`prefix_tree_snapshot{ok, files}`).
+/// Tightened to 37,503 (VA-030 D10-5/6/7): `content_hash` and its test moved to commands/swarm/tree.rs,
+/// paying for `write_ledger_mini_checked` (the research fan's four writers emit
+/// `research_mini_write_failed` through `persist_research_row`) and the cover site's sink argument.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_514;
+    const SWARM_RS_LINE_BASELINE: usize = 37_503;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

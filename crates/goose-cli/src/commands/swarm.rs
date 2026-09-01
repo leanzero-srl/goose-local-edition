@@ -71,9 +71,9 @@ mod research;
 use research::{
     announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
     emit_research_planned, files_from_objective, fold_research_panic, load_research_mini,
-    persist_request_text, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
-    research_prompt_head, research_request_block, research_schema, research_sources_block,
-    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, REQUEST_FILE,
+    persist_request_text, persist_research_row, relay_note, relay_targets, research_dispatch_text,
+    research_fan_lanes, research_prompt_head, research_request_block, research_schema,
+    research_sources_block, research_system_text, ResearchQuestion, ResearchRow, REQUEST_FILE,
     RESEARCH_ANSWERED,
 };
 mod research_plan;
@@ -89,7 +89,7 @@ use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod plan_repairs;
 use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
 mod tree;
-use tree::{rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
+use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -22222,7 +22222,7 @@ impl GooseAgentDispatcher {
                     None if q.is_cited_fact() => {
                         emit_question_disposition(self.events.as_ref(), &rq, "fact");
                         let row = ResearchRow::spec_fact(&rq);
-                        write_research_ledger(&self.working_dir, &row);
+                        persist_research_row(&self.working_dir, self.events.as_ref(), &row);
                         fact_rows.push(row);
                     }
                     // C2(a): routed to an open decision — no row of its own; the decision's
@@ -22317,12 +22317,12 @@ impl GooseAgentDispatcher {
                     let landed = research::load_research_minis(&me.working_dir);
                     let mut remaining: Vec<ResearchQuestion> = Vec::new();
                     for q in batch {
-                        let Some((cover, rule)) = covering_mini(&q, &landed) else {
+                        let Some((cover, rule)) = covering_mini(&q, &landed, me.events.as_ref()) else {
                             remaining.push(q);
                             continue;
                         };
                         let row = ResearchRow::covered_by(&q, cover, rule);
-                        write_research_ledger(&me.working_dir, &row);
+                        persist_research_row(&me.working_dir, me.events.as_ref(), &row);
                         me.events.write_value(serde_json::json!({
                             "event": "research_question_covered",
                             "slice": q.slice,
@@ -22415,7 +22415,7 @@ impl GooseAgentDispatcher {
                         // raised question) are the loud channel tick.py counts. Each landed
                         // row is relayed to the still-running lanes whose questions name a
                         // path it names (E7, re-aimed by C3).
-                        write_research_ledger(&me.working_dir, &row);
+                        persist_research_row(&me.working_dir, me.events.as_ref(), &row);
                         emit_research_outcome(me.events.as_ref(), &row);
                         me.queue_research_relay(&row);
                         out_rows.push(row);
@@ -22438,7 +22438,7 @@ impl GooseAgentDispatcher {
                     // the same funnel as every other row, and the brief keeps the raw question.
                     for q in &batches[i] {
                         let row = fold_research_panic(q, &error);
-                        write_research_ledger(&self.working_dir, &row);
+                        persist_research_row(&self.working_dir, self.events.as_ref(), &row);
                         emit_research_outcome(self.events.as_ref(), &row);
                         rows.push(row);
                     }
@@ -22836,32 +22836,9 @@ impl GooseAgentDispatcher {
     }
 }
 
-/// A cheap stable content hash (FNV-1a) — provenance, not cryptography (the `desc_sha` a brief is
-/// stamped with).
-fn content_hash(bytes: &[u8]) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
-    }
-    format!("{h:016x}")
-}
-
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
-
-    #[test]
-    fn content_hash_is_stable_and_separates_bytes() {
-        let v1 = content_hash(b"def f(): return 41");
-        let v2 = content_hash(b"def f(): return 42");
-        assert_ne!(v1, v2, "different bytes must hash apart");
-        assert_eq!(
-            v1,
-            content_hash(b"def f(): return 41"),
-            "same bytes, same hash"
-        );
-    }
 
     /// P1-6: the ON-form excerpt carries the BEHAVIOUR a signature deletes. A ledgerd-shaped
     /// dependency returns {"data": [...]} whose rows carry `amount_minor` — the two literals r0's
@@ -26652,20 +26629,32 @@ fn write_ledger_mini(
     file_name: &str,
     row: &serde_json::Value,
 ) -> Option<std::path::PathBuf> {
+    write_ledger_mini_checked(root, file_name, row).ok()
+}
+
+/// The same funnel with the failure NAMED (VA-030 D10-5, gate 1): the research fan's four writers
+/// emit `research_mini_write_failed` from this error instead of discarding an Option — a fact mini
+/// that failed to write was counted in `research_planned.facts` and rendered from memory while
+/// resume, cover and the snowball never saw it, with no event.
+fn write_ledger_mini_checked(
+    root: &Path,
+    file_name: &str,
+    row: &serde_json::Value,
+) -> Result<std::path::PathBuf, String> {
     let dir = root.join(LEDGER_DIR);
-    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let path = dir.join(file_name);
-    let bytes = serde_json::to_string_pretty(row).ok()?;
+    let bytes = serde_json::to_string_pretty(row).map_err(|e| format!("serialize: {e}"))?;
     // Finding 9: an unchanged row is a byte-AND-mtime no-op, so a gate replay over an archived
     // tree leaves its ledger looking exactly as archived ("freshest 0s ago" was a replay
     // artifact, not run activity). The roll-up write below makes the same comparison.
     if std::fs::read_to_string(&path).is_ok_and(|old| old == bytes) {
         rebuild_ledger_rollup(root);
-        return Some(path);
+        return Ok(path);
     }
-    std::fs::write(&path, bytes).ok()?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     rebuild_ledger_rollup(root);
-    Some(path)
+    Ok(path)
 }
 
 /// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
@@ -36895,7 +36884,7 @@ mod audit_regressions {
             origin: String::new(),
             batch: 0,
         };
-        write_research_ledger(root, &row).expect("the mini writes through the funnel");
+        research::write_research_ledger(root, &row).expect("the mini writes through the funnel");
         let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
         assert_eq!(back.status, RESEARCH_ANSWERED);
         assert_eq!(back.answer, row.answer);
@@ -36948,7 +36937,7 @@ mod audit_regressions {
             origin: String::new(),
             batch: 0,
         };
-        write_research_ledger(
+        research::write_research_ledger(
             root,
             &mk(
                 0,
@@ -36958,7 +36947,7 @@ mod audit_regressions {
             ),
         )
         .unwrap();
-        write_research_ledger(
+        research::write_research_ledger(
             root,
             &mk(1, RESEARCH_UNANSWERED, "what about the webhook secret", ""),
         )
