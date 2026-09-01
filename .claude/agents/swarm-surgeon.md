@@ -31,7 +31,7 @@ lines). You receive a brief naming exact functions/anchors; you do not wander.
    never counters alone.
 5. Every app-under-test spawn goes through `spawn_grouped`/`kill_app_tree` (own process group).
    Bare `tokio::process::Command` + `kill()` leaks grandchildren that park readers forever.
-6. REVIEW is ONE round (`review_once`); no planning phase may loop on an LLM's own novelty.
+6. The LLM REVIEW round is DELETED (2447d145c, 2026-09-01: 0 effective patches in 3 runs); the deterministic plan repairs in `finalize_plan_before_dag` are the mechanism, and no planning phase may loop on an LLM's own novelty.
 
 ## The gates, short form (detail: .claude/rules/development-gates.md — Read it when touching one)
 FALLBACK: a missing input never silently substitutes content — facts, or a loud NAMED absence-event;

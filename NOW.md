@@ -94,7 +94,7 @@ in config → bench_dispatch → first_tick). Below: the r6d launch record, stil
 - research_mini_relayed events appear when a same-slice mini lands while a sibling runs (E7) — the sibling's
   next turn cites it; research-lane judge NEXT points at spec lines / "emit what you have", never an answer (E6).
 - Brief lines "POST /api/drafts -> EXPECT …" show the request→effect text with balanced backticks (E1/E12), not a
-  role; levers_resolved.retired_levers entries carry `configured` (E11); persona_loaded stack_key not angular (S4).
+  role; levers_resolved.retired_levers entries carry `configured` (E11); ~~persona_loaded stack_key not angular (S4)~~ — LEARN/persona DELETED 97d5735a4; no persona event exists.
 
 ## r6d LAUNCH RECORD (06:53 local / 03:53Z from the Benchmark view)
 
@@ -172,7 +172,7 @@ r6d FIRST-TICK EXPECTATIONS (the falsifiers for tonight's 22 engine commits — 
   complete-fix prompt (fabfe962f) — rules_delivered.rules_sections shows "repair"; findings carry request/status/
   body (afae2eb1b); complete_fix_wave.unassigned == 0 and NO critical_unassigned event; findings_assigned[] in the
   shard ledgers lists every finding; server-response findings owned by server files.
-- levers_resolved carries retired_levers (ee4c73d15); persona_loaded stack_key is python-stdlib-vanilla-web, not
+- levers_resolved carries retired_levers (ee4c73d15); ~~persona_loaded stack_key~~ (LEARN deleted 97d5735a4 — this falsifier is void), not
   angular (S4).
 - Desktop: the redesigned Benchmark view shows the session as Running under the CURRENT sb-7 section; on finish the
   outcome is Finished + score (or the honest did-not-finish).
