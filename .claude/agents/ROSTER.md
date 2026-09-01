@@ -615,3 +615,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   standalone CLI with NO mesh handle; LinkManager is a private OnceLock needing connect()),
   recommending an S0 spike BEFORE any S1-S5 code. Read-only respected. This is the model of a
   design-first pass on the sacred engine.
+- 2026-09-01 panel-surgeon (#13 nodes-tab weight = routing share, 6f3c8a282): CLEAN++. Wrote into
+  the engine's EXACT precedence (device.speed_weight wins, speed_weights map fallback) per node kind,
+  leaving concurrency (weight) untouched and honoring the CLI-owns-cloud-devices invariant (cloud
+  share via the map, no CLI call); read mirrors the same precedence so a legacy map-only config shows
+  the TRUE routed share (no lie); restored the live config to pristine after the write test. Flagged
+  the AddNodeDialog label inconsistency (says share, sets concurrency). Charter gap: none.
