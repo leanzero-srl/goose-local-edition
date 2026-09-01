@@ -524,3 +524,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   the benchmark ran; set-but-missing env override is a hard error (no fall-through). Charter-grade
   discipline without a charter — if a third link-backend brief lands, mint `link-backend` from
   this pass + the worker pass.
+- 2026-09-01 auth worker (general-purpose, leanzero-link/worker, 410ecd910): CLEAN++. Measured the
+  external APIs against live docs before coding and caught TWO real-world drifts the brief didn't
+  know — Resend Audiences deprecated → Segments (used the current API, kept the env name), Tailscale
+  OAuth secrets need a token exchange (dual-mode); audience-sync failure surfaced explicitly never
+  blocks auth (loud-absence); 58 mock-fetch tests assert the EXACT documented request bodies;
+  named the one unverifiable sub-claim (Resend 409-on-existing) and made the code robust to either.
+  Second clean link-backend pass — a THIRD link-backend brief now mints `link-backend` (this + the
+  mesh pass are the two).
