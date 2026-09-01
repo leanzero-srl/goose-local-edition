@@ -84,6 +84,8 @@ mod review_merge;
 use review_merge::{review_dedupe_key, union_lane_patches};
 mod briefs;
 mod spec_sets;
+mod spec_surface;
+use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
 mod transcripts;
 use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_reasoning_transcript,
@@ -3415,150 +3417,6 @@ fn spec_doc_urls(spec: &str) -> Vec<String> {
         // this bench it is the very service the build is supposed to write a client for.
         if url.split("://").nth(1).is_some_and(|r| r.contains('/')) && !out.contains(&url) {
             out.push(url);
-        }
-    }
-    out
-}
-
-/// Pure, and deliberately narrow: it returns METHOD PATH -> EXPECTED triples only, never spec prose,
-/// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
-/// the caller emits today's string byte-for-byte.
-fn spec_advertised_surface(spec: &str) -> Vec<String> {
-    let SpecSurface { primary, rows } = spec_surface_rows(spec);
-    rows.into_iter()
-        .filter(|(service, _)| primary.is_none() || *service == primary)
-        .map(|(_, row)| row)
-        .collect()
-}
-
-/// Every endpoint-table row in the spec, each tagged with the service whose section it sits in, plus
-/// the primary service's name. `spec_advertised_surface` is the primary's rows and nothing else; the
-/// plan repair's rule (d) needs the OTHER services' rows too, addressed to their own entry owners, and a
-/// second table parser would drift from this one the way the inline decomposition counters did.
-struct SpecSurface {
-    primary: Option<String>,
-    rows: Vec<(Option<String>, String)>,
-}
-
-fn spec_surface_rows(spec: &str) -> SpecSurface {
-    let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
-    // THE PATH IS THE FIRST BACKTICKED TOKEN when the cell opens with a backtick, else the first
-    // whitespace token. sb-7's row `| `GET` | `/` + `web/*` | …` stripped by `unwrap_cell` to
-    // "/` + `web/*"; every consumer then took its first whitespace token, "/`", and the gate curled
-    // an endpoint that exists nowhere — r0's "GET /` returned 404". The REAL `/` was never emitted
-    // at all, so the frontend row went unprobed while its phantom twin blocked green.
-    let path_cell = |c: &str| -> String {
-        let c = c.trim();
-        match c.strip_prefix('`') {
-            Some(rest) => rest.split('`').next().unwrap_or("").trim().to_string(),
-            None => c.split_whitespace().next().unwrap_or("").to_string(),
-        }
-    };
-    // ONE SERVICE'S SURFACE, NOT THE WHOLE DOCUMENT'S. sb-7 documents two services: §3 `ledgerd`,
-    // whose table the gate boots and probes, and §6 `notifierd`, whose /notify/* and /health rows
-    // are served on notifierd's OWN port. Every consumer of `spec_advertised_surface` — the GET
-    // prober, the POST prober, the unprobed disclosure, the tester angle and the fix worker —
-    // addresses ONE port, so notifierd's rows probed on ledgerd's port were three of r0's phantom
-    // 404s. The nearest heading's backticked name is a row's service; the FIRST endpoint table's
-    // service is the primary; a row named for another service is tagged with that name and the
-    // primary-only consumer drops it. Only headings AT THAT LEVEL OR DEEPER denote services: sb-7's
-    // title is "# Build `app`", and letting an unnamed section inherit from it made §5's drafts rows
-    // (`### 5. The approval workflow`, no name) belong to `app` rather than to ledgerd and dropped
-    // them. Ancestors above the first table's named heading are the document, not a service; an
-    // unnamed sibling section is the primary's.
-    // The notifier port IS known to the gate (`spec_run_argv_v2` fills it second), so a future
-    // prober can address those rows there; today nothing does, and probing them there is a lie.
-    let mut service_by_level: [Option<String>; 7] = Default::default();
-    let mut first_row_seen = false;
-    let mut primary: Option<(usize, String)> = None;
-    let mut in_fence = false;
-    let mut rows = Vec::new();
-    for line in spec.lines() {
-        let line = line.trim();
-        if line.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if !in_fence && line.starts_with('#') {
-            let level = line.chars().take_while(|c| *c == '#').count();
-            if level <= 6 && line.get(level..).is_some_and(|rest| rest.starts_with(' ')) {
-                for slot in service_by_level.iter_mut().skip(level) {
-                    *slot = None;
-                }
-                service_by_level[level] = heading_service_name(line);
-            }
-            continue;
-        }
-        if !line.starts_with('|') {
-            continue;
-        }
-        let cells: Vec<&str> = line.trim_matches('|').split('|').collect();
-        if cells.len() < 3 {
-            continue;
-        }
-        let method = unwrap_cell(cells[0]).to_uppercase();
-        if !matches!(
-            method.as_str(),
-            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
-        ) {
-            continue; // header row, separator row, or a table that is not an endpoint table
-        }
-        let path = path_cell(cells[1]);
-        if !path.starts_with('/') {
-            continue;
-        }
-        if !first_row_seen {
-            first_row_seen = true;
-            primary = service_by_level
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(level, s)| s.as_ref().map(|s| (level, s.clone())));
-        }
-        let service = primary.as_ref().map(|(level, name)| {
-            service_by_level[*level..]
-                .iter()
-                .rev()
-                .find_map(|s| s.clone())
-                .unwrap_or_else(|| name.clone())
-        });
-        let expected = unwrap_cell(cells[2]);
-        rows.push((
-            service,
-            if expected.is_empty() {
-                format!("{method} {path}")
-            } else {
-                format!("{method} {path} -> EXPECT {expected}")
-            },
-        ));
-    }
-    SpecSurface {
-        primary: primary.map(|(_, name)| name),
-        rows,
-    }
-}
-
-/// The backticked service a section heading names — `### 3. `ledgerd` — …` is `ledgerd`,
-/// `### 3. `vendorsync/api.py` — the HTTP backend` is `vendorsync/api.py`. None for an unnamed
-/// heading (`#### Endpoints`) and for a backticked PATH (`### GET `/api/health``), which names an
-/// endpoint rather than the thing serving it.
-fn heading_service_name(heading: &str) -> Option<String> {
-    let name = heading.split('`').nth(1)?.trim();
-    (!name.is_empty() && !name.starts_with('/') && !name.contains(char::is_whitespace))
-        .then(|| name.to_string())
-}
-
-/// Advertised endpoints that MUTATE, as bare paths. `spec_advertised_surface` returns display
-/// strings ("POST /api/sync -> EXPECT {...}"); this returns the paths a prober can actually call.
-fn spec_post_endpoints(spec: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for adv in spec_advertised_surface(spec) {
-        let mut it = adv.split_whitespace();
-        let (Some(method), Some(path)) = (it.next(), it.next()) else {
-            continue;
-        };
-        if method == "POST" && path.starts_with('/') && !out.contains(&path.to_string()) {
-            out.push(path.to_string());
         }
     }
     out
@@ -9140,57 +8998,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(
             tick.iter().all(|p| !p.contains('`')),
             "backticked endpoints must not carry the delimiter: {tick:?}"
-        );
-    }
-
-    #[test]
-    fn spec_advertised_surface_enumerates_the_real_endpoint_table() {
-        // The real spec's shape, verbatim from evals/swarm-bench/spec-build.md.
-        let spec = "\
-## 3. `vendorsync/api.py`\n\n\
-| Method | Path | Response |\n\
-|---|---|---|\n\
-| `GET` | `/api/health` | `{\"status\": \"ok\", \"payments\": <int>}` |\n\
-| `GET` | `/api/summary` | `{\"count\": <int>, \"currency\": \"EUR\"}` |\n\
-| `POST` | `/api/sync` | `{\"fetched\": <int>, \"inserted\": <int>}` |\n\n\
-`limit` defaults to 25 and is capped at 100.\n";
-        let items = spec_advertised_surface(spec);
-        assert_eq!(
-            items.len(),
-            3,
-            "three endpoint rows, header and separator skipped: {items:?}"
-        );
-        assert!(
-            items[0].starts_with("GET /api/health -> EXPECT"),
-            "{:?}",
-            items[0]
-        );
-        assert!(
-            items[2].starts_with("POST /api/sync -> EXPECT"),
-            "{:?}",
-            items[2]
-        );
-        // DETERMINISM is the whole point — the same spec must yield the same list, so three shards
-        // partition one list instead of three they each invented.
-        assert_eq!(items, spec_advertised_surface(spec));
-        // PROSE MUST NOT SURVIVE. A read-only shard handed a build order is the failure this is
-        // deliberately narrow to avoid.
-        assert!(
-            !items.iter().any(|i| i.contains("defaults to 25")),
-            "{items:?}"
-        );
-        assert!(
-            !items.iter().any(|i| i.contains("vendorsync/api.py")),
-            "{items:?}"
-        );
-
-        // A spec with no endpoint table yields NOTHING, so the caller emits today's string
-        // byte-for-byte and the change is inert rather than half-applied.
-        assert!(spec_advertised_surface("# Build a CLI\n\nIt should be fast.\n").is_empty());
-        assert!(spec_advertised_surface("").is_empty());
-        // A markdown table that is not an endpoint table must not be mistaken for one.
-        assert!(
-            spec_advertised_surface("| Name | Type |\n|---|---|\n| `id` | `str` |\n").is_empty()
         );
     }
 
@@ -37477,41 +37284,6 @@ mod live_fleet_tests {
                 "{brief:?} must not mention {path}"
             );
         }
-    }
-
-    /// `spec_surface_rows` tags every row with its service and `spec_advertised_surface` is its
-    /// primary-only view — the notifierd rows the gate must not probe on ledgerd's port are still
-    /// enumerated, under their own name, for the repair to address to notifierd's entry owner.
-    #[test]
-    fn spec_surface_rows_tags_every_service_and_the_primary_view_is_unchanged() {
-        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
-        let SpecSurface { primary, rows } = spec_surface_rows(spec);
-        assert_eq!(primary.as_deref(), Some("ledgerd"));
-        let notifierd: Vec<&str> = rows
-            .iter()
-            .filter(|(s, _)| s.as_deref() == Some("notifierd"))
-            .map(|(_, r)| r.as_str())
-            .collect();
-        assert_eq!(notifierd.len(), 4, "{notifierd:?}");
-        assert!(notifierd[0].starts_with("POST /notify/events"));
-        let primary_rows: Vec<String> = rows
-            .iter()
-            .filter(|(s, _)| *s == primary)
-            .map(|(_, r)| r.clone())
-            .collect();
-        assert_eq!(primary_rows, spec_advertised_surface(spec));
-        assert!(
-            primary_rows
-                .iter()
-                .any(|r| r == "GET / -> EXPECT the frontend files, correct content types"),
-            "{primary_rows:?}"
-        );
-        assert!(
-            primary_rows
-                .iter()
-                .any(|r| r.starts_with("POST /api/drafts ")),
-            "§5's unnamed section belongs to the primary"
-        );
     }
 
     /// The verifier must be RIGHT, because unlike the judge its findings are facts and will be acted on

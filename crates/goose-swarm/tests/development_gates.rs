@@ -277,9 +277,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `rules_delivered` labels. The move paid for the repair arms of `stopping_rules` and
 /// `rules_sections` (a repair shard no longer reads "report DONE immediately", "STOP WHEN GREEN"
 /// and "you may edit ANY file" against its own order).
+/// Tightened to 40,765 (r6e header-named shape column): the endpoint-table parser
+/// (`SpecSurface`/`spec_surface_rows`/`heading_service_name`/`spec_advertised_surface`/
+/// `spec_post_endpoints`) and its two table tests moved to commands/swarm/spec_surface.rs,
+/// paying for the header-named expected-shape column (r6c's briefs read §5's ROLE column as the
+/// response shape: "POST /api/drafts -> EXPECT maker or checker").
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 40_993;
+    const SWARM_RS_LINE_BASELINE: usize = 40_765;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
