@@ -10,10 +10,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::decisions::{self, DECISION_SLICE};
+use super::decisions::{self, DecisionState, PlanDecision, DECISION_SLICE};
 use super::findings::FINDING_PATH_EXTS;
 use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
 use super::orientation::{children_of, heading_key, top_level};
+use super::research_plan::{content_words, decision_ids};
 use super::spec_surface::spec_surface_rows;
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{orientation_armed, spec_sections, SliceBrief};
@@ -1350,6 +1351,199 @@ fn files_from_objective(objective: &str) -> Vec<String> {
     out
 }
 
+/// What a slice can be NAMED BY (VA-012): its id, its declared files and their basenames, the
+/// file-like tokens of its claimed headings (`DECISIONS.md`; a bare `web/` or `app` is not a
+/// name), the routes its claimed sections advertise, and the decision ids (`D1`) its claimed
+/// bodies cite. Lowercased — `content_words` lowercases the text it is matched against.
+struct SliceVocabulary {
+    names: BTreeSet<String>,
+    routes: BTreeSet<String>,
+    decision_ids: BTreeSet<u32>,
+}
+
+fn slice_vocabulary(
+    slice_id: &str,
+    files: &[String],
+    claimed: &[String],
+    sections: &[SpecSection],
+) -> SliceVocabulary {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    names.insert(slice_id.to_lowercase());
+    for f in files {
+        names.insert(f.to_lowercase());
+        if let Some((_, base)) = f.rsplit_once('/') {
+            names.insert(base.to_lowercase());
+        }
+    }
+    let mut routes: BTreeSet<String> = BTreeSet::new();
+    let mut ids: BTreeSet<u32> = BTreeSet::new();
+    for want in claimed {
+        for (i, seg) in want.split('`').enumerate() {
+            let tok = seg.trim().trim_end_matches('/');
+            if i % 2 == 1 && (tok.contains('/') || tok.contains('.')) {
+                names.insert(tok.to_lowercase());
+            }
+        }
+        let key = heading_key(want);
+        if let Some(sec) = sections.iter().find(|s| heading_key(&s.heading) == key) {
+            routes.extend(advertised_paths(sec).into_iter().map(|p| p.to_lowercase()));
+            ids.extend(decision_ids(&sec.body));
+        }
+    }
+    SliceVocabulary {
+        names,
+        routes,
+        decision_ids: ids,
+    }
+}
+
+impl SliceVocabulary {
+    /// Does `text` name this slice — a content word that IS one of its names or files (or a
+    /// path ending in one of its basenames), or that is one of its routes (or a template under
+    /// one: `/api/drafts/` from `/api/drafts/<id>/submit` names `/api/drafts`)?
+    fn named_in(&self, text: &str) -> bool {
+        content_words(text).iter().any(|tok| {
+            self.names
+                .iter()
+                .any(|n| tok == n || (!n.contains('/') && tok.ends_with(&format!("/{n}"))))
+                || self
+                    .routes
+                    .iter()
+                    .any(|r| tok == r || tok.starts_with(&format!("{r}/")))
+        })
+    }
+}
+
+/// Does a paragraph of a decision's answer cite the request — `request.md:NNN`, "section 7",
+/// "Sections 5 and 9", `§`? Those are the GROUNDING lines a builder can check against the spec;
+/// the rest of a handoff addressed to another slice is that slice's.
+fn cites_request(paragraph: &str) -> bool {
+    let lower = paragraph.to_lowercase();
+    if lower.contains("request.md:") || lower.contains('§') {
+        return true;
+    }
+    lower.match_indices("section").any(|(at, word)| {
+        lower.get(at + word.len()..).is_some_and(|rest| {
+            rest.trim_start_matches('s')
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+        })
+    })
+}
+
+/// The slices each plan decision NAMES (VA-012): by index into `opened.slices`. A decision names
+/// a slice when its question or answer carries one of the slice's names, files or routes
+/// (`SliceVocabulary::named_in`), when its question cites a decision id the slice's claimed
+/// bodies cite (`D1` in §9's body, claimed by r6c's web-console), or when one of the slice's own
+/// questions was routed to it (C2(a)). A decision naming NO slice is every slice's — MILD: it
+/// broadcasts, and `decision_broadcast{decision, question}` says so.
+fn decision_consumers(
+    opened: &OpenOutput,
+    vocabularies: &[SliceVocabulary],
+    d: &PlanDecision,
+    events: &dyn EventSink,
+) -> Vec<usize> {
+    let answer = match &d.state {
+        DecisionState::SettledByUser { answer } | DecisionState::SettledByResearch { answer } => {
+            answer.as_str()
+        }
+        DecisionState::Open => "",
+    };
+    let text = format!("{}\n{answer}", d.question);
+    let question_ids = decision_ids(&d.question);
+    let mut consumers: Vec<usize> = opened
+        .slices
+        .iter()
+        .enumerate()
+        .filter(|(i, sl)| {
+            sl.questions.iter().any(|q| q.decision == Some(d.q_index))
+                || !question_ids.is_disjoint(&vocabularies[*i].decision_ids)
+                || vocabularies[*i].named_in(&text)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if consumers.is_empty() {
+        events.write_value(serde_json::json!({
+            "event": "decision_broadcast",
+            "decision": d.q_index,
+            "question": head_to_sentence_end(&d.question, 200),
+        }));
+        consumers = (0..opened.slices.len()).collect();
+    }
+    consumers
+}
+
+/// One slice's DECISIONS block (VA-012): only the decisions that name it. A RESEARCH-settled
+/// decision renders as its VERDICT (the answer's first paragraph), then the answer's paragraphs
+/// that name THIS slice or cite the request — verbatim, whole — and the durable mini's path.
+/// Never a head cut: r6c's five briefs each carried the same 5,582-char block, every research
+/// answer cut at 1,500 chars with "ANSWER TRUNCATED" (27,910 chars, 22,328 duplicate), and
+/// web-console's copy of D1 ended before "3. `web/app.js` behavior contract" (char 2,057 of
+/// 2,562) — the one paragraph addressed to it. The user-settled and still-open decisions that
+/// name the slice carry no transcript and keep their exact pre-VA-012 rendering
+/// (`decisions::decisions_brief_block` over that subset) — the arm that had the defect is the
+/// only arm that changed.
+fn slice_decisions_block(
+    decisions: &[PlanDecision],
+    consumers: &[Vec<usize>],
+    slice_index: usize,
+    vocabulary: &SliceVocabulary,
+) -> String {
+    let mut settled = String::new();
+    let mut without_transcript: Vec<PlanDecision> = Vec::new();
+    for (d, who) in decisions.iter().zip(consumers) {
+        if !who.contains(&slice_index) {
+            continue;
+        }
+        match &d.state {
+            DecisionState::SettledByUser { .. } | DecisionState::Open => {
+                without_transcript.push(d.clone());
+            }
+            DecisionState::SettledByResearch { answer } => {
+                let mut paragraphs = answer
+                    .split("\n\n")
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty());
+                let verdict = paragraphs.next().unwrap_or("");
+                let indent = |p: &str| {
+                    p.lines()
+                        .map(|l| format!("  {l}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let mut lines = format!(
+                    "- {}\n  SETTLED BY PLAN-TIME RESEARCH (the user did not answer; a \
+                     convention, binding for consistency): {}\n",
+                    d.question.trim(),
+                    verdict.replace('\n', " ")
+                );
+                for p in paragraphs.filter(|p| vocabulary.named_in(p) || cites_request(p)) {
+                    lines.push_str(&indent(p));
+                    lines.push('\n');
+                }
+                lines.push_str(&format!(
+                    "  FULL ANSWER (every slice's handoff): .swarm/ledger/{}\n",
+                    research_mini_name(DECISION_SLICE, d.q_index)
+                ));
+                settled.push_str(&lines);
+            }
+        }
+    }
+    let mut out = String::new();
+    if !settled.is_empty() {
+        out.push_str(&format!(
+            "\n\nDECISIONS SETTLED AT PLAN TIME BY RESEARCH that name this slice — the verdict, \
+             the request-grounded lines and the paragraphs addressed to this slice, verbatim and \
+             BINDING; implement each exactly as written and never substitute your own \
+             convention (a decision naming no slice is repeated in every brief):\n{settled}"
+        ));
+    }
+    out.push_str(&decisions::decisions_brief_block(&without_transcript));
+    out
+}
+
 /// The brief partition every slice's builder reads, assembled from the opener's slice and the
 /// fan's terminal rows — the objective, then what the fan settled (SPEC FACTS the opener cited,
 /// answers the lanes established or an earlier mini covered), the questions that ARE open
@@ -1366,22 +1560,39 @@ pub(super) fn briefs_from_slices(
 ) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
-    // ITEM 0, amendment (b): the settled/still-open DECISIONS PARTITION, spliced into EVERY
-    // brief — including the docs/decisions task's own, whose description then quotes the settled
-    // choices verbatim (splice_briefs carries each brief into its task's description). Settled
-    // answers are quoted with provenance; a decision that stayed open keeps the pre-fan
-    // conventional-choice framing, verbatim. With no decisions the block is empty and every
-    // brief is byte-identical to the pre-partition form.
-    let folded_decisions = decisions::decisions_brief_block(plan_decisions);
     let every_claim: Vec<&[String]> = opened
         .slices
         .iter()
         .map(|sl| sl.sections.as_slice())
         .collect();
-    opened
+    // ITEM 0, amendment (b), per slice since VA-012: the settled/still-open DECISIONS PARTITION
+    // — but each brief carries the decisions that NAME its slice (files, routes, claimed
+    // sections' decision ids, routed questions), a decision naming none goes to every brief
+    // (loud), and a research answer renders as its verdict plus its slice-addressed and
+    // request-citing paragraphs, whole — never a 1,500-char head. With no decisions the block
+    // is empty and every brief is byte-identical to the pre-partition form. (The worker
+    // channel, `research_settled_worker_block`, is unchanged here.)
+    let vocabularies: Vec<SliceVocabulary> = opened
         .slices
         .iter()
         .map(|sl| {
+            slice_vocabulary(
+                &sl.id,
+                &files_from_objective(&sl.objective),
+                &sl.sections,
+                &sections,
+            )
+        })
+        .collect();
+    let consumers: Vec<Vec<usize>> = plan_decisions
+        .iter()
+        .map(|d| decision_consumers(opened, &vocabularies, d, events))
+        .collect();
+    opened
+        .slices
+        .iter()
+        .enumerate()
+        .map(|(slice_index, sl)| {
             let mut brief = sl.objective.clone();
             let files = files_from_objective(&sl.objective);
             // RESEARCH FAN v2: the slice's own questions, partitioned against what the fan
@@ -1519,7 +1730,12 @@ pub(super) fn briefs_from_slices(
                 );
                 brief.push_str(&consumed_sections_blocks(&consumed));
             }
-            brief.push_str(&folded_decisions);
+            brief.push_str(&slice_decisions_block(
+                plan_decisions,
+                &consumers,
+                slice_index,
+                &vocabularies[slice_index],
+            ));
             // The one-line settled digest slice_index renders for SYNTHESIS — answered/total
             // plus the first answer's head, cut exactly the way the index's own summary line
             // is (non-empty lines joined, sentence-end cut within 400).
@@ -3214,5 +3430,249 @@ mod tests {
         assert!(!route_named("/health", "GET /api/health"));
         assert!(!route_named("/api/drafts", "/api/drafts/<id>/submit"));
         assert!(route_named("/api/drafts", "POST /api/drafts?state=x"));
+    }
+
+    /// r6c's three plan-time decisions, verbatim: the questions from `low_confidence_ask` and
+    /// the answers from `.swarm/ledger/research-__open_decisions__-q{0,1,2}.json` (2,562 /
+    /// 3,066 / 3,243 chars).
+    const R6C_D1_Q: &str = "D1 — does the brush survive a streamed mutation of a brushed record (stay brushed vs drop out)? Documented in DECISIONS.md, owned by the web-console slice; affects viz.js dimming and app.js row state.";
+    const R6C_D2_Q: &str = "D2 — is a rejected draft terminal, or resubmittable? Affects the drafts state machine (api slice) and workflow UI (web-console slice); note the frozen state machine lists no rejected→submitted edge, which constrains the answer.";
+    const R6C_D3_Q: &str = "D3 — before the first sync completes, does the table render empty-with-progress, or block behind a loading state? Implemented in web/index.html + web/app.js (web-console slice).";
+    const R6C_D1_A: &str = r#"D1 DECISION: **stay brushed** — a streamed mutation of a brushed record leaves it in the brush set.
+
+Grounding: the request does not settle this (section 8 delegates it verbatim; vendor docs at 127.0.0.1:8850/v3/docs are silent on UI selection). So this is the published decision, chosen as the conventional choice: selections bind to entity identity, not current attribute values. It also matches the spec's own framing — "ONE brush set of record ids" — because a vendor mutation changes only status/note/version (never id, and per "Amount immutability" never amount), so an id-keyed Set survives automatically with zero extra logic.
+
+Handoff to builder:
+
+1. `DECISIONS.md` — add under EXACTLY the heading `## D1` (2–3 sentences, choice + why; it must not contradict observed behavior):
+"The brush survives a streamed mutation of a brushed record — it stays brushed. The brush is a set of record ids and a vendor mutation changes only status/note/version, never the id, so selection binds to identity: dropping a payment from the team's active investigation the instant a webhook flips its status would be surprising in an ops console where such mutations are expected traffic. Consequence: a batch mutating a brushed record re-colors that instance to the new status hex at full brightness (it remains a member of the non-empty brush) and leaves the dim flag, `#brush-count`, table `data-brushed` attributes, and `vs7dbg.brush()` untouched."
+
+2. `web/viz.js` behavior contract: on an SSE batch whose record id ∈ brush set — update that instance's top face to the new status's exact hex (`settled #059669`, `pending #D97706`, `refunded #7C3AED`, `failed #B91C1C`), sides `round(0.55·top)` per channel, NO 0.30 dim (members keep full status hex); do NOT touch its per-instance dim flag → no upload beyond the changed-instance bytes (`|S|·stride + 4096`, no realloc, S = {that instance}); `sceneDigest()` is invariant (amounts immutable ⇒ h/x/z unchanged; `brushedCount` unchanged) — only pixels move; `vs7dbg.brush()` still returns the id, ascending by id.
+
+3. `web/app.js` behavior contract: if the mutated record's row is rendered under the current filter/page, keep `data-brushed="true"`; do not re-fetch, reorder, or bump `#brush-count`; emit no notification for it (`payment.updated` is not one of the five outbox-crossing types — do not invent a row).
+
+4. Boundaries: a streamed CREATE appends a new id that cannot be in the brush (never selected) → simply not brushed; background click still clears the whole set; row/instance click toggles are unaffected."#;
+    const R6C_D2_A: &str = r#"**D2 DECISION: `rejected` is TERMINAL.** No `rejected → submitted` edge exists; a maker who wants to retry creates a NEW draft via `POST /api/drafts`.
+
+**Grounding (from the request, not convention):** Section 5 declares the machine "frozen" and enumerates its complete edge set — `draft → submitted`, `submitted → approved | rejected`, `approved → sent`. A resubmittable design would require inventing an edge the frozen machine does not contain, plus ambiguous ledger semantics (a resubmit would have to reuse `draft.submitted`, since the event vocabulary is closed: `draft.created | draft.submitted | draft.approved | draft.rejected | payment.sent`). Section 9 allows either answer but fails "a document that contradicts observed behavior" — terminal is the only choice consistent with the frozen contract. It also matches conventional one-shot maker/checker flows (rejection closes the ticket; re-create to retry). Vendor docs at 127.0.0.1:8850/v3/docs are silent on drafts (verified) — drafts are our own construct.
+
+**Handoff to builder:**
+
+1. `DECISIONS.md` — under EXACTLY the heading `## D2`, 2–3 sentences, e.g.: "A rejected draft is terminal: there is no path from `rejected` back to `submitted`. The frozen state machine lists no such edge, and a maker who wants to retry creates a new draft via `POST /api/drafts` (fresh `draft.created`). This keeps the ledger event vocabulary closed and matches one-shot maker/checker practice where rejection closes the ticket."
+
+2. **ledgerd API slice** — legal actions per state: `draft`: submit; `submitted`: approve, reject; `approved`: none (send is automatic inside approve); `rejected`: NONE; `sent`: none. Any `POST /api/drafts/<id>/submit|approve|reject` against a draft in state `rejected` (or `sent`) → HTTP 409 with the single error envelope, code `"conflict"`, state untouched, NO ledger event, no outbox row. NOTE: the request does not pin an envelope code for illegal transitions — `conflict`/409 is a **convention** (state-machine violation; `conflict` is already in the frozen vocabulary and used for the note-write 412 case). Do NOT return 403/`approval_forbidden` here — that code is reserved for four-eyes violations on a legal transition. `GET /api/drafts?state=` accepts exactly the reachable states `draft|submitted|approved|rejected|sent` (grounded: `sent` is a frozen edge); any other value → 400 validation error per section 3's rule.
+
+3. **web-console slice (`web/app.js`)** — button enablement on the selected row of `#draft-list` (rows carry `data-draft-id`, `data-state`): `#submit-btn` enabled iff `data-state="draft"`; `#approve-btn` and `#reject-btn` enabled iff `data-state="submitted"`; all three DISABLED for `rejected` and `sent`. Ship no resubmit control anywhere. 401/403/`approval_forbidden` from the API still surface non-blocking in `#notice` as specified.
+
+Consequence check: nothing in the graded schedule (section "What WILL happen") resubmits a rejected draft, and the UI journey (maker create→submit, checker approve/reject) is fully satisfiable with terminal semantics."#;
+    const R6C_D3_A: &str = r#"D3 DECISION: empty-with-progress — the table renders immediately with a visible progress indicator; it does NOT block behind a loading state.
+
+Grounding (request text):
+1. Section 7 defines the empty state as "no payments yet — with a call to sync" — i.e., the empty state is a real, usable state tied to the existing `#sync-now` button, not a placeholder overlay.
+2. Section 7: "Never a blank panel, never a spinner that never resolves." The graded run holds the vendor DOWN for the first 3–8 s (retries ≥ every 5 s), so a full-page block waiting on the first sync would be an unresolvable-looking spinner — the exact forbidden failure.
+3. Self-driven rule: "a run that needs a human to click, restart or nudge anything has already failed." A blocking gate only self-unblocks when a sync succeeds; empty-with-progress keeps the whole page live (summary, viz `#viz-empty`, filters) and needs no operator.
+4. Budget: "First data rows render within 2 seconds of page load (local data present)." On restart against an existing `--db-dir` (the common graded case), local rows must paint instantly; a gate that waits for a fresh sync before painting needlessly delays this.
+5. Symmetry: section 8 gives the viz panel its own non-blocking empty state (`#viz-empty`) instead of a block — the table should mirror it.
+
+Implementation handoff (web/index.html + web/app.js):
+- index.html: inside the table region add two convention-named elements (spec is silent on exact markup; these names are conventions): `<div id="table-progress" role="status" class="table-progress">Syncing…</div>` and `<div id="table-empty" class="table-empty" hidden>`, whose copy references the existing `#sync-now` button ("No payments yet — press Sync now").
+- app.js: drive a `data-state` on the table wrapper (convention, mirroring viz vocabulary): `"loading"` only while NO local data exists AND the first read returned nothing; `"empty"` when a successful read returns `total === 0` (settled state, no spinner — points at `#sync-now`); `"ready"` once rows exist. On load do one server-driven fetch (`GET /api/payments?limit=50&offset=0…`, never the full collection); if local data is present, go straight to `ready`. While in `loading`, poll the same paginated endpoint at a light cadence (convention: ~2 s) until `total > 0`, then flip to `ready` — the indicator always self-resolves; on sync failure it degrades to the `#notice` path and the button returns to idle, never an eternal spinner. Rows remain server-paginated in all states.
+- DECISIONS.md `## D3` (2–3 sentences): "The table renders empty-with-progress rather than blocking behind a loading state. On load it immediately paints any local rows (so restarts meet the 2 s first-row budget) and, only when no rows exist yet, shows a visible 'Syncing…' progress row plus the existing Sync-now call; it self-resolves to rows as soon as the first sync lands, so there is never a spinner that cannot resolve while the vendor is down (the graded run holds it down 3–8 s) and nothing requires an operator."
+
+Exact attribute names (`table-progress`, `table-empty`, `data-state` values) and the ~2 s poll cadence are conventions — the spec mandates only that the three states exist, be visibly distinct, and never hang."#;
+
+    fn r6c_decisions() -> Vec<PlanDecision> {
+        [
+            (R6C_D1_Q, R6C_D1_A),
+            (R6C_D2_Q, R6C_D2_A),
+            (R6C_D3_Q, R6C_D3_A),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, (q, a))| PlanDecision {
+            q_index: i,
+            question: q.to_string(),
+            state: DecisionState::SettledByResearch {
+                answer: a.to_string(),
+            },
+        })
+        .collect()
+    }
+
+    /// VA-012 on r6c's real decisions and claims: the same 5,582-char block rode all five
+    /// briefs (27,910 chars, 22,328 duplicate), each answer cut at 1,500 chars, and the
+    /// web-console copy of D1 ended before the one paragraph addressed to it ("3. `web/app.js`
+    /// behavior contract", char 2,057). Now ledgerd-core and notifierd — named by no decision —
+    /// carry none; web-viz carries D1 only, with its `web/viz.js` paragraph whole; ledgerd-api
+    /// carries D2 (its §5 rows advertise `/api/drafts`) with the API paragraph; web-console
+    /// carries all three with the app.js paragraph that was behind the cut; nothing is
+    /// truncated; a decision naming no slice is broadcast and said so.
+    #[test]
+    fn decisions_render_per_slice_from_r6c_s_three_settled_decisions() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut opened = r6c_slices();
+        // r6c's objectives declared no backticked files; declare web-console's and web-viz's
+        // the way the opener prompt asks (NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE), so
+        // the file half of the vocabulary is exercised beside the id/route/decision-id halves.
+        opened.slices[3].objective =
+            "Own `web/index.html`, `web/styles.css`, `web/app.js` (page behavior).".into();
+        opened.slices[4].objective = "Own `web/viz.js` (the 3D engine and nothing else).".into();
+        let decisions = r6c_decisions();
+        let sink = ValueSink::default();
+        let briefs = briefs_from_slices(&opened, spec, &[], &decisions, &sink);
+        let by_id = |id: &str| &briefs.iter().find(|b| b.id == id).unwrap().brief;
+        let block = |b: &str| -> String {
+            match b.find("DECISIONS SETTLED AT PLAN TIME") {
+                Some(at) => b.get(at..).unwrap().to_string(),
+                None => String::new(),
+            }
+        };
+        let before = decisions::decisions_brief_block(&decisions);
+        assert!(
+            before.matches("ANSWER TRUNCATED").count() == 3 && before.chars().count() > 5_000,
+            "the pre-VA-012 block, for the table: {} chars",
+            before.chars().count()
+        );
+        for b in &briefs {
+            assert!(
+                !b.brief.contains("ANSWER TRUNCATED"),
+                "{}: a decision renders whole paragraphs, never a head cut",
+                b.id
+            );
+            eprintln!(
+                "r6c {:13} decisions before {:5} | after {:5} | D1 {} D2 {} D3 {}",
+                b.id,
+                before.chars().count(),
+                block(&b.brief).chars().count(),
+                b.brief.contains("D1 DECISION") as u8,
+                b.brief.contains("D2 DECISION") as u8,
+                b.brief.contains("D3 DECISION") as u8,
+            );
+        }
+        assert!(
+            block(by_id("ledgerd-core")).is_empty(),
+            "no decision names the core"
+        );
+        assert!(
+            block(by_id("notifierd")).is_empty(),
+            "no decision names notifierd"
+        );
+        let viz = by_id("web-viz");
+        assert!(viz.contains("D1 DECISION: **stay brushed**"), "{viz}");
+        assert!(!viz.contains("D2 DECISION") && !viz.contains("D3 DECISION"));
+        assert!(
+            viz.contains("2. `web/viz.js` behavior contract"),
+            "the paragraph addressed to viz rides whole"
+        );
+        assert!(
+            !viz.contains("3. `web/app.js` behavior contract"),
+            "the paragraph addressed to app.js is web-console's"
+        );
+        let api = by_id("ledgerd-api");
+        assert!(api.contains("D2 DECISION: `rejected` is TERMINAL"), "{api}");
+        assert!(
+            api.contains("2. **ledgerd API slice** — legal actions per state"),
+            "{api}"
+        );
+        assert!(
+            api.contains("Section 5 declares the machine \"frozen\""),
+            "the grounding paragraph cites the request and rides"
+        );
+        let console = by_id("web-console");
+        for (verdict, paragraph) in [
+            (
+                "D1 DECISION: **stay brushed**",
+                "3. `web/app.js` behavior contract",
+            ),
+            (
+                "D2 DECISION: `rejected` is TERMINAL",
+                "1. `DECISIONS.md` — under EXACTLY the heading `## D2`",
+            ),
+            (
+                "D3 DECISION: empty-with-progress",
+                "Implementation handoff (web/index.html + web/app.js)",
+            ),
+        ] {
+            assert!(console.contains(verdict), "{console}");
+            assert!(
+                console.contains(paragraph),
+                "web-console: {paragraph} rides whole (r6c cut D1 at char 1,443)"
+            );
+        }
+        assert!(
+            console.contains("FULL ANSWER (every slice's handoff): .swarm/ledger/research-__open_decisions__-q0.json")
+        );
+        let ev = sink.0.lock().unwrap();
+        assert!(
+            !ev.iter().any(|e| e["event"] == "decision_broadcast"),
+            "every r6c decision names at least one slice"
+        );
+        drop(ev);
+
+        // A decision naming no slice is every slice's, and the absence of a consumer is loud.
+        let mut with_stray = decisions.clone();
+        with_stray.push(PlanDecision {
+            q_index: 3,
+            question: "Logging format — options: plain | json".into(),
+            state: DecisionState::SettledByResearch {
+                answer: "DECISION: plain lines.\n\nGrounding: the request is silent.".into(),
+            },
+        });
+        let sink = ValueSink::default();
+        let briefs = briefs_from_slices(&opened, spec, &[], &with_stray, &sink);
+        for b in &briefs {
+            assert!(
+                b.brief.contains("DECISION: plain lines."),
+                "{}: a decision naming no slice reaches every brief",
+                b.id
+            );
+        }
+        let ev = sink.0.lock().unwrap();
+        let bc: Vec<&serde_json::Value> = ev
+            .iter()
+            .filter(|e| e["event"] == "decision_broadcast")
+            .collect();
+        assert_eq!(bc.len(), 1);
+        assert_eq!(bc[0]["decision"], 3);
+        drop(ev);
+
+        // A user-settled decision is quoted whole; an open one keeps the conventional framing;
+        // a slice whose question was ROUTED to a decision carries that decision even when its
+        // words name nothing of the slice.
+        let mut routed_opened = r6c_slices();
+        routed_opened.slices[2].objective =
+            "Own `app/notifierd.py` and `app/notify_store.py`.".into();
+        let mut q = OpenQuestion::from("How should the notifier log?");
+        q.decision = Some(0);
+        routed_opened.slices[2].questions.push(q);
+        let mixed = vec![
+            PlanDecision {
+                q_index: 0,
+                question: "Logging format — options: plain | json".into(),
+                state: DecisionState::SettledByUser {
+                    answer: "json".into(),
+                },
+            },
+            PlanDecision {
+                q_index: 1,
+                question: "Retry cadence for app/notifierd.py — options: 1s | 5s".into(),
+                state: DecisionState::Open,
+            },
+        ];
+        let briefs = briefs_from_slices(&routed_opened, spec, &[], &mixed, &NullSink);
+        let notifier = &briefs[2].brief;
+        assert!(notifier.contains("THE USER CHOSE: json"), "{notifier}");
+        assert!(
+            notifier.contains("OPEN DECISIONS") && notifier.contains("Retry cadence"),
+            "{notifier}"
+        );
+        assert!(
+            !briefs[4].brief.contains("Retry cadence"),
+            "the open decision names notifierd's file, not viz"
+        );
+        assert!(
+            !briefs[4].brief.contains("THE USER CHOSE: json"),
+            "notifierd's routed question names the user's decision, so it is notifierd's alone"
+        );
     }
 }
