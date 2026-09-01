@@ -909,11 +909,11 @@ async fn run_finding_shard(
     r: &DispatcherShardRunner,
     f: &OpenFinding,
     model: &str,
-    baseline: Arc<tokio::sync::RwLock<usize>>,
+    baseline: Arc<tokio::sync::RwLock<TreeGrade>>,
 ) -> ShardOutcome {
     let (sink, me, round, all_files, cwd) = (&r.sink, &r.me, r.round, &r.all_files, &r.cwd);
     let task_id = format!("complete-fix::{}#{}", f.file, f.k);
-    let baseline_at_dispatch = *baseline.read().await;
+    let baseline_at_dispatch = baseline.read().await.count;
     sink.write_value(serde_json::json!({
         "event": "complete_fix_dispatched",
         "round": round, "shard": f.file, "finding_index": f.k, "model": model,
