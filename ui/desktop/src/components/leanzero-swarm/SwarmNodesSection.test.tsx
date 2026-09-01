@@ -223,7 +223,19 @@ describe('the simplified Nodes tab', () => {
     expect(screen.queryByTestId('awaiting-routing-workhorse-mlx')).not.toBeInTheDocument();
   });
 
-  it('a weight edit on a configured row rewrites SwarmDevice.weight in place, unknown fields intact', async () => {
+  it('the stepper is labeled Share, and mounting untouched nodes writes NOTHING', async () => {
+    render();
+    await waitFor(() => {
+      expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
+    });
+    // the column/stepper reads Share — one per configured row
+    expect(screen.getAllByText('Share').length).toBeGreaterThanOrEqual(2);
+    // no node is persisted a share until the user changes one (no mass-write on load)
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockSwarmCloud).not.toHaveBeenCalledWith('zai', expect.anything());
+  });
+
+  it('a share edit on a configured row writes speed_weight, leaving concurrency (weight) untouched', async () => {
     render();
     await waitFor(() => {
       expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
@@ -238,14 +250,15 @@ describe('the simplified Nodes tab', () => {
     });
     const payload = lastUpsertPayload();
     const row = payload.devices?.find((d) => d.id === 'workhorse-mlx');
-    expect(row).toMatchObject({ weight: 3, engine: 'mlx-sidecar', instances: 1 });
+    // share (speed_weight) rises 1 -> 2; concurrency (weight) stays at its existing default
+    expect(row).toMatchObject({ speed_weight: 2, weight: 2, engine: 'mlx-sidecar', instances: 1 });
     expect((row as unknown as Record<string, unknown>).future_row_field).toBe('keep-me');
     expect(payload.worker_extensions).toEqual(['developer']);
-    // speed_weights is NOT the write target any more (the amendment)
+    // no pre-existing speed_weights map on this config, so none is materialized for a device edit
     expect(payload.speed_weights).toBeUndefined();
   });
 
-  it('a weight edit on a DISCOVERED row materializes a device row for it', async () => {
+  it('a share edit on a DISCOVERED row materializes a device row carrying speed_weight, weight at default', async () => {
     lmStudioVisible = true;
     render();
     await waitFor(() => {
@@ -260,27 +273,47 @@ describe('the simplified Nodes tab', () => {
     const payload = lastUpsertPayload();
     expect(payload.devices?.find((d) => d.id === 'gabee')).toMatchObject({
       model_id: 'gabee-qwen3.8-27b',
-      weight: 2,
+      weight: 1,
+      speed_weight: 2,
       enabled: true,
     });
   });
 
-  it('a weight edit on a CLOUD row rides the CLI (rm then add --weight) — never an upsert', async () => {
+  it('a share edit on a CLOUD row writes the speed_weights map — never the CLI, never a device mutation', async () => {
     render();
     await waitFor(() => {
       expect(screen.getByTestId('swarm-node-zai-glm')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: 'More work (zai-glm)' }));
     await waitFor(() => {
-      expect(mockSwarmCloud).toHaveBeenCalledWith('zai', ['rm', 'glm-5.3-flash']);
-      expect(mockSwarmCloud).toHaveBeenCalledWith('zai', [
-        'add',
-        'glm-5.3-flash',
-        '--weight',
-        '3',
-      ]);
+      expect(mockUpsert).toHaveBeenCalled();
     });
-    expect(mockUpsert).not.toHaveBeenCalled();
+    const payload = lastUpsertPayload();
+    // the cloud node's share lands in the top-level map keyed by its device id (the engine's fallback)
+    expect(payload.speed_weights).toEqual({ 'zai-glm': 2 });
+    // the CLI-owned device LIST is untouched: the row survives verbatim, concurrency unchanged
+    expect(payload.devices?.find((d) => d.id === 'zai-glm')).toMatchObject({
+      provider: 'zai',
+      weight: 2,
+    });
+    // never the rm/add CLI path any more (share is not a CLI knob)
+    expect(mockSwarmCloud).not.toHaveBeenCalledWith('zai', ['rm', 'glm-5.3-flash']);
+    expect(mockSwarmCloud).not.toHaveBeenCalledWith('zai', expect.arrayContaining(['add']));
+  });
+
+  it('a share edit on a row that already has a speed_weights map key UPDATES that key in place', async () => {
+    mockRead.mockResolvedValue({ ...BASE_CFG, speed_weights: { zai: 1 } });
+    render();
+    await waitFor(() => {
+      expect(screen.getByTestId('swarm-node-zai-glm')).toBeInTheDocument();
+    });
+    // the stepper reflects the map value (1), so More work -> 2
+    await userEvent.click(screen.getByRole('button', { name: 'More work (zai-glm)' }));
+    await waitFor(() => {
+      expect(mockUpsert).toHaveBeenCalled();
+    });
+    // the substring key 'zai' matched 'zai-glm' and was rewritten in place — no duplicate key added
+    expect(lastUpsertPayload().speed_weights).toEqual({ zai: 2 });
   });
 
   it('removing a CLOUD node drives the CLI (rm) and never a device upsert', async () => {
