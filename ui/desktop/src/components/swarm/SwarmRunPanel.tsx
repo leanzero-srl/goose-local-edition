@@ -55,6 +55,7 @@ import { ZoneHeader } from './ZoneHeader';
 import {
   Button,
   Chip,
+  FOCUS,
   MOTION,
   NODE_DOT,
   RADIUS,
@@ -81,7 +82,6 @@ import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseL
 import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
-  FORMATION_RAMP,
   SWARM_STATUS,
   nextRevealedText,
   usePrefersReducedMotion,
@@ -123,9 +123,6 @@ const CALL_ERR = SWARM_STATUS.error;
 const CALL_PENDING = SWARM_STATUS.stopped;
 const AMBER = SWARM_STATUS.running;
 const BLUE = SWARM_STATUS.action;
-// A solid slate for a run that stopped without finishing — neutral (not an error) but dark enough for white
-// banner text. Distinct from the amber "running" and red "failed".
-const STOPPED = SWARM_STATUS.stopped;
 // Body colour for MODEL-GENERATED text (live generations, reasoning). The primary text token — solid, never
 // a tint or an opacity fade. Chrome (labels, counts, hints) deliberately stays on the secondary token.
 const GEN_TEXT = 'var(--color-text-primary)';
@@ -305,7 +302,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
         </span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-text-primary">{m.action}</span>
+            <span className="text-xs font-lz-medium text-text-primary">{m.action}</span>
             {pill ? <Chip tone={m.kind === 'malformed' ? 'err' : 'warn'}>{pill}</Chip> : null}
             {m.kind !== 'ok' ? (
               <span className="text-[11px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
@@ -620,7 +617,7 @@ const LaneRow: React.FC<{
         <div className="px-3 pb-3 pl-9 space-y-2">
           {laneError ? (
             <div>
-              <div className="text-[11px] font-medium mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className="text-[11px] font-lz-medium mb-1" style={{ color: STATUS_COLOR.error }}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
@@ -1068,8 +1065,13 @@ const FollowScroll: React.FC<{
             if (boxRef.current) boxRef.current.scrollTop = 0;
           }}
           aria-label="Jump to the start of this log"
-          className="absolute top-2 right-3 px-2 py-1 text-[11px] font-semibold text-white shadow-lg"
-          style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
+          className={cx(
+            'absolute right-3 top-2 h-6 px-2 text-lz-meta',
+            WEIGHT.medium,
+            RADIUS.control,
+            'border border-lz-border-strong bg-lz-surface text-lz-ink hover:bg-lz-surface-2',
+            MOTION
+          )}
         >
           ↑ start
         </button>
@@ -1081,8 +1083,13 @@ const FollowScroll: React.FC<{
             sentinelRef.current?.scrollIntoView?.({ block: 'end' });
           }}
           aria-label={jumpToStart ? 'Back to the end of this log' : 'Follow the newest text'}
-          className="absolute bottom-2 right-3 px-2 py-1 text-[11px] font-semibold text-white shadow-lg"
-          style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+          className={cx(
+            'absolute bottom-2 right-3 h-6 px-2 text-lz-meta',
+            WEIGHT.semibold,
+            RADIUS.control,
+            TONE_FILL.accent,
+            MOTION
+          )}
         >
           {jumpToStart ? '↓ end' : '↓ follow'}
         </button>
@@ -1116,7 +1123,7 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
       <FollowScroll
         dep={text}
         jumpToStart={jumpToStart}
-        className="px-3 py-2 font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words"
+        className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-lz-mono text-lz-ink-2"
       >
         {text}
       </FollowScroll>
@@ -1125,8 +1132,11 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
   return (
     <div className="contents">
       <div
-        className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
-        style={{ borderRadius: CHIP_RADIUS, maxHeight: 300, overflowY: 'auto' }}
+        className={cx(
+          'mb-1 ml-6 mt-1 whitespace-pre-wrap break-words border border-lz-border bg-lz-surface-2 p-2 font-mono text-lz-mono text-lz-ink-2',
+          RADIUS.control
+        )}
+        style={{ maxHeight: 300, overflowY: 'auto' }}
       >
         {text}
       </div>
@@ -1642,14 +1652,17 @@ const InspectorPane: React.FC<{
   isEmpty: boolean;
   /** A header control (the live pane's "show all N KB" / "live tail" toggle) — beside the count. */
   action?: React.ReactNode;
+  /** 'reasoning' = the thinking channel: its title carries the Studio secondary accent, the ONE surface
+   *  that does. Every other pane title is the zone register in ink-2. */
+  channel?: 'reasoning';
   children: React.ReactNode;
-}> = ({ title, count, empty, isEmpty, action, children }) => (
-  <div
-    className="flex flex-col min-h-0 flex-1 border border-border-primary overflow-hidden"
-    style={{ borderRadius: CHIP_RADIUS }}
-  >
-    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-primary shrink-0 bg-background-secondary">
-      <span className={`${EYEBROW_CLASS} text-text-primary`} data-testid="pane-title">
+}> = ({ title, count, empty, isEmpty, action, channel, children }) => (
+  <div className={cx('flex min-h-0 flex-1 flex-col overflow-hidden border border-lz-border', RADIUS.control)}>
+    <div className="flex h-8 shrink-0 items-center justify-between border-b border-lz-border bg-lz-surface-2 px-3">
+      <span
+        className={cx(EYEBROW_CLASS, channel === 'reasoning' ? TONE_TEXT.secondary : 'text-lz-ink-2')}
+        data-testid="pane-title"
+      >
         {title}
       </span>
       <span className="flex items-center gap-2">
@@ -1658,7 +1671,7 @@ const InspectorPane: React.FC<{
       </span>
     </div>
     <div className="min-h-0 flex-1 overflow-hidden">
-      {isEmpty ? <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div> : children}
+      {isEmpty ? <div className="px-3 py-2 text-lz-body text-lz-ink-3">{empty}</div> : children}
     </div>
   </div>
 );
@@ -1985,7 +1998,7 @@ const WorkPane: React.FC<{
       {hasSaid ? (
         <div>
           {calls.length > 0 || running.length > 0 ? (
-            <div className="mt-3 pt-2 border-t border-border-primary text-[11px] font-medium text-text-secondary">
+            <div className="mt-3 pt-2 border-t border-border-primary text-[11px] font-lz-medium text-text-secondary">
               Said
             </div>
           ) : null}
@@ -2002,17 +2015,18 @@ const PaneActionButton: React.FC<{
   onClick: () => void;
   children: React.ReactNode;
 }> = ({ label, onClick, children }) => (
-  <button
+  <Button
+    variant="secondary"
+    size="sm"
+    className="h-6 px-2 text-lz-meta"
     onClick={(e) => {
       e.stopPropagation();
       onClick();
     }}
     aria-label={label}
-    className="px-2 py-0.5 text-[11px] font-semibold text-white"
-    style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
   >
     {children}
-  </button>
+  </Button>
 );
 
 /**
@@ -2028,11 +2042,13 @@ const HistoryChannelPane: React.FC<{
   log: { text: string; bytes: number } | null;
   failed: boolean;
   empty: string;
-}> = ({ title, log, failed, empty }) => {
+  channel?: 'reasoning';
+}> = ({ title, log, failed, empty, channel }) => {
   const squeezed = useMemo(() => squeezeBlankRuns(log?.text ?? ''), [log]);
   return (
     <InspectorPane
       title={title}
+      channel={channel}
       count={log ? `all ${log.bytes.toLocaleString()} bytes${squeezeNote(log.text, squeezed)}` : ''}
       empty={
         failed
@@ -2111,8 +2127,7 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
   };
   return (
     <div
-      className="border border-border-primary"
-      style={{ borderRadius: CHIP_RADIUS }}
+      className={cx('border border-lz-border', RADIUS.control)}
       data-testid="node-history-entry"
       data-task={lane.taskId}
     >
@@ -2122,7 +2137,7 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} the full durable log of ${title}`}
         data-testid="node-history-row"
-        className="flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer"
+        className={cx('flex min-h-8 cursor-pointer items-center gap-2 px-2 py-1 text-lz-body', SURFACE.hover, MOTION)}
         onClick={toggle}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -2131,21 +2146,15 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
           }
         }}
       >
-        <span
-          className="px-1.5 py-0.5 text-[11px] font-semibold text-white shrink-0"
-          style={{
-            borderRadius: CHIP_RADIUS,
-            // INTERRUPTED is not FAILED: the digest went quiet without a completion stamp — a liveness
-            // fact, not an engine verdict — and painting it as a failure would claim a verdict nobody
-            // reached. Amber, its own word.
-            background: lane.interrupted ? CALL_PENDING : lane.status === 'error' ? CALL_ERR : CALL_OK,
-          }}
-        >
+        {/* INTERRUPTED is not FAILED: the digest went quiet without a completion stamp — a liveness
+            fact, not an engine verdict — and painting it as a failure would claim a verdict nobody
+            reached. The stopped slate, its own word. */}
+        <Chip tone={lane.interrupted ? 'stopped' : lane.status === 'error' ? 'err' : 'ok'}>
           {lane.interrupted ? 'interrupted' : lane.status === 'error' ? 'failed' : 'finished'}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-text-primary">{title}</span>
+        </Chip>
+        <span className="min-w-0 flex-1 truncate text-lz-ink">{title}</span>
         {lane.interrupted ? (
-          <span className="shrink-0 text-[11px]" style={{ color: CALL_PENDING }}>
+          <span className={cx('shrink-0 text-lz-meta', TONE_TEXT.stopped)}>
             went quiet mid-call — no completion stamp
           </span>
         ) : null}
@@ -2154,32 +2163,33 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
           // lane" would be true but say less than the honest rolling caption.
           const rolling = supervisionRollingCaption(lane);
           if (rolling)
-            return <span className="shrink-0 text-[11px] text-text-secondary">{rolling}</span>;
+            return <span className="shrink-0 text-lz-meta text-lz-ink-3">{rolling}</span>;
           return priorCalls > 0 ? (
-            <span className="shrink-0 text-[11px] text-text-secondary">
+            <span className="shrink-0 text-lz-meta text-lz-ink-3">
               {priorCalls + 1} calls on this lane
             </span>
           ) : null;
         })()}
         {durationLabel ? (
-          <span className="shrink-0 text-[11px] tabular-nums text-text-secondary">{durationLabel}</span>
+          <span className={cx('shrink-0 text-lz-meta text-lz-ink-3', TNUM)}>{durationLabel}</span>
         ) : null}
-        <span className="shrink-0 text-[11px] tabular-nums font-mono text-text-secondary">
+        <span className={cx('shrink-0 font-mono text-lz-mono text-lz-ink-3', TNUM)}>
           {sizes.length > 0 ? sizes.join(' · ') : 'no durable log'}
         </span>
         {open ? (
-          <ChevronDown size={12} className="shrink-0 text-text-secondary" />
+          <ChevronDown size={12} className="shrink-0 text-lz-ink-3" />
         ) : (
-          <ChevronRight size={12} className="shrink-0 text-text-secondary" />
+          <ChevronRight size={12} className="shrink-0 text-lz-ink-3" />
         )}
       </div>
       {open ? (
         logs == null ? (
-          <div className="px-3 py-2 text-xs text-text-secondary">Reading the durable logs…</div>
+          <div className="px-3 py-2 text-lz-body text-lz-ink-3">Reading the durable logs…</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-2" style={{ height: 340 }}>
             <HistoryChannelPane
               title="Thinking"
+              channel="reasoning"
               log={logs.think}
               failed={failed}
               empty="No .think.log on disk — this call never wrote the reasoning channel."
@@ -2346,88 +2356,66 @@ const NodeInspector: React.FC<{
         aria-modal="true"
         aria-label={`Node ${letter}, ${device}`}
         data-task={lane?.taskId ?? ''}
-        className="fixed z-50 inset-4 md:inset-8 flex flex-col bg-background-primary border border-border-primary shadow-2xl"
-        style={{ borderRadius: CHIP_RADIUS }}
+        className={cx('fixed inset-4 z-50 flex flex-col text-lz-body md:inset-8', SURFACE.overlay)}
       >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-border-primary shrink-0">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-lz-border px-4">
           <NodeDot index={index} letter={letter} size={10} />
-          <span className="font-mono text-sm text-text-primary">{device}</span>
+          <span className={cx('font-mono text-lz-mono text-lz-ink', WEIGHT.medium)}>{device}</span>
           {nodeState && (
-            <span
-              className="px-2 py-0.5 text-[11px] font-semibold text-white"
-              style={{
-                borderRadius: CHIP_RADIUS,
-                background:
-                  nodeState === 'generating'
-                    ? SWARM_STATUS.done
-                    : nodeState === 'processingPrompt'
-                      ? SWARM_STATUS.running
-                      : SWARM_STATUS.stopped,
-              }}
+            <Chip
+              tone={
+                nodeState === 'generating' ? 'ok' : nodeState === 'processingPrompt' ? 'warn' : 'stopped'
+              }
             >
               {nodeState === 'processingPrompt' ? 'processing prompt' : nodeState}
-            </span>
+            </Chip>
           )}
           {/* A SECOND MODEL IS READING THIS CALL. It used to also mean "the counters below are frozen",
               because the engine buffered the worker's stream during a probe — it no longer does, so the
               lane keeps moving while this is up and the badge is context, not an excuse for stillness.
               Next to GENERATING it read as a contradiction; it says who is doing what now. */}
           {lane?.judging && (
-            <span
-              className="px-2 py-0.5 text-[11px] font-semibold text-white"
-              style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+            <Chip
+              tone="warn"
               title="A supervisor model is reading this call's reasoning to decide whether to redirect it. The worker keeps running."
             >
               {'being reviewed'}
-            </span>
+            </Chip>
           )}
           {/* THE LANE'S OWN END, event-driven: task_completed/failed or the digest's phase stamp.
               Since the modal no longer clears when a phase ends, a reader mid-scroll needs the fact
               that the call under them ENDED stated, not implied by counters going still. */}
           {lane && lane.status !== 'running' && (
-            <span
-              data-testid="inspector-lane-ended"
-              className="px-2 py-0.5 text-[11px] font-semibold text-white"
-              style={{
-                borderRadius: CHIP_RADIUS,
-                background: lane.status === 'done' ? CALL_OK : CALL_ERR,
-              }}
-            >
-              {lane.status === 'done' ? 'finished' : 'failed'}
+            <span className="inline-flex shrink-0" data-testid="inspector-lane-ended">
+              <Chip tone={lane.status === 'done' ? 'ok' : 'err'}>
+                {lane.status === 'done' ? 'finished' : 'failed'}
+              </Chip>
             </span>
           )}
           {/* An r6 supervision lane says so — the class's solid violet, and for the judge's rolling
               lane the honest semantics: look N (1-based), earlier looks folded into superseded. */}
           {lane?.supervision === true && (
-            <span
-              data-testid="inspector-supervision"
-              className="px-2 py-0.5 text-[11px] font-semibold text-white shrink-0"
-              style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.solidStopped }}
-            >
-              supervision
+            <span className="inline-flex shrink-0" data-testid="inspector-supervision">
+              <Chip tone="accent">supervision</Chip>
             </span>
           )}
           {(() => {
             const rolling = lane ? supervisionRollingCaption(lane) : null;
             return rolling ? (
-              <span
-                className="text-xs shrink-0"
-                style={{ color: FORMATION_RAMP[2], fontWeight: 600 }}
-              >
-                {rolling}
-              </span>
+              <span className={cx('shrink-0 text-lz-meta', TONE_TEXT.accent, WEIGHT.semibold)}>{rolling}</span>
             ) : null;
           })()}
           {lane?.description && (
-            <span className="text-xs text-text-secondary truncate">{lane.description}</span>
+            <span className="truncate text-lz-meta text-lz-ink-3">{lane.description}</span>
           )}
-          <button
-            className="ml-auto shrink-0 text-text-secondary hover:text-text-primary"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
             onClick={onClose}
             aria-label="Close"
-          >
-            <X size={16} />
-          </button>
+            icon={<X />}
+          />
         </div>
 
         {/* ONE PANE WHEN THERE IS ONE THING TO SHOW.
@@ -2445,6 +2433,7 @@ const NodeInspector: React.FC<{
         >
           <InspectorPane
             title="Thinking"
+            channel="reasoning"
             // COUNT WHAT IS ON SCREEN, and say so when it is a clipped tail. The header used to report
             // the engine's `thinkingChars` while the body rendered something else entirely, so a pane
             // showing 2,000 characters could be captioned 22,150 — which reads as "the UI is hiding
@@ -2566,12 +2555,13 @@ const NodeInspector: React.FC<{
         {shownHistory.length > 0 ? (
           <div
             data-testid="node-history"
-            className={`border-t border-border-primary flex flex-col min-h-0 ${
-              lane ? 'shrink-0 max-h-[45%]' : 'flex-1'
-            }`}
+            className={cx(
+              'flex min-h-0 flex-col border-t border-lz-border',
+              lane ? 'max-h-[45%] shrink-0' : 'flex-1'
+            )}
           >
-            <div className="flex items-center justify-between px-4 py-2 shrink-0">
-              <span className={`${EYEBROW_CLASS} text-text-primary`} data-testid="pane-title">
+            <div className="flex h-8 shrink-0 items-center justify-between px-4">
+              <span className={cx(EYEBROW_CLASS, 'text-lz-ink-2')} data-testid="pane-title">
                 {lane ? 'Earlier calls on this node' : 'Calls this node ran'}
               </span>
               <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
@@ -3191,7 +3181,7 @@ const ConfSignal: React.FC<{
         </span>
         {binding ? (
           <span
-            className="text-[11px] font-semibold px-1.5 py-px text-background-primary"
+            className="text-[11px] font-lz-semibold px-1.5 py-px text-background-primary"
             style={{ backgroundColor: col, borderRadius: CHIP_RADIUS }}
           >
             binding
@@ -3380,18 +3370,18 @@ const ConfidenceBreakdownBody: React.FC<{
       <div className="flex items-center gap-3.5">
         <ConfGauge value={conf.final} askFloor={askFloor} />
         <div className="min-w-0">
-          <div className="text-[11px] font-medium text-text-secondary">
+          <div className="text-[11px] font-lz-medium text-text-secondary">
             Plan confidence
           </div>
           <div
-            className="text-[15px] font-bold leading-snug mt-1"
+            className="text-[15px] font-lz-semibold leading-snug mt-1"
             style={{ color: confColorVsFloor(conf.final, askFloor) }}
           >
             {confVerdict(conf.final, askFloor)}
           </div>
           {askFloor != null ? (
             <div className="text-[11px] text-text-secondary mt-1">
-              Your bar is <span className="font-bold text-text-primary">{askFloor}</span> — below it, goose
+              Your bar is <span className="font-lz-semibold text-text-primary">{askFloor}</span> — below it, goose
               asks you instead of guessing.
             </div>
           ) : null}
@@ -3419,7 +3409,7 @@ const ConfidenceBreakdownBody: React.FC<{
         />
       </div>
       <div>
-        <div className="text-[11px] font-medium text-text-secondary mb-1.5">
+        <div className="text-[11px] font-lz-medium text-text-secondary mb-1.5">
           What&apos;s holding it back
         </div>
         {showDecisions ? (
@@ -3436,7 +3426,7 @@ const ConfidenceBreakdownBody: React.FC<{
         )}
       </div>
       <div>
-        <div className="text-[11px] font-medium text-text-secondary mb-1.5">
+        <div className="text-[11px] font-lz-medium text-text-secondary mb-1.5">
           What would raise it
         </div>
         <div className="text-[12px] leading-relaxed text-text-primary">{raiseIt}</div>
@@ -3477,7 +3467,7 @@ const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value
     label={`Planner confidence in how it broke this app down — ${value}/100. ${confVerdict(value, askFloor)}.`}
   >
     <span
-      className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
+      className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-lz-medium tabular-nums"
       style={{ backgroundColor: confColorVsFloor(value, askFloor), borderRadius: CHIP_RADIUS }}
     >
       <Gauge className="h-2.5 w-2.5" />
@@ -3551,7 +3541,7 @@ const HeaderMetrics: React.FC<{
   return (
     <span className="flex items-center gap-3 shrink-0 tabular-nums">
       <Tip label="Total wall-clock time since the run started.">
-        <span className="text-xs font-semibold text-text-primary">{fmtElapsed(elapsedMin)}</span>
+        <span className="text-xs font-lz-semibold text-text-primary">{fmtElapsed(elapsedMin)}</span>
       </Tip>
       <Tip label="A deliberately rough range — the local fleet is variable, so a precise figure would lie.">
         <span className="text-xs text-text-secondary">{etaLabel}</span>
@@ -3657,7 +3647,7 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
   if (!hasAny) return null;
   return (
     <div className="text-[11px] text-text-secondary space-y-1">
-      <span className="font-medium text-text-secondary">Live generation</span>
+      <span className="font-lz-medium text-text-secondary">Live generation</span>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
         {model ? (
           <span>
@@ -3797,7 +3787,7 @@ const PhaseTodoRow: React.FC<{
           ) : null}
           {item.files && item.files.length ? (
             <div className="text-[11px] text-text-secondary break-words">
-              <span className="font-medium text-text-secondary">Files</span>{' '}
+              <span className="font-lz-medium text-text-secondary">Files</span>{' '}
               {item.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -4040,7 +4030,7 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {row.files && row.files.length ? (
             <div className="text-[11px] text-text-secondary break-words">
-              <span className="font-medium text-text-secondary">Files</span>{' '}
+              <span className="font-lz-medium text-text-secondary">Files</span>{' '}
               {row.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -4061,7 +4051,7 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {laneError ? (
             <div>
-              <div className="text-[11px] font-medium mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className="text-[11px] font-lz-medium mb-1" style={{ color: STATUS_COLOR.error }}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
@@ -4262,7 +4252,7 @@ const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
   };
 
   return (
-    <div className="border-t border-border-primary px-3 py-2">
+    <div className="border-t border-lz-border px-3 py-2">
       <div className="flex items-center gap-2">
         <input
           value={text}
@@ -4274,31 +4264,34 @@ const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
             }
           }}
           placeholder="Tell it something while it builds — picked up by the next task, never interrupts one"
-          className="flex-1 min-w-0 bg-background-primary border border-border-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-text-secondary"
-          style={{ borderRadius: CHIP_RADIUS }}
+          className={cx(
+            'h-7 min-w-0 flex-1 border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+            RADIUS.control,
+            FOCUS
+          )}
           aria-label="Add a note to this build"
         />
-        <button
-          type="button"
+        {/* The panel's ONE primary action while it builds. Disabled is the solid neutral, never an opacity. */}
+        <Button
+          variant="primary"
+          size="sm"
           onClick={() => void send()}
           disabled={!text.trim() || busy}
           title={sendWhy}
           aria-describedby={sendWhyId}
-          className="shrink-0 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
         >
           {busy ? 'Sending…' : 'Send'}
-        </button>
+        </Button>
         <span id={sendWhyId} className="sr-only">
           {sendWhy}
         </span>
       </div>
       {failed ? (
-        <div className="text-[11px] mt-1" style={{ color: STATUS_COLOR.error }}>
+        <div className={cx('mt-1 text-lz-meta', TONE_TEXT.err)}>
           Could not write the note. Is the build directory still there?
         </div>
       ) : sent > 0 ? (
-        <div className="text-[11px] text-text-secondary mt-1">
+        <div className="mt-1 text-lz-meta text-lz-ink-3">
           {sent === 1 ? '1 note queued' : `${sent} notes queued`} — it is background context, not an order:
           the spec still wins. Needs “Let me add notes while it builds” on.
         </div>
@@ -4318,11 +4311,10 @@ const ProxyNotice: React.FC<{ proxy: ClarifyProxy }> = ({ proxy }) => {
   const { questions, waitedSecs } = proxy.timedOut;
   return (
     <div
-      className="flex items-start gap-2 px-2 py-2 text-xs text-white"
-      style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
+      className={cx('flex items-start gap-2 px-2 py-2 text-lz-body', TONE_FILL.accent, RADIUS.control)}
       data-testid="clarify-timed-out"
     >
-      <Bot className="h-3.5 w-3.5 shrink-0 mt-px" />
+      <Bot className="mt-px size-3.5 shrink-0" />
       <span>
         {questions} open decision{questions === 1 ? '' : 's'} went unanswered at the {waitedSecs}s
         unattended window — every worker was told to choose the most conventional option and note
@@ -4405,10 +4397,10 @@ const ClarifyPrompt: React.FC<{
       ? 'Send these answers and start the build'
       : 'Type an answer to at least one question, or some guidance, to send';
   return (
-    <div className="border-b border-border-primary">
+    <div className="border-b border-lz-border">
       <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: AMBER }}>
         <MessageCircleQuestion className="h-4 w-4 shrink-0" />
-        <span className="text-xs font-semibold">Review the plan &amp; steer the build</span>
+        <span className="text-xs font-lz-semibold">Review the plan &amp; steer the build</span>
         {typeof clarify.planConfidence === 'number' ? (
           <span className="text-[11px] tabular-nums">
             planner confidence {clarify.planConfidence}/100
@@ -4463,7 +4455,7 @@ const ClarifyPrompt: React.FC<{
           <div key={i} className="space-y-1.5">
             {/* The question IS the answer box's name: a placeholder vanishes on the first keystroke, and
                 three boxes named "your answer…" are three boxes named nothing. */}
-            <div id={`${uid}-q${i}`} className="text-xs text-text-primary font-medium">
+            <div id={`${uid}-q${i}`} className="text-xs text-text-primary font-lz-medium">
               {i + 1}. <InlineMarkdown content={q.question} />
             </div>
             {q.resolves ? (
@@ -4485,7 +4477,7 @@ const ClarifyPrompt: React.FC<{
                       onClick={() => setAnswer(i, selected ? '' : opt)}
                       className={`text-[11px] px-2 py-1 border transition-colors ${
                         selected
-                          ? 'text-white font-medium'
+                          ? 'text-white font-lz-medium'
                           : 'border-border-primary text-text-primary hover:border-text-secondary'
                       }`}
                       style={
@@ -4514,7 +4506,7 @@ const ClarifyPrompt: React.FC<{
         ))}
 
         <div className="space-y-1">
-          <label htmlFor={`${uid}-guidance`} className="block text-xs text-text-primary font-medium">
+          <label htmlFor={`${uid}-guidance`} className="block text-xs text-text-primary font-lz-medium">
             Anything else? (optional)
           </label>
           <textarea
@@ -4523,31 +4515,33 @@ const ClarifyPrompt: React.FC<{
             onChange={(e) => setGuidance(e.target.value)}
             rows={2}
             placeholder="Tell goose to change the plan however you like — e.g. “use SQLite, add an export command, skip the web UI”."
-            className="w-full text-xs px-2 py-1.5 bg-background-primary text-text-primary border border-border-primary focus:outline-none focus:border-text-secondary resize-y"
-            style={{ borderRadius: CHIP_RADIUS }}
+            className={cx(
+              'w-full resize-y border border-lz-border-strong bg-lz-surface px-2 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+              RADIUS.control,
+              FOCUS
+            )}
           />
         </div>
 
         {error ? (
-          <div className="text-xs" style={{ color: STATUS_COLOR.error }}>
+          <div className={cx('text-lz-body', TONE_TEXT.err)}>
             Couldn&apos;t write the answers file — check that the build directory is still there, then retry.
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The panel's ONE primary while goose is asking (the note box never mounts beside this). */}
+          <Button
+            variant="primary"
             onClick={send}
             disabled={busy || !canSend}
             title={sendWhy}
             aria-describedby={`${uid}-send-why`}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50 transition-opacity"
-            style={{ backgroundColor: BLUE, borderRadius: CHIP_RADIUS }}
+            icon={busy ? <Loader2 className="animate-spin" /> : <Send />}
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             Send answers &amp; build
-          </button>
-          <span id={`${uid}-send-why`} className="text-[11px] text-text-secondary">
+          </Button>
+          <span id={`${uid}-send-why`} className="text-lz-meta text-lz-ink-3">
             {canSend ? '' : `${sendWhy}. `}
             The build is paused until you respond. Your answers guide every worker; the plan shape
             stays as drafted.
@@ -4638,14 +4632,14 @@ const PlanningZone: React.FC<{
   ].filter((g) => g.lanes.length > 0);
   const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => (
     <div key={key} className="mt-1">
-      <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-        <Braces className="h-3 w-3 text-text-secondary" />
-        <span className={`${EYEBROW_CLASS} text-text-secondary`}>
+      <div className="flex h-7 items-center gap-1.5 px-3">
+        <Braces className="size-3 text-lz-ink-3" />
+        <span className={cx(EYEBROW_CLASS, 'text-lz-ink-3')}>
           {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
           {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
         </span>
       </div>
-      <div className="divide-y divide-border-primary">
+      <div className="divide-y divide-lz-border">
         {lanes.map((lane) => {
           const defaultOpen = lane.status === 'running';
           const isOpen = laneOpen[lane.taskId] ?? defaultOpen;
@@ -4726,11 +4720,10 @@ const PlanningZone: React.FC<{
             {clarifyInterrupted ? (
               <div className="px-3 pt-2">
                 <div
-                  className="flex items-start gap-2 px-2 py-2 text-xs text-white"
+                  className={cx('flex items-start gap-2 px-2 py-2 text-lz-body', TONE_FILL.stopped, RADIUS.control)}
                   data-testid="clarify-interrupted"
-                  style={{ backgroundColor: SWARM_STATUS.solidStopped, borderRadius: CHIP_RADIUS }}
                 >
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                  <AlertTriangle className="mt-px size-3.5 shrink-0" />
                   <span>
                     The run stopped while asking — the engine is not running, so nothing is waiting on
                     these answers. Relaunch the run from its directory to be asked again.
@@ -4759,10 +4752,8 @@ const PlanningZone: React.FC<{
               const fan = fanOf(p.key);
               return (
                 <div key={p.key} data-testid={`planning-phase-${p.key}`} data-phase-state={p.state}>
-                  <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-text-secondary">
-                      {p.label}
-                    </span>
+                  <div className="flex h-7 items-center gap-1.5 px-3">
+                    <span className={cx('text-lz-meta text-lz-ink-2', WEIGHT.medium)}>{p.label}</span>
                     {p.counts.total > 0 ? (
                       <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
                         {p.counts.done}/{p.counts.total}
@@ -4814,24 +4805,13 @@ const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
         explain="the run passed — these are what it passed WITH"
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
-        right={
-          <span
-            className="text-xs px-2 py-0.5 text-white font-semibold tabular-nums"
-            style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS }}
-          >
-            {bugs.length}
-          </span>
-        }
+        right={<Chip tone="warn">{bugs.length}</Chip>}
       />
       {open ? (
-        <ol className="px-3 pb-3 space-y-1.5">
+        <ol className="space-y-1.5 px-3 pb-3">
           {bugs.map((bug, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs" style={{ color: GEN_TEXT }}>
-              <Bug
-                className="h-3.5 w-3.5 shrink-0 mt-0.5"
-                style={{ color: SWARM_STATUS.running }}
-                aria-hidden
-              />
+            <li key={i} className="flex items-start gap-2 text-lz-body text-lz-ink">
+              <Bug className={cx('mt-0.5 size-3.5 shrink-0', TONE_TEXT.warn)} aria-hidden />
               <span className="min-w-0 break-words">
                 <InlineMarkdown content={bug} />
               </span>
@@ -4856,35 +4836,25 @@ const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
         explain="questions dropped to the running swarm, and its answers"
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
-        right={
-          <span
-            className="text-xs px-2 py-0.5 text-white font-semibold tabular-nums"
-            style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
-          >
-            {qa.length}
-          </span>
-        }
+        right={<Chip tone="accent">{qa.length}</Chip>}
       />
       {open ? (
-        <ol className="px-3 pb-3 space-y-2">
+        <ol className="space-y-2 px-3 pb-3">
           {qa.map((item, i) => (
-            <li key={`${item.questionFile}-${i}`} className="text-xs" style={{ color: GEN_TEXT }}>
-              <div className="flex items-start gap-2 font-semibold">
+            <li key={`${item.questionFile}-${i}`} className="text-lz-body text-lz-ink">
+              <div className={cx('flex items-start gap-2', WEIGHT.semibold)}>
                 <MessageCircleQuestion
-                  className="h-3.5 w-3.5 shrink-0 mt-0.5"
-                  style={{ color: SWARM_STATUS.action }}
+                  className={cx('mt-0.5 size-3.5 shrink-0', TONE_TEXT.accent)}
                   aria-hidden
                 />
                 <span className="min-w-0 break-words">{item.question}</span>
               </div>
-              <div className="mt-1 ml-5 flex items-start gap-2">
-                <Bot className="h-3.5 w-3.5 shrink-0 mt-0.5 text-text-secondary" aria-hidden />
-                <span className="min-w-0 break-words whitespace-pre-wrap">
+              <div className="ml-5 mt-1 flex items-start gap-2">
+                <Bot className="mt-0.5 size-3.5 shrink-0 text-lz-ink-3" aria-hidden />
+                <span className="min-w-0 whitespace-pre-wrap break-words">
                   <InlineMarkdown content={item.answer} />
                   {item.model ? (
-                    <span className="ml-1 font-mono text-[11px] text-text-secondary">
-                      — {item.model}
-                    </span>
+                    <span className="ml-1 font-mono text-lz-mono text-lz-ink-3">— {item.model}</span>
                   ) : null}
                 </span>
               </div>
@@ -4908,20 +4878,22 @@ const RunOverview: React.FC<{
 }> = ({ overview, phaseTodo, deviceOrder, workingDir }) => {
   const verifyItems = phaseTodo.find((p) => p.key === 'integrate')?.items ?? [];
   const verified = verifyItems.find((i) => i.id === 'v-e2e')?.state === 'done';
-  const hdr = 'text-[11px] font-medium text-text-secondary mb-1 mt-2';
-  const slate = SWARM_STATUS.stopped;
+  const hdr = cx('mb-1 mt-2 text-lz-meta text-lz-ink-2', WEIGHT.medium);
   return (
-    <div className="border-t border-border-primary px-3 py-3 bg-background-secondary space-y-1">
-      <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
-        <ListChecks className="h-3.5 w-3.5" /> Build overview
+    <div className="space-y-1 border-t border-lz-border px-3 py-3">
+      <div className={cx('flex items-center gap-1.5 text-lz-body text-lz-ink', WEIGHT.semibold)}>
+        <ListChecks className="size-3.5" /> Build overview
         {workingDir ? (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
             onClick={() => void window.electron.revealInFinder(workingDir)}
             title="Reveal the build folder in Finder — every file this run wrote lives here"
-            className="ml-auto flex items-center gap-1 text-[11px] font-normal text-text-secondary hover:text-text-primary"
+            icon={<FolderOpen />}
           >
-            <FolderOpen className="h-3 w-3" /> Reveal build folder
-          </button>
+            Reveal build folder
+          </Button>
         ) : null}
       </div>
       {/* RUNNABILITY IS AN ENGINE FACT. It is `verified` (phaseTodo's v-e2e — goose actually RAN the app)
@@ -4932,21 +4904,20 @@ const RunOverview: React.FC<{
           sin as a false green, and this panel exists to prevent exactly that. Ask the verify check first;
           a missing summary is a missing summary. */}
       {!verified ? (
-        <div
-          className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
-          style={{ backgroundColor: AMBER, borderRadius: CHIP_RADIUS }}
-        >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <div className={cx('mt-1 flex items-center gap-1.5 px-2 py-1.5 text-lz-meta', TONE_FILL.warn, RADIUS.control)}>
+          <AlertTriangle className="size-3.5 shrink-0" />
           Not yet verified — the program was built but never run. Everything below describes the code, not
           proof it works.
         </div>
       ) : !overview.generated ? (
         <div
-          className="mt-1 px-2 py-1.5 text-[11px] flex items-center gap-1.5 border border-border-primary text-text-secondary"
-          style={{ borderRadius: CHIP_RADIUS }}
+          className={cx(
+            'mt-1 flex items-center gap-1.5 border border-lz-border px-2 py-1.5 text-lz-meta text-lz-ink-2',
+            RADIUS.control
+          )}
         >
-          <ListChecks className="h-3.5 w-3.5 shrink-0" />
-          goose ran this app and it works{overview.runCommand ? <> — <code className="text-text-primary">{overview.runCommand}</code></> : null}. It just
+          <ListChecks className="size-3.5 shrink-0" />
+          goose ran this app and it works{overview.runCommand ? <> — <code className="font-mono text-lz-mono text-lz-ink">{overview.runCommand}</code></> : null}. It just
           didn&apos;t write up what it built; the verification below is the engine&apos;s own record.
         </div>
       ) : null}
@@ -4959,8 +4930,8 @@ const RunOverview: React.FC<{
               </div>
               <ul className="space-y-0.5">
                 {overview.features.map((f, i) => (
-                  <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
-                    <span className="text-text-secondary shrink-0">·</span>
+                  <li key={i} className="flex gap-1.5 text-lz-body text-lz-ink">
+                    <span className="shrink-0 text-lz-ink-3">·</span>
                     <span>{f}</span>
                   </li>
                 ))}
@@ -4972,29 +4943,22 @@ const RunOverview: React.FC<{
             {overview.runCommand ? (
               <div className="flex items-center gap-2 flex-wrap">
                 <code
-                  className="text-[11px] font-mono bg-background-primary border border-border-primary px-1.5 py-0.5"
-                  style={{ borderRadius: CHIP_RADIUS }}
+                  className={cx(
+                    'border border-lz-border bg-lz-surface-2 px-1.5 py-0.5 font-mono text-lz-mono text-lz-ink',
+                    RADIUS.control
+                  )}
                 >
                   {overview.runCommand}
                 </code>
-                <span
-                  className="text-[11px] px-1.5 py-px"
-                  style={{
-                    color: overview.runCommandVerified ? STATUS_COLOR.done : slate,
-                    border: `1px solid ${overview.runCommandVerified ? STATUS_COLOR.done : slate}`,
-                    borderRadius: CHIP_RADIUS,
-                  }}
-                >
+                <Chip tone={overview.runCommandVerified ? 'ok' : 'stopped'}>
                   {overview.runCommandVerified ? 'verified to start' : 'candidate entry — not verified'}
-                </span>
+                </Chip>
               </div>
             ) : (
-              <div className="text-[11px] text-text-primary">
-                No standalone entry point — this runs inside goose.
-              </div>
+              <div className="text-lz-body text-lz-ink">No standalone entry point — this runs inside goose.</div>
             )}
             {overview.engage ? (
-              <div className="text-[11px] text-text-secondary mt-0.5">{overview.engage}</div>
+              <div className="mt-0.5 text-lz-meta text-lz-ink-3">{overview.engage}</div>
             ) : null}
           </div>
         </>
@@ -5008,7 +4972,7 @@ const RunOverview: React.FC<{
             ))}
           </div>
         ) : (
-          <div className="text-[11px] text-text-secondary">Verification gates were off this run.</div>
+          <div className="text-lz-meta text-lz-ink-3">Verification gates were off this run.</div>
         )}
       </div>
       {overview.generated && overview.next.length ? (
@@ -5016,8 +4980,8 @@ const RunOverview: React.FC<{
           <div className={hdr}>What&apos;s next</div>
           <ul className="space-y-0.5">
             {overview.next.map((n, i) => (
-              <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
-                <span className="text-text-secondary shrink-0">→</span>
+              <li key={i} className="flex gap-1.5 text-lz-body text-lz-ink">
+                <span className="shrink-0 text-lz-ink-3">→</span>
                 <span>{n}</span>
               </li>
             ))}
@@ -5042,26 +5006,30 @@ const TerminalBanner: React.FC<{
   const done = summary?.done ?? totals.done;
   const failed = summary?.failed ?? totals.failed;
   const tasks = totals.tasks;
-  const cfg = {
-    done: { color: STATUS_COLOR.done, Icon: Check, title: 'Build complete' },
-    failed: { color: STATUS_COLOR.error, Icon: AlertTriangle, title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed` },
-    stopped: { color: STOPPED, Icon: CircleSlash, title: 'Run stopped' },
+  const cfg: { tone: Tone; Icon: typeof Check; title: string } = {
+    done: { tone: 'ok' as Tone, Icon: Check, title: 'Build complete' },
+    failed: {
+      tone: 'err' as Tone,
+      Icon: AlertTriangle,
+      title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed`,
+    },
+    stopped: { tone: 'stopped' as Tone, Icon: CircleSlash, title: 'Run stopped' },
   }[outcome];
-  const { color, Icon, title } = cfg;
+  const { tone, Icon, title } = cfg;
   const parts = [
     `${done}/${tasks} task${tasks === 1 ? '' : 's'} done`,
     outcome !== 'failed' && failed ? `${failed} failed` : null,
     durationLabel ? `in ${durationLabel}` : null,
   ].filter(Boolean);
   return (
-    <div className="border-b border-border-primary">
-      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
-        <Icon className="h-4 w-4 shrink-0" strokeWidth={2.5} />
-        <span className="text-xs font-semibold">{title}</span>
-        <span className="text-[11px] tabular-nums">{parts.join(' · ')}</span>
+    <div className="border-b border-lz-border">
+      <div className={cx('flex items-center gap-2 px-3 py-2', TONE_FILL[tone])} data-testid="terminal-banner">
+        <Icon className="size-4 shrink-0" strokeWidth={2.5} />
+        <span className={cx('text-lz-body', WEIGHT.semibold)}>{title}</span>
+        <span className={cx('text-lz-meta', TNUM)}>{parts.join(' · ')}</span>
       </div>
       {outcome === 'stopped' ? (
-        <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+        <div className="px-3 py-1.5 text-lz-meta text-lz-ink-3">
           {/* Absorbs the liveness banner's exited explanation — outcome 'stopped' keys on the same
               EXITED heartbeat stamp, so both surfaces speaking would say one fact twice. */}
           The engine exited without a completion signal — it stopped writing its heartbeat and stamped
@@ -5069,11 +5037,11 @@ const TerminalBanner: React.FC<{
         </div>
       ) : null}
       {summary && summary.perDevice.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-lz-border px-3 py-1.5 text-lz-meta">
           {summary.perDevice.map((d) => {
             // Key the hue by the CANONICAL node name — d.device is the raw pool id, which is not in
             // deviceOrder, so every node collapsed onto the same out-of-range hue.
-            const hue = FORMATION_RAMP[deviceIndex(d.node, deviceOrder) % FORMATION_RAMP.length];
+            const idx = deviceIndex(d.node, deviceOrder);
             return (
               <Tip
                 key={d.device}
@@ -5085,12 +5053,12 @@ const TerminalBanner: React.FC<{
                   </span>
                 }
               >
-                <span className="inline-flex items-center gap-1 tabular-nums cursor-default">
-                  <span className="font-semibold" style={{ color: hue }}>
-                    {d.node}
-                  </span>
-                  <span className="text-text-secondary">
-                    {d.dispatched}t · {d.toolCalls}🔧 · {fmtDuration(d.busyMs / 60000)}
+                <span className={cx('inline-flex cursor-default items-center gap-1.5', TNUM)}>
+                  <NodeDot index={idx} letter={String.fromCharCode(65 + (idx % 26))} />
+                  <span className={cx('text-lz-ink', WEIGHT.semibold)}>{d.node}</span>
+                  <span className="text-lz-ink-3">
+                    {d.dispatched} task{d.dispatched === 1 ? '' : 's'} · {d.toolCalls} call
+                    {d.toolCalls === 1 ? '' : 's'} · {fmtDuration(d.busyMs / 60000)}
                   </span>
                 </span>
               </Tip>
@@ -5100,9 +5068,9 @@ const TerminalBanner: React.FC<{
       ) : null}
       {outputDir ? (
         <Tip label={<span className="font-mono break-all">{outputDir}</span>}>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary border-t border-border-primary min-w-0 cursor-default">
-            <FolderOpen className="h-3 w-3 shrink-0" />
-            <span className="font-mono truncate">{outputDir}</span>
+          <div className="flex min-w-0 cursor-default items-center gap-1.5 border-t border-lz-border px-3 py-1.5 text-lz-meta text-lz-ink-3">
+            <FolderOpen className="size-3 shrink-0" />
+            <span className="truncate font-mono text-lz-mono text-lz-ink-3">{outputDir}</span>
           </div>
         </Tip>
       ) : null}
@@ -5582,11 +5550,13 @@ export const SwarmRunPanel: React.FC<{
           <ZoneHeader
             label="Fleet"
             explain="what each node is doing right now"
+            count={deviceOrder.length}
             right={
-              <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
-                {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
-                {run.inProgress && !stale && !ended ? ` · ${fleet.workingByDevice.size} working` : ''}
-              </span>
+              run.inProgress && !stale && !ended ? (
+                <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
+                  {fleet.workingByDevice.size} working
+                </span>
+              ) : undefined
             }
           />
           <FleetStrip
