@@ -1,8 +1,16 @@
 //! The WALKING SKELETON: the engine-authored first task and its brief. Extracted from swarm.rs
 //! under the incremental-split law in the same commit that added `refresh_skeleton_description`
 //! (r6c: the brief baked pre-repair paths); every function moved mechanically, tests included.
+//!
+//! VA-023 (2026-09-01): which tasks WAIT on the skeleton is derived here too — from the plan's own
+//! `files` against the entry files the skeleton writes — so a task that needs no entry module
+//! starts at BUILD minute 0 instead of idling behind a one-node barrier (see
+//! `skeleton_dependency_verdict`).
 
-use super::{spec_get_endpoints, spec_python_invocations, spec_surface_rows, SpecSurface};
+use super::{
+    decomposition_of, spec_get_endpoints, spec_python_invocations, spec_surface_rows, string_list,
+    SpecSurface,
+};
 
 /// PART III — THE WALKING SKELETON. The plan's first task, prepended by CODE after the review:
 /// entry point(s) + boot + config + route registration, with EVERY advertised route pre-registered
@@ -147,13 +155,149 @@ fn skeleton_description(
     s
 }
 
-/// Prepend the skeleton as the plan's first task and make every other task depend on it. Runs
-/// BEFORE the repair passes on purpose: rule (b)'s first-claimant then guarantees module tasks
-/// never own the skeleton's files (the skeleton is claimant #1 by position), and rule (d)'s
-/// `entry_owner_index` resolves every advertised invocation to the skeleton, so the
-/// endpoint-append targets the one task whose job is serving. The price of prepending first is
-/// that the brief bakes PRE-repair ownership — `refresh_skeleton_description` regenerates it
-/// inside the repair chain (r6c), so what dispatches describes the repaired plan.
+/// The packages the skeleton creates — every directory whose `__init__.py` or `__main__.py` it
+/// writes, with those entry files — longest path first so a nested file (`app/ledgerd/impl.py`)
+/// is reported against `app/ledgerd/`, the package it actually lives in, and ties are by name so
+/// the order is deterministic.
+fn skeleton_packages(skeleton_files: &[String]) -> Vec<(String, Vec<String>)> {
+    let mut packages: Vec<(String, Vec<String>)> = Vec::new();
+    for f in skeleton_files {
+        let Some((dir, name)) = f.rsplit_once('/') else {
+            continue;
+        };
+        if name != "__init__.py" && name != "__main__.py" {
+            continue;
+        }
+        match packages.iter_mut().find(|(d, _)| d == dir) {
+            Some((_, entries)) => entries.push(f.clone()),
+            None => packages.push((dir.to_string(), vec![f.clone()])),
+        }
+    }
+    packages.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    packages
+}
+
+/// Does this task WAIT on the skeleton? Decided from the plan's own `files` against the packages
+/// the skeleton creates — never from prose, never as a blanket rule.
+///
+/// WHY (VA-023, measured r5/r6c): with every task depending on the skeleton, BUILD's first 56 (r5)
+/// and 64 (r6c) minutes ran on one node while two idled (112 / 128 idle node-minutes); r6c's
+/// `web-console` (web/index.html, web/styles.css, web/app.js) and `web-viz` (web/viz.js) import no
+/// entry module and touched no skeleton file, and waited 64 minutes for nothing. Mihai,
+/// 2026-09-01: "We have too many sequential tasks that are done only by one node… Why must it be
+/// done sequentially?"
+///
+/// THE RULE: KEPT when one of the task's files lies inside a package whose `__init__.py` /
+/// `__main__.py` the skeleton writes (`app/db.py` inside `app/`), or is the `X.py` module shadow
+/// of such a package `X/` — the very module `decomposition_of` names in
+/// `module_package_collisions` and `repair_module_package_collisions` rewrites INTO the package,
+/// one derivation reused so this pre-repair verdict matches the post-repair layout. The join is
+/// KEPT unconditionally (it waits on every task). Everything else is RELAXED: it keeps only its
+/// planner-given deps and is Ready the moment those are. Prose is NOT evidence here — r6c's
+/// `decisions-doc` brief names `app/drafts.py` and every frontend brief says `app.js`; a mention
+/// rule would have kept them all. A Python file OUTSIDE every skeleton package (a test, a script)
+/// relaxes too: its imports are unknowable before it is written, and the skeleton's entry stubs
+/// are not what such a file needs — the module it exercises is, and that is a planner dep.
+///
+/// Loud both ways: the row names the file and package the verdict rests on. Rows are
+/// self-describing (`event` + `task` + `reason`) so a sink can fan them out as per-task
+/// `skeleton_dep_kept` / `skeleton_dep_relaxed` events unchanged.
+fn skeleton_dependency_verdict(
+    task: &serde_json::Value,
+    packages: &[(String, Vec<String>)],
+    shadowed_modules: &[String],
+) -> (bool, serde_json::Value) {
+    // A task without an id cannot load as a DAG at all (`from_planner_json` requires one), so
+    // the row states the absence instead of standing in a default for it.
+    let id = task
+        .get("id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("<id missing>");
+    let quoted = |items: &[String]| {
+        items
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let row = |event: &str, reason: String| serde_json::json!({ "event": event, "task": id, "reason": reason });
+    if id == goose_swarm::SINK_ID {
+        return (
+            true,
+            row(
+                "skeleton_dep_kept",
+                "the join waits on every task".to_string(),
+            ),
+        );
+    }
+    let files = string_list(&task["files"]);
+    for f in &files {
+        if let Some((dir, entries)) = packages
+            .iter()
+            .find(|(d, _)| f.starts_with(&format!("{d}/")))
+        {
+            return (
+                true,
+                row(
+                    "skeleton_dep_kept",
+                    format!(
+                        "owns `{f}` inside `{dir}/` — the skeleton writes its {}",
+                        quoted(entries)
+                    ),
+                ),
+            );
+        }
+        if shadowed_modules.iter().any(|m| m == f) {
+            let stem = f.trim_end_matches(".py");
+            if let Some((dir, entries)) = packages.iter().find(|(d, _)| d == stem) {
+                return (
+                    true,
+                    row(
+                        "skeleton_dep_kept",
+                        format!(
+                            "owns `{f}`, the module shadow of `{dir}/` (the collision repair \
+                             rewrites it into the package) — the skeleton writes its {}",
+                            quoted(entries)
+                        ),
+                    ),
+                );
+            }
+        }
+    }
+    let mut package_dirs: Vec<String> = packages.iter().map(|(d, _)| format!("{d}/")).collect();
+    package_dirs.sort();
+    let owned = if files.is_empty() {
+        "owns no files".to_string()
+    } else {
+        format!(
+            "none of its files ({}) lies inside a package the skeleton writes an entry for ({})",
+            quoted(&files),
+            quoted(&package_dirs)
+        )
+    };
+    let deps = string_list(&task["depends_on"]);
+    let planned = if deps.is_empty() {
+        "no planned deps — Ready at BUILD start".to_string()
+    } else {
+        format!("planned deps kept: {}", quoted(&deps))
+    };
+    (
+        false,
+        row("skeleton_dep_relaxed", format!("{owned}; {planned}")),
+    )
+}
+
+/// Prepend the skeleton as the plan's first task and make every task that needs an entry file it
+/// writes depend on it (`skeleton_dependency_verdict`; the join always does). Runs BEFORE the
+/// repair passes on purpose: rule (b)'s first-claimant then guarantees module tasks never own the
+/// skeleton's files (the skeleton is claimant #1 by position), and rule (d)'s `entry_owner_index`
+/// resolves every advertised invocation to the skeleton, so the endpoint-append targets the one
+/// task whose job is serving. The price of prepending first is that the brief bakes PRE-repair
+/// ownership — `refresh_skeleton_description` regenerates it inside the repair chain (r6c), so
+/// what dispatches describes the repaired plan. The dependency verdicts survive the repairs
+/// without a refresh: the repairs only remove files, rewrite a shadow module INTO its package
+/// (already a KEPT case), or move the join's files onto the skeleton — none turns a RELAXED
+/// task into one that owns a skeleton-package file.
 ///
 /// Returns the event to emit, or None when there is nothing to build from — no advertised
 /// `python -m` invocation (the same guard `require_advertised_entry_files` applies; a spec with no
@@ -180,18 +324,6 @@ pub(super) fn prepend_skeleton_task(
         return None;
     }
     let description = skeleton_description(subtasks, spec, &invocations, &files);
-    let module_count = subtasks.len();
-    for t in subtasks.iter_mut() {
-        let obj = t.as_object_mut()?;
-        let deps = obj
-            .entry("depends_on")
-            .or_insert_with(|| serde_json::json!([]));
-        if let Some(a) = deps.as_array_mut() {
-            if !a.iter().any(|d| d.as_str() == Some(SKELETON_ID)) {
-                a.push(serde_json::Value::String(SKELETON_ID.to_string()));
-            }
-        }
-    }
     subtasks.insert(
         0,
         serde_json::json!({
@@ -202,11 +334,41 @@ pub(super) fn prepend_skeleton_task(
             "description": description,
         }),
     );
+    // The shadow list is computed WITH the skeleton in the plan, so a module beside a package the
+    // skeleton alone creates (`app.py` beside its `app/__main__.py`) is named too.
+    let shadowed = string_list(&decomposition_of(&v.to_string())["module_package_collisions"]);
+    let packages = skeleton_packages(&files);
+    let mut kept: Vec<serde_json::Value> = Vec::new();
+    let mut relaxed: Vec<serde_json::Value> = Vec::new();
+    if let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for t in subtasks.iter_mut().skip(1) {
+            let (waits, verdict) = skeleton_dependency_verdict(t, &packages, &shadowed);
+            if !waits {
+                relaxed.push(verdict);
+                continue;
+            }
+            kept.push(verdict);
+            let Some(obj) = t.as_object_mut() else {
+                continue;
+            };
+            let deps = obj
+                .entry("depends_on")
+                .or_insert_with(|| serde_json::json!([]));
+            if let Some(a) = deps.as_array_mut() {
+                if !a.iter().any(|d| d.as_str() == Some(SKELETON_ID)) {
+                    a.push(serde_json::Value::String(SKELETON_ID.to_string()));
+                }
+            }
+        }
+    }
     Some(serde_json::json!({
         "event": "skeleton_prepended",
         "files": files,
         "invocations": invocations,
-        "dependents": module_count,
+        "dependents": kept.len(),
+        "relaxed": relaxed.len(),
+        "skeleton_dep_kept": kept,
+        "skeleton_dep_relaxed": relaxed,
         "description_chars": description.chars().count(),
     }))
 }
@@ -329,15 +491,19 @@ mod tests {
         }
         // the planned module list rides along so the skeleton imports what will exist
         assert!(desc.contains("vendor-sync: app/vendor_sync.py"));
-        // every other task now waits on the skeleton — the app boots before the fan
+        // VA-023: a task waits on the skeleton only when it owns a file inside a package the
+        // skeleton creates (`app/`, `app/ledgerd/`, `app/notifierd/`) — plus the join. r2's
+        // `documentation` (DECISIONS.md, README.md) and `frontend-ui` (web/*) own none: Ready at
+        // BUILD start instead of behind a one-node barrier.
         for t in v["subtasks"].as_array().unwrap().iter().skip(1) {
-            assert!(
-                strings(&t["depends_on"]).contains(&"skeleton".to_string()),
-                "{} does not depend on the skeleton",
-                t["id"]
-            );
+            let id = t["id"].as_str().unwrap();
+            let waits = strings(&t["depends_on"]).contains(&"skeleton".to_string());
+            let expected = !matches!(id, "documentation" | "frontend-ui");
+            assert_eq!(waits, expected, "{id}: depends_on = {:?}", t["depends_on"]);
         }
         assert_eq!(ev["event"], "skeleton_prepended");
+        assert_eq!(ev["dependents"], 9, "11 planned tasks, 2 relaxed");
+        assert_eq!(ev["relaxed"], 2);
         // THE FENCE: after the repair passes, no module task owns a skeleton file — rule (b)'s
         // first claimant is the skeleton by position, and the action rows say so.
         let repairs = repair_plan_flags(&mut v, spec);
@@ -464,6 +630,157 @@ mod tests {
             "the regeneration is loud in plan_repaired: {:?}",
             r.actions
         );
+    }
+
+    /// VA-023 on r6c's own shape. Measured: r6c's BUILD ran its first 64 minutes on one node
+    /// (skeleton) with two idle, then dispatched all five module tasks at B+64 — `web-console`,
+    /// `web-viz` and `decisions-doc` had waited for entry files they never import. Derived from
+    /// `files` alone: the three tasks under `app/` keep the dependency (their reasons name the
+    /// file and the package), the join keeps it, the two frontend tasks and the doc task relax
+    /// and keep exactly their planner-given deps. The event carries one row per task, both ways.
+    #[test]
+    fn skeleton_dependency_is_derived_from_package_membership_on_r6cs_plan() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v: serde_json::Value = serde_json::from_str(R6C_SHAPED_PLAN).unwrap();
+        let ev = prepend_skeleton_task(&mut v, spec).expect("the sb-7 spec advertises boots");
+        let deps_of = |v: &serde_json::Value, id: &str| -> Vec<String> {
+            v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .map(|t| strings(&t["depends_on"]))
+                .unwrap_or_else(|| panic!("{id} missing"))
+        };
+        for kept in [
+            "ledgerd-core",
+            "ledgerd-api",
+            "notifierd",
+            "integrate-verify",
+        ] {
+            assert!(
+                deps_of(&v, kept).contains(&"skeleton".to_string()),
+                "{kept} must wait on the skeleton: {:?}",
+                deps_of(&v, kept)
+            );
+        }
+        assert_eq!(deps_of(&v, "web-console"), vec!["ledgerd-api"]);
+        assert_eq!(deps_of(&v, "web-viz"), vec!["web-console"]);
+        assert!(
+            deps_of(&v, "decisions-doc").is_empty(),
+            "Ready at BUILD start"
+        );
+        assert_eq!(ev["dependents"], 4);
+        assert_eq!(ev["relaxed"], 3);
+        let rows = |key: &str| -> Vec<(String, String)> {
+            ev[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    assert_eq!(r["event"], key, "rows are self-describing events");
+                    (
+                        r["task"].as_str().unwrap().to_string(),
+                        r["reason"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect()
+        };
+        let kept = rows("skeleton_dep_kept");
+        let relaxed = rows("skeleton_dep_relaxed");
+        assert_eq!(
+            kept.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+            vec![
+                "ledgerd-core",
+                "ledgerd-api",
+                "notifierd",
+                "integrate-verify"
+            ]
+        );
+        assert_eq!(
+            relaxed.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+            vec!["web-console", "web-viz", "decisions-doc"]
+        );
+        // the reasons name the evidence, not a rule
+        let reason = |rows: &[(String, String)], t: &str| {
+            rows.iter().find(|(id, _)| id == t).unwrap().1.clone()
+        };
+        assert!(
+            reason(&kept, "ledgerd-core").contains(
+                "owns `app/__main__.py` inside `app/` — the skeleton writes its `app/__main__.py`"
+            ),
+            "{}",
+            reason(&kept, "ledgerd-core")
+        );
+        assert!(
+            reason(&kept, "notifierd").contains("owns `app/notifierd.py` inside `app/`"),
+            "{}",
+            reason(&kept, "notifierd")
+        );
+        assert_eq!(
+            reason(&kept, "integrate-verify"),
+            "the join waits on every task"
+        );
+        let web = reason(&relaxed, "web-console");
+        assert!(
+            web.contains("`web/index.html`, `web/styles.css`, `web/app.js`")
+                && web.contains("`app/`, `app/ledgerd/`, `app/notifierd/`")
+                && web.contains("planned deps kept: `ledgerd-api`"),
+            "{web}"
+        );
+        assert!(
+            reason(&relaxed, "decisions-doc").contains("no planned deps — Ready at BUILD start"),
+            "{}",
+            reason(&relaxed, "decisions-doc")
+        );
+        // the repairs neither undo a verdict nor need to revisit one, and the DAG loads
+        repair_plan_flags(&mut v, spec);
+        assert_eq!(deps_of(&v, "web-console"), vec!["ledgerd-api"]);
+        assert!(deps_of(&v, "ledgerd-core").contains(&"skeleton".to_string()));
+        let dag = goose_swarm::Dag::from_planner_json(&v.to_string()).unwrap();
+        assert!(dag.tasks["web-console"].spec.deps == vec!["ledgerd-api".to_string()]);
+    }
+
+    /// The shadow clause: a top-level `app.py` beside the skeleton's `app/__main__.py` is not
+    /// under `app/` as a string, but it IS the module the collision repair rewrites into
+    /// `app/impl.py` — so the pre-repair verdict must already keep it, from the same
+    /// `module_package_collisions` derivation the repair uses, or the repaired plan would carry a
+    /// package member with no skeleton dependency.
+    #[test]
+    fn a_module_shadowing_a_skeleton_package_keeps_the_dependency() {
+        let spec = "Build `app`. Runs as `python -m app --port N`.";
+        let mut v: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core","files":["app.py"],"depends_on":[],"description":"core"},
+                {"id":"docs","files":["README.md"],"depends_on":[],"description":"docs"},
+                {"id":"integrate-verify","files":[],"depends_on":["core","docs"],"description":"verify"}
+            ]}"#,
+        )
+        .unwrap();
+        let ev = prepend_skeleton_task(&mut v, spec).unwrap();
+        assert_eq!(
+            strings(&v["subtasks"][0]["files"]),
+            vec!["app/__main__.py", "app/__init__.py"],
+            "no planned task puts a file in app/, so the skeleton creates the package"
+        );
+        let core = &v["subtasks"][1];
+        assert!(strings(&core["depends_on"]).contains(&"skeleton".to_string()));
+        let reason = ev["skeleton_dep_kept"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("owns `app.py`, the module shadow of `app/`"),
+            "{reason}"
+        );
+        assert_eq!(ev["skeleton_dep_relaxed"][0]["task"], "docs");
+        let r = repair_plan_flags(&mut v, spec);
+        assert!(
+            r.actions
+                .iter()
+                .any(|a| a.contains("rewritten to `app/impl.py`")),
+            "{:?}",
+            r.actions
+        );
+        assert_eq!(strings(&v["subtasks"][1]["files"]), vec!["app/impl.py"]);
+        assert!(strings(&v["subtasks"][1]["depends_on"]).contains(&"skeleton".to_string()));
     }
 
     /// The one-door check for this guarantee: the dag_fallback arm walks the SAME
