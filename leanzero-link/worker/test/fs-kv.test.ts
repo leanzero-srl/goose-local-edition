@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createFsKvStore } from "../src/lib/fs-kv";
+import { createFsKvStore, fileNameFor } from "../src/lib/fs-kv";
 
 // Every test operates in a fresh mkdtemp under the OS temp dir — never a real
 // LINK_KV_DIR. The dir is removed in afterEach.
@@ -102,7 +102,7 @@ describe("createFsKvStore", () => {
     expect(await kv.get("k")).toBeNull();
   });
 
-  it("encodes keys to a safe base64url filename so path traversal is unrepresentable", async () => {
+  it("names files sha256(key) hex — fixed 64 chars, hex alphabet, so path traversal is unrepresentable", async () => {
     const kv = createFsKvStore(dir);
     const evil = "../../../../etc/passwd";
     await kv.put(evil, "pwned");
@@ -110,9 +110,8 @@ describe("createFsKvStore", () => {
     const files = await readdir(dir);
     expect(files.length).toBe(1);
     const name = files[0] as string;
-    // base64url alphabet only: A-Z a-z 0-9 - _  (plus the .json suffix). No slashes,
-    // no dots-as-parent, so nothing can escape the dir.
-    expect(name).toMatch(/^[A-Za-z0-9_-]+\.json$/);
+    expect(name).toMatch(/^[0-9a-f]{64}\.json$/);
+    expect(name).toBe(fileNameFor(evil));
     expect(name).not.toContain("/");
     expect(name).not.toContain("..");
 
@@ -120,6 +119,22 @@ describe("createFsKvStore", () => {
     // outside the dir (no file at the traversal target inside the temp root).
     expect(await kv.get(evil)).toBe("pwned");
     await expect(stat(join(dir, "..", "..", "..", "..", "etc", "passwd-should-not-exist"))).rejects.toThrow();
+  });
+
+  // W-M7's measured case: base64url(key).json.<uuid>.tmp exceeded NAME_MAX (255) at a
+  // 141-char email → ENAMETOOLONG → 500 on request-code. The name no longer grows with
+  // the key at all, so there is no cap to derive.
+  it("stores keys of ANY length: a 254-char email, a 2 KB key and a 64 KB key all round-trip", async () => {
+    const kv = createFsKvStore(dir);
+    const longEmail = `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(57)}.com`;
+    expect(longEmail.length).toBe(254);
+    const keys = [`otp:${longEmail}`, `rl:email:${longEmail}:496738`, "x".repeat(2048), "y".repeat(65536)];
+    for (const key of keys) {
+      await kv.put(key, `value-for-${key.length}`, { expirationTtl: 600 });
+      expect(await kv.get(key)).toBe(`value-for-${key.length}`);
+      expect(fileNameFor(key).length).toBe(64 + ".json".length);
+    }
+    expect((await readdir(dir)).length).toBe(keys.length);
   });
 
   it("update is atomic per key: 500 concurrent increments land as exactly 500", async () => {
@@ -164,11 +179,20 @@ describe("createFsKvStore", () => {
     expect(await kv.get("b")).toBe("independent");
   });
 
-  it("writes the on-disk record as JSON with the value and an expiry", async () => {
+  it("writes the on-disk record as JSON with the plaintext key, the value and an expiry", async () => {
     const kv = createFsKvStore(dir, { now: () => 5_000 });
     await kv.put("k", "v", { expirationTtl: 600 });
     const [file] = await readdir(dir);
     const raw = await readFile(join(dir, file as string), "utf8");
-    expect(JSON.parse(raw)).toEqual({ value: "v", expiresAtMs: 5_000 + 600 * 1000 });
+    expect(JSON.parse(raw)).toEqual({ key: "k", value: "v", expiresAtMs: 5_000 + 600 * 1000 });
+  });
+
+  it("treats a record whose embedded key is not the looked-up key as corrupt (a misplaced file)", async () => {
+    const { log, events } = captureLog();
+    const kv = createFsKvStore(dir, { log });
+    await writeFile(join(dir, fileNameFor("k")), JSON.stringify({ key: "other", value: "v" }), "utf8");
+    expect(await kv.get("k")).toBeNull();
+    expect(events.some((e) => e.event === "fs_kv_corrupt")).toBe(true);
+    expect((await readdir(dir)).length).toBe(0);
   });
 });
