@@ -83,3 +83,13 @@ and amends this file in the same turn a gap shows. Changelog:
 (not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
 way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
 EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## A deletion is complete only when its residue is gone (added 2026-09-01)
+
+Before committing a deletion, grep the WHOLE repo and the operator layer for the deleted symbol, event name,
+phase name and config field: `grep -rn '<name>' . ~/goose-builds/loop-state/tick.py ~/.agents/skills/` — code
+comments that still assert the mechanism, docs (AGENTS.md phase lines, .claude/rules, .claude/agents),
+tick.py rows that will now never fire, desktop `golden.ts` DEFAULTS/PRESET_KEYS and their `golden.test.ts`
+(run `cd ui/desktop && pnpm test` whenever a config field or lever changes — no Rust gate runs it), ribbon
+`RETIRED_PHASES`. Name every residue you leave for another file's owner in the commit message. A half-deleted
+step reads authoritative and is worse than a kept one (2a's D1–D3 left ~20 residues on 2026-09-01).
