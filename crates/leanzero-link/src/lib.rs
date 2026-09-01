@@ -20,8 +20,11 @@
 
 pub mod control;
 pub mod discovery;
+pub mod identity;
+pub mod manager;
 pub mod mesh;
 pub mod pubsub;
 pub mod state;
 mod subprocess;
 pub mod wire;
+pub mod worker_client;

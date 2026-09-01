@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "LeanZero Link: goose-owned userspace Tailscale mesh sidecar, fully isolated from any system tailscaled"
 
+# TLS for the auth worker client (worker_client.rs → HTTPS). Off by default so the
+# crate builds and its tests run against a plain-HTTP mock with no TLS backend; the
+# consuming crate (goose-server) enables one, exactly as it does for goose-sidecar.
+[features]
+default = []
+rustls-tls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
@@ -11,6 +19,7 @@ bytes = { workspace = true }
 chrono = { workspace = true, features = ["now"] }
 dirs = { workspace = true }
 futures = { workspace = true }
+gethostname = "1.1.0"
 reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -31,3 +40,4 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wiremock = { workspace = true }
