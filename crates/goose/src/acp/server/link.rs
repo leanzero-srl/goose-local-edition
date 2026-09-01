@@ -1363,6 +1363,37 @@ mod tests {
         assert_eq!(back.remote_execution_allowed_live, Some(false));
     }
 
+    /// The `goose serve` boot path (`crates/goose-cli/src/cli.rs` `handle_serve_command`)
+    /// injects goose's own `GoosedMlxControl` through `set_mlx_control`; the status DTO
+    /// reads the same process-wide slot, so the shipped desktop's panel shows
+    /// `mlxControlWired: true` and its `/v1/swarm/mlx/*` routes no longer answer `501`.
+    #[test]
+    fn mlx_control_injected_at_serve_boot_reads_wired_on_the_status_dto() {
+        set_mlx_control(GoosedMlxControl::new());
+        let view = HolderView {
+            allow_remote_execution: false,
+            mesh_binaries: MeshBinaries {
+                tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+                tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+            },
+            connect_refusal: None,
+        };
+        let dto = link_state_to_dto(
+            LinkState {
+                auth: AuthState::LoggedOut,
+                mesh: None,
+                node_count: 0,
+                mesh_poll_failures: 0,
+                last_error: None,
+            },
+            &view,
+        );
+        assert!(
+            dto.mlx_control_wired,
+            "the DTO reads the injected mlx control"
+        );
+    }
+
     /// R-H4: a failed discovery is carried as its own text — every missing binary named
     /// with everywhere discovery looked — never replaced by a guessed install path.
     #[test]

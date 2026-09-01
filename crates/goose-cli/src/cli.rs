@@ -1470,6 +1470,11 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         additional_source_roots,
         scheduler: None,
     }));
+    // The shipped desktop runs THIS path, not `goosed agent` (which injects the LeanZero
+    // Link seams in crates/goose-server/src/commands/agent.rs). Without this line the
+    // node's control service answers `501` on every `POST /v1/swarm/mlx/*`. The control is
+    // stateless over the one global engine manager, so it needs no AppState.
+    goose::acp::server::set_mlx_control(goose::acp::server::GoosedMlxControl::new());
     let env_secret = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
         .ok()
         .map(|secret| secret.trim().to_string())
