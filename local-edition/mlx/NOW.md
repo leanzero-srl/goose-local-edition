@@ -1,6 +1,20 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## NEW CHAPTER (2026-09-01): LEANZERO LINK
+## LEANZERO LINK — BUILDING THE DEEPER HALF (Mihai said continue, 2026-09-01)
+Both decisions → BUILD. Sequential chain (all share the goose-server↔link seam, so no parallel):
+  Agent 1 (IN FLIGHT, link-backend): full per-message mirroring — goose-server process-wide delta
+    tap injected into GoosedSwarmStateSource; completes P4. Read-only broadcast, low risk.
+  Agent 2 (NEXT, link-backend): cross-node REMOTE-EXECUTE endpoint on the control service + a
+    goose-server-backed LocalExecutor (run a prompt+cwd through the real agent, stream results).
+    NEW security surface = execute-on-your-own-devices; trust = tailnet membership + node_token
+    bearer (same-account only) — enforce + document LOUDLY. This is the acting path the idle guard needs.
+  Agent 3 (AFTER 2, swarm-surgeon): dispatcher idle-guard — swarm routes eligible tasks to Idle
+    mesh PEERS via the execute endpoint (helpers exist: link.rs fetch_local_swarm_nodes /
+    node_token_from_email; port 41226; peers[].status Idle|Busy|Offline); all-busy → local fallback/queue.
+  Then panel-surgeon: surface remote-run + the queued staleness gate (#20).
+Backend contracts all banked in LEDGER (worker/mesh/control/manager/goosed). Fleet benchmark still live.
+
 Mihai's five-phase spec: passwordless Resend-OTP identity (~/.leanzero/identity.json), cross-WAN
 mesh via Tailscale, idle-node execution guards, real-time session mirroring, companion-app-ready
 /v1/swarm/{nodes,sessions,stream} APIs. MEASURED HEAD START: this machine is ALREADY on a live
