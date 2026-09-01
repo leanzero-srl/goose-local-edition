@@ -1659,12 +1659,38 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'plan_patched': {
-        const round = num(e['round']) ?? 0;
         const patch = {
           replace: num(e['replace']) ?? 0,
           add: num(e['add']) ?? 0,
           remove: num(e['remove']) ?? 0,
         };
+        if (str(e['source']) === 'split') {
+          // THE SPLIT (2c S1, shards.rs): a measured fat task becomes N shard tasks plus the module as
+          // MERGER — ONE PlanPatch built by code from synthesis's declaration, applied to the loaded plan.
+          // It is a PATCH: never a re-plan (the replanner is deleted) and never a review round (deleted
+          // too), so it must read as neither. r6e: viz3d-engine → 8 shards, 23 exports, plan 8 → 16.
+          const module = str(e['module']);
+          const shards = arr(e['shards']).map(String);
+          const exports = num(e['exports_declared']) ?? 0;
+          const after = (e['after'] ?? {}) as Record<string, unknown>;
+          const tasksAfter = num(after['tasks']);
+          const t = `Plan patched — fat task \`${module}\` split into ${shards.length} shard${shards.length === 1 ? '' : 's'} + a merger`;
+          const facts = [
+            `${exports} export${exports === 1 ? '' : 's'} declared`,
+            `${patch.replace} task rewired · ${patch.add} added · ${patch.remove} removed`,
+            tasksAfter != null ? `plan now ${tasksAfter} tasks` : '',
+          ].filter(Boolean);
+          compact({ kind: 'plan', text: t, tone: 'good', sub: facts.join(' · ') });
+          verbose({
+            kind: 'plan',
+            text: t,
+            tone: 'good',
+            sub: [...facts, shards.length ? `shards: ${shards.join(', ')}` : ''].filter(Boolean).join(' · '),
+          });
+          break;
+        }
+        // LEGACY-LOG: the review round's patch — no emitter since 2447d145c; archived r0–r6d carry it.
+        const round = num(e['round']) ?? 0;
         const target = reviewRounds.find((r) => r.round === round);
         if (target) target.patch = patch;
         verbose({
@@ -1677,7 +1703,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'plan_repaired': {
         // The deterministic pass (DESIGN-STABILITY-FIRST.md step 1) that fixes what the measured plan flags
-        // name, without a model round: it fires ONCE per plan and its before/after is the whole story.
+        // name, without a model round: it fires ONCE per plan and its before/after is the whole story —
+        // and ONCE MORE for a split plan (`source: "split"`): the patched plan walks the same door again
+        // (the one-door gate). Said so, or two repair rows on one run read as one repair fired twice.
         const actions = Array.isArray(e['actions']) ? (e['actions'] as unknown[]).length : 0;
         const before = (e['before'] ?? {}) as Record<string, unknown>;
         const after = (e['after'] ?? {}) as Record<string, unknown>;
@@ -1685,7 +1713,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           const v = o[k];
           return Array.isArray(v) ? v.length : (num(v) ?? 0);
         };
-        const t = actions === 0 ? 'Plan needed no repair' : `Plan repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
+        const who = str(e['source']) === 'split' ? 'Split plan' : 'Plan';
+        const t = actions === 0 ? `${who} needed no repair` : `${who} repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
         const sub =
           `owning nothing ${count(before, 'tasks_owning_nothing')}→${count(after, 'tasks_owning_nothing')} · ` +
           `shared files ${count(before, 'shared_files')}→${count(after, 'shared_files')} · ` +
@@ -1693,6 +1722,170 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           `unassigned endpoints ${count(before, 'unassigned_endpoints')}→${count(after, 'unassigned_endpoints')}`;
         compact({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
         verbose({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
+        break;
+      }
+      case 'plan_flag': {
+        // The ONE plan_flag the engine emits (shards.rs `fat_task`): spec sections per owned file above
+        // mean+σ AND ≥ 2× the median. It is the measurement that summons the split; its outcome is
+        // `plan_patched{source: split}` or `split_declined` — never silence.
+        if (str(e['kind']) !== 'fat_task') break;
+        const task = str(e['task']);
+        const files = arr(e['files']).length;
+        const sections = num(e['sections']);
+        const perFile = num(e['sections_per_file']);
+        const threshold = num(e['threshold']);
+        const median = num(e['median']);
+        const t = `Fat task \`${task}\` — asking synthesis for a split`;
+        const sub =
+          [
+            sections != null
+              ? `${sections} spec section${sections === 1 ? '' : 's'} for ${files} file${files === 1 ? '' : 's'}`
+              : '',
+            perFile != null ? `${perFile.toFixed(1)}/file` : '',
+            threshold != null ? `threshold ${threshold.toFixed(1)}` : '',
+            median != null ? `median ${median.toFixed(1)}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'info', sub });
+        verbose({ kind: 'plan', text: t, tone: 'info', sub });
+        break;
+      }
+      case 'split_declined': {
+        // The split's failure twin: the request did not return, or did not parse. The fat task builds
+        // as ONE lane — a warning the feed carries, not a clean pass.
+        const t = `Split of \`${str(e['task'])}\` declined — the fat task builds as one lane`;
+        const sub = str(e['reason']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_dossier': {
+        // What the MERGER was handed at dispatch, measured by code from the shard folders. r6e: 0
+        // pieces, all 8 READMEs missing (the shards had been stripped from its deps) — the merger ran
+        // on nothing, and a dossier row that read clean there would have been the lie.
+        const task = str(e['task_id']) || str(e['module']);
+        const shards = arr(e['shards']).length;
+        const pieces = num(e['pieces']) ?? 0;
+        const parseErrors = num(e['pieces_with_parse_errors']) ?? 0;
+        const readmesMissing = arr(e['readmes_missing']).map(String);
+        const declaredMissing = arr(e['declared_missing']).length;
+        const duplicates = arr(e['duplicates']).length;
+        const disagreements = arr(e['signature_disagreements']).length;
+        const unfinished = arr(e['unfinished']).length;
+        const secondPass = e['second_pass'] === true;
+        const clean =
+          readmesMissing.length === 0 && parseErrors === 0 && declaredMissing === 0 && disagreements === 0;
+        const tone: ActivityTone = pieces === 0 ? 'bad' : clean ? 'good' : 'warn';
+        const t =
+          `Merger \`${task}\` handed ${pieces} piece${pieces === 1 ? '' : 's'} from ${shards} shard${shards === 1 ? '' : 's'}` +
+          (readmesMissing.length
+            ? ` — ${readmesMissing.length} README${readmesMissing.length === 1 ? '' : 's'} missing`
+            : '') +
+          (secondPass ? ' (second pass)' : '');
+        const sub = [
+          `declared exports undefined ${declaredMissing}`,
+          `parse errors ${parseErrors}`,
+          `duplicates ${duplicates}`,
+          `signature disagreements ${disagreements}`,
+          `unfinished ${unfinished}`,
+        ].join(' · ');
+        compact({ kind: 'plan', text: t, tone, sub });
+        verbose({
+          kind: 'plan',
+          text: t,
+          tone,
+          sub: readmesMissing.length ? `${sub}\nno README: ${readmesMissing.join(', ')}` : sub,
+        });
+        break;
+      }
+      case 'merge_piece_dropped': {
+        // A shard's symbol absent from the merged file with no stated reason; REFERENCED means the file
+        // still calls it — a load-time failure, the worst drop.
+        const referenced = e['referenced'] === true;
+        const t = `Merge dropped \`${str(e['symbol'])}\` from ${str(e['shard'])}${referenced ? ' — the merged file still calls it' : ''}`;
+        const tone: ActivityTone = referenced ? 'bad' : 'warn';
+        compact({ kind: 'plan', text: t, tone });
+        verbose({ kind: 'plan', text: t, tone, sub: `merger ${str(e['task_id'])}` });
+        break;
+      }
+      case 'merge_signature_mismatch': {
+        const t = `Merge signature mismatch — \`${str(e['symbol'])}\` in ${str(e['module'])}`;
+        const sub = `declared ${str(e['declared'])} · found ${str(e['found'])}`;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_gap': {
+        // The merger's gap door — the ONE splice site left in the DAG: a validated follow-up shard,
+        // dispatched, with the merger called back when it lands.
+        const t = `Merge gap in ${str(e['module'])} — shard \`${str(e['shard'])}\` dispatched`;
+        const sub = [str(e['missing']), str(e['folder'])].filter(Boolean).join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_gap_repeated': {
+        // The re-arm cycle's PROGRESS terminator: work that already landed as a shard, asked for again,
+        // refused by name — never by a count.
+        const t = `Merge gap repeated — \`${str(e['missing'])}\` already landed as ${str(e['landed_as'])}; refused`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({
+          kind: 'plan',
+          text: t,
+          tone: 'warn',
+          sub: `merger ${str(e['task_id'])} · gap ${str(e['gap'])}`,
+        });
+        break;
+      }
+      case 'merge_gap_refused': {
+        // merge_gap's failure twin: the door refused the splice (ownership, ids, a cycle) — the gap
+        // stays open and the merger completes without it.
+        const gaps = arr(e['gaps']).map(String);
+        const t = `Merge gap${gaps.length === 1 ? '' : 's'} refused for ${str(e['task_id'])} — ${gaps.join(', ') || 'none named'}`;
+        const sub = str(e['reason']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'bad', sub });
+        verbose({ kind: 'plan', text: t, tone: 'bad', sub });
+        break;
+      }
+      case 'merge_gap_open': {
+        const t = `Merge left \`${str(e['item'])}\` open — shard ${str(e['shard'])}, neither filled nor sent out`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub: `merger ${str(e['task_id'])}` });
+        break;
+      }
+      case 'merge_checked': {
+        // CODE's check of the merged file at the merger's completion. `promoted` is a LABEL (REPAIR owns
+        // what is left), but a merger that dropped referenced pieces or left declared exports undefined
+        // must not read like one that landed clean.
+        const promoted = e['promoted'] === true;
+        const declaredMissing = arr(e['declared_missing']).length;
+        const dropped = num(e['dropped']) ?? 0;
+        const droppedReferenced = num(e['dropped_referenced']) ?? 0;
+        const gapsOpen = num(e['gaps_open']) ?? 0;
+        const gapsSent = arr(e['gaps_sent']).length;
+        const parseErrors = arr(e['parse_errors']).length;
+        const mismatch = num(e['signature_mismatch']) ?? 0;
+        const t = promoted
+          ? `Merge of ${str(e['module'])} checked — every declared export defined, promoted`
+          : `Merge of ${str(e['module'])} checked — not promoted`;
+        const sub = [
+          `parse errors ${parseErrors}`,
+          `declared exports undefined ${declaredMissing}`,
+          `signature mismatches ${mismatch}`,
+          `pieces dropped ${dropped}${droppedReferenced ? ` (${droppedReferenced} still referenced)` : ''}`,
+          `gaps open ${gapsOpen} · sent ${gapsSent}`,
+          e['merge_readme_present'] === false ? 'MERGE.md missing' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const tone: ActivityTone = promoted
+          ? 'good'
+          : droppedReferenced > 0 || parseErrors > 0
+            ? 'bad'
+            : 'warn';
+        compact({ kind: 'plan', text: t, tone, sub });
+        verbose({ kind: 'plan', text: t, tone, sub });
         break;
       }
       case 'plan_patch_rejected': {
@@ -2489,7 +2682,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       // LEGACY-LOG: pre_review / pre_review_failed have no emitter (the M5 pre-review layer is gone;
-      // main.ts still pins GOOSE_SWARM_PREREVIEW=0 for older engines) — archived r0/r2 carry them.
+      // main.ts dropped its GOOSE_SWARM_PREREVIEW=0 pin with VA-048) — archived r0/r2 carry them.
       case 'pre_review': {
         const had = !!e['had_findings'];
         verbose({
@@ -3494,7 +3687,13 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     if (activity[k] != null) planningKeys.push(k);
     const prefix = PLANNING_FAN_AFTER[k];
     if (prefix) {
-      planningKeys.push(...activityKeys.filter((x) => x.startsWith(prefix)).sort());
+      planningKeys.push(
+        ...activityKeys
+          // A worker task the plan happened to name under a fan prefix (`split-view`, `review-tool`)
+          // is a task lane already; listing it here too would paint one call twice.
+          .filter((x) => x.startsWith(prefix) && !c.tasks.has(x) && !c.fixTasks.has(x))
+          .sort()
+      );
     }
   }
   const planningLanes: TurnLane[] = planningKeys
@@ -3808,7 +4007,7 @@ export const PLANNING_DIGEST_KEYS = [
  *  2 NODES" — only `open` and `open-resplit` — while three coverage lanes were live. They appeared in
  *  FLEET, which reads node state, so the two halves of the same screen disagreed. REVIEW now fans the same
  *  way as `review-1..N` and would have been invisible identically. */
-const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-'] as const;
+const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-', 'split-'] as const;
 
 /** Which fixed key each fan follows, so the lanes render in the order the phases actually run.
  *  The research fan (v2, `research-<slice>` per batch since C3; `research-<slice>-q<n>` on r6b–r6d
@@ -3817,6 +4016,11 @@ const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-'] as cons
  *  planning-calls group instead. */
 const PLANNING_FAN_AFTER: Record<string, string | undefined> = {
   'open-resplit': 'open-coverage-',
+  // THE SPLIT's one model call (`split-<task>`, shards.rs request_module_split): synthesis asks the
+  // planner model to declare a measured fat task's shard interface. r6e's ran 22 minutes on workhorse
+  // with no entry here — a call the planning zone listed nowhere while its `judge-split-<task>` lane
+  // said a judge was looking at it.
+  synthesis: 'split-',
   review: 'review-',
 };
 
@@ -3925,6 +4129,9 @@ function digestLabel(key: string): string {
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
   if (key.startsWith('slice-')) return `Slice · ${key.slice('slice-'.length)}`;
+  // Identity before the ' · ' (laneSiblingTitle cuts there): "Split viz3d-engine".
+  if (key.startsWith('split-'))
+    return `Split ${key.slice('split-'.length)} · declaring the shard interface of a fat task`;
   if (key.startsWith('open-coverage-'))
     return `Coverage ${key.slice('open-coverage-'.length)} · what the request names that nothing owns`;
   if (key.startsWith('research-')) return researchLaneLabel(key);
@@ -4275,6 +4482,30 @@ export function buildPhaseTodo(
   const salvaged = new Set<string>();
   const splitParents = new Set<string>();
   const replans: number[] = [];
+  // THE SPLIT (2c S1): the fat-task measurement, the one patch it earns (or its declined twin), which
+  // shard is a piece of which module, and what the merger was handed / how its merge checked out.
+  const fatTasks = new Map<
+    string,
+    { sections: number | null; files: number; perFile: number | null; threshold: number | null }
+  >();
+  const splits: Array<{ module: string; shards: string[]; exports: number; tasksAfter: number | null }> =
+    [];
+  const splitDeclined: Array<{ task: string; reason: string }> = [];
+  const shardOf = new Map<string, string>();
+  const mergeDossiers = new Map<
+    string,
+    { shards: number; pieces: number; readmesMissing: number; declaredMissing: number; parseErrors: number }
+  >();
+  const mergeChecks = new Map<
+    string,
+    {
+      promoted: boolean;
+      declaredMissing: number;
+      droppedReferenced: number;
+      gapsOpen: number;
+      parseErrors: number;
+    }
+  >();
   let schedulerStuck: number | null = null;
   const reportFailed = new Set<string>();
   let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null =
@@ -4347,6 +4578,42 @@ export function buildPhaseTodo(
     else if (t === 'clarify_proxy_failed') proxyFailed = true;
     else if (t === 'synthesis_fallback') synthesisFallback = num(e['tasks']) ?? 0;
     else if (t === 'sink_id_pinned') sinkRenamedFrom = str(e['from']);
+    else if (t === 'plan_flag' && str(e['kind']) === 'fat_task')
+      fatTasks.set(str(e['task']), {
+        sections: num(e['sections']),
+        files: arr(e['files']).length,
+        perFile: num(e['sections_per_file']),
+        threshold: num(e['threshold']),
+      });
+    else if (t === 'plan_patched' && str(e['source']) === 'split') {
+      const module = str(e['module']);
+      const shards = arr(e['shards']).map(String);
+      const after = (e['after'] ?? {}) as Record<string, unknown>;
+      splits.push({
+        module,
+        shards,
+        exports: num(e['exports_declared']) ?? 0,
+        tasksAfter: num(after['tasks']),
+      });
+      for (const s of shards) shardOf.set(s, module);
+    } else if (t === 'split_declined')
+      splitDeclined.push({ task: str(e['task']), reason: str(e['reason']) });
+    else if (t === 'merge_dossier')
+      mergeDossiers.set(str(e['task_id']) || str(e['module']), {
+        shards: arr(e['shards']).length,
+        pieces: num(e['pieces']) ?? 0,
+        readmesMissing: arr(e['readmes_missing']).length,
+        declaredMissing: arr(e['declared_missing']).length,
+        parseErrors: num(e['pieces_with_parse_errors']) ?? 0,
+      });
+    else if (t === 'merge_checked')
+      mergeChecks.set(str(e['task_id']) || str(e['module']), {
+        promoted: e['promoted'] === true,
+        declaredMissing: arr(e['declared_missing']).length,
+        droppedReferenced: num(e['dropped_referenced']) ?? 0,
+        gapsOpen: num(e['gaps_open']) ?? 0,
+        parseErrors: arr(e['parse_errors']).length,
+      });
     else if (t === 'review_findings')
       reviewRounds.push({
         round: num(e['round']) ?? reviewRounds.length + 1,
@@ -4766,6 +5033,48 @@ export function buildPhaseTodo(
         'so the engine’s own sink checks keep matching'
       )
     );
+  // THE SPLIT, in the order it runs: the measurement, then its one patch or its declined twin. A flagged
+  // task with neither outcome is being asked while the plan is still open; once the plan loaded without
+  // one it is an advisory — the engine moved on, and a spinner here would outlive the fact that fed it.
+  for (const [task, f] of fatTasks) {
+    if (splits.some((s) => s.module === task) || splitDeclined.some((d) => d.task === task)) continue;
+    const measure =
+      [
+        f.sections != null
+          ? `${f.sections} spec sections for ${f.files} file${f.files === 1 ? '' : 's'}`
+          : '',
+        f.perFile != null && f.threshold != null
+          ? `${f.perFile.toFixed(1)}/file vs threshold ${f.threshold.toFixed(1)}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' · ') || undefined;
+    synthesis.push(
+      planLoaded
+        ? it(`s-fat-${task}`, `Fat task ${task} flagged — no split event followed`, 'advisory', measure)
+        : it(`s-fat-${task}`, `Fat task ${task} — asking synthesis for a split`, 'running', measure)
+    );
+  }
+  for (const s of splits)
+    synthesis.push(
+      it(
+        `s-split-${s.module}`,
+        `Fat task ${s.module} split into ${s.shards.length} shard${s.shards.length === 1 ? '' : 's'} + a merger`,
+        'done',
+        [`${s.exports} exports declared`, s.tasksAfter != null ? `plan now ${s.tasksAfter} tasks` : '']
+          .filter(Boolean)
+          .join(' · ')
+      )
+    );
+  for (const d of splitDeclined)
+    synthesis.push(
+      it(
+        `s-split-declined-${d.task}`,
+        `Split of ${d.task} declined — builds as one lane`,
+        'advisory',
+        d.reason || undefined
+      )
+    );
   if (planLoaded) synthesis.push(it('s-done', `Plan wired — ${taskCount ?? 0} tasks`, 'done'));
   // Legacy plan-phase evidence (candidate drafts, the confidence score, retarget rounds) has no phase of its
   // own any more — the multi-draft vote and the redraft ladder were deleted. Keep it here so an OLD run still
@@ -4888,6 +5197,45 @@ export function buildPhaseTodo(
     const flagged = buildsOnFlagged.get(id);
     if (flagged && (state === 'running' || state === 'pending'))
       detail = [detail, `building on flagged ${[...flagged].join(', ')}`]
+        .filter(Boolean)
+        .join(' · ');
+    // THE SPLIT's two roles on the board. A shard says which module it is a piece of; the MERGER carries
+    // what code measured it was handed (merge_dossier) and how the merge checked out (merge_checked).
+    // r6e's merger was handed 0 of 8 pieces, and its row read like any other build task.
+    const module = shardOf.get(id);
+    if (module) detail = [`shard of ${module}`, detail].filter(Boolean).join(' · ');
+    const dossier = mergeDossiers.get(id);
+    if (dossier)
+      detail = [
+        `merger: ${dossier.pieces}/${dossier.shards} pieces handed` +
+          (dossier.readmesMissing
+            ? `, ${dossier.readmesMissing} README${dossier.readmesMissing === 1 ? '' : 's'} missing`
+            : '') +
+          (dossier.declaredMissing ? `, ${dossier.declaredMissing} declared exports undefined` : '') +
+          (dossier.parseErrors
+            ? `, ${dossier.parseErrors} parse error${dossier.parseErrors === 1 ? '' : 's'}`
+            : ''),
+        detail,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const check = mergeChecks.get(id);
+    if (check)
+      detail = [
+        detail,
+        check.promoted
+          ? 'merge checked — promoted'
+          : `merge checked — not promoted (${
+              [
+                check.parseErrors ? `${check.parseErrors} parse errors` : '',
+                check.declaredMissing ? `${check.declaredMissing} exports undefined` : '',
+                check.droppedReferenced ? `${check.droppedReferenced} referenced pieces dropped` : '',
+                check.gapsOpen ? `${check.gapsOpen} gaps open` : '',
+              ]
+                .filter(Boolean)
+                .join(', ') || 'see the feed'
+            })`,
+      ]
         .filter(Boolean)
         .join(' · ');
     // TITLE = the stable, readable task id; SUMMARY = a short human line; the FULL description / files / judge

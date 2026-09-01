@@ -3183,21 +3183,14 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           // before a node answers, and those 5 minutes are three idle machines.
           GOOSE_SWARM_BENCHMARK: '1',
           GOOSE_SWARM_RENDER_NODE: benchNode,
-          // r3 supervision-off arm (P1-10). These layers are env-only and DEFAULT ON in the engine,
-          // so a packaged run can only switch them off here; the lines die with the r4 deletion, and
-          // the tick proves the state by the ABSENCE of their events.
-          // WHY off — r2: 474 of 481 tail_review events in one hour, 477 with had_findings=false
-          // (median 7 s "whole-tree reviews" that were transport failures reading as clean).
-          GOOSE_SWARM_TAIL_REVIEW: '0',
-          // WHY off — r2: 9 pre_review calls of 220-340 s on already-done tasks, incl. a 7,535 s call
-          // holding gabee through the 11-minute retry starvation (seq 530).
-          GOOSE_SWARM_PREREVIEW: '0',
-          // WHY off — rides with PREREVIEW: the dims rotation only shapes the pre-review prompt, and a
-          // half-armed layer (dims on, layer off) is the stale-config class measured on 34359b8b7.
-          GOOSE_SWARM_PREREVIEW_DIMS: '0',
-          // WHY off — the IDLE-MODEL judge only, NOT the omni judge (config omni_judge /
-          // GOOSE_SWARM_OMNI_JUDGE, which stays ON for r3 with its cost cut — P1-10's arm resolution).
-          GOOSE_SWARM_JUDGE: '0',
+          // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
+          // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
+          // switched four env-only, default-ON layers off here. Every one of those layers is DELETED
+          // now — the tail idle-fill and the idle-model judge in 2c S6, the M5 pre-review in 2a D1b —
+          // so the engine reads none of the names: TAIL_REVIEW only to echo it under
+          // levers_resolved.retired_levers, the other three nowhere at all. A pin on a dead reader
+          // certifies a regime the binary cannot run (the stale-config class, see SPLIT_FAT below);
+          // the tick proves the layers' state by the ABSENCE of their events, which needs no pin.
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
           GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', BENCH_RENDER_PROBE[tier]),
