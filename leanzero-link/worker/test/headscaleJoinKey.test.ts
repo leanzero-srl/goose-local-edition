@@ -241,6 +241,40 @@ describe("POST /v1/mesh/join-key — Headscale (multi-tenant)", () => {
     expect(policyIsolates("nope")).toBe(false);
   });
 
+  // W-M6: a throwing fetch (Headscale down) escaped hsFetch and became the router's 500.
+  it("answers 502 status 0 + headscale_unreachable when Headscale cannot be reached — not a 500", async () => {
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: () => {
+        throw new TypeError("fetch failed: connect ECONNREFUSED 127.0.0.1:8790");
+      },
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(502);
+    expect(await responseJson(response)).toEqual({ error: "headscale key mint failed", status: 0 });
+    expect(h.logs.find((l) => l.event === "headscale_unreachable")?.fields).toEqual({
+      path: "/api/v1/policy",
+      error: "fetch failed: connect ECONNREFUSED 127.0.0.1:8790",
+    });
+    expect(h.logs.some((l) => l.event === "unhandled_error")).toBe(false);
+  });
+
+  it("answers 502 when Headscale drops mid-flow (policy ok, preauth mint unreachable)", async () => {
+    const username = await usernameForEmail(EMAIL);
+    const happy = hsApi({ users: [{ id: "5", name: username }] });
+    const h = makeHarness({
+      env: HS_ENV,
+      fetchHandler: (url, init) => {
+        if (url === PREAUTH_URL) throw new Error("socket hang up");
+        return happy(url, init);
+      },
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(502);
+    expect(await responseJson(response)).toEqual({ error: "headscale key mint failed", status: 0 });
+    expect(h.logs.find((l) => l.event === "headscale_unreachable")?.fields).toMatchObject({ path: "/api/v1/preauthkey" });
+  });
+
   it("fails loudly (502) when Headscale refuses the mint — never a fabricated key", async () => {
     const username = await usernameForEmail(EMAIL);
     const h = makeHarness({
