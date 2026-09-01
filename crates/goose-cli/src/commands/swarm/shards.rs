@@ -3950,6 +3950,11 @@ pub(super) fn gap_specs(
                 .as_ref()
                 .map(|n| n.provides.clone())
                 .unwrap_or_default(),
+            writes: sh
+                .note
+                .as_ref()
+                .map(|n| n.writes.clone())
+                .unwrap_or_default(),
         })
         .collect();
     let base = merger.shards.len();
@@ -3963,6 +3968,8 @@ pub(super) fn gap_specs(
                 merger.module
             ),
             sections: Vec::new(),
+            // a gap shard fills a hole; it writes no shared state of its own (split v2 §4)
+            writes: Vec::new(),
             provides: candidate_names(g),
         })
         .collect();
