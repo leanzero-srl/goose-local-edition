@@ -38,15 +38,33 @@ pub(super) async fn py_syntax_error(path: &Path) -> Option<String> {
     }
 }
 
-/// Deterministic Rust compile gate for the DONE check: `cargo check --all-targets` on the crate; returns
-/// (owned_file, error) if an OWNED .rs file fails to compile, else None. `--all-targets` is required so
-/// owned `tests/*.rs` are compiled too. Scoped to OWNED files so a not-yet-written sibling module that
-/// breaks the crate never rejects THIS worker. Timeout / missing toolchain -> None (degrade gracefully).
-pub(super) async fn rust_compile_error(cwd: &Path, owned: &[String]) -> Option<(String, String)> {
-    if !owned.iter().any(|f| f.ends_with(".rs")) || !cwd.join("Cargo.toml").is_file() {
-        return None;
+/// What the Rust compile gate could establish about the OWNED `.rs` files (S14-3: a tri-state,
+/// because `Option` collapsed "cargo never ran" into "compiles" and the merge check labelled every
+/// `.rs` module checked with the toolchain absent).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RustCheck {
+    /// cargo reached a verdict: the first error located in an owned file, or None — they compile
+    /// (also the vacuous verdict when no `.rs` file is owned).
+    Ran(Option<(String, String)>),
+    /// cargo produced NO verdict about the owned files — no manifest, no toolchain, the wall, or
+    /// the build failing outside them (another file/crate broke first, so these may never have
+    /// been compiled). Said with the reason; each caller decides what "unproven" means to it.
+    DidNotRun(String),
+}
+
+/// Deterministic Rust compile gate: `cargo check --all-targets` on the crate. `--all-targets` is
+/// required so owned `tests/*.rs` are compiled too. Scoped to OWNED files so a not-yet-written
+/// sibling module that breaks the crate never rejects THIS worker (the DONE gate acts only on
+/// `Ran(Some(..))`); the merge check turns `DidNotRun` into an UNCHECKED file. The 120 s wall bounds
+/// a compiler run, never a model.
+pub(super) async fn rust_compile_error(cwd: &Path, owned: &[String]) -> RustCheck {
+    if !owned.iter().any(|f| f.ends_with(".rs")) {
+        return RustCheck::Ran(None);
     }
-    let out = tokio::time::timeout(
+    if !cwd.join("Cargo.toml").is_file() {
+        return RustCheck::DidNotRun(format!("no Cargo.toml in {}", cwd.display()));
+    }
+    let run = tokio::time::timeout(
         std::time::Duration::from_secs(120),
         tokio::process::Command::new("cargo")
             .args([
@@ -58,11 +76,14 @@ pub(super) async fn rust_compile_error(cwd: &Path, owned: &[String]) -> Option<(
             .current_dir(cwd)
             .output(),
     )
-    .await
-    .ok()?
-    .ok()?;
+    .await;
+    let out = match run {
+        Err(_) => return RustCheck::DidNotRun("cargo check exceeded its 120 s wall".to_string()),
+        Ok(Err(e)) => return RustCheck::DidNotRun(format!("cargo could not start: {e}")),
+        Ok(Ok(out)) => out,
+    };
     if out.status.success() {
-        return None;
+        return RustCheck::Ran(None);
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
     for line in stderr.lines() {
@@ -72,9 +93,19 @@ pub(super) async fn rust_compile_error(cwd: &Path, owned: &[String]) -> Option<(
                 .iter()
                 .any(|o| o.ends_with(".rs") && path_tok.ends_with(o.as_str()))
             {
-                return Some((path_tok.to_string(), format!("error{}", msg.trim())));
+                return RustCheck::Ran(Some((
+                    path_tok.to_string(),
+                    format!("error{}", msg.trim()),
+                )));
             }
         }
     }
-    None
+    let first = stderr
+        .lines()
+        .find(|l| l.contains("error"))
+        .unwrap_or("(cargo printed no error line)")
+        .trim();
+    RustCheck::DidNotRun(format!(
+        "cargo check failed outside the owned files: {first}"
+    ))
 }
