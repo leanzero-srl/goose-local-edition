@@ -1,5 +1,6 @@
 import React from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/Tooltip';
+import { Chip, cx } from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -13,6 +14,7 @@ interface EnvironmentBadgeProps {
   className?: string;
 }
 
+/** The dev-build marker: a warn-tone Chip (a state colour with meaning), never a hand-written orange. */
 const EnvironmentBadge: React.FC<EnvironmentBadgeProps> = ({ className = '' }) => {
   const intl = useIntl();
   const isDevelopment = import.meta.env.DEV;
@@ -27,21 +29,14 @@ const EnvironmentBadge: React.FC<EnvironmentBadgeProps> = ({ className = '' }) =
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className={`relative cursor-default no-drag ${className}`}
+          className={cx('relative cursor-default no-drag', className)}
           data-testid="environment-badge"
           aria-label={tooltipText}
         >
-          <div className="absolute -inset-1" />
-          <div className="bg-orange-400 w-2 h-2 rounded-full" />
+          <Chip tone="warn">{tooltipText}</Chip>
         </div>
       </TooltipTrigger>
-      <TooltipContent
-        side="bottom"
-        className="bg-orange-400"
-        arrowClassName="fill-orange-400 bg-orange-400"
-      >
-        {tooltipText}
-      </TooltipContent>
+      <TooltipContent side="bottom">{tooltipText}</TooltipContent>
     </Tooltip>
   );
 };
