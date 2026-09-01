@@ -53,7 +53,41 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-08-31 19:40)
+## THE CURRENT THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN
+
+Mihai, 04:30-04:50 EEST, after reading the live thinking tags: (1) *"repair actually owns the
+repair bugs because last run in r5 it was the same, bugs were found and none of the nodes were owning
+it. So your last fix failed."* (2) *"no longer do so much building on one single node."* (3) *"it looks
+like it's still testing not repairing — the directions may not be clear enough... the tasks as usual
+are the problem and it is why the models think so much and take so long."* All three are MEASURED
+and all three fixes are in flight; NO r6d LAUNCH until each is landed with an independent trace:
+
+- GATE A — OWNERSHIP: `complete_fix_wave{unassigned:2}` printed and ignored; `findings_assigned[]`
+  (only in .swarm/ledger/repair-r<N>-<shard>.json) gave viz's shard ONE unrelated HIGH while the
+  critical "(in viz.js)" went to nobody for 2 rounds; r1 re-dispatched an r0-NOT-REAL finding
+  verbatim (4,809s); a verified drafts.py fix died at promotion with no reason event. FIX (swarm-
+  surgeon, in flight): shard set from OPEN findings' attributed files, criticals first, every
+  finding owned + named verbatim in its shard's brief, loud event for any unassigned, refuted-with-
+  evidence findings carried into the next round, promotion refusal states its reason.
+- GATE B — SINGLE-NODE BUILD: r6c-occupancy.md (loop-state) — 65% of BUILD one node busy; NOT
+  under-dispatch (0 idle-with-ready minutes) but STACKING (367 min idle-while-stacked; 2 workers on
+  a node = -54% per lane, -8% aggregate); both fat tasks (67% of work) placed on workhorse at the
+  same instant; split_fat never fired; 222/222 judge looks on workhorse. FIX (scheduler-surgeon, in
+  flight): spread-before-stack, heaviest-first onto distinct nodes, split_fat root cause, verify
+  8b03be2da spreads judges. PARKED r7 (critical-path, design): file-level deps — ledgerd-api waited
+  6h25m on db.py final at minute 45 (agenda 2676, dispatch-on-brief).
+- GATE C — THE REPAIR BRIEF: three colliding blocks (31142 "ZERO file modifications FAILS" / 31303
+  "FIRST run... report DONE immediately" / 31858 "edit ANY file" vs "write NOTHING outside them"),
+  finding text = measurement outcome with no request/status/body/repro; four of seven shards never
+  edited. FIX (swarm-surgeon, in flight): one repair ORDER with evidence inline and one exit.
+  FOLLOW-UP: the endpoint probe must RECORD status+body into the finding (see TICK-NOTES).
+
+r6c itself: BUILD 9/9, INTEGRATE green (app boots, both ports, full battery), REPAIR r1 open at
+~3h — it runs to its natural end as the evidence; then hermetic score -> RUN-LEDGER -> r6d build
+(now 20+ traced commits) -> install -> CDP-verify the redesigned Benchmark view -> Benchmark-view
+launch. Vigil: tick-surgeon every 30m.
+
+## THE PRIOR THREAD (2026-08-31 19:40)
 
 **r6c LIVE — BUILD ~5.7h, 6/10 tasks done, the best product tree any run has assembled** (21 files
 ~133KB, all python parses; web console 37KB app.js GUARDS the missing viz; replan round-0 delivered
