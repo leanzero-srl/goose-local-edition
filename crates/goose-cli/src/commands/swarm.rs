@@ -100,6 +100,7 @@ use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_
 mod ledger_block;
 #[cfg(test)]
 use ledger_block::render_ledger_block;
+mod merge_holes;
 use ledger_block::{
     read_ledger_rollup, render_ledger_block_measured, render_repair_history, truncate_block_at_line,
 };
@@ -3366,37 +3367,6 @@ mod tests {
             findings,
             "a multi-line finding must not truncate the findings numbered after it"
         );
-    }
-
-    /// II-2: command classes are the four questions a later dispatch asks. Import beats test for
-    /// collect-only (an import probe spelled with pytest); the boot class recognises the
-    /// spec-entry idiom, not a hardcoded package name.
-    #[test]
-    fn classify_command_answers_the_four_questions() {
-        assert_eq!(
-            classify_command("python3 -m pytest tests/ -v 2>&1 | tail -30"),
-            "test"
-        );
-        assert_eq!(
-            classify_command("python3 -m pytest --collect-only -q"),
-            "import"
-        );
-        assert_eq!(classify_command("python3 -c 'import app.api'"), "import");
-        assert_eq!(classify_command("python3 -m app --help 2>&1"), "boot");
-        assert_eq!(
-            classify_command("python3 -m app --db-dir /tmp/d --ledger-port 9907"),
-            "boot"
-        );
-        assert_eq!(classify_command("ls -la"), "other");
-        // Whole-suite detection: a named file or node id is a targeted re-run.
-        assert!(pytest_runs_whole_suite("python3 -m pytest -q"));
-        assert!(pytest_runs_whole_suite("python3 -m pytest tests/ -v"));
-        assert!(!pytest_runs_whole_suite(
-            "python3 -m pytest tests/test_ledger_core.py -v"
-        ));
-        assert!(!pytest_runs_whole_suite(
-            "python3 -m pytest tests/test_x.py::TestA::test_b"
-        ));
     }
 
     /// II-2 writers, end to end on a fixture tree cut from the r2 archive's shapes: a task row
@@ -25000,39 +24970,6 @@ async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
 
 const LEDGER_DIR: &str = ".swarm/ledger";
 
-/// Class a shell command for the ledger's `commands` table. Four classes because they are the
-/// four questions a later dispatch actually asks: did the tests run (and how often), does the
-/// tree import, was the app booted, anything else. `import` is checked before `test` because a
-/// `pytest --collect-only` is an import probe that happens to be spelled with pytest.
-fn classify_command(cmd: &str) -> &'static str {
-    let c = cmd.trim();
-    if c.contains("--collect-only") || (c.contains(" -c ") && c.contains("import")) {
-        return "import";
-    }
-    if c.contains("pytest") || c.contains("cargo test") || c.contains("go test") {
-        return "test";
-    }
-    if c.contains("--help")
-        || c.contains("cargo run")
-        || c.contains("go run")
-        || spec_python_entry(c).is_some()
-    {
-        return "boot";
-    }
-    "other"
-}
-
-/// Does a pytest invocation run the WHOLE suite? A command that names an individual test file or
-/// a `::` node id is a targeted re-run; anything else (bare `pytest`, `pytest -q`, `pytest
-/// tests/`) exercises the suite. The roll-up's "last whole-suite outcome" — the one number the
-/// r2 sink paid 3 full re-runs to learn — keys off this.
-fn pytest_runs_whole_suite(cmd: &str) -> bool {
-    !cmd.contains("::")
-        && !cmd
-            .split_whitespace()
-            .any(|t| t.trim_matches('"').ends_with(".py"))
-}
-
 /// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
 /// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
 /// failure — the caller emits `ledger_written` only for a write that actually happened.
@@ -26935,7 +26872,17 @@ impl GooseAgentDispatcher {
         // THE SPLIT (S4): a MERGER's task is the code-built dossier's numbered list with the
         // module brief behind it — built here, at dispatch, when every shard is Done.
         let merger_brief: Option<String> = match &req.merger_of {
-            Some(m) => Some(self.merger_dispatch_brief(&req, m, &root, lang).await),
+            Some(m) => {
+                let brief = self.merger_dispatch_brief(&req, m, &root, lang).await;
+                // VA-079: the holes CODE finds in the shard folders (a README-only shard, a
+                // missing handoff) ride the brief LAST, as GAPS to fill or send out — never as
+                // delivered parts. Nothing appended when the split is clean.
+                let states = merge_holes::shard_folder_states(&root, m);
+                Some(match merge_holes::gap_paragraph(&m.module, &states) {
+                    Some(p) => format!("{brief}{p}"),
+                    None => brief,
+                })
+            }
             None => None,
         };
         let effective_description: &str = sink_brief
@@ -27392,6 +27339,14 @@ impl GooseAgentDispatcher {
                 let shard_note = shard.map(|sh| {
                     self.record_shard_note(sh, &req, &root, &out.text, &shard_final_before)
                 });
+                // VA-079: a shard is Done on its README alone (the deliverable gate above); an
+                // EMPTY folder behind that README is named once, here, as its own event.
+                if let (Some(sh), Some(row)) = (shard, shard_note.as_ref()) {
+                    if let Some(ev) = merge_holes::shard_pieces_absent_event(sh, &req.task_id, row)
+                    {
+                        self.events.write_value(ev);
+                    }
+                }
                 // THE SPLIT (S4): a merger's gaps become follow-up shard specs for the scheduler's
                 // merge-gap door; with none, CODE checks the merge and reports.
                 let follow_ups = match &req.merger_of {

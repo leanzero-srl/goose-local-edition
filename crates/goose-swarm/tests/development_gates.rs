@@ -391,7 +391,11 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,714 (VA-067): `render_completed_output_from_ledger` moved to
     // commands/swarm/transcripts.rs beside `build_task_ledger_row` (the row it reads), paying for
     // `plan_loaded.tasks[].shard_of/merger_of`.
-    const SWARM_RS_LINE_BASELINE: usize = 34_714;
+    // Tightened to 34,669 (VA-079): `classify_command` / `pytest_runs_whole_suite` and their test
+    // moved to commands/swarm/transcripts.rs (their only production callers, the calls-capture row
+    // builder), paying for `mod merge_holes;`, the merger brief's GAP paragraph at dispatch and the
+    // shard completion's `shard_pieces_absent` event.
+    const SWARM_RS_LINE_BASELINE: usize = 34_669;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

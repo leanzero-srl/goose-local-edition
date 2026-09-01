@@ -285,7 +285,7 @@ pub(super) fn build_task_ledger_row(
                 continue;
             }
             let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
-            let class = super::classify_command(cmd);
+            let class = classify_command(cmd);
             let ok = v.get("ok").and_then(|o| o.as_bool());
             let entry = classes.entry(class).or_default();
             entry.count += 1;
@@ -312,7 +312,7 @@ pub(super) fn build_task_ledger_row(
                 if !cmd.contains("::") {
                     last_pytest_filewide = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
                 }
-                if super::pytest_runs_whole_suite(cmd) {
+                if pytest_runs_whole_suite(cmd) {
                     last_full_suite = Some(serde_json::json!({
                         "cmd": cmd,
                         "summary": py,
@@ -459,9 +459,7 @@ pub(super) fn render_previous_attempt_block(
         }
         let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
         let ok = v.get("ok").and_then(|o| o.as_bool());
-        let entry = classes
-            .entry(super::classify_command(cmd))
-            .or_insert((0, None));
+        let entry = classes.entry(classify_command(cmd)).or_insert((0, None));
         entry.0 += 1;
         entry.1 = ok;
         if let Some(py) = v.get("pytest") {
@@ -635,6 +633,39 @@ pub(super) fn render_completed_output_from_ledger(
         lines.push(format!("last pytest: {p}"));
     }
     Some(lines.join("\n"))
+}
+
+/// Class a shell command for the ledger's `commands` table. Four classes because they are the
+/// four questions a later dispatch actually asks: did the tests run (and how often), does the
+/// tree import, was the app booted, anything else. `import` is checked before `test` because a
+/// `pytest --collect-only` is an import probe that happens to be spelled with pytest.
+pub(super) fn classify_command(cmd: &str) -> &'static str {
+    let c = cmd.trim();
+    if c.contains("--collect-only") || (c.contains(" -c ") && c.contains("import")) {
+        return "import";
+    }
+    if c.contains("pytest") || c.contains("cargo test") || c.contains("go test") {
+        return "test";
+    }
+    if c.contains("--help")
+        || c.contains("cargo run")
+        || c.contains("go run")
+        || super::spec_python_entry(c).is_some()
+    {
+        return "boot";
+    }
+    "other"
+}
+
+/// Does a pytest invocation run the WHOLE suite? A command that names an individual test file or
+/// a `::` node id is a targeted re-run; anything else (bare `pytest`, `pytest -q`, `pytest
+/// tests/`) exercises the suite. The roll-up's "last whole-suite outcome" — the one number the
+/// r2 sink paid 3 full re-runs to learn — keys off this.
+pub(super) fn pytest_runs_whole_suite(cmd: &str) -> bool {
+    !cmd.contains("::")
+        && !cmd
+            .split_whitespace()
+            .any(|t| t.trim_matches('"').ends_with(".py"))
 }
 
 #[cfg(test)]
@@ -1030,6 +1061,37 @@ mod tests {
         assert!(block.contains("tests/test_ledger_core.py"), "{block}");
         assert!(block.contains("app/ledger_core.py"), "{block}");
         assert!(!block.contains("NOTHING"), "{block}");
+    }
+
+    /// II-2: command classes are the four questions a later dispatch asks. Import beats test for
+    /// collect-only (an import probe spelled with pytest); the boot class recognises the
+    /// spec-entry idiom, not a hardcoded package name.
+    #[test]
+    fn classify_command_answers_the_four_questions() {
+        assert_eq!(
+            classify_command("python3 -m pytest tests/ -v 2>&1 | tail -30"),
+            "test"
+        );
+        assert_eq!(
+            classify_command("python3 -m pytest --collect-only -q"),
+            "import"
+        );
+        assert_eq!(classify_command("python3 -c 'import app.api'"), "import");
+        assert_eq!(classify_command("python3 -m app --help 2>&1"), "boot");
+        assert_eq!(
+            classify_command("python3 -m app --db-dir /tmp/d --ledger-port 9907"),
+            "boot"
+        );
+        assert_eq!(classify_command("ls -la"), "other");
+        // Whole-suite detection: a named file or node id is a targeted re-run.
+        assert!(pytest_runs_whole_suite("python3 -m pytest -q"));
+        assert!(pytest_runs_whole_suite("python3 -m pytest tests/ -v"));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_ledger_core.py -v"
+        ));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_x.py::TestA::test_b"
+        ));
     }
 }
 
