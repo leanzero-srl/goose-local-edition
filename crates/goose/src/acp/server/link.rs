@@ -190,13 +190,30 @@ impl GoosedSwarmStateSource {
 #[async_trait::async_trait]
 impl SwarmStateSource for GoosedSwarmStateSource {
     async fn local_node(&self) -> NodeState {
-        let sessions =
-            snapshot_sessions(&self.agent_manager, &self.session_manager, &self.node_id).await;
-        derive_node(&self.node_id, &sessions, Utc::now())
+        let snapshot =
+            snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id).await;
+        derive_node(&self.node_id, &snapshot, Utc::now())
     }
 
+    /// RESIDUE, not a fallback by choice: the crate's trait returns a bare `Vec`, so an
+    /// unreadable store cannot be carried through it. The `/v1/swarm/sessions` route
+    /// therefore still publishes `[]` on a store error (and every peer's
+    /// `fold_peer_snapshot` purges this node's mirrored sessions). The error is logged
+    /// LOUDLY here and [`Self::local_sessions_checked`] is the shape the route must
+    /// consume once the trait carries a `Result` — that change belongs to `leanzero-link`.
+    /// The poller and [`Self::local_node`] already refuse to fabricate.
     async fn local_sessions(&self) -> Vec<SessionSummary> {
-        snapshot_sessions(&self.agent_manager, &self.session_manager, &self.node_id).await
+        match self.local_sessions_checked().await {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                error!(
+                    %error,
+                    "leanzeroLink: /v1/swarm/sessions will publish an EMPTY index for an unreadable store \
+                     — the SwarmStateSource trait cannot carry the error yet"
+                );
+                Vec::new()
+            }
+        }
     }
 
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
@@ -205,6 +222,16 @@ impl SwarmStateSource for GoosedSwarmStateSource {
 }
 
 impl GoosedSwarmStateSource {
+    /// The local session index, or the store's error verbatim (`session index unreadable:
+    /// <err>`). The shape the control service's `/v1/swarm/sessions` and `/execute` routes
+    /// need to answer `503` instead of an empty `200` / a `202` — the trait method above
+    /// forwards to this once `leanzero-link` lets it return a `Result`.
+    pub async fn local_sessions_checked(&self) -> Result<Vec<SessionSummary>, String> {
+        snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id)
+            .await
+            .sessions
+    }
+
     /// The `NodeStateChanged` / `SessionUpserted` poller stream — the always-on half of
     /// the local delta feed, derived by re-snapshotting the managers. One poller per
     /// subscription; it exits when the receiver is dropped (the control service's local
@@ -219,9 +246,19 @@ impl GoosedSwarmStateSource {
             let mut last_node_key: Option<(NodeStatus, u32)> = None;
             let mut last_sessions: HashMap<String, SessionSummary> = HashMap::new();
             loop {
-                let sessions = snapshot_sessions(&agent_manager, &session_manager, &node_id).await;
+                let snapshot = snapshot_local(&agent_manager, &session_manager, &node_id).await;
 
-                let node = derive_node(&node_id, &sessions, Utc::now());
+                // An unreadable index publishes NOTHING this tick: an empty index here
+                // would ride out as SessionUpserted silence plus a retain-wipe, which every
+                // peer folds as "this node's sessions are gone", and a NodeStateChanged
+                // built on a hole. The next readable tick reconciles; peers still see the
+                // live Busy/Idle through their `/nodes` poll, which never needs the store.
+                let Ok(sessions) = &snapshot.sessions else {
+                    tokio::time::sleep(LINK_DELTA_POLL_INTERVAL).await;
+                    continue;
+                };
+
+                let node = derive_node(&node_id, &snapshot, Utc::now());
                 let node_key = (node.status.clone(), node.sessions_active);
                 if last_node_key.as_ref() != Some(&node_key) {
                     if tx.send(LinkEvent::NodeStateChanged(node)).await.is_err() {
@@ -230,7 +267,7 @@ impl GoosedSwarmStateSource {
                     last_node_key = Some(node_key);
                 }
 
-                for summary in &sessions {
+                for summary in sessions {
                     if last_sessions.get(&summary.session_id) != Some(summary) {
                         if tx
                             .send(LinkEvent::SessionUpserted(summary.clone()))
@@ -277,37 +314,47 @@ impl GoosedSwarmStateSource {
     }
 }
 
-/// Snapshot the local session index, mapping each non-archived [`Session`] to a
-/// [`SessionSummary`]. `live` is `is_session_busy` (an in-flight reply); a read failure
-/// is logged LOUDLY and yields an empty index for this tick — never a faked list.
-async fn snapshot_sessions(
+/// The local view at one instant. `sessions` is the store's index (each non-archived
+/// [`Session`] as a [`SessionSummary`], `live` = holds a cancel token) or the store's
+/// error verbatim; `busy` is the in-flight set from the token maps alone — never from
+/// the store — so a Busy node stays Busy through a store failure, transient or not.
+struct LocalSnapshot {
+    sessions: Result<Vec<SessionSummary>, String>,
+    busy: HashSet<String>,
+}
+
+async fn snapshot_local(
     agent_manager: &Arc<AgentManager>,
     session_manager: &SessionManager,
     node_id: &str,
-) -> Vec<SessionSummary> {
+) -> LocalSnapshot {
+    let busy = busy_session_ids(agent_manager).await;
+
     let sessions = match session_manager.list_sessions().await {
-        Ok(sessions) => sessions,
+        Ok(sessions) => Ok(sessions
+            .into_iter()
+            .filter(|session| session.archived_at.is_none())
+            .map(|session| SessionSummary {
+                session_id: session.id.clone(),
+                origin_node_id: node_id.to_string(),
+                working_dir: session.working_dir.to_string_lossy().into_owned(),
+                name: session.name,
+                updated_at: session.updated_at,
+                message_count: session.message_count as u64,
+                live: busy.contains(&session.id),
+            })
+            .collect()),
         Err(error) => {
-            error!(%error, "leanzeroLink: reading local sessions failed; empty index this tick");
-            return Vec::new();
+            error!(
+                %error,
+                busy = busy.len(),
+                "leanzeroLink: the local session index is unreadable; Busy/Idle still comes from the live token maps"
+            );
+            Err(format!("session index unreadable: {error}"))
         }
     };
 
-    let busy = busy_session_ids(agent_manager).await;
-
-    sessions
-        .into_iter()
-        .filter(|session| session.archived_at.is_none())
-        .map(|session| SessionSummary {
-            session_id: session.id.clone(),
-            origin_node_id: node_id.to_string(),
-            working_dir: session.working_dir.to_string_lossy().into_owned(),
-            name: session.name,
-            updated_at: session.updated_at,
-            message_count: session.message_count as u64,
-            live: busy.contains(&session.id),
-        })
-        .collect()
+    LocalSnapshot { sessions, busy }
 }
 
 /// The busy set: every session id holding an in-flight cancel token, read from the token
@@ -335,15 +382,38 @@ async fn busy_session_ids(agent_manager: &Arc<AgentManager>) -> HashSet<String> 
 /// mesh IP (that is the mesh layer's knowledge); the control service's `/nodes` handler
 /// fills it for the direct response, and peers learn it from the tailnet + their `/nodes`
 /// polls.
-fn derive_node(node_id: &str, sessions: &[SessionSummary], now: DateTime<Utc>) -> NodeState {
+///
+/// The token is the fact; the index only decorates it. With a readable index the busy
+/// session named is the freshest live one (`NodeStatus::from_sessions`); a token the
+/// index cannot see — the store is down, or lists no such session — still makes the node
+/// Busy, and `sessions_active` counts tokens, not index rows.
+fn derive_node(node_id: &str, snapshot: &LocalSnapshot, now: DateTime<Utc>) -> NodeState {
+    let status = match &snapshot.sessions {
+        Ok(sessions) => match NodeStatus::from_sessions(sessions) {
+            NodeStatus::Idle => busy_status(&snapshot.busy),
+            busy => busy,
+        },
+        Err(_) => busy_status(&snapshot.busy),
+    };
     NodeState {
         node_id: node_id.to_string(),
         hostname: hostname_string(),
         mesh_ip: None,
-        status: NodeStatus::from_sessions(sessions),
-        sessions_active: sessions.iter().filter(|s| s.live).count() as u32,
+        status,
+        sessions_active: snapshot.busy.len() as u32,
         updated_at: now,
     }
+}
+
+/// Busy on the lexically first token-holding id (deterministic without timestamps), Idle
+/// when no token is held.
+fn busy_status(busy: &HashSet<String>) -> NodeStatus {
+    busy.iter()
+        .min()
+        .map(|id| NodeStatus::Busy {
+            session_id: id.clone(),
+        })
+        .unwrap_or(NodeStatus::Idle)
 }
 
 // ---------------------------------------------------------------------------
@@ -940,11 +1010,24 @@ mod tests {
         }
     }
 
+    /// A readable-store snapshot whose busy set is exactly the `live` summaries.
+    fn snapshot_of(sessions: Vec<SessionSummary>) -> LocalSnapshot {
+        let busy = sessions
+            .iter()
+            .filter(|s| s.live)
+            .map(|s| s.session_id.clone())
+            .collect();
+        LocalSnapshot {
+            sessions: Ok(sessions),
+            busy,
+        }
+    }
+
     #[test]
     fn derive_node_reports_busy_idle_and_active_count() {
         let now = Utc::now();
 
-        let idle = derive_node("node-a", &[summary("s1", false, 100)], now);
+        let idle = derive_node("node-a", &snapshot_of(vec![summary("s1", false, 100)]), now);
         assert_eq!(idle.status, NodeStatus::Idle);
         assert_eq!(idle.sessions_active, 0);
         assert!(idle.mesh_ip.is_none());
@@ -952,7 +1035,7 @@ mod tests {
 
         let busy = derive_node(
             "node-a",
-            &[summary("old", true, 100), summary("new", true, 200)],
+            &snapshot_of(vec![summary("old", true, 100), summary("new", true, 200)]),
             now,
         );
         assert_eq!(
@@ -963,6 +1046,50 @@ mod tests {
             "busy carries the most recently updated live session"
         );
         assert_eq!(busy.sessions_active, 2);
+    }
+
+    /// R-M2: the busy set comes from the token maps, so an unreadable store never turns
+    /// a running node Idle — the transient-failure window in which a Busy node used to
+    /// accept a second job.
+    #[test]
+    fn derive_node_stays_busy_when_the_session_index_is_unreadable() {
+        let now = Utc::now();
+        let unreadable = LocalSnapshot {
+            sessions: Err("session index unreadable: database is locked".to_string()),
+            busy: HashSet::from(["s-running".to_string()]),
+        };
+        let node = derive_node("node-a", &unreadable, now);
+        assert_eq!(
+            node.status,
+            NodeStatus::Busy {
+                session_id: "s-running".to_string()
+            }
+        );
+        assert_eq!(node.sessions_active, 1);
+
+        let quiet = LocalSnapshot {
+            sessions: Err("session index unreadable: database is locked".to_string()),
+            busy: HashSet::new(),
+        };
+        assert_eq!(derive_node("node-a", &quiet, now).status, NodeStatus::Idle);
+    }
+
+    /// A token the index does not list (a session the store has not caught up on) still
+    /// makes the node Busy — the token is the fact, the index only decorates it.
+    #[test]
+    fn derive_node_reports_busy_for_a_token_the_index_does_not_list() {
+        let snapshot = LocalSnapshot {
+            sessions: Ok(vec![summary("s1", false, 100)]),
+            busy: HashSet::from(["s-unlisted".to_string()]),
+        };
+        let node = derive_node("node-a", &snapshot, Utc::now());
+        assert_eq!(
+            node.status,
+            NodeStatus::Busy {
+                session_id: "s-unlisted".to_string()
+            }
+        );
+        assert_eq!(node.sessions_active, 1);
     }
 
     #[test]
@@ -1295,6 +1422,73 @@ mod tests {
             .unregister_cancel_token(&session.id)
             .await;
         assert_eq!(source.local_node().await.status, NodeStatus::Idle);
+    }
+
+    /// A source whose session store cannot open: the `sessions/` directory the storage
+    /// created is replaced by a plain file before the lazy pool's first connection, so
+    /// every store read fails with the real sqlite open error. The agent manager (and its
+    /// token map) is untouched.
+    async fn source_with_unreadable_store() -> (tempfile::TempDir, GoosedSwarmStateSource) {
+        use crate::agents::{AgentConfig, GoosePlatform};
+        use crate::config::permission::PermissionManager;
+        use crate::config::GooseMode;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let session_manager = Arc::new(SessionManager::new(temp.path().to_path_buf()));
+        let sessions_dir = temp.path().join("sessions");
+        std::fs::remove_dir_all(&sessions_dir).unwrap();
+        std::fs::write(&sessions_dir, b"not a directory").unwrap();
+
+        let agent_config = AgentConfig::new(
+            session_manager.clone(),
+            PermissionManager::instance(),
+            None,
+            GooseMode::default(),
+            false,
+            GoosePlatform::GooseDesktop,
+        );
+        let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager);
+        (temp, source)
+    }
+
+    /// R-M2 end to end on a real broken store: `local_node` stays Busy from the token
+    /// map, `local_sessions_checked` carries the error verbatim, and the poller publishes
+    /// NOTHING (no NodeStateChanged, no upsert, no retain-wipe) for the unreadable tick.
+    #[tokio::test]
+    async fn an_unreadable_store_keeps_the_node_busy_and_the_poller_silent() {
+        let (_temp, source) = source_with_unreadable_store().await;
+        source
+            .agent_manager
+            .try_register_cancel_token("s-running", CancellationToken::new())
+            .await
+            .unwrap();
+
+        let error = source
+            .local_sessions_checked()
+            .await
+            .expect_err("a store that cannot open is an error, never an empty index");
+        assert!(
+            error.starts_with("session index unreadable: "),
+            "got {error}"
+        );
+
+        let node = source.local_node().await;
+        assert_eq!(
+            node.status,
+            NodeStatus::Busy {
+                session_id: "s-running".to_string()
+            }
+        );
+        assert_eq!(node.sessions_active, 1);
+
+        let mut stream = source.local_deltas_with(None);
+        let first = tokio::time::timeout(Duration::from_millis(400), stream.next()).await;
+        assert!(
+            first.is_err(),
+            "the poller must publish nothing while the index is unreadable, got {:?}",
+            first.ok().flatten()
+        );
     }
 
     /// A scheduler that schedules nothing: `GooseAcpAgent::new` requires one and the
