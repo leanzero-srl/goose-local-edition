@@ -83,6 +83,8 @@ use pytest_tail::parse_pytest_summary;
 mod review_merge;
 use review_merge::{review_dedupe_key, union_lane_patches};
 mod briefs;
+mod opener;
+use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
 mod spec_surface;
 use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
@@ -21019,37 +21021,6 @@ where
 // which was not free, disappears.
 // ================================================================================================
 
-/// One semantic slice of the request, as the opener sees it.
-#[derive(Clone, Debug, serde::Deserialize)]
-pub(crate) struct OpenSlice {
-    id: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    objective: String,
-    #[serde(default)]
-    questions: Vec<String>,
-    /// The opener's OWN estimate of how much work this slice is, 1-5. Not truth — a model estimate,
-    /// used only to notice a lopsided split and ask for one more cut. Independent machines pick these
-    /// up in parallel, so a slice twice the size of its siblings is a node idling while one grinds.
-    #[serde(default)]
-    weight: u32,
-    /// OPEN-1: the spec section HEADINGS this slice owns, claimed by the opener against the
-    /// orientation index. The engine splices each claimed section's full text into the slice's
-    /// brief verbatim. Empty on a small spec (orientation not armed) — everything then behaves
-    /// exactly as before this field existed.
-    #[serde(default)]
-    sections: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default, serde::Deserialize)]
-pub(crate) struct OpenOutput {
-    #[serde(default)]
-    slices: Vec<OpenSlice>,
-    #[serde(default)]
-    open_decisions: Vec<String>,
-}
-
 /// A slice as SYNTHESIS consumes it (P1-5: built directly from the opener's slice by
 /// `briefs_from_slices` — the RESEARCH fan that used to write these is deleted). `brief` is
 /// spliced into the task description VERBATIM — it never passes through the synthesis model.
@@ -21076,34 +21047,6 @@ pub(crate) struct SliceBrief {
     /// answer's head", empty when no research row exists for the slice, so SYNTHESIS sees what
     /// got settled without being handed prose to restate.
     settled: String,
-}
-
-/// The opener's contract, deliberately small: no files FIELD (owned files are declared inside the
-/// objective text — synthesis infers each task's paths from its slice's objective), no deps, no
-/// task ids, no requirement map.
-fn open_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "required": ["slices"],
-        "properties": {
-            "slices": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["id", "title", "objective", "questions", "weight"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "objective": {"type": "string"},
-                        "questions": {"type": "array", "items": {"type": "string"}},
-                        "weight": {"type": "integer"},
-                        "sections": {"type": "array", "items": {"type": "string"}}
-                    }
-                }
-            },
-            "open_decisions": {"type": "array", "items": {"type": "string"}}
-        }
-    })
 }
 
 /// A slice id for a component the model named but did not shape into a slice itself. The request's own
@@ -21475,9 +21418,15 @@ impl GooseAgentDispatcher {
              never asked what it was missing. Slicing by TECHNICAL LAYER — client, store, html, css, js, \
              entry, docs — is the shape that error takes: those are the layers of any program at all, so \
              the list looks complete while naming nothing the request actually asked for.\n\n\
-             Also list OPEN DECISIONS: things the request genuinely leaves undecided and that a human \
-             would need to choose (storage format, auth or none, which library). Only real ones — if the \
-             request settles it, or convention obviously settles it, it is not an open decision.\n\n\
+             Also list OPEN DECISIONS. An open decision is a QUESTION a human would have to answer: \
+             `question`, at least TWO concrete `options`, and `cite` — the request's own words that \
+             leave it open (\"Which store? options: SQLite file | in-memory — cite: 'persist across \
+             restarts', no store named\"). Only real ones: if the request settles it (it says \
+             'standard library only', so there is no framework choice), if convention obviously \
+             settles it, or if YOU settle it in a slice's objective, it is NOT an open decision — an \
+             instruction to yourself is never one. MEASURED: an opener listed \"D1/D2/D3 ... must be \
+             decided and shipped in DECISIONS.md, not deferred to a human\" as an open decision, and \
+             the ask window and a research lane were spent on a question nobody could answer.\n\n\
              NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE, AS OWNERSHIP DECLARATIONS — a claim of \
              territory, not a task plan. The next step reads each slice's files out of its objective, \
              so a slice that names none forces it to guess. Do NOT plan tasks or dependencies. Do NOT \
@@ -21524,12 +21473,14 @@ impl GooseAgentDispatcher {
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
         // Tolerant on purpose: the fleet is a 27B and it wraps structured output in prose or fences
         // often enough that a strict parse would be a coin flip.
-        let parsed: OpenOutput = parse_json_lenient(&raw)
+        let parsed: OpenOutputRaw = parse_json_lenient(&raw)
             .ok_or_else(|| anyhow!("opener returned no parseable slice list"))?;
         if parsed.slices.is_empty() {
             bail!("opener returned zero slices");
         }
-        Ok(parsed)
+        // The one door for open decisions: fewer than two options is not a decision (r6d's
+        // self-instruction), named in `decision_self_resolved` and kept out of ASK and the fan.
+        Ok(parsed.qualify(self.events.as_ref()))
     }
 }
 
