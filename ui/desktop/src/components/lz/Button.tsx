@@ -1,11 +1,14 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { DISABLED, FOCUS, MOTION, RADIUS, cx } from './tokens';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'destructive';
 export type ButtonSize = 'sm' | 'md';
 
 export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
-  /** primary = the accent fill (ONE per view); secondary = neutral outline; ghost = text until hovered. */
+  /**
+   * primary = the accent fill (ONE per view); secondary = neutral outline; ghost = text until
+   * hovered; destructive = the err fill with white ink, for the one irreversible action.
+   */
   variant?: ButtonVariant;
   size?: ButtonSize;
   /** Leading icon slot (a lucide icon); sized by the button. */
@@ -24,6 +27,9 @@ const VARIANT: Record<ButtonVariant, string> = {
   secondary: 'border border-lz-border-strong bg-lz-surface text-lz-ink hover:bg-lz-surface-2',
   ghost:
     'border border-transparent bg-transparent text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink',
+  /** TONE_FILL.err with its border; hover steps to the bare err token (a shade lighter in dark). */
+  destructive:
+    'border border-lz-err-solid bg-lz-err-solid text-white hover:border-lz-err hover:bg-lz-err',
 };
 
 const SIZE: Record<ButtonSize, string> = {
