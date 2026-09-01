@@ -7,6 +7,10 @@
 use std::collections::HashSet;
 
 use super::skeleton::SKELETON_ID;
+
+/// Rule (e)'s tail header — `decisions::brief_decisions_block` cuts a brief's decisions block
+/// before it, because the list is the owner's, not a repair shard's.
+pub(super) const UNOWNED_FILES_HEADER: &str = "FILES NAMED ABOVE THAT ANOTHER TASK OWNS";
 use super::spec_surface::path_token_named;
 use super::string_list;
 
@@ -170,10 +174,10 @@ pub(super) fn repair_brief_file_mentions(
             named.push((path.clone(), owner.clone()));
         }
         if !named.is_empty() {
-            desc.push_str(
-                "\n\nFILES NAMED ABOVE THAT ANOTHER TASK OWNS — read them if you need them, never \
-                 write them (your own files are the YOU OWN list):\n",
-            );
+            desc.push_str(&format!(
+                "\n\n{UNOWNED_FILES_HEADER} — read them if you need them, never write them (your \
+                 own files are the YOU OWN list):\n"
+            ));
             for (path, owner) in &named {
                 desc.push_str(&format!("- `{path}` → owned by task `{owner}`\n"));
             }

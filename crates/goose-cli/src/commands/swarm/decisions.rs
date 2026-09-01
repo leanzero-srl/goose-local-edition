@@ -18,7 +18,9 @@
 //!   (c) DELETED (VA-030): workers used to receive every research-settled answer a second time,
 //!       cut at 1,500 chars, under a provenance header appended to `DispatchRequest.user_decisions`;
 //!       the brief (the task description, i.e. the worker prompt's body) carries them once, per
-//!       slice and whole, so `user_decisions` is the USER's channel only;
+//!       slice and whole, so `user_decisions` is the USER's channel only. A REPAIR shard has no
+//!       brief: it reads its OWNING task's block, found again in the loaded DAG
+//!       (`BriefDecisions`, D11) — the deletion first left that channel empty;
 //!   (e) when EVERY open decision folded as settled, the plan repair strips
 //!       implementation-task -> docs-only-task dependency edges (loud, MILD, rides
 //!       `plan_repaired.actions`); one unanswered decision KEEPS every such dep — the doc task is
@@ -31,6 +33,12 @@ use super::USER_DECISIONS_HEADER;
 /// slice id collides with it (slice ids are kebab-case words from a model; the partition in
 /// `run_linear_plan` siphons rows by exact equality on this constant).
 pub(super) const DECISION_SLICE: &str = "__open_decisions__";
+
+/// The header prefixes a brief's decisions block opens with — `decisions_brief_block` below and
+/// research.rs's `slice_decisions_block` both start theirs with the first; the anchors
+/// `BriefDecisions` finds the block again by.
+pub(super) const SETTLED_DECISIONS_HEADER: &str = "DECISIONS SETTLED AT PLAN TIME";
+pub(super) const OPEN_DECISIONS_HEADER: &str = "OPEN DECISIONS —";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DecisionState {
@@ -168,13 +176,13 @@ pub(super) fn decisions_brief_block(decisions: &[PlanDecision]) -> String {
     let mut out = String::new();
     if !settled.is_empty() {
         out.push_str(&format!(
-            "\n\nDECISIONS SETTLED AT PLAN TIME — quoted verbatim and BINDING; implement each \
+            "\n\n{SETTLED_DECISIONS_HEADER} — quoted verbatim and BINDING; implement each \
              exactly as written and never substitute your own convention:\n{settled}"
         ));
     }
     if !open.is_empty() {
         out.push_str(&format!(
-            "\n\nOPEN DECISIONS — unless a USER DECISIONS block in the request settles one of \
+            "\n\n{OPEN_DECISIONS_HEADER} unless a USER DECISIONS block in the request settles one of \
              these, choose the most CONVENTIONAL option and note the choice in a code comment; \
              never invent a novel one:\n{}",
             open.iter()
@@ -184,6 +192,79 @@ pub(super) fn decisions_brief_block(decisions: &[PlanDecision]) -> String {
         ));
     }
     out
+}
+
+/// VA-030 D11 — the decisions block a REPAIR shard reads. A shard owns FILES, not a slice, so it
+/// has no brief of its own; the tasks that own its files are its owners, and their briefs'
+/// blocks — the selection the brief already made, rendered once at plan time — are what it
+/// reads. Indexed from the DAG the run loaded (the in-memory plan), never from a sidecar:
+/// plan_store's law is that the sidecars have no engine reader. r6c's seven shards: five owned
+/// by web-viz / ledgerd-api / web-console (each brief carrying a 5,584-char block), two by the
+/// skeleton (no block) — after the worker-channel copy was deleted (D10-3) all seven read none.
+#[derive(Clone, Default)]
+pub(super) struct BriefDecisions {
+    /// `(task id, owned files, the brief's decisions block)` — tasks whose brief carries none
+    /// are not indexed, so `for_files` measures the absence as `owners` without a block.
+    per_task: Vec<(String, Vec<String>, String)>,
+}
+
+pub(super) struct ShardDecisions {
+    /// Every task owning one of the shard's files, whether or not its brief carried a block.
+    pub(super) owners: Vec<String>,
+    /// The owners' blocks, an identical block delivered once; empty when no owner carries one.
+    pub(super) block: String,
+}
+
+impl BriefDecisions {
+    pub(super) fn from_tasks<'a>(
+        tasks: impl Iterator<Item = (&'a str, &'a [String], &'a str)>,
+    ) -> Self {
+        let mut per_task: Vec<(String, Vec<String>, String)> = tasks
+            .map(|(id, files, description)| {
+                (
+                    id.to_string(),
+                    files.to_vec(),
+                    brief_decisions_block(description).unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        per_task.sort_by(|a, b| a.0.cmp(&b.0));
+        Self { per_task }
+    }
+
+    pub(super) fn for_files(&self, files: &[String]) -> ShardDecisions {
+        let mut owners = Vec::new();
+        let mut block = String::new();
+        for (id, owned, b) in &self.per_task {
+            if !owned.iter().any(|f| files.contains(f)) {
+                continue;
+            }
+            owners.push(id.clone());
+            if !b.is_empty() && !block.contains(b.as_str()) {
+                block.push_str(b);
+            }
+        }
+        ShardDecisions { owners, block }
+    }
+}
+
+/// A brief's decisions block, from its header to the brief's end — minus the plan repair's
+/// UNOWNED-FILES tail, which is the OWNER's list, not the shard's. None when the brief carries
+/// no block (a run with no open decisions, or a brief that never got one — r6c's 387-char
+/// decisions-doc brief).
+pub(super) fn brief_decisions_block(description: &str) -> Option<&str> {
+    let start = [SETTLED_DECISIONS_HEADER, OPEN_DECISIONS_HEADER]
+        .iter()
+        .filter_map(|h| description.find(&format!("\n\n{h}")))
+        .min()?;
+    let block = description.get(start..)?;
+    let end = block
+        .find(&format!(
+            "\n\n{}",
+            super::plan_repairs::UNOWNED_FILES_HEADER
+        ))
+        .unwrap_or(block.len());
+    block.get(..end)
 }
 
 /// The decisions lane's prompt HEAD (the fan adds the snowball block and EVERY still-open
@@ -391,6 +472,76 @@ mod tests {
         assert!(b.contains("binding for consistency"));
         assert!(b.contains("- which palette") && b.contains("CONVENTIONAL"));
         assert!(decisions_brief_block(&[]).is_empty());
+    }
+
+    /// r6c's real shape: web-console's brief ended "...the run exercises all three.\n\n---" and
+    /// then the block; the D5 repair appends an UNOWNED-FILES tail after it. The shard for
+    /// `web/app.js` reads exactly the block; `app/ledgerd/__init__.py` (skeleton, no block) reads
+    /// none and names its owner; two owners carrying the identical block deliver it once.
+    #[test]
+    fn a_shard_reads_its_owners_brief_block_once() {
+        let block = decisions_brief_block(&[PlanDecision {
+            q_index: 0,
+            question: "D1 — does the brush survive a streamed mutation of a brushed record?".into(),
+            state: DecisionState::SettledByResearch {
+                answer: "Stay brushed.\n\n3. `web/app.js` behavior contract: keep the row.".into(),
+            },
+        }]);
+        let unowned_tail = format!(
+            "\n\n{} — read them if you need them, never write them:\n- `DECISIONS.md` → owned by task `decisions-doc`\n",
+            super::super::plan_repairs::UNOWNED_FILES_HEADER
+        );
+        let console =
+            format!("Ship the console. The run exercises all three.\n\n---{block}{unowned_tail}");
+        let viz = format!("Draw the canvas.{block}");
+        let skeleton = "Boot both packages; DONE means every route answers.".to_string();
+        let files = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let console_files = files(&["web/index.html", "web/styles.css", "web/app.js"]);
+        let viz_files = files(&["web/viz.js"]);
+        let skeleton_files = files(&["app/__main__.py", "app/ledgerd/__init__.py"]);
+        let index = BriefDecisions::from_tasks(
+            [
+                ("web-console", console_files.as_slice(), console.as_str()),
+                ("web-viz", viz_files.as_slice(), viz.as_str()),
+                ("skeleton", skeleton_files.as_slice(), skeleton.as_str()),
+            ]
+            .into_iter(),
+        );
+
+        let app_js = index.for_files(&files(&["web/app.js"]));
+        assert_eq!(app_js.owners, vec!["web-console".to_string()]);
+        assert_eq!(
+            app_js.block, block,
+            "exactly the brief's block, no prose before, no tail after"
+        );
+        assert!(
+            !app_js.block.contains("DECISIONS.md"),
+            "the owner's unowned-files list is not the shard's"
+        );
+
+        let init = index.for_files(&files(&["app/ledgerd/__init__.py"]));
+        assert_eq!(init.owners, vec!["skeleton".to_string()]);
+        assert!(
+            init.block.is_empty(),
+            "no block is measured as chars 0, never invented"
+        );
+
+        let both = index.for_files(&files(&["web/app.js", "web/viz.js"]));
+        assert_eq!(
+            both.owners,
+            vec!["web-console".to_string(), "web-viz".to_string()]
+        );
+        assert_eq!(
+            both.block.matches("D1 — does the brush").count(),
+            1,
+            "one identical block, once"
+        );
+
+        assert!(index
+            .for_files(&files(&["nobody/owns.py"]))
+            .owners
+            .is_empty());
+        assert!(brief_decisions_block("no block here").is_none());
     }
 
     /// The r5 receipt verbatim: ledgerd/brush-contract/frontend/viz gated on the w1 docs task.
