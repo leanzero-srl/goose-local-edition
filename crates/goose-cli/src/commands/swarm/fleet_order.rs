@@ -413,10 +413,22 @@ pub(super) fn reconcile_pool_with_fleet(
         resident
             .iter()
             .filter(|p| planner_grade(&p.identifier))
-            .max_by_key(|p| planner_rank(&cfg.speed_weights, p.device.as_deref(), &p.identifier))
+            .max_by_key(|p| {
+                planner_rank(
+                    &cfg.speed_weights,
+                    p.device.as_deref(),
+                    &super::gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+                    &p.identifier,
+                )
+            })
             .or_else(|| {
                 resident.iter().max_by_key(|p| {
-                    planner_rank(&cfg.speed_weights, p.device.as_deref(), &p.identifier)
+                    planner_rank(
+                        &cfg.speed_weights,
+                        p.device.as_deref(),
+                        &super::gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+                        &p.identifier,
+                    )
                 })
             })
             .map(|p| p.identifier.clone())
@@ -434,11 +446,18 @@ pub(super) fn planner_grade(identifier: &str) -> bool {
 
 /// The planner pick's rank. QUALITY outranks speed: a low-quant model (q5/q4/q3/q2) fails the
 /// structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host (highest
-/// configured speed_weight). speed_weight keys match device+identifier (some identifiers omit
-/// the host) — the haystack is exactly what the pool reconciliation always built.
+/// configured speed_weight). speed_weight keys are matched against host + DEVICE ID + identifier
+/// — the device id because that is what the operator's `speed_weights` fragments were written for
+/// (`configured_speed_weight` matches them against `d.id`), and the pool that reaches the aux
+/// router carries ids and often no host. VA-004 (r6d): `speed_weights {local: 2, gabee: 1,
+/// worksmacstudio: 3}` against `mihai-qwen3.8-27b` with no host matched NOTHING — the fragment
+/// `local` lives in the device id `local-mihai-qwen3.8-27b` — so mihai ranked 1, tied with gabee,
+/// lost the id-order tiebreak, and the aux order was [workhorse, gabee, mihai] against the
+/// operator's [3, 2, 1].
 pub(super) fn planner_rank(
     speed_weights: &std::collections::HashMap<String, u32>,
     host: Option<&str>,
+    device_id: &str,
     identifier: &str,
 ) -> (u8, u32) {
     let ident = identifier.to_lowercase();
@@ -448,7 +467,12 @@ pub(super) fn planner_rank(
             || ident.contains("q4_")
             || ident.contains("q5")),
     );
-    let hay = format!("{} {}", host.unwrap_or(""), ident);
+    let hay = format!(
+        "{} {} {}",
+        host.unwrap_or(""),
+        device_id.to_lowercase(),
+        ident
+    );
     let speed = speed_weights
         .iter()
         .find(|(pat, _)| hay.contains(pat.as_str()))
@@ -473,12 +497,17 @@ pub(super) fn aux_candidate_models(
         .filter(|d| {
             !d.is_cloud()
                 && planner_grade(&d.model_id)
-                && planner_rank(speed_weights, d.host.as_deref(), &d.model_id).0 == 1
+                && planner_rank(speed_weights, d.host.as_deref(), &d.id, &d.model_id).0 == 1
         })
         .collect();
     cands.sort_by(|a, b| {
-        planner_rank(speed_weights, b.host.as_deref(), &b.model_id)
-            .cmp(&planner_rank(speed_weights, a.host.as_deref(), &a.model_id))
+        planner_rank(speed_weights, b.host.as_deref(), &b.id, &b.model_id)
+            .cmp(&planner_rank(
+                speed_weights,
+                a.host.as_deref(),
+                &a.id,
+                &a.model_id,
+            ))
             .then_with(|| a.model_id.cmp(&b.model_id))
     });
     cands.into_iter().map(|d| d.model_id.clone()).collect()
@@ -1095,6 +1124,53 @@ mod aux_routing_tests {
             least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &inflight, None);
         assert_eq!(model, "mihai-qwen3.8-27b", "the idle host serves the look");
         assert_eq!(seen, 0, "and the event can say what the pick saw");
+    }
+
+    /// VA-004, r6d's REAL pool (`pool_resolved` seq 1) and REAL `speed_weights` (config.yaml:
+    /// local 2, gabee 1, worksmacstudio 3): the fragments name DEVICE ids, the pool carries no
+    /// host, and mihai's model id contains none of them. Before: mihai ranked 1, tied with gabee,
+    /// lost the id-order tiebreak — aux order [workhorse, gabee, mihai]. Now the device id is in
+    /// the haystack and the operator's order holds.
+    #[test]
+    fn r6d_s_device_id_fragments_rank_the_aux_pool() {
+        let weights = std::collections::HashMap::from([
+            ("local".to_string(), 2u32),
+            ("gabee".to_string(), 1u32),
+            ("worksmacstudio".to_string(), 3u32),
+        ]);
+        let pool = [
+            sd("mac-gabee-qwen3.8-27b", "gabee-qwen3.8-27b", None),
+            sd("local-mihai-qwen3.8-27b", "mihai-qwen3.8-27b", None),
+            sd(
+                "worksmacstudio-workhorse-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                None,
+            ),
+        ];
+        assert_eq!(
+            planner_rank(
+                &weights,
+                None,
+                "local-mihai-qwen3.8-27b",
+                "mihai-qwen3.8-27b"
+            ),
+            (1, 2),
+            "the `local` fragment is read off the device id"
+        );
+        assert_eq!(
+            planner_rank(&weights, None, "", "mihai-qwen3.8-27b").1,
+            1,
+            "without the device id nothing matches — the r6d reading"
+        );
+        assert_eq!(
+            aux_candidate_models(&weights, &pool),
+            vec![
+                "workhorse-qwen3.8-27b".to_string(),
+                "mihai-qwen3.8-27b".to_string(),
+                "gabee-qwen3.8-27b".to_string(),
+            ],
+            "the operator's 3 / 2 / 1"
+        );
     }
 
     /// THE r6d SHAPE (research-ledger-core-q0, looks 6 and 7 at 04:42:30Z / 04:48:21Z): the
