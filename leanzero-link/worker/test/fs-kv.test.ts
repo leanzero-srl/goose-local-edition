@@ -102,6 +102,15 @@ describe("createFsKvStore", () => {
     expect(await kv.get("k")).toBeNull();
   });
 
+  it("treats a record whose expiresAtMs is not a finite number as corrupt", async () => {
+    const { log, events } = captureLog();
+    const kv = createFsKvStore(dir, { log });
+    await writeFile(join(dir, fileNameFor("k")), JSON.stringify({ key: "k", value: "v", expiresAtMs: "soon" }), "utf8");
+    expect(await kv.get("k")).toBeNull();
+    expect(events.some((e) => e.event === "fs_kv_corrupt")).toBe(true);
+    expect((await readdir(dir)).length).toBe(0);
+  });
+
   it("names files sha256(key) hex — fixed 64 chars, hex alphabet, so path traversal is unrepresentable", async () => {
     const kv = createFsKvStore(dir);
     const evil = "../../../../etc/passwd";
@@ -194,5 +203,109 @@ describe("createFsKvStore", () => {
     expect(await kv.get("k")).toBeNull();
     expect(events.some((e) => e.event === "fs_kv_corrupt")).toBe(true);
     expect((await readdir(dir)).length).toBe(0);
+  });
+});
+
+describe("createFsKvStore.sweepExpired", () => {
+  it("removes exactly the records whose expiresAtMs has passed; live and no-TTL records stay", async () => {
+    let nowMs = 1_000_000;
+    const clock = (): number => nowMs;
+    const kv = createFsKvStore(dir, { now: clock });
+    expect(await kv.sweepExpired(clock)).toBe(0);
+
+    await kv.put("rl:ip:203.0.113.9:277", "3", { expirationTtl: 7200 }); // expires 8_200_000
+    await kv.put("rl:email:old@example.com:277", "1", { expirationTtl: 7200 }); // expires 8_200_000
+    await kv.put("otp:old@example.com", '{"hash":"h","attempts":0}', { expirationTtl: 600 }); // expires 1_600_000
+    nowMs = 5_000_000;
+    await kv.put("rl:email:recent@example.com:278", "1", { expirationTtl: 7200 }); // expires 12_200_000
+    await kv.put("nodesecret:someone@example.com", "secret"); // no TTL: never a candidate
+    await writeFile(join(dir, "not-a-record.txt"), "ignored", "utf8");
+    await writeFile(join(dir, `${fileNameFor("k")}.00000000-0000-0000-0000-000000000000.tmp`), "{", "utf8");
+    const recordFiles = async (): Promise<string[]> => (await readdir(dir)).filter((name) => name.endsWith(".json")).sort();
+
+    nowMs = 1_599_999;
+    expect(await kv.sweepExpired(clock)).toBe(0);
+    expect((await recordFiles()).length).toBe(5);
+
+    nowMs = 1_600_000; // exactly at the OTP expiry — >= is expired, the same predicate get uses
+    expect(await kv.sweepExpired(clock)).toBe(1);
+    expect(await recordFiles()).not.toContain(fileNameFor("otp:old@example.com"));
+
+    nowMs = 8_200_000;
+    expect(await kv.sweepExpired(clock)).toBe(2);
+    expect(await recordFiles()).toEqual(
+      [fileNameFor("rl:email:recent@example.com:278"), fileNameFor("nodesecret:someone@example.com")].sort(),
+    );
+    expect(await kv.sweepExpired(clock)).toBe(0);
+
+    nowMs += 100 * 365 * 86400 * 1000;
+    expect(await kv.sweepExpired(clock)).toBe(1);
+    expect(await recordFiles()).toEqual([fileNameFor("nodesecret:someone@example.com")]);
+    expect(await kv.get("nodesecret:someone@example.com")).toBe("secret");
+    expect((await readdir(dir)).length).toBe(3); // the secret, the foreign file, the stray tmp
+  });
+
+  it("a concurrent update on an expired key wins: the refreshed record is kept and not counted", async () => {
+    let nowMs = 1_000_000;
+    const kv = createFsKvStore(dir, { now: () => nowMs });
+    const key = "rl:email:racer@example.com:277";
+    await kv.put(key, "3", { expirationTtl: 60 });
+    await kv.put("nodesecret:racer@example.com", "secret");
+    nowMs += 61_000;
+
+    // The sweep consults `now` once per record that can expire, and `key` holds the only
+    // one, so the first call IS the scan's verdict on it. The update enqueued from inside
+    // that call lands on the key's chain BEFORE the sweep's own removal step, which pins
+    // the interleaving under test: the scan saw an expired record, the key was refreshed,
+    // then the removal step ran — and must find the refreshed record and keep it.
+    const order: string[] = [];
+    let refresh: Promise<void> | undefined;
+    const clock = (): number => {
+      order.push("clock");
+      refresh ??= kv.update(key, () => {
+        order.push("mutate");
+        return { value: "fresh", expirationTtl: 60 };
+      });
+      return nowMs;
+    };
+
+    const removed = await kv.sweepExpired(clock);
+    await refresh;
+    expect(removed).toBe(0);
+    expect(order).toEqual(["clock", "mutate", "clock"]);
+    expect(await kv.get(key)).toBe("fresh");
+    const raw = JSON.parse(await readFile(join(dir, fileNameFor(key)), "utf8")) as { expiresAtMs: number };
+    expect(raw.expiresAtMs).toBe(nowMs + 60_000);
+    expect(await kv.get("nodesecret:racer@example.com")).toBe("secret");
+  });
+
+  it("a concurrent update that keeps an expired key is not double-counted: the update's own read removed the file", async () => {
+    let nowMs = 1_000_000;
+    const kv = createFsKvStore(dir, { now: () => nowMs });
+    const key = "otp:keeper@example.com";
+    await kv.put(key, "code", { expirationTtl: 600 });
+    nowMs += 600_000;
+    let keep: Promise<void> | undefined;
+    const clock = (): number => {
+      keep ??= kv.update(key, () => "keep");
+      return nowMs;
+    };
+    expect(await kv.sweepExpired(clock)).toBe(0);
+    await keep;
+    expect((await readdir(dir)).length).toBe(0);
+  });
+
+  it("reports corrupt and misplaced files and leaves them for get to clean up", async () => {
+    const { log, events } = captureLog();
+    const kv = createFsKvStore(dir, { log });
+    await writeFile(join(dir, fileNameFor("junk")), "}{ not json", "utf8");
+    await writeFile(join(dir, fileNameFor("k")), JSON.stringify({ key: "other", value: "v", expiresAtMs: 1 }), "utf8");
+    await kv.put("rl:ip:198.51.100.7:1", "1", { expirationTtl: 1 });
+
+    expect(await kv.sweepExpired(() => Number.MAX_SAFE_INTEGER)).toBe(1);
+    expect(events.filter((e) => e.event === "fs_kv_corrupt").map((e) => e.fields?.file).sort()).toEqual(
+      [fileNameFor("junk"), fileNameFor("k")].sort(),
+    );
+    expect((await readdir(dir)).sort()).toEqual([fileNameFor("junk"), fileNameFor("k")].sort());
   });
 });

@@ -2,9 +2,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { capabilities, parseConfig, type Config } from "./lib/config";
-import type { Deps } from "./lib/deps";
-import { createFsKvStore } from "./lib/fs-kv";
+import { capabilities, parseConfig, RATE_WINDOW_SECONDS, type Config } from "./lib/config";
+import type { Deps, KVStore } from "./lib/deps";
+import { createFsKvStore, type FsKvStore } from "./lib/fs-kv";
 import { generateOtp } from "./lib/otp";
 import { handleRequest } from "./router";
 
@@ -24,10 +24,10 @@ function defaultKvDir(): string {
   return process.env.LINK_KV_DIR ?? join(homedir(), ".leanzero", "link-kv");
 }
 
-export function buildDeps(): Deps {
+export function buildDeps(kv: KVStore): Deps {
   const config = parseConfig(process.env);
   return {
-    kv: createFsKvStore(defaultKvDir(), { log: jsonLog }),
+    kv,
     fetchFn: (url, init) => fetch(url, init),
     now: () => Date.now(),
     randomOtp: generateOtp,
@@ -164,10 +164,30 @@ export function logConfigWarnings(config: Config, log: (event: string, fields?: 
   }
 }
 
+/// W-L9: the filesystem KV only drops an expired `rl:*` / `otp:*` file when that key is
+/// read again, so files for never-repeated emails and addresses accumulate. Sweep once at
+/// boot and then once per rate window — the window is what gives those records their
+/// lifetime (`bumpFixedWindow` writes `expirationTtl: windowSeconds * 2`), so nothing
+/// expired ever outlives two sweeps. Storage housekeeping only; no model work rides on it.
+function startExpirySweeps(kv: FsKvStore, now: () => number, log: (event: string, fields?: Record<string, unknown>) => void): void {
+  const sweep = async (): Promise<void> => {
+    try {
+      const removed = await kv.sweepExpired(now);
+      log("fs_kv_swept", { removed });
+    } catch (error) {
+      log("fs_kv_sweep_error", { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  void sweep();
+  setInterval(() => void sweep(), RATE_WINDOW_SECONDS * 1000).unref();
+}
+
 function main(): void {
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
-  const deps = buildDeps();
+  const kv = createFsKvStore(defaultKvDir(), { log: jsonLog });
+  const deps = buildDeps(kv);
   logConfigWarnings(deps.config, jsonLog);
+  startExpirySweeps(kv, deps.now, jsonLog);
   const server = createNodeServer(deps, port);
   server.listen(port, "127.0.0.1", () => {
     jsonLog("node_server_listening", {
