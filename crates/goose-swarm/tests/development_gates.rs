@@ -279,7 +279,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// and "you may edit ANY file" against its own order).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 41_606;
+    const SWARM_RS_LINE_BASELINE: usize = 41_054;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -317,12 +317,13 @@ fn do_everything_never_reaches_a_model() {
 /// failure into a green gate. Baseline 130 measured at HEAD bce2901d9 (swarm.rs 104, scheduler.rs 24,
 /// dag.rs 1, patch.rs 1); TIGHTENED to 128 by GEN-6a, which converted the evidence-hiding sites
 /// (scheduler replan laundering, the pillars serialize/panic pair, distill parse) into named
-/// events. The survivors are the honest-empty class: json field reads and format-string absences
+/// events; to 127 on 2026-09-01 when the retired `split_inherit_spec` echo row took its env-read
+/// `unwrap_or_default()` with it. The survivors are the honest-empty class: json field reads and format-string absences
 /// where empty genuinely means empty. The count may only DECREASE. If you legitimately need a new
 /// one, prove the empty MEANS empty in a comment at the call site (honest-empty exemplar:
 /// scheduler.rs hashes "ABSENT" distinctly instead of hashing nothing) and adjust the baseline in
 /// the SAME commit — the diff then shows the proof next to the licence.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 128;
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 127;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {

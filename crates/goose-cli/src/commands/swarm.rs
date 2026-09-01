@@ -109,6 +109,11 @@ use findings::{
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
+mod persona;
+use persona::{
+    detect_stack_key, judge_lessons_from_log, persona_runs, persona_user_notes, read_persona,
+    reflect_on_success, render_persona_skill, write_persona, PersonaSnapshot, PersonaWrite,
+};
 mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
@@ -3048,19 +3053,6 @@ fn straggler_stop_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
     }
 }
 
-fn straggler_stop_enabled(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_STOP").ok(), cfg)
-}
-
-/// #135 degrade-straggler-stop gate (contracts + detail). Reuses the same on/off parsing; env
-/// GOOSE_SWARM_STRAGGLER_STOP_DEGRADE wins, else config, else default OFF.
-fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(
-        std::env::var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE").ok(),
-        cfg,
-    )
-}
-
 /// #136 repeat-breaker gate: env GOOSE_SWARM_REPEAT_BREAK wins, else config, else default OFF.
 fn repeat_break_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
@@ -5407,251 +5399,6 @@ mod tests {
         // An empty inbox is the same as none.
         std::fs::create_dir_all(dir.path().join(".swarm").join("inbox")).unwrap();
         assert_eq!(read_user_notes(dir.path(), 0).block, "");
-    }
-
-    // ---- LEARN & REFLECT --------------------------------------------------------------------
-    /// The trap this exists for: TargetLang collapses React, Angular and a node CLI all into `TypeScript`,
-    /// and Swift into `Other` beside Ruby. Keying learned knowledge on that would inject an Angular lesson
-    /// into a React build — poisoning the very thing the learning is meant to speed up.
-    #[test]
-    fn detect_stack_key_never_collapses_distinct_stacks() {
-        let react = detect_stack_key(
-            "Build Minesweeper as a React + TypeScript SPA using Vite",
-            &[],
-        );
-        let angular = detect_stack_key("Build a dashboard with Angular", &["angular.json".into()]);
-        assert_eq!(react.as_deref(), Some("react-vite-ts"));
-        assert_eq!(angular.as_deref(), Some("angular"));
-        assert_ne!(
-            react, angular,
-            "react and angular must NEVER share a bucket"
-        );
-
-        // THE WHOLE REASON THIS FUNCTION EXISTS: to TargetLang, React and Angular are the SAME thing.
-        // (Second-order trap found while writing this test: detect_language DEFAULTS TO PYTHON without an
-        // explicit cue, so "Build a React app with Vite" alone is Python to it. Given a real TypeScript spec
-        // + manifest, both frameworks still collapse into one bucket.)
-        let react_files = vec!["src/App.tsx".to_string(), "vite.config.ts".to_string()];
-        let ng_files = vec![
-            "src/app.component.ts".to_string(),
-            "angular.json".to_string(),
-        ];
-        assert_eq!(
-            detect_language("Build a React SPA in TypeScript", &react_files),
-            TargetLang::TypeScript
-        );
-        assert_eq!(
-            detect_language("Build an Angular SPA in TypeScript", &ng_files),
-            TargetLang::TypeScript
-        );
-        // Identical to TargetLang; correctly distinct to detect_stack_key.
-        assert_ne!(
-            detect_stack_key("Build a React SPA in TypeScript with Vite", &react_files),
-            detect_stack_key("Build an Angular SPA in TypeScript", &ng_files)
-        );
-
-        assert_eq!(
-            detect_stack_key(
-                "a macOS notes app in Swift 6 with SwiftUI",
-                &["Package.swift".into()]
-            )
-            .as_deref(),
-            Some("swift-spm")
-        );
-        assert_eq!(
-            detect_stack_key("Build a FastAPI + SQLite web app", &[]).as_deref(),
-            Some("fastapi")
-        );
-    }
-
-    /// A bare language is NOT a stack: "python" spans a CLI, a web app and a library, whose proven layouts
-    /// have nothing in common. Refusing to key is the safe answer — no key means nothing is learned and
-    /// nothing is injected, which is byte-identical to today.
-    #[test]
-    fn detect_stack_key_refuses_when_it_is_not_confident() {
-        assert_eq!(detect_stack_key("Build a python tool", &[]), None);
-        assert_eq!(detect_stack_key("Build something nice", &[]), None);
-        assert_eq!(detect_stack_key("", &[]), None);
-        // React WITHOUT vite is not the react-vite-ts stack — do not guess it in.
-        assert_eq!(detect_stack_key("a react native mobile app", &[]), None);
-    }
-
-    /// Moving personas into the SHARED skills root is what made this reachable: persona_dir is a pure
-    /// function of the stack key, and write_persona truncates. A user who hand-writes a skill named
-    /// `stack-fastapi` would have had it silently eaten by the first successful fastapi build. Authorship,
-    /// not the path, decides — and the check runs against real bytes on a real disk, because the bug is in
-    /// the filesystem call and a mocked one would prove nothing.
-    #[test]
-    fn a_persona_write_never_truncates_a_skill_goose_did_not_author() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("SKILL.md");
-        let hand_written =
-            "---\nname: stack-fastapi\ndescription: mine\n---\n\nMy own hard-won notes.\n";
-        std::fs::write(&path, hand_written).unwrap();
-
-        // the guard's exact predicate, over the real file
-        let existing = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !existing.contains(PERSONA_PROVENANCE),
-            "a hand-written skill must not look goose-authored"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            hand_written,
-            "the user's file must be byte-identical after the check"
-        );
-
-        // ...whereas goose's own render IS recognised, so it can still update itself
-        let rendered = render_persona_skill("fastapi", &PersonaSnapshot::default(), "x", 1, "");
-        assert!(rendered.contains(PERSONA_PROVENANCE));
-    }
-
-    /// THE SAFETY CLAIM, PINNED. The persona is only defensible because the user can SEE the lesson a weak
-    /// model wrote about itself and throw it out. That rests entirely on the write landing on a directory
-    /// `goose::skills` actually walks — which the first version did not (it wrote to `data_dir/swarm/personas`,
-    /// a path no skill root covers, so nothing goose learned was ever visible). Assert against the real
-    /// discovery list, so moving either side of this contract fails here instead of silently un-mitigating it.
-    #[test]
-    fn learned_persona_lands_where_the_skills_ui_looks() {
-        let dir = persona_dir("react-vite-ts");
-        let roots: Vec<_> = goose::skills::all_skill_dirs(None)
-            .into_iter()
-            .map(|(d, _)| d)
-            .collect();
-        assert!(
-            roots.iter().any(|r| dir.starts_with(r)),
-            "persona dir {dir:?} is under NO skill discovery root {roots:?} — the user cannot see, edit or \
-             delete what goose learned, which is the whole mitigation for a wrong lesson"
-        );
-        assert!(dir.ends_with("stack-react-vite-ts"));
-
-        // The counter must NOT sit in the skill folder: every non-SKILL.md file there is advertised to the
-        // model as a loadable supporting file, so a `runs` file becomes a tool call returning one integer.
-        let counter = persona_runs_file("react-vite-ts");
-        assert!(
-            !counter.starts_with(&dir),
-            "the run counter {counter:?} is inside the skill folder and would be advertised as loadable"
-        );
-    }
-
-    /// The render must emit the exact sentence the write guard looks for. These are two constants in two
-    /// functions and nothing but this test couples them: if the render stops emitting PERSONA_PROVENANCE,
-    /// every future write silently takes the RefusedForeign branch and goose quietly stops learning — a
-    /// dead feature behind a green build, which is the failure mode this codebase keeps producing.
-    #[test]
-    fn a_rendered_persona_is_recognised_as_goose_authored() {
-        let snap = PersonaSnapshot::default();
-        let rendered = render_persona_skill("fastapi", &snap, "a lesson", 1, "");
-        assert!(
-            rendered.contains(PERSONA_PROVENANCE),
-            "the write guard proves authorship by finding PERSONA_PROVENANCE in the file it is about to \
-             truncate; this render does not contain it, so goose would refuse to overwrite its own skill"
-        );
-        // and the warning must sit ABOVE the lesson, not only in the footer: the user fixes a wrong sentence
-        // where the wrong sentence IS, and everything above the marker is regenerated.
-        let warn = rendered
-            .find("REGENERATED")
-            .expect("no in-place-edit warning");
-        let lesson = rendered.find("## What worked").expect("no lesson section");
-        assert!(
-            warn < lesson,
-            "the warning that this region is regenerated must appear BEFORE the region the user will edit"
-        );
-    }
-
-    /// The file tells the user their corrections are permanent. A rewrite is `fs::write` — truncating — so
-    /// that promise is only true if the user's section round-trips through the render DETERMINISTICALLY.
-    /// Handing it to a weak model as "prior" and hoping it merges is exactly the trust this cannot assume.
-    #[test]
-    fn user_notes_survive_a_rewrite_verbatim() {
-        let snap = PersonaSnapshot {
-            stack_key: Some("fastapi".into()),
-            files: vec!["app/main.py".into()],
-            shape: vec![("api".into(), vec!["app/main.py".into()])],
-            judge_lessons: vec!["pin the pydantic version".into()],
-        };
-        let correction =
-            "goose keeps getting this wrong: we use SQLModel here, NOT raw SQLAlchemy.";
-        let first = render_persona_skill("fastapi", &snap, "use uvicorn", 1, "");
-        assert!(first.contains(PERSONA_USER_MARKER));
-        assert_eq!(
-            persona_user_notes(&first),
-            "",
-            "a fresh skill has no user notes"
-        );
-        // The banner NAMES the marker inline, above the real heading. Cutting at the first textual hit
-        // would hand back the whole document as "the user's notes" — assert we cut at the heading itself.
-        assert!(
-            first.matches(PERSONA_USER_MARKER).count() > 1,
-            "this test only bites while the banner names the marker inline"
-        );
-        assert!(
-            !persona_user_notes(&first).contains("use uvicorn"),
-            "the split landed on the banner, not the heading — goose's own lesson is being preserved as \
-             though the user wrote it, and it will compound on every rewrite"
-        );
-
-        // the user opens the file and appends their correction under the marker
-        let edited = format!("{first}\n{correction}\n");
-        assert_eq!(persona_user_notes(&edited), correction);
-
-        // ...and a later successful build rewrites everything ABOVE the marker
-        let rewritten =
-            render_persona_skill("fastapi", &snap, "a totally different lesson", 2, &edited);
-        assert!(
-            rewritten.contains(correction),
-            "the rewrite dropped the user's correction — 'write here and it sticks' is then a lie:\n{rewritten}"
-        );
-        assert!(rewritten.contains("a totally different lesson"));
-        assert!(
-            !rewritten.contains("use uvicorn"),
-            "the model's old lesson should be replaced, not kept"
-        );
-        // and it must be idempotent: rewriting again does not duplicate or nest the notes
-        let again = render_persona_skill("fastapi", &snap, "third lesson", 3, &rewritten);
-        assert_eq!(
-            again.matches(correction).count(),
-            1,
-            "the notes were duplicated across rewrites"
-        );
-        // Exactly one real HEADING. The banner names the marker inline too, so a raw substring count is the
-        // wrong invariant — what must never happen is a SECOND notes section, which would strand the first.
-        let headings = |s: &str| {
-            s.matches(&format!("\n{PERSONA_USER_MARKER}")).count()
-                + usize::from(s.starts_with(PERSONA_USER_MARKER))
-        };
-        assert_eq!(headings(&again), 1, "a rewrite grew a second notes section");
-        assert_eq!(headings(&first), 1);
-    }
-
-    /// Only a CORRECTIVE verdict carries a lesson; "ok"/"observed" means the judge had nothing to say. Uses
-    /// the real event shape emitted by a run.
-    #[test]
-    fn judge_lessons_keeps_only_corrective_hints() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let log = dir.path().join("run.jsonl");
-        std::fs::write(
-            &log,
-            "{\"event\":\"judge_verdict\",\"verdict\":\"ok\",\"hint\":\"\"}\n\
-             {\"event\":\"judge_verdict\",\"verdict\":\"observed\",\"hint\":\"looks fine\"}\n\
-             {\"event\":\"judge_verdict\",\"verdict\":\"broken_code\",\"hint\":\"Add @MainActor to the NoteStore class declaration\"}\n\
-             {\"event\":\"judge_verdict\",\"verdict\":\"broken_code\",\"hint\":\"Add @MainActor to the NoteStore class declaration\"}\n\
-             {\"event\":\"task_completed\",\"hint\":\"not a judge event\"}\n\
-             not json at all\n",
-        )
-        .unwrap();
-        let out = judge_lessons_from_log(&log);
-        assert_eq!(
-            out.len(),
-            1,
-            "dedup + drop ok/observed/non-judge, got {out:?}"
-        );
-        assert!(out[0].contains("@MainActor"));
-    }
-
-    #[test]
-    fn judge_lessons_from_a_missing_log_is_empty_not_a_panic() {
-        assert!(judge_lessons_from_log(std::path::Path::new("/nonexistent/run.jsonl")).is_empty());
     }
 
     // ---- TURN-CONTEXT STRIP -----------------------------------------------------------------
@@ -9306,12 +9053,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
 
         // Q2(b): the documented keys come from the ADVERTISING ROW, scoped per endpoint.
-        let keys = spec_documented_keys(table, "/api/payments?limit=1&offset=1");
+        let keys = spec_documented_keys(table, "GET", "/api/payments?limit=1&offset=1");
         assert_eq!(keys, vec!["data", "total", "limit", "offset"]);
-        let keys = spec_documented_keys(table, "/api/summary");
+        let keys = spec_documented_keys(table, "GET", "/api/summary");
         assert_eq!(keys, vec!["count", "total_minor", "oldest"]);
         // No documented shape -> no assertion (fail-open; prose/HTML rows must not invent checks).
-        assert!(spec_documented_keys("| `GET` | `/` | the HTML page |", "/").is_empty());
+        assert!(spec_documented_keys("| `GET` | `/` | the HTML page |", "GET", "/").is_empty());
 
         // Q2(c): the POST's own acquired count, both directions.
         assert_eq!(
@@ -11811,14 +11558,45 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             | `POST` | `/api/sync` | `{\"fetched\": 0, \"inserted\": 0, \"total\": 0}` |\n\
             | `POST` | `/api/payments/batch` | `{\"created\": [], \"failed\": []}` |\n";
         assert_eq!(
-            spec_documented_keys(spec, "/api/sync"),
+            spec_documented_keys(spec, "POST", "/api/sync"),
             vec!["fetched", "inserted", "total"]
         );
         assert_eq!(
-            spec_documented_keys(spec, "/api/payments/batch"),
+            spec_documented_keys(spec, "POST", "/api/payments/batch"),
             vec!["created", "failed"]
         );
-        assert!(spec_documented_keys(spec, "/api/webhooks/meridian").is_empty());
+        assert!(spec_documented_keys(spec, "POST", "/api/webhooks/meridian").is_empty());
+    }
+
+    /// r6c: sb-7's drafts row documents a REQUEST body before the arrow and an event name after
+    /// it; the probe was handed the request keys as response keys and filed "POST /api/drafts's
+    /// response does not carry the documented field(s) `amount_minor`, `currency`, `counterparty`,
+    /// `name`, `country`, `note`" four times. The rows below are the spec's, verbatim.
+    #[test]
+    fn documented_keys_come_from_the_response_side_of_the_rows_own_method() {
+        let spec = "| Method | Path | Role | Effect + ledger event |\n|---|---|---|---|\n\
+            | `POST` | `/api/drafts` | maker or checker | create from `{\"amount_minor\": <int>, \"currency\": <str>, \"counterparty\": {\"name\": <str>, \"country\": <str>}, \"note\": <str>}` → `draft.created` |\n\
+            | `GET` | `/api/drafts?state=` | any role | `{\"data\": [...], \"total\": <int>}`, filtered by state; unknown state = validation error |\n\
+            | `POST` | `/notify/events` | `{\"events\": [...]}` → `{\"accepted\": [<seq>...], \"duplicate\": [<seq>...]}` |\n";
+        assert!(
+            spec_documented_keys(spec, "POST", "/api/drafts").is_empty(),
+            "a request body and an event name document no response shape"
+        );
+        assert_eq!(
+            spec_documented_keys(spec, "GET", "/api/drafts?state="),
+            vec!["data", "total"],
+            "the GET row's own shape, not the POST row's request body"
+        );
+        assert_eq!(
+            spec_documented_keys(spec, "POST", "/notify/events"),
+            vec!["accepted", "duplicate"],
+            "the response side of the arrow, never the request side"
+        );
+        // A table without a method column still matches on the path alone.
+        assert_eq!(
+            spec_documented_keys("| `/api/x` | `{\"a\": 1}` |", "GET", "/api/x"),
+            vec!["a"]
+        );
     }
 
     #[test]
@@ -17786,7 +17564,7 @@ fn plan_sink_description(spec: &str, lang: TargetLang) -> String {
         s.push_str("ADVERTISED ENDPOINTS — the gate probes exactly these, nothing else:\n");
         for (method, paths) in [("GET", &gets), ("POST", &posts)] {
             for p in paths {
-                let keys = spec_documented_keys(spec, p);
+                let keys = spec_documented_keys(spec, method, p);
                 s.push_str(&format!(
                     "  - {method} {p}{}\n",
                     if keys.is_empty() {
@@ -19085,22 +18863,49 @@ fn probeable_get_path(path: &str) -> Option<String> {
     }
 }
 
-/// Q2(b): the top-level JSON keys the spec DOCUMENTS for an endpoint's response, extracted from the
-/// markdown table row that advertises it (the response-shape cell: `{"data": [...], "total": <int>,
-/// ...}`). Empty when the spec documents no JSON shape for the path — the caller then asserts
-/// nothing (fail-open; a row whose response cell is prose or an HTML page must not invent a check).
-/// Matching is on the PATH PART (query stripped both sides) so a filled probe path finds its row.
-fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
+/// Q2(b): the top-level JSON keys the spec DOCUMENTS for an endpoint's RESPONSE, extracted from
+/// the markdown table row that advertises it. Empty when the spec documents no JSON response shape
+/// for the path — the caller then asserts nothing (fail-open; a row whose response cell is prose or
+/// an HTML page must not invent a check). Matching is on the PATH PART (query stripped both sides)
+/// so a filled probe path finds its row, and on the row's METHOD cell when the table has one,
+/// because one path carries two rows with two shapes (sb-7: `POST /api/drafts` creates,
+/// `GET /api/drafts?state=` lists).
+///
+/// The spec's own notation separates what the client SENDS from what comes BACK with an arrow
+/// inside the cell: `{"events": [...]} → {"accepted": [...], "duplicate": [...]}`; `create from
+/// {"amount_minor": ...} → draft.created`. Keys are read from the RESPONSE side only. r6c read the
+/// drafts row's request body as response keys and filed "POST /api/drafts's response does not
+/// carry the documented field(s) `amount_minor`, `currency`, `counterparty`, `name`, `country`,
+/// `note`" four times against a handler whose response the spec documents only as an event name.
+fn spec_documented_keys(spec: &str, method: &str, path: &str) -> Vec<String> {
     let base = path.split('?').next().unwrap_or(path);
     let key_re = match regex::Regex::new(r#""(\w+)"\s*:"#) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
+    };
+    let is_http_method = |m: &str| {
+        matches!(
+            m.trim().to_uppercase().as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+        )
     };
     for line in spec.lines() {
         if !line.trim_start().starts_with('|') {
             continue;
         }
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // The row's METHOD cell (`POST`, or a slash list like `POST/GET`) scopes the row to the
+        // caller's method. A table with no method column matches on the path alone.
+        let method_cell = cells
+            .iter()
+            .find(|c| !c.is_empty())
+            .map(|c| c.trim_matches('`'));
+        let names_a_method = method_cell.is_some_and(|c| c.split('/').any(is_http_method));
+        let names_this_method = method_cell
+            .is_some_and(|c| c.split('/').any(|m| m.trim().eq_ignore_ascii_case(method)));
+        if names_a_method && !names_this_method {
+            continue;
+        }
         // A row advertises the path when some cell's backtick-stripped content starts with it
         // (query template and trailing prose tolerated) — and the ROW, not the whole spec, scopes
         // the key extraction so /api/health's keys are never asserted against /api/summary.
@@ -19111,8 +18916,14 @@ fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
         if !advertises {
             continue;
         }
+        // The RESPONSE side of every cell: after the last `→` when the cell carries one.
+        let response_side = cells
+            .iter()
+            .map(|c| c.rsplit_once('→').map(|(_, after)| after).unwrap_or(c))
+            .collect::<Vec<_>>()
+            .join(" | ");
         let mut keys: Vec<String> = key_re
-            .captures_iter(line)
+            .captures_iter(&response_side)
             .map(|c| c[1].to_string())
             .collect();
         keys.dedup();
@@ -19746,7 +19557,7 @@ async fn probe_advertised_get(
             ),
         ));
     } else if (200..300).contains(&code) {
-        let documented = spec_documented_keys(spec, path);
+        let documented = spec_documented_keys(spec, "GET", path);
         if !documented.is_empty() {
             match serde_json::from_str::<serde_json::Value>(body.trim()) {
                 Ok(v) => {
@@ -20391,7 +20202,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         POST_PROBE_SECS,
                         &[(a_code, a_body), (b_code, b_body)],
                     );
-                    let documented = spec_documented_keys(spec, path.as_str());
+                    let documented = spec_documented_keys(spec, "POST", path.as_str());
                     let missing = missing_documented_keys(a_body, &documented);
                     if matches!(a_code, 404 | 405 | 501) {
                         prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
@@ -20444,7 +20255,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // Unreadable arm — so a legitimate empty sync can never be blamed.
             if let Some(acquired) = post_reports_acquired(a_body).filter(|&n| n > 0) {
                 for gpath in &gets {
-                    let dk = spec_documented_keys(spec, gpath);
+                    let dk = spec_documented_keys(spec, "GET", gpath);
                     if !dk.iter().any(|k| k == "total" || k == "count") {
                         continue;
                     }
@@ -26376,113 +26187,6 @@ enum TargetLang {
     Other,
 }
 
-/// ── LEARN & REFLECT ────────────────────────────────────────────────────────────────────────────────
-/// After a build that PROVABLY worked, goose reflects on what it did and writes a reusable skill for that
-/// stack, so the next build of the same stack does not re-derive it from zero.
-///
-/// Mihai: "if you did it well once then keep it as a memory/skill to reuse so that next time it won't take
-/// 5 hours." MEASURED waste it exists to kill: loop-03 and loop-04, the SAME Swift/SwiftUI/SPM stack, each
-/// burned ~40 min of planning re-deriving identical knowledge from zero, and the judge rediscovered
-/// "@MainActor on NoteStore" and "a struct cannot have a deinit" in BOTH runs. Same lesson, paid for twice,
-/// thrown away twice.
-///
-/// WHAT MAKES THIS SAFE — the two rules that keep a weak model from poisoning its own future:
-///  1. ONLY A DETERMINISTIC ENGINE EVENT MAY TRIGGER A WRITE. The skill is written ONLY when the run's own
-///     gate says the app built AND was verified. The model never decides that it "did well" — the engine
-///     does. The model only PHRASES what the engine already proved.
-///  2. STRUCTURE, NOT FEATURES. A cached decomposition is spec-specific; injected whole it would bias the
-///     next build toward the LAST app's features — the laundering bug one level up. So the skill records the
-///     STRUCTURAL skeleton (build file, module layout, how tests are wired, the conventions the judge
-///     enforced) and is injected on the ADVISORY channel only. The live spec always wins.
-///
-/// It is a plain-markdown folder the user can read, edit, or delete — the mitigation for a wrong lesson.
-///
-/// WHICH IS WHY IT LIVES HERE. `config_dir/skills` is one of the roots `goose::skills::all_skill_dirs`
-/// already walks, so a persona written here is listed, rendered and editable in the Skills UI with no new
-/// plumbing. That placement is not tidiness — it IS the mitigation. The only reason it is defensible to let a
-/// weak local model author its own skill is that a wrong lesson is visible and removable; a skill filed where
-/// the UI never looks is precisely the invisible self-poisoning this design set out to avoid.
-///
-/// It was first written to `data_dir/swarm/personas/<key>`, which NO skill root covers — so the whole safety
-/// argument was false for that commit. Discovery is the feature; do not move this off a discovered root.
-fn persona_dir(stack_key: &str) -> std::path::PathBuf {
-    goose::config::paths::Paths::config_dir()
-        .join("skills")
-        .join(format!("stack-{stack_key}"))
-}
-
-/// The engine's run counter, kept deliberately OUT of the skill folder.
-///
-/// Skill discovery advertises EVERY non-`SKILL.md` file under a skill dir to the model as a loadable
-/// supporting file (`skills/mod.rs`: `walk_files_recursively` → `supporting_files`). A `runs` file beside the
-/// skill would surface in the model's context as `load_skill(name: "stack-react-vite-ts/runs")` — a tool call
-/// whose entire payload is a bare integer. Engine bookkeeping belongs in the data dir; only the artifact the
-/// user is meant to read belongs in the skills dir.
-fn persona_runs_file(stack_key: &str) -> std::path::PathBuf {
-    goose::config::paths::Paths::data_dir()
-        .join("swarm")
-        .join("personas")
-        .join(format!("{stack_key}.runs"))
-}
-
-/// The heading after which everything belongs to the USER and is preserved verbatim across rewrites.
-const PERSONA_USER_MARKER: &str = "## Your notes";
-
-/// What sits under the marker until the user writes something. Kept as a constant because the round-trip
-/// cannot otherwise tell "the user wrote nothing" from "the user wrote this" — the previous render's own
-/// invitation would be preserved as though it were a correction, and goose would then be reading its own
-/// boilerplate back to itself as user guidance forever.
-const PERSONA_NOTES_PLACEHOLDER: &str =
-    "_Nothing yet. Whatever you write here is read on the next build of this stack and is kept word for word \
-     when goose rewrites the rest of this file — so a correction here is permanent._";
-
-/// Lift the user's own section out of the existing skill so a rewrite cannot clobber it.
-///
-/// THE HOLE THIS PLUGS: the file told the user "edit anything here that is wrong", but a later successful
-/// build called `write_persona`, which is `fs::write` — a truncating overwrite. The correction was handed to
-/// the reflection as prior text and a weak model was trusted to carry it forward, which is exactly the
-/// trust this feature is not allowed to assume. Everything after the marker now round-trips deterministically,
-/// so a correction written there outlives every future rewrite without a model in the path.
-fn persona_user_notes(prior: &str) -> String {
-    // Match the marker ONLY as a heading at the start of a line — i.e. with its newline. The file also
-    // MENTIONS `## Your notes` inline, in the banner telling the user where to write, and a plain
-    // `split_once` cuts at that sentence instead, handing back the whole rest of the file as though the user
-    // had authored it — which round-trips goose's own lesson into the preserved section and compounds it on
-    // every rewrite. Split on the newline-prefixed form rather than computing byte offsets: an index into a
-    // str is a panic waiting on the first multi-byte character, and these files carry em-dashes.
-    let notes = match prior.strip_prefix(PERSONA_USER_MARKER) {
-        Some(rest) => rest.to_string(),
-        None => prior
-            .split_once(&format!("\n{PERSONA_USER_MARKER}"))
-            .map(|(_, after)| after.to_string())
-            .unwrap_or_default(),
-    };
-    // Strip the invitation wherever it sits, rather than testing the section for equality with it: a user
-    // writing under a "write here" heading appends BELOW the prompt at least as often as they replace it, and
-    // a surviving placeholder would be fed back to the next reflection as though the user had asserted it.
-    notes
-        .replace(PERSONA_NOTES_PLACEHOLDER, "")
-        .trim()
-        .to_string()
-}
-
-/// The structural facts of a run, snapshotted while they are still in scope.
-///
-/// THE TRAP THIS EXISTS FOR: by the time a run knows it PASSED, the evidence is gone — `plan_json` has been
-/// moved into the plan_loaded event, `dag` has been moved into `scheduler.run(...)`, and the research
-/// findings have been folded into a flat string and dropped. So the facts must be captured EARLY and carried
-/// to the write, exactly as `smoke_all_files` already is.
-#[derive(Default, Clone)]
-struct PersonaSnapshot {
-    stack_key: Option<String>,
-    /// The file layout that actually built — the proven skeleton.
-    files: Vec<String>,
-    /// Per-task: (id, owned_files) — the decomposition shape, WITHOUT the feature descriptions.
-    shape: Vec<(String, Vec<String>)>,
-    /// Corrective judge verdicts that led somewhere — the conventions this stack really enforces.
-    judge_lessons: Vec<String>,
-}
-
 /// CROSS-MODULE ATTRIBUTE DRIFT — the check that catches what a signature stub never could.
 ///
 /// THE BUG, measured and shipped as verified:
@@ -27539,271 +27243,6 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
         dropped,
         skipped_stale,
     }
-}
-
-/// Harvest the judge's corrective hints from a finished run's own event log.
-///
-/// These are the highest-value thing to learn: not what this app needed, but what this STACK gets wrong.
-/// Only hints attached to a CORRECTIVE verdict are kept — an "ok/observed" verdict carries no lesson. Pure
-/// over the log text and best-effort: an unreadable log simply yields nothing.
-fn judge_lessons_from_log(path: &std::path::Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let mut out: Vec<String> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|e| e.get("event").and_then(|v| v.as_str()) == Some("judge_verdict"))
-        .filter(|e| {
-            // "ok"/"observed" means the judge had nothing to correct — no lesson there.
-            !matches!(
-                e.get("verdict").and_then(|v| v.as_str()),
-                Some("ok") | Some("observed") | None
-            )
-        })
-        .filter_map(|e| {
-            e.get("hint")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|h| !h.is_empty())
-                .map(str::to_string)
-        })
-        .collect();
-    out.sort();
-    out.dedup();
-    out.truncate(12); // a skill is a briefing, not a transcript
-    out
-}
-
-/// Persist what was learned. Best-effort: a failed write must never fail a run that already succeeded.
-/// What a persona write did. `write_persona` is a TRUNCATING write to a path derived purely from the stack
-/// key, so it needs a way to say "I found something there that is not mine and left it alone".
-enum PersonaWrite {
-    Written(std::path::PathBuf),
-    /// A SKILL.md sits at the persona path that goose did not author — a hand-written skill that happens to
-    /// be called `stack-<key>`. Refuse. Learning a lesson is never worth eating the user's own file.
-    RefusedForeign(std::path::PathBuf),
-}
-
-/// The sentence every rendered persona carries, used to prove goose wrote the file it is about to truncate.
-///
-/// The clobber predicate USED to be the path alone: persona_dir(key) is a pure function of the stack key, so
-/// `write_persona` would truncate whatever sat at config_dir/skills/stack-fastapi — including a skill the user
-/// hand-wrote under that name. Moving personas into the shared skills root (so the UI can show them) is what
-/// created that collision, so the guard ships with it.
-const PERSONA_PROVENANCE: &str = "Written by goose after a build of this stack";
-
-fn write_persona(stack_key: &str, skill: &str, runs: usize) -> std::io::Result<PersonaWrite> {
-    let dir = persona_dir(stack_key);
-    let path = dir.join("SKILL.md");
-    // Fail SAFE: only a file that is absent, or that carries goose's own provenance line, may be truncated.
-    // A user who strips that line out while editing gets a persona goose will never rewrite again — which is
-    // the harmless direction for this to fail in.
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        if !existing.contains(PERSONA_PROVENANCE) {
-            return Ok(PersonaWrite::RefusedForeign(path));
-        }
-    }
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(&path, skill)?;
-    let counter = persona_runs_file(stack_key);
-    if let Some(parent) = counter.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(counter, runs.to_string());
-    Ok(PersonaWrite::Written(path))
-}
-
-/// THE REFLECT STEP. The engine has already PROVEN the app built and verified; this asks the model to say
-/// WHAT ABOUT THE APPROACH is worth reusing on this stack next time.
-///
-/// The model is deliberately confined: it is handed only facts the engine attested (the layout that built,
-/// the decomposition that shipped, the conventions the judge enforced) and asked to generalise the STACK
-/// lesson out of them. It cannot invent success — the trigger is a deterministic gate. It cannot smuggle in
-/// the app's features — the prompt forbids it explicitly and the injection channel is advisory.
-async fn reflect_on_success(
-    dispatcher: &Arc<GooseAgentDispatcher>,
-    model: &str,
-    stack_key: &str,
-    snap: &PersonaSnapshot,
-    prior: &str,
-) -> String {
-    let shape = snap
-        .shape
-        .iter()
-        .map(|(id, f)| format!("{id}: {}", f.join(", ")))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let lessons = snap.judge_lessons.join("\n");
-    let prior_block = if prior.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n\nYou have learned about this stack before. MERGE with what you already know — keep what still \
-             holds, drop nothing that is still true, and do NOT simply restate it:\n{prior}"
-        )
-    };
-    let system = "You are writing a REUSABLE SKILL for a specific technology stack, from a build that \
-        PROVABLY worked (it compiled and its checks passed — that is an established fact, not your judgement).\n\n\
-        Write what a future build OF THIS SAME STACK should know, so it does not re-derive it from scratch. \
-        Be concrete and technical: the build-file shape, how modules are laid out and depend on each other, \
-        how tests are wired in, the language/framework conventions that must be honoured.\n\n\
-        HARD RULES:\n\
-        - Write about the STACK, never about THIS APP. 'A SwiftUI store needs @MainActor' is a stack lesson. \
-          'The notes app has a sidebar' is this app's feature and is USELESS — worse than useless, because \
-          the next app on this stack is a different product and would be dragged toward the wrong shape.\n\
-        - Only state what the evidence below supports. Do not invent facts, versions, or APIs you were not \
-          shown. If you are unsure, say less.\n\
-        - No preamble, no 'Certainly'. Terse bullets. At most ~200 words."
-        .to_string();
-    let user = format!(
-        "STACK: {stack_key}\n\nThe file layout that BUILT and VERIFIED:\n{}\n\nThe decomposition that \
-         shipped (task: files owned):\n{shape}\n\nConventions the judge had to enforce during the build \
-         (these are the mistakes this stack invites):\n{lessons}{prior_block}\n\nWrite the skill.",
-        snap.files.join("\n")
-    );
-    // Keyed `reflect` (r6 supervision lanes, batch 2): one call per successful run, at the end —
-    // previously the run's last generation was its only invisible one. Parity with the old
-    // `run_agent_timed` route otherwise.
-    match dispatcher
-        .run_agent(model, system, user, None, 4, &[], Some(REFLECT_LANE))
-        .await
-    {
-        // A filler/error-closer reply must never be written into SKILL.md as a stack lesson —
-        // future runs READ that file. Empty means empty here: the caller emits `persona_learned
-        // written:false, reason "the reflection came back empty"`, so the absence is loud.
-        Ok(o) => match supervised_reply_text(&o.text) {
-            Ok(t) => t.trim().to_string(),
-            Err(_) => String::new(),
-        },
-        Err(_) => String::new(),
-    }
-}
-
-/// Render the learned skill as markdown. Human-readable and hand-editable BY DESIGN — this is the mitigation
-/// for a wrong lesson: the user can open it, fix it, or delete it. It is also the shape the Skills UI already
-/// renders, so it is inspectable without new plumbing.
-fn render_persona_skill(
-    stack_key: &str,
-    snap: &PersonaSnapshot,
-    reflection: &str,
-    runs: usize,
-    prior: &str,
-) -> String {
-    let layout = snap
-        .files
-        .iter()
-        .map(|f| format!("- `{f}`"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let shape = snap
-        .shape
-        .iter()
-        .map(|(id, files)| format!("- **{id}** — owns {}", files.join(", ")))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let lessons = if snap.judge_lessons.is_empty() {
-        "_(none recorded)_".to_string()
-    } else {
-        snap.judge_lessons
-            .iter()
-            .map(|l| format!("- {l}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let notes = persona_user_notes(prior);
-    let notes = if notes.is_empty() {
-        PERSONA_NOTES_PLACEHOLDER.to_string()
-    } else {
-        notes
-    };
-    format!(
-        "---\nname: stack-{stack_key}\ndescription: What goose learned from builds of the {stack_key} stack \
-         that actually shipped.\n---\n\n\
-         # {stack_key}\n\n\
-         {PERSONA_PROVENANCE} that **built and verified**. Everything here is derived from a run the engine \
-         PROVED worked — not from a guess. It is advisory: a live spec always overrides it.\n\n\
-         Learned from **{runs}** successful build(s).\n\n\
-         > **Correcting this file:** everything down to the `{PERSONA_USER_MARKER}` heading is REGENERATED by \
-         goose after the next successful build of this stack, so a fix typed up here is lost. Write it under \
-         `{PERSONA_USER_MARKER}` instead — that section is kept word for word. Delete the skill to make goose \
-         forget the stack entirely.\n\n\
-         ## What worked\n\n{reflection}\n\n\
-         ## Proven layout\n\n{layout}\n\n\
-         ## Decomposition that shipped\n\n{shape}\n\n\
-         ## Conventions this stack enforces\n\n\
-         Caught by the judge during a successful build — these are the mistakes worth not repeating.\n\n{lessons}\n\n\
-         ---\n\
-         _Everything above this line is rewritten by goose after the next successful build of this stack. \
-         Delete this whole skill to make it forget. To correct it permanently, write under `Your notes` — \
-         that section is never rewritten._\n\n\
-         {PERSONA_USER_MARKER}\n\n{notes}\n"
-    )
-}
-
-/// Read the learned skill for a stack, if one exists. Returns "" when there is nothing — a first build of a
-/// stack is byte-identical to today.
-fn read_persona(stack_key: &str) -> String {
-    std::fs::read_to_string(persona_dir(stack_key).join("SKILL.md")).unwrap_or_default()
-}
-
-/// How many successful builds this skill has been learned from (for the header + an honest confidence cue).
-///
-/// Gated on the SKILL.md still being there, so that DELETING the skill — the user's escape hatch from a wrong
-/// lesson — actually resets the learning. Without the gate the counter outlives the file it counts, and the
-/// next freshly-learned skill opens by claiming "learned from 4 successful builds" on the strength of one.
-fn persona_runs(stack_key: &str) -> usize {
-    if !persona_dir(stack_key).join("SKILL.md").is_file() {
-        return 0;
-    }
-    std::fs::read_to_string(persona_runs_file(stack_key))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
-}
-
-/// The STACK a build targets, fine enough to key learned knowledge on — e.g. "react-vite-ts", "swift-spm",
-/// "flask", "fastapi". Deliberately NOT `TargetLang`, which is far too coarse for this: React, Angular and a
-/// plain node CLI all collapse to `TypeScript`, and Swift lands in `Other` next to Ruby and Java. Keying a
-/// learned skill on that would inject an Angular lesson into a React build — poisoning the very thing the
-/// learning is supposed to speed up.
-///
-/// Returns None unless the match is CONFIDENT. None means "no stack identified" => nothing is learned and
-/// nothing is injected, which is the safe default: a wrong key is worse than no key.
-///
-/// Pure over the spec text + the planned file list, so it is unit-testable and no model opinion decides it.
-fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
-    let hay = format!("{} {}", spec.to_lowercase(), files.join(" ").to_lowercase());
-    let has = |needles: &[&str]| needles.iter().any(|n| hay.contains(n));
-
-    // Order matters: the most specific framework wins. A React+Vite app also says "typescript".
-    if has(&["angular.json", "@angular", " angular"]) {
-        return Some("angular".into());
-    }
-    if has(&["react"]) && has(&["vite", "vite.config"]) {
-        return Some("react-vite-ts".into());
-    }
-    if has(&["next.js", "nextjs"]) {
-        return Some("nextjs".into());
-    }
-    if has(&["svelte"]) {
-        return Some("svelte".into());
-    }
-    if has(&["package.swift", "swiftui", " swift "]) {
-        return Some("swift-spm".into());
-    }
-    if has(&["fastapi"]) {
-        return Some("fastapi".into());
-    }
-    if has(&["flask"]) {
-        return Some("flask".into());
-    }
-    if has(&["django"]) {
-        return Some("django".into());
-    }
-    // A bare language is NOT a stack — "python" alone spans a CLI, a web app and a library, whose proven
-    // layouts have nothing in common. Refuse rather than pollute one bucket with all of them.
-    None
 }
 
 /// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
@@ -30017,7 +29456,7 @@ fn render_sink_description(
         s.push_str("ADVERTISED ENDPOINTS — the gate probes exactly these, nothing else:\n");
         for (method, paths) in [("GET", &gets), ("POST", &posts)] {
             for p in paths {
-                let keys = spec_documented_keys(spec, p);
+                let keys = spec_documented_keys(spec, method, p);
                 s.push_str(&format!(
                     "  - {method} {p}{}\n",
                     if keys.is_empty() {
@@ -31161,6 +30600,16 @@ impl GooseAgentDispatcher {
              over re-deriving. Do not re-run the whole suite or re-read the project to 'understand \
              it first': the modules, exports, endpoints and defects are already listed. Read a \
              specific file only when a listed defect points into it.\n"
+        } else if repairing {
+            // A repair shard's reading is unrestricted but TARGETED. r6c: all seven complete-fix
+            // dispatches read the kind-generic "Read AT MOST the ONE file you will edit" (rules_delivered
+            // reading_rules:"kind-generic") ~1,400 chars after fix_directive's "The rules about not
+            // reading are SUSPENDED" — the collision class repair_owner_body closed, one block over.
+            "- READ WHAT THE FINDING NAMES, THEN ACT. Your owned file is inlined below: go to the part \
+             the finding points at. Open any other file the finding names, or that DEFINES a symbol \
+             the finding mentions — a signature mismatch lives in two files and cannot be fixed from \
+             one. That reading is expected and is not over-reading. What IS over-reading: re-reading \
+             the project to 'understand it first' — the finding already says where to look.\n"
         } else if kind_prompt_on && is_test_author {
             "- DON'T OVER-READ the project, but DO read what you are testing: the SOURCE module under \
              test (to get its real signatures) and YOUR OWN test file after you write it. Do not read \
@@ -31226,8 +30675,8 @@ impl GooseAgentDispatcher {
             //   owned_part     — branches on `read_only_shard && kind_prompt_on` (a SUBTRACTED rule set,
             //                    this kind sees fewer rules) and again on `owned_files.is_empty()` (the
             //                    sink's do-not-re-stat-the-tree paragraph, which is NOT gated on the lever)
-            //   reading_rules  — test-author / kind_prompt-generic / off-generic
-            //   stopping_rules — the same three
+            //   reading_rules  — sink-semantic / repair / test-author / read-only-shard / kind-generic / off-generic
+            //   stopping_rules — its own arms, below
             // MEASURED CONSEQUENCE: `dispatch_audit.py` read 40.9/42.3/41.7% "mismatched" off `tailored`
             // for the three lever-ON runs, counting every `read-only-shard` and `owns-nothing` dispatch as
             // misinstructed — when read-only-shard is in fact receiving a rule set written specifically
@@ -31258,6 +30707,8 @@ impl GooseAgentDispatcher {
                 },
                 "reading_rules": if sink_brief.is_some() {
                     "sink-semantic"
+                } else if repairing {
+                    "repair"
                 } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
@@ -34467,6 +33918,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
         "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
         "crate_version": env!("CARGO_PKG_VERSION"),
+        // RETIRED, NOT RESOLVED. Every lever here names a mechanism that is `#[cfg(test)]` or
+        // unreachable in this build, so there is no value to resolve — and a resolved value WAS
+        // being printed: r6c's echo said `split_fat: true` while `split_fat_modules` had been
+        // test-only since b0dd68eac (gate 1, suspect #2 — a levers echo that lies). The config
+        // fields survive for the desktop's config round-trip, the desktop still env-pins
+        // GOOSE_SWARM_SPLIT_FAT=1 at spawn, and golden.generated.json still lists split_fat /
+        // fan_verify / straggler_stop as true; this object makes that visible instead of
+        // certifying it. Audited 2026-09-01 by asking, of each, which non-test caller consumes it.
+        "retired_levers": {
+            "split_fat": "split_fat_modules is #[cfg(test)] since b0dd68eac",
+            "fan_verify": "fan_verify_split is #[cfg(test)] since P1-4",
+            "fan_e2e": "no consumer; it sharded the fan fan_verify no longer builds",
+            "straggler_stop": "collect_drafts_with_straggler_stop is #[cfg(test)] since P1-4",
+            "straggler_stop_degrade": "same collector",
+            "straggler_grace_secs": "same collector",
+            "split": "scheduler.rs pins `let is_split = false`; GOOSE_SWARM_SPLIT was read by nothing but this echo",
+            "split_inherit_spec": "read only inside apply_split, which is_split = false never reaches",
+        },
         "levers": {
             // UNATTENDED OR NOT, stated in the log. `benchmark` decides whether all three ask sites route
             // to a proxy node instantly or wait five minutes on a human, and it was the one lever the run
@@ -34548,13 +34017,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "act_now_nudge": act_now_nudge(),
             "force_write_tool": force_write_tool(),
             "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
-            "split_fat": swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat),
-            // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
-            // the campaign's measure.py read them as OFF while they demonstrably drove runs (fan_verify split
-            // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
-            // indistinguishable from OFF — echo the resolved value from the SAME gate the engine branches on.
-            "fan_verify": swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify),
-            "fan_e2e": swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e),
+            // split_fat / fan_verify / fan_e2e left this map for `retired_levers` below: their
+            // mechanisms are #[cfg(test)], so a resolved value here was a live-looking row for a
+            // dead lever (r6c's echo said `split_fat: true`; `split_fat_modules` has been test-only
+            // since b0dd68eac). A lever missing from the map reads as OFF; a lever named retired
+            // reads as retired — echo the resolved value only from a gate the engine still branches on.
             "verify_commands": swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands),
             "require_tests": swarm_gate_cfg("GOOSE_SWARM_REQUIRE_TESTS", load_config().require_tests),
             // Absent from this echo entirely until now, which is precisely why it went unnoticed that it
@@ -34572,28 +34039,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // and drove a demote. The echo's whole purpose is completeness.
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "user_notes": swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes),
-            // FORCED ON by the desktop provider at spawn and unsettable from config — recorded so a
-            // "control" arm can never be mistaken for one that had them off.
-            "split": std::env::var("GOOSE_SWARM_SPLIT")
-                .ok()
-                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or_else(|| load_config().split.unwrap_or(true)),
-            // The splitter defaults ON and this lever defaults OFF, so a split child's ENTIRE task
-            // statement is "(split of <parent>) <child-id>" — 43 characters, after the run paid ~40%
-            // of its wall-clock producing the spec that is discarded at the moment of use. It lives
-            // in crates/goose-swarm (which cannot see SwarmConfig) so it is env-only, and it was
-            // ABSENT from this map — meaning a run could not say whether it was on, and a campaign
-            // screen reading only this map would score it INERT whether or not it fired. A lever
-            // nobody can see resolve is a lever nobody can keep. Read here the same way the engine
-            // reads it, so the echo cannot drift from the behaviour.
-            "split_inherit_spec": matches!(
-                std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
-                    .unwrap_or_default()
-                    .trim()
-                    .to_lowercase()
-                    .as_str(),
-                "1" | "on" | "true" | "yes"
-            ),
+            // `split` and `split_inherit_spec` are in `retired_levers`: scheduler.rs pins
+            // `let is_split = false`, so the judge can no longer split a task and the only reader of
+            // GOOSE_SWARM_SPLIT_INHERIT_SPEC (`apply_split`) is unreachable. GOOSE_SWARM_SPLIT itself
+            // was read by nothing but this echo.
             // Enumerated rather than fixed one at a time: these are every OTHER lever read from env
             // inside crates/goose-swarm and therefore missing from this map for the same reason.
             // salvage_spin turns a terminal finalize-spin failure into Done — it decides whether a
@@ -34624,10 +34073,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 load_config().relax_contracted_deps,
             ),
             "stream_decode_retry": stream_decode_retry_enabled(load_config().stream_decode_retry),
-            "straggler_stop": straggler_stop_enabled(load_config().straggler_stop),
-            "straggler_stop_degrade": straggler_stop_degrade_enabled(
-                load_config().straggler_stop_degrade,
-            ),
+            // straggler_stop / straggler_stop_degrade / straggler_grace_secs: `retired_levers` —
+            // their collector (`collect_drafts_with_straggler_stop`) has been #[cfg(test)] since P1-4.
             "clarity_fail_closed": swarm_gate_cfg(
                 "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
                 load_config().clarity_fail_closed,
@@ -34682,7 +34129,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "clarity_probe_secs": load_config().clarity_probe_secs,
             "draft_timeout_secs": load_config().draft_timeout_secs,
             "draft_temp": load_config().draft_temp,
-            "straggler_grace_secs": load_config().straggler_grace_secs,
             "context_cap": load_config().context_cap,
             "max_tool_response_chars": load_config().max_tool_response_chars,
             "temperature": swarm_temp_resolved(load_config().temperature),
@@ -36740,7 +36186,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
                 eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
                 let fix_req = DispatchRequest {
-                    task_id: "smoke-fix".to_string(),
+                    // `fix::` so the dispatch's `repairing` predicate (fix:: / complete-fix) reads
+                    // it as a repair: "smoke-fix" matched neither and would have read authoring text.
+                    task_id: "fix::smoke".to_string(),
                     description: smoke_fix_description(
                         &smoke.findings,
                         smoke_lang,
