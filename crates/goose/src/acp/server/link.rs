@@ -558,6 +558,34 @@ fn link_err(error: LinkError) -> agent_client_protocol::Error {
     agent_client_protocol::Error::invalid_params().data(error.to_string())
 }
 
+/// Map a [`remote_execute`](LinkManager::remote_execute) failure the same way the mlx
+/// mount handlers do: a target-STATE / target-SELECTION problem the user can act on (a
+/// busy peer, remote-exec disabled on the peer, an unwired executor, an unknown target
+/// id, a not-connected manager, a rejected prompt) rides through as `invalid_params` so
+/// the panel/companion shows its status text verbatim ("node is busy"). Everything else —
+/// a transport failure reaching the peer, or the peer's own internal error — is a flat
+/// `internal_error`; its text is logged by the dispatcher, not offered as a user knob.
+fn remote_execute_err(error: LinkError) -> agent_client_protocol::Error {
+    match error {
+        LinkError::Execute(ExecuteError::Busy)
+        | LinkError::Execute(ExecuteError::Disabled)
+        | LinkError::Execute(ExecuteError::BadRequest(_))
+        | LinkError::ExecutorUnavailable
+        | LinkError::NotConnected
+        | LinkError::UnknownPeer(_) => {
+            agent_client_protocol::Error::invalid_params().data(error.to_string())
+        }
+        _ => agent_client_protocol::Error::internal_error().data(error.to_string()),
+    }
+}
+
+/// The connect-first error `remoteExecute` returns when the manager is not `Connected`.
+/// A distinct, short message (not the `LinkError::NotConnected` Display) so the panel can
+/// route the user straight to the Link tab's Connect action.
+fn not_connected_to_mesh_err() -> agent_client_protocol::Error {
+    agent_client_protocol::Error::invalid_params().data("not connected to the mesh")
+}
+
 // ---------------------------------------------------------------------------
 // ACP handlers.
 // ---------------------------------------------------------------------------
@@ -711,6 +739,32 @@ impl GooseAcpAgent {
             peers: Vec::new(),
         })
     }
+
+    pub(super) async fn on_leanzero_link_remote_execute(
+        &self,
+        req: LeanzeroLinkRemoteExecuteRequest,
+    ) -> Result<LeanzeroLinkRemoteExecuteResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
+            return Err(not_connected_to_mesh_err());
+        }
+        // A fresh session on the target — the caller mirrors the returned id over the
+        // swarm stream; `session_id: None` is the wire contract for "create a new one".
+        let accepted = manager
+            .remote_execute(
+                &req.target_node_id,
+                ExecuteRequest {
+                    prompt: req.prompt,
+                    working_dir: req.working_dir,
+                    session_id: None,
+                },
+            )
+            .await
+            .map_err(remote_execute_err)?;
+        Ok(LeanzeroLinkRemoteExecuteResponse {
+            session_id: accepted.session_id,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -826,6 +880,129 @@ mod tests {
         assert_eq!(value["self"]["node_id"], "node-a");
         assert_eq!(value["peers"][0]["node_id"], "node-b");
         assert!(value.get("self_node").is_none());
+    }
+
+    #[test]
+    fn remote_execute_request_uses_camelcase() {
+        let req = LeanzeroLinkRemoteExecuteRequest {
+            target_node_id: "studio-ab12cd".to_string(),
+            prompt: "build the thing".to_string(),
+            working_dir: Some("/tmp/proj".to_string()),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["targetNodeId"], "studio-ab12cd");
+        assert_eq!(value["prompt"], "build the thing");
+        assert_eq!(value["workingDir"], "/tmp/proj");
+        assert!(value.get("target_node_id").is_none());
+        assert!(value.get("working_dir").is_none());
+
+        // Round-trips, and an absent workingDir stays absent (skip_serializing_if).
+        let back: LeanzeroLinkRemoteExecuteRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(back.target_node_id, "studio-ab12cd");
+        assert_eq!(back.working_dir.as_deref(), Some("/tmp/proj"));
+
+        let minimal: LeanzeroLinkRemoteExecuteRequest =
+            serde_json::from_value(serde_json::json!({ "targetNodeId": "n", "prompt": "p" }))
+                .unwrap();
+        assert!(minimal.working_dir.is_none());
+        let minimal_value = serde_json::to_value(&minimal).unwrap();
+        assert!(
+            minimal_value.get("workingDir").is_none(),
+            "an absent workingDir must not serialize as null"
+        );
+    }
+
+    #[test]
+    fn remote_execute_response_uses_camelcase() {
+        let resp = LeanzeroLinkRemoteExecuteResponse {
+            session_id: "sess-9".to_string(),
+        };
+        let value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(value["sessionId"], "sess-9");
+        assert!(value.get("session_id").is_none());
+        let back: LeanzeroLinkRemoteExecuteResponse = serde_json::from_value(value).unwrap();
+        assert_eq!(back.session_id, "sess-9");
+    }
+
+    fn invalid_params_code() -> agent_client_protocol::ErrorCode {
+        agent_client_protocol::Error::invalid_params().code
+    }
+
+    fn internal_error_code() -> agent_client_protocol::ErrorCode {
+        agent_client_protocol::Error::internal_error().code
+    }
+
+    fn err_text(error: &agent_client_protocol::Error) -> String {
+        error
+            .data
+            .as_ref()
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[test]
+    fn remote_execute_err_surfaces_device_state_verbatim_as_invalid_params() {
+        // A busy peer (409 → LinkError::Execute(Busy)) must reach the UI as its own text.
+        let busy = remote_execute_err(LinkError::Execute(ExecuteError::Busy));
+        assert_eq!(busy.code, invalid_params_code());
+        assert_eq!(err_text(&busy), "node is busy");
+
+        let disabled = remote_execute_err(LinkError::Execute(ExecuteError::Disabled));
+        assert_eq!(disabled.code, invalid_params_code());
+        assert_eq!(
+            err_text(&disabled),
+            "remote execution disabled on this node"
+        );
+
+        let bad = remote_execute_err(LinkError::Execute(ExecuteError::BadRequest(
+            "empty prompt".to_string(),
+        )));
+        assert_eq!(bad.code, invalid_params_code());
+        assert_eq!(err_text(&bad), "bad request: empty prompt");
+
+        // The self short-circuit with no injected executor.
+        let unwired = remote_execute_err(LinkError::ExecutorUnavailable);
+        assert_eq!(unwired.code, invalid_params_code());
+        assert_eq!(
+            err_text(&unwired),
+            "remote execution is not wired on this node"
+        );
+
+        // A target id that is not a known mesh peer — a selection error, user-actionable.
+        let unknown = remote_execute_err(LinkError::UnknownPeer("ghost".to_string()));
+        assert_eq!(unknown.code, invalid_params_code());
+        assert_eq!(
+            err_text(&unknown),
+            "no known mesh peer with node id 'ghost'"
+        );
+    }
+
+    #[test]
+    fn remote_execute_err_maps_transport_and_internal_to_internal_error() {
+        // A transport failure reaching the peer is not a user knob.
+        let transport =
+            remote_execute_err(LinkError::RemoteExecute("connection refused".to_string()));
+        assert_eq!(transport.code, internal_error_code());
+        assert_eq!(
+            err_text(&transport),
+            "remote execute request to a peer failed: connection refused"
+        );
+
+        // The peer's own internal error rides through as internal too.
+        let internal = remote_execute_err(LinkError::Execute(ExecuteError::Internal(
+            "boom".to_string(),
+        )));
+        assert_eq!(internal.code, internal_error_code());
+        assert_eq!(err_text(&internal), "internal error: boom");
+    }
+
+    #[test]
+    fn not_connected_manager_yields_the_connect_first_message() {
+        // The handler's pre-check (manager not Connected) surfaces exactly this.
+        let error = not_connected_to_mesh_err();
+        assert_eq!(error.code, invalid_params_code());
+        assert_eq!(err_text(&error), "not connected to the mesh");
     }
 
     async fn seeded_source() -> (tempfile::TempDir, GoosedSwarmStateSource) {

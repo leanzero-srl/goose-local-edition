@@ -1107,4 +1107,12 @@ impl GooseAcpAgent {
     ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
         self.on_leanzero_link_nodes(req).await
     }
+
+    #[custom_method(LeanzeroLinkRemoteExecuteRequest)]
+    async fn dispatch_leanzero_link_remote_execute(
+        &self,
+        req: LeanzeroLinkRemoteExecuteRequest,
+    ) -> Result<LeanzeroLinkRemoteExecuteResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_remote_execute(req).await
+    }
 }

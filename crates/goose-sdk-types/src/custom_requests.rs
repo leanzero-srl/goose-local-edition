@@ -2884,3 +2884,30 @@ pub struct LeanzeroLinkNodesResponse {
     #[serde(default)]
     pub peers: Vec<serde_json::Value>,
 }
+
+/// Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
+/// there. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks
+/// `targetNodeId` from `leanzeroLink/nodes` (filter to `status == "Idle"`); the receive
+/// side's idle guard on the peer is the backstop, so a busy/disabled/unwired target
+/// surfaces its status text verbatim as an `invalid_params` error. Requires the manager
+/// be `connected` — otherwise `invalid_params` "not connected to the mesh". The returned
+/// `sessionId` is the session on the TARGET node, mirrored over `/v1/swarm/stream`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/remoteExecute",
+    response = LeanzeroLinkRemoteExecuteResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRemoteExecuteRequest {
+    pub target_node_id: String,
+    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRemoteExecuteResponse {
+    /// The session id created on the target node — mirror it over the swarm stream.
+    pub session_id: String,
+}
