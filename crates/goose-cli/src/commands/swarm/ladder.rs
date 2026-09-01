@@ -505,6 +505,70 @@ pub(super) fn restream_seed(
     )
 }
 
+/// The measured facts one loop pass hands `judge_summon_trigger` (VA-013). All booleans are
+/// derived from the call's own counters at that pass — no clock is among them except
+/// `cadence_due`, which only an output-tool lane may act on.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct SummonFacts {
+    /// The call owes a structured reply (research / synthesis / open — the output-tool lanes).
+    pub(super) structured_reply: bool,
+    /// The repeat detector measured the same command returning the same bytes N times.
+    pub(super) repeat: bool,
+    /// The answer is 400+ chars of whitespace.
+    pub(super) degenerate: bool,
+    /// The readiness floor: enough reasoning or enough actions to judge from.
+    pub(super) ready: bool,
+    /// The shingle meter says recurring (span and rate both over their floors).
+    pub(super) recurring: bool,
+    /// A forming tool call's argument bytes stopped while reasoning grew (`forming_stalled`).
+    pub(super) forming_stall: bool,
+    /// Reasoning grew by a chunk with no tool call in between.
+    pub(super) grew_without_acting: bool,
+    /// The back-off interval since the last OK look has elapsed.
+    pub(super) cadence_due: bool,
+}
+
+/// VA-013: which measured fact summons the judge on this pass — or none. BUILD and REPAIR lanes
+/// (no structured reply; they deliver files) summon on EVIDENCE only: the repeat detector, a
+/// degenerate answer, the recurrence meter, or a forming-channel stall — never cadence, never
+/// bare growth-without-acting. MEASURED r6c: 132 build-lane looks (99 cadence, 33 growth, ~925
+/// look-minutes, 44% of the judge's whole spend) bought four nudges, two compliances and zero
+/// kills, and NOT ONE of those looks would have been a recurrence look (0 of 182 looks in the
+/// run crossed the meter). Output-tool lanes keep every trigger: they complied 7/7, and their
+/// 13 of 14 nudges came from growth looks. `ready` gates the reasoning-shaped triggers only;
+/// repeat and degenerate bypass it, as they always did. The name returned rides
+/// `judge_look_dispatched.trigger`, so a replay never re-derives the trigger from counters.
+pub(super) fn judge_summon_trigger(f: SummonFacts) -> Option<&'static str> {
+    if f.repeat {
+        return Some("repeat");
+    }
+    if f.degenerate {
+        return Some("degenerate_answer");
+    }
+    if f.ready && f.recurring {
+        return Some("recurrence");
+    }
+    if f.forming_stall {
+        return Some("forming_stall");
+    }
+    if f.structured_reply && f.ready && f.grew_without_acting {
+        return Some("growth_without_acting");
+    }
+    if f.structured_reply && f.ready && f.cadence_due {
+        return Some("cadence");
+    }
+    None
+}
+
+/// VA-013 (b): a write the model announced and walked away from. Sampled on REASONING GROWTH
+/// (every OMNI_JUDGE_GROWTH_CHARS of new thinking re-reads `<key>.forming.json`), never on a
+/// clock: a frame is OPEN on both samples and its argument bytes did not move while the reasoning
+/// did. `None` on either side is the writer's honest empty (no frame open) and is never a stall;
+/// `Some(0)` twice is an unparseable sidecar — not progress, not a stall.
+pub(super) fn forming_stalled(prev: Option<u64>, now: Option<u64>) -> bool {
+    matches!((prev, now), (Some(p), Some(n)) if p == n && n > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,5 +1188,134 @@ mod tests {
                 .repeat(30),
         );
         assert!(!tails_recur(&h1, &h2), "distinct content must not recur");
+    }
+}
+
+#[cfg(test)]
+mod summon_tests {
+    use super::*;
+
+    fn build_lane() -> SummonFacts {
+        SummonFacts {
+            structured_reply: false,
+            ready: true,
+            ..SummonFacts::default()
+        }
+    }
+    fn output_lane() -> SummonFacts {
+        SummonFacts {
+            structured_reply: true,
+            ready: true,
+            ..SummonFacts::default()
+        }
+    }
+
+    /// r6c web-viz, look 10 (the nudge that changed nothing: "calls flat 46m, lane ran 210 more
+    /// min"): a build lane at recurrence 0.003 over 65,536 shingles, 34,286 fresh chars and zero
+    /// actions since the last look, cadence due. Under VA-013 nothing summons.
+    #[test]
+    fn a_build_lane_is_never_summoned_on_growth_or_cadence() {
+        let f = SummonFacts {
+            grew_without_acting: true,
+            cadence_due: true,
+            ..build_lane()
+        };
+        assert_eq!(judge_summon_trigger(f), None);
+        assert_eq!(
+            judge_summon_trigger(SummonFacts {
+                cadence_due: true,
+                ..build_lane()
+            }),
+            None
+        );
+    }
+
+    /// r6c research-web-viz-q2, look 2 (an output-tool lane, 8,916 fresh chars, zero actions):
+    /// the growth look stays — 7/7 of these complied.
+    #[test]
+    fn an_output_tool_lane_keeps_growth_and_cadence() {
+        assert_eq!(
+            judge_summon_trigger(SummonFacts {
+                grew_without_acting: true,
+                ..output_lane()
+            }),
+            Some("growth_without_acting")
+        );
+        assert_eq!(
+            judge_summon_trigger(SummonFacts {
+                cadence_due: true,
+                ..output_lane()
+            }),
+            Some("cadence")
+        );
+    }
+
+    /// r6d research-ledger-core-q3, look 1: recurrence 0.353 over 10,760 shingles — the meter
+    /// summons on any lane kind; on a build lane it is one of the two triggers left.
+    #[test]
+    fn evidence_summons_on_every_lane_kind() {
+        for base in [build_lane(), output_lane()] {
+            assert_eq!(
+                judge_summon_trigger(SummonFacts {
+                    recurring: true,
+                    ..base
+                }),
+                Some("recurrence")
+            );
+            assert_eq!(
+                judge_summon_trigger(SummonFacts {
+                    forming_stall: true,
+                    ..base
+                }),
+                Some("forming_stall")
+            );
+            // repeat and degenerate bypass the readiness floor, as before.
+            assert_eq!(
+                judge_summon_trigger(SummonFacts {
+                    repeat: true,
+                    ready: false,
+                    ..base
+                }),
+                Some("repeat")
+            );
+            assert_eq!(
+                judge_summon_trigger(SummonFacts {
+                    degenerate: true,
+                    ready: false,
+                    ..base
+                }),
+                Some("degenerate_answer")
+            );
+        }
+        // Below the readiness floor the meter's word alone does not summon (no tail to read).
+        assert_eq!(
+            judge_summon_trigger(SummonFacts {
+                recurring: true,
+                ready: false,
+                ..build_lane()
+            }),
+            None
+        );
+    }
+
+    /// r6c web-viz's one delivery streamed 38,927 argument bytes across three looks — GROWING
+    /// bytes are a write in progress, never a stall; a frozen open frame is; no frame is nothing.
+    #[test]
+    fn a_forming_stall_is_an_open_frame_whose_bytes_stopped_while_reasoning_grew() {
+        assert!(forming_stalled(Some(2_433), Some(2_433)));
+        assert!(
+            !forming_stalled(Some(12_000), Some(38_927)),
+            "growing = delivering"
+        );
+        assert!(!forming_stalled(None, None), "no frame open");
+        assert!(
+            !forming_stalled(Some(2_433), None),
+            "the frame closed (the call landed)"
+        );
+        assert!(!forming_stalled(None, Some(500)), "a frame just opened");
+        assert!(
+            !forming_stalled(Some(0), Some(0)),
+            "an unparseable sidecar is not evidence"
+        );
     }
 }
