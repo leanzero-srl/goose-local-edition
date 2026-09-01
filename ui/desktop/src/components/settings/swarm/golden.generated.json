@@ -92,7 +92,7 @@
   "failed_tasks_block_green": true,
   "delivery": false,
   "sink_prebuild": true,
-  "persona": true,
+  "persona": false,
   "user_notes": true,
   "relax_contracted_deps": false,
   "owned_file_fence": false,

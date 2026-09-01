@@ -57,7 +57,7 @@ use supervision::{
     schedjudge_lane_key, structured_reply_block, superseded_from_prior, supervised_reply_text,
     supervision_lane_kind, tail_chars, tail_review_lane_key, verify_lane_key, write_forming_atomic,
     FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE,
-    JUDGE_PROBE_TURNS, PILLARS_LANE, REFLECT_LANE,
+    JUDGE_PROBE_TURNS, PILLARS_LANE,
 };
 mod orientation;
 use orientation::{
@@ -120,11 +120,6 @@ use findings::{
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
-mod persona;
-use persona::{
-    detect_stack_key, judge_lessons_from_log, persona_runs, persona_user_notes, read_persona,
-    reflect_on_success, render_persona_skill, write_persona, PersonaSnapshot, PersonaWrite,
-};
 mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
@@ -894,15 +889,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_SINK_PREBUILD env overrides.
     #[serde(default)]
     pub sink_prebuild: bool,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
-    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
-    /// LEARN & REFLECT: after a build that PROVABLY worked (built AND verified), goose reflects on what it
-    /// did and writes a reusable per-STACK skill, then injects it at planning on the next build of that same
-    /// stack — so it stops re-deriving the same knowledge from zero every time. Measured waste: two Swift
-    /// runs each burned ~40min re-learning the same things, and the judge rediscovered the identical
-    /// conventions in both. Structural only (never the app's features), advisory only (the spec always
-    /// wins), and the skill is a plain markdown file the user can edit or delete. OFF by default.
-    /// GOOSE_SWARM_PERSONA env overrides.
+    /// RETIRED (VA-016, 2026-09-01): LEARN & REFLECT — the per-stack persona skill — is deleted.
+    /// Measured on the two runs that wrote one: `lessons: 0` both times (persona.rs harvested
+    /// `judge_verdict` rows, an event no run.jsonl has ever carried), the stack key read `angular`
+    /// for a Python + vanilla-JS app (a physics adjective in the spec), and the r6c run that
+    /// LOADED r5's skill (2,729 bytes) scored 0.1420 against r5's 0.3609. Zero happy paths; the
+    /// field survives for the config round-trip and is echoed under `retired_levers`.
     #[serde(default)]
     pub persona: bool,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
@@ -1317,7 +1309,7 @@ impl Default for SwarmConfig {
             failed_tasks_block_green: true,
             delivery: false,
             sink_prebuild: true,
-            persona: true,
+            persona: false,
             user_notes: true,
             relax_contracted_deps: false,
             owned_file_fence: false,
@@ -31238,43 +31230,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // empty unless GOOSE_SWARM_DOC_PREFETCH is on AND a scout actually looked something up — so off (or with
     // no grounding) it is "" and the worker prompt is byte-identical to today.
     let mut doc_facts = String::new();
-    // LEARN & REFLECT — the READ half. Seed the advisory channel with what goose learned from PREVIOUS
-    // successful builds of this same stack, BEFORE research and planning run, so the fleet starts from what
-    // already worked instead of re-deriving it. Measured: two Swift runs each burned ~40min rediscovering the
-    // same conventions.
-    //
-    // research_findings is deliberately the channel: it renders as "Prior research findings", which reads
-    // ADVISORY. The spec and the user's decisions are appended later to opts.prompt and framed BINDING, so a
-    // learned skill can never outrank what the user actually asked for.
-    let persona_on = swarm_gate_cfg("GOOSE_SWARM_PERSONA", cfg.persona);
-    let mut persona_snapshot = PersonaSnapshot::default();
-    if persona_on {
-        if let Some(key) = detect_stack_key(&opts.prompt, &[]) {
-            persona_snapshot.stack_key = Some(key.clone());
-            let learned = read_persona(&key);
-            if !learned.trim().is_empty() {
-                let runs = persona_runs(&key);
-                research_findings.push_str(&format!(
-                    "\n\n### [learned: {key}] What worked on this stack before ({runs} successful build(s))\n\
-                     Reusable knowledge from builds of this stack that PROVABLY shipped. Start from it \
-                     instead of re-deriving it. It describes the STACK, not this app — the spec below always \
-                     wins where they differ.\n\n{learned}"
-                ));
-                sink.write_value(serde_json::json!({
-                    "event": "persona_loaded",
-                    "stack_key": key,
-                    "runs": runs,
-                    "bytes": learned.len(),
-                }));
-                eprintln!(
-                    "{} {} — reusing what worked on {} previous build(s)",
-                    style("learned skill:").cyan().bold(),
-                    key,
-                    runs
-                );
-            }
-        }
-    }
     // Per-phase wall-clock so every run SHOWS where time goes (research / planning / execute) — performance
     // must be MEASURED, not asserted: a phase that does not pay for its minutes is waste to find and cut.
     let t_start = std::time::Instant::now();
@@ -31699,7 +31654,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             ),
             "dep_signatures": dep_signatures_on(),
             "think_off_test_authors": think_off_test_authors(),
-            "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
             // bedA's screen reported "(not on: 1)" for `review` on a run where review ran, found dead code,
             // and drove a demote. The echo's whole purpose is completeness.
@@ -32193,31 +32147,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .filter(|d| d.enabled)
         .map(|d| (d.id.clone(), d.model_id.clone(), d.speed_weight))
         .collect();
-    // LEARN & REFLECT — the SNAPSHOT. Capture the structural facts NOW, while the plan is still in scope:
-    // by the time the run knows it PASSED, plan_json has been moved into the plan_loaded event and `dag` has
-    // been moved into scheduler.run(). Same reason smoke_all_files is captured here.
-    //
-    // STRUCTURE ONLY — task ids and the files they own, never the feature descriptions. A cached decomposition
-    // carrying THIS app's features would drag the next app on this stack toward the wrong product; that is the
-    // laundering bug one level up, and it is the single thing that would make learning harmful.
-    if persona_on {
-        persona_snapshot.shape = dag
-            .tasks
-            .values()
-            .map(|n| (n.spec.id.clone(), n.spec.owned_files.clone()))
-            .collect();
-        persona_snapshot.shape.sort();
-        // Re-detect with the planned FILE LIST in hand: the spec alone may not name the stack (a spec can say
-        // "a web app" while the plan reveals vite.config.ts), and a wrong key is worse than none.
-        if persona_snapshot.stack_key.is_none() {
-            let files: Vec<String> = dag
-                .tasks
-                .values()
-                .flat_map(|n| n.spec.owned_files.clone())
-                .collect();
-            persona_snapshot.stack_key = detect_stack_key(&opts.prompt, &files);
-        }
-    }
     let smoke_all_files: Vec<String> = {
         let mut v: Vec<String> = dag
             .tasks
@@ -33702,99 +33631,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // authoring check derives for each shipped bug.
             "known_active_bugs_severities": known_active_bugs_severities,
         }));
-        // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
-        // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine
-        // event — the model does not get to decide it "did well". So this is the one honest moment to ask:
-        // what about this approach is worth reusing on this stack next time?
-        //
-        // Mihai: "if you did it well once then keep it as a memory/skill to reuse so that next time it won't
-        // take 5 hours." Measured: loop-03 and loop-04 (same Swift stack) each burned ~40min of planning
-        // re-deriving identical knowledge, and the judge rediscovered "@MainActor on NoteStore" in BOTH.
-        //
-        // Gated on final_passed AND final_verified: a skipped oracle (verified=false) means nothing was
-        // proven, so nothing is learned. Never learn from a run that only claimed success.
-        if persona_on && final_passed && final_verified {
-            if let Some(key) = persona_snapshot.stack_key.clone() {
-                persona_snapshot.files = smoke_all_files.clone();
-                // The judge's corrective hints are the MOST reusable thing a run produces — they are the
-                // mistakes this stack invites ("@MainActor on NoteStore", "a struct cannot have a deinit",
-                // both rediscovered from scratch in two separate Swift runs). They live only in the sink's
-                // event stream (RunReport carries no hint), so read them back from this run's OWN log: it is
-                // the engine's deterministic record, complete by now, and the same source used to audit a run.
-                persona_snapshot.judge_lessons = log_path
-                    .as_deref()
-                    .map(judge_lessons_from_log)
-                    .unwrap_or_default();
-                let prior = read_persona(&key);
-                let runs = persona_runs(&key) + 1;
-                let model = fleet_models.first().cloned().unwrap_or_default();
-                eprintln!(
-                    "{} reflecting on what worked for the {} stack…",
-                    style("learn:").cyan().bold(),
-                    key
-                );
-                let reflection = reflect_on_success(
-                    &smoke_fix_dispatcher,
-                    &model,
-                    &key,
-                    &persona_snapshot,
-                    &prior,
-                )
-                .await;
-                if reflection.trim().is_empty() {
-                    sink.write_value(serde_json::json!({
-                        "event": "persona_learned", "stack_key": key, "written": false,
-                        "reason": "the reflection came back empty",
-                    }));
-                } else {
-                    // RE-READ before rendering. `prior` was captured BEFORE reflect_on_success, which just
-                    // spent minutes inside a 27b local model — a note the user typed during that window is
-                    // not in it, and the write below TRUNCATES. Lifting the preserved section from `prior`
-                    // would therefore destroy exactly the corrections the section promises to keep, with a
-                    // race window as wide as a model call. The reflection keeps the older copy; it is only
-                    // context, and a stale prior there costs nothing.
-                    let fresh = read_persona(&key);
-                    let skill =
-                        render_persona_skill(&key, &persona_snapshot, &reflection, runs, &fresh);
-                    match write_persona(&key, &skill, runs) {
-                        Ok(PersonaWrite::Written(path)) => {
-                            sink.write_value(serde_json::json!({
-                                "event": "persona_learned", "stack_key": key, "written": true,
-                                "runs": runs, "path": path.display().to_string(),
-                                "lessons": persona_snapshot.judge_lessons.len(),
-                                "kept_user_notes": !persona_user_notes(&fresh).is_empty(),
-                            }));
-                            eprintln!(
-                                "{} {} — goose will start from this next time it builds {} ({} successful build(s))",
-                                style("learned:").green().bold(),
-                                path.display(),
-                                key,
-                                runs,
-                            );
-                        }
-                        Ok(PersonaWrite::RefusedForeign(path)) => {
-                            sink.write_value(serde_json::json!({
-                                "event": "persona_learned", "stack_key": key, "written": false,
-                                "reason": "a skill goose did not author already occupies that name",
-                                "path": path.display().to_string(),
-                            }));
-                            eprintln!(
-                                "{} {} already exists and goose did not write it — leaving it alone",
-                                style("learn:").yellow().bold(),
-                                path.display(),
-                            );
-                        }
-                        Err(e) => {
-                            // Best-effort: a failed write must never fail a run that already succeeded.
-                            sink.write_value(serde_json::json!({
-                                "event": "persona_learned", "stack_key": key, "written": false,
-                                "reason": e.to_string(),
-                            }));
-                        }
-                    }
-                }
-            }
-        }
         if !final_passed {
             eprintln!(
                 "{}",

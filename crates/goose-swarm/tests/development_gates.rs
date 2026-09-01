@@ -328,9 +328,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (`research_settled_worker_block` + `settled_decisions`) deleted — the brief carries them once, per
 /// slice and whole; `spec_documented_keys` gained its prose-shape consumer and the research prompt the
 /// plan-wide `consumed_spec_sections` inputs.
+/// Tightened to 37,655 (VA-016, gate 9): LEARN & REFLECT deleted — the persona read half
+/// (`persona_loaded`), the structural snapshot and the post-verdict write half (`reflect_on_success`,
+/// `persona_learned`), the `reflect` lane and the levers echo; commands/swarm/persona.rs (1,224 lines)
+/// deleted with it. `lessons: 0` on both runs that wrote a skill; `persona` survives as a retired field.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_819;
+    const SWARM_RS_LINE_BASELINE: usize = 37_655;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
