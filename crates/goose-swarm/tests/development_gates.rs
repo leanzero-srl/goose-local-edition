@@ -349,9 +349,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 37,503 (VA-030 D10-5/6/7): `content_hash` and its test moved to commands/swarm/tree.rs,
 /// paying for `write_ledger_mini_checked` (the research fan's four writers emit
 /// `research_mini_write_failed` through `persist_research_row`) and the cover site's sink argument.
+/// Tightened to 37,501 (VA-034 D10-8): the opener's QUESTIONS rule moved out of the system prompt's head
+/// into `opener::opener_questions_rule`, rendered right after the SOURCES block; the schema requires a
+/// cite on every kind.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_503;
+    const SWARM_RS_LINE_BASELINE: usize = 37_501;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

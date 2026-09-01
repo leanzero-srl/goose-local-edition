@@ -581,7 +581,13 @@ pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
         }
         Some("open") | Some("open-resplit") => {
             "split the request into balanced semantic slices, naming each slice's owned files in its \
-             objective as OWNERSHIP DECLARATIONS. It must NOT write code, plan tasks, or dependencies."
+             objective as OWNERSHIP DECLARATIONS, and write each slice's questions as OBJECTS with a \
+             cite — which means SHELL READS OF THE REQUEST FILE (`grep -n`, `sed -n 'A,Bp'` on \
+             .swarm/request.md) ARE THE TASK, not a detour: a lookup it greps and answers with a cited \
+             fact costs no research lane. Drift here is drafting objectives and questions in \
+             REASONING without reading the file — r6d's opener made zero shell calls and asked for a \
+             shape that stood on request.md:134-136. Never tell it to stop reading and emit; tell it \
+             which term to grep. It must NOT write code, plan tasks, or dependencies."
         }
         Some("synthesis") => {
             "wire already-researched slices into a task DAG — ids, files and dependencies only. It \

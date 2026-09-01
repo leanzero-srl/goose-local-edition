@@ -98,7 +98,7 @@ mod briefs;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
 mod opener;
-use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
+use opener::{open_schema, opener_questions_rule, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
 mod spec_surface;
 use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
@@ -20778,9 +20778,10 @@ impl GooseAgentDispatcher {
         let armed = orientation_armed(user_prompt, &sections);
         let sections_block = if armed {
             "\n\nTHE REQUEST ARRIVES AS AN ORIENTATION INDEX — every section of the document \
-             with its heading, measured size and opening lines. You are ORIENTING and SLICING, \
-             not reading the whole document: the engine splices each section's FULL text into \
-             the owning slice's brief after you answer. For each slice, list in `sections` the \
+             with its heading, measured size and opening lines. The FULL text is the request \
+             file named under SOURCES: never print the whole file; grep it for every question \
+             (the QUESTIONS rule below). The engine splices each section's FULL text into the \
+             owning slice's brief after you answer. For each slice, list in `sections` the \
              EXACT headings (verbatim from the index) of every section that slice owns; every \
              section must appear in at least one slice's `sections`."
         } else {
@@ -20790,23 +20791,10 @@ impl GooseAgentDispatcher {
             "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
              work, divided by MEANING and by interface, never by document order or by equal-sized \
              buckets.\n\n\
-             Each slice gets: an id (kebab-case), a title, an objective, its QUESTIONS (see below), \
-             and a weight from 1 to 5 estimating how much work it is.\n\n\
-             A QUESTION IS AN OBJECT WITH A KIND, AND MOST CANDIDATES ARE NOT QUESTIONS AT ALL. \
-             Before you list one, grep the request file named under SOURCES for its terms \
-             (`grep -n -i '<term>' <path>`, then `sed -n 'A,Bp'` around a hit — never print the \
-             whole file; the index is your map). `kind` is one of exactly three: `spec_lookup` — \
-             the request's own text answers it: write `fact` (the answer in the request's words, \
-             literals verbatim) and `cite` (`request.md:<line>` or the heading you read); no lane \
-             will research it, the builder receives the fact and the line. If you searched and \
-             truly could not find it, keep `kind: spec_lookup`, leave `fact` empty and put what you \
-             searched in `cite` — a lane will look. `design` — the request leaves it open and the \
-             builder must choose a convention. `external` — it needs the vendor's documentation or \
-             another source outside the request. MEASURED: of 27 questions one opener dispatched, \
-             13 were answerable by one grep of the request (\"which sort keys does sort accept\" — \
-             line 148 lists the four; \"the tokens-file shape\" — line 51 shows it) and each cost a \
-             15-minute research lane. A question that IS one of your open decisions, or names one \
-             of the request's own decision ids, belongs under `open_decisions` — never in a slice.\n\n\
+             Each slice gets: an id (kebab-case), a title, an objective, its QUESTIONS (the \
+             QUESTIONS rule follows the SOURCES block in the request message — every question is \
+             an object with a kind, a cite and, for a lookup, the fact), and a weight from 1 to 5 \
+             estimating how much work it is.\n\n\
              SLICES MUST BE COMPARABLE IN SIZE, AND THERE ARE THREE TO SIX OF THEM. A slice more than \
              roughly twice the work of another means one machine grinds while the others idle — split \
              that one, and if splitting would push you past six, the overweight slice is hiding layers \
@@ -20868,6 +20856,15 @@ impl GooseAgentDispatcher {
         // full sb-7 spec). The detail is not lost: briefs_from_slices splices each claimed
         // section's full text into the owning slice verbatim. Below the floor everything here
         // is byte-identical.
+        // D10-8 (VA-034's mechanism): the QUESTIONS rule sits RIGHT AFTER the SOURCES block, where
+        // the request file's path is, not at the end of a 9-paragraph system prompt. r6c's and r6d's
+        // openers both HAD a shell and made ZERO shell calls (`open.json tool_calls 1
+        // ['recipe__final_output']`); r6d at 0.3k "First let me check the working directory", then
+        // 74k chars and one call; at 62.4k it wrote "Health response shape ('shape below' — in full
+        // text) — which fields?" while request.md:134-136 held the shape. The rule says RUN the
+        // grep, shows the three shapes with real sb-7 examples, and the schema below refuses a
+        // question without a cite — no cap, no retry count: the validator is the refuser.
+        let questions_rule = opener_questions_rule(request_path.as_deref());
         let user_text = if armed {
             let orientation = spec_orientation(&sections);
             self.events.write_value(serde_json::json!({
@@ -20878,10 +20875,11 @@ impl GooseAgentDispatcher {
             }));
             format!(
                 "The request, as its ORIENTATION INDEX (the engine splices each section's full \
-                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}"
+                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}\
+                 {questions_rule}"
             )
         } else {
-            format!("The request:\n\n{user_prompt}{sources_block}")
+            format!("The request:\n\n{user_prompt}{sources_block}{questions_rule}")
         };
         let out = self
             .run_agent_timed_at(
