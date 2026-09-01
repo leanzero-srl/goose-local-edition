@@ -89,7 +89,7 @@ use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod plan_repairs;
 use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
 mod tree;
-use tree::snapshot_tree_files;
+use tree::{rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -32361,6 +32361,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut last_verify_count;
         let mut last_verify_established;
         sink.write_value(serde_json::json!({"event": "phase", "phase": "repair"}));
+        // VA-027: the PRE-FIX tree, written ONCE at this handover into `.swarm/prefix-tree/` and never
+        // touched again — the one snapshot the harness can score against the final tree to say what
+        // the fix waves bought (r6c's `.swarm/best-tree` was rsync --delete'd by round 1 over round 0,
+        // so 458 node-minutes of waves were unmeasurable by construction). No model call; loud on
+        // failure (`prefix_tree_snapshot{ok:false, error}`), never silent.
+        sink.write_value(write_once_prefix_tree(&cwd).await);
         // P1-9 (STRAIGHT-LINE THE TAIL): the round loop's steering — the TEST fan, RATE, the
         // repair ASK + proxy, the twin race, the fresh-scheduler fix DAG, the serial fallback,
         // the stall counter and the strategy switch — is DELETED, on r0's own measurements: the
@@ -32899,34 +32905,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 })
             {
                 let best_dir = cwd.join(".swarm/best-tree");
-                let _ = std::fs::create_dir_all(&best_dir);
-                // F886: the snapshot is the APP TREE, never the run's evidence. run.jsonl,
-                // bench-shots, heartbeat and the scorer's db live in the same directory, and
-                // snapshotting them means the end-of-run restore REWINDS HISTORY: run 10's
-                // restore replaced run.jsonl with its round-0 copy (mtimes preserved), erasing
-                // every fix-round event, and --delete removed the repair-progression screenshots
-                // taken after the snapshot.
-                let ok = tokio::process::Command::new("rsync")
-                    .args([
-                        "-a",
-                        "--delete",
-                        "--exclude",
-                        ".swarm",
-                        "--exclude",
-                        "run.jsonl",
-                        "--exclude",
-                        "bench-shots",
-                        "--exclude",
-                        "heartbeat",
-                        "--exclude",
-                        "graded.db",
-                    ])
-                    .arg(format!("{}/", cwd.display()))
-                    .arg(format!("{}/", best_dir.display()))
-                    .status()
-                    .await
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+                // F886: the snapshot is the APP TREE, never the run's evidence — `tree::SNAPSHOT_EXCLUDES`
+                // (run.jsonl, bench-shots, heartbeat and the scorer's db live in the same directory,
+                // and snapshotting them means the end-of-run restore REWINDS HISTORY: run 10's restore
+                // replaced run.jsonl with its round-0 copy, erasing every fix-round event, and --delete
+                // removed the repair-progression screenshots taken after the snapshot). Mirrored
+                // (--delete): a strictly-better verify REPLACES the best tree.
+                let ok = rsync_app_tree(&cwd, &best_dir, true).await.unwrap_or(false);
                 if ok {
                     best_verified = Some((round, verdict.findings.len()));
                     best_established = verdict.established();
@@ -33392,27 +33377,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     if best_dir.is_dir() {
                         // F886: same exclusions as the snapshot — the restore ships the best
                         // APP TREE and must never touch the run's own history or evidence.
-                        let restored = tokio::process::Command::new("rsync")
-                            .args([
-                                "-a",
-                                "--delete",
-                                "--exclude",
-                                ".swarm",
-                                "--exclude",
-                                "run.jsonl",
-                                "--exclude",
-                                "bench-shots",
-                                "--exclude",
-                                "heartbeat",
-                                "--exclude",
-                                "graded.db",
-                            ])
-                            .arg(format!("{}/", best_dir.display()))
-                            .arg(format!("{}/", cwd.display()))
-                            .status()
-                            .await
-                            .map(|s| s.success())
-                            .unwrap_or(false);
+                        let restored = rsync_app_tree(&best_dir, &cwd, true).await.unwrap_or(false);
                         sink.write_value(serde_json::json!({
                             "event": "best_tree_restored",
                             "from_round": best_round,
