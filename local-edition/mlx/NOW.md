@@ -7,14 +7,15 @@
   he runs `wrangler login`, then I can run kv-create + secret-put + deploy if he pastes values;
   he gives the deployed URL → I bake it as LEANZERO_LINK_WORKER_URL default + rebuild). Until then
   everything connected-state is unit-only.
-- #2 SWARM-ENGINE GRAFT (#22): YES build — but DESIGN-FIRST (sacred engine). swarm-surgeon read-only
-  design in flight; I REVIEW before authorizing the build. Crux: unit-of-work mismatch (subtask vs
-  whole remote_execute session) + does the mesh move FILES back. Scoped-but-real beats ambitious-but-
-  invariant-breaking.
+- #2 SWARM-ENGINE GRAFT (#22): SHELVED by Mihai after the design (2026-09-01). Build-fan proved
+  UNSAFE (mesh moves events not files; swarm completes on LOCAL files → silent-break). Safe slice
+  (advisory-review fan) adds less than the delegation UI already gives. Engine untouched. Full
+  distributed-builds would need a file-return subsystem = separate project, not queued.
 - #3 SMALL SEMANTICS: YES. #13 weight = ROUTING SHARE (speed_weight), not concurrency — nodes-tab
-  stepper should write speed_weights (UI-side, panel-surgeon, independent of swarm.rs). #17 arbitrary
-  configured cloud providers as nodes — swarm.rs CLOUD_DEFS/validation + add-node UI (swarm.rs part
-  folds into the #22 build pass to avoid collision).
+  stepper should write speed_weights (UI-side, panel-surgeon, independent of swarm.rs). #17 arbitrary configured cloud
+  providers as nodes — its OWN pass now (#22 shelved, no longer folds in): first VERIFY whether the
+  dispatcher already routes an arbitrary cloud provider name (is_cloud + create(provider_name)); if
+  so it's a UI+config change (panel-surgeon), else a small swarm-surgeon CLOUD_DEFS change. After #13.
 IN FLIGHT: node-picker UI (panel-surgeon, ui) + #22 design (swarm-surgeon, read-only). NEXT: review
 #22 design → authorize build (+#17 swarm.rs); panel-surgeon for #13 + #17 UI after node-picker lands.
 
