@@ -2967,6 +2967,14 @@ pub struct LeanzeroLinkStateResponse {
     pub remote_execution_allowed_live: Option<bool>,
     /// Discovery's verdict on the mesh binaries at manager build — shown before any click.
     pub mesh_binaries: LeanzeroLinkMeshBinariesDto,
+    /// Whether this goosed injected a remote executor at boot. `false` means every
+    /// `/v1/swarm/execute` (own or a peer's) answers `501` — "not wired", not "busy".
+    #[serde(default)]
+    pub remote_execution_wired: bool,
+    /// Whether this goosed injected the local MLX control at boot. `false` means every
+    /// `/v1/swarm/mlx/*` op answers `501`.
+    #[serde(default)]
+    pub mlx_control_wired: bool,
 }
 
 /// The swarm node view (`self` + peers). Proxies the local control service's
