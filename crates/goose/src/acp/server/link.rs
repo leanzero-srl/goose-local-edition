@@ -84,13 +84,6 @@ pub const ALLOW_REMOTE_EXECUTION_KEY: &str = "LEANZERO_LINK_ALLOW_REMOTE_EXECUTI
 /// auth boundary. The iOS companion must derive it identically.
 const LINK_NODE_TOKEN_APP_SECRET: &str = "leanzero-link/v1/node-token";
 
-/// Fallback binary paths used only when discovery fails, so the auth flows
-/// (health/requestCode/verify/status/logout) still work with no Tailscale installed. A
-/// `connect()` then fails loudly with a spawn error naming the path (the discovery
-/// warning is already logged), rather than the whole manager refusing to construct.
-const TAILSCALED_FALLBACK: &str = "/opt/homebrew/bin/tailscaled";
-const TAILSCALE_CLI_FALLBACK: &str = "/opt/homebrew/bin/tailscale";
-
 // ---------------------------------------------------------------------------
 // Delta-tap injection seam — dependency inversion for per-message mirroring.
 // ---------------------------------------------------------------------------
@@ -469,11 +462,35 @@ fn sanitize_hostname(raw: &str) -> String {
 }
 
 /// The per-machine suffix the mesh persists at `<identity dir>/node-id`
-/// (`~/.leanzero/node-id`). Absent until the first connect; read-only here.
+/// (`~/.leanzero/node-id`). Absent until the first connect — the one quiet `None`. Any
+/// other failure (no home dir, an unreadable file) is logged at error level before the
+/// suffix-less id is used: that id will NOT match the tailnet hostname the mesh minted,
+/// and a silent mismatch is how peers end up mirroring a ghost node.
 fn read_persisted_node_suffix() -> Option<String> {
-    let path = identity::default_identity_path().ok()?;
-    let dir = path.parent()?;
-    let content = std::fs::read_to_string(dir.join("node-id")).ok()?;
+    let identity_path = match identity::default_identity_path() {
+        Ok(path) => path,
+        Err(error) => {
+            error!(
+                %error,
+                "leanzeroLink: no identity directory; the node id carries no per-machine suffix"
+            );
+            return None;
+        }
+    };
+    let node_id_path = identity_path.parent()?.join("node-id");
+    let content = match std::fs::read_to_string(&node_id_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            error!(
+                %error,
+                path = %node_id_path.display(),
+                "leanzeroLink: the persisted node-id is unreadable; this start uses the suffix-less \
+                 node id, which will not match the tailnet hostname"
+            );
+            return None;
+        }
+    };
     let trimmed = content.trim();
     if trimmed.is_empty() {
         None
@@ -536,6 +553,70 @@ fn allow_from_config(read: Result<bool, ConfigError>) -> bool {
     }
 }
 
+/// What binary discovery found when the manager was built, or the full searched-list
+/// text of its failure — carried, never substituted by a guessed path. A failed
+/// discovery keeps the manager constructible (health/requestCode/verify/status/logout
+/// need no daemon) and refuses `connect` with this text; the status DTO shows it before
+/// the click.
+#[derive(Debug, Clone)]
+struct MeshBinaries {
+    tailscaled: Result<PathBuf, String>,
+    tailscale: Result<PathBuf, String>,
+}
+
+impl MeshBinaries {
+    fn discover() -> Self {
+        let binaries = Self {
+            tailscaled: discovery::find_tailscaled().map_err(|error| error.to_string()),
+            tailscale: discovery::find_tailscale_cli().map_err(|error| error.to_string()),
+        };
+        for (name, found) in [
+            ("tailscaled", &binaries.tailscaled),
+            ("tailscale", &binaries.tailscale),
+        ] {
+            if let Err(error) = found {
+                error!(%error, binary = name, "leanzeroLink: mesh binary missing; connect is refused until it is found");
+            }
+        }
+        binaries
+    }
+
+    /// Both paths, or the refusal text naming every missing binary and everywhere
+    /// discovery looked for it.
+    fn paths(&self) -> Result<(PathBuf, PathBuf), String> {
+        match (&self.tailscaled, &self.tailscale) {
+            (Ok(daemon), Ok(cli)) => Ok((daemon.clone(), cli.clone())),
+            (daemon, cli) => {
+                let missing: Vec<&str> = [daemon, cli]
+                    .into_iter()
+                    .filter_map(|found| found.as_ref().err().map(String::as_str))
+                    .collect();
+                Err(format!(
+                    "cannot start the mesh — {}",
+                    missing.join("; and ")
+                ))
+            }
+        }
+    }
+
+    fn to_dto(&self) -> LeanzeroLinkMeshBinariesDto {
+        fn one(found: &Result<PathBuf, String>) -> LeanzeroLinkBinaryDto {
+            match found {
+                Ok(path) => LeanzeroLinkBinaryDto::Found {
+                    path: path.display().to_string(),
+                },
+                Err(error) => LeanzeroLinkBinaryDto::Missing {
+                    error: error.clone(),
+                },
+            }
+        }
+        LeanzeroLinkMeshBinariesDto {
+            tailscaled: one(&self.tailscaled),
+            tailscale: one(&self.tailscale),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The process-wide LinkManager (lazily built, rebuilt when its build key changes).
 // ---------------------------------------------------------------------------
@@ -562,8 +643,43 @@ fn current_build_key() -> LinkBuildKey {
 struct LinkHolder {
     key: LinkBuildKey,
     manager: Arc<LinkManager>,
+    /// Discovery's verdict at build time; re-run on every rebuild.
+    mesh_binaries: MeshBinaries,
+    /// The text of the last connect this layer refused before the manager saw it
+    /// (missing mesh binaries), cleared when a connect reaches the manager. Rides the
+    /// status DTO's `lastError` because the manager's own `last_error` never learns of it.
+    connect_refusal: Option<String>,
     /// Set once per deferred rebuild so a live mesh does not log the deferral every poll.
     stale_logged: bool,
+}
+
+/// What this layer knows about the manager it built, snapshotted for the status DTO.
+#[derive(Debug, Clone)]
+struct HolderView {
+    allow_remote_execution: bool,
+    mesh_binaries: MeshBinaries,
+    connect_refusal: Option<String>,
+}
+
+/// Read only after `link_manager()` built the holder — every status/connect/logout
+/// handler does exactly that first.
+fn holder_view() -> HolderView {
+    let guard = LINK
+        .get()
+        .expect("holder_view is read only after link_manager() built the holder")
+        .lock()
+        .unwrap();
+    HolderView {
+        allow_remote_execution: guard.key.allow_remote_execution,
+        mesh_binaries: guard.mesh_binaries.clone(),
+        connect_refusal: guard.connect_refusal.clone(),
+    }
+}
+
+fn record_connect_refusal(refusal: Option<String>) {
+    if let Some(holder) = LINK.get() {
+        holder.lock().unwrap().connect_refusal = refusal;
+    }
 }
 
 static LINK: OnceLock<StdMutex<LinkHolder>> = OnceLock::new();
@@ -587,20 +703,22 @@ fn resolve_worker_base_url() -> String {
 
 fn build_link_config(
     key: &LinkBuildKey,
+    binaries: &MeshBinaries,
 ) -> Result<LinkManagerConfig, agent_client_protocol::Error> {
     let email = key.email.as_deref();
     let worker_base_url = resolve_worker_base_url();
     let identity_path = identity::default_identity_path()
         .internal_err_ctx("resolving the LeanZero Link identity path")?;
 
-    let tailscaled = discovery::find_tailscaled().unwrap_or_else(|error| {
-        warn!(%error, "leanzeroLink: tailscaled not found; connect() will fail loudly until it is installed");
-        PathBuf::from(TAILSCALED_FALLBACK)
-    });
-    let tailscale_cli = discovery::find_tailscale_cli().unwrap_or_else(|error| {
-        warn!(%error, "leanzeroLink: tailscale CLI not found; connect() will fail loudly until it is installed");
-        PathBuf::from(TAILSCALE_CLI_FALLBACK)
-    });
+    let (tailscaled, tailscale_cli) = match binaries.paths() {
+        Ok(paths) => paths,
+        // Discovery failed: the mesh template carries EMPTY paths, which never reach a
+        // spawn — `on_leanzero_link_connect` refuses with the discovery text before
+        // `LinkManager::connect` can run, and an empty path fails `MeshEngine::start`
+        // loudly should any other caller ever reach it. No guessed install location:
+        // the manager stays constructible for the auth flows and nothing else.
+        Err(_) => (PathBuf::new(), PathBuf::new()),
+    };
     let mesh = MeshConfig::new(tailscaled, tailscale_cli, stable_node_id())
         .internal_err_ctx("building the LeanZero Link mesh config")?;
 
@@ -700,21 +818,22 @@ fn mesh_status_to_dto(mesh: MeshStatus) -> LeanzeroLinkMeshStatusDto {
 /// `remote_execution_allowed_live` is the value the RUNNING control service enforces,
 /// present only while Connected — so a toggle flipped mid-connection reads as "applies at
 /// the next connect" instead of lying in either direction.
-fn link_state_to_dto(state: LinkState) -> LeanzeroLinkStateResponse {
-    let built_allow = LINK
-        .get()
-        .map(|holder| holder.lock().unwrap().key.allow_remote_execution);
-    let remote_execution_allowed_live = match (&state.auth, built_allow) {
-        (AuthState::Connected { .. }, Some(built)) => Some(built),
+fn link_state_to_dto(state: LinkState, view: &HolderView) -> LeanzeroLinkStateResponse {
+    let remote_execution_allowed_live = match &state.auth {
+        AuthState::Connected { .. } => Some(view.allow_remote_execution),
         _ => None,
     };
     LeanzeroLinkStateResponse {
         auth: auth_state_to_dto(state.auth),
         mesh: state.mesh.map(mesh_status_to_dto),
         node_count: state.node_count,
-        last_error: state.last_error,
+        // A connect this layer refused (missing mesh binaries) is the latest failure the
+        // user caused and the manager never saw; it leads until a connect reaches the
+        // manager again.
+        last_error: view.connect_refusal.clone().or(state.last_error),
         remote_execution_allowed: remote_execution_allowed(),
         remote_execution_allowed_live,
+        mesh_binaries: view.mesh_binaries.to_dto(),
     }
 }
 
@@ -809,8 +928,9 @@ impl GooseAcpAgent {
     fn build_link_manager(
         &self,
         key: &LinkBuildKey,
+        binaries: &MeshBinaries,
     ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
-        let config = build_link_config(key)?;
+        let config = build_link_config(key, binaries)?;
         let source = self.link_source();
         let mut manager = LinkManager::new(config, source)
             .internal_err_ctx("constructing the LeanZero Link manager")?;
@@ -839,10 +959,13 @@ impl GooseAcpAgent {
         let holder = match LINK.get() {
             Some(holder) => holder,
             None => {
-                let manager = self.build_link_manager(&key)?;
+                let binaries = MeshBinaries::discover();
+                let manager = self.build_link_manager(&key, &binaries)?;
                 let holder = StdMutex::new(LinkHolder {
                     key: key.clone(),
                     manager,
+                    mesh_binaries: binaries,
+                    connect_refusal: None,
                     stale_logged: false,
                 });
                 // Losing the init race is fine: the winner's holder is resolved below.
@@ -874,14 +997,22 @@ impl GooseAcpAgent {
             return Ok(guard.manager.clone());
         }
 
-        let rebuilt = self.build_link_manager(&key)?;
+        let binaries = MeshBinaries::discover();
+        let rebuilt = self.build_link_manager(&key, &binaries)?;
         let mut guard = holder.lock().unwrap();
         if guard.key != key {
             guard.key = key;
             guard.manager = rebuilt;
+            guard.mesh_binaries = binaries;
+            guard.connect_refusal = None;
             guard.stale_logged = false;
         }
         Ok(guard.manager.clone())
+    }
+
+    /// The status DTO for a manager obtained from [`Self::link_manager`].
+    async fn status_response(&self, manager: &LinkManager) -> LeanzeroLinkStateResponse {
+        link_state_to_dto(manager.status().await, &holder_view())
     }
 
     pub(super) async fn on_leanzero_link_health(
@@ -931,8 +1062,18 @@ impl GooseAcpAgent {
         _req: LeanzeroLinkConnectRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
+        // Missing mesh binaries refuse the connect HERE, with discovery's full
+        // searched-list text, before the manager would try to spawn an empty path. The
+        // refusal is recorded so `status.lastError` carries it until a connect gets
+        // through.
+        if let Err(refusal) = holder_view().mesh_binaries.paths() {
+            error!(%refusal, "leanzeroLink: connect refused");
+            record_connect_refusal(Some(refusal.clone()));
+            return Err(agent_client_protocol::Error::invalid_params().data(refusal));
+        }
+        record_connect_refusal(None);
         manager.connect().await.map_err(link_err)?;
-        Ok(link_state_to_dto(manager.status().await))
+        Ok(self.status_response(&manager).await)
     }
 
     pub(super) async fn on_leanzero_link_status(
@@ -940,7 +1081,7 @@ impl GooseAcpAgent {
         _req: LeanzeroLinkStatusRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
-        Ok(link_state_to_dto(manager.status().await))
+        Ok(self.status_response(&manager).await)
     }
 
     pub(super) async fn on_leanzero_link_logout(
@@ -949,7 +1090,7 @@ impl GooseAcpAgent {
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
         manager.logout(req.wipe).await.map_err(link_err)?;
-        Ok(link_state_to_dto(manager.status().await))
+        Ok(self.status_response(&manager).await)
     }
 
     pub(super) async fn on_leanzero_link_nodes(
@@ -1203,6 +1344,11 @@ mod tests {
             last_error: Some("boom".to_string()),
             remote_execution_allowed: true,
             remote_execution_allowed_live: Some(false),
+            mesh_binaries: MeshBinaries {
+                tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+                tailscale: Err("could not find 'tailscale': …".to_string()),
+            }
+            .to_dto(),
         };
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(value["auth"]["state"], "loggedIn");
@@ -1210,9 +1356,103 @@ mod tests {
         assert_eq!(value["lastError"], "boom");
         assert_eq!(value["remoteExecutionAllowed"], true);
         assert_eq!(value["remoteExecutionAllowedLive"], false);
+        assert_eq!(value["meshBinaries"]["tailscaled"]["status"], "found");
+        assert_eq!(
+            value["meshBinaries"]["tailscaled"]["path"],
+            "/app/bin/tailscaled"
+        );
+        assert_eq!(value["meshBinaries"]["tailscale"]["status"], "missing");
+        assert_eq!(
+            value["meshBinaries"]["tailscale"]["error"],
+            "could not find 'tailscale': …"
+        );
         let back: LeanzeroLinkStateResponse = serde_json::from_value(value).unwrap();
         assert_eq!(back.node_count, 2);
         assert_eq!(back.remote_execution_allowed_live, Some(false));
+    }
+
+    /// R-H4: a failed discovery is carried as its own text — every missing binary named
+    /// with everywhere discovery looked — never replaced by a guessed install path.
+    #[test]
+    fn mesh_binaries_refuse_with_every_missing_binary_named() {
+        let both = MeshBinaries {
+            tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        assert_eq!(
+            both.paths().unwrap(),
+            (
+                PathBuf::from("/app/bin/tailscaled"),
+                PathBuf::from("/app/bin/tailscale")
+            )
+        );
+
+        let daemon_missing = discovery::discover(
+            "tailscaled",
+            discovery::TAILSCALED_ENV,
+            None,
+            &[PathBuf::from("/nonexistent/path-dir")],
+            &["/nonexistent/known/tailscaled"],
+        )
+        .expect_err("nothing exists there")
+        .to_string();
+        let one = MeshBinaries {
+            tailscaled: Err(daemon_missing.clone()),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        let refusal = one.paths().expect_err("a missing daemon refuses");
+        assert!(refusal.starts_with("cannot start the mesh — "), "{refusal}");
+        assert!(refusal.contains(&daemon_missing), "{refusal}");
+        assert!(
+            refusal.contains("/nonexistent/path-dir") && refusal.contains("/nonexistent/known"),
+            "the refusal must carry the full searched list: {refusal}"
+        );
+        assert!(
+            !refusal.contains("/opt/homebrew"),
+            "no guessed install path may appear: {refusal}"
+        );
+
+        let none = MeshBinaries {
+            tailscaled: Err("no daemon".to_string()),
+            tailscale: Err("no cli".to_string()),
+        };
+        let refusal = none.paths().unwrap_err();
+        assert!(
+            refusal.contains("no daemon") && refusal.contains("no cli"),
+            "{refusal}"
+        );
+    }
+
+    /// With discovery failed the manager config still builds (the auth flows need no
+    /// daemon) and its mesh template carries EMPTY paths — not a guessed binary.
+    #[test]
+    fn build_link_config_without_mesh_binaries_carries_empty_paths_not_a_guess() {
+        let key = LinkBuildKey {
+            email: Some("a@b.com".to_string()),
+            allow_remote_execution: false,
+        };
+        let binaries = MeshBinaries {
+            tailscaled: Err("no daemon".to_string()),
+            tailscale: Err("no cli".to_string()),
+        };
+        let config = build_link_config(&key, &binaries).expect("constructible without a mesh");
+        assert_eq!(config.mesh.tailscaled_path, PathBuf::new());
+        assert_eq!(config.mesh.tailscale_cli_path, PathBuf::new());
+        assert!(!config.control.allow_remote_execution);
+
+        let found = MeshBinaries {
+            tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        let config = build_link_config(&key, &found).unwrap();
+        assert_eq!(
+            config.mesh.tailscaled_path,
+            PathBuf::from("/app/bin/tailscaled")
+        );
+        assert_eq!(
+            config.mesh.tailscale_cli_path,
+            PathBuf::from("/app/bin/tailscale")
+        );
     }
 
     /// R-H3: the switch defaults OFF when unset and fails CLOSED on an unreadable value;
