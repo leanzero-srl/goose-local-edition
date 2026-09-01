@@ -876,7 +876,9 @@ describe('MlxEngineView models tab', () => {
       undefined
     );
     expect(mockBrowse.mock.calls[0][0].cursor).toBeUndefined();
-    expect(screen.getByText('↓ 12.8K')).toBeInTheDocument();
+    // Downloads and likes are plain aligned figures now — no arrow, no heart glyph.
+    expect(screen.getByText('12.8K')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
     expect(screen.getByText('4-bit')).toBeInTheDocument();
     expect(screen.getByText('qwen3')).toBeInTheDocument();
     // The size ESTIMATE renders with its ~ marker; a hit without one shows no size at all.
@@ -1534,6 +1536,66 @@ describe('MlxEngineView device picker (remote model management)', () => {
     await waitFor(() =>
       expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id, 'peer-workhorse')
     );
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The token doctrine on the Hugging Face browser (main.css `.local-edition`): ONE accent, the
+// node ramp for node identity ONLY, metadata as aligned neutral columns. The hot-pink tab and
+// the rainbow publisher chips were this view breaking that doctrine.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView browser — one accent, neutral columns', () => {
+  const ACCENT = 'var(--color-action-solid, #1d4ed8)'.replace(/\s/g, '');
+
+  it('renders hits as aligned columns under a header row; the publisher is neutral text, not a hue', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    const header = screen.getByTestId('mlx-browse-header');
+    for (const col of ['Model', 'Publisher', 'Quant', 'Arch', 'Size', 'Downloads', 'Likes', 'Created']) {
+      expect(header).toHaveTextContent(col);
+    }
+    const publisher = screen.getByText('mlx-community');
+    expect(publisher.style.backgroundColor).toBe('');
+    expect(publisher.style.color).toBe('');
+    expect(publisher.className).toContain('text-text-secondary');
+    expect(publisher.className).toContain('tabular-nums');
+    // Likes is a number — no heart, no arrow, no glyph.
+    expect(screen.queryByText(/[♥↓]/)).not.toBeInTheDocument();
+    // The node ramp never reaches this view: no inline style on the page names a node token.
+    const nodeStyled = Array.from(document.querySelectorAll('[style]')).filter((el) =>
+      (el.getAttribute('style') ?? '').includes('--color-node-')
+    );
+    expect(nodeStyled).toHaveLength(0);
+    unmount();
+  });
+
+  it('the active sort segment and the row action are the single accent — never node-5 pink', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    const active = screen.getByRole('button', { name: 'Top downloads' });
+    expect(active).toHaveAttribute('aria-pressed', 'true');
+    expect(active.style.backgroundColor.replace(/\s/g, '')).toBe(ACCENT);
+    const inactive = screen.getByRole('button', { name: 'Latest' });
+    expect(inactive.style.backgroundColor).toBe('');
+    const download = screen.getByLabelText(`Download ${HIT_A.id}`);
+    expect(download.style.backgroundColor.replace(/\s/g, '')).toBe(ACCENT);
+    // Exactly one filled element per row: the action.
+    const row = screen.getByLabelText(`Open model card for ${HIT_A.id}`);
+    const filled = Array.from(row.querySelectorAll<HTMLElement>('[style]')).filter(
+      (el) => el.style.backgroundColor !== ''
+    );
+    expect(filled).toHaveLength(1);
+    expect(filled[0]).toBe(download);
     unmount();
   });
 });

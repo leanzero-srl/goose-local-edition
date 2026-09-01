@@ -64,9 +64,6 @@ import {
   RED,
   SLATE,
   SolidBanner,
-  TEAL,
-  VIOLET,
-  authorHue,
   formatCount,
   formatDate,
   formatGb,
@@ -81,18 +78,21 @@ import {
   type NodesResponse,
 } from '../../acp/leanzero-link';
 
-// Formatters and the author hue stay importable from this module — tests and older
-// callers reach them here.
-export { authorHue, formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
+// Formatters stay importable from this module — tests and older callers reach them here.
+export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
-// The node ramp lives under `.local-edition`; this window also runs in builds without that
-// class, where a bare var() resolves to NOTHING and a solid fill silently turns transparent
-// (caught live 2026-08-31: the active tab label vanished). Every node var carries a fallback.
-const SEGMENT_ACTIVE = 'var(--color-node-5, #db2777)';
+// The ONE accent for every active tab and segment. The node ramp is node identity, never
+// chrome — node-5 pink on a tab was the hot-pink bug. This window also runs in builds without
+// `.local-edition`, where a bare var() resolves to NOTHING and a solid fill silently turns
+// transparent (caught live 2026-08-31: the active tab label vanished); the token carries its
+// fallback.
+const SEGMENT_ACTIVE = AZURE;
 
+// Engine state on the status triad: running = ok, mounting and stopped = the stopped neutral
+// (mounting keeps its spinner, which is the difference), failed = err.
 const STATE_COLOR: Record<MlxEngineState, string> = {
   running: GREEN,
-  mounting: AMBER,
+  mounting: SLATE,
   failed: RED,
   stopped: SLATE,
 };
@@ -216,13 +216,8 @@ function StateBadge({ state }: { state: MlxEngineState }) {
   return (
     <span
       data-testid="mlx-state-badge"
-      className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
-        state === 'mounting' ? 'animate-pulse' : ''
-      }`}
-      style={{
-        backgroundColor: STATE_COLOR[state],
-        color: state === 'mounting' ? INK_DARK : '#fff',
-      }}
+      className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-semibold text-white"
+      style={{ backgroundColor: STATE_COLOR[state] }}
     >
       {state === 'mounting' && <Loader2 className="h-3 w-3 animate-spin" />}
       {state}
@@ -312,7 +307,10 @@ function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; total
   const tight = totalBytes > 0 && availableBytes / totalBytes < 0.1;
   return (
     <div className="flex min-w-0 items-center gap-3" data-testid="mlx-disk-bar">
-      <HardDrive className="h-4 w-4 shrink-0" style={{ color: tight ? AMBER : TEAL }} />
+      <HardDrive
+        className="h-4 w-4 shrink-0 text-text-secondary"
+        style={tight ? { color: AMBER } : undefined}
+      />
       <div
         className="h-2.5 flex-1 overflow-hidden rounded border border-border-primary"
         role="progressbar"
@@ -323,12 +321,12 @@ function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; total
       >
         <div
           className="h-full"
-          style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : TEAL }}
+          style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : AZURE }}
         />
       </div>
       <span
         className="shrink-0 text-xs font-bold tabular-nums"
-        style={{ color: tight ? AMBER : TEAL }}
+        style={{ color: tight ? AMBER : AZURE }}
       >
         {formatGb(availableBytes)} free
       </span>
@@ -357,7 +355,7 @@ function CardHeader({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border-primary bg-background-secondary px-3 py-2">
-      <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
         {label}
       </span>
       {children}
@@ -448,14 +446,14 @@ function NumericField({
           <button
             type="button"
             onClick={() => onText('')}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white hover:opacity-90"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-white hover:opacity-90"
             style={{ backgroundColor: AZURE }}
             title="Clear — fall back to the engine default"
           >
             set <X className="w-2.5 h-2.5" />
           </button>
         ) : (
-          <Chip color={SLATE} title="No value sent — the engine uses its own default">
+          <Chip quiet title="No value sent — the engine uses its own default">
             engine default
           </Chip>
         )}
@@ -505,7 +503,7 @@ function ModelOptionLabel({ option }: { option: ModelOption }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span className="truncate font-mono text-sm">{option.model.id}</span>
-      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
+      <span className="shrink-0 text-xs tabular-nums text-text-secondary">
         {formatGb(option.model.sizeBytes)}
       </span>
       {!option.model.complete && (
@@ -561,7 +559,7 @@ function ProfileModelOptionLabel({ option }: { option: ProfileModelOption }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span className="truncate font-mono text-sm">{option.value}</span>
-      {option.hasProfile && <Chip color={VIOLET}>profile</Chip>}
+      {option.hasProfile && <Chip quiet>profile</Chip>}
       {!option.local && (
         <Chip color={SLATE} title="A saved profile for a model that is not in the models folder">
           not downloaded
@@ -618,9 +616,7 @@ function SamplingModelPicker({
 function StatusFact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-        {label}
-      </span>
+      <span className="text-[11px] font-medium text-text-secondary">{label}</span>
       <span className="min-w-0 truncate text-sm text-text-primary">{children}</span>
     </div>
   );
@@ -706,7 +702,7 @@ function EngineSection(props: EngineSectionProps) {
             <span className="text-sm text-text-secondary">no model mounted</span>
           )}
           {status?.toolCallParser && (
-            <Chip color={VIOLET} title="Tool-call parser reported by the live engine">
+            <Chip quiet title="Tool-call parser reported by the live engine">
               {status.toolCallParser}
             </Chip>
           )}
@@ -715,7 +711,7 @@ function EngineSection(props: EngineSectionProps) {
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
             <StatusFact label="Context window">
               {status?.contextWindow != null ? (
-                <span className="font-bold tabular-nums" style={{ color: AZURE }}>
+                <span className="font-semibold tabular-nums text-text-primary">
                   {status.contextWindow.toLocaleString()}
                 </span>
               ) : (
@@ -779,7 +775,7 @@ function EngineSection(props: EngineSectionProps) {
             <Button
               disabled
               className="rounded font-bold text-white"
-              style={{ backgroundColor: GREEN }}
+              style={{ backgroundColor: SLATE }}
             >
               <Loader2 className="w-4 h-4 animate-spin" />
               Mounting
@@ -798,7 +794,7 @@ function EngineSection(props: EngineSectionProps) {
               onClick={onMount}
               disabled={!canSwitch}
               className="rounded font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: GREEN }}
+              style={{ backgroundColor: AZURE }}
             >
               <Play className="w-4 h-4" />
               Switch model
@@ -808,7 +804,7 @@ function EngineSection(props: EngineSectionProps) {
               onClick={onMount}
               disabled={!canMount}
               className="rounded font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: GREEN }}
+              style={{ backgroundColor: AZURE }}
             >
               <Play className="w-4 h-4" />
               Mount
@@ -817,8 +813,8 @@ function EngineSection(props: EngineSectionProps) {
           <Button
             onClick={onUnmount}
             disabled={!canUnmount}
-            className="rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: SLATE }}
+            variant="outline"
+            className="rounded font-bold"
           >
             <Square className="w-4 h-4" />
             Unmount
@@ -1061,6 +1057,34 @@ export interface DownloadHandlers {
   onCancel: (repoId: string) => void;
 }
 
+/** The browser's column template — ONE grid shared by the header row and every hit so the
+ *  attributes line up as a table, not a pile of chips. The id keeps a 220px floor (at narrow
+ *  widths the old chip cluster squeezed it to "lmstudi…", caught live 2026-08-31); the list
+ *  scrolls sideways under that width instead of squeezing. */
+const HIT_COLUMNS = 'minmax(220px, 1fr) 132px 48px 80px 60px 64px 48px 88px 100px';
+const HIT_CELL = 'min-w-0 truncate text-[11px] tabular-nums text-text-secondary';
+const HIT_NUM = `${HIT_CELL} text-right`;
+
+function BrowseHeaderRow() {
+  return (
+    <div
+      className="grid items-center gap-x-3 border-t border-border-primary px-3 py-1.5"
+      style={{ gridTemplateColumns: HIT_COLUMNS }}
+      data-testid="mlx-browse-header"
+    >
+      <span className={HIT_CELL}>Model</span>
+      <span className={HIT_CELL}>Publisher</span>
+      <span className={HIT_CELL}>Quant</span>
+      <span className={HIT_CELL}>Arch</span>
+      <span className={HIT_NUM}>Size</span>
+      <span className={HIT_NUM}>Downloads</span>
+      <span className={HIT_NUM}>Likes</span>
+      <span className={HIT_NUM}>Created</span>
+      <span />
+    </div>
+  );
+}
+
 interface BrowseHitRowProps {
   hit: MlxBrowseHit;
   sort: MlxBrowseSort;
@@ -1080,7 +1104,7 @@ function BrowseHitRow({
 }: BrowseHitRowProps) {
   return (
     <div
-      className="cursor-pointer border-t border-border-primary px-3 py-2 transition-colors hover:bg-background-secondary"
+      className="cursor-pointer border-t border-border-primary transition-colors hover:bg-background-secondary"
       onClick={onOpenCard}
       role="button"
       tabIndex={0}
@@ -1089,94 +1113,76 @@ function BrowseHitRow({
       }}
       aria-label={`Open model card for ${hit.id}`}
     >
-      {/* flex-wrap + a real min width on the id: at narrow window widths the chip cluster
-          otherwise squeezed the model id down to "lmstudi…" (caught live 2026-08-31). */}
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="min-w-[220px] flex-1 truncate font-mono text-xs font-medium text-text-primary">
+      {/* Every attribute is an aligned, tabular, secondary-text column; the ONE coloured element
+          on a row is its primary action. "—" states an absent value — never a guessed one. */}
+      <div className="grid items-center gap-x-3 px-3 py-2" style={{ gridTemplateColumns: HIT_COLUMNS }}>
+        <span className="min-w-0 truncate font-mono text-[13px] font-medium text-text-primary" title={hit.id}>
           {hit.id}
         </span>
-        <Chip color={authorHue(hit.author)} title={`Published by ${hit.author}`}>
+        <span className={HIT_CELL} title={`Published by ${hit.author}`}>
           {hit.author}
-        </Chip>
-        {hit.quant && (
-          <Chip color={AZURE} title="Derived from the repo's tags or name">
-            {hit.quant}
-          </Chip>
-        )}
-        {hit.arch && (
-          <Chip color={TEAL} title="Derived from the repo's tags or name">
-            {hit.arch}
-          </Chip>
-        )}
-        {hit.sizeBytesEstimate != null && (
-          <span
-            className="shrink-0 text-xs font-bold tabular-nums"
-            style={{ color: TEAL }}
-            title="estimated from tensor dtypes; exact size on the model card"
-          >
-            ~{formatGb(hit.sizeBytesEstimate)}
-          </span>
-        )}
-        <span
-          className="shrink-0 text-xs font-bold tabular-nums"
-          style={{ color: AZURE }}
-          title={`${hit.downloads.toLocaleString()} downloads`}
-        >
-          ↓ {formatCount(hit.downloads)}
+        </span>
+        <span className={HIT_CELL} title={hit.quant ? "Derived from the repo's tags or name" : undefined}>
+          {hit.quant ?? '—'}
+        </span>
+        <span className={HIT_CELL} title={hit.arch ? "Derived from the repo's tags or name" : undefined}>
+          {hit.arch ?? '—'}
         </span>
         <span
-          className="shrink-0 text-xs font-bold tabular-nums"
-          style={{ color: VIOLET }}
-          title={`${hit.likes.toLocaleString()} likes`}
+          className={HIT_NUM}
+          title={
+            hit.sizeBytesEstimate != null
+              ? 'estimated from tensor dtypes; exact size on the model card'
+              : 'no size estimate for this repo'
+          }
         >
-          ♥ {formatCount(hit.likes)}
+          {hit.sizeBytesEstimate != null ? `~${formatGb(hit.sizeBytesEstimate)}` : '—'}
         </span>
-        {hit.createdAt &&
-          (sort === 'newest' ? (
-            <span
-              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
-              style={{ backgroundColor: AMBER, color: INK_DARK }}
-              title={`Created ${hit.createdAt}`}
+        <span className={HIT_NUM} title={`${hit.downloads.toLocaleString()} downloads`}>
+          {formatCount(hit.downloads)}
+        </span>
+        <span className={HIT_NUM} title={`${hit.likes.toLocaleString()} likes`}>
+          {formatCount(hit.likes)}
+        </span>
+        <span
+          className={`${HIT_NUM} ${sort === 'newest' ? 'font-semibold text-text-primary' : ''}`}
+          title={hit.createdAt ? `Created ${hit.createdAt}` : undefined}
+        >
+          {hit.createdAt ? formatDate(hit.createdAt) : '—'}
+        </span>
+        <span className="flex justify-end">
+          {!progress && (
+            <Button
+              size="xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlers.onDownload(hit.id);
+              }}
+              className="shrink-0 rounded font-semibold text-white hover:opacity-90"
+              style={{ backgroundColor: AZURE }}
+              aria-label={`Download ${hit.id}`}
             >
-              {formatDate(hit.createdAt)}
-            </span>
-          ) : (
-            <span
-              className="shrink-0 text-xs tabular-nums text-text-secondary"
-              title={`Created ${hit.createdAt}`}
-            >
-              {formatDate(hit.createdAt)}
-            </span>
-          ))}
-        {!progress && (
-          <Button
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              handlers.onDownload(hit.id);
-            }}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: GREEN }}
-            aria-label={`Download ${hit.id}`}
-          >
-            <Download className="w-3.5 h-3.5" />
-            Download
-          </Button>
-        )}
+              <Download className="w-3 h-3" />
+              Download
+            </Button>
+          )}
+        </span>
       </div>
       {startError && (
-        <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
+        <div className="break-words px-3 pb-2 text-xs font-semibold" style={{ color: RED }}>
           {startError}
         </div>
       )}
       {progress && (
-        <DownloadProgressRow
-          repoId={hit.id}
-          progress={progress}
-          onPause={() => handlers.onPause(hit.id)}
-          onResume={() => handlers.onResume(hit.id)}
-          onCancel={() => handlers.onCancel(hit.id)}
-        />
+        <div className="px-3 pb-2">
+          <DownloadProgressRow
+            repoId={hit.id}
+            progress={progress}
+            onPause={() => handlers.onPause(hit.id)}
+            onResume={() => handlers.onResume(hit.id)}
+            onCancel={() => handlers.onCancel(hit.id)}
+          />
+        </div>
       )}
     </div>
   );
@@ -1356,12 +1362,12 @@ function HfBrowser({
         right={
           <>
             {loading && (
-              <Chip color={AMBER} ink={INK_DARK}>
+              <Chip color={SLATE}>
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 loading
               </Chip>
             )}
-            <Chip color={AZURE}>{hits?.length ?? 0} loaded</Chip>
+            <Chip quiet>{hits?.length ?? 0} loaded</Chip>
           </>
         }
       />
@@ -1402,7 +1408,7 @@ function HfBrowser({
             value={author}
             options={filters?.authors ?? []}
             onChange={setAuthor}
-            chipColor={author != null ? authorHue(author) : SLATE}
+            chipColor={AZURE}
           />
           <FilterCombobox
             label="Quant"
@@ -1416,7 +1422,7 @@ function HfBrowser({
             value={arch}
             options={filters?.archs ?? []}
             onChange={setArch}
-            chipColor={TEAL}
+            chipColor={AZURE}
           />
           {filters?.refreshError != null && (
             <Chip
@@ -1442,18 +1448,21 @@ function HfBrowser({
         </div>
       )}
       {hits != null && hits.length > 0 && (
-        <div>
-          {hits.map((hit) => (
-            <BrowseHitRow
-              key={hit.id}
-              hit={hit}
-              sort={sort}
-              progress={downloads[hit.id]}
-              startError={downloadErrors[hit.id]}
-              handlers={handlers}
-              onOpenCard={() => onOpenCard(hit.id)}
-            />
-          ))}
+        <div className="overflow-x-auto">
+          <div className="min-w-[940px]">
+            <BrowseHeaderRow />
+            {hits.map((hit) => (
+              <BrowseHitRow
+                key={hit.id}
+                hit={hit}
+                sort={sort}
+                progress={downloads[hit.id]}
+                startError={downloadErrors[hit.id]}
+                handlers={handlers}
+                onOpenCard={() => onOpenCard(hit.id)}
+              />
+            ))}
+          </div>
         </div>
       )}
       {nextCursor != null && !loading && (
@@ -1461,8 +1470,7 @@ function HfBrowser({
           type="button"
           onClick={loadMore}
           disabled={loadingMore}
-          className="flex w-full items-center justify-center gap-2 border-t border-border-primary py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-          style={{ backgroundColor: TEAL }}
+          className="flex w-full items-center justify-center gap-2 border-t border-border-primary bg-background-secondary py-2.5 text-sm font-semibold text-text-secondary transition-colors hover:text-text-primary disabled:opacity-60"
         >
           {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Load more
@@ -1498,7 +1506,7 @@ function ActiveDownloadsCard({
   return (
     <Card>
       <CardHeader label="Active downloads">
-        <Chip color={AZURE}>{entries.length}</Chip>
+        <Chip quiet>{entries.length}</Chip>
       </CardHeader>
       <div>
         {entries.map(([repoId, progress]) => (
@@ -1636,12 +1644,7 @@ function ModelsSection({
             label: (
               <>
                 Downloaded
-                <span
-                  className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
-                  style={{ backgroundColor: view === 'downloaded' ? INK_DARK : SLATE }}
-                >
-                  {models.length}
-                </span>
+                <span className="text-[11px] font-medium tabular-nums">{models.length}</span>
               </>
             ),
             title: 'Local models, the models folder and disk space',
@@ -1689,7 +1692,7 @@ function ModelsSection({
                 </Button>
               }
             >
-              <Chip color={AZURE}>{models.length}</Chip>
+              <Chip quiet>{models.length}</Chip>
             </CardHeader>
             {deleteError && (
               <div className="px-3 pt-3">
@@ -1713,8 +1716,8 @@ function ModelsSection({
                       chip/action cluster wraps under it at narrow widths. */}
                       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                         <HardDrive
-                          className="w-4 h-4 shrink-0"
-                          style={{ color: incomplete ? AMBER : AZURE }}
+                          className="w-4 h-4 shrink-0 text-text-secondary"
+                          style={incomplete ? { color: AMBER } : undefined}
                         />
                         <span className="min-w-[220px] flex-1 truncate font-mono text-sm text-text-primary">
                           {model.id}
@@ -1729,10 +1732,7 @@ function ModelsSection({
                             incomplete — missing {model.missingFiles} file(s)
                           </Chip>
                         )}
-                        <span
-                          className="shrink-0 text-xs font-bold tabular-nums"
-                          style={{ color: AZURE }}
-                        >
+                        <span className="shrink-0 text-xs tabular-nums text-text-secondary">
                           {formatGb(model.sizeBytes)}
                         </span>
                         {incomplete ? (
@@ -1740,7 +1740,7 @@ function ModelsSection({
                             size="xs"
                             onClick={() => downloadHandlers.onResume(model.id)}
                             className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                            style={{ backgroundColor: GREEN }}
+                            style={{ backgroundColor: AZURE }}
                             aria-label={`Resume ${model.id}`}
                             title="Resume the download — complete files are skipped, partials continue"
                           >
@@ -1751,8 +1751,8 @@ function ModelsSection({
                           <Button
                             size="xs"
                             onClick={() => onOpenSampling(model.id)}
-                            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                            style={{ backgroundColor: VIOLET }}
+                            variant="outline"
+                            className="shrink-0 rounded font-bold"
                             aria-label={`Sampling for ${model.id}`}
                             title="This model's sampling profile — opens the Sampling tab"
                           >
@@ -1766,8 +1766,9 @@ function ModelsSection({
                             setDeleteError(null);
                             setPendingDelete(model);
                           }}
-                          className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                          style={{ backgroundColor: RED }}
+                          variant="outline"
+                          className="shrink-0 rounded font-bold"
+                          style={{ borderColor: RED, color: RED }}
                           aria-label={`Delete ${model.id}`}
                         >
                           <Trash2 className="w-3 h-3" />
@@ -1802,7 +1803,7 @@ function ModelsSection({
             <CardHeader label="Models folder" />
             <div className="flex flex-col gap-2 px-3 py-3">
               <div className="flex items-center gap-2">
-                <Folder className="w-4 h-4 shrink-0" style={{ color: AZURE }} />
+                <Folder className="w-4 h-4 shrink-0 text-text-secondary" />
                 <span
                   className="min-w-0 flex-1 truncate rounded border border-border-primary bg-background-secondary px-2.5 py-1.5 font-mono text-sm text-text-primary"
                   title={settings?.modelsDir}
@@ -2607,9 +2608,7 @@ const MlxEngineView: React.FC = () => {
           view behaves exactly as before, all ops on THIS device. */}
       {peers.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-            Manage on
-          </span>
+          <span className="text-[11px] font-medium text-text-secondary">Manage on</span>
           <DeviceTargetPicker
             targets={deviceTargets}
             value={targetNodeId}
@@ -2638,12 +2637,7 @@ const MlxEngineView: React.FC = () => {
           {tabBtn(
             'models',
             'Models',
-            <span
-              className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
-              style={{ backgroundColor: tab === 'models' ? INK_DARK : SLATE }}
-            >
-              {models.length}
-            </span>
+            <span className="text-[11px] font-medium tabular-nums">{models.length}</span>
           )}
           {tabBtn('sampling', 'Sampling')}
         </div>
