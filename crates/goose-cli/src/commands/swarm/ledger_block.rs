@@ -511,6 +511,160 @@ pub(super) fn render_ledger_block_measured(
     }
 }
 
+/// II-4, the repair shard's splice (budget one dep-file, 3,500 chars): this round's gate row,
+/// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'
+/// ledger rows — pure over the roll-up so a round-1 shard is testable against a round-0 fixture.
+/// Round N+1 shards measurably re-tried what round N tried (prompt comment above
+/// smoke_fix_description); the fresh per-round Scheduler discards its SharedContext, so this
+/// on-disk history is the only channel that survives between rounds. Overflow drop order: the
+/// owning-task rows first, then the gate row — NEVER a prior NOT FIXED verdict, which is the one
+/// line whose loss re-schedules a failed approach; a line-boundary cut is the last resort.
+pub(super) fn render_repair_history(
+    rollup: Option<&serde_json::Value>,
+    shard_files: &[String],
+    findings: &[String],
+    round: usize,
+) -> String {
+    const BUDGET: usize = 3_500;
+    let Some(rollup) = rollup else {
+        return String::new();
+    };
+    let mut verdicts = String::new();
+    if let Some(rounds) = rollup.pointer("/repair/rounds").and_then(|r| r.as_array()) {
+        for r in rounds {
+            let r_round = r.get("round").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            if r_round >= round {
+                continue;
+            }
+            let shard = r.get("shard").and_then(|x| x.as_str()).unwrap_or("?");
+            let owns_overlap = r
+                .get("owned_files")
+                .and_then(|o| o.as_array())
+                .is_some_and(|a| {
+                    a.iter()
+                        .filter_map(|f| f.as_str())
+                        .any(|f| shard_files.iter().any(|sf| sf == f))
+                });
+            for v in r
+                .get("verdicts")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&Vec::new())
+            {
+                let finding = v.get("finding").and_then(|f| f.as_str()).unwrap_or("");
+                let matches_finding = findings.iter().any(|f| f == finding);
+                if !owns_overlap && !matches_finding {
+                    continue;
+                }
+                // S5d: a FIXED on a shard whose shadow never changed, and a NOT REAL that quoted
+                // no replay, are named as what they are — the next shard must not read either
+                // as a closed finding (r6c r1 read a zero-edit FIXED as a regression).
+                let verdict = v.get("verdict").and_then(|x| x.as_str()).unwrap_or("?");
+                let edited = r.get("edited").and_then(|e| e.as_bool());
+                let unreplayed = v
+                    .get("unreplayed")
+                    .and_then(|u| u.as_bool())
+                    .unwrap_or(false);
+                let qualifier = match (verdict, edited, unreplayed) {
+                    ("FIXED", Some(false), _) => " — CLAIMED FIXED WITHOUT AN EDIT (its shadow was byte-identical to the tree; nothing landed)",
+                    ("NOT REAL", _, true) => " — NOT ACCEPTED (no replayed request+response quoted; the finding stays open)",
+                    _ => "",
+                };
+                verdicts.push_str(&format!(
+                    "  - round {r_round}, {shard}: FINDING {} {}{qualifier} — {}\n",
+                    v.get("n").and_then(|n| n.as_u64()).unwrap_or(0),
+                    verdict,
+                    v.get("detail").and_then(|d| d.as_str()).unwrap_or(""),
+                ));
+            }
+        }
+    }
+    let verdicts_block = if verdicts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "WHAT PRIOR ROUNDS ALREADY TRIED on these findings/files (a NOT FIXED approach must \
+             not be retried as-is — try something different in kind):\n{verdicts}"
+        )
+    };
+    let gate_block = rollup
+        .get("gate")
+        .and_then(|g| g.as_array())
+        .and_then(|gates| {
+            gates
+                .iter()
+                .find(|g| g.get("round").and_then(|r| r.as_u64()) == Some(round as u64))
+                .or(gates.last())
+        })
+        .map(|g| {
+            let n = g
+                .get("findings")
+                .and_then(|f| f.as_array())
+                .map_or(0, |a| a.len());
+            let inc = g
+                .get("inconclusive")
+                .and_then(|f| f.as_array())
+                .map_or(0, |a| a.len());
+            format!(
+                "GATE round {}: {n} finding(s) against the RUNNING app, {inc} check(s) \
+                 inconclusive — your numbered findings above are drawn from this measurement.\n",
+                g.get("round").and_then(|r| r.as_u64()).unwrap_or(0)
+            )
+        })
+        .unwrap_or_default();
+    let mut owners = String::new();
+    if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
+        for (id, t) in tasks {
+            let owns_overlap = t
+                .get("owned_files")
+                .and_then(|o| o.as_array())
+                .is_some_and(|a| {
+                    a.iter()
+                        .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
+                        .any(|f| shard_files.iter().any(|sf| sf == f))
+                });
+            if !owns_overlap {
+                continue;
+            }
+            let fail = t
+                .get("commands")
+                .and_then(|c| c.as_object())
+                .and_then(|c| {
+                    c.iter()
+                        .filter_map(|(_, v)| v.get("last_failure_tail").and_then(|x| x.as_str()))
+                        .find(|tl| !tl.is_empty())
+                })
+                .unwrap_or("");
+            owners.push_str(&format!(
+                "  - `{id}` built these files ({} attempt(s), {}){}\n",
+                t.get("attempts").and_then(|a| a.as_u64()).unwrap_or(1),
+                t.get("status").and_then(|x| x.as_str()).unwrap_or("?"),
+                if fail.is_empty() {
+                    String::new()
+                } else {
+                    format!("; its last failure: {}", tail_chars(fail, 200))
+                },
+            ));
+        }
+    }
+    let owners_block = if owners.is_empty() {
+        String::new()
+    } else {
+        format!("WHO BUILT THE FILES you are repairing:\n{owners}")
+    };
+    let full = format!("{gate_block}{verdicts_block}{owners_block}");
+    if full.chars().count() <= BUDGET {
+        return full;
+    }
+    let without_owners = format!("{gate_block}{verdicts_block}");
+    if without_owners.chars().count() <= BUDGET {
+        return without_owners;
+    }
+    if verdicts_block.chars().count() <= BUDGET {
+        return verdicts_block;
+    }
+    truncate_block_at_line(&verdicts_block, BUDGET)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

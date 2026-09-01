@@ -373,7 +373,10 @@ fn swarm_rs_line_count_only_decreases() {
     // promoter (`grade_promotion_preview`, `promote_speculative`, `copy_owned_files`) and their
     // barrier moved out — commands/swarm/repair_waves.rs runs one shard per FINDING, lands by
     // three-way merge, and dispatches without a round barrier.
-    const SWARM_RS_LINE_BASELINE: usize = 36_433;
+    // Tightened to 36,336 (2c S5d+S8): `render_repair_history` moved to commands/swarm/
+    // ledger_block.rs beside the roll-up it reads, paying for the gate-evidence and the
+    // forming-reset lines.
+    const SWARM_RS_LINE_BASELINE: usize = 36_336;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

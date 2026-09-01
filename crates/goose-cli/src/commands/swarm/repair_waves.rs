@@ -42,7 +42,7 @@ use goose_swarm::{DispatchRequest, EventSink, TaskDispatcher};
 
 use super::attribution::parse_handoffs;
 use super::decisions::BriefDecisions;
-use super::findings::FileGroup;
+use super::findings::{parse_finding_verdicts, FileGroup};
 use super::fleet_order::{order_fleet_by_speed, resolved_fleet_speed_weights};
 use super::ledger_block::read_ledger_rollup;
 use super::ledger_writers::{write_repair_ledger, RepairLedgerRow};
@@ -67,6 +67,9 @@ pub(super) struct OpenFinding {
     pub(super) attempted_at: Option<u64>,
     /// The quoted conflict hunks from a promotion that overlapped a sibling's landed fix.
     pub(super) conflict_note: Option<String>,
+    /// S5d (ii): the finding came from a server-response probe or the render gate, so a NOT REAL
+    /// verdict must quote the replayed request and response or it is `dismissed_without_replay`.
+    pub(super) replay_required: bool,
 }
 
 /// (a) One shard per FINDING: every finding of a file group becomes its own OpenFinding carrying
@@ -75,6 +78,7 @@ pub(super) fn explode_groups(
     groups: &[FileGroup],
     owned_by_shard: &[Vec<String>],
     order_notes: &[String],
+    replay_required: &dyn Fn(&str) -> bool,
 ) -> Vec<OpenFinding> {
     let mut out = Vec::new();
     for (i, g) in groups.iter().enumerate() {
@@ -92,6 +96,7 @@ pub(super) fn explode_groups(
                 k,
                 attempted_at: None,
                 conflict_note: None,
+                replay_required: replay_required(f),
             });
         }
     }
@@ -620,6 +625,33 @@ pub(super) async fn run_wave(
     outcome
 }
 
+/// Does a NOT REAL verdict QUOTE the replay the gate's finding calls for? A probe finding names
+/// a request (`POST /api/drafts …`): the detail must carry that path and an HTTP status
+/// (`HTTP 200`, `200 OK`, `→ 201`, a curl line). A render finding names no path: the detail
+/// must carry the probe's own numbers (`renderedRowCount`/`rows=` or a console-error count).
+/// Words alone ("re-probed with realistic variants, saw JSON every time") are not a replay.
+pub(super) fn quotes_replay(detail: &str, finding: &str) -> bool {
+    let has_status = detail.contains("curl")
+        || detail
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|t| t.len() == 3 && t.chars().all(|c| c.is_ascii_digit()))
+            .any(|t| t.starts_with(['2', '3', '4', '5']));
+    let path = finding
+        .split(|c: char| c.is_whitespace() || "`'\"(),;".contains(c))
+        .find(|t| t.starts_with("/") && t.len() > 1)
+        .map(|t| t.split('?').next().unwrap_or(t).trim_end_matches("'s"));
+    match path {
+        Some(p) => has_status && detail.contains(p),
+        None => {
+            let low = detail.to_lowercase();
+            has_status
+                || low.contains("renderedrowcount")
+                || low.contains("rows=")
+                || (low.contains("console") && low.chars().any(|c| c.is_ascii_digit()))
+        }
+    }
+}
+
 /// One finding's shard, start to finish: dispatch (speculative shadow), grade the merged
 /// preview, land or discard, persist the repair row, say what happened.
 #[allow(clippy::too_many_arguments)]
@@ -741,6 +773,46 @@ async fn run_finding_shard(
         }));
     }
     let output = ran.as_ref().map(|o| o.output.as_str()).unwrap_or("");
+    // S5d (iv): a FIXED verdict from a shard whose shadow never diverged from the tree is a
+    // claim without an edit — r6c's r1 read a zero-edit FIXED as a regression. Loud, MILD.
+    let verdicts = parse_finding_verdicts(output);
+    if !shard_changed {
+        for (n, verdict, said) in &verdicts {
+            if *verdict == "FIXED" {
+                sink.write_value(serde_json::json!({
+                    "event": "fix_claimed_without_edit",
+                    "round": round, "shard": f.file, "task_id": task_id,
+                    "finding_n": n,
+                    "finding": super::findings::elide_middle(&f.text, 150, 400),
+                    "said": said,
+                }));
+            }
+        }
+    }
+    // S5d (ii): NOT REAL on a probe/render finding must quote the replayed request AND response
+    // — r6c's four lanes "re-probed with 8 realistic variants" (their own requests, not the
+    // gate's bare POST) and dismissed findings the gate re-filed byte-identically every round.
+    let unreplayed: Vec<u32> = verdicts
+        .iter()
+        .filter(|(_, v, said)| {
+            *v == "NOT REAL" && f.replay_required && !quotes_replay(said, &f.text)
+        })
+        .map(|(n, _, _)| *n)
+        .collect();
+    for n in &unreplayed {
+        let said = verdicts
+            .iter()
+            .find(|(m, _, _)| m == n)
+            .map(|(_, _, s)| s.as_str())
+            .unwrap_or("");
+        sink.write_value(serde_json::json!({
+            "event": "dismissed_without_replay",
+            "round": round, "shard": f.file, "task_id": task_id,
+            "finding_n": n,
+            "finding": super::findings::elide_middle(&f.text, 150, 400),
+            "said": said,
+        }));
+    }
     if let Some(path) = write_repair_ledger(
         cwd,
         RepairLedgerRow {
@@ -753,6 +825,8 @@ async fn run_finding_shard(
             promoted,
             baseline,
             agent_ok: ran.is_ok(),
+            edited: shard_changed,
+            unreplayed: &unreplayed,
         },
     ) {
         sink.write_value(serde_json::json!({
@@ -780,6 +854,8 @@ async fn run_finding_shard(
         "conflicted": conflicted,
         "handoffs": handoff_files,
         "files_written": written,
+        "claimed_fixed_without_edit": !shard_changed && verdicts.iter().any(|(_, v, _)| *v == "FIXED"),
+        "dismissed_without_replay": unreplayed,
         "promoted": promoted,
     }));
     let note = conflicted.then(|| conflict_note(&composed.conflicts, &composed.unavailable));
@@ -798,6 +874,57 @@ mod tests {
         assert!(safe_rel("/tmp/abs-escape").is_none());
         assert!(safe_rel("sub/../../x").is_none());
         assert_eq!(safe_rel("web/app.js"), Some(Path::new("web/app.js")));
+    }
+
+    /// S5d (ii): a NOT REAL is accepted only with the replayed request AND response quoted —
+    /// r6c's "re-probed with 8 realistic variants and saw JSON every time" is words; the gate's
+    /// own line with its status is a replay.
+    #[test]
+    fn a_not_real_needs_the_replayed_request_and_response() {
+        let probe = "POST /api/drafts's response could not be read as a JSON object on either probe — the spec documents a JSON response";
+        assert!(!quotes_replay(
+            "re-probed with 8 realistic variants (tokens, bodies) and saw JSON every time",
+            probe
+        ));
+        assert!(quotes_replay("`curl -s -w '\n%{http_code}' -X POST -m 20 http://127.0.0.1:8741/api/drafts` → HTTP 401 {\"error\":{\"code\":\"unauthorized\"}}", probe));
+        assert!(
+            !quotes_replay("GET /api/health returned HTTP 200 {\"ok\":true}", probe),
+            "a different path is not this finding's replay"
+        );
+        let render = "the served page renders NO data rows in a real browser — the API works but the frontend shows a user nothing. (in `web/viz.js`)";
+        assert!(!quotes_replay("the page looks fine to me", render));
+        assert!(quotes_replay(
+            "ran the probe: renderedRowCount=50, consoleErrors 0",
+            render
+        ));
+        assert!(quotes_replay(
+            "node probe.js load http://127.0.0.1:8741 → rows=50",
+            render
+        ));
+    }
+
+    /// S5d (iv): the history a later shard reads names a FIXED that landed no edit and a NOT REAL
+    /// that quoted no replay — r6c r1 read a zero-edit FIXED as a regression.
+    #[test]
+    fn the_repair_history_names_unedited_fixed_and_unreplayed_not_real() {
+        let rollup = serde_json::json!({"repair": {"rounds": [
+            {"round": 0, "shard": "web/app.js", "owned_files": ["web/app.js"], "edited": false,
+             "verdicts": [
+                {"n": 1, "finding": "POST /api/drafts's response does not carry the documented field(s)", "verdict": "FIXED", "detail": "all fields present on my probes"},
+                {"n": 2, "finding": "the page renders NO data rows", "verdict": "NOT REAL", "detail": "looks fine", "unreplayed": true}
+             ]}
+        ]}});
+        let text = super::super::render_repair_history(
+            Some(&rollup),
+            &["web/app.js".to_string()],
+            &["POST /api/drafts's response does not carry the documented field(s)".to_string()],
+            1,
+        );
+        assert!(
+            text.contains("FINDING 1 FIXED — CLAIMED FIXED WITHOUT AN EDIT"),
+            "{text}"
+        );
+        assert!(text.contains("FINDING 2 NOT REAL — NOT ACCEPTED (no replayed request+response quoted; the finding stays open)"), "{text}");
     }
 
     /// r5 put six findings on ONE shard (group by file); now six findings on one file are six
@@ -819,8 +946,9 @@ mod tests {
             vec!["web/viz.js".to_string(), "web/index.html".to_string()],
         ];
         let notes = vec!["A".to_string(), "B".to_string()];
-        let open = explode_groups(&groups, &owned, &notes);
+        let open = explode_groups(&groups, &owned, &notes, &|t: &str| t == "f4");
         assert_eq!(open.len(), 4);
+        assert!(open[3].replay_required && !open[0].replay_required);
         assert_eq!(open[0].k, 0);
         assert_eq!(open[2].k, 2);
         assert_eq!(open[2].owned, owned[0]);
