@@ -662,6 +662,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
     let b_executor = RecordingExecutor::new("sess-on-b");
     let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
+    b_config.allow_remote_execution = true; // B opts in to being acted on
     let b = ControlService::start(
         b_config,
         Arc::new(NamedIdleSource {
@@ -805,6 +806,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
     let b_control = RecordingMlxControl::returning(b_payload.clone());
     let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
+    b_config.allow_remote_execution = true; // B opts in to being acted on
     let b = ControlService::start(
         b_config,
         Arc::new(NamedIdleSource {
@@ -886,6 +888,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
     ));
     let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
+    b_config.allow_remote_execution = true; // B opts in to being acted on
     let b = ControlService::start(
         b_config,
         Arc::new(NamedIdleSource {
