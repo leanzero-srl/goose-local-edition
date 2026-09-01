@@ -1,5 +1,33 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## REVIEW + FIX CAMPAIGN (2026-09-02) — IN FLIGHT, fully autonomous ("yes do it all")
+Branch review vs main: 6 read-only reviewers (Link Rust / Link worker / fallback-hunter / works-prover / swarm engine / desktop UI)
+→ 6 adversarial refuters re-measuring from primary sources. 34 findings → 30 survived, 4 killed, 9 reviewer-proposed FIXES caught
+wrong. Full index with every refuter verdict + corrected spec: session scratchpad `review-findings-index.md` (copy the essentials
+here if it is gone). TOP TRUTHS (all refuter-confirmed): (1) the worker's IP rate-limit keyed on a header Funnel never sets → GLOBAL
+sign-in lockout was LIVE — FIXED+DEPLOYED (worker commits ffc2e38a0..94fa06376, Funnel X-Forwarded-For measured per-client); (2) remote
+execute + mlx proxy are DEAD in the shipped app — injection only in `goosed agent`, desktop runs `goose serve` → 501 "not wired";
+(3) the app's own connect path (connect_inner) has NEVER run against Headscale (no ~/.leanzero/node-id; all mocks omit loginServer) —
+my earlier "proven e2e" was the hand-driven tailscaled chain; (4) no built app contains tailscaled; (5) idle guard never fires (busy
+read from a map only orchestrator subagents fill); (6) remote exec default-on, Auto mode even for Approve users, unvalidated cwd;
+(7) node_token derivable from the email → replaced by a worker-issued per-account nodeSecret (contract shipped in the worker);
+(8) swarm: mixed LM+MLX pool silently moves a sidecar planner to LM Studio; an LM probe hiccup empties the LM half of every fan once a
+sidecar serves; sidecar fabricates Running on an occupied port; SIGKILL orphans the uv grandchild (killpg on its OWN group is
+gate-consistent); (9) desktop: Cmd+W on a session window KILLS a live swarm run; dead-lane demotion inert by default + blind to MLX.
+FIX WAVE 1 (parallel, one agent per disjoint file set, TRACE in every commit): worker DONE; crates/leanzero-link (crate agent);
+goose link.rs + remote_executor + both-door busy registration (C1); swarm.rs/swarm_engine.rs (swarm-surgeon); goose-sidecar
+(mlx-backend); desktop main/useFleet/csp/useSwarmRun (panel-surgeon). WAVE 2 after: C2 = wire executor/mlx/delta under `goose serve`
+(brief: scratchpad wave2-injection-brief.md — mlx control is a one-liner; executor+delta need goose-crate impls over on_prompt's reply
+path), fix-tracers on the engine commits, rebuild+repackage (tailscaled now bundled via `just fetch-tailscale`), then ONE REAL app
+connect with receipts (identity.json + node-id + "tailscaled ready"/"control service listening" + a <host>-<6hex> node on Headscale
++ /execute 202 not 501).
+UI: owner wants "a really nice and welcome remake" (visual only, functionality untouched, leanzero.net = light accent reference).
+Stage-1 polish (enforce the .local-edition token doctrine) running; design system "LeanZero Studio" (Inter via @fontsource, slate
+surfaces, ONE accent #1d4ed8, violet secondary for the reasoning channel, node ramp for nodes only, lz/* primitives + ui/desktop/
+DESIGN.md) being built; then per-surface remake agents (spec: scratchpad ui-remake-spec.md — nav/projects, landing, session chrome,
+LeanZero Swarm hub + models DataTable, Link section, swarm run panel as mission control, benchmark/settings harmonized), each verified
+in the RUNNING app with light+dark screenshots into local-edition/mlx/screenshots-passF/.
+
 ## MULTI-TENANT MESH — DONE & LIVE (2026-09-01, commit ff9c53b59)
 "Everyone connects to their OWN swarm." Moved OFF Tailscale hosted control (personal tailnet, no
 isolation) ONTO **self-hosted Headscale** — each account = one Headscale user = the isolation unit.
