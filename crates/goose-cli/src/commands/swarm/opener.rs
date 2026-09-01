@@ -113,7 +113,9 @@ pub(crate) struct SpecCite {
 /// digit (or the digits overflow).
 fn leading_number(s: &str) -> (Option<usize>, &str) {
     let n = s.chars().take_while(char::is_ascii_digit).count();
-    (s[..n].parse::<usize>().ok(), &s[n..])
+    // `n` counts leading ASCII digits (one byte each), so it is a char boundary.
+    let (digits, rest) = s.split_at(n);
+    (digits.parse::<usize>().ok(), rest)
 }
 
 impl SpecCite {
@@ -122,7 +124,7 @@ impl SpecCite {
     /// `end >= start`, else `None` — never a guess at which lines the opener meant.
     pub(crate) fn parse(cite: &str) -> Option<Self> {
         let marker = format!("{}:", request_file_label());
-        let rest = &cite[cite.find(&marker)? + marker.len()..];
+        let (_, rest) = cite.split_once(marker.as_str())?;
         let (start, after) = leading_number(rest);
         let start = start?;
         let end = match after.strip_prefix('-').map(leading_number) {
@@ -461,7 +463,7 @@ enum RequestText {
 /// The three example lines of the QUESTIONS rule, one per kind, each ending in a JSON object
 /// that satisfies `open_schema` (the tests parse them): spec_lookup on the first table row (the
 /// cite IS the fact — no text, VA-095), design on the first rule-stating line (the closest words
-/// + the grep that found nothing), external on the first top-level section (the range cite from
+/// and the grep that found nothing), external on the first top-level section (the range cite from
 /// the index).
 fn example_lines(text: &RequestText, label: &str) -> [String; 3] {
     let (row, prose, section, absent) = match text {
