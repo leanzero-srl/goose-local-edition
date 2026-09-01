@@ -119,6 +119,8 @@ const STATUS_COLOR: Record<TurnStatus, string> = {
   done: SWARM_STATUS.done,
   error: SWARM_STATUS.error,
 };
+/** The same triad as Studio text classes — for every glyph coloured by a lane's status. */
+const STATUS_TONE: Record<TurnStatus, Tone> = { running: 'warn', done: 'ok', error: 'err' };
 const CALL_OK = SWARM_STATUS.done;
 const CALL_ERR = SWARM_STATUS.error;
 const CALL_PENDING = SWARM_STATUS.stopped;
@@ -244,7 +246,7 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
         {big && (
           <button
             onClick={() => setExpanded((e) => !e)}
-            className="text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+            className={cx('text-lz-meta text-lz-ink-3 hover:text-lz-ink', MOTION)}
           >
             {expanded ? 'Show less' : `Show all (${lineCount} lines)`}
           </button>
@@ -255,7 +257,7 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           }}
-          className="text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+          className={cx('text-lz-meta text-lz-ink-3 hover:text-lz-ink', MOTION)}
         >
           {copied ? 'copied' : 'copy'}
         </button>
@@ -284,7 +286,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
   // the native Cut/Copy menu with no Reveal option, which is why it looked "missing everywhere".
   const callPath = ((call.summary ?? '').match(/(\/[^\s'"`]+[^\s'"`:;,.)])/) ?? [])[1] ?? null;
   return (
-    <div className="py-0.5 border-b border-border-primary last:border-0">
+    <div className="py-0.5 border-b border-lz-border last:border-0">
       <button
         type="button"
         onClick={() => hasOutput && setOpen((o) => !o)}
@@ -303,16 +305,16 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
         </span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-lz-medium text-text-primary">{m.action}</span>
+            <span className="text-xs font-lz-medium text-lz-ink">{m.action}</span>
             {pill ? <Chip tone={m.kind === 'malformed' ? 'err' : 'warn'}>{pill}</Chip> : null}
             {m.kind !== 'ok' ? (
-              <span className="text-[11px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
+              <span className={cx('text-lz-meta', m.kind === 'malformed' ? TONE_TEXT.err : 'text-lz-ink-3')}>
                 {m.outcome}
               </span>
             ) : null}
           </span>
           {call.summary ? (
-            <span className="block font-mono text-[11px] text-text-secondary break-words mt-px" title={call.summary}>
+            <span className="block font-mono text-lz-mono text-lz-ink-2 break-words mt-px" title={call.summary}>
               {call.summary}
             </span>
           ) : null}
@@ -321,15 +323,15 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
             array index is not a position; this makes "last 60 of 69" checkable and gives a reader a
             bearing inside a 60-row scroll. A numeral in the row's own flow — no rail, no chip. */}
         {ordinal != null ? (
-          <span className="shrink-0 mt-0.5 font-mono text-[11px] tabular-nums text-text-secondary">
+          <span className={cx('shrink-0 mt-0.5 font-mono text-lz-mono text-lz-ink-3', TNUM)}>
             #{ordinal}
           </span>
         ) : null}
         {hasOutput &&
           (open ? (
-            <ChevronDown className="h-3 w-3 shrink-0 text-text-secondary mt-0.5" />
+            <ChevronDown className="h-3 w-3 shrink-0 text-lz-ink-3 mt-0.5" />
           ) : (
-            <ChevronRight className="h-3 w-3 shrink-0 text-text-secondary mt-0.5" />
+            <ChevronRight className="h-3 w-3 shrink-0 text-lz-ink-3 mt-0.5" />
           ))}
       </button>
       {hasOutput && open && (
@@ -445,7 +447,7 @@ const LaneRow: React.FC<{
   const live = lane.status === 'running' && !stale;
   const interrupted = lane.status === 'running' && stale;
   const Icon = interrupted ? CircleSlash : lane.status === 'done' ? Check : lane.status === 'error' ? X : Loader2;
-  const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
+  const iconTone = interrupted ? TONE_TEXT.stopped : TONE_TEXT[STATUS_TONE[lane.status]];
 
   const { completed: calls, running } = workRows(lane.calls, lane.inflight);
   // FINDING 23: `calls` is the engine's SLIDING last-60 window, so past 60 resolved calls every new
@@ -508,9 +510,9 @@ const LaneRow: React.FC<{
       >
         {hasBody ? (
           open ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-lz-ink-3" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-lz-ink-3" />
           )
         ) : (
           <span className="w-3.5 shrink-0" />
@@ -542,7 +544,7 @@ const LaneRow: React.FC<{
               {lane.description ? (
                 <>
                   <br />
-                  <span className="font-mono text-text-secondary">{lane.taskId}</span>
+                  <span className="font-mono">{lane.taskId}</span>
                 </>
               ) : null}
             </span>
@@ -563,7 +565,7 @@ const LaneRow: React.FC<{
             cloud fleet, where it is the whole point. */}
         {lane.model && heterogeneous && (
           <Tip label={<span className="font-mono">{lane.model}</span>}>
-            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[11px] font-mono text-text-secondary">
+            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate font-mono text-lz-mono text-lz-ink-3">
               {lane.model}
             </span>
           </Tip>
@@ -607,8 +609,7 @@ const LaneRow: React.FC<{
             <Icon
               size={15}
               strokeWidth={3}
-              className={`${live ? 'animate-spin' : ''}`}
-              style={{ color: iconColor }}
+              className={cx(live && 'animate-spin', iconTone)}
             />
           </span>
         </Tip>
@@ -618,7 +619,7 @@ const LaneRow: React.FC<{
         <div className="px-3 pb-3 pl-9 space-y-2">
           {laneError ? (
             <div>
-              <div className="text-[11px] font-lz-medium mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className={cx('mb-1 text-lz-meta', TONE_TEXT.err)}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
@@ -627,7 +628,7 @@ const LaneRow: React.FC<{
           {mode === 'compact' ? (
             // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
             compactLine ? (
-              <div className="text-xs text-text-secondary truncate">{compactLine}</div>
+              <div className="text-xs text-lz-ink-2 truncate">{compactLine}</div>
             ) : null
           ) : (
             <>
@@ -682,7 +683,7 @@ const LaneRow: React.FC<{
                   </div>
                 </div>
               ) : lane.recent && lane.recent.length > 0 ? (
-                <div className="text-xs text-text-secondary font-mono break-words">
+                <div className="text-xs text-lz-ink-2 font-mono break-words">
                   {lane.recent.join(' · ')}
                 </div>
               ) : null}
@@ -1737,7 +1738,7 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
   const color = SWARM_STATUS.running;
   return (
     <div
-      className="py-0.5 border-b border-border-primary last:border-0"
+      className="py-0.5 border-b border-lz-border last:border-0"
       data-testid="inflight-row"
       data-call-id={call.id}
     >
@@ -1755,7 +1756,7 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
               {elapsedSince(call.since, now)}
             </span>
           </span>
-          <span className="block font-mono text-[11px] text-text-secondary break-words">{call.args}</span>
+          <span className="block font-mono text-lz-mono text-lz-ink-2 break-words">{call.args}</span>
         </span>
       </div>
     </div>
@@ -1779,7 +1780,7 @@ const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now })
   const preview = bytes > 0 ? call.args_preview : undefined;
   return (
     <div
-      className="py-0.5 border-b border-border-primary last:border-0"
+      className="py-0.5 border-b border-lz-border last:border-0"
       data-testid="forming-row"
       data-call-id={call.id}
     >
@@ -1805,12 +1806,12 @@ const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now })
               <span className={cx('block text-lz-meta', TONE_TEXT.warn)}>
                 forming — last {preview.length} chars of the arguments so far
               </span>
-              <span className="block font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words">
+              <span className="block font-mono text-lz-mono text-lz-ink-2 whitespace-pre-wrap break-words">
                 {preview}
               </span>
             </span>
           ) : (
-            <span className="block font-mono text-[11px] text-text-secondary break-words">
+            <span className="block font-mono text-lz-mono text-lz-ink-3 break-words">
               the model is still generating this call's arguments
             </span>
           )}
@@ -2025,7 +2026,7 @@ const WorkPane: React.FC<{
       {hasSaid ? (
         <div>
           {calls.length > 0 || running.length > 0 ? (
-            <div className="mt-3 pt-2 border-t border-border-primary text-[11px] font-lz-medium text-text-secondary">
+            <div className="mt-3 pt-2 border-t border-lz-border text-lz-meta text-lz-ink-3">
               Said
             </div>
           ) : null}
@@ -4081,7 +4082,7 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {laneError ? (
             <div>
-              <div className="text-[11px] font-lz-medium mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className={cx('mb-1 text-lz-meta', TONE_TEXT.err)}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
