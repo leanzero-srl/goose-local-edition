@@ -2937,6 +2937,15 @@ pub struct LeanzeroLinkStateResponse {
     pub node_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The user's remote-execution switch (goose config key
+    /// `LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`) as configured NOW — what a toggle shows.
+    /// Default `false`: the node is observe-only (peers get `403` on `/execute` and `/mlx/*`).
+    #[serde(default)]
+    pub remote_execution_allowed: bool,
+    /// The value the RUNNING control service enforces, present only while connected. When
+    /// it differs from `remote_execution_allowed`, the change applies at the next connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_execution_allowed_live: Option<bool>,
 }
 
 /// The swarm node view (`self` + peers). Proxies the local control service's
