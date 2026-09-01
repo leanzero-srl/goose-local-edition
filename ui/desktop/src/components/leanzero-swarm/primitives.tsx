@@ -250,9 +250,7 @@ export function DownloadProgressRow({
         >
           <div className={cx('h-full', TONE_DOT[barTone])} style={{ width: `${pct}%` }} />
         </div>
-        <span
-          className={cx('shrink-0 text-lz-meta', WEIGHT.semibold, TNUM, TONE_TEXT[barTone])}
-        >
+        <span className={cx('shrink-0 text-lz-meta', WEIGHT.semibold, TNUM, TONE_TEXT[barTone])}>
           {formatBytesShort(progress.downloadedBytes)}
           {progress.totalBytes > 0 ? ` / ${formatBytesShort(progress.totalBytes)}` : ''}
         </span>
@@ -304,7 +302,9 @@ export function DownloadProgressRow({
         {progress.state !== 'cancelled' && (
           <StudioChip
             tone={stateTone}
-            icon={progress.state === 'downloading' ? <Loader2 className="animate-spin" /> : undefined}
+            icon={
+              progress.state === 'downloading' ? <Loader2 className="animate-spin" /> : undefined
+            }
           >
             {progress.state}
           </StudioChip>
