@@ -61,6 +61,17 @@ build, install, then kill r6d per-pid, archive as KILLED-viz-brief-lacks-vs7dbg,
 relaunch is ready (free falsifier measurement). Launch chain = the r6d one (bench_verify_view → weight-1 already
 in config → bench_dispatch → first_tick). Below: the r6d launch record, still the template.
 
+## r6e RELAUNCH — FIRST-TICK EXPECTATIONS (in addition to the r6d list below, all of which still apply)
+- tick.py SECTION CLAIMS UNMATCHED must be 0 (766810d61) — and the viz-field research/build briefs carry the
+  `vs7dbg` body; `decision_self_resolved` events carry `shape` (E13) — a "bare" shape is an opener contract miss
+  to read, not a decision; `ClarifyQuestion.options` non-empty at ASK for a framed decision (E10).
+- JUDGE LOOKS BY NODE: a lane's looks land OFF its own node when another candidate ties (E8); no judge think
+  contains "1/1 used… last turn" confusion (E9); JUDGE LOOK OUTCOMES failed stays 0 (abandoned is the desk's).
+- research_mini_relayed events appear when a same-slice mini lands while a sibling runs (E7) — the sibling's
+  next turn cites it; research-lane judge NEXT points at spec lines / "emit what you have", never an answer (E6).
+- Brief lines "POST /api/drafts -> EXPECT …" show the request→effect text with balanced backticks (E1/E12), not a
+  role; levers_resolved.retired_levers entries carry `configured` (E11); persona_loaded stack_key not angular (S4).
+
 ## r6d LAUNCH RECORD (06:53 local / 03:53Z from the Benchmark view)
 
 run_id swarm-20260901-035310576 · engine cceab86eb (installed /Applications/Goose.app, sha 9497224d… identical to
