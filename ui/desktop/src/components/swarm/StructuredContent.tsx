@@ -1,6 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import MarkdownContent from '../MarkdownContent';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import { Chip, RADIUS, TONE_TEXT, WEIGHT, cx, type Tone } from '../lz';
 
 // A model's output is EITHER prose or a structured payload, and the panel used to run both through the
 // markdown renderer. That is wrong twice over for a payload:
@@ -71,11 +71,9 @@ export function classifyContent(text: string): Parsed {
   return { kind: 'json', pretty: JSON.stringify(obj, null, 2) };
 }
 
-const DIFFICULTY_COLOR: Record<string, string> = {
-  easy: SWARM_STATUS.done,
-  medium: SWARM_STATUS.running,
-  hard: '#ff5c7a',
-};
+/** Difficulty as a status tone — easy is the ok green, medium the warn amber, hard the err red; an
+ *  unknown word renders as a quiet Chip rather than an invented hue. */
+const DIFFICULTY_TONE: Record<string, Tone> = { easy: 'ok', medium: 'warn', hard: 'err' };
 
 /** The plan skeleton rendered as a task list — id, what it builds, the files it owns, what it waits on. */
 const PlanSkeleton: React.FC<{ subtasks: Subtask[]; integration?: string }> = ({
@@ -84,40 +82,29 @@ const PlanSkeleton: React.FC<{ subtasks: Subtask[]; integration?: string }> = ({
 }) => (
   <div className="space-y-1.5">
     {subtasks.map((s) => (
-      <div key={s.id} className="border border-border-primary px-2 py-1.5" style={{ borderRadius: CHIP_RADIUS }}>
+      <div key={s.id} className={cx('border border-lz-border px-2 py-1.5', RADIUS.control)}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] font-mono font-semibold text-text-primary">{s.id}</span>
-          {s.difficulty ? (
-            <span
-              className="text-[9px] uppercase tracking-wide px-1 py-px"
-              style={{
-                color: DIFFICULTY_COLOR[s.difficulty] ?? 'var(--text-secondary)',
-                border: `1px solid ${DIFFICULTY_COLOR[s.difficulty] ?? 'var(--border-primary)'}`,
-                borderRadius: CHIP_RADIUS,
-              }}
-            >
-              {s.difficulty}
-            </span>
-          ) : null}
+          <span className={cx('font-mono text-lz-mono text-lz-ink', WEIGHT.semibold)}>{s.id}</span>
+          {s.difficulty ? <Chip tone={DIFFICULTY_TONE[s.difficulty]}>{s.difficulty}</Chip> : null}
           {s.depends_on && s.depends_on.length ? (
-            <span className="text-[10px] text-text-secondary">after {s.depends_on.join(', ')}</span>
+            <span className="text-lz-meta text-lz-ink-3">after {s.depends_on.join(', ')}</span>
           ) : null}
         </div>
         {s.description ? (
-          <div className="text-[11px] text-text-primary mt-0.5 leading-snug">{s.description}</div>
+          <div className="mt-0.5 text-lz-body text-lz-ink">{s.description}</div>
         ) : null}
         {s.files && s.files.length ? (
           // font-mono, and NOT markdown — this is where __init__.py used to come out as **init**.py.
-          <div className="text-[10px] font-mono text-text-secondary mt-0.5 break-all">
+          <div className="mt-0.5 break-all font-mono text-lz-mono text-lz-ink-2">
             {s.files.join('  ')}
           </div>
         ) : null}
       </div>
     ))}
     {integration ? (
-      <div className="text-[10px] text-text-secondary">
-        <span className="uppercase tracking-wide">Integration</span>{' '}
-        <span className="font-mono text-text-primary">{integration}</span>
+      <div className="text-lz-meta text-lz-ink-3">
+        <span className="text-lz-zone uppercase">Integration</span>{' '}
+        <span className="font-mono text-lz-ink">{integration}</span>
       </div>
     ) : null}
   </div>
@@ -140,14 +127,13 @@ export const CodeBlock: React.FC<{
   className?: string;
 }> = ({ text, wrap = false, tone = 'normal', className = '' }) => (
   <pre
-    className={`font-mono text-[11px] px-2 py-1 bg-background-secondary border border-border-primary ${
-      wrap ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto'
-    } ${className}`}
-    style={{
-      borderRadius: CHIP_RADIUS,
-      margin: 0,
-      color: tone === 'error' ? '#ff8f88' : 'var(--text-primary)',
-    }}
+    className={cx(
+      'm-0 border border-lz-border bg-lz-surface-2 px-2 py-1 font-mono text-lz-mono',
+      tone === 'error' ? TONE_TEXT.err : 'text-lz-ink',
+      wrap ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto',
+      RADIUS.control,
+      className
+    )}
   >
     {text}
   </pre>
