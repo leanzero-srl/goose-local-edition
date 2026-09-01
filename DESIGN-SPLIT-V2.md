@@ -3,7 +3,7 @@
 Mihai, 2026-09-02 00:1x: *"research the split. Very important to get this right. It's a bet but it is the crux of a
 swarm."* This is the research's verdict mapped onto the engine, ranked by how confident the evidence makes us (never by
 size). v1 (2c S1–S6, 30b1c4fb2) stands: fatness measured, N shards in `.swarm/shards/<module>/<shard>/` with a README
-(PROVIDES / ASSUMES / UNFINISHED / CHECKED_WITH), a merger fed a code dossier, gaps through the scheduler door. What
+(PROVIDES / WRITES / ASSUMES / UNFINISHED / CHECKED_WITH — WRITES added by v2), a merger fed a code dossier, gaps through the scheduler door. What
 changes is WHO does the mechanical work and WHAT is checked before the merge.
 
 ## What the evidence says (sources in the research note, TICK-NOTES 09-02 00:1x)

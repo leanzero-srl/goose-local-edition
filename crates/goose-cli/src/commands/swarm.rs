@@ -21650,17 +21650,16 @@ where
     // 519 min) gets ONE patch request to synthesis — shards in temp folders + the module as merger,
     // the interface declared as plan text — and the patched plan walks the one door again
     // (`plan_repaired{source: split}`). No fat task → byte-identical, no event. `shards.rs`.
-    let mut plan_json = shards::split_fat_tasks(
+    let mut plan_json = shards::split_fat_tasks_sized(
         plan_json,
         &opened,
         user_prompt,
         every_decision_settled,
+        // SPLIT v2 (b7f4fdbcb + e7c83fb4d, merged 09-02): the fleet's free hosts at split time size the
+        // shard count — a derivation from the pool, never a literal (DESIGN-SPLIT-V2 §6).
+        Some(free_hosts),
         split,
         sink,
-        // TODO(SPLIT v2 merge): `shards::split_fat_tasks` gains `free_hosts: usize` as its LAST
-        // parameter in the shards.rs surgeon's commit; until both halves land this call does not
-        // compile — on purpose, so the two are reconciled at the merge, never dropped silently.
-        free_hosts,
     )
     .await;
 
