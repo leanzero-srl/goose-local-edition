@@ -119,6 +119,16 @@ pub enum EngineKind {
     MlxSidecar,
 }
 
+impl EngineKind {
+    /// The kind's config/event spelling (the serde name): "lmstudio" / "mlx-sidecar".
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            EngineKind::LmStudio => "lmstudio",
+            EngineKind::MlxSidecar => "mlx-sidecar",
+        }
+    }
+}
+
 /// A device's engine KIND. `None` MEANS LM Studio by definition (the serde default that keeps
 /// every existing config byte-identical), so this `unwrap_or` is definitional, not a fallback.
 pub(super) fn device_engine_kind(d: &SwarmDevice) -> EngineKind {
@@ -330,6 +340,13 @@ pub(super) fn all_resident_unservable_per_engine(
 /// a negative PROVEN by the planner's own engine — its probe answered with a non-empty set that
 /// lacks the planner — and only when the pool has a first device to fall back to. An unmounted
 /// sidecar probes to None (unproven) and is left alone: the pre-warm mounts it.
+///
+/// One None is NOT unproven: a planner carried by a device whose engine KIND nobody registered
+/// (tagged mlx-sidecar, config key `mlx_engine` missing/unparseable) will never mount — there is
+/// no engine to warm it and no provider to dispatch it. Kept as "unproven" it stayed the pinned
+/// planner, `engine_models` omitted it, `provider_for` fell to the shared lmstudio provider and
+/// every planning call failed as text: the planner "planned from nothing". That arm falls back
+/// to the first pool device whose engine IS registered, naming the missing engine.
 pub(super) fn planner_fallback(
     engines: &Engines,
     fleet_pool: &[SwarmDevice],
@@ -341,18 +358,26 @@ pub(super) fn planner_fallback(
         .find(|d| d.model_id == planner_model)
         .map(device_engine_kind)
         .unwrap_or(EngineKind::LmStudio);
+    let Some(engine) = engines.for_kind(planner_kind) else {
+        let alt = fleet_pool
+            .iter()
+            .find(|d| engines.engine_for_device(d).is_some())?
+            .model_id
+            .clone();
+        return Some((
+            format!(
+                "{} (no engine registered — config key \"mlx_engine\" absent or unparseable)",
+                planner_kind.name()
+            ),
+            alt,
+        ));
+    };
     let set = served.get(&planner_kind)?.as_ref()?;
     if set.contains(planner_model) {
         return None;
     }
     let alt = fleet_pool.first()?.model_id.clone();
-    // A proven set for a kind implies its engine is registered (an unregistered kind probes to
-    // None above); the label on the unreachable arm names the kind rather than inventing a host.
-    let host = engines
-        .for_kind(planner_kind)
-        .map(|e| e.http_host())
-        .unwrap_or_else(|| format!("{planner_kind:?} (no engine registered)"));
-    Some((host, alt))
+    Some((engine.http_host(), alt))
 }
 
 /// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot — PER ENGINE.
@@ -2160,6 +2185,38 @@ mod tests {
                 "gabee-qwen3.8-27b".to_string()
             ))
         );
+        // UNREGISTERED engine (no `mlx_engine` config): the sidecar planner will never mount —
+        // distinct from "not mounted yet". It falls back to the first device whose engine IS
+        // registered, naming the missing engine; the sidecar device itself is never the alt.
+        let unregistered = Engines::with_lmstudio_for_tests(RecordingEngine::with_host(
+            "lmstudio",
+            "http://lm.local:1234",
+        ));
+        let map = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, None),
+        ]);
+        let expect = Some((
+            "mlx-sidecar (no engine registered — config key \"mlx_engine\" absent or unparseable)"
+                .to_string(),
+            "gabee-qwen3.8-27b".to_string(),
+        ));
+        assert_eq!(planner_fallback(&unregistered, &pool, &map, alias), expect);
+        let sidecar_first: Vec<SwarmDevice> =
+            [pool[3].clone(), pool[0].clone(), pool[1].clone()].to_vec();
+        assert_eq!(
+            planner_fallback(&unregistered, &sidecar_first, &map, alias),
+            expect,
+            "the alt skips the unregistered device even when it is first"
+        );
+        assert_eq!(
+            planner_fallback(&unregistered, &pool[3..], &map, alias),
+            None,
+            "no registered device to fall back to: left alone, as before"
+        );
+        // Every other arm is byte-identical with the sidecar registered: the same map keeps the
+        // planner (unproven, the pre-warm mounts it).
+        assert_eq!(planner_fallback(&engines, &pool, &map, alias), None);
     }
 
     /// S-M5: the wire shape per engine. LM Studio keeps the previous block byte-for-byte
