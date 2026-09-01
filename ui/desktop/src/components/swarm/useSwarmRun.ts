@@ -319,6 +319,27 @@ export function elapsedSince(since: string, now: number): string {
   return `${m}m ${String(r).padStart(2, '0')}s`;
 }
 
+/**
+ * One opener question on a research lane, from the per-question events (`research_dispatched` →
+ * `research_answered` / `research_unanswered`). The fan cut (C3, 8d6a4eb7c) dispatches ONE lane per
+ * slice carrying every question of that slice, so a lane lists its questions here; the r6b–r6d engines
+ * ran one lane per question and land here as a one-row list — the same shape, read from the same
+ * events. `question` is the engine's 200-char head (the event's own cut; the whole text is in the
+ * durable mini `.swarm/ledger/research-<slice>-q<n>.json`).
+ */
+export interface ResearchQuestionRow {
+  slice: string;
+  qIndex: number;
+  question: string;
+  /** `dispatched` until its terminal event lands; `unanswered` is the loud absence twin, never hidden. */
+  status: 'dispatched' | 'answered' | 'unanswered';
+  chars?: number;
+  raised?: number;
+  secs?: number;
+  reason?: string;
+  detail?: string;
+}
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -419,6 +440,10 @@ export interface TurnLane {
    *  past the open-call window — the LIVENESS fact that ends its 'running' claim (panel #2's find:
    *  demoted, it used to vanish entirely). Derived, never a digest field: no digest says this. */
   interrupted?: boolean;
+  /** A research lane's questions (VA-029), from the per-question events — event truth on the carry,
+   *  deliberately NOT a digestStreamFields key: no digest names its questions. One lane per batch
+   *  lists every question it carries; the lane is done when each has a terminal event. */
+  researchQuestions?: ResearchQuestionRow[];
   seq: number;
 }
 
@@ -506,6 +531,9 @@ export interface PhaseTodo {
   state: TodoState;
   active: boolean;
   counts: { done: number; total: number };
+  /** A phase-level fact its rows cannot carry — the header says it beside the counts. Research:
+   *  "N answered from the spec (no lane)" from `research_planned.facts` (VA-029). */
+  note?: string;
 }
 
 export type ActivityKind =
@@ -695,8 +723,11 @@ export interface SwarmRunState {
   /** RESEARCH per-slice lanes (slice-<id>) — one per node, each owner writing its module's spec. Without
    *  these the RESEARCH phase renders empty lanes while the whole fleet is generating. */
   sliceLanes: TurnLane[];
-  /** The v2 RESEARCH fan (research-<slice>-q<n>): the opener's own questions, one read-only call each
-   *  across the fleet — grouped under the Research phase chip, not the trailing planning-calls list. */
+  /** The v2 RESEARCH fan: the opener's own questions answered read-only across the fleet. Since the
+   *  fan cut (C3) ONE lane per slice (`research-<slice>`, plus `research-__open_decisions__`) carries
+   *  every question of that slice — each lane lists them in `researchQuestions`; r6b–r6d logs ran one
+   *  lane per question (`research-<slice>-q<n>`) and render through the same grouping, one question
+   *  each. Grouped under the Research phase chip, not the trailing planning-calls list. */
   researchLanes: TurnLane[];
   /** The single-node planning calls that own no slice: open / open-resplit / synthesis / review /
    *  proxy-answer / rate. Each writes its own digest, so the node running one reads WORKING, not idle. */
@@ -1286,6 +1317,13 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   const proxy: ClarifyProxy = { timedOut: null };
   const reviewRounds: ReviewRound[] = [];
   const qa: SwarmAnswer[] = [];
+  // The research fan's dispatch line per LANE (activity_key), so a batch's later questions update the
+  // line already on the feed instead of appending one per question. Indices into feed/vfeed are stable
+  // until the slice at return.
+  const researchDispatchLines = new Map<
+    string,
+    { compactIdx: number; verboseIdx: number; qs: number[]; questions: string[] }
+  >();
   // Set by pillars_write_failed so the positive 'pillars' line can carry its honest caveat: the engine
   // still injects pillars into workers after a failed write (set_pillars runs regardless), but the
   // file-driven pillar CHECKS will not run.
@@ -1446,16 +1484,45 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       // also what moves the header to Researching). Field names read from the emit sites in
       // swarm.rs research_fan / fold_research_outcome, 2026-08-30.
       case 'research_dispatched': {
+        // ONE LINE PER LANE, UPDATED AS ITS QUESTIONS ARRIVE (VA-029). The fan cut dispatches a slice's
+        // questions as one batch on one lane and emits this event once per question, back to back;
+        // printing "Researching <slice> q<i>" per event put six lines on the feed for one call. The
+        // first event of a lane makes the line; each later one for the same `activity_key` UPDATES it
+        // (the state changes, so the line changes — never a second line). r6b–r6d's one-question lanes
+        // keep their exact per-question text through the same path.
         const slice = str(e['slice']);
         const qi = num(e['q_index']);
         const node = e['model'] ? nodeOf(str(e['model'])) : '';
-        const t = `Researching ${slice || 'a slice'} q${qi ?? '?'}`;
-        compact({ kind: 'dispatch', text: t, sub: node ? `on ${node}` : undefined });
-        verbose({
-          kind: 'dispatch',
-          text: t,
-          sub: [node && `on ${node}`, str(e['question'])].filter(Boolean).join(' — ') || undefined,
-        });
+        const key = str(e['activity_key']) || `research-${slice}-q${qi ?? '?'}`;
+        const question = str(e['question']);
+        const sliceLabel = researchSliceLabel(slice) || 'a slice';
+        const prior = researchDispatchLines.get(key);
+        if (prior) {
+          prior.qs.push(qi ?? -1);
+          prior.questions.push(`[q${qi ?? '?'}] ${question}`);
+          const qs = [...prior.qs].sort((a, b) => a - b).map((q) => (q < 0 ? 'q?' : `q${q}`));
+          const t = `Researching ${sliceLabel} · ${prior.qs.length} questions (${qs.join(', ')})`;
+          feed[prior.compactIdx] = { ...feed[prior.compactIdx], text: t };
+          vfeed[prior.verboseIdx] = {
+            ...vfeed[prior.verboseIdx],
+            text: t,
+            sub: [node && `on ${node}`, ...prior.questions].filter(Boolean).join('\n') || undefined,
+          };
+        } else {
+          const t = `Researching ${sliceLabel} q${qi ?? '?'}`;
+          compact({ kind: 'dispatch', text: t, sub: node ? `on ${node}` : undefined });
+          verbose({
+            kind: 'dispatch',
+            text: t,
+            sub: [node && `on ${node}`, question].filter(Boolean).join(' — ') || undefined,
+          });
+          researchDispatchLines.set(key, {
+            compactIdx: feed.length - 1,
+            verboseIdx: vfeed.length - 1,
+            qs: [qi ?? -1],
+            questions: [`[q${qi ?? '?'}] ${question}`],
+          });
+        }
         phase = 'Researching';
         break;
       }
@@ -1931,9 +1998,40 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      // scouts_planned / research_planned were DELETED with the scout fan (no emitter remains). The
-      // archived-run research story renders via the LEGACY-LOG research_completed case and
-      // buildPhaseTodo's retired-phase rows, which is where their history actually shows.
+      // scouts_planned was DELETED with the scout fan (no emitter remains); its archived-run story
+      // renders via buildPhaseTodo's retired-phase rows. research_planned is LIVE again — the v2 fan's
+      // QUEUE event (research.rs emit_research_planned), emitted once when the queue is built: how
+      // many questions reach a lane (`questions`, a NUMBER — the v1 scout-era shape carried an array),
+      // how many the opener settled as cited spec FACTS with no lane (`facts`, the fan cut's saving),
+      // and how many lane sessions run (`lanes`, C3). r6d's shape (no facts/lanes) renders its count
+      // and per-slice split; nothing is invented for a field the log lacks.
+      case 'research_planned': {
+        const questions =
+          typeof e['questions'] === 'number' ? (e['questions'] as number) : arr(e['questions']).length;
+        const lanes = num(e['lanes']);
+        const facts = num(e['facts']);
+        const resumed = num(e['resumed']);
+        const perSlice =
+          e['per_slice'] && typeof e['per_slice'] === 'object'
+            ? Object.entries(e['per_slice'] as Record<string, unknown>)
+                .map(([s, n]) => `${researchSliceLabel(s)} ${num(n) ?? '?'}`)
+                .join(' · ')
+            : '';
+        const t = `Research planned — ${questions} question${questions === 1 ? '' : 's'}${
+          lanes != null ? ` across ${lanes} lane${lanes === 1 ? '' : 's'}` : ''
+        }`;
+        const sub =
+          [
+            facts != null && facts > 0 ? `${facts} answered from the spec (no lane)` : '',
+            resumed != null && resumed > 0 ? `${resumed} resumed from the ledger` : '',
+            perSlice,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, sub });
+        verbose({ kind: 'plan', text: t, sub });
+        break;
+      }
       case 'pillars': {
         // NOT gated on a prior pillars_write_failed: injection into the workers genuinely still happens
         // after a failed write (set_pillars runs regardless), so the line stays true — with the failed
@@ -2915,7 +3013,8 @@ export interface FoldedRun {
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
   sliceLanes: TurnLane[];
-  /** The v2 research fan (`research-<slice>-q<n>`) — its own group so the lanes render under the
+  /** The v2 research fan — one lane per batch key (`research-<slice>` since C3; `research-<slice>-q<n>`
+   *  on r6b–r6d logs), each carrying its questions — its own group so the lanes render under the
    *  Research phase chip rather than in the trailing planning-calls list. */
   researchLanes: TurnLane[];
   planningLanes: TurnLane[];
@@ -2940,7 +3039,24 @@ interface FoldCarry {
   planned: boolean;
   researchOver: boolean;
   contractsOver: boolean;
+  /** Research lanes by ACTIVITY KEY (`research_dispatched.activity_key`, present since the first v2
+   *  fan, r6b): the batch's slice, the node it went to, and every question it carries with that
+   *  question's terminal outcome. Event truth: this is what says a lane exists, which questions it
+   *  holds and when each one settled — the digest only ever knows the lane's key. */
+  research: Map<string, ResearchBatchCarry>;
+  /** `<slice>::<q_index>` → activity key, so an outcome event (which names slice + q_index, never the
+   *  lane) finds its lane on both engine shapes. */
+  researchByQuestion: Map<string, string>;
 }
+
+interface ResearchBatchCarry {
+  slice: string;
+  model?: string;
+  questions: Map<string, ResearchQuestionRow>;
+  seq: number;
+}
+
+const researchQuestionKey = (slice: string, qIndex: number) => `${slice}::${qIndex}`;
 
 const newFoldCarry = (): FoldCarry => ({
   tasks: new Map(),
@@ -2960,6 +3076,8 @@ const newFoldCarry = (): FoldCarry => ({
   planned: false,
   researchOver: false,
   contractsOver: false,
+  research: new Map(),
+  researchByQuestion: new Map(),
 });
 
 /**
@@ -3009,6 +3127,51 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       if (t.status === 'running') c.fixTasks.set(k, { ...t, status: 'done', seq: c.seq++ });
     return;
   }
+  // THE RESEARCH FAN'S PER-QUESTION EVENTS → LANES BY BATCH (VA-029). Since the fan cut (C3,
+  // 8d6a4eb7c) `research_dispatched` fires once per question with `activity_key` = the LANE the
+  // question rides (`research-<slice>`; r6b–r6d: `research-<slice>-q<n>`, one lane each) and
+  // `batch` = how many ride with it; the outcome events name slice + q_index only. Grouping by the
+  // key the engine itself names is what makes one lane list its questions on both shapes; a
+  // dispatch without the key (no such log exists since r6b) derives the documented per-question key
+  // from facts rather than dropping the question.
+  if (type === 'research_dispatched') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const key = str(e['activity_key']) || `research-${slice}-q${qIndex}`;
+    let batch = c.research.get(key);
+    if (!batch) {
+      batch = { slice, model: str(e['model']) || undefined, questions: new Map(), seq: c.seq++ };
+      c.research.set(key, batch);
+    }
+    const qk = researchQuestionKey(slice, qIndex);
+    batch.questions.set(qk, { slice, qIndex, question: str(e['question']), status: 'dispatched' });
+    c.researchByQuestion.set(qk, key);
+    return;
+  }
+  if (type === 'research_answered' || type === 'research_unanswered') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const qk = researchQuestionKey(slice, qIndex);
+    const key = c.researchByQuestion.get(qk);
+    const batch = key ? c.research.get(key) : undefined;
+    const row = batch?.questions.get(qk);
+    // An outcome for a question this log never dispatched (a resumed ledger row) ran on no lane
+    // here — nothing to update; the checklist still counts it.
+    if (!batch || !row) return;
+    batch.questions.set(qk, {
+      ...row,
+      status: type === 'research_answered' ? 'answered' : 'unanswered',
+      chars: num(e['chars']) ?? undefined,
+      raised: num(e['raised']) ?? undefined,
+      secs: num(e['secs']) ?? undefined,
+      reason: str(e['reason']) || undefined,
+      detail: str(e['detail']) || undefined,
+    });
+    return;
+  }
+
   let taskId = String(e['task_id'] ?? '');
   // The race/fan arms' completed events historically carried twin/shard but NO task_id, so a
   // finished twin's lane stayed "running" until the wave's end event — a completed node showed
@@ -3263,15 +3426,49 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     .map((k, i) => laneFromDigest(k, `Slice · ${k.replace(/^slice-/, '')}`, researchOver, i))
     .filter(hasActivity);
 
-  // THE RESEARCH FAN (v2: `research-<slice>-q<n>`, the opener's own questions answered read-only across
-  // the fleet). These used to ride planningLanes via the fan-after table, which parked them in the
-  // trailing "Planning calls" group — a list that says nothing about WHEN they ran. As their own group
-  // they render under the Research phase chip (planningLanesFor), the home the v1 slice fan already has.
-  const researchLanes: TurnLane[] = Object.keys(activity)
-    .filter((k) => /^research-/.test(k))
+  // THE RESEARCH FAN — ONE LANE PER BATCH KEY, ITS QUESTIONS LISTED (VA-029). Since the fan cut (C3)
+  // the engine runs one lane per slice (`research-<slice>`) carrying every question of that slice;
+  // r6b–r6d ran one lane per question (`research-<slice>-q<n>`). Both are the same thing here: a lane
+  // is the key the engine dispatched (`research_dispatched.activity_key`) OR a digest under that
+  // prefix, and it lists the questions the per-question events put on it. Truth layer: a lane is
+  // DONE when every question it carries has its terminal event (or its digest stamps done, or the
+  // phase moved on), and it is an ERROR when every question came back unanswered — a lane that
+  // produced nothing must not look like a clean pass. These used to ride planningLanes via the
+  // fan-after table, which parked them in the trailing "Planning calls" group; as their own group
+  // they render under the Research phase chip (planningLanesFor), the home the v1 slice fan has.
+  const researchKeys = new Set<string>([
+    ...Object.keys(activity).filter((k) => /^research-/.test(k)),
+    ...c.research.keys(),
+  ]);
+  const researchLanes: TurnLane[] = [...researchKeys]
     .sort()
-    .map((k, i) => laneFromDigest(k, digestLabel(k), researchOver, i))
-    .filter(hasActivity);
+    .map((k, i): TurnLane => {
+      const d = (activity[k] ?? {}) as Digest & { model?: string };
+      const batch = c.research.get(k);
+      const questions = batch
+        ? [...batch.questions.values()].sort((a, b) => a.qIndex - b.qIndex)
+        : undefined;
+      const settled = !!questions?.length && questions.every((q) => q.status !== 'dispatched');
+      const allMissed = settled && questions!.every((q) => q.status === 'unanswered');
+      const status: TurnStatus = allMissed
+        ? 'error'
+        : d.phase === 'done' || settled || researchOver
+          ? 'done'
+          : 'running';
+      return {
+        taskId: k,
+        description: researchLaneLabel(k, questions?.length),
+        judgeEtaMins: c.judgeEta.get(k),
+        device: canonDevice(d.model ?? batch?.model ?? 'planner'),
+        model: d.model ?? batch?.model,
+        status,
+        researchQuestions: questions,
+        ...join(k, d),
+        seq: i,
+      };
+    })
+    // A lane the events dispatched IS activity, digest or not — the dispatch is the fact.
+    .filter((l) => hasActivity(l) || (l.researchQuestions?.length ?? 0) > 0);
 
   // The single-node planning calls. Each is over the moment its own digest stamps phase='done', so a node
   // that finished synthesising stops reading as working without waiting for the next phase to open.
@@ -3599,9 +3796,10 @@ export const PLANNING_DIGEST_KEYS = [
 const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-'] as const;
 
 /** Which fixed key each fan follows, so the lanes render in the order the phases actually run.
- *  The research fan (v2, `research-<slice>-q<n>`) is deliberately NOT here any more: it has its own
- *  fold group (`researchLanes`) and renders under the Research phase chip via planningLanesFor —
- *  riding this table put it in the trailing planning-calls group instead. */
+ *  The research fan (v2, `research-<slice>` per batch since C3; `research-<slice>-q<n>` on r6b–r6d
+ *  logs) is deliberately NOT here any more: it has its own fold group (`researchLanes`) and renders
+ *  under the Research phase chip via planningLanesFor — riding this table put it in the trailing
+ *  planning-calls group instead. */
 const PLANNING_FAN_AFTER: Record<string, string | undefined> = {
   'open-resplit': 'open-coverage-',
   review: 'review-',
@@ -3662,6 +3860,33 @@ export function supervisionRollingCaption(
   return `look ${lane.attempt}${(lane.superseded?.length ?? 0) > 0 ? ' · earlier looks folded' : ''}`;
 }
 
+/** The engine's slice id for the still-open decisions lane (decisions.rs `DECISION_SLICE`), which is
+ *  not a slice a reader knows by that name. */
+const DECISION_SLICE = '__open_decisions__';
+
+/** A research slice id as a reader sees it: the opener's slice id verbatim, or "open decisions" for
+ *  the engine's decisions pseudo-slice. */
+export function researchSliceLabel(slice: string): string {
+  return slice === DECISION_SLICE ? 'open decisions' : slice;
+}
+
+/**
+ * The research lane's caption — identity before the ' · ' cut (laneSiblingTitle), caption after.
+ * Two engine key shapes: `research-<slice>-q<n>` (r6b–r6d: one lane per question; slice ids can
+ * themselves contain hyphens, so the TRAILING -qN is matched) and `research-<slice>` (the fan cut,
+ * C3: one lane per slice carrying `questions` of them). The count is the events' — omitted when the
+ * lane is known only from its digest, never guessed.
+ */
+export function researchLaneLabel(key: string, questions?: number): string {
+  const perQuestion = key.match(/^research-(.+)-q(\d+)$/);
+  if (perQuestion)
+    return `Research ${researchSliceLabel(perQuestion[1])} q${perQuestion[2]} · one opener question, answered read-only`;
+  const slice = researchSliceLabel(key.slice('research-'.length));
+  if (questions != null && questions > 0)
+    return `Research ${slice} · ${questions} question${questions === 1 ? '' : 's'} in one read-only session`;
+  return `Research · ${slice}`;
+}
+
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
   // r6 supervision lanes, labels derived from the key CLASS — this derivation (not a hardcoded
@@ -3683,14 +3908,7 @@ function digestLabel(key: string): string {
   if (key.startsWith('slice-')) return `Slice · ${key.slice('slice-'.length)}`;
   if (key.startsWith('open-coverage-'))
     return `Coverage ${key.slice('open-coverage-'.length)} · what the request names that nothing owns`;
-  if (key.startsWith('research-')) {
-    // Engine key format: `research-<slice>-q<index>` (research_fan's activity_key). Slice ids can
-    // themselves contain hyphens, so match the trailing -qN, not the first hyphen.
-    const m = key.match(/^research-(.+)-q(\d+)$/);
-    return m
-      ? `Research ${m[1]} q${m[2]} · one opener question, answered read-only`
-      : `Research · ${key.slice('research-'.length)}`;
-  }
+  if (key.startsWith('research-')) return researchLaneLabel(key);
   if (key.startsWith('review-'))
     return `Review ${key.slice('review-'.length)} · this part of the request against the whole plan`;
   if (key === 'open') return 'Opening · cutting the request into slices';
@@ -4012,6 +4230,16 @@ export function buildPhaseTodo(
   const r2Reasons = new Map<string, number>();
   let r2NoQuestions = false;
   let r2FanPanicked = false;
+  // The fan's QUEUE event (research_planned, v2 shape: `questions` is a NUMBER). `facts` are the
+  // questions the opener settled as cited spec facts — answered with NO lane, so they are outside
+  // every lane count and the header must say so in those words. `lanes` (C3) is the session count.
+  let r2Planned: {
+    questions: number;
+    dispatching: number;
+    resumed: number;
+    facts: number;
+    lanes: number | null;
+  } | null = null;
   let planConf: number | null = null;
   let taskCount: number | null = null;
   let pillarsN: number | null = null;
@@ -4134,7 +4362,21 @@ export function buildPhaseTodo(
       };
     else if (t === 'complete_fix_wave' || t === 'spec_repair_wave') fixWaves += 1;
     else if (t === 'scouts_planned') scoutsN = arr(e['lenses']).length || (num(e['count']) ?? 0);
-    else if (t === 'research_planned') researchQ = num(e['count']) ?? arr(e['questions']).length;
+    else if (t === 'research_planned') {
+      // Two shapes share the name. The v2 fan's queue event carries `questions` as a NUMBER (plus
+      // dispatching/resumed, and facts/lanes since the fan cut); the retired scout-era shape carried a
+      // `questions` ARRAY or a `count`. Reading the v2 number through `arr()` yielded 0 and lit the
+      // legacy "Research questions scoped — 0" row for the moment before the first dispatch.
+      if (typeof e['questions'] === 'number' || e['dispatching'] != null)
+        r2Planned = {
+          questions: num(e['questions']) ?? 0,
+          dispatching: num(e['dispatching']) ?? 0,
+          resumed: num(e['resumed']) ?? 0,
+          facts: num(e['facts']) ?? 0,
+          lanes: num(e['lanes']),
+        };
+      else researchQ = num(e['count']) ?? arr(e['questions']).length;
+    }
     else if (t === 'research_dispatched') r2Dispatched += 1;
     else if (t === 'research_answered') r2Answered += 1;
     else if (t === 'research_unanswered') {
@@ -4345,9 +4587,35 @@ export function buildPhaseTodo(
   const legacyResearch = scoutsN != null || researchQ != null || researchDone != null;
   const research: PhaseTodoItem[] = [];
   const r2Settled = r2Answered + r2Unanswered;
-  if (r2Dispatched > 0 || r2NoQuestions || r2FanPanicked) {
+  if (r2Dispatched > 0 || r2NoQuestions || r2FanPanicked || r2Planned) {
     if (r2NoQuestions)
       research.push(it('r2-none', 'No research questions — the opener raised none', 'skipped'));
+    else if (r2Planned && r2Dispatched === 0 && !r2FanPanicked && r2Planned.dispatching === 0)
+      // The whole queue was settled without a lane: every question a cited spec fact or a resumed
+      // ledger row. Before this branch the legacy rows read "Research questions scoped — 0" and
+      // "Researching…" running, forever, on a fan that had nothing left to dispatch.
+      research.push(
+        it(
+          'r2-facts',
+          `Research — nothing to dispatch: ${r2Planned.facts} answered from the spec${
+            r2Planned.resumed > 0 ? `, ${r2Planned.resumed} resumed from the ledger` : ''
+          }`,
+          'done',
+          'a cited spec fact is settled in its slice brief without a lane'
+        )
+      );
+    else if (r2Planned && r2Dispatched === 0 && !r2FanPanicked)
+      // Queue built, first dispatch not yet on the log (the covered-by-mini check runs per question
+      // before a lane is called) — running, with the engine's own denominator.
+      research.push(
+        it(
+          'r2-queued',
+          `Research planned — ${r2Planned.dispatching} question${r2Planned.dispatching === 1 ? '' : 's'} queued${
+            r2Planned.lanes != null ? ` across ${r2Planned.lanes} lane${r2Planned.lanes === 1 ? '' : 's'}` : ''
+          }`,
+          'running'
+        )
+      );
     else if (r2FanPanicked)
       // The whole fan died at the join — any answers its lanes produced were lost with it.
       research.push(
@@ -4363,7 +4631,11 @@ export function buildPhaseTodo(
         it(
           'r2-run',
           `Researching — ${r2Settled} of ${r2Dispatched} question${r2Dispatched === 1 ? '' : 's'} settled`,
-          'running'
+          'running',
+          // The queue's own denominator, when the log carries it and more is still to dispatch.
+          r2Planned && r2Planned.dispatching > r2Dispatched
+            ? `${r2Planned.dispatching} planned${r2Planned.lanes != null ? ` across ${r2Planned.lanes} lane${r2Planned.lanes === 1 ? '' : 's'}` : ''}`
+            : undefined
         )
       );
     else
@@ -4759,10 +5031,11 @@ export function buildPhaseTodo(
     if (real.some((i) => i.state === 'unverified')) return 'unverified';
     return 'pending';
   };
-  const mk = (key: PhaseKey, label: string, items: PhaseTodoItem[]): PhaseTodo => ({
+  const mk = (key: PhaseKey, label: string, items: PhaseTodoItem[], note?: string): PhaseTodo => ({
     key,
     label,
     items,
+    note,
     state: rollUp(items),
     active: false,
     counts: {
@@ -4793,7 +5066,16 @@ export function buildPhaseTodo(
   const phases: PhaseTodo[] = [
     mk('open', 'Open', open),
     mk('ask', 'Ask', ask),
-    mk('research', 'Research', research),
+    // The header carries what NO lane shows: the questions the opener settled as cited spec facts.
+    // They are outside every lane and every row count below, so the words say "(no lane)".
+    mk(
+      'research',
+      'Research',
+      research,
+      r2Planned && r2Planned.facts > 0
+        ? `${r2Planned.facts} answered from the spec (no lane)`
+        : undefined
+    ),
     mk('synthesis', 'Synthesize', synthesis),
     mk('review', 'Review', review),
     mk('contracts', 'Contracts', contracts),
