@@ -188,9 +188,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// extracted to swarm_engine::prewarm_pool (per-device planner routing, pinned by recording-
 /// engine tests) and `reconcile_pool_with_fleet` moved beside `merge_sidecar_devices`, paying
 /// for the planner-keep guard and the loud file-level config-load failure in load_config.
+/// Tightened to 44,997 (S-H1): the planner servability fallback extracted to
+/// swarm_engine::planner_fallback, keyed on the engine of the pool device carrying the planner.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_999;
+    const SWARM_RS_LINE_BASELINE: usize = 44_997;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

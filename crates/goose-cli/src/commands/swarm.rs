@@ -33,8 +33,9 @@ use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
-    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, prewarm_pool,
-    reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind, Engines, LmsProcess,
+    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, planner_fallback,
+    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind,
+    Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -36530,24 +36531,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
         // The PLANNER is pinned separately, and a withdrawn planner model kills the run before a single task
         // is dispatched — every draft returns a 400 as *text*, so the planner "answers" with an error and the
-        // engine plans from nothing. If the configured planner is not servable, fall back to a device that is.
-        // The planner runs on the LM Studio engine today, so consult ITS servable set (absent
-        // entirely when the pool carried no LM Studio device — then nothing is proven, no fallback).
-        if let Some(served) = served.get(&EngineKind::LmStudio).and_then(|o| o.as_ref()) {
-            if !served.contains(&cfg.planner_model) {
-                if let Some(alt) = fleet_pool.first() {
-                    eprintln!(
-                        "{}",
-                        style(format!(
-                            "planner '{}' is NOT servable by {} — falling back to '{}'",
-                            cfg.planner_model, cfg.endpoint, alt.model_id
-                        ))
-                        .yellow()
-                        .bold()
-                    );
-                    cfg.planner_model = alt.model_id.clone();
-                }
-            }
+        // engine plans from nothing. If the configured planner is not servable BY ITS OWN ENGINE (the
+        // engine of the pool device carrying it; LM Studio when none does), fall back to a device that is.
+        if let Some((host, alt)) =
+            planner_fallback(&engines, &fleet_pool, &served, &cfg.planner_model)
+        {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "planner '{}' is NOT servable by {} — falling back to '{}'",
+                    cfg.planner_model, host, alt
+                ))
+                .yellow()
+                .bold()
+            );
+            cfg.planner_model = alt;
         }
         for (id, model_id) in &unservable {
             eprintln!(

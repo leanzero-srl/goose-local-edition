@@ -311,6 +311,40 @@ pub(super) fn all_resident_unservable_per_engine(
     })
 }
 
+/// The planner's servability fallback, decided by the engine of the POOL DEVICE that carries
+/// the planner model. Before this the check consulted `served[LmStudio]` no matter where the
+/// planner lived, so on a mixed pool (three LM Studio devices + a sidecar planner) the LM Studio
+/// catalog — which by construction never lists a sidecar alias — "proved" the planner
+/// unservable and silently moved it to `fleet_pool[0]`. A planner carried by no pool device is
+/// LM Studio by definition (the historical shape, unchanged). Returns `Some((host, alt))` only on
+/// a negative PROVEN by the planner's own engine — its probe answered with a non-empty set that
+/// lacks the planner — and only when the pool has a first device to fall back to. An unmounted
+/// sidecar probes to None (unproven) and is left alone: the pre-warm mounts it.
+pub(super) fn planner_fallback(
+    engines: &Engines,
+    fleet_pool: &[SwarmDevice],
+    served: &HashMap<EngineKind, Option<HashSet<String>>>,
+    planner_model: &str,
+) -> Option<(String, String)> {
+    let planner_kind = fleet_pool
+        .iter()
+        .find(|d| d.model_id == planner_model)
+        .map(device_engine_kind)
+        .unwrap_or(EngineKind::LmStudio);
+    let set = served.get(&planner_kind)?.as_ref()?;
+    if set.contains(planner_model) {
+        return None;
+    }
+    let alt = fleet_pool.first()?.model_id.clone();
+    // A proven set for a kind implies its engine is registered (an unregistered kind probes to
+    // None above); the label on the unreachable arm names the kind rather than inventing a host.
+    let host = engines
+        .for_kind(planner_kind)
+        .map(|e| e.http_host())
+        .unwrap_or_else(|| format!("{planner_kind:?} (no engine registered)"));
+    Some((host, alt))
+}
+
 /// The one engine today. Construct through `default_engine` so every call site shares the seam
 /// a second engine will slot into.
 pub struct LmStudioEngine;
@@ -1222,12 +1256,17 @@ mod tests {
     /// honest emptiness — no lms, no network.
     struct RecordingEngine {
         name: &'static str,
+        host: &'static str,
         calls: std::sync::Mutex<Vec<(String, u32)>>,
     }
     impl RecordingEngine {
         fn new(name: &'static str) -> Arc<Self> {
+            Self::with_host(name, "")
+        }
+        fn with_host(name: &'static str, host: &'static str) -> Arc<Self> {
             Arc::new(Self {
                 name,
+                host,
                 calls: std::sync::Mutex::new(Vec::new()),
             })
         }
@@ -1240,7 +1279,7 @@ mod tests {
             self.name
         }
         fn http_host(&self) -> String {
-            String::new()
+            self.host.to_string()
         }
         fn catalog_probe(&self) -> Vec<LmsProcess> {
             Vec::new()
@@ -1310,6 +1349,92 @@ mod tests {
                 ("some-other-planner".to_string(), 1),
                 ("gabee-qwen".to_string(), 1),
             ]
+        );
+    }
+
+    /// S-H1 pinned on the mixed pool [gabee, mihai, workhorse-27b, workhorse-mlx]: the LM Studio
+    /// catalog never lists a sidecar alias, so consulting it for a sidecar planner "proved" the
+    /// planner unservable and moved it to fleet_pool[0]. The planner's OWN engine decides —
+    /// mounted (its probe serves the alias) → kept; unmounted (probe None) → left for the
+    /// pre-warm; withdrawn on its own engine → the fallback names THAT engine's host.
+    #[test]
+    fn planner_fallback_consults_the_engine_of_the_device_carrying_the_planner() {
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::with_host(
+            "lmstudio",
+            "http://lm.local:1234",
+        ));
+        engines.register_sidecar(
+            "mlx-sidecar",
+            RecordingEngine::with_host("omlx", "http://127.0.0.1:8899"),
+        );
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let pool = vec![
+            dev("mac-gabee", "gabee-qwen3.8-27b", None),
+            dev("local-mihai", "mihai-qwen3.8-27b", None),
+            dev("works-workhorse", "workhorse-qwen3.8-27b", None),
+            dev("workhorse-mlx", alias, Some(EngineKind::MlxSidecar)),
+        ];
+        let lm_ids: &[&str] = &[
+            "gabee-qwen3.8-27b",
+            "mihai-qwen3.8-27b",
+            "workhorse-qwen3.8-27b",
+        ];
+        // Mounted: the sidecar's own probe serves the alias -> the planner is KEPT (the old code
+        // read served[LmStudio] here and moved it to gabee).
+        let map = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, Some(&[alias])),
+        ]);
+        assert_eq!(planner_fallback(&engines, &pool, &map, alias), None);
+        // Unmounted: the sidecar probe cannot answer -> unproven -> kept for the pre-warm.
+        let map = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, None),
+        ]);
+        assert_eq!(planner_fallback(&engines, &pool, &map, alias), None);
+        // Proven by ITS engine (a different alias is mounted): fall back, naming the sidecar host.
+        let map = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, Some(&["workhorse-other-alias"])),
+        ]);
+        assert_eq!(
+            planner_fallback(&engines, &pool, &map, alias),
+            Some((
+                "http://127.0.0.1:8899".to_string(),
+                "gabee-qwen3.8-27b".to_string()
+            ))
+        );
+        // All-LM pool, byte-identical to the LM-only check: a withdrawn planner falls back with
+        // the LM host; a served one stays; a failed LM probe proves nothing.
+        let lm_pool = &pool[..3];
+        let map = served(&[(EngineKind::LmStudio, Some(lm_ids))]);
+        assert_eq!(
+            planner_fallback(&engines, lm_pool, &map, "mihai-withdrawn-27b"),
+            Some((
+                "http://lm.local:1234".to_string(),
+                "gabee-qwen3.8-27b".to_string()
+            ))
+        );
+        assert_eq!(
+            planner_fallback(&engines, lm_pool, &map, "mihai-qwen3.8-27b"),
+            None
+        );
+        let map = served(&[(EngineKind::LmStudio, None)]);
+        assert_eq!(
+            planner_fallback(&engines, lm_pool, &map, "mihai-withdrawn-27b"),
+            None
+        );
+        // A planner carried by NO pool device is LM Studio by definition — the historical shape.
+        let map = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, Some(&[alias])),
+        ]);
+        assert_eq!(
+            planner_fallback(&engines, &pool, &map, "nowhere-planner"),
+            Some((
+                "http://lm.local:1234".to_string(),
+                "gabee-qwen3.8-27b".to_string()
+            ))
         );
     }
 
