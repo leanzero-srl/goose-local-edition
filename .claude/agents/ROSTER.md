@@ -516,3 +516,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   selectable, never fake "no key" (loud-absence held); no-key rows are a STATE with a deep-link
   pane, not dead rows; live proof used this machine's real credential truth (bedrock configured,
   three no-key). Cosmetic Done/Cancel footer nit reported not absorbed. Charter gap: none.
+- 2026-09-01 mesh sidecar (general-purpose, crates/leanzero-link, 8048946c2): CLEAN++. Verified
+  every daemon flag against the actual binary before use; refused to reuse goose-sidecar's Sidecar
+  when its HTTP readiness contract didn't fit a unix-socket daemon and said why; validate() makes
+  the system socket/state PATHS unrepresentable (isolation as a type-level gate, not a promise);
+  live test ran the full protocol with before/after identity proof of the personal daemon while
+  the benchmark ran; set-but-missing env override is a hard error (no fall-through). Charter-grade
+  discipline without a charter — if a third link-backend brief lands, mint `link-backend` from
+  this pass + the worker pass.

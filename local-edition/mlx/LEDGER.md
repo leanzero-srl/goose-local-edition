@@ -334,3 +334,6 @@ oMLX's headline strength and must be re-verified on current engine versions, not
 
 **Gates stood up the same day:** `gates.py` (memory-mount, port-safety, fleet-untouched) with
 BLOCK+ALLOW self-tests in `gates_selftest.py`, on the acting path before any mount.
+
+MESH WIRE SHAPE (control service + UI bind to this; 8048946c2):
+MeshStatus{self_ip?, self_hostname?, backend_state: NoState|InUseOtherUser|NeedsLogin|NeedsMachineAuth|Stopped|Starting|Running|Other(s), online, peers[]}; MeshPeer{hostname, ip?, online, last_seen?(RFC3339, None while connected)}. Daemon: brew tailscaled 1.98.5, --tun=userspace-networking --statedir ~/.leanzero/tailscale --socket ~/.leanzero/tailscale/tailscaled.sock --no-logs-no-support; CLI --socket is GLOBAL before subcommand; up takes --auth-key --hostname --accept-routes=false --login-server --timeout --advertise-tags --reset.
