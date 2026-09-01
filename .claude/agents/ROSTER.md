@@ -571,3 +571,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   misclassification) and flagged it as the one brief-listed kind not produced, with the reason;
   carried origin seq across the seam instead of re-minting where session identity is lost. Charter
   gap: none.
+- 2026-09-01 link-backend (cross-node remote execute, e15a4867c): CLEAN++. EXTRACTED spawn_reply_task
+  from the reply route so remote-execute reuses the exact agent-spawn core (no loop reimplementation,
+  both callers share it); receive-side idle guard is a real 409 (not dead); executor is an Option
+  seam that 501s when unwired (loud, never fake-accept); allow_remote_execution default-true with a
+  documented observe-only false; stated the security model (RCE among same-account devices) loudly;
+  left the ACP method + dispatcher graft to the correct owners rather than half-wiring. Deviations
+  each reasoned (executor as start-param not Debug-config-field). Charter gap: none.
