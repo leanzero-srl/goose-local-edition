@@ -501,6 +501,29 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
 /// message with no tool call. Moved verbatim from swarm.rs's omni-look (incremental-split law);
 /// that paragraph is the one addition.
 pub(super) fn judge_contract() -> String {
+    format!(
+        "{JUDGE_CONTRACT_HEAD}{}{JUDGE_CONTRACT_TAIL}",
+        own_turn_sentence()
+    )
+}
+
+/// The judge probe's turn budget — ONE derivation for four facts that used to be copies: the
+/// probe's `max_turns` at dispatch, the structural probe predicate in `run_agent_in_inner`
+/// (which strips the developer toolset from the judge lane — r6e E14), the `<turn-budget>
+/// {n}/{n} used` sentence in the contract, and the tripwire test that pins it.
+pub(super) const JUDGE_PROBE_TURNS: u32 = 1;
+
+fn own_turn_sentence() -> String {
+    format!(
+        "You answer in ONE message with no tool call. Your own request carries a <turn-context> \
+         block whose <turn-budget> reads {t}/{t} used: that is YOUR single turn — the one message \
+         you are writing now — never the call's. Any turn-budget or turn-count text inside the \
+         excerpt belongs to the call you are reading, never to you.\n",
+        t = JUDGE_PROBE_TURNS
+    )
+}
+
+const JUDGE_CONTRACT_HEAD: &str =
     "You supervise ONE running agent call on a shared multi-agent build. You are \
      given its goal, what it has produced so far, a measurement of how much its reasoning is \
      repeating, a sample of its reasoning from much earlier in the same call, its recent \
@@ -508,12 +531,10 @@ pub(super) fn judge_contract() -> String {
      actually written plus the head of the file itself.\n\
      THE FILE CHECKS ARE FACTS AND OUTRANK THE REASONING. A call that sounds confident \
      while its owned file does not exist, does not parse, or holds nothing but stubs is \
-     not progressing, whatever its narration says.\n\
-     You answer in ONE message with no tool call. Your own request carries a <turn-context> \
-     block whose <turn-budget> reads 1/1 used: that is YOUR single turn — the one message you are \
-     writing now — never the call's. Any turn-budget or turn-count text inside the excerpt \
-     belongs to the call you are reading, never to you.\n\
-     Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
+     not progressing, whatever its narration says.\n";
+
+const JUDGE_CONTRACT_TAIL: &str =
+    "Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
      Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
      revisiting the same analysis without adding evidence, resolving a decision, or taking the \
      next concrete step.\n\
@@ -567,8 +588,75 @@ pub(super) fn judge_contract() -> String {
      only party that can judge this: you have read what it has established, what it is \
      doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
      not on how long it has already taken. ETA=0m means it is essentially done. If you \
-     genuinely cannot tell, write ETA=? rather than inventing a number."
-        .to_string()
+     genuinely cannot tell, write ETA=? rather than inventing a number.";
+
+/// WHAT THIS CALL IS FOR, in one line, for the judge.
+///
+/// The judge was given the reasoning tail and nothing else, so it inferred the call's purpose from what
+/// the call happened to be talking about. MEASURED on a live run: it watched the plan-REVIEW call, saw it
+/// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
+/// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
+/// at all. A supervisor that does not know what it is supervising does not help — it derails.
+/// (Moved verbatim from swarm.rs under the incremental-split law, paying for E14's tool gate.)
+pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
+    match activity_key {
+        Some(k) if k.starts_with("open-coverage") => {
+            "build a COVERAGE TABLE for its part of the request: every component that part names, which \
+             slice owns each, and a QUOTE from that slice's objective proving it. It must NOT write code \
+             and must NOT rewrite the slices that exist.\n\n\
+             THIS CALL IS SUPPOSED TO LOOK REPETITIVE, and that is the thing to understand before you \
+             judge it. Its deliverable IS a table: dozens of near-identical rows, each naming a component \
+             and an owner in the same shape. Structural repetition here is the call doing exactly what it \
+             was asked to do. MEASURED: judging that shape as a loop re-streamed these lanes three times \
+             in one run, and every re-stream threw away the whole partial table and started the \
+             enumeration again from the top — which is why a phase that should take minutes took thirty. \
+             It is stuck only if the rows stop ADVANCING: the same component named twice, or an owner it \
+             has already given. Rows that merely look alike are progress."
+        }
+        Some("open") | Some("open-resplit") => {
+            "split the request into balanced semantic slices, naming each slice's owned files in its \
+             objective as OWNERSHIP DECLARATIONS. It must NOT write code, plan tasks, or dependencies."
+        }
+        Some("synthesis") => {
+            "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
+             must NOT write code and must NOT restate the specifications."
+        }
+        Some(k) if k == "review" || k.starts_with("review-") => {
+            "read the original request against the plan and return a small structural PATCH. It must \
+             NOT write code, and must NOT rewrite any task's specification. A fanned lane (review-N) \
+             holds ONE portion of the request and the whole plan, so a task that looks unrelated to its \
+             portion is almost certainly owned by another portion — that is not a finding."
+        }
+        Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
+        Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
+        Some(k) if k.starts_with("slice-") => {
+            "answer its slice's questions and then give that module's SPECIFICATION — interfaces, edge \
+             cases, files — AS ITS REPLY. The specification is what it says back, not a file it puts on \
+             disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
+             the implementation."
+        }
+        Some(k) if k.starts_with("research-") => {
+            "answer ONE named question about the request as a HANDOFF — exact files, exact \
+             key/field literals, conventions stated as conventions. It must NOT write code and \
+             has no file-writing tools; its structured reply IS its deliverable. Different \
+             research questions legitimately cover similar ground — it is stuck only if its OWN \
+             answer stops advancing."
+        }
+        Some(k) if k.starts_with("apptest-") => {
+            "exercise the BUILT app from one angle and report the defects it observes, with the files \
+             each touches. It must NOT fix anything and must not edit a single file — a call reporting \
+             bugs without writing code is doing this job exactly right."
+        }
+        Some(k) if k.starts_with("contract-") => {
+            "emit a signature-only stub for one module. It must NOT implement anything."
+        }
+        Some("integrate-verify") => {
+            "assemble the produced modules, run the tests, boot the app and exercise the commands the \
+             request advertises."
+        }
+        // A dispatched build worker: the only kind that SHOULD be writing files.
+        _ => "implement its assigned module — write the files it owns, then verify them.",
+    }
 }
 
 /// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
@@ -1220,7 +1308,11 @@ mod reply_tests {
     fn the_judge_contract_owns_its_turn_budget_and_answers_in_one_message() {
         let c = judge_contract();
         assert!(c.contains("You answer in ONE message with no tool call."));
-        assert!(c.contains("<turn-budget> reads 1/1 used: that is YOUR single turn"));
+        assert!(c.contains(&format!(
+            "<turn-budget> reads {t}/{t} used: that is YOUR single turn",
+            t = JUDGE_PROBE_TURNS
+        )));
+        assert!(c.starts_with("You supervise ONE running agent call"));
         assert!(c.contains("belongs to the call you are reading, never to you."));
         assert!(c.contains("VERDICT|CONFIDENCE|ESTABLISHED|NEXT"));
         assert!(c.contains("You may never request termination."));
