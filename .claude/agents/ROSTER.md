@@ -591,3 +591,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   with reasons (P4 already mirrors; a remote session has no local route). CRITICAL catch: reported
   that NO goosed binary on the machine contains any leanzeroLink method — the bundle predates the
   feature; end-to-end needs a fresh release-binary. Charter gap: none.
+- 2026-09-01 link-backend (remote model mgmt #21, c26940e94): CLEAN++. Optional-nodeId-on-all-16
+  design (minimal UI change, no per-op branching) with the 16 handler bodies EXTRACTED into shared
+  core_* fns so local and remote share one impl (no copy); peer errors preserve the local error
+  CLASS + text verbatim (gate-BLOCK→invalid_params, node-failure→internal); one /v1/swarm/mlx/{op}
+  route validated against MlxOp (unknown→404); documented the two honest asymmetries (no idle guard
+  on management by design; remote status skips the local inventory-refresh to avoid a circular dep).
+  Destructive ops warn-log on the executor. Charter gap: none.
