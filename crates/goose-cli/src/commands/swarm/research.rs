@@ -15,7 +15,7 @@ use super::findings::FINDING_PATH_EXTS;
 use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
 use super::orientation::{children_of, heading_key, top_level};
 use super::research_plan::{content_words, decision_ids};
-use super::spec_surface::spec_surface_rows;
+use super::spec_surface::{path_token_named, spec_surface_rows};
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
@@ -582,22 +582,6 @@ fn advertised_paths(sec: &SpecSection) -> Vec<String> {
     out
 }
 
-/// Does `text` name `route` as a whole path token? Bounded on both sides so notifierd's
-/// `/health` is not found inside ledgerd's `/api/health` (the r6c prototype's one false hit),
-/// and `/api/drafts` is not found inside `/api/drafts/<id>/submit` — that longer row has its own
-/// path. A byte before or after that is not part of a path token (alphanumeric, `_`, `/`, `.`,
-/// `-`) is a boundary; the routes are ASCII, so byte offsets are char offsets around them.
-fn route_named(route: &str, text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let is_path_byte = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'.' | b'-');
-    text.match_indices(route).any(|(at, _)| {
-        let before_ok = at == 0 || !is_path_byte(bytes[at - 1]);
-        let end = at + route.len();
-        let after_ok = end >= bytes.len() || !is_path_byte(bytes[end]);
-        before_ok && after_ok
-    })
-}
-
 /// The sections a slice CONSUMES without owning them (VA-008), rendered in the same
 /// `### heading\nbody` shape as its own splice, plus the sections that bind every slice.
 pub(super) struct ConsumedSections {
@@ -695,7 +679,7 @@ pub(super) fn consumed_spec_sections(
         }
         if advertised_paths(sec)
             .iter()
-            .any(|p| route_named(p, &vocabulary))
+            .any(|p| path_token_named(p, &vocabulary))
         {
             by_route.push(i);
         }
@@ -3425,11 +3409,6 @@ mod tests {
         let a = s(&["A"]);
         let cf = consumed_spec_sections("a", &a, &[], &[&a], &flat, &NullSink);
         assert!(cf.called_into.is_empty() && cf.cross_cutting.is_empty());
-
-        assert!(route_named("/api/y", "GET `/api/y` now"));
-        assert!(!route_named("/health", "GET /api/health"));
-        assert!(!route_named("/api/drafts", "/api/drafts/<id>/submit"));
-        assert!(route_named("/api/drafts", "POST /api/drafts?state=x"));
     }
 
     /// r6c's three plan-time decisions, verbatim: the questions from `low_confidence_ask` and

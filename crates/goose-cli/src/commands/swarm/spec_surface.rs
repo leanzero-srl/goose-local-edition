@@ -198,6 +198,208 @@ pub(super) fn spec_post_endpoints(spec: &str) -> Vec<String> {
     out
 }
 
+/// Does `text` name `path` as a whole path token? Bounded on both sides so notifierd's
+/// `/health` is not found inside ledgerd's `/api/health`, and `/api/drafts` is not found inside
+/// `/api/drafts/<id>/submit` — that longer row has its own path. A byte before or after that is
+/// not part of a path token (alphanumeric, `_`, `/`, `.`, `-`) is a boundary; paths are ASCII, so
+/// byte offsets are char offsets around them. Shared by the consumer routing
+/// (`research::consumed_spec_sections`, rule a) and the prose-shape label match below.
+pub(super) fn path_token_named(path: &str, text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let is_path_byte = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'.' | b'-');
+    text.match_indices(path).any(|(at, _)| {
+        let before_ok = at == 0 || !is_path_byte(bytes[at - 1]);
+        let end = at + path.len();
+        let after_ok = end >= bytes.len() || !is_path_byte(bytes[end]);
+        before_ok && after_ok
+    })
+}
+
+/// VA-005: the response keys a spec documents for an endpoint OUTSIDE its table row — the
+/// PROSE SHAPE. sb-7 writes three rows as `| GET | /api/health | shape below |` and puts the
+/// shape after the table, under a bold label, in a fenced block:
+///
+/// ```text
+/// **Health.**
+///
+/// ```json
+/// {"status": "ok", "payments": <int>, "last_sync": <str or null>,
+///  "webhook": {"registered": <bool>, ...}}
+/// ```
+/// ```
+///
+/// `spec_documented_keys` (swarm.rs) reads the row's own cell and found nothing for /api/health,
+/// /api/summary and /api/buckets on r6c/r6d — three of ledgerd's four JSON reads went unchecked.
+/// The rule, derived from the document: the section that advertises the row; inside it, a LABEL
+/// line — one that names the path as a token, or whose decoration-stripped text IS the path's
+/// last segment (`**Health.**` → `health`) — whose next non-empty line opens a fence; the keys
+/// are the TOP-LEVEL keys of that fenced shape (depth 1 of its outermost object), because the
+/// GET prober asserts documented keys at the top level (`v.get(k)`) and a flattened `registered`
+/// or `currency` would be filed as missing against a correct response. Empty when the section
+/// has no such label+fence — the caller then asserts nothing, exactly as for a prose cell. MILD.
+// Consumer pending in swarm.rs (`spec_documented_keys`, a batch-2a file at the time of this
+// commit): its trailing `Vec::new()` becomes `spec_surface::spec_prose_documented_keys(spec,
+// method, path)` — the prose shape is consulted only when the row's own cell documents none.
+// Remove this allowance in the commit that lands that hunk.
+#[allow(dead_code)]
+pub(super) fn spec_prose_documented_keys(spec: &str, method: &str, path: &str) -> Vec<String> {
+    let base = path.split('?').next().unwrap_or(path);
+    if !base.starts_with('/') {
+        return Vec::new();
+    }
+    let segment = base
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c| c == '<' || c == '>')
+        .to_lowercase();
+    let is_http_method = |m: &str| {
+        matches!(
+            m.trim().to_uppercase().as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+        )
+    };
+    let lines: Vec<&str> = spec.lines().collect();
+    let is_heading = |l: &str| {
+        let t = l.trim_start();
+        let n = t.chars().take_while(|c| *c == '#').count();
+        (1..=6).contains(&n) && t.get(n..).is_some_and(|r| r.starts_with(' '))
+    };
+    // The section (heading to heading, fences respected) whose table advertises the row.
+    let mut in_fence = false;
+    let mut section_start = 0usize;
+    let mut advertising_section: Option<(usize, usize)> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if is_heading(t) {
+            if let Some((start, _)) = advertising_section {
+                advertising_section = Some((start, i));
+                break;
+            }
+            section_start = i;
+            continue;
+        }
+        if advertising_section.is_some() || !t.starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = t.split('|').map(str::trim).collect();
+        let method_cell = cells
+            .iter()
+            .find(|c| !c.is_empty())
+            .map(|c| c.trim_matches('`'));
+        let names_a_method = method_cell.is_some_and(|c| c.split('/').any(is_http_method));
+        let names_this_method = method_cell
+            .is_some_and(|c| c.split('/').any(|m| m.trim().eq_ignore_ascii_case(method)));
+        if names_a_method && !names_this_method {
+            continue;
+        }
+        let advertises = cells.iter().any(|c| {
+            let c = c.trim_matches('`');
+            c.split(['?', '`', ' ']).next().unwrap_or("") == base
+        });
+        if advertises {
+            advertising_section = Some((section_start, lines.len()));
+        }
+    }
+    let Some((start, end)) = advertising_section else {
+        return Vec::new();
+    };
+    let label_names_path = |t: &str| -> bool {
+        if path_token_named(base, t) {
+            return true;
+        }
+        let stripped: String = t
+            .chars()
+            .filter(|c| !matches!(c, '*' | '_' | '`'))
+            .collect::<String>()
+            .trim()
+            .trim_end_matches(['.', ':'])
+            .to_lowercase();
+        !segment.is_empty() && stripped == segment
+    };
+    let mut in_fence = false;
+    let mut i = start;
+    while i < end {
+        let t = lines[i].trim();
+        if t.starts_with("```") {
+            in_fence = !in_fence;
+            i += 1;
+            continue;
+        }
+        if in_fence || t.is_empty() || t.starts_with('|') || is_heading(t) || !label_names_path(t) {
+            i += 1;
+            continue;
+        }
+        let Some(fence_at) = (i + 1..end).find(|j| !lines[*j].trim().is_empty()) else {
+            break;
+        };
+        if !lines[fence_at].trim().starts_with("```") {
+            i += 1;
+            continue;
+        }
+        let body: String = lines[fence_at + 1..end]
+            .iter()
+            .take_while(|l| !l.trim().starts_with("```"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        return top_level_keys(&body);
+    }
+    Vec::new()
+}
+
+/// The keys at depth 1 of a JSON-LIKE shape — the spec's notation (`<int>`, `<str or null>`,
+/// `[...]`) is not JSON a parser accepts, so this walks braces and brackets outside string
+/// literals and takes a string followed by `:` only inside the outermost object. Deduped, in
+/// document order.
+#[allow(dead_code)]
+fn top_level_keys(shape: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut current = String::new();
+    let chars: Vec<char> = shape.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+                let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
+                if depth == 1 && next == Some(&':') && !keys.contains(&current) {
+                    keys.push(current.clone());
+                }
+            } else {
+                current.push(c);
+            }
+        } else {
+            match c {
+                '"' => {
+                    in_string = true;
+                    current.clear();
+                }
+                '{' | '[' => depth += 1,
+                '}' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    keys
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +580,69 @@ mod tests {
                 "{r}"
             );
         }
+    }
+
+    /// VA-005 on the real sb-7 spec (the run's `.swarm/request.md` is this file): the three rows
+    /// whose Response cell says "shape below" document their keys in a fenced block under a bold
+    /// label. Top-level keys only — the GET prober asserts them with `v.get(k)`, so `registered`
+    /// (inside `webhook`) or `currency` (inside `by_currency` items) must NOT be returned. A row
+    /// with an inline shape, a label followed by prose (`**Sync.**`, `**Note.**`), a path with no
+    /// row and notifierd's own inline rows all yield nothing — the caller then asserts nothing.
+    #[test]
+    fn prose_shapes_under_a_label_document_the_top_level_keys_of_shape_below_rows() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        assert_eq!(
+            spec_prose_documented_keys(spec, "GET", "/api/health"),
+            vec!["status", "payments", "last_sync", "webhook"]
+        );
+        assert_eq!(
+            spec_prose_documented_keys(spec, "GET", "/api/summary"),
+            vec![
+                "count",
+                "last_sync",
+                "oldest",
+                "newest",
+                "by_currency",
+                "reversals"
+            ]
+        );
+        assert_eq!(
+            spec_prose_documented_keys(spec, "GET", "/api/buckets"),
+            vec!["timezone", "days", "statuses", "cells"]
+        );
+        for (method, path) in [
+            ("GET", "/api/payments?limit=1&offset=1"),
+            ("POST", "/api/sync"),
+            ("POST", "/api/payments/<id>/note"),
+            ("GET", "/api/outbox/status"),
+            ("GET", "/health"),
+            ("POST", "/notify/events"),
+            ("GET", "/api/nowhere"),
+            ("POST", "/api/health"),
+        ] {
+            assert!(
+                spec_prose_documented_keys(spec, method, path).is_empty(),
+                "{method} {path} documents no prose shape"
+            );
+        }
+        // A label naming the PATH (not the segment) works too, the fence must be the next
+        // non-empty line, and a fence that is not the shape's yields nothing.
+        let doc = "## svc\n\n| Method | Path | Response |\n|---|---|---|\n\
+                   | `GET` | `/api/x` | shape below |\n| `GET` | `/api/y` | shape below |\n\n\
+                   The response of `GET /api/x`:\n\n```json\n{\"a\": 1, \"b\": {\"c\": 2}, \"d\": [{\"e\": 3}]}\n```\n\n\
+                   **Y.**\n\nSome prose first.\n\n```json\n{\"z\": 1}\n```\n";
+        assert_eq!(
+            spec_prose_documented_keys(doc, "GET", "/api/x"),
+            vec!["a", "b", "d"]
+        );
+        assert!(spec_prose_documented_keys(doc, "GET", "/api/y").is_empty());
+        assert_eq!(
+            top_level_keys("{\"k\": \"v:with:colons\", \"q\": [\"a\", {\"n\": 1}], \"k\": 2}"),
+            vec!["k", "q"]
+        );
+        assert!(path_token_named("/api/x", "GET `/api/x` now"));
+        assert!(!path_token_named("/health", "GET /api/health"));
+        assert!(!path_token_named("/api/drafts", "/api/drafts/<id>/submit"));
+        assert!(path_token_named("/api/drafts", "POST /api/drafts?state=x"));
     }
 }
