@@ -18,16 +18,6 @@ export const SLATE = 'var(--color-status-stopped-solid, #475569)';
  *  -solid fill cannot (3.5:1). Every AMBER fill in this window carries dark ink. */
 export const AMBER = 'var(--color-status-warn, #d97706)';
 export const INK_DARK = '#1a1a1a';
-/** @deprecated Decorative hues carry no meaning under the doctrine. Aliased to the accent /
- *  the neutral so remaining callers resolve to a sanctioned colour; delete once none remain. */
-export const TEAL = AZURE;
-export const VIOLET = SLATE;
-
-/** A publisher is NOT a node: it takes no hue from the node ramp. One neutral, whatever the
- *  author — callers should prefer rendering the author as text or a quiet chip. */
-export function authorHue(_author: string): string {
-  return SLATE;
-}
 
 export const GB = 1024 * 1024 * 1024;
 

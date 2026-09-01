@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { AZURE, Chip, GREEN, RED, SLATE, authorHue } from './primitives';
+import { AZURE, Chip, GREEN, RED, SLATE } from './primitives';
 
 // The token doctrine (main.css `.local-edition`): ONE accent, the status triad for state, and
 // nothing else coloured. These pin the two chip registers and that a publisher takes no hue.
@@ -36,12 +36,5 @@ describe('leanzero primitives — chip registers', () => {
       expect(c).toMatch(/^var\(--color-(action-solid|status-[a-z]+-solid), #[0-9a-f]{6}\)$/);
       expect(c).not.toContain('--color-node-');
     }
-  });
-
-  it('a publisher is not a node: authorHue is one neutral for every author', () => {
-    const hues = new Set(['mlx-community', 'lmstudio-community', 'prism-ml', 'Qwen'].map(authorHue));
-    expect(hues.size).toBe(1);
-    expect([...hues][0]).toBe(SLATE);
-    expect([...hues][0]).not.toContain('--color-node-');
   });
 });
