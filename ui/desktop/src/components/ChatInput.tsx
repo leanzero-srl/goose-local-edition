@@ -12,7 +12,6 @@ import { LocalMessageStorage } from '../utils/localMessageStorage';
 import { DirSwitcher } from './bottom_menu/DirSwitcher';
 import ModelsBottomBar from './settings/models/bottom_bar/ModelsBottomBar';
 import { BottomMenuExtensionSelection } from './bottom_menu/BottomMenuExtensionSelection';
-import { cn } from '../utils';
 import { AlertType, useAlerts } from './alerts';
 import { useModelAndProvider } from './ModelAndProviderContext';
 import { acpListProviderDetails } from '../acp/providers';
@@ -42,6 +41,7 @@ import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
 import { defineMessages, useIntl } from '../i18n';
+import { Button as StudioButton, Chip, StatusDot, TYPE, cx } from './lz';
 import TurndownService from 'turndown';
 import type { NextChatExtensionDraft } from '../utils/nextChatExtensions';
 
@@ -1501,13 +1501,13 @@ export default function ChatInput({
 
   return (
     <div
-      className={`flex flex-col relative h-auto p-4 transition-colors ${
-        disableAnimation ? '' : 'page-transition'
-      } ${
+      className={cx(
+        'flex flex-col relative h-auto p-4 transition-colors z-10 bg-lz-surface',
+        !disableAnimation && 'page-transition',
         isFocused
           ? 'border-border-secondary hover:border-border-secondary'
           : 'border-border-primary hover:border-border-primary'
-      } bg-background-primary z-10`}
+      )}
       data-drop-zone="true"
       onDrop={handleLocalDrop}
       onDragOver={handleLocalDragOver}
@@ -1532,7 +1532,7 @@ export default function ChatInput({
           editingMessageIdRef={editingMessageIdRef}
           sendingMessageIds={sendNowInFlightMessageIds}
           isPaused={queuePausedRef.current}
-          className="border-b border-border-primary"
+          className="border-b border-lz-border"
         />
       )}
       {/* Input row with inline action buttons wrapped in form */}
@@ -1559,23 +1559,31 @@ export default function ChatInput({
               maxHeight: `${maxHeight}px`,
               overflowY: 'auto',
             }}
-            className="w-full outline-none border-none focus:ring-0 bg-transparent px-3 pt-3 pb-1.5 text-sm resize-none text-text-primary placeholder:text-text-secondary"
+            className={cx(
+              'w-full outline-none border-none focus:ring-0 bg-transparent px-3 pt-3 pb-1.5 resize-none placeholder:text-lz-ink-4',
+              TYPE.body
+            )}
           />
 
           {/* Recording/transcribing status indicator (floats above the bottom bar) */}
           {(isRecording || isTranscribing) && (
-            <div className="absolute right-2 -bottom-2 bg-background-primary px-2 py-1 rounded text-xs whitespace-nowrap shadow-md border border-border-primary">
+            <div
+              className={cx(
+                'absolute right-2 -bottom-2 whitespace-nowrap rounded-lz-control border border-lz-border bg-lz-surface px-2 py-1',
+                TYPE.meta
+              )}
+            >
               <span className="flex items-center gap-2">
                 {isRecording && (
-                  <span className="flex items-center gap-1 text-text-secondary">
-                    <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                  <span className="flex items-center gap-1.5">
+                    <StatusDot tone="err" live label="Listening" />
                     Listening
                   </span>
                 )}
-                {isRecording && isTranscribing && <span className="text-text-secondary">•</span>}
+                {isRecording && isTranscribing && <span>•</span>}
                 {isTranscribing && (
-                  <span className="flex items-center gap-1 text-blue-500">
-                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                  <span className="flex items-center gap-1.5 text-lz-accent">
+                    <StatusDot tone="accent" live label="Transcribing" />
                     Transcribing
                   </span>
                 )}
@@ -1595,17 +1603,17 @@ export default function ChatInput({
                 <img
                   src={img.dataUrl}
                   alt={`Pasted image ${img.id}`}
-                  className={`w-full h-full object-cover rounded border ${img.error ? 'border-red-500' : 'border-border-primary'}`}
+                  className={`w-full h-full object-cover rounded border ${img.error ? 'border-lz-err' : 'border-lz-border'}`}
                 />
               )}
               {img.isLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded">
-                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white"></div>
+                <div className="absolute inset-0 flex items-center justify-center bg-lz-surface-2 rounded">
+                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-lz-ink"></div>
                 </div>
               )}
               {img.error && !img.isLoading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-75 rounded p-1 text-center">
-                  <p className="text-red-400 text-[10px] leading-tight break-all">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-lz-err-solid rounded p-1 text-center">
+                  <p className="text-white text-lz-meta leading-tight break-all">
                     {img.error.substring(0, 50)}
                   </p>
                 </div>
@@ -1615,7 +1623,7 @@ export default function ChatInput({
                   type="button"
                   shape="round"
                   onClick={() => handleRemovePastedImage(img.id)}
-                  className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity z-10"
+                  className="absolute -top-1 -right-1 z-10"
                   aria-label={intl.formatMessage(i18n.removeImage)}
                   variant="outline"
                   size="xs"
@@ -1636,17 +1644,17 @@ export default function ChatInput({
                     <img
                       src={file.dataUrl}
                       alt={file.name}
-                      className={`w-full h-full object-cover rounded border ${file.error ? 'border-red-500' : 'border-border-primary'}`}
+                      className={`w-full h-full object-cover rounded border ${file.error ? 'border-lz-err' : 'border-lz-border'}`}
                     />
                   )}
                   {file.isLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded">
-                      <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white"></div>
+                    <div className="absolute inset-0 flex items-center justify-center bg-lz-surface-2 rounded">
+                      <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-lz-ink"></div>
                     </div>
                   )}
                   {file.error && !file.isLoading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-75 rounded p-1 text-center">
-                      <p className="text-red-400 text-[10px] leading-tight break-all">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-lz-err-solid rounded p-1 text-center">
+                      <p className="text-white text-lz-meta leading-tight break-all">
                         {file.error.substring(0, 30)}
                       </p>
                     </div>
@@ -1673,7 +1681,7 @@ export default function ChatInput({
                   type="button"
                   shape="round"
                   onClick={() => handleRemoveDroppedFile(file.id)}
-                  className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity z-10"
+                  className="absolute -top-1 -right-1 z-10"
                   aria-label={intl.formatMessage(i18n.removeFile)}
                   variant="outline"
                   size="xs"
@@ -1694,7 +1702,7 @@ export default function ChatInput({
       <div ref={bottomBarRef} className="flex flex-row items-center gap-2 px-3 py-2 relative">
         {/* Left: model selector */}
         <Tooltip>
-          <div>
+          <Chip>
             <ModelsBottomBar
               sessionId={sessionId}
               dropdownRef={dropdownRef}
@@ -1705,7 +1713,7 @@ export default function ChatInput({
               onModelChanged={setModelOverride}
               sessionLoaded={sessionLoaded}
             />
-          </div>
+          </Chip>
         </Tooltip>
 
         {/* Left: persona chooser (Local Edition swarm only) */}
@@ -1719,14 +1727,14 @@ export default function ChatInput({
           />
         )}
         {isSwarmProvider && persona === 'agent' && !isBottomBarNarrow && (
-          <button
-            type="button"
+          <StudioButton
+            variant="ghost"
+            size="sm"
             onClick={() => setAgentWizardOpen(true)}
-            className="text-xs text-text-primary/70 hover:text-text-primary transition-colors underline underline-offset-2"
             title="Configure the autonomous Agent (loop, recipe, skills)"
           >
             set up
-          </button>
+          </StudioButton>
         )}
         {agentWizardOpen && (
           <AgentSetupWizard
@@ -1739,15 +1747,17 @@ export default function ChatInput({
 
         {/* Left: working directory (leaf folder name only) */}
         {!isBottomBarNarrow && (
-          <DirSwitcher
-            className=""
-            sessionId={sessionId ?? undefined}
-            workingDir={currentWorkingDir}
-            onWorkingDirChange={async (newDir) => {
-              await onWorkingDirChange?.(newDir);
-              setWorkingDirOverride(newDir);
-            }}
-          />
+          <Chip>
+            <DirSwitcher
+              className=""
+              sessionId={sessionId ?? undefined}
+              workingDir={currentWorkingDir}
+              onWorkingDirChange={async (newDir) => {
+                await onWorkingDirChange?.(newDir);
+                setWorkingDirOverride(newDir);
+              }}
+            />
+          </Chip>
         )}
 
         {/* Spacer */}
@@ -1758,21 +1768,25 @@ export default function ChatInput({
             {/* Right: cost tracker (when enabled). Never for the LeanZero MLX provider — local
                 inference has no price, so a cost readout there is a fabricated number (pass E). */}
             {COST_TRACKING_ENABLED && effectiveProvider !== MLX_PROVIDER_ID && (
-              <CostTracker
-                inputTokens={accumulatedInputTokens}
-                outputTokens={accumulatedOutputTokens}
-                accumulatedCost={accumulatedCost}
-                model={effectiveModel}
-                provider={effectiveProvider}
-              />
+              <Chip>
+                <CostTracker
+                  inputTokens={accumulatedInputTokens}
+                  outputTokens={accumulatedOutputTokens}
+                  accumulatedCost={accumulatedCost}
+                  model={effectiveModel}
+                  provider={effectiveProvider}
+                />
+              </Chip>
             )}
 
             {/* Right: context window indicator */}
-            <ContextWindowIndicator
-              totalTokens={totalTokens || 0}
-              tokenLimit={tokenLimit}
-              alerts={alerts}
-            />
+            <Chip>
+              <ContextWindowIndicator
+                totalTokens={totalTokens || 0}
+                tokenLimit={tokenLimit}
+                alerts={alerts}
+              />
+            </Chip>
 
             {/* Right: extension selector — hidden per pass E (SHOW_EXTENSIONS_SELECTOR) */}
             {SHOW_EXTENSIONS_SELECTOR && (
@@ -1787,19 +1801,17 @@ export default function ChatInput({
             {sessionId && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    type="button"
+                  <StudioButton
+                    variant="ghost"
+                    size="sm"
+                    className="w-7"
+                    aria-label="Generate diagnostics bundle"
                     onClick={() => {
                       trackDiagnosticsOpened();
                       setDiagnosticsOpen(true);
                     }}
-                    variant="ghost"
-                    size="sm"
-                    shape="round"
-                    className="text-text-primary/70 hover:text-text-primary cursor-pointer transition-colors"
-                  >
-                    <Bug className="w-4 h-4" />
-                  </Button>
+                    icon={<Bug />}
+                  />
                 </TooltipTrigger>
                 <TooltipContent>Generate diagnostics bundle</TooltipContent>
               </Tooltip>
@@ -1808,20 +1820,15 @@ export default function ChatInput({
             {/* Right: attach */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  onClick={handleFileSelect}
-                  disabled={isFilePickerOpen}
+                <StudioButton
                   variant="ghost"
                   size="sm"
-                  shape="round"
-                  className={cn(
-                    'text-text-primary/70 hover:text-text-primary transition-colors',
-                    isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  )}
-                >
-                  <Attach className="w-4 h-4" />
-                </Button>
+                  className="w-7"
+                  aria-label="Attach file"
+                  onClick={handleFileSelect}
+                  disabled={isFilePickerOpen}
+                  icon={<Attach />}
+                />
               </TooltipTrigger>
               <TooltipContent>Attach file</TooltipContent>
             </Tooltip>
@@ -1832,11 +1839,10 @@ export default function ChatInput({
         {dictationProvider && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                type="button"
+              <StudioButton
                 variant="ghost"
                 size="sm"
-                shape="round"
+                aria-label="Voice dictation"
                 onClick={() => {
                   if (!isEnabled) return;
                   if (isRecording) {
@@ -1852,17 +1858,19 @@ export default function ChatInput({
                 // We still natively disable while transcribing.
                 disabled={isTranscribing}
                 aria-disabled={!isEnabled}
-                className={cn(
-                  'transition-colors',
-                  isRecording
-                    ? 'text-red-500 hover:text-red-600'
-                    : 'text-text-primary/70 hover:text-text-primary',
-                  isTranscribing && 'animate-pulse',
-                  !isEnabled && 'opacity-50 cursor-not-allowed'
-                )}
-              >
-                <Microphone size={16} />
-              </Button>
+                className={cx('w-7', !isEnabled && 'cursor-not-allowed')}
+                icon={
+                  <span
+                    className={cx(
+                      'inline-flex',
+                      isRecording ? 'text-lz-err' : !isEnabled && 'text-lz-ink-4',
+                      isTranscribing && 'animate-lz-live'
+                    )}
+                  >
+                    <Microphone />
+                  </span>
+                }
+              />
             </TooltipTrigger>
             <TooltipContent>
               {!isEnabled ? (
@@ -1874,40 +1882,29 @@ export default function ChatInput({
           </Tooltip>
         )}
 
-        {/* Right: send / stop — soft gray circle with up-arrow */}
+        {/* Right: send = the one primary (accent) Button in the bar; stop = a secondary Button */}
         {isLoading && !hasSubmittableContent ? (
-          <Button
-            type="button"
-            onClick={handleStop}
+          <StudioButton
+            variant="secondary"
             size="sm"
-            shape="round"
-            variant="ghost"
+            className="w-7"
+            onClick={handleStop}
             aria-label="Stop"
-            className="bg-background-tertiary text-text-primary hover:bg-background-tertiary/70"
-          >
-            <Stop />
-          </Button>
+            icon={<Stop />}
+          />
         ) : (
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
-                <Button
-                  type="button"
+                <StudioButton
+                  variant="primary"
                   size="sm"
-                  shape="round"
-                  variant="ghost"
+                  className="w-7"
                   disabled={isSubmitButtonDisabled}
                   aria-label={intl.formatMessage(i18n.send)}
                   onClick={onFormSubmit}
-                  className={cn(
-                    'bg-background-tertiary',
-                    isSubmitButtonDisabled
-                      ? 'text-text-secondary cursor-not-allowed opacity-60'
-                      : 'text-text-primary hover:bg-background-tertiary/70 hover:cursor-pointer'
-                  )}
-                >
-                  <ArrowUp className="w-4 h-4" strokeWidth={2.25} />
-                </Button>
+                  icon={<ArrowUp strokeWidth={2.25} />}
+                />
               </span>
             </TooltipTrigger>
             <TooltipContent>
