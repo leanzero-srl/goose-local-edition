@@ -174,9 +174,6 @@ fn default_planner_also_works() -> bool {
 fn default_planner_weight() -> u32 {
     1
 }
-fn default_max_research() -> u32 {
-    4
-}
 fn default_dynamic_replan() -> bool {
     true
 }
@@ -345,9 +342,13 @@ pub struct SwarmConfig {
     /// Parallel research-planning phase before plan(). Auto = only when the cwd has source files.
     #[serde(default)]
     pub research_planning: ResearchPlanningMode,
-    /// Hard cap on parallel research workers (bounds latency + curbs make-work).
-    #[serde(default = "default_max_research")]
-    pub max_research_questions: u32,
+    /// RETIRED (the fan cut): it bounded v1's scout lenses, deleted with P1-5, and since then
+    /// was consumed nowhere — the v2 fan dispatches every opener question — while
+    /// `levers_resolved` printed it as a live bound. The field survives ONLY for the config
+    /// round-trip (an operator's config.yaml may still pin it); `None` when nobody names it,
+    /// echoed under `retired_levers` with its `configured` value (levers.rs).
+    #[serde(default)]
+    pub max_research_questions: Option<u32>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// When workers idle mid-run, let the planner inject more parallel work to fill the tail.
     #[serde(default = "default_dynamic_replan")]
@@ -1257,7 +1258,7 @@ impl Default for SwarmConfig {
             planner_weight: default_planner_weight(),
             context_cap: None,
             research_planning: ResearchPlanningMode::On,
-            max_research_questions: default_max_research(),
+            max_research_questions: None,
             scout_max_lookups: default_scout_max_lookups(),
             dynamic_replan: true,
             max_replans: default_max_replans(),
@@ -2116,9 +2117,8 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
-        "  research   {:?}   max-questions {}   mode {}",
+        "  research   {:?}   mode {}",
         cfg.research_planning,
-        style(cfg.max_research_questions).cyan(),
         if cfg.research_scouts {
             style("scouts(parallel)").green().bold()
         } else {
@@ -2295,7 +2295,6 @@ fn pool_menu() -> Result<()> {
                 "Allow model loading",
                 "let the swarm lms-load / pre-warm (off = resident only)",
             )
-            .item("max-research", "Max research questions / lenses", "")
             .item(
                 "replan",
                 "Dynamic replan on/off",
@@ -2463,12 +2462,6 @@ fn pool_menu() -> Result<()> {
                 )
                 .initial_value(cfg.allow_model_load)
                 .interact()?;
-            }
-            "max-research" => {
-                let v: String = cliclack::input("Max research questions / scout lenses")
-                    .default_input(&cfg.max_research_questions.to_string())
-                    .interact()?;
-                cfg.max_research_questions = v.trim().parse().unwrap_or(4).clamp(1, 8);
             }
             "replan" => {
                 cfg.dynamic_replan =
@@ -33132,7 +33125,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // a printed lever reads as a live lever, and measure.py trusts this map.
             "max_attempts": load_config().max_attempts,
             "max_replans": load_config().max_replans,
-            "max_research_questions": load_config().max_research_questions,
+            // max_research_questions left this map for `retired_levers` (the fan cut): it
+            // bounded v1's scout lenses and nothing has read it since P1-5 — a printed lever
+            // reads as a live lever, and this one claimed to bound research that is unbounded.
             "best_of_n_skeletons": load_config().best_of_n_skeletons,
             "scout_budget_secs": load_config().scout_budget_secs,
             "scout_max_lookups": load_config().scout_max_lookups,

@@ -27,7 +27,7 @@
   "planner_weight": 1,
   "context_cap": null,
   "research_planning": "on",
-  "max_research_questions": 4,
+  "max_research_questions": null,
   "dynamic_replan": true,
   "max_replans": 4294967295,
   "research_scouts": true,

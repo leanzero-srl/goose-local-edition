@@ -98,7 +98,6 @@ describe('swarm golden preset', () => {
     expect(DEFAULTS.planner_timeout_secs).toBe(900);
     expect(DEFAULTS.progress_watchdog_secs).toBe(900);
     expect(DEFAULTS.research_planning).toBe('on');
-    expect(DEFAULTS.max_research_questions).toBe(4);
     expect(DEFAULTS.scout_max_lookups).toBe(10);
     expect(DEFAULTS.scout_budget_secs).toBe(900);
     expect(DEFAULTS.best_of_n_skeletons).toBe(1);
