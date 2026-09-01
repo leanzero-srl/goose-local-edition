@@ -1427,6 +1427,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Show less"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Failed"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Loaded"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Loading"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Partially loaded"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{Successfully loaded # extension} other{Successfully loaded # extensions}}"
   },
