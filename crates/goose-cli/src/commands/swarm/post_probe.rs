@@ -221,7 +221,13 @@ fn body_snippet(body: &str, max: usize) -> String {
 /// within the budget" — boot latency or a hang, a different defect class from a non-JSON body,
 /// and a shard must be able to tell them apart. `budget_secs` is the probe's own curl `-m`
 /// (POST_PROBE_SECS, quoted as data — it bounds the app under test, never a model).
-pub(super) fn post_probe_evidence(path: &str, budget_secs: u64, probes: &[(u16, &str)]) -> String {
+pub(super) fn post_probe_evidence(
+    path: &str,
+    budget_secs: u64,
+    probes: &[(u16, &str)],
+    boot: &str,
+    port: u16,
+) -> String {
     let mut out = format!(
         "PROBE EVIDENCE — request as sent: `POST {path}` with NO body and NO headers (bare \
          `curl -X POST`, {budget_secs}s budget)"
@@ -241,6 +247,13 @@ pub(super) fn post_probe_evidence(path: &str, budget_secs: u64, probes: &[(u16, 
         }
     }
     out.push('.');
+    // S5d (iii): the gate's own boot argv and a copy-paste replay — so the shard reproduces
+    // the GATE'S request against the GATE'S app, never "8 realistic variants" of its own.
+    out.push_str(&format!(
+        " REPLAY IT: boot exactly as the gate did — `{boot}` — then `curl -s -w '\\n%{{http_code}}' \
+         -X POST -m {budget_secs} http://127.0.0.1:{port}{path}`; a NOT REAL verdict must quote \
+         that command's status and body."
+    ));
     out
 }
 
@@ -391,7 +404,8 @@ mod tests {
     fn probe_evidence_names_the_bare_request_each_status_and_a_body_head() {
         let env =
             r#"{"error": {"code": "unauthorized", "message": "missing or unknown bearer token"}}"#;
-        let ev = post_probe_evidence("/api/drafts", 20, &[(401, env), (401, env)]);
+        let boot = "cd <tree> && PYTHONPATH=src python3 -m app --db-dir /tmp/x --ledger-port 8741";
+        let ev = post_probe_evidence("/api/drafts", 20, &[(401, env), (401, env)], boot, 8741);
         assert!(
             ev.starts_with(
                 "PROBE EVIDENCE — request as sent: `POST /api/drafts` with NO body and NO headers"
@@ -404,22 +418,36 @@ mod tests {
             "{ev}"
         );
         assert!(ev.contains("probe 2: HTTP 401"), "{ev}");
+        // S5d (iii): the gate's boot argv and a copy-paste replay ride every probe finding.
+        assert!(ev.contains("REPLAY IT: boot exactly as the gate did — `cd <tree> && PYTHONPATH=src python3 -m app --db-dir /tmp/x --ledger-port 8741`"), "{ev}");
+        assert!(
+            ev.contains(
+                "curl -s -w '\\n%{http_code}' -X POST -m 20 http://127.0.0.1:8741/api/drafts"
+            ),
+            "{ev}"
+        );
         // A silent second probe is a DIFFERENT class (boot latency / hang), worded as such.
-        let ev2 = post_probe_evidence("/api/sync", 20, &[(200, "{\"total\": 3}"), (0, "")]);
+        let ev2 = post_probe_evidence(
+            "/api/sync",
+            20,
+            &[(200, "{\"total\": 3}"), (0, "")],
+            boot,
+            8741,
+        );
         assert!(
             ev2.contains("probe 2: no HTTP response within 20s"),
             "{ev2}"
         );
         // A long pretty-printed body reads on one line, capped, with its true length.
         let long = format!("{{\n  \"rows\": \"{}\"\n}}", "x".repeat(400));
-        let ev3 = post_probe_evidence("/api/x", 20, &[(200, &long)]);
+        let ev3 = post_probe_evidence("/api/x", 20, &[(200, &long)], boot, 8741);
         assert!(!ev3.contains('\n'), "{ev3}");
         assert!(
             ev3.contains("…» (4"),
             "the snippet states the full length: {ev3}"
         );
         assert!(!ev3.contains("empty body"));
-        assert!(post_probe_evidence("/api/x", 20, &[(204, "")]).contains("empty body"));
+        assert!(post_probe_evidence("/api/x", 20, &[(204, "")], boot, 8741).contains("empty body"));
     }
 
     /// The documented keys are checked ANYWHERE in the body, because the spec's key regex

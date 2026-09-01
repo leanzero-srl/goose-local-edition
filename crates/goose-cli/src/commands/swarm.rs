@@ -100,7 +100,9 @@ use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_
 mod ledger_block;
 #[cfg(test)]
 use ledger_block::render_ledger_block;
-use ledger_block::{read_ledger_rollup, render_ledger_block_measured, truncate_block_at_line};
+use ledger_block::{
+    read_ledger_rollup, render_ledger_block_measured, render_repair_history, truncate_block_at_line,
+};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -3614,6 +3616,8 @@ mod tests {
                 promoted: false,
                 baseline: 1,
                 agent_ok: true,
+                edited: true,
+                unreplayed: &[],
             },
         )
         .unwrap();
@@ -3885,6 +3889,8 @@ mod tests {
                 promoted: false,
                 baseline: 1,
                 agent_ok: true,
+                edited: true,
+                unreplayed: &[],
             },
         )
         .unwrap();
@@ -15398,6 +15404,13 @@ impl GooseAgentDispatcher {
                             // restart. The engine manufactured the exact symptom it then fired on, and
                             // each firing threw away another stream's reasoning.
                             omni_thinking_at_last_look = 0;
+                            // S8 (2a D4's refuter): the FORMING-STALL sampler's high-water marks
+                            // belong to the abandoned stream too — left standing, `thinking_chars
+                            // >= forming_sample_at_thinking + GROWTH` holds the old total and the
+                            // stall trigger (one of two evidence triggers on a build lane) is blind
+                            // until the new attempt out-reasons the old one.
+                            forming_sample_bytes = None;
+                            forming_sample_at_thinking = 0;
                             omni_calls_at_last_look = call_records.len();
                             // The new stream is judged on what IT does, not on the actions that earned
                             // the re-stream. Without this the readiness floor is cleared instantly by
@@ -19098,6 +19111,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
     own_process_group(&mut server);
+    // S5d (iii): the gate's boot argv, quoted verbatim into every probe finding so a repair shard
+    // reproduces the GATE'S app, not one it booted its own way.
+    let boot_line = format!(
+        "cd <tree> && PYTHONPATH=src python3 -m {pkg} {}",
+        advertised.join(" ")
+    )
+    .trim_end()
+    .to_string();
     let Ok(mut child) = server.spawn() else {
         inconclusive.push(format!("spec-contract: could not spawn `python3 -m {pkg}`"));
         return SpecContractResult {
@@ -19544,6 +19565,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         &path,
                         POST_PROBE_SECS,
                         &[(a_code, a_body), (b_code, b_body)],
+                        &boot_line,
+                        port,
                     );
                     let which = match (json_object(a_body).is_none(), json_object(b_body).is_none()) {
                         (true, true) => "either probe",
@@ -19562,6 +19585,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         &path,
                         POST_PROBE_SECS,
                         &[(a_code, a_body), (b_code, b_body)],
+                        &boot_line,
+                        port,
                     );
                     let documented = spec_documented_keys(spec, "POST", path.as_str());
                     let missing = missing_documented_keys(a_body, &documented);
@@ -20013,7 +20038,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                      {exemplar}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
-                                     not a blank page.{rows_suffix}"
+                                     not a blank page. GATE COMMAND (run it yourself against your \
+                                     booted app; it prints renderedRowCount and consoleErrors): \
+                                     `{node} {probe} load http://127.0.0.1:{port}`.{rows_suffix}"
                                     ),
                                 );
                             } else if console > 0 {
@@ -20034,7 +20061,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                     format!(
                                     "the page renders but the browser console carries {console} \
                                      error(s) in normal use ({exemplar}) — fix the JS \
-                                     errors; users hit them as broken interactions.{src_suffix}"
+                                     errors; users hit them as broken interactions. GATE COMMAND \
+                                     (run it yourself; it prints consoleErrors.texts): `{node} \
+                                     {probe} load http://127.0.0.1:{port}`.{src_suffix}"
                                 ),
                                 );
                             } else {
@@ -25592,146 +25621,6 @@ async fn build_swarm_dispatcher(
         )
         .await?,
     ))
-}
-
-/// II-4, the repair shard's splice (budget one dep-file, 3,500 chars): this round's gate row,
-/// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'
-/// ledger rows — pure over the roll-up so a round-1 shard is testable against a round-0 fixture.
-/// Round N+1 shards measurably re-tried what round N tried (prompt comment above
-/// smoke_fix_description); the fresh per-round Scheduler discards its SharedContext, so this
-/// on-disk history is the only channel that survives between rounds. Overflow drop order: the
-/// owning-task rows first, then the gate row — NEVER a prior NOT FIXED verdict, which is the one
-/// line whose loss re-schedules a failed approach; a line-boundary cut is the last resort.
-fn render_repair_history(
-    rollup: Option<&serde_json::Value>,
-    shard_files: &[String],
-    findings: &[String],
-    round: usize,
-) -> String {
-    const BUDGET: usize = 3_500;
-    let Some(rollup) = rollup else {
-        return String::new();
-    };
-    let mut verdicts = String::new();
-    if let Some(rounds) = rollup.pointer("/repair/rounds").and_then(|r| r.as_array()) {
-        for r in rounds {
-            let r_round = r.get("round").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-            if r_round >= round {
-                continue;
-            }
-            let shard = r.get("shard").and_then(|x| x.as_str()).unwrap_or("?");
-            let owns_overlap = r
-                .get("owned_files")
-                .and_then(|o| o.as_array())
-                .is_some_and(|a| {
-                    a.iter()
-                        .filter_map(|f| f.as_str())
-                        .any(|f| shard_files.iter().any(|sf| sf == f))
-                });
-            for v in r
-                .get("verdicts")
-                .and_then(|v| v.as_array())
-                .unwrap_or(&Vec::new())
-            {
-                let finding = v.get("finding").and_then(|f| f.as_str()).unwrap_or("");
-                let matches_finding = findings.iter().any(|f| f == finding);
-                if !owns_overlap && !matches_finding {
-                    continue;
-                }
-                verdicts.push_str(&format!(
-                    "  - round {r_round}, {shard}: FINDING {} {} — {}\n",
-                    v.get("n").and_then(|n| n.as_u64()).unwrap_or(0),
-                    v.get("verdict").and_then(|x| x.as_str()).unwrap_or("?"),
-                    v.get("detail").and_then(|d| d.as_str()).unwrap_or(""),
-                ));
-            }
-        }
-    }
-    let verdicts_block = if verdicts.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "WHAT PRIOR ROUNDS ALREADY TRIED on these findings/files (a NOT FIXED approach must \
-             not be retried as-is — try something different in kind):\n{verdicts}"
-        )
-    };
-    let gate_block = rollup
-        .get("gate")
-        .and_then(|g| g.as_array())
-        .and_then(|gates| {
-            gates
-                .iter()
-                .find(|g| g.get("round").and_then(|r| r.as_u64()) == Some(round as u64))
-                .or(gates.last())
-        })
-        .map(|g| {
-            let n = g
-                .get("findings")
-                .and_then(|f| f.as_array())
-                .map_or(0, |a| a.len());
-            let inc = g
-                .get("inconclusive")
-                .and_then(|f| f.as_array())
-                .map_or(0, |a| a.len());
-            format!(
-                "GATE round {}: {n} finding(s) against the RUNNING app, {inc} check(s) \
-                 inconclusive — your numbered findings above are drawn from this measurement.\n",
-                g.get("round").and_then(|r| r.as_u64()).unwrap_or(0)
-            )
-        })
-        .unwrap_or_default();
-    let mut owners = String::new();
-    if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
-        for (id, t) in tasks {
-            let owns_overlap = t
-                .get("owned_files")
-                .and_then(|o| o.as_array())
-                .is_some_and(|a| {
-                    a.iter()
-                        .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
-                        .any(|f| shard_files.iter().any(|sf| sf == f))
-                });
-            if !owns_overlap {
-                continue;
-            }
-            let fail = t
-                .get("commands")
-                .and_then(|c| c.as_object())
-                .and_then(|c| {
-                    c.iter()
-                        .filter_map(|(_, v)| v.get("last_failure_tail").and_then(|x| x.as_str()))
-                        .find(|tl| !tl.is_empty())
-                })
-                .unwrap_or("");
-            owners.push_str(&format!(
-                "  - `{id}` built these files ({} attempt(s), {}){}\n",
-                t.get("attempts").and_then(|a| a.as_u64()).unwrap_or(1),
-                t.get("status").and_then(|x| x.as_str()).unwrap_or("?"),
-                if fail.is_empty() {
-                    String::new()
-                } else {
-                    format!("; its last failure: {}", tail_chars(fail, 200))
-                },
-            ));
-        }
-    }
-    let owners_block = if owners.is_empty() {
-        String::new()
-    } else {
-        format!("WHO BUILT THE FILES you are repairing:\n{owners}")
-    };
-    let full = format!("{gate_block}{verdicts_block}{owners_block}");
-    if full.chars().count() <= BUDGET {
-        return full;
-    }
-    let without_owners = format!("{gate_block}{verdicts_block}");
-    if without_owners.chars().count() <= BUDGET {
-        return without_owners;
-    }
-    if verdicts_block.chars().count() <= BUDGET {
-        return verdicts_block;
-    }
-    truncate_block_at_line(&verdicts_block, BUDGET)
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
@@ -32367,8 +32256,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // 2c S5 (a): ONE SHARD PER FINDING — r5 worked six findings serially on one
                     // shard; now six findings on one file are six shards that may run at once and
                     // land by three-way merge (repair_waves.rs).
-                    let findings =
-                        repair_waves::explode_groups(&groups, &owned_by_shard, &order_notes);
+                    let findings = repair_waves::explode_groups(
+                        &groups,
+                        &owned_by_shard,
+                        &order_notes,
+                        // S5d (ii): probe/render findings need a QUOTED replay to be dismissed.
+                        &|t: &str| {
+                            prov.source_of(t).is_some_and(|src| {
+                                src.is_server_response_probe()
+                                    || matches!(
+                                        src,
+                                        FindingSource::RenderGateRows
+                                            | FindingSource::RenderGateConsole
+                                    )
+                            })
+                        },
+                    );
                     sink.write_value(serde_json::json!({
                         "event": "finding_shards",
                         "round": round,

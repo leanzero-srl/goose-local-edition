@@ -87,6 +87,12 @@ pub(super) struct RepairLedgerRow<'a> {
     pub(super) promoted: bool,
     pub(super) baseline: usize,
     pub(super) agent_ok: bool,
+    /// S5d (iv): did the shard's shadow diverge from the tree at all? A FIXED verdict on an
+    /// unedited shadow is a claim without an edit — rendered so by `render_repair_history`.
+    pub(super) edited: bool,
+    /// S5d (ii): finding numbers whose NOT REAL quoted no replayed request+response — not
+    /// accepted; the finding stays open and the next shard is told so.
+    pub(super) unreplayed: &'a [u32],
 }
 
 pub(super) fn write_repair_ledger(
@@ -111,6 +117,7 @@ pub(super) fn write_repair_ledger(
                 "finding": findings.get((n as usize).saturating_sub(1)),
                 "verdict": verdict,
                 "detail": detail,
+                "unreplayed": row.unreplayed.contains(&n),
             })
         })
         .collect();
@@ -125,6 +132,7 @@ pub(super) fn write_repair_ledger(
         "promoted": row.promoted,
         "baseline": row.baseline,
         "agent_ok": row.agent_ok,
+        "edited": row.edited,
     });
     super::write_ledger_mini(
         root,
