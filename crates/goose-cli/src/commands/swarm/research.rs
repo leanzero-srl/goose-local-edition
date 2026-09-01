@@ -11,10 +11,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::decisions::{self, DECISION_SLICE};
+use super::findings::FINDING_PATH_EXTS;
 use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
 use super::orientation::heading_key;
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
-use super::{files_from_objective, orientation_armed, spec_sections, SliceBrief};
+use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
 use super::{EventSink, SpecSection};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
@@ -64,6 +65,9 @@ pub(super) const RESEARCH_UNANSWERED: &str = "unanswered";
 /// `ResearchRow.origin` for a row the OPENER settled by citing the request (no lane ran). The
 /// empty origin is a lane's own answer — every pre-cut mini reads that way.
 pub(super) const ORIGIN_SPEC_FACT: &str = "spec_fact";
+/// `ResearchRow.origin` prefix for a row COVERED by an earlier-landed mini of another question
+/// (`research_plan::covering_mini`): `covered:<the original mini's file name>`.
+pub(super) const ORIGIN_COVERED_PREFIX: &str = "covered:";
 
 /// One terminal research outcome. `status` is always set — answered or unanswered — which is what
 /// makes "every dispatched question terminal" a property of the type rather than of a clock.
@@ -126,6 +130,33 @@ impl ResearchRow {
             kind: q.kind.as_str().to_string(),
             cite: q.cite.clone(),
             origin: ORIGIN_SPEC_FACT.to_string(),
+        }
+    }
+
+    /// C2(b): `q` answered by an earlier-landed row of another question (`covering_mini`, rule
+    /// named). The answer is COPIED — the brief's Q/A shape and the ledger block read it like
+    /// any settled row — and `origin` names the ORIGINAL mini (a copy of a copy resolves to the
+    /// first), so provenance is one hop everywhere. The cover's `raised` stay with the cover's
+    /// slice; `secs` is 0 (nothing was called); `model` is the cover's, the one that answered.
+    pub(super) fn covered_by(q: &ResearchQuestion, cover: &ResearchRow, _rule: &str) -> Self {
+        let original = match cover.origin.strip_prefix(ORIGIN_COVERED_PREFIX) {
+            Some(m) => m.to_string(),
+            None => research_mini_name(&cover.slice, cover.q_index),
+        };
+        Self {
+            slice: q.slice.clone(),
+            q_index: q.q_index,
+            question: q.question.clone(),
+            status: RESEARCH_ANSWERED.to_string(),
+            answer: cover.answer.clone(),
+            reason: None,
+            detail: None,
+            raised: Vec::new(),
+            model: cover.model.clone(),
+            secs: 0,
+            kind: q.kind.as_str().to_string(),
+            cite: q.cite.clone(),
+            origin: format!("{ORIGIN_COVERED_PREFIX}{original}"),
         }
     }
 }
@@ -867,11 +898,51 @@ pub(super) fn emit_question_disposition(
     }));
 }
 
+/// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
+///
+/// Since 14831a321 the opener is told to NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE — but
+/// `briefs_from_slices` still shipped `files: Vec::new()`, so `slice_files_unnamed` fired for
+/// EVERY slice on EVERY run (measured 5 and 7 on the last two runs) and every `.files` reader
+/// — the index's named-files caption, the fallback plan's declared ownership — was a dead path.
+///
+/// Conservative on purpose: only backticked tokens shaped like relative file paths — a '/' or a
+/// known source extension (`FINDING_PATH_EXTS`, the one list), no whitespace, no scheme, not
+/// absolute (`/api/ledger` is a route, not a file), no trailing '/' (a directory is territory,
+/// not a plan file) — deduped in objective order. An objective that declares nothing keeps the
+/// empty vec, and the absence event keeps firing for exactly those slices. (Moved verbatim from
+/// swarm.rs beside its one caller, paying for the fan cut's C2 wiring.)
+fn files_from_objective(objective: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (i, seg) in objective.split('`').enumerate() {
+        if i % 2 == 0 {
+            continue;
+        }
+        let tok = seg.trim();
+        let tok = tok.strip_prefix("./").unwrap_or(tok);
+        if tok.is_empty()
+            || tok.chars().any(char::is_whitespace)
+            || tok.contains("://")
+            || tok.starts_with('/')
+            || tok.ends_with('/')
+        {
+            continue;
+        }
+        let lower = tok.to_lowercase();
+        let pathish = tok.contains('/') || FINDING_PATH_EXTS.iter().any(|e| lower.ends_with(e));
+        if pathish && !out.iter().any(|f| f == tok) {
+            out.push(tok.to_string());
+        }
+    }
+    out
+}
+
 /// The brief partition every slice's builder reads, assembled from the opener's slice and the
 /// fan's terminal rows — the objective, then what the fan settled (SPEC FACTS the opener cited,
-/// answers the lanes established), then what stayed open, the raised questions, the claimed
-/// spec sections verbatim, and the decisions partition. (Moved from swarm.rs under the
-/// incremental-split law, paying for the fan cut's wiring; the WHY of each block is inline.)
+/// answers the lanes established or an earlier mini covered), the questions that ARE open
+/// decisions (pointed at the decisions partition — decided once), then what stayed open, the
+/// raised questions, the claimed spec sections verbatim, and the decisions partition. (Moved
+/// from swarm.rs under the incremental-split law, paying for the fan cut's wiring; the WHY of
+/// each block is inline.)
 pub(super) fn briefs_from_slices(
     opened: &OpenOutput,
     spec: &str,
@@ -910,6 +981,7 @@ pub(super) fn briefs_from_slices(
                 .collect();
             let mut facts_block = String::new();
             let mut answers_block = String::new();
+            let mut decided_block = String::new();
             let mut open_questions: Vec<&str> = Vec::new();
             for (i, q) in sl.questions.iter().enumerate() {
                 match answered.get(&i) {
@@ -922,10 +994,37 @@ pub(super) fn briefs_from_slices(
                         ));
                     }
                     Some(row) => {
+                        // C2(b): a covered row says WHOSE answer this is — the original mini —
+                        // so the builder can open it; a lane's own row carries no VIA line (an
+                        // honest absence of provenance-to-elsewhere, not a default).
+                        let via = match row.origin.strip_prefix(ORIGIN_COVERED_PREFIX) {
+                            Some(m) => format!(
+                                "\nVIA: .swarm/ledger/{m} — another slice asked the same \
+                                 question and its lane answered it; this is that answer"
+                            ),
+                            None => String::new(),
+                        };
                         answers_block.push_str(&format!(
-                            "\nQ: {}\nA: {}\n",
+                            "\nQ: {}\nA: {}{via}\n",
                             q.text,
                             budget_research_answer(&row.answer, &row.slice, row.q_index)
+                        ));
+                    }
+                    // C2(a): the question IS an open decision — settled once, in the DECISIONS
+                    // block below (the user's answer, the decisions lane's row, or the
+                    // conventional-choice framing); the builder must not decide it again here.
+                    None if q.decision.is_some() => {
+                        let i = q.decision.unwrap_or(0);
+                        let line = opened
+                            .open_decisions
+                            .get(i)
+                            .map(|d| d.line.as_str())
+                            .unwrap_or("(decision index out of range — see the DECISIONS block)");
+                        decided_block.push_str(&format!(
+                            "\n- {}\n  → OPEN DECISION #{}: {}",
+                            q.text,
+                            i + 1,
+                            head_to_sentence_end(line, 200).replace('\n', " ")
                         ));
                     }
                     None => open_questions.push(&q.text),
@@ -943,6 +1042,13 @@ pub(super) fn briefs_from_slices(
                     "\n\nANSWERS SETTLED AT PLAN TIME — facts gathered from the request before \
                      building; build to these unless the spec or a USER DECISIONS block \
                      contradicts them:{answers_block}"
+                ));
+            }
+            if !decided_block.is_empty() {
+                brief.push_str(&format!(
+                    "\n\nQUESTIONS THAT ARE OPEN DECISIONS — each one IS a decision in the \
+                     DECISIONS block below, settled there once for every slice; implement that \
+                     settlement, never decide it again here:{decided_block}"
                 ));
             }
             if !open_questions.is_empty() {
@@ -1056,6 +1162,7 @@ pub(super) fn research_system_text() -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::opener::OpenDecision;
     use super::super::{unclaimed_sections, NullSink, OpenSlice, SwarmEvent};
     use super::*;
     use std::sync::Mutex;
@@ -1884,6 +1991,88 @@ mod tests {
         let mut r = row(slice, q_index, RESEARCH_ANSWERED, &[]);
         r.answer = answer.to_string();
         r
+    }
+
+    /// C2 in the brief, on r6d's web-page slice: web-q0 routed to the token decision renders
+    /// under QUESTIONS THAT ARE OPEN DECISIONS pointing at decision #2 (and leaves the QUESTIONS
+    /// block); a row covered by another slice's mini renders in ANSWERS SETTLED with a VIA line
+    /// naming the ORIGINAL mini; a lane's own row carries no VIA; the settled digest counts the
+    /// covered row (it is settled) and not the routed question (its settlement is the
+    /// decision's, in the DECISIONS block).
+    #[test]
+    fn a_routed_question_points_at_its_decision_and_a_covered_row_names_its_source() {
+        let tokens_line = "How the browser obtains the three bearer tokens for drafts endpoints — \
+                           options: prompt field | config | hardcoded dev tokens in the page";
+        let mut routed = OpenQuestion::from(
+            "How does the browser obtain the three bearer tokens for drafts endpoints?",
+        );
+        routed.decision = Some(1);
+        let opened = OpenOutput {
+            slices: vec![OpenSlice {
+                id: "web-page".into(),
+                title: "the page".into(),
+                objective: "Owns `web/app.js`.".into(),
+                questions: vec![
+                    routed,
+                    OpenQuestion::from("Do maker/checker see /api/events at all?"),
+                    OpenQuestion::from("Notifications feed: SSE, polling, or both?"),
+                ],
+                weight: 3,
+                sections: Vec::new(),
+            }],
+            open_decisions: vec![
+                OpenDecision {
+                    line: "HTTP framework — options: stdlib | Flask".into(),
+                    options: vec!["stdlib".into(), "Flask".into()],
+                },
+                OpenDecision {
+                    line: tokens_line.into(),
+                    options: vec!["prompt field".into(), "config".into()],
+                },
+            ],
+        };
+        let mut api_q5 = row_answered(
+            "ledger-api",
+            5,
+            "It requires a bearer token (any of the three roles).",
+        );
+        api_q5.cite = "request.md:218".into();
+        let q1 = rq("web-page", 1, "Do maker/checker see /api/events at all?");
+        let covered = ResearchRow::covered_by(&q1, &api_q5, "cite");
+        let own = row_answered(
+            "web-page",
+            2,
+            "Both: SSE-driven refresh, polling as fallback.",
+        );
+        let briefs = briefs_from_slices(&opened, "build the app", &[covered, own], &[], &NullSink);
+        let b = &briefs[0].brief;
+        let decided_at = b
+            .find("QUESTIONS THAT ARE OPEN DECISIONS")
+            .expect("the routed block");
+        assert!(b.contains("→ OPEN DECISION #2: How the browser obtains the three bearer tokens"));
+        assert!(
+            !b.contains("QUESTIONS this slice must settle"),
+            "nothing stayed open: routed + covered + answered:\n{b}"
+        );
+        let answers_at = b.find("ANSWERS SETTLED AT PLAN TIME").unwrap();
+        assert!(
+            answers_at < decided_at,
+            "settled facts first, then the pointers"
+        );
+        assert!(b.contains(
+            "VIA: .swarm/ledger/research-ledger-api-q5.json — another slice asked the same question"
+        ));
+        assert_eq!(
+            b.matches("VIA:").count(),
+            1,
+            "the lane's own row carries no VIA line"
+        );
+        assert!(
+            briefs[0].settled.starts_with("2/2 — "),
+            "covered counts as settled; the routed question is the decision's: {}",
+            briefs[0].settled
+        );
+        assert_eq!(briefs[0].files, vec!["web/app.js".to_string()]);
     }
 
     /// The brief partition: an answered question MOVES out of the QUESTIONS block into the
