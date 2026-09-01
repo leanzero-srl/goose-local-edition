@@ -68,7 +68,7 @@ The files here are large enough that naive reading is the main cause of lost wor
 
 | object | size | never |
 |---|---|---|
-| `crates/goose-cli/src/commands/swarm.rs` | **42,165 lines** | read whole; `grep -n` then `sed -n 'A,Bp'` |
+| `crates/goose-cli/src/commands/swarm.rs` | **40,691 lines** (was 42,165 on 2026-08-31; shrinking by extraction) | read whole; `grep -n` then `sed -n 'A,Bp'` |
 | `crates/goose-swarm/src/scheduler.rs` | 4,616 lines | — |
 | `ui/desktop/src/components/swarm/SwarmRunPanel.tsx` | 3,971 lines | — |
 | `ui/desktop/src/components/swarm/useSwarmRun.ts` | 3,858 lines | — |

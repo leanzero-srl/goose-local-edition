@@ -862,3 +862,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   judge flipping three ways and being wrong at look 4, and found the dispatch-time snowball gap by
   reading a NEW lane's opening words against a mini that landed 33 seconds later. Three engine
   defects with quotes from six calls. Charter gap: none.
+- 2026-09-01 08:10 swarm-surgeon (r6e E1–E6, six commits): EXEMPLARY. Every item extracted into a
+  named module (spec_surface.rs, opener.rs, lenient_json.rs), consumer walks quoted (E4's "an
+  unmatched claim contributes nothing" is the fact that matters for the live run), honest NO/NET
+  labels on E2/E3, and an explicit refusal to write a string-presence test for a prompt clause
+  ("a tripwire pretending to gate"). Charter gap: none.
