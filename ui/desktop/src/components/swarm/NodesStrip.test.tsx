@@ -3,12 +3,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NodesStrip from './NodesStrip';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 
 /**
  * Pass E — the blank-session "Nodes" strip: rows come from the CONFIGURED swarm devices (the same
  * swarm-config read the LeanZero Swarm nodes tab uses), never from LM Studio discovery, and
  * occupancy renders only where a live signal exists (the local mlx-sidecar node via the MLX engine
  * status). No fake states: cloud rows get a chip and nothing else.
+ *
+ * Studio remake (surface C): a Panel whose header counts the rows it shows; each row is a node dot
+ * (identity hue by configured order) + name, the engine as a chip (LeanZero MLX in the secondary
+ * tone, everything else quiet), the model id as quiet meta, and occupancy as a status-tone chip.
  */
 
 const readMock = vi.fn();
@@ -39,6 +45,10 @@ const mount = () =>
     </IntlTestWrapper>
   );
 
+const dotIn = (row: HTMLElement) => row.querySelector('[data-testid="lz-status-dot"]');
+const chipsIn = (row: HTMLElement) =>
+  Array.from(row.querySelectorAll<HTMLElement>('[data-testid="lz-chip"]'));
+
 beforeEach(() => {
   mlxStatus = null;
   readMock.mockReset();
@@ -52,9 +62,10 @@ describe('NodesStrip', () => {
     expect(screen.getByTestId('nodes-strip-row-workhorse-mlx')).toBeInTheDocument();
     expect(screen.getByTestId('nodes-strip-row-zai-node')).toBeInTheDocument();
     expect(screen.getAllByTestId(/^nodes-strip-row-/)).toHaveLength(DEVICES.length);
-    // Provider chips: LeanZero MLX for the sidecar row, the cloud chip for the zai row.
-    expect(screen.getByText('LEANZERO MLX')).toBeInTheDocument();
-    expect(screen.getByText('Z.AI')).toBeInTheDocument();
+    // Engine chips: LeanZero MLX for the sidecar row, the cloud provider for the zai row — normal
+    // case (uppercase belongs to the zone header alone).
+    expect(screen.getByText('LeanZero MLX')).toBeInTheDocument();
+    expect(screen.getByText('Z.ai')).toBeInTheDocument();
   });
 
   it('shows IDLE for the mlx node when the engine is stopped', async () => {
@@ -63,6 +74,9 @@ describe('NodesStrip', () => {
     await waitFor(() =>
       expect(screen.getByTestId('nodes-strip-occupancy-workhorse-mlx')).toHaveTextContent('idle')
     );
+    const occ = screen.getByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('stopped');
+    expect(dotIn(screen.getByTestId('nodes-strip-row-workhorse-mlx'))?.getAttribute('data-live')).toBeNull();
   });
 
   it('shows SERVING with the served model when the engine runs', async () => {
@@ -78,6 +92,11 @@ describe('NodesStrip', () => {
     const occ = await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
     expect(occ).toHaveTextContent('serving');
     expect(occ).toHaveTextContent('workhorse-qwen3.5-9b-4bit-mlx');
+    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('ok');
+    // A serving node is the one live thing on a blank session: its identity dot pulses (by scale).
+    expect(dotIn(screen.getByTestId('nodes-strip-row-workhorse-mlx'))?.getAttribute('data-live')).toBe(
+      'true'
+    );
   });
 
   it('shows MOUNTING while the engine mounts', async () => {
@@ -88,6 +107,8 @@ describe('NodesStrip', () => {
         'mounting'
       )
     );
+    const occ = screen.getByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('warn');
   });
 
   it('never invents occupancy: cloud rows have no state, and no signal means no chip', async () => {
@@ -104,4 +125,56 @@ describe('NodesStrip', () => {
     await waitFor(() => expect(readMock).toHaveBeenCalled());
     expect(screen.queryByTestId('nodes-strip')).toBeNull();
   });
+
+  it('is a Studio Panel: the header counts the rows, each row is a node dot + name, the engine is a chip', async () => {
+    mlxStatus = { state: 'stopped', restartRequired: false, availableMemoryGb: 32, totalMemoryGb: 64 };
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('lz-panel')).toBeInTheDocument());
+    expect(screen.getByTestId('lz-section-count').textContent).toBe(String(DEVICES.length));
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Nodes');
+
+    const mlxRow = screen.getByTestId('nodes-strip-row-workhorse-mlx');
+    const zaiRow = screen.getByTestId('nodes-strip-row-zai-node');
+    // Identity hue follows the configured order: row 1 → node-1, row 2 → node-2.
+    expect(dotIn(mlxRow)?.className).toContain('bg-lz-node-1');
+    expect(dotIn(zaiRow)?.className).toContain('bg-lz-node-2');
+    expect(dotIn(mlxRow)?.getAttribute('aria-label')).toBe('workhorse-mlx');
+    // The engine chip: LeanZero MLX keeps its violet through the secondary tone; a cloud provider
+    // is quiet metadata (outline, no fill).
+    const mlxChip = chipsIn(mlxRow).find((c) => c.textContent === 'LeanZero MLX');
+    const zaiChip = chipsIn(zaiRow).find((c) => c.textContent === 'Z.ai');
+    expect(mlxChip?.getAttribute('data-tone')).toBe('secondary');
+    expect(zaiChip?.getAttribute('data-tone')).toBeNull();
+    expect(zaiChip?.className).toContain('border-lz-border-strong');
+    // The model id is quiet meta on the row.
+    expect(mlxRow).toHaveTextContent('workhorse-qwen3.5-9b-4bit-mlx');
+    expect(zaiRow).toHaveTextContent('glm-4.7');
+    // Rows are the dense 32px register.
+    expect(mlxRow.className).toContain('h-lz-row-dense');
+    // Uppercase belongs to the zone header alone.
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>('[class*="uppercase"]'))) {
+      expect(el.tagName).toBe('H2');
+    }
+    // No hand-written colour anywhere — every hue is a token utility.
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>('[style]'))) {
+      expect(el.getAttribute('style') ?? '').not.toMatch(/#[0-9a-f]{3,6}|rgb/i);
+    }
+    assertStudioClean(container);
+  });
+
+  it('every class it emits compiles to a real rule against main.css', async () => {
+    mlxStatus = {
+      state: 'running',
+      modelId: 'mlx-community/Qwen3.5-9B-4bit',
+      servedModelId: 'workhorse-qwen3.5-9b-4bit-mlx',
+      restartRequired: false,
+      availableMemoryGb: 32,
+      totalMemoryGb: 64,
+    };
+    const { container } = mount();
+    await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(classes.length).toBeGreaterThan(20);
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
 });
