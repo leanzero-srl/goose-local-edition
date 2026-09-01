@@ -366,11 +366,22 @@ fn token_matches(candidate: Option<&str>, expected: &str) -> bool {
 /// `Authorization: Bearer <node_token>`, or `?token=` for WebSocket clients that
 /// cannot set headers (mirrors goose's `/acp` transport choice). Constant-time
 /// comparison via `subtle`.
+///
+/// Any request carrying an `Origin` header is refused with `403` BEFORE the token is
+/// looked at: browsers attach `Origin` to every cross-origin fetch and every WebSocket
+/// upgrade, while peers, the host's loopback proxy and native clients never send one —
+/// so a web page on the same machine cannot drive the loopback listener even with a
+/// leaked bearer (R-M6). This applies to the WS upgrade too, since the middleware wraps
+/// `/v1/swarm/stream` like every other route.
 async fn require_token(
     State(token): State<Arc<String>>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    if request.headers().contains_key(header::ORIGIN) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let header_token = request
         .headers()
         .get(header::AUTHORIZATION)

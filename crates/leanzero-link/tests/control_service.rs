@@ -294,6 +294,87 @@ async fn nodes_sessions_shape_and_auth() {
     handle.shutdown();
 }
 
+// ── R-M6: an Origin header is a browser context — refused outright ──────
+
+#[tokio::test]
+async fn any_request_carrying_an_origin_header_is_403_even_with_a_valid_token() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let source = FakeStateSource::new("node-a");
+    let executor = FakeExecutor::accepting("unused");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    // GET with the correct bearer + Origin → 403 (a page fetching the mirror).
+    for path in ["/v1/swarm/nodes", "/v1/swarm/sessions"] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .bearer_auth(TOKEN)
+            .header("origin", "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 403, "{path} with an Origin header");
+    }
+    // The ?token= form (the ws-client path) gets no exemption either.
+    let resp = client
+        .get(format!("{base}/v1/swarm/nodes?token={TOKEN}"))
+        .header("origin", "http://127.0.0.1:41226")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        403,
+        "same-origin-looking Origin is still a browser"
+    );
+
+    // POST /execute with Origin → 403 and the executor never runs.
+    let resp = client
+        .post(format!("{base}/v1/swarm/execute"))
+        .bearer_auth(TOKEN)
+        .header("origin", "null")
+        .json(&serde_json::json!({"prompt": "x"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    assert_eq!(executor.call_count(), 0);
+
+    // The WebSocket upgrade with Origin → the handshake itself fails with 403.
+    let url = format!(
+        "ws://127.0.0.1:{}/v1/swarm/stream?token={TOKEN}",
+        handle.local_addr().port()
+    );
+    let mut request = url.clone().into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("origin", "http://evil.example".parse().unwrap());
+    match tokio_tungstenite::connect_async(request).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), 403, "ws upgrade with Origin refused")
+        }
+        Ok(_) => panic!("a browser-shaped ws upgrade must not be accepted"),
+        Err(other) => panic!("expected an HTTP 403 handshake failure, got {other:?}"),
+    }
+
+    // Negative control: the same requests WITHOUT Origin succeed (peer / native shape).
+    let resp = client
+        .get(format!("{base}/v1/swarm/nodes"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let (ws, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("a native ws client (no Origin) still connects");
+    drop(ws);
+
+    handle.shutdown();
+}
+
 // ── Busy vs Idle from active sessions ───────────────────────────────────
 
 #[tokio::test]
