@@ -1,0 +1,23 @@
+name = "leanzero-link-auth"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+kv_namespaces = [
+  { binding = "LINK_KV", id = "REPLACE_WITH_LINK_KV_NAMESPACE_ID" }
+]
+
+[vars]
+TS_NODE_TAG = "tag:leanzero-link"
+ALLOWED_ORIGINS = "*"
+# Sender for OTP mail — REQUIRED for the mail capability. Must be a sender on a
+# domain verified in Resend, e.g. "LeanZero Link <link@your-domain.example>".
+# LEANZERO_MAIL_FROM = "LeanZero Link <link@your-domain.example>"
+# Lifetime (seconds) of minted Tailscale join keys. Default 600 when unset.
+# TS_KEY_EXPIRY_SECONDS = "600"
+
+# Secrets — set via `npx wrangler secret put <NAME>`, never in this file:
+#   LINK_JWT_SECRET     required — HMAC-SHA256 secret for identity JWTs
+#   RESEND_API_KEY      required for the mail + audience capabilities
+#   RESEND_AUDIENCE_ID  optional — Resend segment id (formerly audience id) for contact sync
+#   TS_API_TOKEN        optional — Tailscale API access token, or "client_id:client_secret" OAuth pair
+#   TS_TAILNET          optional — tailnet name (e.g. "example.com" or the org name)
