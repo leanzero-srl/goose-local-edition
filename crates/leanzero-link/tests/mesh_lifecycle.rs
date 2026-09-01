@@ -79,7 +79,24 @@ if "up" in args:
         if flag(name) is None:
             print("fake tailscale: missing %s in %r" % (name, args), file=sys.stderr)
             sys.exit(3)
-    if flag("--auth-key") != "tskey-auth-good":
+    # R-L1: the key must arrive as `file:<path>` (the CLI's documented form), the file
+    # must be private (0600) and live under the state dir; the CLI reads it like the
+    # real one does.
+    key = flag("--auth-key")
+    if not key.startswith("file:"):
+        print("fake tailscale: auth key on argv (%r) — must be file:" % key, file=sys.stderr)
+        sys.exit(3)
+    key_path = key[len("file:"):]
+    if os.path.dirname(key_path) != base:
+        print("fake tailscale: key file %r not under the state dir %r" % (key_path, base), file=sys.stderr)
+        sys.exit(3)
+    mode = os.stat(key_path).st_mode & 0o777
+    if mode != 0o600:
+        print("fake tailscale: key file mode %o, want 600" % mode, file=sys.stderr)
+        sys.exit(3)
+    with open(key_path) as f:
+        authkey = f.read().strip()
+    if authkey != "tskey-auth-good":
         print("backend error: invalid key: unable to validate API key", file=sys.stderr)
         sys.exit(1)
     with open(marker, "w") as f:
@@ -227,6 +244,15 @@ fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
+/// Names of any `auth-key*` files left in the state dir — must be empty after `join`.
+fn leftover_key_files(state_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(state_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("auth-key"))
+        .collect()
+}
+
 #[tokio::test]
 async fn starts_reports_needs_login_and_shuts_down_without_orphans() {
     let root = tempfile::tempdir().unwrap();
@@ -276,6 +302,11 @@ async fn join_with_bad_or_empty_key_is_a_loud_typed_error() {
         err.to_string().contains("invalid key"),
         "join error must carry tailscale's stderr: {err}"
     );
+    assert!(
+        leftover_key_files(&engine.config().state_dir).is_empty(),
+        "the key file is removed even when `up` fails: {:?}",
+        leftover_key_files(&engine.config().state_dir)
+    );
 
     engine.shutdown().await;
 }
@@ -290,6 +321,13 @@ async fn join_succeeds_then_logout_stops_the_daemon() {
         .join("tskey-auth-good", "lz-node-self")
         .await
         .unwrap();
+    // The fake CLI exited 0 only if the key came as `file:`, 0600, under the state dir;
+    // and nothing of it survives `up`.
+    assert!(
+        leftover_key_files(&engine.config().state_dir).is_empty(),
+        "the key file is removed after a successful `up`: {:?}",
+        leftover_key_files(&engine.config().state_dir)
+    );
 
     let status = engine.status().await.unwrap();
     assert_eq!(status.backend_state, BackendState::Running);
