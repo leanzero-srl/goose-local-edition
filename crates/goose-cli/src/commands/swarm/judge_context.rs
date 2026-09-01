@@ -259,10 +259,10 @@ pub(super) fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<St
         // A FILE THAT EXISTS AND IS ONLY STUBS IS NOT A DELIVERABLE, and it is the defect most likely to
         // be mistaken for success: it exists, it is non-empty, it parses, and it does nothing. The engine
         // already refuses to salvage one of these as "done" at the watchdog path (`skeleton_only`,
-        // judge.rs:66) — the same test belongs here, where it is cheap and early rather than at the end.
+        // goose-swarm `stub::skeleton_only`) — the same test belongs here, where it is cheap and early rather than at the end.
         if rel.ends_with(".py") {
             if let Ok(body) = std::fs::read_to_string(&path) {
-                if goose_swarm::judge::skeleton_only(&body) {
+                if goose_swarm::skeleton_only(&body) {
                     out.push(format!(
                         "{rel} is a SKELETON — it exists and parses, but every body is a stub"
                     ));

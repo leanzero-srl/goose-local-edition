@@ -280,8 +280,9 @@ impl Dag {
         Dag::from_specs(expand_subsplits(specs))
     }
 
-    /// Splice additional specs into a LIVE dag (apply_split's partition door; the dynamic replanner
-    /// that also came through here is deleted, VA-015). Validated
+    /// Splice additional specs into a LIVE dag (the merger's gap door, `splice_merge_gaps`; the
+    /// dynamic replanner (VA-015) and the idle-model judge's `apply_split` (2c S6) that also came
+    /// through here are deleted). Validated
     /// exactly like `from_specs` so the safety net is identical: rejects ids that collide with
     /// existing tasks, deps on unknown OR failed tasks, intra-batch dup ids, and any cycle. On ANY
     /// error the dag is left UNCHANGED (validation runs before mutation). Returns the ids that became

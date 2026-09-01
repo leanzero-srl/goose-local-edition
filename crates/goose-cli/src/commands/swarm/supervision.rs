@@ -26,15 +26,6 @@ pub(super) fn judge_lane_key(task_id: &str) -> String {
     format!("judge-{task_id}")
 }
 
-/// The SCHEDULER-side judge's semantic review (`Judge::judge`), one lane per reviewed task.
-/// DELIBERATELY not `judge-<task>` (surgeon #10's warning): the omni judge already owns that key
-/// for the same task, and two writers on one digest would interleave two different reviews into
-/// one rolling story. Distinct class, same task suffix, so the panel can still group both onto
-/// the task.
-pub(super) fn schedjudge_lane_key(task_id: &str) -> String {
-    format!("schedjudge-{task_id}")
-}
-
 /// The mid-run operator-question answerer's lane (`answer_user_question`). One lane for the run:
 /// questions are answered one at a time (the in-flight set serializes them) and each new answer
 /// folds the prior into `superseded`, which is the cumulative story the inspector renders.
@@ -51,7 +42,7 @@ pub(super) const PILLARS_LANE: &str = "pillars";
 /// keys replaced were never judged either (behavior parity).
 ///
 /// Derivation is by the exact shapes the mint fns above produce. A MODEL-chosen task id starting
-/// with `judge-`/`schedjudge-` would be misclassified — the same accepted hazard
+/// with `judge-` would be misclassified — the same accepted hazard
 /// `engine_owned_activity_keys_cannot_collide_with_a_model_chosen_task_id` documents for
 /// `call_objective` (live plans name tasks after modules). The sink-review `verify-<n>` lanes and
 /// the `tail-review-<dim>` lanes are deleted (2c S6), so a model-chosen `verify-endpoints` is a
@@ -59,9 +50,6 @@ pub(super) const PILLARS_LANE: &str = "pillars";
 pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
     if key.starts_with("judge-") {
         return Some("judge");
-    }
-    if key.starts_with("schedjudge-") {
-        return Some("schedjudge");
     }
     if key == ASK_ANSWER_LANE {
         return Some("ask");
@@ -84,10 +72,6 @@ mod tests {
         assert_eq!(
             supervision_lane_kind(&judge_lane_key("open-1")),
             Some("judge")
-        );
-        assert_eq!(
-            supervision_lane_kind(&schedjudge_lane_key("web-viz")),
-            Some("schedjudge")
         );
         assert_eq!(supervision_lane_kind(ASK_ANSWER_LANE), Some("ask"));
         assert_eq!(supervision_lane_kind(PILLARS_LANE), Some("pillars"));
@@ -734,7 +718,7 @@ pub(super) fn is_agent_loop_filler(s: &str) -> bool {
 
 /// Why a supervision reply is NOT a usable reply. Both variants take the caller's failed-look
 /// path; they are distinguished because the omni judge names the second with the
-/// `judge_turn_budget_exhausted` vocabulary the schedjudge arm already emits.
+/// `judge_turn_budget_exhausted` vocabulary.
 #[derive(Debug)]
 pub(super) enum SupervisedReplyError {
     /// The agent loop's own provider-error closer text (A-2, `said_kind_of == "error"`): a dead
@@ -771,7 +755,7 @@ impl std::fmt::Display for SupervisedReplyError {
 ///      reaches a model-read direction. Stripped by the shared constant, never a duplicated literal
 ///      (the JUDGE_ENDED_NEEDLE pattern: emit and matcher move together).
 ///   3. what remains must not BE the filler (`is_agent_loop_filler`: empty, or the filler phrases
-///      anywhere — the same over-broad-but-safe contract the schedjudge arm already applies).
+///      anywhere — over-broad, but safe).
 pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedReplyError> {
     if said_kind_of(text) == "error" {
         return Err(SupervisedReplyError::ProviderError(clip_tail(text, 400)));
@@ -971,7 +955,6 @@ pub(super) fn parse_judge_reply(s: &str) -> JudgeOutcome {
         },
         established,
         next_action,
-        proposed_split: None,
         // MODEL-AUTHORED. It may STEER; it may never fail a task.
         deterministic: false,
     }

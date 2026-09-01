@@ -992,7 +992,7 @@ impl Desk {
             if key.is_empty() || self.finished.contains(key) || self.lanes.contains_key(key) {
                 continue;
             }
-            // SUPERVISION LANES ARE NOT WATCHED (r6e E15). The judge/schedjudge/ask
+            // SUPERVISION LANES ARE NOT WATCHED (r6e E15). The judge/ask
             // lanes write the same artifacts as workers, so the desk
             // discovered them and ran its detectors on the supervisors: r6d run.jsonl carried 62
             // desk_summon on `judge-research-*` keys ("[growth_without_acting] 4297 reasoning
@@ -1441,7 +1441,7 @@ mod tests {
         for key in [
             "judge-research-ledger-core-q5",
             "ask-answer",
-            "schedjudge-web-viz",
+            "judge-web-viz",
         ] {
             std::fs::write(activity.join(format!("{key}.think.log")), &big).unwrap();
             std::fs::write(activity.join(format!("{key}.json")), "{}").unwrap();

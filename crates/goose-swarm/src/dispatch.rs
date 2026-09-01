@@ -86,8 +86,9 @@ pub struct DispatchRequest {
     /// The full project file manifest (every task's owned files) so the worker uses the agreed layout
     /// for imports and never invents a divergent location.
     pub all_files: Vec<String>,
-    /// A corrective hint from the idle-model judge when this is a re-dispatch after the judge killed a
-    /// prior attempt (e.g. "you were looping/over-reading — WRITE now"). `None` on a normal attempt.
+    /// A corrective note carried onto a re-dispatch — the guided retry's content error, the tree
+    /// warden's findings, the sink's inherited supervisor notes (the idle-model judge that also wrote
+    /// here is deleted, 2c S6). `None` on a normal attempt.
     pub prior_hint: Option<String>,
     /// S3 i3 (GOOSE_SWARM_FILL_FAN): the task's contract-anchored parallel-fill slots, carried
     /// from TaskSpec.subsplit. Empty everywhere except a normal dispatch of a task whose spec

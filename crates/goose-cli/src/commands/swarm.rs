@@ -19,9 +19,8 @@ use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
-    DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewer, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, ToolCallRecord,
+    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, NullSink, PreReviewer, Scheduler,
+    SwarmEvent, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,11 +54,11 @@ use decisions::PlanDecision;
 mod supervision;
 use supervision::{
     call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
-    is_agent_loop_filler, judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping,
-    parse_judge_eta_mins, parse_judge_reply, render_forming_file, said_kind_of,
-    schedjudge_lane_key, structured_reply_block, superseded_from_prior, supervised_reply_text,
-    supervision_lane_kind, tail_chars, write_forming_atomic, FormingGuard, FormingReport,
-    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
+    judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping, parse_judge_eta_mins,
+    parse_judge_reply, render_forming_file, said_kind_of, structured_reply_block,
+    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_chars,
+    write_forming_atomic, FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError,
+    ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
 };
 mod orientation;
 use orientation::{
@@ -508,7 +507,7 @@ pub struct SwarmConfig {
     /// (val-lean-02/verify::cli-module): 31 identical `cat deals/__main__.py` calls, errors:0, malformed:0 —
     /// invisible to EVERY existing guard, because message_content_is_productive() counts any ToolResponse as
     /// productive (so each repeat reset the progress watchdog), the idle watchdog is reset by every token, and
-    /// the deterministic judge is unreachable for `verify::` tasks (judge.rs requires owned files; fan-verify
+    /// the deterministic idle-model judge (since deleted, 2c S6) was unreachable for `verify::` tasks (it required owned files; fan-verify
     /// plants `files: []`). It only ended when the provider dropped the HTTP body. A repeat with a DIFFERENT
     /// result is progress and never counts; any intervening different call resets the run, so an edit->retest
     /// cycle can never trip it. On trip the attempt returns the EXISTING "no productive progress" stall error,
@@ -516,8 +515,8 @@ pub struct SwarmConfig {
     /// no new way for a task to fail. None => OFF (byte-identical). env GOOSE_SWARM_REPEAT_BREAK overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat_break: Option<bool>,
-    /// #135 GLOBAL SPIRAL BREAK — the judge is ABSENT outside EXECUTE. pick_judge_target
-    /// (scheduler.rs) iterates ONLY `self.dag.tasks` and is called from ONE site inside the execute loop, so
+    /// #135 GLOBAL SPIRAL BREAK — supervision was ABSENT outside EXECUTE. The (since deleted) scheduler judge's
+    /// pick_judge_target iterated ONLY `self.dag.tasks` from ONE site inside the execute loop, so
     /// during RESEARCH / PLAN / CONTRACTS / DETAIL there is no DAG and NO supervision exists at all. Planner
     /// -side calls are unbounded except by their wall-clock budget. MEASURED (nf-poll, 2026-07-20): three
     /// scouts on three nodes — edge-cases 607 thinking chars (done 96s), architecture 6,312 (done 344s),
@@ -9395,7 +9394,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     /// OMNI-JUDGE is now ON by default — it is the ONLY supervisor that can watch a `verify::` task, because
-    /// every deterministic judge gate in judge.rs requires owned files and a verify task owns none.
+    /// the deleted idle-model judge's every deterministic gate required owned files and a verify task owns none.
     ///
     /// Enabling it was only safe once the retry-budget burn was fixed (see scheduler.rs `omni_aborts`): an
     /// omni abort arrives as a plain Transient with no intervention credit, so it consumed one of the task's
@@ -10976,30 +10975,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(pend[0].ends_with("q2.txt"), "answered q1 dropped out");
     }
 
-    #[test]
-    fn digest_failed_calls_block_extracts_only_failures_capped() {
-        // F790-2: 5 calls — 1 ok, 4 failed; the block carries the LAST 3 failures with tails.
-        let digest = Some(serde_json::json!({
-            "calls": [
-                {"name": "shell", "summary": "pytest", "ok": false, "result": "fail-1"},
-                {"name": "write", "summary": "api.py", "ok": true, "result": "ok"},
-                {"name": "shell", "summary": "pytest", "ok": false, "result": "fail-2"},
-                {"name": "edit", "summary": "store.py", "ok": false, "result": "fail-3"},
-                {"name": "shell", "summary": "run", "ok": false, "result": "fail-4"},
-            ]
-        }));
-        let b = digest_failed_calls_block(&digest).unwrap();
-        assert!(b.contains("fail-2") && b.contains("fail-3") && b.contains("fail-4"));
-        assert!(!b.contains("fail-1"), "capped to the last 3 failures");
-        assert!(!b.contains("api.py"), "successful calls are not evidence");
-        // In-flight calls (ok: null) are not failures.
-        let pending = Some(serde_json::json!({
-            "calls": [{"name": "shell", "summary": "x", "ok": null, "result": ""}]
-        }));
-        assert!(digest_failed_calls_block(&pending).is_none());
-        assert!(digest_failed_calls_block(&None).is_none());
-    }
-
     /// F881 (run 8, 0.601): the vendor client stored ONE collection-wide ETag and looped on 304
     /// forever after a cursor restart. The author must receive the conditional-request fact, and it
     /// must not spray onto tasks that have nothing to do with paged fetching.
@@ -12254,14 +12229,6 @@ pub struct GooseAgentDispatcher {
     shard_bases: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
     /// F790-3: questions currently being answered, so two ticks never answer the same one.
     qa_inflight: Mutex<std::collections::HashSet<String>>,
-    /// Per-task fingerprint of what the SEMANTIC REVIEW last saw. The judge re-ran a full 27B
-    /// review of the same unchanged task every ~60s: measured live on one fix task, 9 reviews in
-    /// 10 minutes, every one returning `ok` with an empty hint while the worker's state never
-    /// moved. The review's inputs are exactly (owned-file bytes, tool calls, thinking chars); if
-    /// none of them changed there is nothing new to judge, and paying a generation to re-derive
-    /// the same verdict is pure node-time. Keyed by task id, holding the last reviewed
-    /// fingerprint.
-    judge_seen: Mutex<std::collections::HashMap<String, u64>>,
     /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
     /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
     /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
@@ -12274,33 +12241,10 @@ pub struct GooseAgentDispatcher {
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
     /// flag is on -> no snapshot taken, no restore, byte-identical.
     owner_snapshots: Mutex<HashMap<String, (String, Vec<u8>)>>,
-    /// GEN-4 (fallback rule): per-task record of what the LAST dispatch's prompt actually
-    /// delivered — (file_layout_delivered, dep_apis_delivered) — written at prompt build, read
-    /// by the judge so its deterministic hint asserts only facts. `dep_apis` false means the
-    /// NONE-ON-DISK redirect fired: the worker has NO dependency source, and telling it "you
-    /// already have the injected dependency APIs" would send it hunting for missing context.
-    prompt_delivered: Mutex<HashMap<String, (bool, bool)>>,
     /// GEN-6a #8: activity key + log kind pairs whose transcript-write failure was already
     /// reported, so `transcript_write_failed` fires once per key instead of on every 400ms
     /// flush of a permanently-broken path.
     transcript_failures: Mutex<std::collections::HashSet<String>>,
-    /// `worker_thinking_chars` as of the LAST judge observation of each task, so the judge can see a
-    /// DELTA rather than a level. F143: `test-meridian` was killed for "stuck re-reading" while its
-    /// tool_calls sat at 3 and its reasoning climbed 5,818 -> 8,784 — a single snapshot cannot tell a
-    /// worker mid-generation from a stopped one, and only the pair can.
-    ///
-    /// Keyed by task_id and simply overwritten each observation: a re-dispatch starts a new attempt
-    /// whose first look then has a stale predecessor. That is deliberate and SAFE in one direction
-    /// only — a stale HIGHER value makes `now > prev` false and leaves the trip ARMED, so the failure
-    /// mode is "kill as before", never "suppress a kill we should have made".
-    judge_prev_thinking: Mutex<HashMap<String, u64>>,
-    /// Per-task `worker_tool_calls` as of the previous judge observation. The ACTION counterpart to
-    /// `judge_prev_thinking`; `is_still_producing` keys on this because a spiral's thinking grows
-    /// monotonically by definition (F191) and so can never signal a stall.
-    /// Stores `(tool_calls, elapsed_secs)` — the count AND when it was taken. Without the timestamp the
-    /// delta says only "acted since I last looked", and the judge only looks when a device is idle, so
-    /// under load "last looked" can be 21 minutes ago (measured).
-    judge_prev_calls: Mutex<HashMap<String, (u32, u64)>>,
     /// #121: when set, a task whose accumulated output carries the deterministic mid-stream body-drop
     /// signature (`is_stream_decode_interrupt`) is re-dispatched as Transient instead of being accepted as
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
@@ -12499,13 +12443,9 @@ impl GooseAgentDispatcher {
             spec_shadows: Mutex::new(HashMap::new()),
             shard_bases: Mutex::new(HashMap::new()),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
-            judge_seen: Mutex::new(std::collections::HashMap::new()),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
-            prompt_delivered: Mutex::new(HashMap::new()),
             transcript_failures: Mutex::new(std::collections::HashSet::new()),
-            judge_prev_thinking: Mutex::new(HashMap::new()),
-            judge_prev_calls: Mutex::new(HashMap::new()),
             stream_decode_retry,
             owned_files_by_task: Mutex::new(HashMap::new()),
             dispatched_tasks: Mutex::new(std::collections::HashSet::new()),
@@ -12866,8 +12806,8 @@ impl GooseAgentDispatcher {
         max_turns: u32,
         extensions: &[ExtensionConfig],
         // When Some(task_id), emit a per-turn activity heartbeat to `.swarm/activity/<task_id>.json` so
-        // the idle-model judge can see how many actions this worker has taken — letting it catch a
-        // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
+        // the omni judge (and the panel) can see how many actions this worker has taken — a thrashing
+        // (many-actions, zero-output) worker is caught by BEHAVIOR instead of by a clock.
         // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
         activity_key: Option<&str>,
         // The scheduler's attempt counter for this dispatch, stamped into the activity digest as
@@ -13620,8 +13560,8 @@ impl GooseAgentDispatcher {
             // #135 OMNI-JUDGE: once this call's reasoning crosses the trigger, take ONE look at it with the
             // JUDGE — the thing that can actually SEE a loop. Runs at most once per call, and only for a call
             // already reasoning past every healthy p90, so a normal call never pays for it. A LOOPING verdict
-            // aborts THIS call only; it can never fail a task or a run (a model verdict has
-            // JudgeOutcome.deterministic == false, and scheduler.rs's terminal-fail requires it).
+            // aborts THIS call only; it can never fail a task or a run (scheduler.rs counts the abort
+            // in `omni_aborts`, outside the task's retry budget; no model verdict can fail a task).
             // #F924: a measured recurrence SUMMONS the judge immediately, ahead of the interval.
             // It never kills by itself — under UNCAPPED the judge decides, and this only ensures
             // the judge is looking, and knows what the detector saw, while the loop is running.
@@ -14464,8 +14404,8 @@ impl GooseAgentDispatcher {
                 // turn-cap filler (r6a seq 58: parse_judge_reply minted `drifting` from the
                 // engine's own MAX_TURNS_MESSAGE). A real verdict with the filler as a trailing
                 // line (r6c seq 312) is kept, STRIPPED — `supervised_reply_text` carries both
-                // measurements. The filler look is named with the schedjudge arm's vocabulary and,
-                // like it, moves no streak and records nothing as judged.
+                // measurements. The filler look is named `judge_turn_budget_exhausted` and moves no
+                // streak and records nothing as judged.
                 let probe = probe.and_then(|o| match supervised_reply_text(&o.text) {
                     Ok(text) => Ok(RunAgentOut { text, ..o }),
                     Err(e @ SupervisedReplyError::ProviderError(_)) => {
@@ -16771,8 +16711,8 @@ const BOUNDARY_PROBE_CLAUSE: &str = " SILENT-ACCEPT CHECK: an out-of-domain inpu
 
 /// Finding 1 (the plan-side half of GEN-1): the sink description a PLAN carries, assembled from
 /// the spec's own advertised surface at plan time — the fact parsers need no ledger and no built
-/// tree, so there is no excuse for a template here either. This text is what the REVIEW call's
-/// task summaries and the judge's `JudgeRequest.description` read; the dispatch-time brief
+/// tree, so there is no excuse for a template here either. This text is what the plan row
+/// carries (its two model readers — the REVIEW round and the idle-model judge — are deleted); the dispatch-time brief
 /// (`sink_semantic_description`, which probes the built tree and writes gate round 0) still
 /// replaces it the moment the sink actually dispatches. A spec that advertises nothing gets its
 /// measured absence stated in prose — never the banned zero-fact template, which is now
@@ -20872,7 +20812,7 @@ fn splice_briefs(
                 .unwrap_or(true);
             if empty {
                 // Finding 1: this fallback shipped the banned zero-fact template to the REVIEW
-                // call and the judge (JudgeRequest.description reads the plan row). Built from
+                // call and the idle-model judge (both since deleted; the plan row is still the DAG's). Built from
                 // the spec's own advertised surface now — plan time has the spec, so the facts
                 // exist; a spec advertising nothing gets its absence stated (the fallback rule).
                 t["description"] = serde_json::Value::from(plan_sink_description(spec, lang));
@@ -22280,46 +22220,6 @@ fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang, spec: &str) ->
     serde_json::json!({ "subtasks": tasks }).to_string()
 }
 
-impl GooseAgentDispatcher {
-    /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
-    /// Returns the parsed children (the scheduler re-validates the partition before applying), or None if
-    /// the reply can't be parsed into >= 2 children — the judge then falls back to its normal review.
-    async fn propose_split(&self, req: &JudgeRequest) -> Option<Vec<ChildSpec>> {
-        let owns = req.owned_files.join(", ");
-        let system = "You split an over-long coding subtask into smaller INDEPENDENT pieces so several \
-            workers can finish it in parallel. You are given the files the task owns. Partition those files \
-            into 2 to 4 child subtasks. RULES: every file goes in EXACTLY ONE child; together the children \
-            cover ALL the listed files; introduce NO new files. Prefer fully independent children (empty \
-            depends_on); add a dependency only if one file genuinely cannot be written before another. Reply \
-            with ONLY a JSON array and no prose: \
-            [{\"id\":\"short-kebab-id\",\"files\":[\"path\"],\"depends_on\":[]}]."
-            .to_string();
-        let user = format!(
-            "GOAL: {goal}\nThe subtask \"{desc}\" owns these files and is taking too long for one worker:\n  \
-             {owns}\nPartition them now as a JSON array.",
-            goal = req.goal,
-            desc = req.description,
-        );
-        // HONESTLY NOT KEYED (r6 supervision lanes, batch 2): this call is UNREACHABLE at HEAD —
-        // `judge()` pins `split_enabled: false` ("task-splitting is gone entirely", step 4b), so
-        // `is_split_candidate` can never pass and no model call happens here. Keying dead code
-        // would be capture theater; if splitting ever returns, mint `split-<task>` in
-        // supervision.rs alongside its classifier arm.
-        let text = self
-            .run_agent(&req.judge_model_id, system, user, None, 2, &[], None)
-            .await
-            .ok()
-            .map(|o| o.text)?;
-        // Extract the JSON array even if the model wrapped it in prose. `get` (not slice indexing) returns
-        // None on an inverted/invalid range, so a reply with no array just falls through to the review.
-        let start = text.find('[')?;
-        let end = text.rfind(']')?;
-        let json = text.get(start..=end)?;
-        let children: Vec<ChildSpec> = serde_json::from_str(json).ok()?;
-        (children.len() >= 2).then_some(children)
-    }
-}
-
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
@@ -22613,571 +22513,6 @@ fn corrupt_store_crash(out: &str, err: &str) -> bool {
 
 // II-7: default_complete_cap_secs / complete_cap_fitting_rounds deleted with the repair
 // wall they budgeted — the phase has no deadline to fit rounds into any more.
-
-/// The whole-run deliverable census for the SUPERVISOR prompt, one `path [state]` line each.
-///
-/// The per-task file list can only answer "is this worker doing its job". A worker importing from a
-/// dependency that reported done and left a stub — or nothing — behind is healthy by every per-task
-/// signal, so the only way the supervisor can see that class is to be shown what the REST of the
-/// tree actually put on disk. Empty string when the scheduler has no census, so a run without one
-/// produces a byte-identical prompt.
-fn judge_tree_block(tree_files: &[String]) -> String {
-    if tree_files.is_empty() {
-        return String::new();
-    }
-    let lines = tree_files
-        .iter()
-        .map(|f| format!("    - {f}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("\n  every planned deliverable in this run, and what is on disk for it now:\n{lines}")
-}
-
-#[cfg(test)]
-mod judge_tree_block_tests {
-    use super::judge_tree_block;
-
-    /// A run whose scheduler produced no census must yield a byte-identical supervisor prompt, so the
-    /// block has to vanish entirely rather than render an empty heading.
-    #[test]
-    fn an_empty_census_adds_nothing_to_the_prompt() {
-        assert_eq!(judge_tree_block(&[]), "");
-    }
-
-    /// The states are written by the scheduler's `tree_file_status` and READ by the supervisor system
-    /// prompt, which names `[MISSING]` and `[stub]` as the defect it must flag. The two vocabularies
-    /// are one rule in two crates, so the block must pass the marker through untouched.
-    #[test]
-    fn the_census_reaches_the_prompt_with_its_states_intact() {
-        let census = vec![
-            "core/store.py [delivered]".to_string(),
-            "core/api.py [MISSING]".to_string(),
-            "web/app.js [stub]".to_string(),
-        ];
-        let block = judge_tree_block(&census);
-        for entry in &census {
-            assert!(
-                block.contains(entry),
-                "{entry} was dropped from the supervisor prompt"
-            );
-        }
-        assert_eq!(
-            block.lines().filter(|l| l.contains(" - ")).count(),
-            census.len()
-        );
-        assert!(
-            block.starts_with('\n'),
-            "the block must open its own line in RUN STATE"
-        );
-    }
-}
-
-#[async_trait]
-impl Judge for GooseAgentDispatcher {
-    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
-        // M3: split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime
-        // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
-        let cfg = JudgeConfig {
-            // UNCAPPED: the split trip is elapsed-wall on a PRODUCTIVE task — exactly the class the
-            // regime removes; the spiral kill is a volume threshold. Both forced off; the judge's
-            // content-based LOOPING verdicts stay.
-            // Task-splitting is gone entirely (step 4b): taking files off a running worker is the same
-            // mistake as moving it to another node.
-            split_enabled: false,
-            // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
-            // desktop can enable it (env is discarded by `open -n`).
-            // Permanently off: a char count is a volume threshold, and the judge reads content.
-            spiral_thinking_chars: 0,
-            ..JudgeConfig::default()
-        };
-        // P1-9: the judge probes the REAL tree, always. The shadow-probe selection existed for
-        // fix:: tasks under the fresh-scheduler fix round, which is deleted; the tail's shard fan
-        // dispatches directly (no scheduler, no judge look), so no live caller probes a shadow.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let mut file_contents: Vec<(String, String)> = Vec::new();
-        let mut compile_errors: Vec<(String, String)> = Vec::new();
-        let mut any_owned_written = false;
-        let mut newest_mtime: Option<std::time::SystemTime> = None;
-        for f in &req.owned_files {
-            let path = cwd.join(f);
-            if let Ok(meta) = path.metadata() {
-                if meta.len() > 0 {
-                    any_owned_written = true;
-                }
-                if let Ok(mt) = meta.modified() {
-                    newest_mtime = Some(match newest_mtime {
-                        Some(n) if n > mt => n,
-                        _ => mt,
-                    });
-                }
-            }
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                if !contents.trim().is_empty() {
-                    if let Some(err) = syntax_error(&path).await {
-                        compile_errors.push((f.clone(), err));
-                    }
-                }
-                file_contents.push((f.clone(), contents));
-            }
-        }
-        // CLAMPED TO THE ATTEMPT'S OWN AGE (speed hunt 2026-08-16): a task cannot have been
-        // "still" longer than it has existed. Fix shadows are created by a copy that preserves
-        // source mtimes, so the raw value read the ORIGINAL tree's age — a 434s-old fix attempt
-        // was accepted as "nothing has changed for 3685s" and its shadow was never graded.
-        let secs_since_last_write = newest_mtime
-            .and_then(|mt| mt.elapsed().ok())
-            .map(|d| d.as_secs().min(req.elapsed_secs));
-        // The worker's live activity digest (.swarm/activity/<task_id>.json): action count, error count,
-        // recent tool calls, and last reasoning. tool_calls feeds the deterministic over-read check; the
-        // whole digest is the worker's "log" that the semantic review reads below.
-        let digest = std::fs::read_to_string(
-            cwd.join(".swarm")
-                .join("activity")
-                .join(format!("{}.json", activity_digest_key(&req.task_id))),
-        )
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-        let worker_tool_calls = digest
-            .as_ref()
-            .and_then(|v| v.get("tool_calls").and_then(|n| n.as_u64()))
-            .map(|n| n as u32);
-        // On a reasoning model this is the ONLY non-zero signal a still-working worker produces: it streams
-        // Thinking, which is neither a tool call nor text, so tool_calls/errors/last_text all read 0 while
-        // it is in fact generating. Absent (None) on an older digest that predates the key.
-        let worker_thinking_chars = digest
-            .as_ref()
-            .and_then(|v| v.get("thinking_chars").and_then(|n| n.as_u64()));
-        // Read the PREVIOUS action count AND when it was taken, then record this one, so the judge can
-        // read the delta as a rate. Both halves must come from the SAME lock acquisition or a concurrent
-        // observation could pair this count with a different observation's timestamp.
-        let prev_calls = {
-            let mut g = self.judge_prev_calls.lock().unwrap();
-            let was = g.get(&req.task_id).copied();
-            if let Some(now) = worker_tool_calls {
-                g.insert(req.task_id.clone(), (now, req.elapsed_secs));
-            }
-            was
-        };
-        let delivered = self
-            .prompt_delivered
-            .lock()
-            .unwrap()
-            .get(&req.task_id)
-            .copied()
-            .unwrap_or((false, false));
-        let input = JudgeInput {
-            task_id: req.task_id.clone(),
-            description: req.description.clone(),
-            owned_files: req.owned_files.clone(),
-            file_contents,
-            compile_errors,
-            elapsed_secs: req.elapsed_secs,
-            any_owned_written,
-            secs_since_last_write,
-            worker_tool_calls,
-            worker_thinking_chars,
-            // Read the PREVIOUS observation, then record this one — so the judge sees the delta.
-            prev_thinking_chars: {
-                let mut g = self.judge_prev_thinking.lock().unwrap();
-                let was = g.get(&req.task_id).copied();
-                if let Some(now) = worker_thinking_chars {
-                    g.insert(req.task_id.clone(), now);
-                }
-                was
-            },
-            prev_tool_calls: prev_calls.map(|(n, _)| n),
-            prev_observed_secs: prev_calls.map(|(_, at)| at),
-            // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
-            // split carries split_count >= 1 and is never re-split).
-            split_count: req.split_count,
-            attempt: req.attempt,
-            // GEN-4: what this task's dispatch prompt actually delivered, recorded at prompt
-            // build. A look with no record (defensive only — dispatch precedes every look)
-            // claims nothing it cannot prove.
-            file_layout_delivered: delivered.0,
-            dep_apis_delivered: delivered.1,
-        };
-        // WHAT THE JUDGE ACTUALLY SAW, as a deterministic engine event.
-        //
-        // `judge_verdict` carries only {task_id, device, verdict, confidence, hint, action}. Across
-        // 1,339 judge events in the archive, NEITHER `worker_tool_calls` NOR `worker_thinking_chars`
-        // appears anywhere — and those two are the entire discriminator between the only two stories
-        // that explain a worker killed at the 420s floor with nothing written:
-        //
-        //   * it is SPIRALLING and should have died sooner  (#134 spiral trip, judge.rs:359 —
-        //     BUILT and default-OFF at `spiral_thinking_chars: 0`)
-        //   * it is THINKING PRODUCTIVELY and 420s is too short (the "grace lever" the regression
-        //     test at judge.rs:496 pins a baseline for — never actually built)
-        //
-        // The outcomes are identical either way, so the archive cannot choose: pre-write paralysis
-        // is 25% of interventions, fires at a 7.5-min median (i.e. AT the floor), and recovers only
-        // 35.7% against 60.0% for post-write spin. A lever built for this has sat off and unmeasured
-        // precisely because its precondition was structurally unobservable. Same shape as F111.
-        //
-        // RAW INPUTS ONLY — deliberately not a re-derived "would_trip" flag. The trip predicate lives
-        // in judge.rs and duplicating it here would be the two-disagreeing-versions defect this loop
-        // keeps finding; with the raw fields any threshold can be tested offline against the archive.
-        //
-        // Emitted BEFORE `deterministic_verdict`'s early return and before the `no_idle_device`
-        // return, so it lands on EVERY judge invocation whichever path is taken. An event added to
-        // make something observable that is emitted on a branch is the defect it was meant to fix.
-        self.events.write_value(serde_json::json!({
-            "event": "judge_observed",
-            "task_id": req.task_id,
-            "elapsed_secs": req.elapsed_secs,
-            "tool_calls": worker_tool_calls,
-            "thinking_chars": worker_thinking_chars,
-            "any_owned_written": any_owned_written,
-            "owns_files": !req.owned_files.is_empty(),
-            "secs_since_last_write": secs_since_last_write,
-        }));
-        // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
-        if let Some(out) = deterministic_verdict(&input, &cfg) {
-            // GEN-4 receipt (fallback rule): when a deterministic over-read hint had to drop a
-            // context claim because the dispatch never delivered it, that absence is a named
-            // event — a hint that quietly asserts less is otherwise indistinguishable from the
-            // full one in the log.
-            if out.deterministic
-                && matches!(out.verdict, goose_swarm::judge::Verdict::OverReading)
-                && !(input.file_layout_delivered && input.dep_apis_delivered)
-            {
-                let mut missing: Vec<&str> = Vec::new();
-                if !input.file_layout_delivered {
-                    missing.push("file_layout");
-                }
-                if !input.dep_apis_delivered {
-                    missing.push("dep_apis");
-                }
-                self.events.write_value(serde_json::json!({
-                    "event": "judge_hint_context_absent",
-                    "task_id": req.task_id,
-                    "missing": missing,
-                }));
-            }
-            return Ok(out);
-        }
-        // No idle device was free for the model review (fleet saturated — weight-1 with every node busy).
-        // The cheap deterministic checks above already ran without a model; skip the LLM review rather than
-        // queue it behind a busy worker. This is what lets the judge still catch a stuck worker mid-fan-out.
-        if req.judge_model_id.trim().is_empty() {
-            // WHY the judge passed, as an engine fact. Four distinct paths return `JudgeOutcome::ok()`
-            // and every one of them lands in the log as `confidence 1.0, hint ""` — indistinguishable.
-            // That made the headline "the semantic review runs 4.3% of the time" UNATTRIBUTABLE: it
-            // could be this branch, the nothing-produced gate below, or a failed model call, and those
-            // have completely different fixes.
-            //
-            // THIS branch is the load-bearing one and it is UPSTREAM of everything else. The scheduler
-            // hands the judge a model ONLY when a device is idle (scheduler.rs — `claimed_device` is
-            // the first device with `in_flight < weight`, and `judge_model_id` is empty otherwise). With
-            // execute occupancy measured at 0.72-0.93, nodes are busy nearly all the time, so the
-            // semantic review is not being declined — it is UNREACHABLE. High utilisation and semantic
-            // judging are in direct tension, and nothing in the log said so.
-            me_events_skip(&self.events, &req.task_id, "no_idle_device");
-            return Ok(JudgeOutcome::ok());
-        }
-        // M3 (gated by split_enabled): a too-big PRODUCING task — ask this idle node to PARTITION its files
-        // into independent children instead of letting it crawl. The scheduler RE-VALIDATES the partition
-        // before applying, so a malformed proposal is harmless; on any parse failure we fall through to the
-        // normal semantic review and the worker keeps running.
-        if is_split_candidate(&input, &cfg) {
-            if let Some(children) = self.propose_split(&req).await {
-                return Ok(JudgeOutcome::split(children));
-            }
-        }
-        // Phase 2: SEMANTIC review on the idle node. Reached only after the deterministic checks pass —
-        // this is where the (weak) model adds JUDGEMENT the cheap signals can't: given the goal and what
-        // the rest of the run has already done, is this worker on a healthy path, or is it broken /
-        // looping on an error / drifting / re-doing finished work? It reads the worker's files-so-far,
-        // its live activity log, AND the high-level run state, then passes or returns a correction.
-        let acts = input.worker_tool_calls.unwrap_or(0);
-        let thinking = input.worker_thinking_chars.unwrap_or(0);
-        // "NOTHING TO ASSESS" MUST MEAN NOTHING PRODUCED — not "produced only thinking".
-        //
-        // MEASURED across 851 judge verdicts on 9 runs: 814 of them (95.7%) came back
-        // `confidence 1.0` with an empty hint, which is this early return. The semantic review — the
-        // whole SUPERVISOR prompt below, the thing the judge exists for — ran **4.3% of the time**.
-        // The judge was not mostly deciding "ok"; it was mostly never asked.
-        //
-        // The cause is the gate itself. `worker_tool_calls` comes from the activity digest, and on a
-        // reasoning model a worker that streams thinking makes NO tool calls — so `acts` stays 0. A
-        // worker with no file and no actions was read as "hasn't got going yet" and skipped, when it
-        // is equally the signature of a worker thinking itself in circles. The one worker most in
-        // need of a supervisor was the one guaranteed not to get one.
-        //
-        // `thinking == 0` rather than a char threshold, deliberately: another tuned literal is the
-        // thing being removed, and `min_age_secs`/`rejudge_cooldown_secs` already stop a
-        // just-launched worker from being reviewed. A worker that is 90s old and has emitted
-        // reasoning while writing nothing and calling nothing is exactly what a supervisor is for.
-        if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
-            me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
-            return Ok(JudgeOutcome::ok()); // genuinely nothing produced yet
-        }
-        let files_block = if input.file_contents.is_empty() {
-            "(no file written yet)".to_string()
-        } else {
-            input
-                .file_contents
-                .iter()
-                .map(|(p, c)| {
-                    // SAY WHEN IT IS CUT. The judge is asked whether this worker's code can satisfy
-                    // its spec, and it was handed the first 1800 characters of each file with no
-                    // marker — so a large, complete, correct file arrived looking like it stopped
-                    // mid-function. The one thing the prompt tells the judge never to flag is
-                    // merely-unfinished work, and this is how a finished file was made to look
-                    // unfinished. An honest excerpt marker costs one line and removes the illusion.
-                    let total = c.chars().count();
-                    if total > 1800 {
-                        let body: String = c.chars().take(1800).collect();
-                        format!(
-                            "### {p}\n(excerpt: first 1800 of {total} characters — the file \
-                             CONTINUES beyond this point; judge only what you can see and never \
-                             treat the cut as an unfinished file)\n```\n{body}\n```"
-                        )
-                    } else {
-                        format!("### {p} (complete, {total} characters)\n```\n{c}\n```")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
-        // The worker's live "log": what it has been doing and whether its actions are erroring.
-        let trace_block = digest
-            .as_ref()
-            .map(|d| {
-                let errors = d.get("errors").and_then(|n| n.as_u64()).unwrap_or(0);
-                let recent: Vec<String> = d
-                    .get("recent")
-                    .and_then(|r| r.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let last = d.get("last_text").and_then(|t| t.as_str()).unwrap_or("");
-                format!(
-                    "actions taken: {acts} ({errors} errored)\nreasoning emitted: {thinking} chars\
-                     \nrecent actions: {}\nworker's last reasoning: {}",
-                    if recent.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        recent.join(", ")
-                    },
-                    if last.is_empty() { "(none)" } else { last }
-                )
-            })
-            .unwrap_or_else(|| format!("actions taken: {acts}"));
-        // High-level state of the rest of the run — so the judge reviews this worker in context.
-        let done_block = if req.done.is_empty() {
-            "    (none yet)".to_string()
-        } else {
-            req.done
-                .iter()
-                .map(|(id, brief)| format!("    - {id}: {}", brief.replace('\n', " ")))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let remaining_str = if req.remaining.is_empty() {
-            "(none)".to_string()
-        } else {
-            req.remaining.join(", ")
-        };
-        let failed_str = if req.failed.is_empty() {
-            "(none)".to_string()
-        } else {
-            req.failed.join(", ")
-        };
-        let owns_str = if req.owned_files.is_empty() {
-            "(works across the whole layout)".to_string()
-        } else {
-            req.owned_files.join(", ")
-        };
-        let system = "You are the SUPERVISOR of one worker on a shared multi-agent code build, running on \
-            a spare node. You are given the overall GOAL, the high-level state of the whole run (what is \
-            already done, still running, and failed, and every planned deliverable with what is on disk \
-            for it right now), the worker's own SUBTASK spec, the file(s) it has \
-            produced so far, and its live ACTIVITY LOG (recent actions, how many errored, its last \
-            reasoning). Use ALL of it plus your own judgement to decide ONE thing: is this worker on a \
-            healthy path to finish its subtask and move the goal forward, or has it gone wrong? Mid-write, \
-            incomplete code is NORMAL — never flag merely-unfinished work. Flag ONLY a clear problem you \
-            can SEE evidence for: code that cannot satisfy the spec, repeating the same failing \
-            action/error, exploring without producing, re-doing a task already DONE, depending on a \
-            FAILED task, or building on a dependency whose planned file is listed [MISSING] or [stub]. Give a concrete CORRECTION the worker can act on. BE CONSERVATIVE — a wrong kill \
-            wastes real work, so when unsure say OK. Reply with EXACTLY one line `VERDICT|CONFIDENCE|hint`: \
-            VERDICT one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT; CONFIDENCE one of HIGH or LOW (HIGH only \
-            when you are sure and can point to the evidence); hint = for a NON-OK verdict, the concrete \
-            correction; for OK, ONE clause naming the specific evidence you checked and what it showed \
-            (e.g. `wrote store.py with all 6 spec methods, 2 tool errors both self-resolved, no repeated \
-            action`). NEVER leave the hint blank and never write generic praise — an OK you cannot \
-            evidence is not an OK you should give."
-            .to_string();
-        // GOOSE_SWARM_GOALS (part 5): give the judge the app's PILLARS so its existing SPEC_DRIFT verdict is
-        // grounded in the concrete acceptance criteria (a wrong command name/interface is now a nameable
-        // drift, not a vague "quality" call). Conservative: still HIGH-confidence + visible-evidence only.
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| {
-                    format!(
-                        "\n{p}(If this worker's code CLEARLY violates one of the pillars above — a wrong \
-                         command name/argument order, or a different shared data shape — that is SPEC_DRIFT; \
-                         still require HIGH confidence + visible evidence, never flag merely-unfinished work.)"
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        // F790-2 INSTRUMENTS: deterministic evidence the verdict/hint can CITE. Failed tool
-        // calls come from the digest already in hand; import health runs only when this worker
-        // owns Python files and only after the cheap early-returns above, so a healthy young
-        // worker never pays for it.
-        let failed_calls = digest_failed_calls_block(&digest);
-        let import_health = if req.owned_files.iter().any(|f| f.ends_with(".py")) {
-            collect_only_import_health(&cwd).await
-        } else {
-            None
-        };
-        let instruments_block = match (&failed_calls, &import_health) {
-            (None, None) => String::new(),
-            _ => format!(
-                "\n\nINSTRUMENT READINGS (deterministic — cite these in your hint when relevant):\n\
-                 {}{}",
-                failed_calls
-                    .as_deref()
-                    .map(|f| format!("recent FAILED tool calls:\n{f}\n"))
-                    .unwrap_or_default(),
-                import_health
-                    .as_deref()
-                    .map(|h| format!("pytest --collect-only FAILS (the tree cannot import):\n{h}\n"))
-                    .unwrap_or_default(),
-            ),
-        };
-        let user = format!(
-            "GOAL: {goal}{pillars_block}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}{tree}\n\n\
-             THIS WORKER's subtask: {desc}\n  owns files: {owns}\n\nFiles produced so far:\n{files}\n\n\
-             Worker activity log:\n{trace}{instruments}\n\nYour one-line verdict:",
-            goal = req.goal,
-            done = done_block,
-            rem = remaining_str,
-            fail = failed_str,
-            tree = judge_tree_block(&req.tree_files),
-            desc = req.description,
-            owns = owns_str,
-            files = files_block,
-            trace = trace_block,
-            instruments = instruments_block,
-        );
-        // NOTHING NEW TO JUDGE. The semantic review is a full generation on a fleet node, and the
-        // prompt just built IS everything it can see — goal, run state, this worker's files, its
-        // activity trace, the instrument readings. When that prompt is byte-identical to the one the
-        // last completed review answered, the model can only re-derive the verdict it already gave,
-        // and it did: MEASURED live on `fix::r0::vendorsync/web/app.js`, 9 reviews in 10 minutes,
-        // every one `ok` with an empty hint — a node-quarter-hour spent re-reading an unchanged
-        // worker while the fleet had real work queued.
-        //
-        // Fingerprinting the PROMPT rather than a hand-picked tuple is deliberate (review finding):
-        // an earlier version hashed only files+acts+thinking and would have skipped reviews whose
-        // verdict could legitimately change because the RUN moved around the worker (a sibling
-        // failed, imports broke tree-wide). If it cannot change the prompt, it cannot change the
-        // verdict. The key carries `attempts` so a re-dispatched attempt — which restarts at the
-        // same zeroed counters — is always reviewed afresh, and the fingerprint is recorded ONLY
-        // after a review actually completes, so a timed-out or errored review never marks itself
-        // done and suppresses its own retry.
-        let review_fp = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            user.hash(&mut h);
-            h.finish()
-        };
-        let seen_key = format!("{}#{}", req.task_id, req.attempt);
-        if let Ok(seen) = self.judge_seen.lock() {
-            if seen.get(&seen_key) == Some(&review_fp) {
-                me_events_skip(&self.events, &req.task_id, "unchanged_since_last_review");
-                return Ok(JudgeOutcome::ok());
-            }
-        }
-        // Keyed `schedjudge-<task>` (r6 supervision lanes, batch 2): r5's 43 scheduler-judge
-        // looks were attributable only by event — no lane, no digest, no think.log. NOT
-        // `judge-<task>` (surgeon #10): the omni judge owns that key for the same task, and a
-        // shared key would interleave two reviews into one digest. One lane per reviewed task;
-        // each review folds the prior into `superseded`.
-        let schedjudge_lane = schedjudge_lane_key(&req.task_id);
-        match self
-            .run_agent(
-                &req.judge_model_id,
-                system,
-                user,
-                None,
-                2,
-                &[],
-                Some(&schedjudge_lane),
-            )
-            .await
-        {
-            Ok(o) if is_agent_loop_filler(&o.text) => {
-                // THE JUDGE'S OWN MODEL EXHAUSTED ITS TURNS. goose's agent loop then returns its
-                // fixed meta-message ("I've reached the maximum number of actions…") instead of a
-                // verdict — a full generation on a fleet node that supervised nothing. The engine
-                // already recognises this filler everywhere else (detailers, repro authors); the
-                // judge treated it as a reply and `parse_judge_reply` quietly degraded it to OK, so
-                // it was indistinguishable from a real pass. Caught live the first hour the
-                // `judge_review` event existed. It must NOT record the reviewed-fingerprint either:
-                // this state was never actually judged, so the next attempt must be allowed to run.
-                self.events.write_value(serde_json::json!({
-                    "event": "judge_review",
-                    "task_id": req.task_id,
-                    "elapsed_secs": req.elapsed_secs,
-                    "reply": "(no verdict — the judge's own turn budget was exhausted)",
-                    "filler": true,
-                }));
-                me_events_skip(&self.events, &req.task_id, "judge_turn_budget_exhausted");
-                Ok(JudgeOutcome::ok())
-            }
-            // A-2: the agent loop hands a provider failure back as TEXT, so this arm — not the Err
-            // arm below — is where r2's dead judge model arrived. It is a failed LOOK: no verdict,
-            // no fingerprint (this state was never judged, same rule as the filler above), no
-            // semantic_reviews row claiming a review happened.
-            Ok(o) if said_kind_of(&o.text) == "error" => Err(clip_tail(&o.text, 400)),
-            Ok(o) => {
-                if let Ok(mut seen) = self.judge_seen.lock() {
-                    seen.insert(seen_key, review_fp);
-                }
-                // Research log: record EVERY semantic review (including the OK ones) so the judge's
-                // behaviour can actually be studied — when it ran and what it concluded. A semantic OK is
-                // otherwise indistinguishable from a deterministic OK in the verdict event.
-                let log = cwd.join(".swarm").join("semantic_reviews.log");
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log)
-                {
-                    use std::io::Write;
-                    let reply: String = o.text.replace('\n', " ").chars().take(240).collect();
-                    let _ = writeln!(f, "{}\t{}s\t{}", req.task_id, req.elapsed_secs, reply);
-                }
-                // THE REVIEW'S ACTUAL WORDS, IN THE RUN LOG. An OK verdict returns
-                // `JudgeOutcome::ok()`, which carries no text, so a semantic review that genuinely
-                // read the worker and concluded it was healthy was indistinguishable in the event
-                // stream from a deterministic early-return — every `judge_verdict` read `ok /
-                // confidence 1.0 / hint ""`, which is what "the judge observed and did nothing"
-                // looks like from outside. The verdict types stay untouched; this event just makes
-                // the reasoning visible to the panel, the operator and the audits.
-                self.events.write_value(serde_json::json!({
-                    "event": "judge_review",
-                    "task_id": req.task_id,
-                    "elapsed_secs": req.elapsed_secs,
-                    "reply": o.text.replace('\n', " ").chars().take(400).collect::<String>(),
-                }));
-                Ok(parse_judge_reply(&o.text))
-            }
-            // A-2: a transport Err from the judge's own call is a failed look, never a clean OK —
-            // the old `_ => JudgeOutcome::ok()` wrote `judge_verdict ok / confidence 1.0` rows for
-            // looks that never happened, indistinguishable from a real pass.
-            Err(e) => Err(clip_tail(&e.to_string(), 400)),
-        }
-    }
-}
 
 #[async_trait]
 impl PreReviewer for GooseAgentDispatcher {
@@ -25757,36 +25092,6 @@ fn render_pillars_block(p: &Pillars) -> String {
     )
 }
 
-/// F790-2: the worker's FAILED tool calls, from the activity digest's `calls` records — the
-/// evidence a supervisor verdict should cite. Pure over the parsed digest, capped to the last 3
-/// failures with result tails, so a noisy worker cannot flood the judge prompt.
-fn digest_failed_calls_block(digest: &Option<serde_json::Value>) -> Option<String> {
-    let calls = digest.as_ref()?.get("calls")?.as_array()?;
-    let fails: Vec<String> = calls
-        .iter()
-        .filter(|c| c.get("ok").and_then(|o| o.as_bool()) == Some(false))
-        .rev()
-        .take(3)
-        .map(|c| {
-            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let summary = c.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-            let result: String = c
-                .get("result")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(300)
-                .collect();
-            format!("  - {name} {summary}: {result}")
-        })
-        .collect();
-    if fails.is_empty() {
-        None
-    } else {
-        Some(fails.join("\n"))
-    }
-}
-
 /// F790-2: import health via `pytest --collect-only -q` on the probe root. A collect failure
 /// means the tree cannot even be imported — the strongest cheap "broken" fact a supervisor can
 /// cite, and invisible to per-file syntax checks (it catches cross-file import breakage). 20s
@@ -26884,9 +26189,6 @@ impl GooseAgentDispatcher {
         // byte-identical for every other task.
         let shard = req.shard_of.as_ref();
         let shard_final_before = shards::snapshot_final_files(&root, shard);
-        // GEN-4: whether the dependency-API section below carries REAL source, recorded so the
-        // judge's deterministic hint can assert only what this prompt actually delivered.
-        let mut dep_apis_delivered = false;
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
@@ -27288,7 +26590,6 @@ impl GooseAgentDispatcher {
                  (`grep -n`/`sed -n`) before writing calls against it.\n\n"
                     .to_string()
             } else {
-                dep_apis_delivered = true;
                 dep_block
             };
             format!(
@@ -27297,12 +26598,6 @@ impl GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
-        // GEN-4 record for the judge: the layout block is gated on the manifest, so its
-        // delivery IS that gate's outcome; dep_apis is the flag set above.
-        self.prompt_delivered.lock().unwrap().insert(
-            req.task_id.clone(),
-            (!req.all_files.is_empty(), dep_apis_delivered),
-        );
         // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
         // signature, not a behaviour, and r2 measured the bundle NARROWING the build (meridian/
         // viz/static silently dropped from the contract; the worker built exactly what was
@@ -27852,8 +27147,8 @@ impl GooseAgentDispatcher {
         // worker_timeout_secs (a genuinely stalled stream). A slow-but-PROGRESSING local model emits an
         // event every turn and runs to completion no matter the total time — wall-clock would wrongly
         // kill an honest 885s task. A stall surfaces as transient below → the scheduler re-routes it.
-        // If the idle-model judge killed a prior attempt, lead with its corrective hint so this
-        // re-dispatch heeds it (e.g. "you were over-reading/looping — WRITE now").
+        // If a prior attempt ended with a supervisor note (the guided retry's content error, the
+        // warden's findings), lead with it so this re-dispatch heeds it.
         // II-3: for the sink with facts on ledger, the semantic brief IS the task — spliced at
         // this seam (ahead of everything the worker reads as its task) so the model cannot reach
         // the instructions without the measured facts having been in context. The injection is
@@ -28206,7 +27501,7 @@ impl GooseAgentDispatcher {
                                 // the run-10 meridian worker "completed" 585s of zero tool calls
                                 // exactly this way.
                                 std::fs::read_to_string(cwd.join(f.as_str()))
-                                    .is_ok_and(|c| goose_swarm::judge::skeleton_only(&c))
+                                    .is_ok_and(|c| goose_swarm::skeleton_only(&c))
                             }
                         })
                         .cloned()
@@ -28414,7 +27709,7 @@ impl GooseAgentDispatcher {
                                     // deliverable — salvaging it as done would replay the
                                     // run-10 laundering through the watchdog path.
                                     !std::fs::read_to_string(cwd.join(f.as_str()))
-                                        .is_ok_and(|c| goose_swarm::judge::skeleton_only(&c))
+                                        .is_ok_and(|c| goose_swarm::skeleton_only(&c))
                                 }
                                 Err(_) => false,
                             });
@@ -30121,10 +29416,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // and drove a demote. The echo's whole purpose is completeness.
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "user_notes": swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes),
-            // `split` and `split_inherit_spec` are in `retired_levers`: scheduler.rs pins
-            // `let is_split = false`, so the judge can no longer split a task and the only reader of
-            // GOOSE_SWARM_SPLIT_INHERIT_SPEC (`apply_split`) is unreachable. GOOSE_SWARM_SPLIT itself
-            // was read by nothing but this echo.
+            // `split` and `split_inherit_spec` are in `retired_levers`: the idle-model judge and its
+            // `apply_split` door are deleted (2c S6). GOOSE_SWARM_SPLIT itself was read by nothing
+            // but this echo.
             // Enumerated rather than fixed one at a time: these are every OTHER lever read from env
             // inside crates/goose-swarm and therefore missing from this map for the same reason.
             // salvage_spin turns a terminal finalize-spin failure into Done — it decides whether a
@@ -30134,12 +29428,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
             "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(true)),
             "spec_sized_plan": swarm_gate_cfg("GOOSE_SWARM_SPEC_SIZED_PLAN", load_config().spec_sized_plan.unwrap_or(true)),
-            "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
-                .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-                .unwrap_or(true),
-            "salvage_require_critical": std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
-                .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or(false),
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // #129/#130 levers + ask_replan were firing but ABSENT from this map, so a campaign screen read
@@ -30689,16 +29977,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // — when the file is deleted. Wired unconditionally: with no sentinel the hold never fires, so this is
     // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
     scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
-    // Idle-model judge: a node that would sit idle while tasks run inspects a busy worker and may kill +
-    // re-dispatch a stuck one. On by default; GOOSE_SWARM_JUDGE=0 disables it.
-    let judge_on = std::env::var("GOOSE_SWARM_JUDGE")
-        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-        .unwrap_or(true);
-    if judge_on {
-        eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
-        scheduler =
-            scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
-    }
     // The idle-node jobs the scheduler can hand this dispatcher: the operator Q&A (GOOSE_SWARM_QA)
     // and testgen (GOOSE_SWARM_TESTGEN, default off) — each carries its own gate inside the
     // scheduler. The sink/tail idle-fill dimension reviews are deleted (2c S6). The M5
@@ -35550,7 +34828,7 @@ mod audit_regressions {
     }
 
     /// Finding 1 (plan-side GEN-1): the sink description a PLAN carries — read by the REVIEW
-    /// call's summaries and the judge's JudgeRequest.description — is built from the spec's
+    /// call's summaries and the idle-model judge's request (both since deleted) — is built from the spec's
     /// advertised surface, and the banned template cannot appear on either live path (the
     /// splice fallback and the flat plan both call this builder now; the template fns are
     /// test-only). A spec advertising nothing gets a stated measured absence.

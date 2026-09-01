@@ -244,7 +244,7 @@ owner inside `finalize_plan_before_dag`; the DYNAMIC REPLANNER — the door r4 c
 DELETED (VA-015, 2026-09-01, gate 9: r6c's `replan-r0` ran 208 unsupervised minutes for two bonus
 tasks nothing imported, r5's held two READY tasks 19 minutes at B+80; `repair_replan_specs` and the
 `Replanned` event went with it), and `development_gates.rs` refuses its return and enumerates the one
-splice site left (apply_split's partition door, whose exact-cover validation is its repair). Mihai,
+splice site left (the merger's gap door, `splice_merge_gaps`, whose refusals are its repair; the idle-model judge's `apply_split` door is deleted in 2c S6). Mihai,
 2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
 practice."
 

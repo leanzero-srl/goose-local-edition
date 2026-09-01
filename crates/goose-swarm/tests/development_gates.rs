@@ -379,7 +379,7 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,254 (2c S12): the thin-brief floor (`THIN_BRIEF_MIN_CHARS`,
     // `thin_brief_missing`) and its test moved to commands/swarm/briefs.rs, paying for the
     // merger's frame arms (owner body, reading rule, the ACT-NOW skip).
-    const SWARM_RS_LINE_BASELINE: usize = 35_652;
+    const SWARM_RS_LINE_BASELINE: usize = 34_930;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -430,7 +430,10 @@ fn do_everything_never_reaches_a_model() {
 // Tightened to 117 (2c S13): repair_waves.rs's three-way compose reads its OURS/THEIRS/BASE
 // bytes explicitly — a missing or unreadable OURS is `shard_file_unreadable` and no change (never
 // an EMPTY file landed), an absent THEIRS/BASE is the honest empty of a file that did not exist.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 117;
+// To 97 on 2026-09-01 (2c S6): the idle-model judge (judge.rs, `apply_judge_outcome`, `apply_split`,
+// goose-cli's `impl Judge`), its Looping-salvage path and the idle-fill dimension reviews took 20
+// with them — deletions of 0-happy-path arms, not new proofs.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 97;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
@@ -529,8 +532,9 @@ fn campaign_skill_still_forbids_headless_launches() {
 /// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs.
 /// VA-015 (2026-09-01, gate 9) DELETED the dynamic replanner — the door r4 came through no longer
 /// exists — so this test now refuses its RETURN (no `Replanner` attach, no `.replan(` call, no
-/// `repair_replan_specs` in scheduler.rs) and enumerates the one splice site left (apply_split's
-/// partition door, whose validation IS its ownership repair). The sink-file strip must stay in the
+/// `repair_replan_specs` in scheduler.rs) and enumerates the one splice site left: the merger's
+/// gap door (`splice_merge_gaps`, 2c S4), whose refusals ARE its ownership repair — the idle-model
+/// judge's `apply_split` partition door is deleted (2c S6). The sink-file strip must stay in the
 /// plan-repair chain, and both agentic docs must carry the gate so a compaction cannot lose it.
 #[test]
 fn every_dag_entry_walks_through_the_same_repairs() {
@@ -562,11 +566,11 @@ fn every_dag_entry_walks_through_the_same_repairs() {
         .collect();
     assert_eq!(
         sites.len(),
-        2,
-        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 2 (apply_split's \
-         partition door; splice_merge_gaps, the merger's gap door — 2c S4). A NEW door must carry \
-         its ownership repair and be added here with its guard assert — never spliced past the \
-         repairs (gate 6, the r4 class).",
+        1,
+        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 1 \
+         (splice_merge_gaps, the merger's gap door — 2c S4; apply_split's partition door is deleted \
+         with the idle-model judge, 2c S6). A NEW door must carry its ownership repair and be added \
+         here with its guard assert — never spliced past the repairs (gate 6, the r4 class).",
         sites.len()
     );
     // The merge-gap door (2c S4): a merger's MERGE_GAP follow-ups are shards of the SAME module,
@@ -592,21 +596,6 @@ fn every_dag_entry_walks_through_the_same_repairs() {
             "splice_merge_gaps lost its refusal `{guard}` — the gap door's ownership repair"
         );
     }
-    // The one door — apply_split's partition validation IS its ownership repair (an exact partition
-    // of the parent's already-repaired claim cannot create a second claimant or a new path):
-    // its two load-bearing refusals must stand between the fn definition and its splice.
-    let split_fn = sched.find("fn apply_split(").expect("apply_split exists");
-    let split_splice = sched[split_fn..]
-        .find(".splice_specs(")
-        .map(|i| split_fn + i)
-        .expect("apply_split's splice site exists inside the fn");
-    let split_body = &sched[split_fn..split_splice];
-    assert!(
-        split_body.contains("!orig_files.contains(f)")
-            && split_body.contains("union != orig_files"),
-        "apply_split's partition refusals (foreign-file and non-exact-cover) must guard its \
-         splice — they are this door's ownership repair"
-    );
     let engine = read("crates/goose-cli/src/commands/swarm.rs");
     assert!(
         engine.contains("repair_sink_files(plan, &mut actions);"),

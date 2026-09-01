@@ -10,9 +10,11 @@ pub mod context;
 pub mod dag;
 pub mod dispatch;
 pub mod event;
-pub mod judge;
+pub mod idle_jobs;
 pub mod patch;
 pub mod scheduler;
+pub mod stub;
+pub mod verdict;
 
 pub use coherence::{extract_signatures, SigLang};
 pub use context::SharedContext;
@@ -23,12 +25,11 @@ pub use dag::{
 };
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 pub use event::{EventSink, NullSink, SwarmEvent};
-pub use judge::{
-    deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
-    JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
-};
+pub use idle_jobs::PreReviewer;
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
 pub use scheduler::{
     qa_enabled, testgen_enabled, AttemptRecord, DeviceAdmission, DeviceCfg, DeviceSummary,
     RunReport, Scheduler, TaskOutcome,
 };
+pub use stub::skeleton_only;
+pub use verdict::{JudgeOutcome, Verdict};
