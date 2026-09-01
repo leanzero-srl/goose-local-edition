@@ -86,7 +86,9 @@ use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod plan_repairs;
-use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
+use plan_repairs::{
+    repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
+};
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
 mod ledger_block;
@@ -21244,9 +21246,10 @@ struct PlanRepairs {
     before: serde_json::Value,
     after: serde_json::Value,
     actions: Vec<String>,
-    /// Rule (e)'s per-mention rows (`brief_names_unowned_file {task, path, owner, rewritten}`),
-    /// self-describing so the finalize seam fans them out as first-class events beside
-    /// `plan_repaired` — the same shape as the skeleton's verdict rows.
+    /// Self-describing rows the finalize seam fans out as first-class events beside
+    /// `plan_repaired` — the same shape as the skeleton's verdict rows: rule (e)'s per-mention
+    /// `brief_names_unowned_file {task, path, owner, rewritten}` and rule (f)'s
+    /// `sink_deps_completed {task, added}`.
     mentions: Vec<serde_json::Value>,
 }
 
@@ -21297,7 +21300,9 @@ fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
 /// (d) an advertised endpoint that no brief of a task owning service code mentions is appended to the
 ///     brief of the task owning that service's entry file;
 /// (e) a brief that names a file ANOTHER task owns gets that file marked not-yours-to-write (and the
-///     r6c ownership claim "(owned by this slice)" rewritten) — VA-009, `plan_repairs.rs`.
+///     r6c ownership claim "(owned by this slice)" rewritten) — VA-009, `plan_repairs.rs`;
+/// (f) the join depends on EVERY non-sink task (`repair_sink_deps`, `plan_repairs.rs`) — r6c's join
+///     never waited on the patch-added `decisions-doc`.
 ///
 /// (a) runs AFTER (b) and (c) because both of them can empty a task, and it is the emptied task that
 /// must go. (d) runs after (a) so it never addresses a task (a) is about to remove; (e) runs last so
@@ -21326,6 +21331,11 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
         refresh_skeleton_description(plan, spec, &mut actions);
         repair_unassigned_endpoints(plan, spec, &mut actions);
         mentions = repair_brief_file_mentions(plan, &mut actions);
+        // (f) LAST: every rule above may add or remove a task; the join's deps must cover the
+        // final set (plan_repairs.rs; r6c's join never waited on the review-added decisions-doc).
+        if let Some(row) = repair_sink_deps(plan, &mut actions) {
+            mentions.push(row);
+        }
     }
     let after = plan_flags(plan, spec);
     PlanRepairs {
@@ -21712,83 +21722,6 @@ fn brief_mentions_path(brief: &str, path: &str) -> bool {
         return true;
     }
     false
-}
-
-fn repair_unassigned_endpoints(
-    plan: &mut serde_json::Value,
-    spec: &str,
-    actions: &mut Vec<String>,
-) {
-    let missing = unassigned_endpoints(plan, spec);
-    if missing.is_empty() {
-        return;
-    }
-    let invocations = spec_python_invocations(spec);
-    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return;
-    };
-    // A row's service is the invocation whose last segment is the service's name (`ledgerd` ->
-    // `app.ledgerd`); a service the spec boots under another name falls to the first invocation.
-    let invocation_for = |service: Option<&str>| -> Option<&String> {
-        service
-            .and_then(|name| {
-                invocations
-                    .iter()
-                    .find(|inv| inv.rsplit('.').next() == Some(name))
-            })
-            .or(invocations.first())
-    };
-    let mut by_task: Vec<(usize, String, Vec<AdvertisedEndpoint>)> = Vec::new();
-    for ep in missing {
-        let Some(inv) = invocation_for(ep.service.as_deref()) else {
-            continue;
-        };
-        let Some(ti) = entry_owner_index(subtasks, inv) else {
-            continue;
-        };
-        match by_task.iter_mut().find(|(i, _, _)| *i == ti) {
-            Some((_, _, eps)) => eps.push(ep),
-            None => by_task.push((ti, inv.clone(), vec![ep])),
-        }
-    }
-    for (ti, inv, eps) in by_task {
-        let st = &mut subtasks[ti];
-        let id = st
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let Some(desc) = st
-            .get_mut("description")
-            .and_then(|d| d.as_str().map(str::to_string))
-        else {
-            continue;
-        };
-        let rows: Vec<String> = eps
-            .iter()
-            .map(|e| match &e.expect {
-                Some(x) => format!("- `{} {}` -> EXPECT {x}", e.method, e.path),
-                None => format!("- `{} {}`", e.method, e.path),
-            })
-            .collect();
-        let note = format!(
-            "\n\nADVERTISED SURFACE (engine-required): the spec's endpoint table lists these on this \
-             service and no brief of a task owning service code mentions them, so as planned they \
-             would ship as 404s. This task owns the entry of `python -m {inv}`, so it serves each \
-             one exactly as the table says:\n{}",
-            rows.join("\n")
-        );
-        st["description"] = serde_json::Value::String(format!("{desc}{note}"));
-        actions.push(format!(
-            "`{id}` (entry of `{inv}`): appended {} advertised endpoint(s) no service brief \
-             mentioned: {}",
-            eps.len(),
-            eps.iter()
-                .map(|e| format!("{} {}", e.method, e.path))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
 }
 
 /// Drive the STRAIGHT-LINE planner (P1-5): OPEN -> [ask handshake, only if the opener left open

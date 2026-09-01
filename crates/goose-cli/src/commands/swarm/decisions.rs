@@ -248,22 +248,27 @@ impl BriefDecisions {
     }
 }
 
-/// A brief's decisions block, from its header to the brief's end — minus the plan repair's
-/// UNOWNED-FILES tail, which is the OWNER's list, not the shard's. None when the brief carries
-/// no block (a run with no open decisions, or a brief that never got one — r6c's 387-char
-/// decisions-doc brief).
+/// A brief's decisions block, from its header to the brief's end — minus the plan repairs'
+/// tails, which are the OWNER's: rule (e)'s UNOWNED-FILES list and rule (d)'s ADVERTISED SURFACE
+/// note (rule (d) runs first in the chain, so an entry owner's brief carries the endpoint note
+/// BETWEEN its block and the unowned list; a cut at the list alone handed the shard the owner's
+/// entry instruction as "decisions" — 2a D11's refuter). The cut is at whichever tail comes
+/// first. None when the brief carries no block (a run with no open decisions, or a brief that
+/// never got one — r6c's 387-char decisions-doc brief).
 pub(super) fn brief_decisions_block(description: &str) -> Option<&str> {
     let start = [SETTLED_DECISIONS_HEADER, OPEN_DECISIONS_HEADER]
         .iter()
         .filter_map(|h| description.find(&format!("\n\n{h}")))
         .min()?;
     let block = description.get(start..)?;
-    let end = block
-        .find(&format!(
-            "\n\n{}",
-            super::plan_repairs::UNOWNED_FILES_HEADER
-        ))
-        .unwrap_or(block.len());
+    let end = [
+        super::plan_repairs::UNOWNED_FILES_HEADER,
+        super::plan_repairs::ADVERTISED_SURFACE_HEADER,
+    ]
+    .iter()
+    .filter_map(|tail| block.find(&format!("\n\n{tail}")))
+    .min()
+    .unwrap_or(block.len());
     block.get(..end)
 }
 
@@ -491,8 +496,23 @@ mod tests {
             "\n\n{} — read them if you need them, never write them:\n- `DECISIONS.md` → owned by task `decisions-doc`\n",
             super::super::plan_repairs::UNOWNED_FILES_HEADER
         );
-        let console =
-            format!("Ship the console. The run exercises all three.\n\n---{block}{unowned_tail}");
+        // Rule (d)'s note lands BEFORE rule (e)'s list in the chain; both are the owner's, not
+        // the shard's — and the cut must hold whichever order they arrive in.
+        let advertised_tail = format!(
+            "\n\n{}: the spec's endpoint table lists these on this service… This task owns the \
+             entry of `python -m app.ledgerd`, so it serves each one exactly as the table says:\n\
+             - `GET /api/health`\n",
+            super::super::plan_repairs::ADVERTISED_SURFACE_HEADER
+        );
+        let console = format!(
+            "Ship the console. The run exercises all three.\n\n---{block}{advertised_tail}{unowned_tail}"
+        );
+        let reversed = format!("Ship it.{block}{unowned_tail}{advertised_tail}");
+        assert_eq!(
+            brief_decisions_block(&reversed),
+            Some(block.as_str()),
+            "the cut is at the FIRST tail whichever order the repairs appended them"
+        );
         let viz = format!("Draw the canvas.{block}");
         let skeleton = "Boot both packages; DONE means every route answers.".to_string();
         let files = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -517,6 +537,11 @@ mod tests {
         assert!(
             !app_js.block.contains("DECISIONS.md"),
             "the owner's unowned-files list is not the shard's"
+        );
+        assert!(
+            !app_js.block.contains("ADVERTISED SURFACE") && !app_js.block.contains("python -m"),
+            "the owner's entry instruction is not the shard's decisions: {}",
+            app_js.block
         );
 
         let init = index.for_files(&files(&["app/ledgerd/__init__.py"]));
