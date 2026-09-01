@@ -1,23 +1,57 @@
 import React from 'react';
-import { Loader2, Pause, Play, X } from 'lucide-react';
-import { Button } from '../ui/button';
+import { Loader2, Minus, Pause, Play, Plus, X } from 'lucide-react';
 import type { MlxDownloadProgress } from '../../acp/mlx-engine';
+import {
+  Button,
+  Chip as StudioChip,
+  StatusDot,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  SURFACE,
+  TNUM,
+  TONE_DOT,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+  type Tone,
+} from '../lz';
 
-// The LeanZero token doctrine (src/styles/main.css, `.local-edition`): ONE accent, the status
-// triad for state, and nothing else coloured. Every constant here routes through a theme token
-// with the light-theme value as its fallback (this window also runs without `.local-edition`,
-// where a bare var() resolves to nothing and a solid fill silently turns transparent).
-// Solid, saturated colours only — never a tint, never a left accent rail, never a native control.
+/**
+ * A thin ADAPTER over the LeanZero Studio primitives (`src/components/lz`, ui/desktop/DESIGN.md).
+ * The exported names and signatures are the ones AddNodeDialog, LeanZeroLinkSection,
+ * LeanZeroSwarmView, SwarmNodesSection and the tests already consume; every visual inside is a
+ * Studio token or primitive. The colour constants stay CSS strings because those consumers use
+ * them as inline styles; `toneForColor` is the one join that reads them back as tones.
+ */
+
 /** The single accent: primary actions, the active segment, the live progress fill. */
 export const AZURE = 'var(--color-action-solid, #1d4ed8)';
 /** Status triad FILLS — they carry white text. */
 export const GREEN = 'var(--color-status-ok-solid, #15803d)';
 export const RED = 'var(--color-status-err-solid, #dc2626)';
 export const SLATE = 'var(--color-status-stopped-solid, #475569)';
-/** Warn is the FOREGROUND token on purpose: it pairs with INK_DARK at 5.4:1, which the darker
- *  -solid fill cannot (3.5:1). Every AMBER fill in this window carries dark ink. */
 export const AMBER = 'var(--color-status-warn, #d97706)';
 export const INK_DARK = '#1a1a1a';
+
+/** The palette constants above read back as Studio tones; anything else is not a tone. */
+export function toneForColor(color: string | undefined): Tone | null {
+  switch (color) {
+    case AZURE:
+      return 'accent';
+    case GREEN:
+      return 'ok';
+    case RED:
+      return 'err';
+    case SLATE:
+      return 'stopped';
+    case AMBER:
+      return 'warn';
+    default:
+      return null;
+  }
+}
 
 export const GB = 1024 * 1024 * 1024;
 
@@ -53,84 +87,81 @@ export function formatDate(iso: string): string {
 }
 
 /**
- * Two chip registers. FILLED (`color`) is reserved for SEMANTIC state — mounted, loading,
- * failed, the single accent — and carries its ink. QUIET is for METADATA (a publisher, a
- * quant, a count): a hairline outline in the secondary text colour, no fill, so a row of
- * attributes reads as text, not as a pile of stickers. Both are 11px, normal case,
- * tabular figures — uppercase-with-tracking belongs to section headers only.
+ * Two chip registers, both the Studio Chip. FILLED (`tone`, or a palette `color`) is for
+ * SEMANTIC state — mounted, loading, failed, the single accent. QUIET (the default, or an
+ * explicit `quiet`) is for METADATA: an outline in ink-3, no fill, so a row of attributes reads
+ * as text, not as a pile of stickers. A colour outside the palette is metadata, not a state.
+ * `ink` is accepted for the older callers; the tone token carries the measured ink.
  */
 export function Chip({
   color,
-  ink = '#ffffff',
+  tone,
   quiet = false,
   children,
   title,
 }: {
   color?: string;
+  tone?: Tone;
+  /** Accepted for older callers; the tone's own ink applies. */
   ink?: string;
   quiet?: boolean;
   children: React.ReactNode;
   title?: string;
 }) {
-  if (quiet || !color) {
-    return (
-      <span
-        title={title}
-        className="inline-flex shrink-0 items-center gap-1 rounded border border-border-primary px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-text-secondary"
-      >
-        {children}
-      </span>
-    );
-  }
+  const resolved = quiet ? undefined : (tone ?? toneForColor(color) ?? undefined);
   return (
-    <span
-      title={title}
-      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
-      style={{ backgroundColor: color, color: ink }}
-    >
+    <StudioChip tone={resolved} title={title}>
       {children}
-    </span>
+    </StudioChip>
   );
 }
 
-/** Solid full-width banner. Red carries backend text VERBATIM — never paraphrased. */
+/**
+ * A banner in the Studio register: a surface card carrying a solid status dot, a toned label and
+ * the message in body ink. Red carries backend text VERBATIM — never paraphrased. A colour outside
+ * the palette reads as err: the one such caller (AddNodeDialog's failed banner) is an error.
+ */
 export function SolidBanner({
   color,
+  tone: toneProp,
   label,
   text,
   action,
 }: {
-  color: string;
+  color?: string;
+  tone?: Tone;
   label: string;
   text: string;
   action?: React.ReactNode;
 }) {
-  const dark = color === AMBER;
+  const tone = toneProp ?? toneForColor(color) ?? 'err';
   return (
     <div
-      className="flex items-center gap-3 rounded px-4 py-3"
-      style={{ backgroundColor: color }}
-      role="alert"
+      className={cx('flex items-center gap-3 px-4 py-3', SURFACE.card)}
+      role={tone === 'err' ? 'alert' : 'status'}
+      data-tone={tone}
     >
-      <span
-        className="shrink-0 text-[10px] font-black uppercase tracking-widest"
-        style={{ color: dark ? INK_DARK : '#ffffff' }}
-      >
-        {label}
-      </span>
-      <span
-        className="min-w-0 flex-1 break-words text-sm font-semibold"
-        style={{ color: dark ? INK_DARK : '#ffffff' }}
-      >
-        {text}
-      </span>
+      <StatusDot tone={tone} label={label} size={10} />
+      <span className={cx('shrink-0 text-lz-meta', WEIGHT.semibold, TONE_TEXT[tone])}>{label}</span>
+      <span className={cx('min-w-0 flex-1 break-words', TYPE.body)}>{text}</span>
       {action}
     </div>
   );
 }
 
-// Custom −/number/+ stepper for a node's relative task-share weight (no native slider/select, per
-// UI rules). Shared by the Nodes card and the add-node dialog so both write the same 1-9 range.
+const STEP_BUTTON = cx(
+  'flex size-7 shrink-0 items-center justify-center bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
+  SURFACE.outline,
+  RADIUS.control,
+  FOCUS,
+  MOTION
+);
+
+/**
+ * The −/n/+ stepper for a node's relative task share (1–9). A custom control, never a native
+ * slider or select; the value is the accent in tabular figures so a column of them lines up.
+ * Shared by the Nodes card and the add-node dialog so both write the same range.
+ */
 export function WeightStepper({
   value,
   onChange,
@@ -141,32 +172,28 @@ export function WeightStepper({
   label?: string;
 }) {
   const clamp = (v: number) => Math.max(1, Math.min(9, v));
-  const btn =
-    'h-6 w-6 flex items-center justify-center border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none';
   return (
-    <div className="flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1">
       <button
         type="button"
         onClick={() => onChange(clamp(value - 1))}
-        className={btn}
-        style={{ borderRadius: 3 }}
+        className={STEP_BUTTON}
         aria-label={`Less work (${label})`}
       >
-        −
+        <Minus />
       </button>
-      <span className="w-4 text-center font-bold tabular-nums" style={{ color: AZURE }}>
+      <span className={cx('w-6 text-center text-lz-body text-lz-accent', WEIGHT.semibold, TNUM)}>
         {value}
       </span>
       <button
         type="button"
         onClick={() => onChange(clamp(value + 1))}
-        className={btn}
-        style={{ borderRadius: 3 }}
+        className={STEP_BUTTON}
         aria-label={`More work (${label})`}
       >
-        +
+        <Plus />
       </button>
-    </div>
+    </span>
   );
 }
 
@@ -176,11 +203,20 @@ export interface DownloadLifecycleHandlers {
   onCancel: () => void;
 }
 
+const DOWNLOAD_STATE_TONE: Record<MlxDownloadProgress['state'], Tone> = {
+  queued: 'stopped',
+  downloading: 'accent',
+  paused: 'stopped',
+  done: 'ok',
+  failed: 'err',
+  cancelled: 'stopped',
+};
+
 /**
- * One tracked download: real-byte bar, state chip, lifecycle actions. Rendered under
- * browse rows, under incomplete local models, and mirrored inside the model-card modal —
- * ONE component so every surface tells the same truth. Cancel is destructive now (the
- * backend deletes the partial repo dir), so it is solid red and says so.
+ * One tracked download: real-byte bar, state chip, lifecycle actions. Rendered under browse
+ * rows, under incomplete local models, and mirrored inside the model-card modal — ONE component
+ * so every surface tells the same truth. Cancel DELETES the partial repo dir (the backend does),
+ * and its title says so.
  */
 export function DownloadProgressRow({
   repoId,
@@ -199,99 +235,96 @@ export function DownloadProgressRow({
   const active = progress.state === 'queued' || progress.state === 'downloading';
   const paused = progress.state === 'paused';
   const failed = progress.state === 'failed';
-  const barColor = paused ? SLATE : failed ? RED : AZURE;
+  const barTone: Tone = paused ? 'stopped' : failed ? 'err' : 'accent';
+  const stateTone = DOWNLOAD_STATE_TONE[progress.state];
   return (
     <div className="mt-2 flex flex-col gap-1.5" data-testid={`mlx-download-${repoId}`}>
       <div className="flex flex-wrap items-center gap-2">
         <div
-          className="h-2.5 min-w-[160px] flex-1 overflow-hidden rounded border border-border-primary"
+          className={cx('h-2 min-w-[160px] flex-1 overflow-hidden', RADIUS.pill, SURFACE.inset)}
           role="progressbar"
           aria-valuenow={Math.round(pct)}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label={`Download progress for ${repoId}`}
         >
-          <div className="h-full" style={{ width: `${pct}%`, backgroundColor: barColor }} />
+          <div className={cx('h-full', TONE_DOT[barTone])} style={{ width: `${pct}%` }} />
         </div>
-        <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: barColor }}>
+        <span
+          className={cx('shrink-0 text-lz-meta', WEIGHT.semibold, TNUM, TONE_TEXT[barTone])}
+        >
           {formatBytesShort(progress.downloadedBytes)}
           {progress.totalBytes > 0 ? ` / ${formatBytesShort(progress.totalBytes)}` : ''}
         </span>
         {active && (
           <Button
-            size="xs"
+            size="sm"
+            variant="secondary"
+            icon={<Pause />}
             onClick={(e) => {
               e.stopPropagation();
               onPause();
             }}
-            variant="outline"
-            className="shrink-0 rounded font-bold"
             aria-label={`Pause ${repoId}`}
           >
-            <Pause className="w-3 h-3" />
             Pause
           </Button>
         )}
         {(paused || failed) && (
           <Button
-            size="xs"
+            size="sm"
+            variant="secondary"
+            icon={<Play />}
             onClick={(e) => {
               e.stopPropagation();
               onResume();
             }}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: AZURE }}
             aria-label={`Resume ${repoId}`}
           >
-            <Play className="w-3 h-3" />
             Resume
           </Button>
         )}
         {(active || paused || failed) && (
           <Button
-            size="xs"
+            size="sm"
+            variant="ghost"
+            icon={<X />}
             onClick={(e) => {
               e.stopPropagation();
               onCancel();
             }}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: RED }}
             aria-label={`Cancel ${repoId}`}
             title="Cancel and DELETE the partial download from disk"
           >
-            <X className="w-3 h-3" />
             Cancel
           </Button>
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {progress.state === 'queued' && <Chip color={SLATE}>queued</Chip>}
-        {progress.state === 'downloading' && (
-          <Chip color={AZURE}>
-            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-            downloading
-          </Chip>
+        {progress.state !== 'cancelled' && (
+          <StudioChip
+            tone={stateTone}
+            icon={progress.state === 'downloading' ? <Loader2 className="animate-spin" /> : undefined}
+          >
+            {progress.state}
+          </StudioChip>
         )}
-        {paused && <Chip color={SLATE}>paused</Chip>}
-        {progress.state === 'done' && <Chip color={GREEN}>done</Chip>}
-        {failed && <Chip color={RED}>failed</Chip>}
         {progress.currentFile && (
-          <span className="truncate font-mono text-[11px] text-text-secondary">
+          <span className="truncate font-mono text-lz-mono text-lz-ink-3">
             {progress.currentFile}
           </span>
         )}
       </div>
       {progress.restartedFiles != null && progress.restartedFiles.length > 0 && (
         <div
-          className="text-xs font-semibold"
-          style={{ color: AMBER }}
+          className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.warn)}
           title={progress.restartedFiles.join('\n')}
         >
           restarted from zero: {progress.restartedFiles.length} file(s)
         </div>
       )}
       {failed && (
-        <div className="break-words text-xs font-semibold" style={{ color: RED }}>
+        <div className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
           {progress.error ?? 'Download failed.'}
         </div>
       )}
