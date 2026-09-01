@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
-import { Button, FOCUS, RADIUS, TNUM, WEIGHT, cx } from '../lz';
+import { Button, Chip, FOCUS, RADIUS, TNUM, WEIGHT, cx } from '../lz';
 import {
   SAMPLING_KNOBS,
   clampKnob,
@@ -41,10 +41,12 @@ function KnobField({
   const unsetLabel = placeholder ?? 'model default';
 
   if (readOnly) {
+    // A SET value is a quiet Chip (outline, tabular figures) so the launched values read as facts on
+    // the line; an unset knob is the words, not a chip — "model default" is an absence, not a value.
     return value === undefined ? (
       <span className="text-lz-ink-3">{unsetLabel}</span>
     ) : (
-      <span className={cx('text-lz-ink', WEIGHT.medium, TNUM)}>{value}</span>
+      <Chip title={`${id} = ${value}`}>{value}</Chip>
     );
   }
 
