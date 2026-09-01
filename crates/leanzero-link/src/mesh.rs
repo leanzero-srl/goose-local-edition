@@ -59,7 +59,9 @@ pub enum MeshError {
         program: String,
         source: std::io::Error,
     },
-    #[error("tailscaled exited during startup ({status}). stderr tail:\n{stderr_tail}")]
+    /// The supervised daemon is gone — raised by `start` (died before the socket
+    /// answered) and by every later `status` read (died under a live connection).
+    #[error("tailscaled exited ({status}). stderr tail:\n{stderr_tail}")]
     DaemonExited { status: String, stderr_tail: String },
     #[error(
         "tailscaled socket did not become ready within {waited:?}. stderr tail:\n{stderr_tail}"
@@ -513,10 +515,48 @@ impl MeshEngine {
         Ok(())
     }
 
-    /// Typed mesh status. A daemon that is not up yet (no socket, or nothing answering
-    /// behind a stale socket file) is `BackendState::Stopped` — a real state, never an
-    /// error dressed as an empty result. Every other failure is a loud typed error.
+    /// Typed mesh status. The held daemon is `try_wait`ed FIRST: a child that has exited
+    /// is [`MeshError::DaemonExited`] (with its stderr tail) on every call until
+    /// [`Self::shutdown`] — never a calm `Stopped`. `BackendState::Stopped` is honest only
+    /// when this engine holds NO child (never started, or explicitly shut down) and
+    /// nothing listens behind the socket path. With a live child every probe failure —
+    /// a vanished socket, EACCES, an unparseable answer — is a loud typed error, because
+    /// a daemon we supervise that cannot be talked to is a fault, not an absence.
     pub async fn status(&self) -> Result<MeshStatus, MeshError> {
+        let live_pid = {
+            let mut state = self.state.lock().await;
+            match state.as_mut() {
+                None => None,
+                Some(handle) => {
+                    if let Some(status) =
+                        handle
+                            .child
+                            .try_wait()
+                            .map_err(|source| MeshError::CliRun {
+                                what: "try_wait on tailscaled",
+                                program: self.config.tailscaled_path.display().to_string(),
+                                source,
+                            })?
+                    {
+                        return Err(MeshError::DaemonExited {
+                            status: status.to_string(),
+                            stderr_tail: stderr_tail_string(&handle.stderr_tail),
+                        });
+                    }
+                    Some(handle.child.id())
+                }
+            }
+        };
+        match live_pid {
+            None => self.status_with_no_child().await,
+            Some(pid) => self.status_of_live_child(pid).await,
+        }
+    }
+
+    /// No child held: absence is a real state. A missing socket, or a socket nobody
+    /// listens behind (ENOENT / ECONNREFUSED from the CLI), is `Stopped`; anything else
+    /// the CLI reports is an error.
+    async fn status_with_no_child(&self) -> Result<MeshStatus, MeshError> {
         if !self.config.socket_path.exists() {
             return Ok(MeshStatus::stopped());
         }
@@ -541,6 +581,33 @@ impl MeshEngine {
                     }
                 }
             }
+        }
+    }
+
+    /// A live child is held: nothing here may read as `Stopped`.
+    async fn status_of_live_child(&self, pid: Option<u32>) -> Result<MeshStatus, MeshError> {
+        if !self.config.socket_path.exists() {
+            return Err(MeshError::StatusFailed {
+                stderr: format!(
+                    "socket '{}' is missing while the supervised tailscaled (pid {}) is alive",
+                    self.config.socket_path.display(),
+                    pid.map_or("unknown".to_string(), |p| p.to_string())
+                ),
+            });
+        }
+        let output = run_cli(
+            "tailscale status",
+            self.config.status_argv(),
+            self.config.cli_timeout,
+        )
+        .await?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        match parse_status_json(&stdout) {
+            Ok(status) => Ok(status),
+            Err(parse_err) if output.status.success() => Err(parse_err),
+            Err(_) => Err(MeshError::StatusFailed {
+                stderr: cli_failure_text(&output),
+            }),
         }
     }
 
@@ -669,13 +736,20 @@ fn cli_failure_text(output: &Output) -> String {
     text
 }
 
+/// True only for the two errno texts that mean "nothing listens behind this socket
+/// path". Measured on the bundled `tailscale` 1.98.5 (`--socket=<p> status --json`,
+/// no daemon involved), whose stderr ends `dial unix <p>: connect: <errno text>`:
+/// - ENOENT `no such file or directory` — the socket file is gone;
+/// - ECONNREFUSED `connection refused` — a socket file left behind by a dead daemon.
+///
+/// Every other errno the same probe produced is a real fault and must stay an error:
+/// EACCES `permission denied`, ENOTSOCK `socket operation on non-socket` (a plain file
+/// or directory at the path), EINVAL `invalid argument` (a path longer than `sun_path`).
+/// The CLI wraps ALL of them in the same "failed to connect to local tailscaled …
+/// not running?" prose, which is why the prose is never matched here.
 fn is_connect_failure(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
-    lower.contains("failed to connect")
-        || lower.contains("connection refused")
-        || lower.contains("no such file or directory")
-        || lower.contains("is tailscale running")
-        || lower.contains("is it running")
+    lower.contains("no such file or directory") || lower.contains("connection refused")
 }
 
 async fn terminate_per_pid(child: &mut Child) {
@@ -699,4 +773,39 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
     tail.lock()
         .map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n"))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_connect_failure;
+
+    const PROSE: &str = "failed to connect to local tailscaled (which appears to be running as \
+        tailscaled, pid 323). Got error: Failed to connect to local Tailscale daemon for \
+        /localapi/v0/status; not running? Error: dial unix /tmp/lzp/sock: connect: ";
+
+    #[test]
+    fn only_enoent_and_econnrefused_mean_nothing_is_listening() {
+        assert!(is_connect_failure(&format!(
+            "{PROSE}no such file or directory"
+        )));
+        assert!(is_connect_failure(&format!("{PROSE}connection refused")));
+    }
+
+    #[test]
+    fn faults_wrapped_in_the_same_prose_stay_errors() {
+        for errno in [
+            "permission denied",
+            "socket operation on non-socket",
+            "invalid argument",
+        ] {
+            assert!(
+                !is_connect_failure(&format!("{PROSE}{errno}")),
+                "{errno} must not read as Stopped"
+            );
+        }
+        assert!(
+            !is_connect_failure("failed to connect to local tailscaled; is it running?"),
+            "the wrapper prose alone carries no errno and must not match"
+        );
+    }
 }
