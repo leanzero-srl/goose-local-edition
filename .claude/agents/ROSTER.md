@@ -805,3 +805,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   absence with a both-rounds grep, caught the drafts.py lost-fix as the same class, and held the
   leak call one tick rather than guessing owners. Sonnet is holding the charter under budget.
   Charter gap: none.
+- 2026-09-01 04:40 tick-surgeon #37: EXEMPLARY at 70.7k/16 — the tick that found the FIELD. It
+  located findings_assigned[] in the per-shard ledger (invisible on the dispatch event, which is
+  why two rounds of unowned criticals went undiagnosed), quoted the engine's own unassigned:2
+  admission, and caught the verbatim re-dispatch of a finding already closed NOT REAL with
+  evidence. Every one of the owner's two gates now has named-field proof. Charter gap: none.
