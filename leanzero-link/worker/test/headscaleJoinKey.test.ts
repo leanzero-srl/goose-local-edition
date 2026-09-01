@@ -14,7 +14,7 @@ import {
 
 const EMAIL = "user@example.com";
 const HS_ENV = {
-  LINK_JWT_SECRET: "unit-test-jwt-secret",
+  LINK_JWT_SECRET: "unit-test-jwt-secret-with-at-least-32-bytes",
   HEADSCALE_API_URL: "http://hs.test",
   HEADSCALE_API_KEY: "hskey-api-test",
   HEADSCALE_LOGIN_SERVER: "https://control.leanzero.test",
@@ -56,7 +56,7 @@ const SSH_POLICY = {
 
 async function mintToken(h: TestHarness): Promise<string> {
   const iat = Math.floor(h.clock.now() / 1000);
-  return signJwt("unit-test-jwt-secret", { sub: EMAIL, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
+  return signJwt("unit-test-jwt-secret-with-at-least-32-bytes", { sub: EMAIL, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
 }
 
 function joinRequest(token: string): Request {

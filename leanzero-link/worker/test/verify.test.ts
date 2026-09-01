@@ -42,7 +42,7 @@ describe("POST /v1/auth/verify", () => {
     expect(body.nodeSecret).toMatch(/^[0-9a-f]{64}$/);
     expect(Object.keys(body).sort()).toEqual(["audienceSync", "email", "nodeSecret", "token"]);
 
-    const verified = await verifyJwt("unit-test-jwt-secret", String(body.token), Math.floor(h.clock.now() / 1000) + 1);
+    const verified = await verifyJwt("unit-test-jwt-secret-with-at-least-32-bytes", String(body.token), Math.floor(h.clock.now() / 1000) + 1);
     expect(verified.ok).toBe(true);
     if (verified.ok) {
       expect(verified.claims.sub).toBe(EMAIL);
@@ -84,7 +84,7 @@ describe("POST /v1/auth/verify", () => {
     expect(record.attempts).toBe(1);
   });
 
-  it("refuses even the correct code after 5 failed attempts", async () => {
+  it("refuses even the correct code after 5 failed attempts — with the SAME 401 as any other failure", async () => {
     const h = makeHarness({ fetchHandler: resendHappyFetch });
     await seedCode(h);
     for (let i = 0; i < 5; i++) {
@@ -92,8 +92,13 @@ describe("POST /v1/auth/verify", () => {
       expect(wrong.status).toBe(401);
     }
     const correct = await handleVerify(postJson("/v1/auth/verify", { email: EMAIL, code: "123456" }), h.deps);
-    expect(correct.status).toBe(429);
-    expect(await responseJson(correct)).toEqual({ error: "too many attempts; request a new code" });
+    expect(correct.status).toBe(401);
+    expect(await responseJson(correct)).toEqual({ error: "invalid or expired code" });
+    expect(h.logs.filter((l) => l.event === "otp_attempts_exhausted")).toHaveLength(1);
+    // A caller cannot tell "exhausted" from "never issued" on the wire.
+    const stranger = await handleVerify(postJson("/v1/auth/verify", { email: "nobody@example.com", code: "123456" }), h.deps);
+    expect(stranger.status).toBe(401);
+    expect(await responseJson(stranger)).toEqual({ error: "invalid or expired code" });
   });
 
   it("rejects a code past its 10-minute expiry", async () => {
@@ -253,5 +258,15 @@ describe("POST /v1/auth/verify", () => {
     const response = await handleVerify(postJson("/v1/auth/verify", { email: EMAIL, code: "123456" }), h.deps);
     expect(response.status).toBe(500);
     expect(await responseJson(response)).toEqual({ error: "LINK_JWT_SECRET not configured on this deployment" });
+  });
+
+  it("refuses to sign with a LINK_JWT_SECRET under 32 bytes (500 + config_error), never a weak token", async () => {
+    const h = makeHarness({ env: { ...FULL_ENV, LINK_JWT_SECRET: "only-twenty-bytes-xx" }, fetchHandler: resendHappyFetch });
+    expect(h.deps.config.jwtSecret).toBeUndefined();
+    expect(h.deps.config.warnings).toEqual([{ error: "jwt_secret_too_short" }]);
+    const response = await handleVerify(postJson("/v1/auth/verify", { email: EMAIL, code: "123456" }), h.deps);
+    expect(response.status).toBe(500);
+    expect(await responseJson(response)).toEqual({ error: "LINK_JWT_SECRET is 20 bytes; at least 32 required" });
+    expect(h.logs.find((l) => l.event === "config_error")?.fields).toEqual({ error: "LINK_JWT_SECRET is 20 bytes; at least 32 required" });
   });
 });

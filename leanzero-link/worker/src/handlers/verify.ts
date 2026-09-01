@@ -73,8 +73,9 @@ async function claimAttempt(kv: KVStore, key: string, nowMs: number): Promise<Cl
 export async function handleVerify(request: Request, deps: Deps): Promise<Response> {
   const secret = deps.config.jwtSecret;
   if (!secret) {
-    deps.log("config_error", { error: "LINK_JWT_SECRET is not configured" });
-    return jsonResponse(500, { error: "LINK_JWT_SECRET not configured on this deployment" });
+    const error = deps.config.jwtSecretError ?? "LINK_JWT_SECRET not configured on this deployment";
+    deps.log("config_error", { error });
+    return jsonResponse(500, { error });
   }
   const body = await readJsonBody(request);
   if (!body.ok || typeof body.value !== "object" || body.value === null) {
@@ -110,8 +111,10 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
       deps.log("otp_record_corrupt", { email });
       return jsonResponse(401, { error: "invalid or expired code" });
     case "exhausted":
+      // Indistinguishable from any other failure on the wire: a distinct status told a
+      // caller that a code HAD been issued for this email. The operator sees it in the log.
       deps.log("otp_attempts_exhausted", { email });
-      return jsonResponse(429, { error: "too many attempts; request a new code" });
+      return jsonResponse(401, { error: "invalid or expired code" });
     case "claimed":
       break;
   }

@@ -8,7 +8,8 @@ import { parseConfig } from "../src/lib/config";
 import type { Deps } from "../src/lib/deps";
 import { createFsKvStore } from "../src/lib/fs-kv";
 import { generateOtp } from "../src/lib/otp";
-import { createNodeServer, logConfigWarnings } from "../src/node-server";
+import { pathToFileURL } from "node:url";
+import { BodyTooLargeError, createNodeServer, isEntrypoint, logConfigWarnings, preludeErrorStatus } from "../src/node-server";
 import { FULL_ENV, resendHappyFetch } from "./helpers";
 
 // A real loopback http server driven by the same createNodeServer the entrypoint uses.
@@ -83,6 +84,33 @@ describe("node-server adapter", () => {
   it("answers a CORS preflight (OPTIONS) with 204", async () => {
     const res = await fetch(`${base}/v1/auth/request-code`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
+  });
+
+  it("answers 413 to a body over 1 MiB", async () => {
+    const res = await fetch(`${base}/v1/auth/request-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "user@example.com", pad: "x".repeat(1_100_000) }),
+    });
+    expect(res.status).toBe(413);
+    expect(await bodyOf(res)).toEqual({ error: "request body too large" });
+  });
+
+  it("maps only the too-large error to 413; any other prelude failure is 400", () => {
+    expect(preludeErrorStatus(new BodyTooLargeError(1)).status).toBe(413);
+    expect(preludeErrorStatus(new Error("aborted")).status).toBe(400);
+    expect(preludeErrorStatus("socket hang up").status).toBe(400);
+    expect(preludeErrorStatus(undefined)).toEqual({ status: 400, error: "malformed request" });
+  });
+
+  it("detects the entrypoint through pathToFileURL, so a checkout path with a space still starts main()", () => {
+    const withSpace = "/Users/some one/Projects/goose/leanzero-link/worker/src/node-server.ts";
+    const loaderUrl = pathToFileURL(withSpace).href;
+    expect(loaderUrl).toContain("%20");
+    expect(isEntrypoint(loaderUrl, withSpace)).toBe(true);
+    expect(`file://${withSpace}`).not.toBe(loaderUrl);
+    expect(isEntrypoint(loaderUrl, "/elsewhere/vitest.mjs")).toBe(false);
+    expect(isEntrypoint(loaderUrl, undefined)).toBe(false);
   });
 
   it("logs every config warning as config_error at boot (partial HEADSCALE_*, bad expiry)", () => {

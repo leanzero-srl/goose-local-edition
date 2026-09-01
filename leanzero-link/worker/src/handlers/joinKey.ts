@@ -8,8 +8,9 @@ import { mintJoinKey } from "../lib/tailscale";
 export async function handleJoinKey(request: Request, deps: Deps): Promise<Response> {
   const secret = deps.config.jwtSecret;
   if (!secret) {
-    deps.log("config_error", { error: "LINK_JWT_SECRET is not configured" });
-    return jsonResponse(500, { error: "LINK_JWT_SECRET not configured on this deployment" });
+    const error = deps.config.jwtSecretError ?? "LINK_JWT_SECRET not configured on this deployment";
+    deps.log("config_error", { error });
+    return jsonResponse(500, { error });
   }
   const authorization = request.headers.get("Authorization");
   const match = authorization === null ? null : /^Bearer\s+(.+)$/.exec(authorization);
