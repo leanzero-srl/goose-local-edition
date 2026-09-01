@@ -23,7 +23,9 @@ use leanzero_link::identity::{Identity, IdentityStore};
 use leanzero_link::manager::{
     AuthState, LinkError, LinkManager, LinkManagerConfig, Mesh, MeshFactory,
 };
-use leanzero_link::mesh::{BackendState, MeshConfig, MeshError, MeshPeer, MeshStatus};
+use leanzero_link::mesh::{
+    BackendState, MeshConfig, MeshError, MeshPeer, MeshStatus, DEFAULT_LOGIN_SERVER,
+};
 use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
     RemoteExecutor, SwarmStateSource,
@@ -126,14 +128,18 @@ struct FakeFactory {
     calls: Arc<StdMutex<MeshCalls>>,
     script: Arc<MeshScript>,
     start_count: Arc<AtomicU32>,
+    /// The exact `MeshConfig` the manager handed to `start` — what would have reached
+    /// `tailscaled` / `tailscale up` (WP-2: this path was never observed before).
+    captured: Arc<StdMutex<Option<MeshConfig>>>,
     join_fails: bool,
     status: MeshStatus,
 }
 
 #[async_trait]
 impl MeshFactory for FakeFactory {
-    async fn start(&self, _config: MeshConfig) -> Result<Arc<dyn Mesh>, MeshError> {
+    async fn start(&self, config: MeshConfig) -> Result<Arc<dyn Mesh>, MeshError> {
         self.start_count.fetch_add(1, Ordering::SeqCst);
+        *self.captured.lock().unwrap() = Some(config);
         Ok(Arc::new(FakeMesh {
             calls: self.calls.clone(),
             script: self.script.clone(),
@@ -305,6 +311,7 @@ struct Harness {
     calls: Arc<StdMutex<MeshCalls>>,
     script: Arc<MeshScript>,
     start_count: Arc<AtomicU32>,
+    captured_mesh: Arc<StdMutex<Option<MeshConfig>>>,
 }
 
 impl Harness {
@@ -318,6 +325,7 @@ impl Harness {
             calls: Arc::new(StdMutex::new(MeshCalls::default())),
             script: Arc::new(MeshScript::default()),
             start_count: Arc::new(AtomicU32::new(0)),
+            captured_mesh: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -355,6 +363,7 @@ impl Harness {
             calls: self.calls.clone(),
             script: self.script.clone(),
             start_count: self.start_count.clone(),
+            captured: self.captured_mesh.clone(),
             join_fails,
             status: connected_status(),
         });
@@ -520,6 +529,87 @@ async fn join_key_401_expired_logs_out_and_clears_identity() {
         0,
         "mesh never started"
     );
+}
+
+/// WP-2: the join-key → loginServer → mesh chain, traversed by `connect_inner` itself
+/// (the works-prover found every earlier proof was hand-driven and every manager mock
+/// omitted `loginServer`). The captured `MeshConfig` is what `tailscale up` would get.
+#[tokio::test]
+async fn join_key_login_server_and_secret_reach_the_mesh_config_and_the_token() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({
+            "authKey": "hskey-auth-abc",
+            "loginServer": "https://hs.example.test",
+            "nodeSecret": SECRET,
+            "expirySeconds": 600
+        }),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    let captured = h
+        .captured_mesh
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the factory received a MeshConfig");
+    assert_eq!(
+        captured.login_server, "https://hs.example.test",
+        "the worker's loginServer is the control plane the mesh joins"
+    );
+    assert_ne!(captured.login_server, DEFAULT_LOGIN_SERVER);
+    let (joined_key, joined_hostname) = {
+        let calls = h.calls.lock().unwrap();
+        (calls.joined[0].0.clone(), calls.joined[0].1.clone())
+    };
+    assert_eq!(joined_key, "hskey-auth-abc", "the Headscale key was used");
+    assert_eq!(
+        captured.hostname, joined_hostname,
+        "the mesh config carries the same <host>-<6hex> name join() was given"
+    );
+    assert_eq!(
+        captured.state_dir, h.state_dir,
+        "the template's state dir is kept"
+    );
+    assert_eq!(
+        manager.node_token().await.as_deref(),
+        Some(node_token_from_secret(SECRET).as_str()),
+        "the same response's nodeSecret became the bearer"
+    );
+    manager.logout(false).await.unwrap();
+}
+
+/// Negative control for WP-2: no `loginServer` (the hosted-Tailscale path) keeps the
+/// template's default control plane; a blank one is treated as absent.
+#[tokio::test]
+async fn absent_or_blank_login_server_keeps_the_template_default() {
+    for login_server in [None, Some("   ")] {
+        let server = MockServer::start().await;
+        let mut body =
+            json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600});
+        if let Some(blank) = login_server {
+            body["loginServer"] = json!(blank);
+        }
+        mount(&server, "POST", "/v1/mesh/join-key", 200, body).await;
+        let h = Harness::new(tempfile::tempdir().unwrap());
+        h.seed_identity("a@example.com", "good-token");
+        let manager = h.manager(&server, false);
+        manager.connect().await.expect("connects");
+        let captured = h.captured_mesh.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            captured.login_server, DEFAULT_LOGIN_SERVER,
+            "loginServer {login_server:?} must keep the template default"
+        );
+        manager.logout(false).await.unwrap();
+    }
 }
 
 /// FH#9: `node_count` counts self + peers that are NOT Offline. A mesh-listed peer with

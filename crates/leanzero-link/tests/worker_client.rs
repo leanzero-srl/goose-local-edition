@@ -231,6 +231,48 @@ async fn join_key_success_sends_bearer_and_no_body() {
     assert_eq!(result.expiry_seconds, 600);
 }
 
+/// WP-2 / the node-token contract: the Headscale path's `loginServer` and the account's
+/// `nodeSecret` parse from the join-key body; both are absent (`None`) when the worker
+/// omits them — never defaulted to a value.
+#[tokio::test]
+async fn join_key_result_parses_login_server_and_node_secret_and_defaults_to_none() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authKey": "hskey-auth-abc",
+            "loginServer": "https://hs.example.test",
+            "nodeSecret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "expirySeconds": 600
+        })))
+        .mount(&server)
+        .await;
+    let result = client(&server).await.join_key("jwt").await.unwrap();
+    assert_eq!(result.auth_key, "hskey-auth-abc");
+    assert_eq!(
+        result.login_server.as_deref(),
+        Some("https://hs.example.test")
+    );
+    assert_eq!(
+        result.node_secret.as_deref(),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+
+    // Older worker: neither field.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authKey": "tskey-auth-abc",
+            "expirySeconds": 600
+        })))
+        .mount(&server)
+        .await;
+    let result = client(&server).await.join_key("jwt").await.unwrap();
+    assert_eq!(result.login_server, None);
+    assert_eq!(result.node_secret, None);
+}
+
 #[tokio::test]
 async fn join_key_401_expired_maps_to_auth_expired() {
     let server = MockServer::start().await;
