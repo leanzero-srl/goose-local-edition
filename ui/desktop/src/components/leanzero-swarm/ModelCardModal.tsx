@@ -16,9 +16,6 @@ import {
   RED,
   SLATE,
   SolidBanner,
-  TEAL,
-  VIOLET,
-  authorHue,
   formatBytesShort,
   formatCount,
   formatDate,
@@ -110,7 +107,7 @@ export function ModelCardModal({
               <h2 className="min-w-0 break-all font-mono text-lg font-bold text-text-primary">
                 {repoId}
               </h2>
-              <Chip color={authorHue(author)} title={`Published by ${author}`}>
+              <Chip quiet title={`Published by ${author}`}>
                 {author}
               </Chip>
               <Button
@@ -130,25 +127,23 @@ export function ModelCardModal({
                 <>
                   <HeaderFact label="Downloads">
                     <span
-                      className="text-xs font-bold tabular-nums"
-                      style={{ color: AZURE }}
+                      className="text-xs font-semibold tabular-nums text-text-primary"
                       title={`${card.downloads.toLocaleString()} downloads`}
                     >
-                      ↓ {formatCount(card.downloads)}
+                      {formatCount(card.downloads)}
                     </span>
                   </HeaderFact>
                   <HeaderFact label="Likes">
                     <span
-                      className="text-xs font-bold tabular-nums"
-                      style={{ color: VIOLET }}
+                      className="text-xs font-semibold tabular-nums text-text-primary"
                       title={`${card.likes.toLocaleString()} likes`}
                     >
-                      ♥ {formatCount(card.likes)}
+                      {formatCount(card.likes)}
                     </span>
                   </HeaderFact>
                   {card.license && (
                     <HeaderFact label="License">
-                      <Chip color={SLATE}>{card.license}</Chip>
+                      <Chip quiet>{card.license}</Chip>
                     </HeaderFact>
                   )}
                   {card.createdAt && (
@@ -166,7 +161,7 @@ export function ModelCardModal({
                     </HeaderFact>
                   )}
                   <HeaderFact label="Size (exact)">
-                    <Chip color={TEAL} title="Exact sum of every file the repo tree lists">
+                    <Chip quiet title="Exact sum of every file the repo tree lists">
                       {formatBytesShort(card.totalBytes)}
                     </Chip>
                   </HeaderFact>
@@ -261,8 +256,8 @@ export function ModelCardModal({
                   <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
                     Files
                   </span>
-                  <Chip color={AZURE}>{card.files.length}</Chip>
-                  <span className="ml-auto text-xs font-bold tabular-nums" style={{ color: TEAL }}>
+                  <Chip quiet>{card.files.length}</Chip>
+                  <span className="ml-auto text-xs font-semibold tabular-nums text-text-primary">
                     {formatBytesShort(card.totalBytes)} total
                   </span>
                 </div>
