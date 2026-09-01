@@ -148,7 +148,7 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    what must reach such a call (re-stream), and that wiring is still open. Since VA-013 (2026-09-01) a
    BUILD/REPAIR lane is looked at on EVIDENCE only (`ladder::judge_summon_trigger`: repeat, degenerate
    answer, the recurrence meter, a forming-channel stall) — r6c spent 925 look-minutes of cadence and
-   growth looks on build lanes for two compliances and zero kills; output-tool lanes keep every trigger.
+   growth looks on build lanes for two compliances and zero kills; since e444953af (VA-056, 2026-09-01) EVERY lane kind is looked at on evidence only — recurrence, a forming-frame stall, or a judge NEXT the lane never acted on; r6e measured 31 cadence looks / 0 steers on planner lanes and 19 research looks all on nodes generating a sibling; the cadence/first-look/growth triggers and OMNI_JUDGE_*_SECS are deleted.
 5. **Every app-under-test spawn goes through `spawn_grouped` / `kill_app_tree` (process groups).** A bare
    `tokio::process::Command` with piped stdio and `kill()` reaches ONE pid; the wrapper's `Popen`
    grandchildren keep the pipe write-ends and a reader awaiting EOF parks forever — r0 hung 20 minutes

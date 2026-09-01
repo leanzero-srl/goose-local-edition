@@ -98,6 +98,22 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
             "same collector",
             opt_secs("GOOSE_SWARM_STRAGGLER_GRACE_SECS", cfg.straggler_grace_secs),
         ),
+        // 2c S6 (VA-051): the idle-model judge itself. Env-only, default-ON as `run_swarm` read it
+        // (`std::env::var("GOOSE_SWARM_JUDGE")` → `0/off/false/no` = off, unset = on); the desktop
+        // pinned `GOOSE_SWARM_JUDGE: '0'` from r2 until 1f8618c23, so the judge emitted 0
+        // `judge_verdict` events in every measured run before it was deleted. No config field.
+        "judge": row(
+            "the idle-model judge (with_judge, JudgeConfig, judge.rs) is deleted in 2c S6 — 0 verdicts \
+             in every measured run; GOOSE_SWARM_JUDGE is read by nothing (the omni judge is a \
+             different lever, `omni_judge`)",
+            match env("GOOSE_SWARM_JUDGE") {
+                Some(v) => json!(!matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                )),
+                None => Value::Null,
+            },
+        ),
         "split": row(
             "the idle-model judge and its apply_split door are deleted (2c S6); GOOSE_SWARM_SPLIT was read by nothing but this echo",
             opt_gate("GOOSE_SWARM_SPLIT", cfg.split),
@@ -112,8 +128,9 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
         ),
         // 2c S6: the two idle-fill dimension reviews are deleted. sink_review kept a config field
         // (env > config); tail_review was env-only with a default-ON reading, echoed as the engine
-        // read it (`0/off/false/no` = false) so main.ts's stale `GOOSE_SWARM_TAIL_REVIEW: '0'` pin
-        // is visible as a pin on a dead lever.
+        // read it (`0/off/false/no` = false). The desktop's Benchmark spawn pinned
+        // `GOOSE_SWARM_TAIL_REVIEW: '0'` until 1f8618c23 (VA-048/051) — an operator env or an older
+        // desktop that still does reads here as a pin on a dead lever.
         "sink_review": row(
             "the sink idle-fill (review_dimension, pick_sink_review) is deleted in 2c S6; its producer \
              defaulted OFF while its drain said ON, so it never ran once in any measured run",
@@ -152,6 +169,24 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
                 None => Value::Null,
             },
         ),
+        // VA-069 (audited 2026-09-01 by following each read to what it changes): both were
+        // `swarm_gate_cfg(env, cfg.field)` levers (env > config, `1/on/true/yes`) whose only reader
+        // is the levers echo. `doc_facts` — the channel doc_prefetch claimed to gate — is filled by
+        // the spec-URL fetch (gated by GOOSE_SWARM_DOC_FETCH / `doc_fetch`, a live lever) and by
+        // the vendor probe (gated by the spec naming a vendor), and spliced into every worker
+        // prompt (`doc_facts_block`, `with_doc_facts`) unconditionally. `diverse_plan_would_skip`
+        // has only test callers; `cfg.diverse_plan` is read by nothing else.
+        "doc_prefetch": row(
+            "gated nothing: doc_facts reaches every worker prompt unconditionally — its fill sites \
+             are gated by doc_fetch (GOOSE_SWARM_DOC_FETCH) and by the spec naming a vendor, never \
+             by this lever; GOOSE_SWARM_DOC_PREFETCH is read by nothing but the levers echo",
+            gate("GOOSE_SWARM_DOC_PREFETCH", cfg.doc_prefetch),
+        ),
+        "diverse_plan": row(
+            "the diverse-draft ladder is gone: diverse_plan_would_skip has only test callers and \
+             cfg.diverse_plan is read by nothing but the levers echo; GOOSE_SWARM_DIVERSE_PLAN idem",
+            gate("GOOSE_SWARM_DIVERSE_PLAN", cfg.diverse_plan),
+        ),
     })
 }
 
@@ -183,8 +218,11 @@ mod tests {
             "persona",
             "sink_review",
             "tail_review",
+            "judge",
             "salvage_spin",
             "salvage_require_critical",
+            "doc_prefetch",
+            "diverse_plan",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -209,6 +247,13 @@ mod tests {
         assert_eq!(clean["tail_review"]["configured"], Value::Null);
         assert_eq!(clean["salvage_spin"]["configured"], Value::Null);
         assert_eq!(clean["salvage_require_critical"]["configured"], Value::Null);
+        assert_eq!(clean["judge"]["configured"], Value::Null);
+        assert_eq!(
+            clean["doc_prefetch"]["configured"],
+            json!(true),
+            "the config field's shipped default (true) is what a run with no pin resolved to"
+        );
+        assert_eq!(clean["diverse_plan"]["configured"], json!(false));
 
         cfg.split_fat = true;
         cfg.fan_verify = true;
@@ -232,14 +277,26 @@ mod tests {
             "GOOSE_SWARM_SPLIT_FAT" => Some("0".to_string()),
             "GOOSE_SWARM_SPLIT_INHERIT_SPEC" => Some("yes".to_string()),
             "GOOSE_SWARM_STRAGGLER_GRACE_SECS" => Some("soon".to_string()),
-            // main.ts's Benchmark spawn still pins this (dead) lever off.
+            // The desktop's Benchmark spawn pinned these two dead levers off until 1f8618c23; an
+            // operator env still can, and the pin must read as the engine read it (default-ON).
             "GOOSE_SWARM_TAIL_REVIEW" => Some("0".to_string()),
+            "GOOSE_SWARM_JUDGE" => Some("0".to_string()),
             "GOOSE_SWARM_SINK_REVIEW" => Some("1".to_string()),
+            // main.ts:3228-3229 still pin these two (VA-069); both gate nothing.
+            "GOOSE_SWARM_DOC_PREFETCH" => Some("1".to_string()),
+            "GOOSE_SWARM_DIVERSE_PLAN" => Some("1".to_string()),
             _ => None,
         };
         let pinned = retired_levers(&cfg, &env);
         assert_eq!(pinned["tail_review"]["configured"], json!(false));
+        assert_eq!(pinned["judge"]["configured"], json!(false));
         assert_eq!(pinned["sink_review"]["configured"], json!(true));
+        assert_eq!(pinned["doc_prefetch"]["configured"], json!(true));
+        assert_eq!(
+            pinned["diverse_plan"]["configured"],
+            json!(true),
+            "the desktop's stale pin is visible beside the reason"
+        );
         assert_eq!(
             pinned["split_fat"]["configured"],
             json!(false),
