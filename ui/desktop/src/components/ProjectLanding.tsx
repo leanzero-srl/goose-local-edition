@@ -78,13 +78,8 @@ export default function ProjectLanding() {
         className="w-full max-w-xl overflow-hidden rounded border border-border-primary"
       >
         <div className="flex items-center gap-2 border-b border-border-primary bg-background-secondary px-4 py-2">
-          <span
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded"
-            style={{ backgroundColor: AZURE }}
-          >
-            <FolderPlus className="h-3.5 w-3.5" strokeWidth={2.5} style={{ color: '#0b0b0b' }} />
-          </span>
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+          <FolderPlus className="h-3.5 w-3.5 shrink-0 text-text-secondary" strokeWidth={2.5} />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
             Projects
           </span>
         </div>
@@ -96,7 +91,7 @@ export default function ProjectLanding() {
 
           {projects == null ? null : hasProjects ? (
             <p className="flex items-center gap-2 text-sm text-text-secondary">
-              <PanelLeft className="h-4 w-4 shrink-0" style={{ color: AZURE }} />
+              <PanelLeft className="h-4 w-4 shrink-0 text-text-secondary" />
               {intl.formatMessage(i18n.pickHint)}
             </p>
           ) : (
