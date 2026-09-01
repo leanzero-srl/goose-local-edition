@@ -563,6 +563,80 @@ pub(super) fn append_lane_note(
     errs
 }
 
+/// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
+/// occupy every dependent's "relevant context" slot when a worker finished with no final text.
+/// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest
+/// truth `build_task_ledger_row` reads — so render THAT: the files it wrote and its last pytest
+/// outcome. `None` when the capture holds neither fact; the caller then hands dependents an
+/// honest EMPTY (nothing at all beats a contentless stub) and emits `dependency_context_empty`.
+pub(super) fn render_completed_output_from_ledger(
+    root: &Path,
+    task_id: &str,
+    owned_files: &[String],
+    attempt: u32,
+    calls_mirror_dir: Option<PathBuf>,
+) -> Option<String> {
+    let row = build_task_ledger_row(
+        root,
+        task_id,
+        "done",
+        false,
+        owned_files,
+        attempt,
+        calls_mirror_dir,
+    );
+    let mut wrote: Vec<String> = Vec::new();
+    for key in ["appeared", "changed"] {
+        for p in row
+            .pointer(&format!("/fs_delta/{key}"))
+            .and_then(|x| x.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            if let Some(s) = p.as_str() {
+                if !wrote.iter().any(|w| w == s) {
+                    wrote.push(s.to_string());
+                }
+            }
+        }
+    }
+    let pytest = row.get("last_pytest").filter(|v| !v.is_null()).map(|v| {
+        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("pytest");
+        let n = |k: &str| {
+            v.pointer(&format!("/summary/{k}"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0)
+        };
+        if v.pointer("/summary/collect_error")
+            .and_then(|c| c.as_bool())
+            .unwrap_or(false)
+        {
+            format!("`{cmd}` → COLLECTION ERROR — the suite never ran")
+        } else {
+            format!(
+                "`{cmd}` → {} failed, {} passed{}",
+                n("failed"),
+                n("passed"),
+                if n("errors") > 0 {
+                    format!(", {} errors", n("errors"))
+                } else {
+                    String::new()
+                }
+            )
+        }
+    });
+    if wrote.is_empty() && pytest.is_none() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    if !wrote.is_empty() {
+        lines.push(format!("wrote: {}", wrote.join(", ")));
+    }
+    if let Some(p) = pytest {
+        lines.push(format!("last pytest: {p}"));
+    }
+    Some(lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,7 +913,7 @@ mod tests {
         assert_eq!(bare["commands"], serde_json::json!({}));
         assert_eq!(bare["fs_delta"]["changed"], serde_json::json!([]));
         // And through the one live shadow-rooted caller: the GEN-3 completion facts.
-        let facts = crate::commands::swarm::render_completed_output_from_ledger(
+        let facts = render_completed_output_from_ledger(
             shadow.path(),
             "complete-fix::app/sync.py",
             &owned,
@@ -849,7 +923,7 @@ mod tests {
         .expect("mirror-only rows render the wrote-line");
         assert!(facts.contains("wrote: app/sync.py"), "{facts}");
         assert!(
-            crate::commands::swarm::render_completed_output_from_ledger(
+            render_completed_output_from_ledger(
                 shadow.path(),
                 "complete-fix::app/sync.py",
                 &owned,

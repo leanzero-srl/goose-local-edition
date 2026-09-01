@@ -120,8 +120,8 @@ mod transcripts;
 use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_lane_note,
     append_reasoning_transcript, append_thinking_transcript, build_task_ledger_row,
-    inflight_args_preview, inflight_rows, read_calls_capture, render_previous_attempt_block,
-    InflightCall,
+    inflight_args_preview, inflight_rows, read_calls_capture, render_completed_output_from_ledger,
+    render_previous_attempt_block, InflightCall,
 };
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
@@ -25069,80 +25069,6 @@ fn write_ledger_mini_checked(
     Ok(path)
 }
 
-/// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
-/// occupy every dependent's "relevant context" slot when a worker finished with no final text.
-/// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest
-/// truth `build_task_ledger_row` reads — so render THAT: the files it wrote and its last pytest
-/// outcome. `None` when the capture holds neither fact; the caller then hands dependents an
-/// honest EMPTY (nothing at all beats a contentless stub) and emits `dependency_context_empty`.
-fn render_completed_output_from_ledger(
-    root: &Path,
-    task_id: &str,
-    owned_files: &[String],
-    attempt: u32,
-    calls_mirror_dir: Option<PathBuf>,
-) -> Option<String> {
-    let row = build_task_ledger_row(
-        root,
-        task_id,
-        "done",
-        false,
-        owned_files,
-        attempt,
-        calls_mirror_dir,
-    );
-    let mut wrote: Vec<String> = Vec::new();
-    for key in ["appeared", "changed"] {
-        for p in row
-            .pointer(&format!("/fs_delta/{key}"))
-            .and_then(|x| x.as_array())
-            .unwrap_or(&Vec::new())
-        {
-            if let Some(s) = p.as_str() {
-                if !wrote.iter().any(|w| w == s) {
-                    wrote.push(s.to_string());
-                }
-            }
-        }
-    }
-    let pytest = row.get("last_pytest").filter(|v| !v.is_null()).map(|v| {
-        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("pytest");
-        let n = |k: &str| {
-            v.pointer(&format!("/summary/{k}"))
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0)
-        };
-        if v.pointer("/summary/collect_error")
-            .and_then(|c| c.as_bool())
-            .unwrap_or(false)
-        {
-            format!("`{cmd}` → COLLECTION ERROR — the suite never ran")
-        } else {
-            format!(
-                "`{cmd}` → {} failed, {} passed{}",
-                n("failed"),
-                n("passed"),
-                if n("errors") > 0 {
-                    format!(", {} errors", n("errors"))
-                } else {
-                    String::new()
-                }
-            )
-        }
-    });
-    if wrote.is_empty() && pytest.is_none() {
-        return None;
-    }
-    let mut lines = Vec::new();
-    if !wrote.is_empty() {
-        lines.push(format!("wrote: {}", wrote.join(", ")));
-    }
-    if let Some(p) = pytest {
-        lines.push(format!("last pytest: {p}"));
-    }
-    Some(lines.join("\n"))
-}
-
 /// Rebuild `.swarm/ledger.json` WHOLE from the minis. Rewriting the roll-up in full on every
 /// write is what makes the writers order-independent and idempotent — the prereview mechanics,
 /// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
@@ -29719,6 +29645,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // and silently runs every task at once against files that do not exist yet.
             "depends_on": n.spec.deps,
             "files": n.spec.owned_files,
+            // VA-067: THE SPLIT's markers ride the event the vigil reads. r6e's kill (the merger's
+            // shard deps stripped as "docs-only") was diagnosable only from `raw_plan_json`, because
+            // this list carried no way to tell a shard (owning `.swarm/shards/<m>/<s>/README.md`)
+            // from a docs task. null for every unsplit task — the loader ignores both keys.
+            "shard_of": n.spec.shard_of,
+            "merger_of": n.spec.merger_of,
             "difficulty": format!("{:?}", n.spec.difficulty).to_lowercase(),
             "model": n.spec.preferred_model,
         })).collect::<Vec<_>>(),
