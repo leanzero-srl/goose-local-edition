@@ -427,7 +427,10 @@ fn do_everything_never_reaches_a_model() {
 // (a wrong count is a `?`, not four empty defaults) and an unreadable piece is SAID
 // (`unreadable: <err>`), never rendered as "parses — no definitions found"; the survivors in
 // shards.rs each carry their empty-means-empty proof comment.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 120;
+// Tightened to 117 (2c S13): repair_waves.rs's three-way compose reads its OURS/THEIRS/BASE
+// bytes explicitly — a missing or unreadable OURS is `shard_file_unreadable` and no change (never
+// an EMPTY file landed), an absent THEIRS/BASE is the honest empty of a file that did not exist.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 117;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
