@@ -15,9 +15,10 @@
 //! two concrete options and the request's words that leave it open; anything else is measured,
 //! named (`decision_self_resolved`, MILD — never a stop) and kept out of ASK and the fan.
 //!
-//! THE QUESTION CONTRACT (the fan cut, r6d): a slice question is an OBJECT with a `kind` —
-//! `spec_lookup` | `design` | `external` — and, for a lookup the opener settled by reading the
-//! request, the `fact` and its `cite`. r6d dispatched 27 questions over 165 minutes on 3 nodes
+//! THE QUESTION CONTRACT (the fan cut, r6d; VA-095): a slice question is an OBJECT with a `kind`
+//! — `spec_lookup` | `design` | `external` — and a `cite`; for a lookup the request settles, the
+//! cite IS the answer (`request.md:A-B`, `SpecCite`) and the engine renders those lines — the
+//! opener writes no fact text. r6d dispatched 27 questions over 165 minutes on 3 nodes
 //! and 13 of them were answerable by one grep of request.md (ledger-api-q1 "which sort keys does
 //! sort accept" — request.md:148 lists the four; drafts-workflow-q0 "the tokens-file shape" —
 //! request.md:51 shows it), each costing a 15-minute lane. A cited fact is not a question: the
@@ -59,8 +60,9 @@ pub(crate) struct OpenSlice {
 /// name, kept dispatchable (treated as `design`) and counted by `research_question_unkinded`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QuestionKind {
-    /// The request's own text answers it. With a `cite` AND a `fact` it is a SPEC FACT — no lane
-    /// runs; without a fact the opener searched and did not find it, and a lane looks.
+    /// The request's own text answers it. With a line-range `cite` (`SpecCite`) it is a SPEC
+    /// FACT — the engine renders the cited lines, no lane runs; with any other cite (the grep
+    /// that found nothing) the opener searched and did not find it, and a lane looks.
     SpecLookup,
     /// The request leaves it open; a builder must choose a convention.
     Design,
@@ -92,30 +94,102 @@ impl QuestionKind {
     }
 }
 
-/// VA-075: the length past which a `fact` is NAMED (`fact_overlong`, a WARNING at parse) — it
-/// bounds NOTHING: the fact is kept verbatim, the plan is accepted, no lane or turn depends on
-/// it. It is not in the schema: the refuter measured r6e's verified emit at 20 of 21 facts over
-/// 200 chars (246…909; "Defaults: yaw = 30, pitch = 40, distance = 260. Clamps: pitch [5, 85]…"
-/// keeps the literals exact as the rule demands), so a `maxLength` would have REFUSED a good plan
-/// and forced the whole emit to re-stream — invariant 3's anti-pattern. WHY the rule: r6f's opener wrote ~1,100
-/// characters of request.md:547-565 into ONE spec_lookup fact ("<canvas id='viz3d'>, context
-/// webgl or webgl2 created {antialias:false, alpha:false}, on the MAIN thread — no
-/// OffscreenCanvas, no Worker…") and its 33,818-completion-token reply sat 16m43s at 0 bytes
-/// while the arguments streamed (r6e's reply: 41.5 KB; r6f's ≈ 1.5×). The owning brief already
-/// splices each claimed section's FULL text and every worker holds the request file at the
-/// cited line, so a pasted passage is the plan written twice.
-pub(super) const FACT_MAX_CHARS: usize = 200;
+/// VA-095: a `spec_lookup` cite as a LINE RANGE of the request file — `<label>:A` or
+/// `<label>:A-B` (`request_file_label`, so `request.md:148`, `request.md:547-565`), 1-based and
+/// inclusive, the form the orientation index carries and the rule asks for. This is the whole
+/// fact: the engine renders those lines of the request verbatim (`render`), the opener writes no
+/// answer text. WHY: r6g's opener emitted 80 `spec_lookup` facts WITH text (62 over 200 chars,
+/// max 471) in a 61-minute reply on one node while two idled — research's work moved into the
+/// serial opener lane — and every fact duplicated the section text the owning brief already
+/// splices. A cite that names no line of the file (a grep command, a heading, another file) is
+/// not a fact location; `parse` says so with `None` and the question rides a lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpecCite {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+/// The leading decimal number of `s` and what follows it; `None` when `s` does not start with a
+/// digit (or the digits overflow).
+fn leading_number(s: &str) -> (Option<usize>, &str) {
+    let n = s.chars().take_while(char::is_ascii_digit).count();
+    (s[..n].parse::<usize>().ok(), &s[n..])
+}
+
+impl SpecCite {
+    /// Lenient on what surrounds the range (a path prefix, a heading after it), strict on the
+    /// range itself: the label, a colon, digits, optionally `-` and digits; `start >= 1` and
+    /// `end >= start`, else `None` — never a guess at which lines the opener meant.
+    pub(crate) fn parse(cite: &str) -> Option<Self> {
+        let marker = format!("{}:", request_file_label());
+        let rest = &cite[cite.find(&marker)? + marker.len()..];
+        let (start, after) = leading_number(rest);
+        let start = start?;
+        let end = match after.strip_prefix('-').map(leading_number) {
+            Some((Some(end), _)) => end,
+            _ => start,
+        };
+        (start >= 1 && end >= start).then_some(Self { start, end })
+    }
+
+    /// Lines cited, inclusive.
+    pub(crate) fn span(self) -> usize {
+        self.end - self.start + 1
+    }
+
+    /// The cited lines of `spec`, verbatim — each line's trailing whitespace cut, blank lines
+    /// dropped, nothing else touched: the RANGE is the trim. No sentence is selected by code,
+    /// because the words that settle a question (a table's literal values, a default) are the
+    /// ones the question never names, so any overlap heuristic would drop exactly them (an
+    /// invention by omission); the rule tells the opener to cite the line(s), and
+    /// `spec_fact_rendered.lines` shows when it cited a section instead. `Err` names why the
+    /// range is not a fact location: past the file's last line (`out_of_range`), across two
+    /// sections of the document's own structure (`spans_sections` — a fact lives at a line or
+    /// inside one section; a region is not a fact), or blank (`blank_range`).
+    pub(crate) fn render(self, spec: &str) -> Result<String, &'static str> {
+        let lines: Vec<&str> = spec.lines().collect();
+        if self.start == 0 || self.end > lines.len() {
+            return Err("out_of_range");
+        }
+        let sections = spec_sections(spec);
+        let section_of = |line: usize| {
+            sections
+                .iter()
+                .position(|s| (s.line_start..=s.line_end).contains(&line))
+        };
+        // Both lines exist, so both sit in a section (the index is contiguous over the file);
+        // a hole in the index would be the engine's defect, not the opener's, and refuses nothing.
+        if let (Some(a), Some(b)) = (section_of(self.start), section_of(self.end)) {
+            if a != b {
+                return Err("spans_sections");
+            }
+        }
+        let text = lines[self.start - 1..self.end]
+            .iter()
+            .map(|l| l.trim_end())
+            .filter(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.is_empty() {
+            return Err("blank_range");
+        }
+        Ok(text)
+    }
+}
 
 /// One slice question as the run consumes it. `text` is the question verbatim (whitespace
 /// squashed to one line — the identity the mini, the brief and the dedup all read); `cite` is the
 /// request line or heading the opener read (`request.md:148`, or a heading), empty when it named
-/// none; `fact` is the answer as ONE sentence (`FACT_MAX_CHARS`), empty unless the opener found one.
+/// none. There is no fact text (VA-095): a lookup's answer is its cited lines, rendered by code.
 #[derive(Clone, Debug)]
 pub(crate) struct OpenQuestion {
     pub(crate) text: String,
     pub(crate) kind: QuestionKind,
     pub(crate) cite: String,
-    pub(crate) fact: String,
+    /// VA-095: the size of a `fact` the model wrote against the contract, kept ONLY so
+    /// `qualify_slice_questions` can name it once (`research_question_fact_ignored`); the text
+    /// itself is dropped at parse and rides nowhere.
+    pub(crate) ignored_fact_chars: usize,
     /// C2(a): the index of the opener's open decision this question IS, set by
     /// `research_plan::route_questions_to_decisions` after ASK — never by the opener. Routed
     /// questions ride no slice lane; the decision settles once and the brief points at it.
@@ -123,11 +197,13 @@ pub(crate) struct OpenQuestion {
 }
 
 impl OpenQuestion {
-    /// A SPEC FACT: a lookup the opener settled by reading the request — both the fact and where
-    /// it read it. Either half missing and this is a question again: a fact without a cite is an
-    /// uncheckable claim, a cite without a fact is a search that found nothing.
+    /// A SPEC FACT: a lookup whose cite names a line range of the request file (`SpecCite`) —
+    /// the engine renders those lines, no lane runs. A `spec_lookup` whose cite is anything else
+    /// (the grep that found nothing, a heading) is a question again and rides a lane. Whether the
+    /// range is IN the file is settled at the fan (`research::land_spec_fact`), where the request
+    /// text is.
     pub(crate) fn is_cited_fact(&self) -> bool {
-        self.kind == QuestionKind::SpecLookup && !self.cite.is_empty() && !self.fact.is_empty()
+        self.kind == QuestionKind::SpecLookup && SpecCite::parse(&self.cite).is_some()
     }
 }
 
@@ -140,7 +216,7 @@ impl From<&str> for OpenQuestion {
             text: squash(text),
             kind: QuestionKind::Design,
             cite: String::new(),
-            fact: String::new(),
+            ignored_fact_chars: 0,
             decision: None,
         }
     }
@@ -152,7 +228,8 @@ fn squash(s: &str) -> String {
 
 /// One question as the opener EMITTED it — the schema's object, a bare string from a model that
 /// ignored the schema (every pre-cut opener's shape), or anything else (kept parseable so one odd
-/// entry cannot fail the whole opener — the `OpenDecisionRaw` lesson).
+/// entry cannot fail the whole opener — the `OpenDecisionRaw` lesson). `fact` is read only to
+/// MEASURE a model that still writes one (VA-095); it is never kept.
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum OpenQuestionRaw {
@@ -182,21 +259,21 @@ impl<'de> serde::Deserialize<'de> for OpenQuestion {
                 text: squash(&question),
                 kind: QuestionKind::parse(&kind),
                 cite: squash(&cite),
-                fact: fact.trim().to_string(),
+                ignored_fact_chars: fact.trim().chars().count(),
                 decision: None,
             },
             OpenQuestionRaw::Bare(q) => OpenQuestion {
                 text: squash(&q),
                 kind: QuestionKind::Unkinded,
                 cite: String::new(),
-                fact: String::new(),
+                ignored_fact_chars: 0,
                 decision: None,
             },
             OpenQuestionRaw::Other(v) => OpenQuestion {
                 text: squash(&v.to_string()),
                 kind: QuestionKind::Unkinded,
                 cite: String::new(),
-                fact: String::new(),
+                ignored_fact_chars: 0,
                 decision: None,
             },
         })
@@ -247,11 +324,10 @@ struct RequestExemplars {
     section: Option<(String, usize, usize)>,
 }
 
-/// The first data row of the first markdown table: its line, the header cells above the
-/// separator, and its own cells.
+/// The first data row of the first markdown table (a header row, a separator, then rows): its
+/// line and its cells.
 struct TableRow {
     line: usize,
-    header: Vec<String>,
     cells: Vec<String>,
 }
 
@@ -301,7 +377,7 @@ fn states_a_rule(t: &str) -> bool {
 fn request_exemplars(spec: &str) -> RequestExemplars {
     let lines: Vec<&str> = spec.lines().collect();
     let mut in_fence = false;
-    let mut pending_header: Option<Vec<String>> = None;
+    let mut header_seen = false;
     let mut table_row: Option<TableRow> = None;
     let mut first_prose: Option<ProseLine> = None;
     let mut rule: Option<ProseLine> = None;
@@ -321,17 +397,13 @@ fn request_exemplars(spec: &str) -> RequestExemplars {
             if is_table_separator(t) {
                 // GFM: a table is a header row, a separator, then rows — a separator with no
                 // header line above it is not a table.
-                if let Some(h) = idx
+                header_seen = idx
                     .checked_sub(1)
                     .map(|h| lines[h].trim())
-                    .filter(|h| is_table_line(h) && !is_table_separator(h))
-                {
-                    pending_header = Some(table_cells(h));
-                }
-            } else if let Some(header) = pending_header.take() {
+                    .is_some_and(|h| is_table_line(h) && !is_table_separator(h));
+            } else if header_seen {
                 table_row = Some(TableRow {
                     line: idx + 1,
-                    header,
                     cells: table_cells(t),
                 });
             }
@@ -368,8 +440,7 @@ fn request_exemplars(spec: &str) -> RequestExemplars {
 }
 
 /// A quoted line inside an example is an illustration of the cite form — cut at a character
-/// boundary to `max` chars INCLUDING the ellipsis (a cut fact must still pass `FACT_MAX_CHARS`);
-/// the full line is one `sed` away.
+/// boundary to `max` chars INCLUDING the ellipsis; the full line is one `sed` away.
 fn quote_cut(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -388,9 +459,10 @@ enum RequestText {
 }
 
 /// The three example lines of the QUESTIONS rule, one per kind, each ending in a JSON object
-/// that satisfies `open_schema` (the tests parse them): spec_lookup on the first table row
-/// (its cells ARE the fact), design on the first rule-stating line (the closest words + the grep
-/// that found nothing), external on the first top-level section (the range cite from the index).
+/// that satisfies `open_schema` (the tests parse them): spec_lookup on the first table row (the
+/// cite IS the fact — no text, VA-095), design on the first rule-stating line (the closest words
+/// + the grep that found nothing), external on the first top-level section (the range cite from
+/// the index).
 fn example_lines(text: &RequestText, label: &str) -> [String; 3] {
     let (row, prose, section, absent) = match text {
         RequestText::Read(ex) => (
@@ -410,21 +482,14 @@ fn example_lines(text: &RequestText, label: &str) -> [String; 3] {
             // `split` always yields at least one cell, so the key exists; empty only when the
             // row's first cell is literally empty — quoted as such.
             let key = r.cells.first().map_or("", String::as_str);
-            let fact = r
-                .header
-                .iter()
-                .zip(&r.cells)
-                .map(|(h, c)| format!("{h}: {c}"))
-                .collect::<Vec<_>>()
-                .join("; ");
             format!(
-                "Example, on this request's own first table row ({label}:{}): {}",
+                "Example, on this request's own first table row ({label}:{}), which the engine \
+                 renders verbatim as the fact: {}",
                 r.line,
                 serde_json::json!({
                     "question": format!("What does the row at {label}:{} fix for `{key}`?", r.line),
                     "kind": "spec_lookup",
                     "cite": format!("{label}:{}", r.line),
-                    "fact": quote_cut(&fact, FACT_MAX_CHARS),
                 })
             )
         }
@@ -434,8 +499,7 @@ fn example_lines(text: &RequestText, label: &str) -> [String; 3] {
             serde_json::json!({
                 "question": "<what the request settles, asked as a question>",
                 "kind": "spec_lookup",
-                "cite": format!("{label}:<N>"),
-                "fact": format!("<one sentence in your words, at most {FACT_MAX_CHARS} characters>"),
+                "cite": format!("{label}:<N> or {label}:<A-B>, the line(s) that hold the value"),
             })
         ),
     };
@@ -524,7 +588,8 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
     };
     let [lookup_example, design_example, external_example] = example_lines(&text, &label);
     format!(
-        "\n\nQUESTIONS. A question is an OBJECT {{question, kind, cite, fact}}. EVERY kind carries a \
+        "\n\nQUESTIONS. A question is an OBJECT {{question, kind, cite}} — there is NO fact field. \
+         EVERY kind carries a \
          cite; the schema rejects a question with an empty cite. Before you write any question, RUN \
          (do not describe) a grep against the request file named under SOURCES: `grep -n -i '<term>' \
          {path}` then `sed -n 'A,Bp'`. Never print the whole file. When the request arrives as its \
@@ -532,21 +597,22 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
          cites FROM the index, and read a section (`sed -n 'A,Bp'`) only when a fact needs its \
          words — the index IS the heading-to-line map, so never rebuild one by hand and never \
          re-read a range you have already read. Then:\n\
-         — If a line ANSWERS it, it is not a question: kind spec_lookup, cite {label}:<N>, fact = \
-         ONE sentence in your own words, at most {FACT_MAX_CHARS} characters (a longer one is kept \
-         but named on the event log), saying what the line settles for a builder, literal values \
-         kept exact; no \
-         lane runs. The fact is NOT the passage: the owning brief carries each claimed section's \
-         FULL text and every builder holds the request file at the cited line, so a pasted passage \
-         is the plan written twice — MEASURED: one opener pasted ~1,100 characters of a section \
-         into a single fact and its reply sat 16 minutes at zero bytes while the arguments \
-         streamed. {lookup_example}\n\
+         — If a line ANSWERS it, it is not a question: kind spec_lookup, cite {label}:<N> or \
+         {label}:<A-B> — the exact line(s) that hold the value, and NOTHING else: write no answer, \
+         no sentence, no passage. The engine renders the cited lines verbatim into the owning brief \
+         as the SPEC FACT and no lane runs; the cite IS the fact. The owning brief already carries \
+         each claimed section's FULL text and every builder holds the request file at the cited \
+         line, so any answer text you write is the plan written twice — MEASURED: one opener wrote \
+         80 such facts (62 over 200 characters) into a 61-minute reply on one node while two nodes \
+         idled. Cite the line(s), not the section: a section range taken from the index renders \
+         the whole section. {lookup_example}\n\
          — If the request is SILENT and a builder must choose: kind design, cite = the closest lines \
          you read AND the grep that found nothing. {design_example}\n\
          — If it needs the vendor's documentation: kind external, cite = the request line that defers \
          to it. {external_example}\n\
-         A spec_lookup with an empty fact is allowed ONLY with the literal grep command you ran and \
-         its 'no match' in cite — a cite you did not run is a false citation. A question that IS one \
+         A spec_lookup whose cite is not a line range rides a lane — that is the one case you \
+         searched and found nothing, and its cite is the literal grep command you ran and its 'no \
+         match'; a cite you did not run is a false citation. A question that IS one \
          of your open_decisions, or names a decision the request itself assigns to the builder, goes \
          under open_decisions only. MEASURED: a previous opener wrote a question asking for a \
          response shape 'in full text' while the request held that shape three lines from the cite \
@@ -576,8 +642,7 @@ pub(super) fn open_schema() -> serde_json::Value {
                                 "properties": {
                                     "question": {"type": "string"},
                                     "kind": {"type": "string", "enum": ["spec_lookup", "design", "external"]},
-                                    "cite": {"type": "string", "minLength": 1},
-                                    "fact": {"type": "string"}
+                                    "cite": {"type": "string", "minLength": 1}
                                 }
                             }
                         },
@@ -678,16 +743,15 @@ fn qualify_slice_questions(mut slices: Vec<OpenSlice>, events: &dyn EventSink) -
                     "question": q.text.chars().take(200).collect::<String>(),
                 }));
             }
-            // VA-075: an overlong fact is a WARNING with its size, never a refusal — the fact rides
-            // verbatim, the plan is accepted. r6e's good plan carried 20 such facts (246…909 chars).
-            let fact_chars = q.fact.chars().count();
-            if fact_chars > FACT_MAX_CHARS {
+            // VA-095: the contract has no `fact` — a lookup's answer is its cited lines, rendered
+            // by code at the fan. A model that writes one anyway spent its emit on text the brief
+            // already holds; named once with its size (the text was dropped at parse).
+            if q.ignored_fact_chars > 0 {
                 events.write_value(serde_json::json!({
-                    "event": "fact_overlong",
+                    "event": "research_question_fact_ignored",
                     "slice": sl.id,
                     "q_index": sl.questions.len(),
-                    "question": q.text.chars().take(200).collect::<String>(),
-                    "chars": fact_chars,
+                    "chars": q.ignored_fact_chars,
                 }));
             }
             sl.questions.push(q);
@@ -911,7 +975,7 @@ mod tests {
     }
 
     /// THE QUESTION CONTRACT on r6d's own questions. The schema demands `question` + `kind`
-    /// (three names); the parse reads the framed shape into kind/cite/fact, reads r6d's actual
+    /// (three names); the parse reads the framed shape into kind/cite, reads r6d's actual
     /// shape (bare strings) as UNKINDED — dispatched as design, each named once with its words —
     /// and drops an empty entry by name so the surviving positions are the q_indexes.
     #[test]
@@ -925,9 +989,8 @@ mod tests {
             "D10-8: the VALIDATOR refuses a bare question — never a retry count"
         );
         assert_eq!(q["properties"]["cite"]["minLength"], 1);
-        // VA-075 (refuted refuser): the schema bounds a fact's length NOWHERE — r6e's good plan
-        // had 20 of 21 facts over 200 chars; an overlong fact is named, never refused.
-        assert!(q["properties"]["fact"].get("maxLength").is_none());
+        // VA-095: the schema names no `fact` — a lookup's answer is its cited lines.
+        assert!(q["properties"].get("fact").is_none());
         assert_eq!(
             q["properties"]["kind"]["enum"],
             serde_json::json!(["spec_lookup", "design", "external"])
@@ -949,16 +1012,18 @@ mod tests {
                 "{obj}"
             );
             assert!(!obj["cite"].as_str().unwrap().is_empty(), "{obj}");
-            if kind == "spec_lookup" {
-                assert!(!obj["fact"].as_str().unwrap().is_empty(), "{obj}");
-            }
+            assert!(
+                obj.get("fact").is_none(),
+                "no example carries fact text: {obj}"
+            );
             examples += 1;
         }
         assert_eq!(examples, 3, "one example per kind");
         assert!(
-            rule.contains(&format!("at most {FACT_MAX_CHARS} characters"))
-                && rule.contains("The fact is NOT the passage"),
-            "the rule states the fact's length and WHY a passage is a duplicate"
+            rule.contains("there is NO fact field")
+                && rule.contains("the cite IS the fact")
+                && rule.contains("Cite the line(s), not the section"),
+            "the rule says a lookup carries its cite only, and WHY: {rule}"
         );
         assert!(
             opener_questions_rule(None).contains("NOT persisted this run"),
@@ -974,8 +1039,7 @@ mod tests {
                 "id": "ledger-api", "title": "t", "objective": "o", "weight": 3,
                 "questions": [
                     {"question": "Which sort keys does sort=<k> accept and in what direction(s)?",
-                     "kind": "spec_lookup", "cite": "request.md:148",
-                     "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT)."},
+                     "kind": "spec_lookup", "cite": "request.md:148"},
                     {"question": "What cursor state from the vendor's paginated list is persisted across a dropped connection?",
                      "kind": "External"},
                     {"question": "What durability/locking strategy for notify.db (WAL? single writer?)",
@@ -996,7 +1060,7 @@ mod tests {
         assert_eq!(qs[0].kind, QuestionKind::SpecLookup);
         assert!(qs[0].is_cited_fact());
         assert_eq!(qs[0].cite, "request.md:148");
-        assert!(qs[0].fact.starts_with("`sort` is one of"));
+        assert_eq!(qs[0].ignored_fact_chars, 0);
         assert_eq!(qs[1].kind, QuestionKind::External, "case folds");
         assert_eq!(qs[2].kind, QuestionKind::Design);
         assert_eq!(
@@ -1063,8 +1127,8 @@ mod tests {
             .collect()
     }
 
-    /// VA-078: the rule's three examples quote THIS request — its first table row (the cells are
-    /// the fact, cut to the schema's length), its first rule-stating line (the closest words +
+    /// VA-078: the rule's three examples quote THIS request — its first table row (its cite is
+    /// the fact, VA-095), its first rule-stating line (the closest words +
     /// the grep that found nothing) and its first top-level section (the range cite the index
     /// carries) — by that file's line numbers; a request without a table says so instead of
     /// inventing a row; fenced code is not prose; an absent or unreadable file is named. No
@@ -1084,9 +1148,10 @@ mod tests {
         assert_eq!(ex.len(), 3, "{rule}");
         assert_eq!(ex[0]["kind"], "spec_lookup");
         assert_eq!(ex[0]["cite"], "request.md:7");
-        assert_eq!(
-            ex[0]["fact"],
-            "Method: GET; Path: /api/items; Purpose: list items"
+        assert!(
+            ex[0].get("fact").is_none(),
+            "the cite is the fact; the engine renders request.md:7: {}",
+            ex[0]
         );
         assert_eq!(
             ex[0]["question"],
@@ -1145,14 +1210,17 @@ mod tests {
             rule.contains("this request has no markdown table, so no row is shown"),
             "{rule}"
         );
-        assert_eq!(ex[0]["cite"], "request.md:<N>");
+        assert_eq!(
+            ex[0]["cite"],
+            "request.md:<N> or request.md:<A-B>, the line(s) that hold the value"
+        );
         assert!(rule.contains("first prose line (request.md:4)"), "{rule}");
         assert!(ex[2]["cite"]
             .as_str()
             .unwrap()
             .starts_with("request.md:3-5 `One`"));
 
-        // Fenced code is neither a table nor prose; a fact cut to the schema's length still passes.
+        // Fenced code is neither a table nor prose; a long row is cited, never quoted.
         let fenced = dir.path().join("fenced.md");
         std::fs::write(
             &fenced,
@@ -1169,9 +1237,11 @@ mod tests {
         let long = dir.path().join("long.md");
         std::fs::write(&long, long_row).unwrap();
         let ex = rule_examples(&opener_questions_rule(Some(&long)));
-        let fact = ex[0]["fact"].as_str().unwrap();
-        assert_eq!(fact.chars().count(), FACT_MAX_CHARS);
-        assert!(fact.ends_with('…'));
+        assert_eq!(
+            ex[0]["cite"], "request.md:6",
+            "a long row is a cite, never a paste"
+        );
+        assert!(ex[0].get("fact").is_none());
 
         // Absent (not persisted) or unreadable: named in the examples, never quoted from.
         let rule = opener_questions_rule(None);
@@ -1190,39 +1260,26 @@ mod tests {
         assert_eq!(rule_examples(&rule).len(), 3);
     }
 
-    /// VA-075 as the refuter corrected it: r6e's verified emit had 20 of 21 facts over 200
-    /// chars (246…909) and was a GOOD plan — a schema `maxLength` would have refused it and
-    /// re-streamed the whole emit. An overlong fact parses, rides verbatim, still counts as a
-    /// cited fact, and is NAMED once (`fact_overlong{slice, q_index, question, chars}`); a
-    /// one-sentence fact is silent.
+    /// VA-095 on r6g's emit (80 `spec_lookup` facts with text, 62 over 200 chars, a 61-minute
+    /// opener on one node): the contract carries NO fact — the cite is the fact. A `spec_lookup`
+    /// whose cite is a line range of the request file is a cited fact by the cite alone; one
+    /// whose cite is the grep that found nothing is a question; a `fact` a model writes anyway is
+    /// dropped at parse and named ONCE with its size (`research_question_fact_ignored`), never
+    /// carried — and the schema refuses nothing new (a refusal re-streams the whole emit).
     #[test]
-    fn an_overlong_fact_is_kept_verbatim_and_named_never_refused() {
-        let defaults: String =
-            "Defaults: yaw = 30, pitch = 40, distance = 260. Clamps: pitch [5, 85]"
-                .chars()
-                .chain("; distance [120, 900]".repeat(9).chars())
-                .take(246)
-                .collect();
-        assert_eq!(
-            defaults.chars().count(),
-            246,
-            "r6e's shortest overlong fact"
-        );
-        let nine_hundred_nine = "x".repeat(909);
-        let nine_hundred = "y".repeat(900);
-        let short = "`sort` is one of `created_at`, `-created_at`; default `created_at`.";
+    fn a_lookup_is_a_fact_by_its_cite_alone_and_a_written_fact_is_dropped_and_named() {
         let raw: OpenOutputRaw = serde_json::from_value(serde_json::json!({
             "slices": [{
-                "id": "web-viz", "title": "t", "objective": "o", "weight": 3,
+                "id": "ledger-api", "title": "t", "objective": "o", "weight": 3,
                 "questions": [
+                    {"question": "Which sort keys does sort accept?", "kind": "spec_lookup",
+                     "cite": "request.md:148"},
                     {"question": "Camera defaults and clamps?", "kind": "spec_lookup",
-                     "cite": "request.md:616-617", "fact": defaults},
-                    {"question": "Longest r6e fact?", "kind": "spec_lookup",
-                     "cite": "request.md:547-565", "fact": nine_hundred_nine},
-                    {"question": "A 900-char paste?", "kind": "spec_lookup",
-                     "cite": "request.md:1", "fact": nine_hundred},
-                    {"question": "Sort keys?", "kind": "spec_lookup",
-                     "cite": "request.md:148", "fact": short}
+                     "cite": "request.md:616-617", "fact": "x".repeat(471)},
+                    {"question": "Which header verifies signed webhooks?", "kind": "spec_lookup",
+                     "cite": "grep -n -i signature request.md → no match"},
+                    {"question": "Which convention for the tokens file?", "kind": "design",
+                     "cite": "request.md:51 'tokens'; grep -n -i 'tokens file' → no match"}
                 ]
             }]
         }))
@@ -1231,28 +1288,114 @@ mod tests {
         let out = raw.qualify(&sink);
         let qs = &out.slices[0].questions;
         assert_eq!(qs.len(), 4, "nothing is refused or dropped");
-        assert_eq!(qs[0].fact, defaults);
-        assert_eq!(qs[1].fact, nine_hundred_nine);
-        assert_eq!(qs[2].fact, nine_hundred);
+        assert!(qs[0].is_cited_fact());
         assert!(
-            qs.iter().all(OpenQuestion::is_cited_fact),
-            "still facts, no lane runs"
+            qs[1].is_cited_fact(),
+            "the stray fact changes nothing about the cite"
+        );
+        assert_eq!(qs[1].ignored_fact_chars, 471);
+        assert!(
+            !qs[2].is_cited_fact(),
+            "a grep cite is a search that found nothing"
+        );
+        assert!(
+            !qs[3].is_cited_fact(),
+            "a design question is never a fact, cite or not"
         );
         let events = sink.0.lock().unwrap();
-        assert_eq!(events.len(), 3, "{events:?}");
-        for (e, (q_index, chars)) in events.iter().zip([(0, 246), (1, 909), (2, 900)]) {
-            assert_eq!(e["event"], "fact_overlong");
-            assert_eq!(e["slice"], "web-viz");
-            assert_eq!(e["q_index"], q_index);
-            assert_eq!(e["chars"], chars);
-        }
-        assert_eq!(events[0]["question"], "Camera defaults and clamps?");
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "research_question_fact_ignored");
+        assert_eq!(events[0]["slice"], "ledger-api");
+        assert_eq!(events[0]["q_index"], 1);
+        assert_eq!(events[0]["chars"], 471);
+        let schema = open_schema();
+        let q = &schema["properties"]["slices"]["items"]["properties"]["questions"]["items"];
+        assert!(q["properties"].get("fact").is_none());
         assert!(
-            open_schema()["properties"]["slices"]["items"]["properties"]["questions"]["items"]
-                ["properties"]["fact"]
-                .get("maxLength")
-                .is_none(),
-            "the schema never bounds a fact"
+            q.get("additionalProperties").is_none(),
+            "a stray fact is measured, never refused"
+        );
+    }
+
+    /// `SpecCite`: the range forms the index carries parse (a path prefix and a trailing heading
+    /// are ignored); a grep command, a bare label, a zero line and an inverted range do not.
+    /// `render` gives the cited lines verbatim (blank lines dropped, trailing whitespace cut) —
+    /// a whole section renders whole, visible as `lines`, never selected by code — and names why
+    /// a range is not a fact location: past the file, across two sections, blank.
+    #[test]
+    fn a_spec_cite_parses_a_line_range_and_renders_those_lines_verbatim() {
+        assert_eq!(
+            SpecCite::parse("request.md:148"),
+            Some(SpecCite {
+                start: 148,
+                end: 148
+            })
+        );
+        assert_eq!(
+            SpecCite::parse("request.md:547-565"),
+            Some(SpecCite {
+                start: 547,
+                end: 565
+            })
+        );
+        assert_eq!(
+            SpecCite::parse("/run/.swarm/request.md:4-8 `Endpoints`"),
+            Some(SpecCite { start: 4, end: 8 })
+        );
+        assert_eq!(
+            SpecCite::parse("request.md:12-"),
+            Some(SpecCite { start: 12, end: 12 })
+        );
+        for not_a_range in [
+            "grep -n -i signature request.md → no match",
+            "request.md",
+            "request.md:",
+            "request.md:0",
+            "request.md:10-4",
+            "request.md:L148",
+            "## Endpoints",
+            "",
+        ] {
+            assert_eq!(SpecCite::parse(not_a_range), None, "{not_a_range:?}");
+        }
+        assert_eq!(SpecCite { start: 4, end: 8 }.span(), 5);
+
+        let spec = "# Title\nintro\n\n## Endpoints\n| Method | Path |\n|---|---|\n\
+                    | GET | /api/items |   \n\n## Rules\nThe server MUST answer within 2 seconds.\n";
+        assert_eq!(
+            SpecCite { start: 7, end: 7 }.render(spec).unwrap(),
+            "| GET | /api/items |",
+            "one line, trailing whitespace cut"
+        );
+        assert_eq!(
+            SpecCite { start: 5, end: 8 }.render(spec).unwrap(),
+            "| Method | Path |\n|---|---|\n| GET | /api/items |",
+            "a range inside one section: verbatim lines, the blank line dropped"
+        );
+        assert_eq!(
+            SpecCite { start: 4, end: 8 }.render(spec).unwrap(),
+            "## Endpoints\n| Method | Path |\n|---|---|\n| GET | /api/items |",
+            "a whole section renders whole"
+        );
+        assert_eq!(
+            SpecCite { start: 10, end: 11 }.render(spec),
+            Err("out_of_range")
+        );
+        assert_eq!(
+            SpecCite {
+                start: 200,
+                end: 200
+            }
+            .render(spec),
+            Err("out_of_range")
+        );
+        assert_eq!(
+            SpecCite { start: 7, end: 10 }.render(spec),
+            Err("spans_sections")
+        );
+        assert_eq!(
+            SpecCite { start: 8, end: 8 }.render(spec),
+            Err("blank_range")
         );
     }
 }
