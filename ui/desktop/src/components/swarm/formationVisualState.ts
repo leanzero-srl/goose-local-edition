@@ -50,7 +50,7 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
   {
     key: 'review',
     label: 'Review',
-    tip: 'An idle node reads the ORIGINAL request against the plan and patches what is missing. It stops when it asks for no change.',
+    tip: 'RETIRED (2447d145c): one model round read the ORIGINAL request against the plan and patched it. Deleted after three runs produced zero effective patches — the plan repairs are deterministic now. Shown only for an archived run that ran it.',
   },
   {
     key: 'contracts',
@@ -76,11 +76,15 @@ export type FormationPhaseState = 'complete' | 'active' | 'upcoming' | 'skipped'
 /** Phases DELETED from the engine. Retired, not erased: archived run.jsonl files still carry their
  *  `phase` events, so a run with EVIDENCE of one renders it as a historical step — but a new run must
  *  not be offered a chip for a stage the engine can no longer reach (it would sit permanently
- *  "skipped", claiming a route that does not exist). CONTRACTS stays retired (P1-4). RESEARCH left
- *  this list when the v2 fan shipped: the engine researches again (the opener's own questions, fanned
- *  read-only between ASK and SYNTHESIS), so the chip is a live stage — it emits no `phase` event, and
+ *  "skipped", claiming a route that does not exist). CONTRACTS stays retired (P1-4). REVIEW joined it
+ *  with 2447d145c (VA-014): the LLM review round is deleted and no `phase: review` is emitted, so
+ *  without this entry formationPhaseState read EVERY new run as "Review — skipped" the moment Build lit
+ *  — the exact defect this comment names. Retired means "absent is not skipped", never "hidden": the
+ *  archived r0 fixture still renders its Review chip off its own evidence. RESEARCH left this list when
+ *  the v2 fan shipped: the engine researches again (the opener's own questions, fanned read-only
+ *  between ASK and SYNTHESIS), so the chip is a live stage — it emits no `phase` event, and
  *  foldRunPhase derives it from the fan's research_* events instead. */
-export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['contracts'];
+export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['review', 'contracts'];
 
 /** The steps the ribbon actually draws for THIS run: the live pipeline, plus any retired phase the
  *  run's own events prove it ran. Evidence is set the moment a phase event is seen (foldRunPhase), so

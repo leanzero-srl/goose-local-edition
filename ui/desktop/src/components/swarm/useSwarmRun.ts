@@ -483,9 +483,10 @@ export interface SwarmRunTotals {
 // call each across the fleet — no `phase` event; derived from research_* events) -> SYNTHESIS (wire the
 // slices into a task DAG) -> REVIEW (one round of structural patches) -> BUILD -> INTEGRATE -> REPAIR.
 // `research` carried v1's slice fan (deleted by P1-5) and is LIVE again for the v2 fan; `contracts`
-// stays RETIRED (P1-4) — archived run.jsonl files still carry its phase events, so the key stays for
-// the historical rows those runs render, but a NEW run must never be offered it as a pending stage
-// (see RETIRED_PHASES in formationVisualState).
+// stays RETIRED (P1-4) and `review` is RETIRED too (the LLM review round, deleted by 2447d145c) —
+// archived run.jsonl files still carry their phase events, so the keys stay for the historical rows
+// those runs render, but a NEW run must never be offered either as a pending stage (see
+// RETIRED_PHASES in formationVisualState).
 export type PhaseKey =
   | 'open'
   | 'ask'
@@ -1172,11 +1173,15 @@ function judgeTone(verdict: string): ActivityTone {
 /**
  * EVERY `{"event":"phase","phase":"…"}` value the engine emits, mapped onto a ribbon step.
  *
- * The engine writes eleven of these; this table understood five, and the other six were read and dropped on
- * the floor by `foldRunPhase`. `build` and `repair` survived that by accident — they are re-derived from the
- * task lifecycle below — but CONTRACTS, TEST, RATE and FIX had no representation at all, so the fleet could
- * fan contract stubs across three nodes or grind a fix wave for hours while the ribbon still lit the
- * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs.
+ * The engine once wrote eleven of these; this table understood five, and the other six were read and dropped
+ * on the floor by `foldRunPhase`. `build` and `repair` survived that by accident — they are re-derived from
+ * the task lifecycle below — but CONTRACTS, TEST, RATE and FIX had no representation at all, so the fleet
+ * could fan contract stubs across three nodes or grind a fix wave for hours while the ribbon still lit the
+ * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs. LIVE today: open,
+ * ask, synthesis, build, repair, fix. The rest are LEGACY-LOG keys that archived run.jsonl files still
+ * carry (research = v1's slice fan, P1-5; review = the LLM review round, 2447d145c; contracts = P1-4;
+ * test/rate = the old per-round events): they keep folding for archives and are never offered to a new
+ * run (RETIRED_PHASES).
  *
  * The mappings that are not one-to-one, and why:
  *   repair    the engine names the WHOLE complete loop `repair`, and that loop OPENS by verifying. Only
@@ -1591,6 +1596,10 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'plan', text: t, tone: 'warn', sub });
         break;
       }
+      // LEGACY-LOG: the review_failed / review_findings / plan_patched / plan_patch_rejected arms have NO
+      // emitter since 2447d145c (the LLM REVIEW round is deleted). They stay because archived run.jsonl
+      // files (r0–r6d) carry them and this is the only place those rounds still render; each is a `case`
+      // on its own event and produces nothing when the event is absent, so a new run pays nothing.
       case 'review_failed': {
         // The review CALL died (transport/model fault). Without this a REVIEW round whose model call
         // failed rendered exactly like a review that read the code and found nothing — the A-2
@@ -1791,7 +1800,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'persona_learned': {
-        // The post-verdict tail's one model call (reflect_on_success). The written:false twin must render
+        // LEGACY-LOG: no emitter since 97d5735a4 (LEARN & REFLECT deleted) — the archived r5 carries it.
+        // It was the post-verdict tail's one model call (reflect_on_success). The written:false twin must render
         // too — a reflection that came back empty or failed to write must not look like a learned skill.
         const stack = str(e['stack_key']);
         if (e['written'] === true) {
@@ -2365,7 +2375,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'replanned': {
-        // A dynamic-replan round. GEN-6a added `reason` precisely so a planner CALL FAILURE (a network
+        // LEGACY-LOG: no emitter since 83e8089a5 (the dynamic replanner is deleted) — r5/r6c archives carry
+        // it. A dynamic-replan round. GEN-6a added `reason` precisely so a planner CALL FAILURE (a network
         // fault) cannot render like the planner DECLINING (a decision) — only the exact declined
         // constant is routine noise and stays hidden; every other empty-added arm is evidence and
         // fails loud, unknown future arms included (the fallback gate's default).
@@ -2477,6 +2488,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // LEGACY-LOG: pre_review / pre_review_failed have no emitter (the M5 pre-review layer is gone;
+      // main.ts still pins GOOSE_SWARM_PREREVIEW=0 for older engines) — archived r0/r2 carry them.
       case 'pre_review': {
         const had = !!e['had_findings'];
         verbose({
@@ -3634,9 +3647,11 @@ export const DIGEST_OPEN_CALL_FRESH_MS = 900_000;
 /**
  * THE DIGESTS THIS RUN ACTUALLY WROTE.
  *
- * `.swarm/activity/` is not cleared when a run starts — the engine truncates only `.swarm/prereview` — and
- * main globs the whole directory, so a SECOND run in the same working directory inherits every digest the
- * previous one left behind. Those carry a task id, a model and a `phase` that never reaches 'done' on a
+ * `.swarm/activity/` is not cleared when a run starts — nothing under `.swarm/` is: the engine's one
+ * truncation (`.swarm/prereview`) died with the M5 pre-review layer, and `.swarm/inbox` is scoped by a
+ * since_ms cutoff rather than cleared — and main globs the whole directory, so a SECOND run in the same
+ * working directory inherits every digest the previous one left behind. Those carry a task id, a model
+ * and a `phase` that never reaches 'done' on a
  * killed run, so they mint lanes, claim nodes in the fleet strip and stamp a checklist row for work that
  * belongs to a run that is over. Nothing downstream can tell them apart: a digest names no run.
  *
@@ -3825,10 +3840,14 @@ export type SupervisionLaneKind =
 
 /**
  * Which r6 supervision class a lane KEY belongs to — null for every worker/planner lane. Mirrors the
- * engine's one derivation (`supervision_lane_kind`, commands/swarm/supervision.rs) EXACTLY, including
- * the digit-exact replan shape: `replan-r2` is the replanner's round 2, while `replan-extra` and
- * `replan-r2b` are MODEL-chosen worker task ids and stay worker lanes (the engine pins this by test).
- * Used for LABELS; the visual supervision accent reads the digest's own `supervision: true` stamp.
+ * engine's one derivation (`supervision_lane_kind`, commands/swarm/supervision.rs) for the LIVE classes
+ * (judge, tailreview, schedjudge, verify, ask, pillars) and keeps three the engine has since dropped,
+ * because archived digests still carry their keys: `replan-rN` (the replanner, 83e8089a5),
+ * `prereview-<task>` (the M5 pre-review layer) and `reflect` (LEARN & REFLECT, 97d5735a4). The replan
+ * shape stays digit-exact: `replan-r2` labels as round 2, while `replan-extra` / `replan-r2b` are
+ * MODEL-chosen worker task ids and stay worker lanes. Used for LABELS only; the visual supervision
+ * accent reads the digest's own `supervision: true` stamp, so a new run's task that happens to match a
+ * retired shape gets at most a mislabel, never a false accent.
  */
 export function supervisionLaneKind(key: string): SupervisionLaneKind | null {
   if (key.startsWith('judge-')) return 'judge';
@@ -4288,6 +4307,9 @@ export function buildPhaseTodo(
   let proxyFailed = false;
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: number | null = null;
+  // LEGACY-LOG (2447d145c): the LLM REVIEW round is deleted, so review_findings / review_failed have no
+  // emitter — these two collect archived rounds only; empty on every new run, and the REVIEW phase's
+  // items stay empty with them (the PlanningZone drops an empty phase).
   const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> =
     [];
   // review_failed rounds — a review whose CALL died must not render like one that found nothing.
@@ -4455,6 +4477,7 @@ export function buildPhaseTodo(
       if (!prev || a !== 'observed' || prev.action === 'observed')
         judgeInfo.set(id, { verdict, hint, action: a });
     } else if (t === 'replanned') {
+      // LEGACY-LOG (83e8089a5): no emitter — the `Re-planned +N tasks` rows render archived r5/r6c only.
       const added = arr(e['added']).length;
       if (added > 0) replans.push(added);
     } else if (t === 'scheduler_stuck') schedulerStuck = num(e['remaining']) ?? 0;
@@ -4717,11 +4740,14 @@ export function buildPhaseTodo(
       )
     );
   } else if (phasesSeen.has('synthesis') && !planLoaded && !phasesSeen.has('review'))
+    // On the live engine (no REVIEW since 2447d145c) synthesis runs until plan_loaded: synthesis ->
+    // plan_synthesized -> plan_repaired (deterministic) -> plan_loaded, nothing else in between.
     synthesis.push(it('s-run', 'Wiring the slices into a task DAG…', 'running'));
-  // SYNTHESIS ENDS WHEN REVIEW OPENS, NOT WHEN THE PLAN LOADS. `plan_loaded` is emitted only after REVIEW
-  // has finished patching the DAG, so gating this row on it made Synthesize render as still-running for the
-  // whole of Review — on EVERY run, which read as the two phases executing in parallel. They never do:
-  // measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly sequential.
+  // LEGACY-LOG: SYNTHESIS ENDED WHEN REVIEW OPENED, NOT WHEN THE PLAN LOADED. `plan_loaded` was emitted only
+  // after REVIEW had finished patching the DAG, so gating this row on it made Synthesize render as
+  // still-running for the whole of Review — on EVERY run, which read as the two phases executing in
+  // parallel. They never did: measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly
+  // sequential. Archived runs still carry that shape; a new run never sees `phase: review`.
   else if (phasesSeen.has('review') && !planLoaded)
     synthesis.push(
       it(
@@ -4756,7 +4782,8 @@ export function buildPhaseTodo(
   for (const r of retargets)
     synthesis.push(it(`s-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
 
-  // ---- REVIEW ---- (structural patches only; it stops when it requests no change)
+  // ---- REVIEW ---- (RETIRED: the LLM review round is deleted, 2447d145c — historical rows for archived
+  // runs only, exactly like CONTRACTS below; empty on every new run)
   const review: PhaseTodoItem[] = [];
   for (const r of reviewRounds) {
     // The honest measure is what the patch TOUCHED. A round can raise well-worded observations and request

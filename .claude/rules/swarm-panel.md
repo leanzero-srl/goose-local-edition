@@ -67,12 +67,29 @@ is being generated".
 
 ## THE LIVE LINE FOLLOWS THE CHANNEL THAT ADVANCED LAST (`2dd046553`)
 
-REVIEW reuses one lane key per round, so the durable transcript still holds the PREVIOUS round's answer
-while the new call thinks. A fixed priority (transcript over thinking) showed round 1's final JSON in the
-cell for twenty minutes while round 2 reasoned 25k chars — measured on r1 by two consecutive ticks. The
-hook keeps each lane's previous transcript/thinking sizes and derives `liveChannel` = whichever grew this
-poll (ties keep the last value; `done` → transcript); `digestStreamFields()` exposes it; `laneLiveLine`
+Measured on the LLM REVIEW round (deleted since 2447d145c — no `phase: review`, `review_findings`,
+`plan_patched` or `review_failed` is emitted; archived runs still carry them and the panel renders those
+as LEGACY-LOG history, never as a stage a new run can reach — `RETIRED_PHASES` in formationVisualState
+keeps the chip off a new run's ribbon). Review reused one lane key per round, so the durable transcript
+still held the PREVIOUS round's answer while the new call thought. A fixed priority (transcript over
+thinking) showed round 1's final JSON in the cell for twenty minutes while round 2 reasoned 25k chars —
+measured on r1 by two consecutive ticks. The rule outlives the phase, because any lane whose key is
+reused across calls (a judge re-stream, a `tail-review-<dim>` round) has the same shape: the hook keeps
+each lane's previous transcript/thinking sizes and derives `liveChannel` = whichever grew this poll
+(ties keep the last value; `done` → transcript); `digestStreamFields()` exposes it; `laneLiveLine`
 shows the thinking line when it is `'thinking'`. Never reintroduce a fixed channel order.
+
+## RETIRED IS NOT SKIPPED, AND NOT HIDDEN (batch 2a, 2026-09-01)
+
+When the engine deletes a phase (contracts P1-4, review 2447d145c) the ribbon has two wrong answers: keep
+offering the chip (every new run reads "Review — skipped" the moment Build lights — `formationPhaseState`
+reads any step behind the active one without evidence as skipped), or delete the key (archived
+run.jsonl files that DID emit `phase: review` lose their history). The right one is `RETIRED_PHASES`:
+the step is drawn only when the run's own evidence proves it ran. The same law for events: a consumer
+of an event that no longer fires (`review_findings`, `replanned`, `pre_review*`, `persona_learned`) stays
+as a LEGACY-LOG `case` that is silent when absent, and its comment names the deleting commit. Deleting the
+panel half is part of deleting the engine half — the golden comparison test sat RED for the replanner's
+`max_replans` until the settings caught up.
 
 ## THE ALSO-ROW IS A CONTROL, NOT A CAPTION (`3ecdbed9d`)
 
