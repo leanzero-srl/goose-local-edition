@@ -44,9 +44,11 @@ r6c web-viz = ONE 39KB file = ONE session = 519 min; ledgerd-core 431 min; 65% o
 tasks. IN FLIGHT 2c: fatness measured as spec sections per owned file → a PATCH request to split THAT task;
 each shard works in its OWN temp folder producing PIECES (functions, sections) per its split plus a structured
 README (provides / assumes / unfinished / checked-with); nobody writes the module's final file until the MERGER,
-which is code-assisted — parse, cross-shard symbol table, pieces concatenated VERBATIM in the declared order —
-and whose model writes only the glue, fills small gaps itself and dispatches bigger ones to free nodes
-immediately; promotion on a passing interface check. (Mihai's design, 2026-09-01; my earlier "separate
+a JUDICIOUS model task with a numbered, specific brief built from a code-produced dossier (duplicates,
+conflicting signatures, undefined references, unfinished items, the declared interface); it reconciles, dedupes,
+fills small gaps and sends bigger ones to free nodes immediately; code checks afterwards (parse, conformance to
+the interface SYNTHESIS declared as plan text, unexplained drops) and reports. Interfaces are declared, never
+stubbed — CONTRACTS' measured harm was stub files, not declarations. (Mihai's design, 2026-09-01; my earlier "separate
 final files" narrowing was wrong — his version avoids overwrites by construction and covers one-file modules.) Repair: one shard per finding, hunk merge of non-overlapping diffs,
 no round barrier, `fix_claimed_without_edit` loud, NOT REAL must quote its replay. Expected to fail first;
 tripwires: shard bytes ≪ its sections' weight + notes full of "unfinished"; `MERGE GAP` rows outpacing free nodes.
