@@ -4274,6 +4274,9 @@
   "shortcutRefused.close": {
     "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
   },
+  "shortcutRefused.closeSessionRun": {
+    "defaultMessage": "Closing this window would drop the live session run. Use File > Close if you really mean it."
+  },
   "shortcutRefused.navigate": {
     "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use the menu if you really mean it."
   },
@@ -4288,6 +4291,9 @@
   },
   "shortcutRefused.title": {
     "defaultMessage": "Shortcut ignored while a benchmark is running"
+  },
+  "shortcutRefused.titleSessionRun": {
+    "defaultMessage": "Shortcut ignored while a session run is live"
   },
   "skillsView.addSkill": {
     "defaultMessage": "Add Skill"

@@ -66,11 +66,16 @@ import { trackErrorWithContext } from './utils/analytics';
 import { AppEvents } from './constants/events';
 import { registerPlatformEventHandlers } from './utils/platform_events';
 import { defineMessages, useIntl } from './i18n';
+import { StatusDot, SURFACE, TYPE, WEIGHT, cx } from './components/lz';
 
 const i18n = defineMessages({
   shortcutRefusedTitle: {
     id: 'shortcutRefused.title',
     defaultMessage: 'Shortcut ignored while a benchmark is running',
+  },
+  shortcutRefusedTitleSessionRun: {
+    id: 'shortcutRefused.titleSessionRun',
+    defaultMessage: 'Shortcut ignored while a session run is live',
   },
   shortcutRefusedSpawn: {
     id: 'shortcutRefused.spawn',
@@ -81,6 +86,11 @@ const i18n = defineMessages({
     id: 'shortcutRefused.close',
     defaultMessage:
       'Closing this window would drop the live benchmark view. Use File > Close if you really mean it.',
+  },
+  shortcutRefusedCloseSessionRun: {
+    id: 'shortcutRefused.closeSessionRun',
+    defaultMessage:
+      'Closing this window would drop the live session run. Use File > Close if you really mean it.',
   },
   shortcutRefusedReload: {
     id: 'shortcutRefused.reload',
@@ -110,6 +120,20 @@ const refusedShortcutMessage = {
 
 const isRefusedShortcutAction = (value: unknown): value is RefusedShortcutAction =>
   typeof value === 'string' && Object.prototype.hasOwnProperty.call(refusedShortcutMessage, value);
+
+// The shortcut-refused notice: a warn StatusDot beside a title and one body line. The toast
+// surface itself is the ToastContainer below (the Studio overlay Panel), so this is its content.
+function ShortcutRefusedNotice({ title, body }: { title: string; body: string }) {
+  return (
+    <div data-testid="shortcut-refused-notice" className="flex items-start gap-3">
+      <StatusDot tone="warn" label="Warning" size={10} className="mt-1.5" />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className={cx(TYPE.body, WEIGHT.semibold)}>{title}</div>
+        <div className={TYPE.bodyMuted}>{body}</div>
+      </div>
+    </div>
+  );
+}
 
 function PageViewTracker() {
   usePageViewTracking();
@@ -603,14 +627,26 @@ export function AppInner() {
 
   useEffect(() => {
     const handleShortcutRefused = (_event: IpcRendererEvent, ...args: unknown[]) => {
-      const action = (args[0] as { action?: unknown } | undefined)?.action;
+      const payload = args[0] as { action?: unknown; reason?: unknown } | undefined;
+      const action = payload?.action;
       if (!isRefusedShortcutAction(action)) return;
+      // main sends reason: 'benchmark' | 'session-run' (shortcutGuard.ts); the notice names the
+      // run it is protecting instead of calling every refusal a benchmark.
+      const sessionRun = payload?.reason === 'session-run';
+      const title = sessionRun ? i18n.shortcutRefusedTitleSessionRun : i18n.shortcutRefusedTitle;
+      const body =
+        sessionRun && action === 'close'
+          ? i18n.shortcutRefusedCloseSessionRun
+          : refusedShortcutMessage[action];
       toast.warn(
-        <div>
-          <strong className="font-medium">{intl.formatMessage(i18n.shortcutRefusedTitle)}</strong>
-          <div>{intl.formatMessage(refusedShortcutMessage[action])}</div>
-        </div>,
-        { position: 'top-right', closeButton: true, hideProgressBar: true, autoClose: 5000 }
+        <ShortcutRefusedNotice title={intl.formatMessage(title)} body={intl.formatMessage(body)} />,
+        {
+          position: 'top-right',
+          closeButton: true,
+          hideProgressBar: true,
+          autoClose: 5000,
+          icon: false,
+        }
       );
     };
 
@@ -673,10 +709,10 @@ export function AppInner() {
       <ToastContainer
         aria-label="Toast notifications"
         toastClassName={() =>
-          `relative min-h-16 mb-4 p-2 rounded-lg
-               flex justify-between overflow-hidden cursor-pointer
-               text-text-inverse bg-background-inverse
-              `
+          cx(
+            'relative mb-4 flex min-h-16 cursor-pointer justify-between overflow-hidden p-3 text-lz-ink',
+            SURFACE.overlay
+          )
         }
         style={{ width: '450px' }}
         className="mt-6"
