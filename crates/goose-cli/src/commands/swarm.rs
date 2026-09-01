@@ -21066,6 +21066,17 @@ async fn run_linear_plan(
     // sequence open -> synthesis -> plan_repaired with nothing between (the LLM REVIEW round is
     // deleted, VA-014: 0 effective patches in 3 runs for 28-52 wall-minutes and 4 lanes each).
     let lang = detect_language(&opts.prompt, &tree_at_start);
+    // SPLIT v2 mechanism 6: the free BUILD slots at split time — the scheduler's `idle_capacity`
+    // rule (enabled, non-supervision devices, their weight) with nothing in flight yet, counted
+    // over the LIVE slot list measured above (a dead node is no host).
+    let free_hosts = worker_models
+        .iter()
+        .filter(|m| {
+            devices
+                .iter()
+                .any(|d| d.enabled && !d.supervision && d.model_id == **m)
+        })
+        .count();
     let (plan_json, dag) = plan_slices_to_dag(
         opened,
         &opts.prompt,
@@ -21097,6 +21108,7 @@ async fn run_linear_plan(
                 }
             }
         },
+        free_hosts,
         sink,
     )
     .await?;
@@ -21496,6 +21508,9 @@ async fn plan_slices_to_dag<S, SFut, P, PFut>(
     // THE SPLIT (VA-021): one split request per fat task, injected like `synthesize` so the
     // measure → flag → patch → re-finalize sequence runs in a test without a model.
     split: P,
+    // SPLIT v2 mechanism 6 (DESIGN-SPLIT-V2): the shard count derives from the fleet — the free
+    // BUILD slots at split time, never a literal; `run_linear_plan` measures them, a test passes 0.
+    free_hosts: usize,
     sink: &Arc<dyn EventSink>,
 ) -> Result<(String, Dag)>
 where
@@ -21642,6 +21657,10 @@ where
         every_decision_settled,
         split,
         sink,
+        // TODO(SPLIT v2 merge): `shards::split_fat_tasks` gains `free_hosts: usize` as its LAST
+        // parameter in the shards.rs surgeon's commit; until both halves land this call does not
+        // compile — on purpose, so the two are reconciled at the merge, never dropped silently.
+        free_hosts,
     )
     .await;
 
@@ -33955,6 +33974,7 @@ mod audit_regressions {
             |_task: serde_json::Value, _density: serde_json::Value| async move {
                 unreachable!("no fat task in this plan — the split is never requested")
             },
+            0,
             &sink_dyn,
         )
         .await
@@ -34032,6 +34052,7 @@ mod audit_regressions {
             |_task: serde_json::Value, _density: serde_json::Value| async move {
                 unreachable!("no fat task in this plan — the split is never requested")
             },
+            0,
             &sink_dyn,
         )
         .await
@@ -34090,6 +34111,7 @@ mod audit_regressions {
             |_task: serde_json::Value, _density: serde_json::Value| async move {
                 unreachable!("no fat task in this plan — the split is never requested")
             },
+            0,
             &sink_dyn,
         )
         .await
