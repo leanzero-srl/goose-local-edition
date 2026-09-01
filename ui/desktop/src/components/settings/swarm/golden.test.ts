@@ -125,11 +125,12 @@ describe('swarm golden preset', () => {
 
   it('engine-retired levers never enter DEFAULTS or PRESET_KEYS, and a config carrying them round-trips', () => {
     // The names are the engine's own `retired_levers` object in levers_resolved (swarm.rs, ee4c73d15):
-    // each mechanism is #[cfg(test)] or unreachable. golden.generated.json STILL carries these keys as
-    // true/null because it is a byte-exact dump of SwarmConfig::default() and the struct fields survive
-    // for the config round-trip — so a true there is a struct default, not a live lever. What the panel
-    // must guarantee is that it never turns them back into controls: no default, no reset key, and a
-    // config.yaml that still carries one is written back untouched.
+    // each mechanism is #[cfg(test)] or unreachable. golden.generated.json is a byte-exact dump of
+    // SwarmConfig::default(); since r6e the struct defaults for these are false/null (straggler_stop is
+    // omitted as None) — the fields survive only for the config round-trip, and a default that read
+    // `split_fat: true` for a mechanism no run can reach was the truth-layer lie from the other side.
+    // What the panel must guarantee is that it never turns them back into controls: no default, no
+    // reset key, and a config.yaml that still carries one is written back untouched.
     const RETIRED = [
       'split_fat',
       'fan_verify',

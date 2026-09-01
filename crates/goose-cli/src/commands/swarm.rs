@@ -300,9 +300,8 @@ pub struct SwarmConfig {
     /// re-runs and produces a real result. None => default ON (env GOOSE_SWARM_STREAM_RETRY overrides).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_decode_retry: Option<bool>,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
-    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
-    /// #135 straggler-stop: during plan drafting, once all-but-one drafts have returned a VALID skeleton,
+    /// RETIRED (r6e) — `collect_drafts_with_straggler_stop` is #[cfg(test)] since P1-4, so no run reads
+    /// this; default None, the field kept only for the config round-trip. Was: #135 straggler-stop: during plan drafting, once all-but-one drafts have returned a VALID skeleton,
     /// wait only `straggler_grace_secs` for the lone lagging draft, then abort it and proceed on the quorum
     /// (rather than blocking the whole run on one slow node up to the full draft timeout). None => OFF
     /// (byte-identical: the classic await-all path). env GOOSE_SWARM_STRAGGLER_STOP overrides.
@@ -774,7 +773,7 @@ pub struct SwarmConfig {
     /// measures quality parity.
     #[serde(default)]
     pub fix_sched: bool,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
+    /// RETIRED (r6e) — scheduler.rs pins `let is_split = false`; default None, kept for the config round-trip. Was:
     /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
     /// MEASURED live: a 4-file api task split into `routes` + `app-entry` and BOTH delivered, where the
     /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). None = off.
@@ -801,14 +800,14 @@ pub struct SwarmConfig {
     /// NOTHING worked. Default ON: a false-green detector that is off by default protects nobody.
     #[serde(default = "default_true")]
     pub verify_commands: bool,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
+    /// RETIRED (r6e) — no consumer: it sharded the fan `fan_verify` no longer builds; default false, kept for the config round-trip. Was:
     /// Shard the whole-program END-TO-END check across the fleet by COMMAND, instead of running every
     /// advertised command in the single integrate-verify task. fan_verify shards by MODULE, which leaves
     /// the end-to-end run monolithic — MEASURED h1-treat-4: 26.5 min, 47% of ALL node-busy time, on one
     /// node while the other two idled. Checking `get` says nothing about checking `compact`, and each shard
     /// only needs the assembled tree read-only, so they parallelise cleanly.
     /// Only ever consulted inside the fan_verify branch, so fan_verify OFF stays byte-identical.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub fan_e2e: bool,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
@@ -1001,7 +1000,8 @@ pub struct SwarmConfig {
     /// nothing.
     #[serde(default = "default_true")]
     pub degrade_on_stall: bool,
-    /// ⚠️ BAKED ON (F873). FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into
+    /// RETIRED (r6e) — `split_fat_modules` is #[cfg(test)] since b0dd68eac; default false, kept for the config
+    /// round-trip. Was (F873): FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into
     /// per-concern child tasks at planning time, so each gets its own small contract stub instead of one
     /// whole-package stub that times out and cascades an API divergence. Baked ON with threshold 3 after the
     /// waste mine measured the 3-file web triplet paying a deterministic ~700s judge-split tax in 9 of the
@@ -1120,9 +1120,8 @@ pub struct SwarmConfig {
     /// written none. Default ON. GOOSE_SWARM_ACT_NOW overrides.
     #[serde(default)]
     pub act_now_nudge: Option<bool>,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
-    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
-    /// SINK DECOMPOSITION (Phase-1). The planner emits ONE terminal `integrate-verify` sink that depends on
+    /// RETIRED (r6e) — `fan_verify_split` is #[cfg(test)] since P1-4; default false, kept for the config
+    /// round-trip. Was: SINK DECOMPOSITION (Phase-1). The planner emits ONE terminal `integrate-verify` sink that depends on
     /// EVERY module and does ALL verification — run every module's tests, build, run the entry, golden-check
     /// every command, probe robustness, fix at root cause — in ONE model turn-loop on ONE node. Because it
     /// depends on all modules it can only become READY once every module is DONE, so it runs LAST and ALONE,
@@ -1240,7 +1239,7 @@ impl Default for SwarmConfig {
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
             stream_decode_retry: Some(true),
-            straggler_stop: Some(true),
+            straggler_stop: None,
             straggler_grace_secs: None,
             straggler_stop_degrade: None,
             worker_extensions: Vec::new(),
@@ -1301,11 +1300,11 @@ impl Default for SwarmConfig {
             cross_module_check: true,
             fix_sched: false,
             supervision_pool: false,
-            split: Some(true),
+            split: None,
             smoke: true,
             complete: true,
             verify_commands: true,
-            fan_e2e: true,
+            fan_e2e: false,
             no_tools_means_ask: true,
             backbone: true,
             draft_temp: None,
@@ -1344,14 +1343,16 @@ impl Default for SwarmConfig {
             read_on_fix: true,
             kind_prompt: true,
             degrade_on_stall: true,
-            // BAKED ON (F873 waste mine): the vendorsync spec demands a 3-file web triplet
-            // "each owned and written separately", yet 22 of 41 archived plans shipped ONE
+            // RETIRED (r6e): split_fat_modules is #[cfg(test)] since b0dd68eac, so this is false —
+            // a true here certified a mechanism no run reaches. Was BAKED ON (F873 waste mine): the
+            // vendorsync spec demands a 3-file web triplet "each owned and written separately", yet
+            // 22 of 41 archived plans shipped ONE
             // `web` task owning all three — and 9 of the last 10 runs replayed the same
             // movie: dispatch, burn 528-1,224s, judge splits it mid-flight anyway (~700s/run
             // of pure split tax, 12,964 node-s corpus-wide). The deterministic pre-split has
             // existed all along with full plumbing; only this gate and the 4-file threshold
             // (the triplet is 3 files) blocked it.
-            split_fat: true,
+            split_fat: false,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -1364,7 +1365,7 @@ impl Default for SwarmConfig {
             think_off_test_authors: None,
             force_write_tool: None,
             act_now_nudge: Some(true),
-            fan_verify: true,
+            fan_verify: false,
             require_tests: true,
             parallel_tests: Some(true),
         }
@@ -6394,9 +6395,10 @@ mod tests {
         // ANTI-VACUITY. If the struct is renamed or the layout changes, this parser quietly matches
         // nothing and an empty `missing` would read as a pass — `all([])` is true. A floor makes the
         // parser's own failure loud instead, and it is the only reason this test can be trusted.
+        // 44 when the floor was set; 39 since r6e retired five levers to false/None (not baked on).
         assert!(
-            checked >= 40,
-            "parser found only {checked} baked-on bool levers (expected 40+) — the PARSER is broken, \
+            checked >= 35,
+            "parser found only {checked} baked-on bool levers (expected 35+) — the PARSER is broken, \
              not the docs; fix it before trusting an empty failure list"
         );
         assert!(
@@ -9862,12 +9864,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             d.complete,
             "complete was force-set to 1 for every desktop run"
         );
-        assert_eq!(
-            d.split,
-            Some(true),
-            "split was force-set to 1 for every desktop run"
-        );
-        // (split_secs and complete_cap_secs left this list with II-7: the split wall clock and
+        // (split left this list with r6e: scheduler.rs pins `is_split = false`, so the field is
+        // retired and None on both surfaces. split_secs and complete_cap_secs left with II-7: the split wall clock and
         // the repair-phase cap are deleted from the engine, so there is no numeric to keep in
         // parity — an asserted number here would be a printed lever for a mechanism that no
         // longer exists.)
@@ -9896,7 +9894,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "section 8: no turn cap on the sink"
         );
         assert!(cfg.verify_commands, "must default ON, not to bool's false");
-        assert!(cfg.fan_e2e);
         assert_eq!(cfg.progress_watchdog_secs, 900);
         // And a key that IS set is honoured.
         assert!(cfg.persona);
@@ -9948,9 +9945,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         merge_json(&mut base, partial);
         let cfg: SwarmConfig = serde_json::from_value(base).unwrap();
         // The omitted golden levers keep their baked ON default (this is what a bare serde default lost).
-        assert!(cfg.fan_verify && cfg.require_tests && cfg.author_pitfalls);
+        assert!(cfg.require_tests && cfg.author_pitfalls);
         assert_eq!(cfg.spec_wins, Some(true));
-        assert_eq!(cfg.straggler_stop, Some(true));
+        assert_eq!(
+            cfg.straggler_stop, None,
+            "retired (r6e): no baked value to keep"
+        );
         assert_eq!(cfg.parallel_tests, Some(true));
         assert_eq!(cfg.spiral_break_chars, Some(12000));
         assert_eq!(cfg.struct_stop, 80);
@@ -33668,10 +33668,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // unreachable in this build, so there is no value to resolve — and a resolved value WAS
         // being printed: r6c's echo said `split_fat: true` while `split_fat_modules` had been
         // test-only since b0dd68eac (gate 1, suspect #2 — a levers echo that lies). The config
-        // fields survive for the desktop's config round-trip, the desktop still env-pins
-        // GOOSE_SWARM_SPLIT_FAT=1 at spawn, and golden.generated.json still lists split_fat /
-        // fan_verify / straggler_stop as true; this object makes that visible instead of
-        // certifying it. Audited 2026-09-01 by asking, of each, which non-test caller consumes it.
+        // fields survive for the config round-trip with false/None defaults since r6e (a `split_fat:
+        // true` default for a mechanism no run reaches was this lie at the config layer), the desktop
+        // pins neither SPLIT_FAT nor FIX_SCHED since cceab86eb, golden.generated.json is regenerated
+        // from the struct. Audited 2026-09-01 by asking, of each, which non-test caller consumes it.
         "retired_levers": {
             "split_fat": "split_fat_modules is #[cfg(test)] since b0dd68eac",
             "fan_verify": "fan_verify_split is #[cfg(test)] since P1-4",
