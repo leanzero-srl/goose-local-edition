@@ -734,12 +734,11 @@ fn build_link_config(
     })
 }
 
-/// Proxy the local control service's `GET /v1/swarm/nodes` (loopback, bearer token),
+/// Proxy the local control service's `GET /v1/swarm/nodes` (loopback, bearer `token`),
 /// returning its `{ self, peers }` body verbatim so the snake_case wire shape survives.
-async fn fetch_local_swarm_nodes() -> Result<LeanzeroLinkNodesResponse, String> {
-    let email = current_identity_email()
-        .ok_or_else(|| "no identity on disk to derive the control node token".to_string())?;
-    let token = node_token_from_email(Some(&email));
+/// Every failure — transport, a non-2xx, a body that is not the contract — is an `Err`
+/// carrying the reason; this function never answers a failure with a roster.
+async fn fetch_local_swarm_nodes(token: &str) -> Result<LeanzeroLinkNodesResponse, String> {
     let url = format!("http://127.0.0.1:{DEFAULT_CONTROL_PORT}/v1/swarm/nodes");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -747,7 +746,7 @@ async fn fetch_local_swarm_nodes() -> Result<LeanzeroLinkNodesResponse, String> 
         .map_err(|e| e.to_string())?;
     let body: serde_json::Value = client
         .get(&url)
-        .bearer_auth(&token)
+        .bearer_auth(token)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -756,11 +755,21 @@ async fn fetch_local_swarm_nodes() -> Result<LeanzeroLinkNodesResponse, String> 
         .json()
         .await
         .map_err(|e| e.to_string())?;
-    let self_node = body.get("self").cloned().unwrap_or(serde_json::Value::Null);
+    parse_swarm_nodes_body(body)
+}
+
+/// The control service always sends both keys, so a body missing either is a bug or a
+/// foreign responder on the port — an error, never "no peers".
+fn parse_swarm_nodes_body(body: serde_json::Value) -> Result<LeanzeroLinkNodesResponse, String> {
+    let self_node = body
+        .get("self")
+        .cloned()
+        .ok_or_else(|| "control service /v1/swarm/nodes body has no 'self' object".to_string())?;
     let peers = body
         .get("peers")
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default();
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .ok_or_else(|| "control service /v1/swarm/nodes body has no 'peers' array".to_string())?;
     Ok(LeanzeroLinkNodesResponse { self_node, peers })
 }
 
@@ -1099,14 +1108,22 @@ impl GooseAcpAgent {
     ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
         if let AuthState::Connected { .. } = manager.status().await.auth {
-            match fetch_local_swarm_nodes().await {
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    warn!(%error, "leanzeroLink: proxying the local control service /v1/swarm/nodes failed; returning the local node only");
-                }
-            }
+            let email = current_identity_email().ok_or_else(|| {
+                agent_client_protocol::Error::internal_error()
+                    .data("connected but no identity on disk to derive the control node token")
+            })?;
+            let token = node_token_from_email(Some(&email));
+            // A failed proxy is an ERROR to the caller, never `{ self, peers: [] }`: the
+            // desktop keeps its last roster on a thrown call and would replace it with an
+            // empty one on a fabricated Ok.
+            return fetch_local_swarm_nodes(&token).await.map_err(|error| {
+                error!(%error, "leanzeroLink: proxying the local control service /v1/swarm/nodes failed");
+                agent_client_protocol::Error::internal_error().data(format!(
+                    "proxying the local control service /v1/swarm/nodes failed: {error}"
+                ))
+            });
         }
-        // Not connected (or the loopback proxy failed): self only, no peers.
+        // Not connected: there are no peers to know about — self only is the truth here.
         let self_node = self.link_source().local_node().await;
         Ok(LeanzeroLinkNodesResponse {
             self_node: serde_json::to_value(self_node).internal_err()?,
@@ -1470,6 +1487,32 @@ mod tests {
             !allow_from_config(unparseable),
             "an unparseable value must not open the node"
         );
+    }
+
+    /// FH#8: the loopback proxy's body is the contract or an error — a hole in it is never
+    /// read as "no peers".
+    #[test]
+    fn swarm_nodes_body_missing_a_key_is_an_error_not_an_empty_roster() {
+        let full = parse_swarm_nodes_body(serde_json::json!({
+            "self": {"node_id": "a"},
+            "peers": [{"node_id": "b"}]
+        }))
+        .unwrap();
+        assert_eq!(full.self_node["node_id"], "a");
+        assert_eq!(full.peers.len(), 1);
+
+        let no_peers = parse_swarm_nodes_body(serde_json::json!({ "self": {"node_id": "a"} }))
+            .expect_err("a body without 'peers' is not a roster");
+        assert!(no_peers.contains("'peers'"), "{no_peers}");
+
+        let no_self = parse_swarm_nodes_body(serde_json::json!({ "peers": [] }))
+            .expect_err("a body without 'self' is not a roster");
+        assert!(no_self.contains("'self'"), "{no_self}");
+
+        let peers_not_array =
+            parse_swarm_nodes_body(serde_json::json!({ "self": {}, "peers": "nope" }))
+                .expect_err("a non-array 'peers' is not a roster");
+        assert!(peers_not_array.contains("'peers'"), "{peers_not_array}");
     }
 
     #[test]
