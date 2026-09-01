@@ -8,6 +8,8 @@
 //! index, and §5's fourth column made that the ROLE). The WHY of every rule stays in its own
 //! comment.
 
+use std::collections::BTreeSet;
+
 /// Pure, and deliberately narrow: it returns METHOD PATH -> EXPECTED triples only, never spec prose,
 /// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
 /// the caller emits today's string byte-for-byte.
@@ -198,21 +200,97 @@ pub(super) fn spec_post_endpoints(spec: &str) -> Vec<String> {
     out
 }
 
+/// THE ONE boundary scanner behind `path_token_named` and `resource_word_named`: `needle`
+/// occurs in `text` with no `is_token_byte` byte on either side. Needles are ASCII (paths and
+/// path segments), so byte offsets around them are char offsets. An empty needle names nothing.
+fn token_named(needle: &str, text: &str, is_token_byte: impl Fn(u8) -> bool) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    text.match_indices(needle).any(|(at, _)| {
+        let before_ok = at == 0 || !is_token_byte(bytes[at - 1]);
+        let end = at + needle.len();
+        let after_ok = end >= bytes.len() || !is_token_byte(bytes[end]);
+        before_ok && after_ok
+    })
+}
+
 /// Does `text` name `path` as a whole path token? Bounded on both sides so notifierd's
 /// `/health` is not found inside ledgerd's `/api/health`, and `/api/drafts` is not found inside
 /// `/api/drafts/<id>/submit` — that longer row has its own path. A byte before or after that is
-/// not part of a path token (alphanumeric, `_`, `/`, `.`, `-`) is a boundary; paths are ASCII, so
-/// byte offsets are char offsets around them. Shared by the consumer routing
-/// (`research::consumed_spec_sections`, rule a) and the prose-shape label match below.
+/// not part of a path token (alphanumeric, `_`, `/`, `.`, `-`) is a boundary. Shared by the
+/// consumer routing (`research::consumed_spec_sections`, rule a), the plan repair's cross-owner
+/// mention rule and the prose-shape label match below.
 pub(super) fn path_token_named(path: &str, text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let is_path_byte = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'.' | b'-');
-    text.match_indices(path).any(|(at, _)| {
-        let before_ok = at == 0 || !is_path_byte(bytes[at - 1]);
-        let end = at + path.len();
-        let after_ok = end >= bytes.len() || !is_path_byte(bytes[end]);
-        before_ok && after_ok
+    token_named(path, text, |b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'.' | b'-')
     })
+}
+
+/// Does `text` use `word` as a WORD — case-folded, bounded by anything that is not a word byte
+/// (alphanumeric or `_`)? The consumer routing's rule (d) predicate (VA-032): sb-7's §7 writes
+/// the drafts panel as `#draft-form`, `#draft-list`, "the drafts call", "the draft's state" —
+/// never the path `/api/drafts` — so `path_token_named` (rule a) finds nothing there while the
+/// prose names the resource in every sentence. `-`, `.` and `/` are boundaries here where they
+/// are path bytes above: `draft` is a word in `#draft-form` and in `draft.created`, and is not
+/// a word in `drafted`. `word` is a path segment (ASCII); a non-ASCII text folds only its ASCII
+/// letters, which is all a segment can match.
+pub(super) fn resource_word_named(word: &str, text: &str) -> bool {
+    token_named(
+        &word.to_ascii_lowercase(),
+        &text.to_ascii_lowercase(),
+        |b| b.is_ascii_alphanumeric() || b == b'_',
+    )
+}
+
+/// The MOUNT PREFIXES of a request's advertised routes — derived from the routes themselves,
+/// never a list: a leading segment that leads more than one distinct advertised base path is
+/// where routes are mounted, not what any of them is about (sb-7: `api` leads twelve, `notify`
+/// three; `/health` leads only itself and is its own resource). A resource word is read AFTER
+/// these (`resource_words`).
+pub(super) fn mount_prefixes(bases: &[String]) -> BTreeSet<String> {
+    let distinct: BTreeSet<&str> = bases.iter().map(String::as_str).collect();
+    let mut leads: std::collections::BTreeMap<&str, usize> = Default::default();
+    for base in distinct {
+        if let Some(first) = base.split('/').find(|s| !s.is_empty()) {
+            *leads.entry(first).or_insert(0) += 1;
+        }
+    }
+    leads
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(seg, _)| seg.to_string())
+        .collect()
+}
+
+/// The WORDS a request's prose uses for the resource a route names — the first path segment
+/// after the mount prefixes (`/api/drafts` → `drafts`, `/api/viz/records` → `viz`,
+/// `/api/outbox/status` → `outbox`, `/notify/events` → `events`, `/health` → `health`; a path
+/// made only of mount prefixes keeps its last segment), lowercased, with its English
+/// singular/plural sibling (`drafts` ⇄ `draft`): the prose that describes the drafts panel says
+/// both, and a route table never says either — it says the path. Template segments never
+/// appear here because `research::advertised_paths` cuts a base path at its first `<`/`{`.
+/// Derived per request from its own advertised routes (`mount_prefixes`); nothing is listed.
+pub(super) fn resource_words(base: &str, mount: &BTreeSet<String>) -> Vec<String> {
+    let segments: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+    let Some(resource) = segments
+        .iter()
+        .find(|s| !mount.contains(**s))
+        .or(segments.last())
+    else {
+        return Vec::new();
+    };
+    let word = resource.to_ascii_lowercase();
+    let mut out = vec![word.clone()];
+    match word.strip_suffix('s') {
+        Some(singular) if singular.len() >= 3 && !singular.ends_with('s') => {
+            out.push(singular.to_string());
+        }
+        Some(_) => {}
+        None => out.push(format!("{word}s")),
+    }
+    out
 }
 
 /// VA-005: the response keys a spec documents for an endpoint OUTSIDE its table row — the
@@ -639,5 +717,94 @@ mod tests {
         assert!(!path_token_named("/health", "GET /api/health"));
         assert!(!path_token_named("/api/drafts", "/api/drafts/<id>/submit"));
         assert!(path_token_named("/api/drafts", "POST /api/drafts?state=x"));
+        assert!(!path_token_named("", "anything"));
+    }
+
+    /// VA-032, rule (d)'s vocabulary, derived from sb-7's own advertised routes: `api` and
+    /// `notify` are mount prefixes (each leads several base paths), `/health` is its own
+    /// resource, the resource word is the first segment after the mount (`viz`, not `records`;
+    /// `outbox`, not `status`), and each word carries its singular/plural sibling. The word
+    /// predicate finds `draft` where the path predicate cannot (`#draft-form`, `draft.created`)
+    /// and stops at word boundaries (`drafted`), case-folded.
+    #[test]
+    fn resource_words_derive_from_the_routes_and_match_as_words() {
+        let bases: Vec<String> = [
+            "/api/health",
+            "/api/payments",
+            "/api/summary",
+            "/api/buckets",
+            "/api/sync",
+            "/api/webhooks/meridian",
+            "/api/events",
+            "/api/outbox/status",
+            "/api/notifications",
+            "/api/viz/records",
+            "/api/stream",
+            "/api/drafts",
+            "/notify/events",
+            "/health",
+            "/notify/processed",
+            "/notify/notifications",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let mount = mount_prefixes(&bases);
+        assert_eq!(
+            mount.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["api", "notify"]
+        );
+        let words = |b: &str| resource_words(b, &mount);
+        assert_eq!(words("/api/drafts"), vec!["drafts", "draft"]);
+        assert_eq!(words("/api/viz/records"), vec!["viz", "vizs"]);
+        assert_eq!(words("/api/outbox/status"), vec!["outbox", "outboxs"]);
+        assert_eq!(words("/notify/events"), vec!["events", "event"]);
+        assert_eq!(words("/health"), vec!["health", "healths"]);
+        assert_eq!(
+            words("/api/status"),
+            vec!["status", "statu"],
+            "an English-plural heuristic: the sibling of a singular that ends in `s` is a \
+             non-word that matches nothing"
+        );
+        assert_eq!(
+            words("/api/address"),
+            vec!["address"],
+            "a word ending in `ss` keeps no singular"
+        );
+        assert_eq!(
+            words("/api"),
+            vec!["api", "apis"],
+            "a path made only of mount prefixes keeps its last segment"
+        );
+        assert!(words("/").is_empty());
+        // A request whose routes share no leading segment has no mount: every first segment is
+        // the resource.
+        let flat: Vec<String> = ["/payments", "/drafts"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(mount_prefixes(&flat).is_empty());
+        assert_eq!(
+            resource_words("/payments", &mount_prefixes(&flat)),
+            vec!["payments", "payment"]
+        );
+
+        let s7 = "**Drafts panel.** A token input (`#role-token`) — the bearer the page sends on \
+                  every drafts call; a create form (`#draft-form`) ... enabled only when the \
+                  action is legal for the draft's state.";
+        assert!(resource_word_named("draft", s7));
+        assert!(resource_word_named("drafts", s7));
+        assert!(
+            !path_token_named("/api/drafts", s7),
+            "rule (a) has nothing to find here"
+        );
+        assert!(resource_word_named("draft", "emits `draft.created`"));
+        assert!(!resource_word_named("draft", "the drafted amount"));
+        assert!(
+            !resource_word_named("draft", "draft_id"),
+            "`_` is a word byte"
+        );
+        assert!(resource_word_named("health", "GET /api/health"));
+        assert!(!resource_word_named("", "anything"));
     }
 }
