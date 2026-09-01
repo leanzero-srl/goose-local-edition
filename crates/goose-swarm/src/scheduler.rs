@@ -43,6 +43,21 @@ use tokio::sync::{Mutex, Notify};
 /// The ONE resolution of GOOSE_SWARM_SINK_REVIEW. Both halves of the mechanism — this crate's
 /// producer and goose-cli's drain — must read the same answer, or the run reports a lever it is not
 /// running.
+/// S12-F: is this gap the SAME work as one that already landed as a shard? The gap text rides
+/// `ShardOf.responsibility` ("MERGE GAP sent out by the merger of `m`: <text>"); the comparison
+/// strips that engine prefix and compares the merger's words, case- and whitespace-folded.
+pub fn gap_already_landed(landed_responsibility: &str, new_responsibility: &str) -> bool {
+    fn core(s: &str) -> String {
+        let s = s.split_once(": ").map(|(_, rest)| rest).unwrap_or(s);
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    }
+    let (a, b) = (core(landed_responsibility), core(new_responsibility));
+    !a.is_empty() && a == b
+}
+
 pub fn sink_review_enabled() -> bool {
     std::env::var("GOOSE_SWARM_SINK_REVIEW")
         .map(|v| {
@@ -2804,11 +2819,51 @@ impl State {
     fn splice_merge_gaps(
         &mut self,
         tid: &str,
-        gaps: Vec<crate::dag::TaskSpec>,
+        mut gaps: Vec<crate::dag::TaskSpec>,
         elapsed_ms: u64,
         dev_id: &Option<String>,
         model_id: &Option<String>,
     ) -> bool {
+        // S12-F, the re-arm cycle's PROGRESS terminator: a gap whose text already landed as a shard
+        // of this module is not a new gap — it is the merger asking for the same work twice. It is
+        // refused by name (`merge_gap_repeated`, never a count); a batch of only repeats re-arms
+        // nothing and the merger completes.
+        let landed: Vec<(String, String)> = self
+            .dag
+            .tasks
+            .values()
+            .filter_map(|n| {
+                n.spec
+                    .shard_of
+                    .as_ref()
+                    .map(|s| (s.responsibility.clone(), n.spec.id.clone()))
+            })
+            .filter(|(r, _)| !r.is_empty())
+            .collect();
+        gaps.retain(|g| {
+            let Some(sh) = g.shard_of.as_ref() else {
+                return true;
+            };
+            match landed
+                .iter()
+                .find(|(r, _)| gap_already_landed(r, &sh.responsibility))
+            {
+                Some((_, id)) => {
+                    self.sink.write_value(serde_json::json!({
+                        "event": "merge_gap_repeated",
+                        "task_id": tid,
+                        "gap": g.id,
+                        "missing": sh.responsibility,
+                        "landed_as": id,
+                    }));
+                    false
+                }
+                None => true,
+            }
+        });
+        if gaps.is_empty() {
+            return false;
+        }
         let refuse = |this: &Self, reason: String| {
             this.sink.write_value(serde_json::json!({
                 "event": "merge_gap_refused",
@@ -4069,6 +4124,19 @@ impl Scheduler {
 #[cfg(test)]
 mod salvage_tests {
     use super::*;
+
+    #[test]
+    fn a_gap_that_already_landed_is_the_same_work_whatever_its_dress() {
+        assert!(gap_already_landed(
+            "MERGE GAP sent out by the merger of `web-viz`: drawBrush(ids) — dim non-members to 0.30",
+            "MERGE GAP sent out by the merger of `web-viz`:   drawbrush(ids) — dim  non-members to 0.30"
+        ));
+        assert!(!gap_already_landed(
+            "MERGE GAP sent out by the merger of `web-viz`: drawBrush(ids)",
+            "MERGE GAP sent out by the merger of `web-viz`: inertia coast stop"
+        ));
+        assert!(!gap_already_landed("", ""));
+    }
 
     #[test]
     fn tail_review_gate_defaults_on_and_respects_the_env() {

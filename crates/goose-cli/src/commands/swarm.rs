@@ -108,6 +108,7 @@ use pytest_tail::parse_pytest_summary;
 mod plan_shape;
 use plan_shape::decomposition_of;
 mod briefs;
+use briefs::thin_brief_missing;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
 mod opener;
@@ -4411,43 +4412,6 @@ mod tests {
                 && HANDOFF_RULE.contains("next step")
                 && HANDOFF_RULE.contains("Do NOT restate the spec"),
             "the constant carries the three load-bearing clauses"
-        );
-    }
-
-    /// GEN-5: the brief guard is a MEASURING instrument for the "no one-line spec" checkpoint.
-    /// It classifies; it may never stop, downgrade or re-route (the dispatcher only ever emits
-    /// a `thin_brief` warning event from its result). Pinned here: a substantive brief clears
-    /// the floor, the one-line spec misses all three named facts, and a task that owns nothing
-    /// is not charged for naming no file.
-    #[test]
-    fn a_thin_brief_is_measured_never_stopped() {
-        let rich = "Implement the ledger core: `app/ledger_core.py` must expose \
-                    post_entry(db, amount_minor, currency) and rebuild_balances(db), persisting \
-                    through sqlite3.Connection; amounts are integer cents (never floats); \
-                    `python3 -m pytest tests/test_ledger_core.py` must pass. The API layer \
-                    imports these two functions exactly as named — keep the signatures stable.";
-        assert!(
-            thin_brief_missing(rich, &["app/ledger_core.py".to_string()], "ledger-core").is_empty(),
-            "a substantive brief clears the named-fact floor"
-        );
-        assert_eq!(
-            thin_brief_missing(
-                "Build the ledger",
-                &["app/ledger_core.py".to_string()],
-                "ledger-core"
-            ),
-            vec!["min_chars", "owned_file", "objective_fact"],
-            "the one-line spec misses every named fact, and each miss is named"
-        );
-        assert!(
-            thin_brief_missing(rich, &[], "integrate-verify").is_empty(),
-            "a task owning nothing is not charged for naming no file"
-        );
-        // A basename mention counts as naming the owned file — plans often drop the directory.
-        let by_basename = format!("{rich} Write ledger_core.py first.");
-        assert!(
-            !thin_brief_missing(&by_basename, &["app/ledger_core.py".to_string()], "core")
-                .contains(&"owned_file")
         );
     }
 
@@ -26757,60 +26721,6 @@ const HANDOFF_RULE: &str =
      what was already known: a vague handoff forces the next model to re-derive your work and \
      overthink.\n";
 
-/// GEN-5: the dispatch-time brief guard's char floor — a MEASURING instrument for the
-/// "no one-line spec" checkpoint, which until now had no instrument at all. 240 is the
-/// codebase's existing "substantive detail" bar (thin_integrate_verify_spec is >240 chars and
-/// passes it), reused rather than invented. This bounds NOTHING: a brief below the floor
-/// ships exactly as it is — the guard emits a warning event and may never stop, downgrade or
-/// re-route a dispatch (MILD; a gate here would be a cap by another name).
-const THIN_BRIEF_MIN_CHARS: usize = 240;
-
-/// What a dispatched description is missing against the named-fact floor: enough chars, at
-/// least one of the task's own owned files named (path or basename; skipped for a task owning
-/// nothing — a verifier's brief has no file to name), and at least one concrete objective
-/// token beyond the task's own title words (a path-, call- or identifier-shaped token — a
-/// heuristic, acceptable for a warning that measures and never gates). Empty = floor met.
-fn thin_brief_missing(
-    description: &str,
-    owned_files: &[String],
-    task_id: &str,
-) -> Vec<&'static str> {
-    let mut missing = Vec::new();
-    if description.chars().count() < THIN_BRIEF_MIN_CHARS {
-        missing.push("min_chars");
-    }
-    if !owned_files.is_empty() {
-        let named = owned_files.iter().any(|f| {
-            description.contains(f.as_str())
-                || std::path::Path::new(f)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|b| description.contains(b))
-        });
-        if !named {
-            missing.push("owned_file");
-        }
-    }
-    let title_words: std::collections::HashSet<&str> = task_id.split(['-', '_']).collect();
-    let concrete = description.split_whitespace().any(|raw| {
-        let t = raw
-            .trim_matches(|c: char| ",.;:!?\"'()".contains(c))
-            .trim_matches('`');
-        if t.chars().count() < 3 || title_words.contains(t) || t.eq_ignore_ascii_case(task_id) {
-            return false;
-        }
-        t.contains('/')
-            || t.contains('(')
-            || t.contains('_')
-            || t.contains("::")
-            || t.split('.').filter(|p| !p.is_empty()).count() >= 2
-    });
-    if !concrete {
-        missing.push("objective_fact");
-    }
-    missing
-}
-
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
 /// answer in `<root>/.swarm/answers/<same-stem>.txt` yet, oldest first. Pure over the
 /// filesystem so the discovery rule is testable: the answer file's existence IS the
@@ -27476,6 +27386,8 @@ impl GooseAgentDispatcher {
                     // A SHARD writes pieces + a README in its folder and never the module's final
                     // file (shards.rs) — the WRITE FIRST script below is for a file's sole author.
                     shards::shard_owner_body(sh)
+                } else if req.merger_of.is_some() {
+                    shards::merger_owner_body()
                 } else if repairing {
                     // The repair worker used to receive the first-authoring script verbatim: "your
                     // VERY FIRST action must be to `write` your owned file(s) IN FULL", "NEVER `cat`
@@ -27815,7 +27727,10 @@ impl GooseAgentDispatcher {
         // (is_test_author is resolved ABOVE layout_block — see the hoist next to kind_prompt_on)
         // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
         // to is the contradiction that produced SyntaxErrors in shipped test files.
-        let reading_rules = if sink_brief.is_some() {
+        let reading_rules = if req.merger_of.is_some() {
+            // S12-C: the merger's job IS reading N piece folders; every arm below forbids it.
+            shards::MERGER_READING_RULE
+        } else if sink_brief.is_some() {
             // II-3: with the semantic brief armed, "read AT MOST the ONE file you will edit" is
             // wrong-job text for the sink — its facts are already in the task. The table replaces
             // the read storm the old rule tried (and failed) to prevent.
@@ -28346,7 +28261,10 @@ impl GooseAgentDispatcher {
         //
         // Gated on the FILESYSTEM, not on a guess: only when this worker owns files and none of them
         // exists yet. A worker that owns nothing, or has already written something, reads nothing new.
+        // S12-C: never for the MERGER — "write it now, in one `write`" is the retype its brief
+        // forbids (the pieces are the source; the final file is assembled, not typed).
         let worker_user_text = if act_now_nudge()
+            && req.merger_of.is_none()
             && !req.owned_files.is_empty()
             && !req.owned_files.iter().any(|f| root.join(f).is_file())
         {
