@@ -69,24 +69,19 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
-    /// A judge-side SPLIT was applied: one task became `children`. Emitted because it was previously
-    /// invisible — `apply_split` mutated the DAG and said nothing, so "does the swarm decompose work
-    /// further when it has spare nodes" could not be answered from a run at all. Measured across three
-    /// real runs before this existed: no way to tell a split that never happened from one that did.
-    TaskSplit {
-        task_id: String,
-        children: Vec<String>,
-    },
     /// A SPECULATIVE twin resolved. `winner` is "twin" or "primary"; `aborted` is the side that lost.
-    /// Same reason as TaskSplit: speculation is the mechanism that spends an idle node on latency, and
+    /// Speculation is the mechanism that spends an idle node on latency, and
     /// it emitted nothing, so its contribution to node-scaling was unmeasurable by construction.
     Speculated {
         task_id: String,
         attempt: u32,
         winner: String,
     },
-    /// The idle-model judge inspected an in-flight worker. `action` is "observed" (logged only) or
-    /// "re_dispatch" (the worker was killed and its task re-queued with `hint`).
+    /// The scheduler's own stall accounting (`verdict: degraded_stall`, `deterministic: true`): a
+    /// stall-exhausted task whose owned file was written is degraded to Done for integrate-verify
+    /// to gate. The idle-model judge that used to emit `observed` / `re_dispatch` / `judge_restart`
+    /// rows through this variant is deleted (2c S6); the shape stays because the desktop folds
+    /// `judge_verdict` and archived runs carry it.
     JudgeVerdict {
         task_id: String,
         /// The device of the JUDGED WORKER — the node whose output is being judged.
@@ -103,7 +98,8 @@ pub enum SwarmEvent {
         confidence: f32,
         hint: String,
         action: String,
-        /// PROVENANCE: true when `deterministic_verdict` produced this — a real engine fact (a compile
+        /// PROVENANCE: true when an ENGINE FACT produced this (today the stall accounting; the deleted
+        /// idle-model judge's `deterministic_verdict` was the other writer) — a real engine fact (a compile
         /// error, an owned file never written, a measured char/tool count) — false when the judge MODEL
         /// authored it.
         ///
@@ -114,16 +110,6 @@ pub enum SwarmEvent {
         /// it produced a wrong published finding (an `over_reading` verdict was attributed to the LLM
         /// judge on exactly that reasoning, when a deterministic 420 s branch had emitted it).
         deterministic: bool,
-    },
-    /// A-2: the judge's LOOK failed in transport — its own model call died (provider error, dead node,
-    /// invalid model id) — so there is NOTHING to apply and nothing was learned about the worker. The
-    /// same name the in-call omni judge already uses for the same state, so one grep finds both. This
-    /// exists because the infallible path laundered the failure: r2 emitted 28 `drifting` verdicts
-    /// whose hint was gabee's 400 body, and the run's final read was a transport error dressed as a
-    /// diagnosis.
-    JudgeLookFailed {
-        task_id: String,
-        error: String,
     },
     /// A device was ADMITTED to a run already in progress — a fleet node that came back after the
     /// pool was resolved. The pool is read once from `lms ps` at run start, so before this event

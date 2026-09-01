@@ -14,9 +14,8 @@ use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
-use crate::judge::{
-    skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
-};
+use crate::idle_jobs::PreReviewer;
+use crate::stub::skeleton_only;
 use anyhow::{bail, Result};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -72,84 +71,6 @@ pub fn testgen_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default OFF): give a split CHILD the parent's full implementation spec,
-/// scoped to the child's own files — instead of the ~40-char label it gets today.
-///
-/// MEASURED (loop-04): PLAN spent 48.4 min (40% of the whole run) writing a 2038-char implementation-ready
-/// spec for `data-model-persistence` (three SPM targets, Swift 6 mode, sqlite3 system library, `@Observable
-/// class NoteStore: Sendable`, an undo stack). The judge then split it, and every child's ENTIRE task
-/// statement became `"(split of data-model-persistence) note-store"` — 43 characters. The spec the run had
-/// just paid 40% of its wall-clock to produce was thrown away at the moment of use, and the shipped app
-/// showed it: 221 LOC against an ~800-1200 spec, a plain JSON store where the plan demanded SQLite.
-///
-/// The splitter is default-ON on the desktop path, so this fires on real runs.
-///
-/// Default OFF because it is a real behaviour change, not merely a restoration: handing a child the parent's
-/// whole spec risks it writing its SIBLINGS' files. `child_description` therefore leads with a hard
-/// file-scope header, and the lever gets an A/B before it is trusted.
-fn split_inherit_spec_enabled() -> bool {
-    // DEFAULT ON (2026-08-16 review). The deterministic no-first-write split hands each child a
-    // file list; without inheritance its ONLY instruction is "(split of <parent>)" — a child with
-    // no statement builds nothing (the F457 lesson: split children buy +0.036 WITH a 43-char
-    // statement; a stub statement is worse than the parent's full spec). Opt-out stays via env=0.
-    !matches!(
-        std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase()
-            .as_str(),
-        "0" | "off" | "false" | "no"
-    )
-}
-
-/// The task statement a split child receives.
-///
-/// OFF (today's behaviour, byte-identical): `"(split of <parent>) <child-id>"`.
-/// ON: a file-scope header naming exactly the files this child owns and stating that the siblings belong to
-/// other workers, followed by the parent's FULL spec as shared context. Pure string work — no model call, no
-/// new judgement, no dep semantics touched. The header comes FIRST so the scope is read before the spec that
-/// describes files the child must not touch.
-fn child_description(
-    parent_id: &str,
-    parent_desc: &str,
-    child: &crate::judge::ChildSpec,
-    inherit_spec: bool,
-) -> String {
-    if !inherit_spec || parent_desc.trim().is_empty() {
-        return format!("(split of {parent_id}) {}", child.id);
-    }
-    format!(
-        "This task is one PART of a larger subtask (`{parent_id}`) that was split across workers.\n\n\
-         YOU OWN ONLY THESE FILES — create/edit these and NOTHING else:\n{}\n\n\
-         The other files named in the spec below belong to OTHER workers on this same plan and are being \
-         written right now in parallel. Do NOT create them, do NOT edit them, and do NOT wait for them.\n\n\
-         The FULL spec of the original subtask follows. Implement ONLY the parts that describe the files you \
-         own; treat the rest as context for how your files must fit together.\n\n{parent_desc}",
-        child
-            .files
-            .iter()
-            .map(|f| format!("- {f}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-}
-
-/// GOOSE_SWARM_SALVAGE_SPIN (default ON): when a NON-TEST task terminal-fails via finalize-spin (Verdict::
-/// Looping), salvage it as Done instead of Failed. Looping only fires once the owned file was written, so the
-/// worker DID produce output — discarding it also fails its dependents (esp. the integrate-verify sink), which
-/// reports a WORKING app as FAILED (observed UNIQ9: the entry spun on its final fix -> integrate-verify blocked
-/// -> run FAILED though the app runs). Salvaging lets integrate-verify be the real gate. Off with 0/off/false/no.
-fn salvage_spin_enabled() -> bool {
-    std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
-        .map(|v| {
-            !matches!(
-                v.trim().to_lowercase().as_str(),
-                "0" | "off" | "false" | "no"
-            )
-        })
-        .unwrap_or(true)
-}
-
 fn looks_like_test_file(f: &str) -> bool {
     let lower = f.to_lowercase();
     let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
@@ -192,27 +113,7 @@ fn looks_like_manifest_file(f: &str) -> bool {
     )
 }
 
-/// GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL (#134, default OFF = byte-identical `.any()`): when a stalled/spinning
-/// task is salvaged to Done, require its CRITICAL owned files to be present, not just ANY file.
-fn salvage_require_critical() -> bool {
-    std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
-        .map(|v| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "1" | "on" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
-}
-
-/// Whether a salvage is justified by what is on disk. DEFAULT: at least one owned file is non-empty (the
-/// finalize-spin gate only fires once SOMETHING was written; a custom/LLM judge could emit Looping with
-/// nothing on disk — never salvage then). STRICT (salvage_require_critical): EVERY *critical* owned file —
-/// non-manifest, non-test source — must exist and be non-empty; a go.mod-only tree is not a done app. Measured
-/// on mustsolve-test4: cli-entry owns cmd/logfold/main.go but stalled after writing only a 24-byte go.mod, and
-/// the old `.any()` salvaged it to Done → the app shipped with NO entrypoint. Falls back to `.any()` when the
-/// task owns only manifest/test files. Paths resolve against the run cwd (where workers write).
-/// Content fingerprint of a task's owned files, for the progress-gated kill rule. Absent
+/// Content fingerprint of a task's owned files, for the real-failure progress rule. Absent
 /// files hash as a marker so created-vs-missing is itself movement.
 fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -276,7 +177,7 @@ pub fn owned_files_findings(owned_files: &[String]) -> Vec<String> {
                 }
             }
             if let Ok(body) = std::fs::read_to_string(path) {
-                if crate::judge::skeleton_only(&body) {
+                if skeleton_only(&body) {
                     out.push(format!("{rel} is a SKELETON — every body is a stub"));
                 }
             }
@@ -287,33 +188,18 @@ pub fn owned_files_findings(owned_files: &[String]) -> Vec<String> {
 
 /// WAS THIS FILE WRITTEN? Present on disk and non-empty.
 ///
-/// One definition, because there were two: `owned_file_written` had it as a closure and `delivered_file`
-/// hand-rolled the identical expression, while the doc on `DeliveredFile::present` claimed they shared a
-/// predicate "so there is one definition of a written file rather than a second hand-rolled one". They
-/// did not, and a comment asserting a shared rule is exactly how two copies drift apart unnoticed.
+/// One definition, because there were two: the judge-salvage `owned_file_written` (deleted with the
+/// idle-model judge, 2c S6) had it as a closure and `delivered_file` hand-rolled the identical
+/// expression, while the doc on `DeliveredFile::present` claimed they shared a predicate. A comment
+/// asserting a shared rule is exactly how two copies drift apart unnoticed.
 fn file_written(f: &str) -> bool {
     std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false)
-}
-
-fn owned_file_written(owned_files: &[String]) -> bool {
-    let nonempty = file_written;
-    if salvage_require_critical() {
-        let critical: Vec<&String> = owned_files
-            .iter()
-            .filter(|f| !looks_like_manifest_file(f) && !looks_like_test_file(f))
-            .collect();
-        if !critical.is_empty() {
-            return critical.iter().all(|f| nonempty(f));
-        }
-    }
-    owned_files.iter().any(|f| nonempty(f))
 }
 
 /// STRICT variant used by degrade-on-stall (#134/#132): require EVERY *critical* owned file (non-manifest,
 /// non-test source) to be present and non-empty; fall back to `.any()` only when the task owns no critical
 /// files. Unconditionally strict — the degrade path must NEVER promote a task that wrote only a go.mod. Kept
-/// separate from `owned_file_written` so the degrade decision does not depend on the salvage_require_critical
-/// env. The evidence (a366f2b3, mustsolve-test4): a stalled worker EMITS events for hundreds of seconds and
+/// unconditionally strict (the env-gated judge-salvage variant is deleted, 2c S6). The evidence (a366f2b3, mustsolve-test4): a stalled worker EMITS events for hundreds of seconds and
 /// WRITES its owned file before the model hangs mid-generation — so at exhaustion the file is usually on disk.
 fn critical_owned_files_written(owned_files: &[String]) -> bool {
     let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
@@ -391,9 +277,8 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
 /// below is testable with no scheduler, no DAG and no filesystem.
 struct DeliveredFile {
     path: String,
-    /// Present AND non-empty, via `file_written` — genuinely the same predicate `owned_file_written`
-    /// uses now, rather than a second copy of the same expression as it was when this comment first
-    /// claimed it.
+    /// Present AND non-empty, via `file_written` — the ONE predicate, rather than a second copy of
+    /// the same expression as it was when this comment first claimed it.
     present: bool,
     /// Still the engine's own signature stub, by `skeleton_only` — the SAME predicate the judge uses
     /// to refuse a false Accept (F884). A stub is what the dispatcher pre-creates, so "the file
@@ -438,7 +323,7 @@ fn delivered_dependency_defect(dep: &str, files: &[DeliveredFile]) -> Option<Str
 }
 
 /// Read one deliverable's state. Paths resolve against the run cwd, exactly like
-/// `owned_file_written` and `owned_files_fingerprint` — that is where the workers write.
+/// `owned_files_fingerprint` — that is where the workers write.
 fn delivered_file(path: &str) -> DeliveredFile {
     let present = file_written(path);
     let skeleton = present
@@ -480,24 +365,6 @@ fn appended_hint(existing: Option<&str>, hint: &str) -> String {
         Some(e) if e.contains(hint) => e.to_string(),
         Some(e) => format!("{e}; {hint}"),
     }
-}
-
-/// Is an UNACTED judge verdict still worth carrying to the task's next attempt?
-///
-/// `apply_judge_outcome` can only re-dispatch while the per-task intervention cap holds, and can only
-/// terminal-fail on a DETERMINISTIC verdict. Once a task has spent its cap, a model verdict reaches no
-/// acting branch at all — it is logged as `observed` and dropped. MEASURED: one test task drew thirteen
-/// consecutive cap-exhausted verdicts naming a literal syntax error (`from Non` for `from None`) and a
-/// wrong mock target, roughly one a minute; every one was discarded, and the attempt that eventually
-/// replaced it was started by `worker_timeout` — a timer — carrying the stale hint from its last kill.
-///
-/// Keeping the hint changes no control flow. It is the difference between a timer replacing a worker
-/// blind and replacing it with the run's freshest diagnosis in hand.
-fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -> bool {
-    // `still_live` matters: a verdict on an attempt that has already ended describes a worker whose
-    // replacement is a different question, and `is_problem()` excludes Ok/Accept, whose hint is empty
-    // anyway.
-    still_live && verdict.is_problem() && !hint.trim().is_empty()
 }
 
 /// Does this dispatch deserve the FASTEST free node?
@@ -780,17 +647,15 @@ struct DeviceRt {
 }
 
 /// Ready-set ordering: higher fan-out first (unblock the most work), tie-break by id ascending for
-/// Releases ONE idle-job slot when an idle-job task ends — INCLUDING on panic, so a panicking judge or
-/// pre-reviewer can never leak a slot and starve future idle work. Always decrements `idle_jobs`; for a
-/// judge job it also clears `judge_running` so a panicked judge does not wedge the single-judge invariant.
+/// Releases ONE idle-job slot when an idle-job task ends — INCLUDING on panic, so a panicking idle
+/// job (Q&A, testgen) can never leak a slot and starve future idle work. Always decrements `idle_jobs`.
 /// Drop is synchronous, so it spawns a tiny task to update the count under the async State lock (only if a
 /// runtime is still current — during shutdown the count no longer matters).
 struct IdleSlotGuard {
     state: Arc<Mutex<State>>,
-    is_judge: bool,
     /// The device index this idle-job CLAIMED (bumped in_flight on), so a worker dispatch + the next idle-job
     /// see it as busy and never stack a 2nd call on the same node (the "+1 QUEUED on one node, another idle"
-    /// bug). `None` when the fleet was saturated so no idle device could be claimed (deterministic-only judge).
+    /// bug). `None` was the deterministic-only judge's shape; every remaining idle job claims a device.
     claimed_device: Option<usize>,
     /// A3: the scheduler loop's wakeup. Releasing a claimed slot without notifying left the freed
     /// slot unusable until the next 15s tick — ~41-61 releases per run (CONFIRMED), each a dead slot
@@ -803,16 +668,12 @@ impl Drop for IdleSlotGuard {
     fn drop(&mut self) {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let st = self.state.clone();
-            let is_judge = self.is_judge;
             let claimed = self.claimed_device;
             let notify = self.notify.clone();
             handle.spawn(async move {
                 {
                     let mut s = st.lock().await;
                     s.idle_jobs = s.idle_jobs.saturating_sub(1);
-                    if is_judge {
-                        s.judge_running = false;
-                    }
                     if let Some(dev) = claimed {
                         if s.devices[dev].in_flight > 0 {
                             s.devices[dev].in_flight -= 1;
@@ -821,18 +682,10 @@ impl Drop for IdleSlotGuard {
                 }
                 // F779/F778: wake the loop ONLY when this release actually freed a DEVICE — a
                 // device-less idle job frees nothing dispatchable, so notifying just re-wakes the
-                // loop into an immediate re-pick of the same task: the measured ~40/sec
-                // judge_observed/skipped spin. Intervention has its own explicit notify; the 15s
-                // tick still fires the device-less judge, just not at CPU speed.
-                //
-                // F893: and never notify for a JUDGE release even WITH a claimed device — the
-                // claimed-device variant of the same spin. Measured live (fleet sb-6 run, fix
-                // round): idle fleet -> judge claims a device -> the dedup skip returns in
-                // microseconds (no LLM call) -> this release notified -> immediate re-pick of the
-                // same unchanged task, 333 observe/skip/verdict cycles in five minutes. The judge
-                // job's own `intervened` notify covers the one case where waking the loop buys
-                // anything; everything else re-evaluates on the tick.
-                if claimed.is_some() && !is_judge {
+                // loop into an immediate re-pick of the same task (the measured ~40/sec
+                // observe/skip spin of the deleted idle-model judge; its F893 no-notify exception
+                // went with it, 2c S6).
+                if claimed.is_some() {
                     if let Some(n) = notify {
                         n.notify_one();
                     }
@@ -907,18 +760,11 @@ struct State {
     /// Observed per-device speed: device index -> (total completed ms, count). Used to route the
     /// hardest tasks (incl. integrate-verify) to the proven-fastest node on an identical-model fleet.
     device_speed: HashMap<usize, (u64, u32)>,
-    /// Judge support — empty/false unless a judge is attached. `abort_handles` lets the judge kill a
-    /// stuck worker's future; `prior_hints` carries the judge's corrective note onto the re-dispatch;
-    /// `interventions` caps kills per task; `judge_running` keeps at most one judge in flight at a time
-    /// (never two judging the same worker); `idle_jobs` counts ALL running idle jobs (the judge + any
-    /// pre-reviews) so up to `idle_capacity()` run CONCURRENTLY — one per free node — instead of the old
-    /// single shared slot that let the judge starve pre-review and left a second idle node asleep.
+    /// Supervision support. `abort_handles` lets speculation kill the losing twin's future (the
+    /// idle-model judge that also used it is deleted, 2c S6); `prior_hints` carries the guided
+    /// retry's corrective note onto the re-dispatch; `idle_jobs` counts ALL running idle jobs so up
+    /// to `idle_capacity()` run CONCURRENTLY — one per free node.
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
-    /// Owned-file fingerprint recorded at each judge kill. A SECOND kill is allowed only if the
-    /// files moved since the previous one — a restart that repeats a no-progress attempt costs a
-    /// full task restart (measured 4-25 min) and converges on nothing the deterministic
-    /// backstops would not handle better.
-    kill_tree_hash: HashMap<TaskId, u64>,
     /// Owned-file fingerprints of EVERY previous REAL failure of this task (not a judge restart,
     /// not a transport drop). A failure that leaves the tree exactly as ANY earlier failure did is
     /// a failure retrying will reproduce, and that is what ends the retries — rather than a count.
@@ -933,9 +779,11 @@ struct State {
     /// baseline. A count, not a cap: nothing here bounds how many shrinking attempts a task may take.
     retry_finding_counts: HashMap<TaskId, usize>,
     prior_hints: HashMap<TaskId, String>,
-    /// Every corrective note the judge has produced this run, in order, and NEVER consumed.
+    /// Every corrective note the guided retry has produced this run, in order, and NEVER consumed
+    /// (the idle-model judge that also wrote here is deleted, 2c S6; its measured catch below is
+    /// why the sink still inherits the list).
     ///
-    /// `prior_hints` is keyed by task and REMOVED on the next dispatch of that task, so a judge
+    /// `prior_hints` is keyed by task and REMOVED on the next dispatch of that task, so a
     /// finding survives exactly one re-dispatch and then vanishes. That is right for guiding a retry
     /// and wrong for everything else — most of all for the SINK, which is told "you are the ONLY task
     /// permitted to edit files here" and whose entire job is fixing what upstream found.
@@ -947,11 +795,9 @@ struct State {
     /// recomputing the very sort the judge had already worked out. The information existed; nothing
     /// carried it to the one task that could act on it.
     judge_notes: Vec<(TaskId, String)>,
-    interventions: HashMap<TaskId, u32>,
-    /// Omni-judge aborts per task. Counted SEPARATELY from `interventions` on purpose: that map also caps
-    /// how many times the deterministic judge may act on a task (max_interventions_per_task), and spending
-    /// that budget on a model's reasoning-loop abort would leave a genuinely stuck task with no
-    /// deterministic supervisor at the point it needs one most.
+    /// Omni-judge aborts per task — SUPERVISORY restarts, excluded from the task's retry budget
+    /// (`complete()`'s exhaustion count). The deterministic idle-model judge's `interventions` map
+    /// is deleted with it (2c S6).
     omni_aborts: HashMap<TaskId, u32>,
     /// Attempts lost to a TRANSPORT fault (mid-stream body drop) rather than to the task.
     /// MEASURED (qwen3.8 r1): one LAN-flaky node dropped streams repeatedly and three modules —
@@ -959,21 +805,8 @@ struct State {
     /// them never recovered. A socket that dies mid-generation says nothing about the work, exactly
     /// like a judge kill, so it must not consume the task's failure budget.
     transport_drops: HashMap<TaskId, u32>,
-    /// Split generation per task: 0 for original tasks, parent+1 for children injected by a split. Feeds
-    /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
-    split_generation: HashMap<TaskId, u32>,
-    judge_running: bool,
-    /// Which node is running the CURRENT judge. A single Option is sufficient and correct because
-    /// `judge_running` makes the judge single-flight — `judge_observed` and `judge_verdict` counts
-    /// match exactly (103/103, 72/72, 64/64, 43/43) across every archived run, and they never
-    /// interleave. If that invariant is ever relaxed this must become a per-task map.
-    judge_node: Option<String>,
     task_salvaged: std::collections::HashMap<String, bool>,
     idle_jobs: u32,
-    /// When each task was last judged, so an OK ("observed") task is NOT re-judged every 15s tick for its
-    /// whole life — that fired ~4 wasted model calls/min on a single long worker, which LM Studio piled onto
-    /// a busy node (one node "+1 QUEUED" while another sat idle). A re-judge waits `JUDGE_REJUDGE_COOLDOWN`.
-    last_judged: HashMap<TaskId, Instant>,
     /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE, default-OFF). When a node would otherwise sit idle at a
     /// serial dependency chokepoint, a TWIN of the in-flight task is raced on the idle device (first-to-finish
     /// wins). The twin runs in a shadow workspace (dispatcher side) so it never touches `held_files` — only
@@ -1468,9 +1301,9 @@ impl State {
         // dispatch, so it stops being re-statable; a finding that survives into a later sweep and is
         // NOT in this list was clobbered rather than delivered.
         self.warden_pending.remove(&tid);
-        // THE SINK INHERITS EVERY JUDGE FINDING, because it is the only task that can act on them and
-        // the judge is a source of findings it otherwise cannot see. A task that owns no files and
-        // joins the graph is the sink; ordinary workers keep the existing one-shot behaviour.
+        // THE SINK INHERITS EVERY SUPERVISOR FINDING (the guided retries' notes), because it is the
+        // only task that can act on them. A task that owns no files and joins the graph is the
+        // sink; ordinary workers keep the existing one-shot behaviour.
         if owned_files.is_empty() && !self.judge_notes.is_empty() {
             let notes = self
                 .judge_notes
@@ -1701,8 +1534,7 @@ impl State {
                     // Judge kills advance n.attempts (for the epoch guard) but are SUPERVISORY, not task
                     // failures — and the judge can be wrong (a borderline over-read). Don't let a judge
                     // intervention burn the transient-retry budget: exclude it from the exhaustion count.
-                    let judge_kills = self.interventions.get(tid).copied().unwrap_or(0)
-                        + self.omni_aborts.get(tid).copied().unwrap_or(0);
+                    let judge_kills = self.omni_aborts.get(tid).copied().unwrap_or(0);
                     // A mid-stream body drop is the NETWORK failing, not the task. Counting it
                     // toward exhaustion let a flaky node delete finished-quality modules from the
                     // build (r1: three tasks, two never recovered). Excluded like a judge kill;
@@ -1806,7 +1638,8 @@ impl State {
                         self.sink.emit(&SwarmEvent::JudgeVerdict {
                             task_id: tid.to_string(),
                             device: dev_id.clone().unwrap_or_default(),
-                            judge_node: self.judge_node.clone().unwrap_or_default(),
+                            // No judging node: this is the scheduler's own stall accounting.
+                            judge_node: String::new(),
                             verdict: "degraded_stall".to_string(),
                             confidence: 1.0,
                             hint: if let Some(why) = &content_settled {
@@ -1922,10 +1755,7 @@ impl State {
         }
     }
 
-    /// Choose an in-flight worker for the judge to inspect: the longest-running Claimed task that is at
-    /// least `min_age_secs` old and under its intervention cap, to be judged on a currently-idle device.
-    /// Returns the request + the attempt inspected, and marks a judge running (at most one at a time).
-    /// A3: the device an IDLE JOB (judge / Q&A / testgen / twin) claims — the
+    /// A3: the device an IDLE JOB (Q&A / testgen / twin) claims — the
     /// LEAST-LOADED free device, never the first free one. `.position()` stacked a review as a
     /// second concurrent generation beside a busy worker while another node sat physically idle
     /// (CONFIRMED live), and concurrent generations on one Apple host degrade each other (F623).
@@ -1942,174 +1772,7 @@ impl State {
             .map(|(i, _)| i)
     }
 
-    /// A device for SUPERVISION, preferring a free slot but never returning `None` while any device is
-    /// enabled.
-    ///
-    /// WHY IT MAY OVERSUBSCRIBE. Supervision was gated on a device having a free slot
-    /// (`in_flight < weight`), and during BUILD the fan fills every slot by design. MEASURED 2026-08-28
-    /// on the first run to reach BUILD: **84 `judge_skipped` events, every one `no_idle_device`, and
-    /// NINE OF TWENTY build tasks never supervised once** — among them `ledgerd-api-layer`, which stalled
-    /// eight minutes mid-sentence ("Let me write these") with zero tool calls and no observer, while
-    /// owning the app's entire HTTP surface.
-    ///
-    /// Every wall-clock, turn and volume cap was deleted from this engine on purpose, which makes the
-    /// judge the ONLY thing that can notice a stuck call. Dropping it exactly where the fleet is most
-    /// committed is the worst possible time to be blind, and it was invisible: `judge_look` counts stayed
-    /// healthy because planning phases leave slots free.
-    ///
-    /// `weight` is the ENGINE's dispatch budget, not the provider's. LM Studio serves `PARALLEL=2` per
-    /// node and queues beyond it, so a supervision call on a full node is a QUEUED small request, not a
-    /// dropped check — a late look beats no look. Build work still never oversubscribes: this is used
-    /// only for the judge.
-    fn supervision_device(&self) -> Option<usize> {
-        self.least_loaded_free_device().or_else(|| {
-            self.devices
-                .iter()
-                .enumerate()
-                .filter(|(_, d)| d.cfg.enabled)
-                .min_by_key(|(i, d)| (!d.cfg.supervision, d.in_flight, *i))
-                .map(|(i, _)| i)
-        })
-    }
-
-    fn pick_judge_target(
-        &mut self,
-        cfg: &JudgeConfig,
-    ) -> Option<(JudgeRequest, u32, Option<usize>)> {
-        // The LLM review wants an idle device; the deterministic checks (won't-compile / no-output /
-        // wrote-then-stale) need no model at all. CLAIM an idle device's slot for the review (so a worker +
-        // the next idle-job never stack on it), but fall through with no claim + an empty model_id so the
-        // deterministic verdicts still fire when every node is busy (saturated) — a stuck worker must not go
-        // unjudged. The actual claim (in_flight bump) happens at the end, only if a task is selected.
-        // Supervision must not be dropped because BUILD filled every slot — see supervision_device.
-        let claimed_device = self.supervision_device();
-        let judge_model_id = claimed_device
-            .map(|i| self.devices[i].cfg.model_id.clone())
-            .unwrap_or_default();
-        // Two pools: `best` = under-cap tasks (normal judging — re-dispatch on a problem); `best_terminal`
-        // = cap-exhausted tasks, surfaced ONLY so the judge can make a terminal decision (a task already
-        // re-dispatched to its cap that is STILL broken should be failed, not left to spin a node to
-        // worker_max_turns). Under-cap judging is always preferred so a cap-exhausted-but-fine task can
-        // never starve a genuinely-stuck one of the single judge slot.
-        let mut best: Option<(String, u64)> = None;
-        let mut best_terminal: Option<(String, u64)> = None;
-        for (tid, n) in &self.dag.tasks {
-            if n.state != TaskState::Claimed {
-                continue;
-            }
-            let elapsed = self
-                .attempt_started_at
-                .get(tid)
-                .map(|t| t.elapsed().as_secs())
-                .unwrap_or(0);
-            if elapsed < cfg.min_age_secs {
-                continue;
-            }
-            let at_cap =
-                self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task;
-            // Re-judge cooldown: an already-judged task is not re-inspected until JUDGE_REJUDGE_COOLDOWN_SECS
-            // has passed, so an OK long worker is not re-judged every tick (the wasted-call/queue-on-busy-node
-            // problem). Applies ONLY to UNDER-CAP re-judging — a cap-exhausted stuck task is NEVER cooled down,
-            // so its terminal-fail stays prompt. The first judge is gated only by min_age_secs above.
-            if !at_cap
-                && self
-                    .last_judged
-                    .get(tid)
-                    .map(|t| t.elapsed().as_secs() < cfg.rejudge_cooldown_secs)
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-            // Skip RE-judging an owns-NOTHING task (the integrate-verify sink). Every deterministic
-            // judge gate is disarmed for it (over-read/finalize-spin/broken-code all require owned
-            // files, judge.rs:292/311/332), and its LLM verdict is always a non-actionable "ok", so a
-            // re-judge catches nothing yet steals an idle node from the other idle jobs. Judge it ONCE (first
-            // pass, for observability) then leave it to worker_timeout as the hard-stall backstop.
-            // …that rationale held while NO verdict could fire for an owns-nothing task. One can now:
-            // the Accept branch for a join that has acted and then gone quiet (judge.rs). Judging it
-            // once and never again would make that branch unreachable, because a first pass early in
-            // the join is always too young for it. So the skip now applies only while the task IS too
-            // young for that branch — the `rejudge_cooldown_secs` check above still throttles the rest,
-            // so this cannot spin re-judges at an idle-job node.
-            if n.spec.owned_files.is_empty()
-                && self.last_judged.contains_key(tid)
-                && elapsed < cfg.min_age_secs.max(420)
-            {
-                continue;
-            }
-            let slot = if at_cap {
-                &mut best_terminal
-            } else {
-                &mut best
-            };
-            if slot.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
-                *slot = Some((tid.clone(), elapsed));
-            }
-        }
-        let (tid, elapsed) = best.or(best_terminal)?;
-        let (description, owned_files, attempt) = {
-            let n = &self.dag.tasks[&tid];
-            (
-                n.spec.description.clone(),
-                n.spec.owned_files.clone(),
-                n.attempts,
-            )
-        };
-        // High-level run state for the semantic judge: completed tasks (with a brief of what each
-        // produced), the tasks still in flight / pending, and the failed ones. Lets it judge this worker
-        // against the whole build — catch it re-doing finished work, depending on a failed task, or
-        // diverging from the shape the rest of the run already set.
-        let mut done = Vec::new();
-        let mut remaining = Vec::new();
-        let mut failed = Vec::new();
-        for (id, node) in &self.dag.tasks {
-            if id == &tid {
-                continue;
-            }
-            match node.state {
-                TaskState::Done => done.push((
-                    id.clone(),
-                    node.result
-                        .clone()
-                        .unwrap_or_default()
-                        .chars()
-                        .take(200)
-                        .collect(),
-                )),
-                TaskState::Failed => failed.push(id.clone()),
-                _ => remaining.push(id.clone()),
-            }
-        }
-        let req = JudgeRequest {
-            task_id: tid.clone(),
-            description,
-            owned_files,
-            elapsed_secs: elapsed,
-            judge_model_id,
-            goal: self.goal.clone(),
-            done,
-            remaining,
-            failed,
-            split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
-            attempt: self.dag.tasks.get(&tid).map(|n| n.attempts).unwrap_or(0),
-            tree_files: self.tree_file_status(),
-        };
-        self.judge_running = true;
-        // Record the JUDGING node before the call, not after: the verdict emit reads
-        // `task_final_device`, which is the judged worker. `None` here is meaningful — it is the
-        // deterministic-only path where no device was claimed and no inference was spent.
-        self.judge_node = claimed_device.map(|i| self.devices[i].cfg.model_id.clone());
-        self.idle_jobs += 1;
-        self.last_judged.insert(tid.clone(), Instant::now());
-        // Claim the idle device's slot now that the judge is actually firing, so a worker dispatch (which
-        // sorts by in_flight) + the next idle-job avoid this node. Released by the IdleSlotGuard.
-        if let Some(i) = claimed_device {
-            self.devices[i].in_flight += 1;
-        }
-        Some((req, attempt, claimed_device))
-    }
-
-    /// F790-3: one-string run state for the Q&A answerer — the judge's perspective, cheaply.
+    /// F790-3: one-string run state for the Q&A answerer — the run's own perspective, cheaply.
     fn run_state_brief(&self) -> String {
         let mut done: Vec<&str> = Vec::new();
         let mut running: Vec<&str> = Vec::new();
@@ -2292,7 +1955,7 @@ impl State {
         // essential when a judge is also on: the judge can re-dispatch this task (bumping n.attempts) while a
         // twin of the OLD attempt is still running — without it, the stale twin would abort the healthy new
         // primary and, because complete()'s attempt guard then rejects the stale call, leak its device.
-        // (Mirrors complete()'s and apply_judge_outcome()'s attempt guards.)
+        // (Mirrors complete()'s attempt guard.)
         let still_live = self
             .dag
             .tasks
@@ -2329,386 +1992,6 @@ impl State {
             });
         }
         // On a twin Err: the primary keeps running; the twin's own device was already released above.
-    }
-
-    /// Apply a judge verdict. Always emits a `JudgeVerdict` event. If the verdict is an actionable
-    /// problem, the inspected attempt is still the live one, the judge is confident enough, and the
-    /// per-task intervention cap is not yet hit, the worker is killed and its task re-queued with the
-    /// hint — otherwise the verdict is logged only (`observed`). The judge being a weak model is the
-    /// reason these guards are strict.
-    fn apply_judge_outcome(
-        &mut self,
-        tid: &str,
-        attempt: u32,
-        outcome: JudgeOutcome,
-        cfg: &JudgeConfig,
-    ) -> bool {
-        let (device, model) = match self.task_final_device.get(tid) {
-            Some((d, m)) => (Some(d.clone()), Some(m.clone())),
-            None => (None, None),
-        };
-        let still_live = self
-            .dag
-            .tasks
-            .get(tid)
-            .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
-            .unwrap_or(false);
-        // Captured ONCE, up front, because every branch below removes `attempt_started_at` before it
-        // emits. All five emits in this function used to hard-code `elapsed_ms: 0` while this very
-        // number sat in scope — and `finish()` sums `per_device.busy_ms += a.elapsed_ms` over the whole
-        // attempt history, so EVERY judge-terminated attempt contributed zero node-seconds to its
-        // device, and a task whose LAST attempt was judge-accepted reported zero for itself. MEASURED:
-        // a task that ran 80.2 minutes across five attempts is recorded as taking no time at all on
-        // three of them. `busy_ms` is the engine's own answer to how busy each node was, which is the
-        // question the whole node-scaling goal turns on, and a judge kill is the commonest restart
-        // there is.
-        let elapsed_ms = self
-            .attempt_started_at
-            .get(tid)
-            .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(0);
-        // ACCEPT — the deliverable is COMPLETE (every owned file exists and none fails its compile
-        // check). Finish the task instead of spending an attempt killing a worker that has already
-        // produced what it owed. This is the judge's only non-stopping lever; without it "looks done"
-        // and "looks stuck" both resolved to kill, and the third kill is terminal. MEASURED (F165):
-        // test-meridian was recorded a TERMINAL FAILURE with 8 passing test functions on disk that the
-        // crunched app still runs.
-        //
-        // Deliberately NOT gated the way `salvage_spin` is. That mechanism marks a spinning task Done —
-        // but excludes test tasks (`!is_test_task`), and test-authors are 93% of every failure this
-        // campaign has recorded (14 of 15). Excluding them excludes the entire population the salvage
-        // would help. Requires `deterministic` so a weak model can never hand itself a completion.
-        if still_live && outcome.verdict == Verdict::Accept && outcome.deterministic {
-            if let Some(h) = self.abort_handles.remove(tid) {
-                h.abort();
-            }
-            if let Some(dev) = self.claimed_device.remove(tid) {
-                if self.devices[dev].in_flight > 0 {
-                    self.devices[dev].in_flight -= 1;
-                }
-            }
-            if let Some(files) = self.held_by.remove(tid) {
-                for f in files {
-                    self.held_files.remove(&f);
-                }
-            }
-            self.attempt_started_at.remove(tid);
-            self.sink.emit(&SwarmEvent::JudgeVerdict {
-                task_id: tid.to_string(),
-                device: device.clone().unwrap_or_default(),
-                judge_node: self.judge_node.clone().unwrap_or_default(),
-                verdict: "accept".to_string(),
-                confidence: outcome.confidence,
-                hint: outcome.hint.clone(),
-                action: "accepted".to_string(),
-                deterministic: outcome.deterministic,
-            });
-            self.attempt_log
-                .entry(tid.to_string())
-                .or_default()
-                .push(AttemptRecord {
-                    device: device.clone(),
-                    model: model.clone(),
-                    outcome: "judge_accepted".to_string(),
-                    error: None,
-                    elapsed_ms,
-                });
-            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
-            self.relax_dependents(tid);
-            let attempts = self.attempt_log[tid].len() as u32;
-            let ended_because = self.last_attempt_error(tid);
-            self.emit_completion(
-                tid,
-                Completion {
-                    status: "done",
-                    device,
-                    model,
-                    attempts,
-                    elapsed_ms,
-                    error: ended_because,
-                    tool_calls: Vec::new(),
-                },
-            );
-            return true;
-        }
-        // THE JUDGE CAN NO LONGER END ANYTHING.
-        //
-        // It used to have three actions: observe, re_dispatch (kill the worker and re-queue it on a
-        // DIFFERENT device with a hint), and terminal-fail. Both of the acting ones are gone.
-        //
-        // re_dispatch went because every node in this fleet runs the SAME model on a different host, so
-        // moving a task buys nothing and costs the whole session — the thing the worker had already
-        // established. Redirection now happens IN the session, as a nudge, and it costs neither the
-        // session nor the attempt.
-        //
-        // terminal-fail went because a task should die from a deterministic engine event — retries
-        // exhausted on transport errors — not from an opinion. That rule was already half-written here
-        // (`outcome.deterministic` gated it, after a model opinion at confidence 0.90 turned a whole run
-        // red through the fan-verify sink); this finishes it.
-        //
-        // What remains is RESTART: the same task, on the SAME device, with a fresh session seeded with
-        // what the judge says the last attempt established. It is the judge's only remaining action.
-        let restart_asked = still_live
-            && !self.fix_round
-            && outcome.verdict == crate::judge::Verdict::Restart
-            && outcome.confidence >= cfg.intervene_confidence;
-        // THE LIVENESS RULE, and the only thing standing between an unbounded judge and a task that never
-        // ends. A restart is permitted only while the previous attempt PRODUCED something — the owned-file
-        // fingerprint moved. Two consecutive asks against an unmoved tree mean restarting is not working,
-        // and the task is failed with the judge's notes attached so the run proceeds and its missing files
-        // become repair work. Progress, not a counter.
-        //
-        // This reuses the fingerprint machinery that already existed for the progress-gated kill, which
-        // was built for exactly this question and for exactly this reason: "a no-progress attempt that
-        // gets killed and restarted repeats the same doomed generation (each restart measured 4-25 min of
-        // a node)". File-less tasks (verify::, e2e shards) have nothing to fingerprint, so they never
-        // restart at all rather than restarting blind.
-        let mut restart_withheld = false;
-        let restart = if restart_asked {
-            let files = self
-                .dag
-                .tasks
-                .get(tid)
-                .map(|n| n.spec.owned_files.clone())
-                .unwrap_or_default();
-            if files.is_empty() {
-                false
-            } else {
-                let fp = owned_files_fingerprint(&files);
-                if self.kill_tree_hash.get(tid) == Some(&fp) {
-                    // The tree has not moved since the last restart, so restarting is not working.
-                    // WITHHOLD it and let the attempt run to its own end — do not fail the task.
-                    //
-                    // I had this failing the task, which is what the plan said. The mock caught that it is
-                    // wrong: at this point the current attempt is still RUNNING and has not been aborted,
-                    // so failing here destroys live work to prevent a loop that withholding already
-                    // prevents. Liveness still holds without it — the attempt ends by completing, by
-                    // erroring into the bounded transport retries, or by the socket dying — and the
-                    // judge's hint is still stored for the next dispatch via the observed path.
-                    restart_withheld = true;
-                    false
-                } else {
-                    self.kill_tree_hash.insert(tid.to_string(), fp);
-                    true
-                }
-            }
-        } else {
-            false
-        };
-        let is_split = false;
-        // NOTHING the judge says can fail a task any more. A task ends by completing, by exhausting its
-        // transport retries, or not at all.
-        let terminal = false;
-        let redispatch = restart;
-        let kill_withheld = restart_withheld;
-        // SPLIT is handled FIRST so the emitted event reflects the ACTUAL outcome: apply_split validates the
-        // proposal and returns false (no-op, worker keeps running) if it is malformed — in that case the
-        // event must report "observed", not a "split" that never happened.
-        if is_split {
-            let children = outcome.proposed_split.clone().unwrap_or_default();
-            let applied = self.apply_split(tid, &children);
-            self.sink.emit(&SwarmEvent::JudgeVerdict {
-                task_id: tid.to_string(),
-                device: device.clone().unwrap_or_default(),
-                judge_node: self.judge_node.clone().unwrap_or_default(),
-                verdict: outcome.verdict.as_str().to_string(),
-                confidence: outcome.confidence,
-                hint: outcome.hint.clone(),
-                action: if applied { "split" } else { "observed" }.to_string(),
-                deterministic: outcome.deterministic,
-            });
-            return applied;
-        }
-        let action = if terminal {
-            // Not a judge opinion failing a task: the judge asked to restart a task whose tree had not
-            // moved, TWICE. Restarting is demonstrably not working, so the task ends here and its missing
-            // files become repair work. This is the liveness rule, not a verdict.
-            "restart_exhausted"
-        } else if redispatch {
-            "restart"
-        } else if kill_withheld {
-            // The progress gate withheld a restart — distinguishable from an ordinary observe so the
-            // event stream can count how often the gate fires (instrument, don't note).
-            "restart_withheld"
-        } else {
-            "observed"
-        };
-        self.sink.emit(&SwarmEvent::JudgeVerdict {
-            task_id: tid.to_string(),
-            device: device.clone().unwrap_or_default(),
-            judge_node: self.judge_node.clone().unwrap_or_default(),
-            verdict: outcome.verdict.as_str().to_string(),
-            confidence: outcome.confidence,
-            hint: outcome.hint.clone(),
-            action: action.to_string(),
-            deterministic: outcome.deterministic,
-        });
-        if terminal {
-            if let Some(h) = self.abort_handles.remove(tid) {
-                h.abort();
-            }
-            if let Some(dev) = self.claimed_device.remove(tid) {
-                if self.devices[dev].in_flight > 0 {
-                    self.devices[dev].in_flight -= 1;
-                }
-            }
-            if let Some(files) = self.held_by.remove(tid) {
-                for f in files {
-                    self.held_files.remove(&f);
-                }
-            }
-            self.attempt_started_at.remove(tid);
-            // FINALIZE-SPIN SALVAGE: a Looping terminal-fail means the owned file WAS written (the judge only
-            // emits Looping once any_owned_written); the worker produced output but kept spinning after. For a
-            // non-test task, discard also fails its dependents (the integrate-verify sink), so a working app is
-            // reported FAILED. Mark it Done and let integrate-verify gate it honestly. Only Looping; never a
-            // test task.
-            let salvage = salvage_spin_enabled()
-                && matches!(outcome.verdict, Verdict::Looping)
-                && self.dag.tasks.get(tid).is_some_and(|n| {
-                    !is_test_task(&n.spec.id, &n.spec.owned_files)
-                        && owned_file_written(&n.spec.owned_files)
-                });
-            let (outcome_label, error_text, state, status) = if salvage {
-                (
-                    "salvaged_spin",
-                    "finalize-spin salvaged: owned file written; integrate-verify gates it"
-                        .to_string(),
-                    TaskState::Done,
-                    "done",
-                )
-            } else {
-                (
-                    "judge_failed",
-                    outcome.verdict.as_str().to_string(),
-                    TaskState::Failed,
-                    "failed",
-                )
-            };
-            if salvage {
-                self.sink.emit(&SwarmEvent::JudgeVerdict {
-                    task_id: tid.to_string(),
-                    device: device.clone().unwrap_or_default(),
-                    judge_node: self.judge_node.clone().unwrap_or_default(),
-                    verdict: "salvaged_spin".to_string(),
-                    confidence: 1.0,
-                    hint: error_text.clone(),
-                    action: "salvaged".to_string(),
-                    // Engine bookkeeping on a terminal Looping, not a fresh judge call.
-                    deterministic: true,
-                });
-            }
-            self.attempt_log
-                .entry(tid.to_string())
-                .or_default()
-                .push(AttemptRecord {
-                    device: device.clone(),
-                    model: model.clone(),
-                    outcome: outcome_label.to_string(),
-                    error: Some(error_text),
-                    elapsed_ms,
-                });
-            self.dag.tasks.get_mut(tid).unwrap().state = state;
-            if salvage {
-                // A salvaged task is Done: relax its dependents exactly like a success, or the CLI/verify
-                // sink stays Pending forever and the run ends scheduler_stuck (backlog #7: expense/tmpl).
-                self.relax_dependents(tid);
-            } else {
-                self.fail_descendants(tid);
-            }
-            let attempts = self.attempt_log[tid].len() as u32;
-            let ended_because = self.last_attempt_error(tid);
-            self.emit_completion(
-                tid,
-                Completion {
-                    status,
-                    device,
-                    model,
-                    attempts,
-                    elapsed_ms,
-                    error: ended_because,
-                    tool_calls: Vec::new(),
-                },
-            );
-            return true;
-        }
-        if !redispatch {
-            // A problem the judge SAW but could not act on is still the freshest and most specific
-            // thing the run knows about this task. It used to be discarded: `prior_hints` is written
-            // only on the re_dispatch path below, so once the intervention cap is spent every further
-            // verdict is pure logging. MEASURED: a test task drew thirteen consecutive cap-exhausted
-            // verdicts naming a literal syntax error (`from Non` for `from None`) and a wrong mock
-            // target, all `observed`, and the attempt that replaced it — started by worker_timeout,
-            // a timer — carried the stale hint from its last kill instead. Storing here kills, fails
-            // and re-queues nothing; it only makes the NEXT dispatch of this task an informed one,
-            // whatever ends the current attempt.
-            if observed_hint_worth_keeping(still_live, outcome.verdict, &outcome.hint) {
-                self.prior_hints.insert(tid.to_string(), outcome.hint);
-            }
-            return false;
-        }
-        if let Some(h) = self.abort_handles.remove(tid) {
-            h.abort();
-        }
-        let released_dev = self.claimed_device.remove(tid);
-        if let Some(dev) = released_dev {
-            if self.devices[dev].in_flight > 0 {
-                self.devices[dev].in_flight -= 1;
-            }
-        }
-        if let Some(files) = self.held_by.remove(tid) {
-            for f in files {
-                self.held_files.remove(&f);
-            }
-        }
-        self.attempt_started_at.remove(tid);
-        // Counted so a RESTART does not burn the task's transport-retry budget (see the judge_kills term
-        // in the max_attempts check) — not as a cap. Nothing reads this as a ceiling any more.
-        *self.interventions.entry(tid.to_string()).or_default() += 1;
-        self.judge_notes
-            .push((tid.to_string(), outcome.hint.clone()));
-        // SEED THE FRESH SESSION with what the judge says the last attempt established, not just with a
-        // correction. That is the difference between a restart and a retry: the new session starts from
-        // what was worked out rather than from nothing, which is the entire reason a restart is preferable
-        // to letting the attempt die and be re-run cold.
-        let seeded_hint = if outcome.established.trim().is_empty() {
-            outcome.hint.clone()
-        } else {
-            format!(
-                "You have already established: {}\nDo this next: {}",
-                outcome.established.trim(),
-                if outcome.next_action.trim().is_empty() {
-                    outcome.hint.trim()
-                } else {
-                    outcome.next_action.trim()
-                }
-            )
-        };
-        self.prior_hints.insert(tid.to_string(), seeded_hint);
-        self.attempt_log
-            .entry(tid.to_string())
-            .or_default()
-            .push(AttemptRecord {
-                device,
-                model,
-                outcome: "judge_restart".to_string(),
-                error: Some(outcome.verdict.as_str().to_string()),
-                elapsed_ms,
-            });
-        // Advance the attempt epoch so the abandoned future's completion is ignored, then re-queue.
-        let n = self.dag.tasks.get_mut(tid).unwrap();
-        n.attempts += 1;
-        // SAME DEVICE. `avoid_device` is deliberately NOT set: every node runs the same model on a
-        // different host, so steering the restart away from the node that just ran it buys nothing and
-        // only makes the task wait for a different slot.
-        n.avoid_device = None;
-        n.state = TaskState::Ready;
-        let fan_out = n.fan_out;
-        self.ready.push(Ranked {
-            fan_out,
-            id: tid.to_string(),
-        });
-        true
     }
 
     /// M3 task-splitting: replace a too-big task with the judge's proposed children that PARTITION its
@@ -2905,192 +2188,6 @@ impl State {
         true
     }
 
-    fn apply_split(&mut self, tid: &str, children: &[crate::judge::ChildSpec]) -> bool {
-        // ---- validate the partition against the original (no mutation yet) ----
-        let (orig_files, orig_deps, orig_diff, orig_model, orig_desc) =
-            match self.dag.tasks.get(tid) {
-                Some(n) => (
-                    n.spec
-                        .owned_files
-                        .iter()
-                        .cloned()
-                        .collect::<std::collections::BTreeSet<String>>(),
-                    n.spec.deps.clone(),
-                    n.spec.difficulty,
-                    n.spec.preferred_model.clone(),
-                    n.spec.description.clone(),
-                ),
-                None => return false,
-            };
-        if children.len() < 2 {
-            return false; // need >= 2 parts to be worth splitting
-        }
-        let mut child_ids = std::collections::HashSet::new();
-        for c in children {
-            if !child_ids.insert(c.id.as_str()) || self.dag.tasks.contains_key(&c.id) {
-                return false; // duplicate child id, or collides with an existing task
-            }
-        }
-        // every child file belongs to the original, children are pairwise-disjoint, and together they
-        // cover ALL of the original's files (a true partition).
-        let mut union = std::collections::BTreeSet::new();
-        for c in children {
-            if c.files.is_empty() {
-                return false;
-            }
-            for f in &c.files {
-                if !orig_files.contains(f) || !union.insert(f.clone()) {
-                    return false; // foreign file or overlap between children
-                }
-            }
-        }
-        if union != orig_files {
-            return false; // does not cover the original's files
-        }
-        // child sibling deps may only reference sibling child ids.
-        if children
-            .iter()
-            .any(|c| c.depends_on.iter().any(|d| !child_ids.contains(d.as_str())))
-        {
-            return false;
-        }
-        // Reject a self-dep or any cycle among siblings BEFORE aborting the worker. Otherwise such a
-        // proposal passes here but fails splice_specs' Kahn check AFTER the abort, hitting the destructive
-        // Err arm — which would cascade-FAIL a healthy worker and break the documented no-op contract.
-        if children
-            .iter()
-            .any(|c| c.depends_on.iter().any(|d| d == &c.id))
-        {
-            return false;
-        }
-        {
-            // Kahn topological drain over the children's sibling-dep edges; a non-empty remainder = a cycle.
-            let mut indeg: std::collections::HashMap<&str, usize> =
-                children.iter().map(|c| (c.id.as_str(), 0usize)).collect();
-            for c in children {
-                for d in &c.depends_on {
-                    *indeg.get_mut(c.id.as_str()).unwrap() += 1;
-                    let _ = d;
-                }
-            }
-            let mut queue: Vec<&str> = indeg
-                .iter()
-                .filter(|(_, &n)| n == 0)
-                .map(|(&k, _)| k)
-                .collect();
-            let mut drained = 0usize;
-            while let Some(node) = queue.pop() {
-                drained += 1;
-                for c in children {
-                    if c.depends_on.iter().any(|d| d == node) {
-                        let e = indeg.get_mut(c.id.as_str()).unwrap();
-                        *e -= 1;
-                        if *e == 0 {
-                            queue.push(c.id.as_str());
-                        }
-                    }
-                }
-            }
-            if drained != children.len() {
-                return false; // cycle among siblings — leave the worker running (no-op)
-            }
-        }
-        // ---- abort + release the original worker (mirror the kill/re-dispatch cleanup) ----
-        if let Some(h) = self.abort_handles.remove(tid) {
-            h.abort();
-        }
-        if let Some(dev) = self.claimed_device.remove(tid) {
-            if self.devices[dev].in_flight > 0 {
-                self.devices[dev].in_flight -= 1;
-            }
-        }
-        if let Some(files) = self.held_by.remove(tid) {
-            for f in files {
-                self.held_files.remove(&f);
-            }
-        }
-        self.attempt_started_at.remove(tid);
-        // ---- build + insert the children (deps = original's external deps + sibling deps) ----
-        let inherit_spec = split_inherit_spec_enabled();
-        let child_id_list: Vec<TaskId> = children.iter().map(|c| c.id.clone()).collect();
-        let specs: Vec<crate::dag::TaskSpec> = children
-            .iter()
-            .map(|c| {
-                let mut deps = orig_deps.clone();
-                deps.extend(c.depends_on.iter().cloned());
-                crate::dag::TaskSpec {
-                    id: c.id.clone(),
-                    description: child_description(tid, &orig_desc, c, inherit_spec),
-                    difficulty: orig_diff,
-                    preferred_model: orig_model.clone(),
-                    owned_files: c.files.clone(),
-                    deps,
-                    subsplit: Vec::new(),
-                    shard_of: None,
-                    merger_of: None,
-                }
-            })
-            .collect();
-        let newly_ready = match self.dag.splice_specs(specs) {
-            Ok(r) => r,
-            Err(_) => {
-                // cycle/collision: abort the split. The worker is already gone, so fail the task cleanly.
-                if let Some(n) = self.dag.tasks.get_mut(tid) {
-                    n.state = TaskState::Failed;
-                }
-                self.fail_descendants(tid);
-                return true;
-            }
-        };
-        // ---- re-point every dependent of the original onto ALL children ----
-        let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
-        for d in &dependents {
-            if let Some(n) = self.dag.tasks.get_mut(d) {
-                n.spec.deps.retain(|x| x != tid);
-                n.spec.deps.extend(child_id_list.iter().cloned());
-                // the original counted as ONE unmet dependency; it is now N unmet children -> net +(N-1).
-                n.indegree_remaining += child_id_list.len() - 1;
-            }
-            for cid in &child_id_list {
-                self.dag
-                    .dependents
-                    .entry(cid.clone())
-                    .or_default()
-                    .push(d.clone());
-                if let Some(cn) = self.dag.tasks.get_mut(cid) {
-                    cn.fan_out += 1;
-                }
-            }
-        }
-        self.dag.dependents.remove(tid);
-        // ---- record each child's split generation = parent + 1, so the cap (split once) holds: a child
-        // that itself runs long carries split_count >= 1 and is never split again. ----
-        let parent_gen = self.split_generation.get(tid).copied().unwrap_or(0);
-        for cid in &child_id_list {
-            self.split_generation.insert(cid.clone(), parent_gen + 1);
-        }
-        // ---- mark the original Done (no cascade) + advance its epoch so a late completion is ignored ----
-        if let Some(n) = self.dag.tasks.get_mut(tid) {
-            n.attempts += 1;
-            n.state = TaskState::Done;
-        }
-        // ---- enqueue the children that are immediately ready ----
-        for id in newly_ready {
-            let fan_out = self.dag.tasks[&id].fan_out;
-            self.ready.push(Ranked { fan_out, id });
-        }
-        // A split is the mechanism by which spare nodes get more work to do, and until now it changed
-        // the DAG silently. Three real runs could not be asked whether a split ever happened, because
-        // the only trace was child task ids appearing in later dispatches — indistinguishable from a
-        // plan that named them. Emitted at the success return ONLY, so the event means "a split was
-        // applied", never "one was considered".
-        self.sink.emit(&SwarmEvent::TaskSplit {
-            task_id: tid.to_string(),
-            children: children.iter().map(|c| c.id.clone()).collect(),
-        });
-        true
-    }
-
     /// A failed task can never produce output, so its (transitive) dependents can never run —
     /// mark them Failed so the run terminates instead of deadlocking on blocked tasks.
     fn fail_descendants(&mut self, tid: &str) {
@@ -3254,43 +2351,6 @@ impl State {
         true
     }
 
-    /// Every planned deliverable in the run and what is on disk for it right now. The judge was
-    /// handed ONE task's file list, so it could answer "is this worker doing its job" and never "is
-    /// this worker building on something that exists". Sorted, so two consecutive judge prompts
-    /// differ only where the tree differs.
-    fn tree_file_status(&self) -> Vec<String> {
-        let mut out: Vec<String> = self
-            .dag
-            .tasks
-            .values()
-            .flat_map(|n| {
-                let done = n.state == TaskState::Done;
-                // A FAILED task is not "in progress". The census keyed on done/not-done, so every
-                // deliverable of a dead task was reported to the supervisor as being actively produced
-                // -- and the whole point of handing it this census is to let it see what a worker is
-                // building ON. Told a file is in progress, it waits for something that will never come.
-                let failed = n.state == TaskState::Failed;
-                n.spec.owned_files.iter().map(move |p| {
-                    let f = delivered_file(p);
-                    let state = match (done, failed, f.present, f.skeleton) {
-                        (_, _, true, true) => "stub",
-                        (true, _, true, false) => "delivered",
-                        (true, _, false, _) => "MISSING",
-                        // Failed and something is on disk: a partial nobody will finish.
-                        (false, true, true, false) => "ABANDONED, partial",
-                        (false, true, false, _) => "ABANDONED, never written",
-                        (false, false, true, false) => "in progress",
-                        (false, false, false, _) => "not written yet",
-                    };
-                    format!("{p} [{state}]")
-                })
-            })
-            .collect();
-        out.sort();
-        out.dedup();
-        out
-    }
-
     fn build_report(&self) -> RunReport {
         let mut done = Vec::new();
         let mut failed = Vec::new();
@@ -3384,8 +2444,6 @@ impl State {
 pub struct Scheduler {
     devices: Vec<DeviceCfg>,
     sink: Arc<dyn EventSink>,
-    judge: Option<Arc<dyn Judge>>,
-    judge_cfg: JudgeConfig,
     pre_reviewer: Option<Arc<dyn PreReviewer>>,
     speculation_enabled: bool,
     /// When set, the scheduler HOLDS at task boundaries while this file exists (the in-process pause).
@@ -3416,8 +2474,6 @@ impl Scheduler {
         Self {
             devices,
             sink: Arc::new(NullSink),
-            judge: None,
-            judge_cfg: JudgeConfig::default(),
             pre_reviewer: None,
             speculation_enabled: false,
             pause_file: None,
@@ -3443,9 +2499,6 @@ impl Scheduler {
         self
     }
 
-    /// Attach an idle-model judge: when a node would otherwise sit idle while tasks are still in
-    /// flight, it inspects a busy worker and may kill + re-dispatch one that is looping, over-reading,
-    /// or producing broken code. OFF by default — with no judge attached the scheduler is unchanged.
     /// F779 i3: append SUPERVISION devices — machines the build pool excluded (the
     /// GOOSE_SWARM_MAX_NODES tail) that carry read-only idle work only. Forced supervision=true
     /// regardless of input; an entry whose model_id collides with an existing device (worker or
@@ -3459,12 +2512,6 @@ impl Scheduler {
             c.supervision = true;
             self.devices.push(c);
         }
-        self
-    }
-
-    pub fn with_judge(mut self, judge: Arc<dyn Judge>, cfg: JudgeConfig) -> Self {
-        self.judge = Some(judge);
-        self.judge_cfg = cfg;
         self
     }
 
@@ -3593,20 +2640,14 @@ impl Scheduler {
             doc_facts: self.doc_facts.clone(),
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
-            kill_tree_hash: HashMap::new(),
             retry_tree_hash: HashMap::new(),
             retry_finding_counts: HashMap::new(),
             prior_hints: HashMap::new(),
             judge_notes: Vec::new(),
-            interventions: HashMap::new(),
             omni_aborts: HashMap::new(),
             transport_drops: HashMap::new(),
-            split_generation: HashMap::new(),
-            judge_running: false,
-            judge_node: None,
             task_salvaged: std::collections::HashMap::new(),
             idle_jobs: 0,
-            last_judged: HashMap::new(),
             spec_device: HashMap::new(),
             spec_started_at: HashMap::new(),
             spec_abort: HashMap::new(),
@@ -3684,9 +2725,9 @@ impl Scheduler {
                     }
                     notify.notify_one();
                 });
-                // Register the abort handle when a judge OR speculation is on, so the loser can be killed.
-                // Neither -> the map stays empty and the default path is byte-identical to before.
-                if self.judge.is_some() || self.speculation_enabled {
+                // Register the abort handle when speculation is on, so the losing twin can be killed.
+                // Off -> the map stays empty and the default path is byte-identical to before.
+                if self.speculation_enabled {
                     state
                         .lock()
                         .await
@@ -3737,74 +2778,6 @@ impl Scheduler {
                     });
                 }
             }
-            // Idle-model judge: when a node would otherwise sit idle while tasks are still in flight,
-            // inspect the longest-running worker and possibly kill + re-dispatch a stuck one. At most one
-            // judge runs at a time; the whole block is skipped when no judge is attached.
-            if let Some(judge) = self.judge.as_ref().filter(|_| !paused) {
-                let target = {
-                    let mut s = state.lock().await;
-                    // The judge is NOT capacity-bounded: it must fire even on a SATURATED fleet to kill a
-                    // stuck worker and free a slot (that is unblocking, not idle-node work). It still counts
-                    // toward idle_jobs so pre-review (below) knows one slot is taken.
-                    // NO nothing-in-flight gate. `build_in_flight() == 0` made supervision
-                    // structurally blind whenever the build devices happened to be empty — and a
-                    // supervisor that can only act while the fleet is busy cannot act on the tail,
-                    // which is exactly where a run's last unresolved work sits. `pick_judge_target`
-                    // is the real filter: it selects only a CLAIMED task and claims no device at all
-                    // when it selects none, so removing this cannot fire a judge with no target.
-                    if s.judge_running {
-                        None
-                    } else {
-                        s.pick_judge_target(&self.judge_cfg)
-                    }
-                };
-                if let Some((req, attempt, claimed_device)) = target {
-                    let tid = req.task_id.clone();
-                    let judge = judge.clone();
-                    let st = state.clone();
-                    let nt = notify.clone();
-                    let cfg = self.judge_cfg;
-                    tokio::spawn(async move {
-                        // The IdleSlotGuard is the SOLE releaser of the idle_jobs slot AND the claimed device
-                        // slot — decrement-ONCE on BOTH normal and panic exit. A counter must not be
-                        // double-decremented the way the old idempotent bool harmlessly could (that
-                        // undercounts and oversubscribes the fleet). We still clear judge_running on the hot
-                        // path so the next tick can re-judge immediately; the guard also clears it as the
-                        // panic backstop.
-                        let _slot = IdleSlotGuard {
-                            state: st.clone(),
-                            is_judge: true,
-                            claimed_device,
-                            notify: Some(nt.clone()),
-                        };
-                        let outcome = judge.judge(req).await;
-                        let intervened = {
-                            let mut s = st.lock().await;
-                            // A-2: a failed LOOK applies nothing — no verdict row, no fingerprint,
-                            // no intervention. The pick already stamped `last_judged`, so a judge
-                            // model that stays dead re-fires at cooldown cadence, never a hot loop.
-                            let r = match outcome {
-                                Ok(o) => s.apply_judge_outcome(&tid, attempt, o, &cfg),
-                                Err(error) => {
-                                    s.sink.emit(&SwarmEvent::JudgeLookFailed {
-                                        task_id: tid.clone(),
-                                        error,
-                                    });
-                                    false
-                                }
-                            };
-                            s.judge_running = false;
-                            r
-                        };
-                        // Only wake the loop when the judge actually intervened (the re-dispatched task
-                        // needs to be picked up). An "observed" verdict changes nothing — notifying here
-                        // would immediately respawn a judge and busy-loop; the 30s tick re-evaluates.
-                        if intervened {
-                            nt.notify_one();
-                        }
-                    });
-                }
-            }
             // F790-3 Q&A (GOOSE_SWARM_QA, default ON) — DELIBERATELY FIRST among the idle jobs: an
             // operator question is rare, one turn, and HUMAN-BLOCKING, while the others are
             // continuous background. MEASURED (F795): behind the old pre-review, a live question
@@ -3832,7 +2805,6 @@ impl Scheduler {
                         tokio::spawn(async move {
                             let _slot = IdleSlotGuard {
                                 state: st.clone(),
-                                is_judge: false,
                                 claimed_device: Some(claimed_device),
                                 notify: Some(nt),
                             };
@@ -3865,7 +2837,6 @@ impl Scheduler {
                     tokio::spawn(async move {
                         let _slot = IdleSlotGuard {
                             state: st,
-                            is_judge: false,
                             claimed_device: Some(claimed_device),
                             notify: Some(nt),
                         };
@@ -3910,27 +2881,23 @@ impl Scheduler {
                     state.lock().await.spec_abort.insert(tid, jh.abort_handle());
                 }
             }
-            // Wake on a completion, or — when a judge is attached — at least every 15s, so it can
-            // inspect a worker that crosses a threshold BETWEEN completions (a lone stuck worker produces
-            // no completion to wake on). A short tick means the behavioral over-read signal (many actions,
-            // zero output) and the terminal-fail decision act within ~15s of tripping, not minutes.
-            // tokio::Notify stores one permit, so a completion that fires before this await is not lost.
-            // With no judge this is an effectively-infinite wait: byte-identical to before.
+            // Wake on a completion, or — when an idle job or speculation is attached — at least every
+            // 15s, so an idle node is filled BETWEEN completions (a lone long worker produces no
+            // completion to wake on). tokio::Notify stores one permit, so a completion that fires
+            // before this await is not lost. With nothing attached this is an effectively-infinite
+            // wait: byte-identical to before.
             let tick = if paused {
                 // While held, re-poll the pause sentinel ~every 2s so Resume is detected promptly even when
                 // there are no in-flight completions left to wake the loop.
                 std::time::Duration::from_secs(2)
-            } else if self.judge.is_some()
-                || self.pre_reviewer.is_some()
-                || self.speculation_enabled
-            {
+            } else if self.pre_reviewer.is_some() || self.speculation_enabled {
                 std::time::Duration::from_secs(15)
             } else {
                 std::time::Duration::from_secs(86_400)
             };
             // Wake on a completion OR on a device offer. Without the second arm an admitted node
             // would wait out the pass timeout — 15s with any idle mechanism attached (the default),
-            // but a full DAY on the plain no-judge configuration, which is the same invisibility
+            // but a full DAY on the plain no-idle-job configuration, which is the same invisibility
             // this feature exists to remove. The admission arm is absent entirely when no handle is
             // attached, so that path keeps the single-future await it always had.
             match self.admission.as_ref() {
@@ -3970,71 +2937,6 @@ mod salvage_tests {
     }
 
     #[test]
-    fn split_child_description_off_is_byte_identical() {
-        let child = crate::judge::ChildSpec {
-            id: "note-store".into(),
-            files: vec!["Sources/NotesLibrary/NoteStore.swift".into()],
-            depends_on: vec![],
-        };
-        // OFF -> exactly today's string, unchanged.
-        assert_eq!(
-            child_description(
-                "data-model-persistence",
-                "a 2038-char spec...",
-                &child,
-                false
-            ),
-            "(split of data-model-persistence) note-store"
-        );
-        // ON but the parent had no spec -> nothing to inherit, fall back to the label.
-        assert_eq!(
-            child_description("data-model-persistence", "   ", &child, true),
-            "(split of data-model-persistence) note-store"
-        );
-    }
-
-    #[test]
-    fn split_child_description_on_scopes_files_then_carries_the_spec() {
-        let child = crate::judge::ChildSpec {
-            id: "note-store".into(),
-            files: vec![
-                "Sources/NotesLibrary/NoteStore.swift".into(),
-                "Sources/NotesLibrary/Note.swift".into(),
-            ],
-            depends_on: vec![],
-        };
-        let parent_spec =
-            "**Package.swift**: three targets. **NoteStore.swift**: @Observable class.";
-        let d = child_description("data-model-persistence", parent_spec, &child, true);
-
-        // The parent's real spec survives — that is the whole point.
-        assert!(
-            d.contains(parent_spec),
-            "the child must receive the parent's spec"
-        );
-        // Every owned file is named explicitly.
-        assert!(d.contains("- Sources/NotesLibrary/NoteStore.swift"));
-        assert!(d.contains("- Sources/NotesLibrary/Note.swift"));
-        // The scope guard comes BEFORE the spec, so the child reads its limits before reading about files
-        // it must not touch (the risk this lever introduces).
-        let scope_at = d
-            .find("YOU OWN ONLY THESE FILES")
-            .expect("scope header present");
-        let spec_at = d.find(parent_spec).expect("spec present");
-        assert!(
-            scope_at < spec_at,
-            "the file-scope header must precede the parent spec"
-        );
-        assert!(d.contains("belong to OTHER workers"));
-        // And it is vastly more than the 43-char label it replaces.
-        assert!(
-            d.len() > 200,
-            "expected a real task statement, got {} chars",
-            d.len()
-        );
-    }
-
-    #[test]
     fn test_files_and_tasks_are_recognized() {
         assert!(looks_like_test_file("tests/test_core.py"));
         assert!(looks_like_test_file("test_utils.py"));
@@ -4057,19 +2959,6 @@ mod salvage_tests {
         ));
         // id mentions test even if a file does not look like one.
         assert!(is_test_task("integration-test", &["run_it.py".into()]));
-    }
-
-    #[test]
-    fn salvage_off_values_parse() {
-        // Parse mirror of salvage_spin_enabled: unset -> ON; explicit off-values -> OFF.
-        let off = |v: &str| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "0" | "off" | "false" | "no"
-            )
-        };
-        assert!(off("0") && off("off") && off("FALSE") && off(" no "));
-        assert!(!off("1") && !off("true") && !off("anything"));
     }
 
     // A fresh temp dir + a helper to write/skip owned files, so the on-disk degrade predicate is exercised for
@@ -4233,41 +3122,6 @@ mod salvage_tests {
     }
 
     #[test]
-    fn a_verdict_the_judge_could_not_act_on_still_keeps_its_diagnosis() {
-        let real = "SyntaxError: `from Non` should be `from None`";
-        for v in [
-            Verdict::BrokenCode,
-            Verdict::SpecDrift,
-            Verdict::OverReading,
-        ] {
-            assert!(
-                observed_hint_worth_keeping(true, v, real),
-                "{v:?} named a real defect the judge could not act on — the next attempt must hear it"
-            );
-        }
-        // An `ok` verdict must never clobber a kept diagnosis, whether or not it carries text.
-        assert!(!observed_hint_worth_keeping(true, Verdict::Ok, ""));
-        assert!(!observed_hint_worth_keeping(
-            true,
-            Verdict::Ok,
-            "looks fine"
-        ));
-        assert!(!observed_hint_worth_keeping(true, Verdict::Accept, "done"));
-        // Nor may a problem verdict with nothing to say replace one that had something.
-        assert!(!observed_hint_worth_keeping(
-            true,
-            Verdict::BrokenCode,
-            "   "
-        ));
-        // A verdict about an attempt that has already ended is not about the worker being replaced.
-        assert!(!observed_hint_worth_keeping(
-            false,
-            Verdict::BrokenCode,
-            real
-        ));
-    }
-
-    #[test]
     fn a_task_that_owns_nothing_is_recorded_unfinished_rather_than_restarted() {
         // The sink, the per-module verifies and the e2e shards all own nothing.
         for id in ["integrate-verify", "verify::store", "verify-e2e::2"] {
@@ -4426,8 +3280,8 @@ mod tree_warden_tests {
 
     #[test]
     fn the_stub_predicate_is_the_judges_own() {
-        // Not a second hand-written "is this implemented" — the same `skeleton_only` the judge uses
-        // to refuse a false Accept. Pinned so a future edit cannot fork the definition.
+        // Not a second hand-written "is this implemented" — the same `skeleton_only` the sink's
+        // stub check and the deliverable gate use. Pinned so a future edit cannot fork the definition.
         assert!(skeleton_only("def load(path: str) -> dict:\n    ...\n"));
         assert!(!skeleton_only(
             "def load(path: str) -> dict:\n    return {}\n"
@@ -4471,7 +3325,7 @@ mod tree_warden_tests {
 
         let w = delivered_file(written.to_str().unwrap());
         assert!(w.present && !w.skeleton);
-        // An EMPTY file is "never written", the same rule `owned_file_written` applies — a
+        // An EMPTY file is "never written", the same rule `file_written` applies — a
         // zero-byte deliverable is not a deliverable.
         let e = delivered_file(empty.to_str().unwrap());
         assert!(!e.present && !e.skeleton);

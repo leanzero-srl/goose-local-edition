@@ -194,8 +194,9 @@ The mechanisms:
   round-trip and are echoed under `retired_levers`.
 
 Refusing test: `development_gates.rs` asserts scheduler.rs carries no replanner attach/call/repair,
-enumerates the ONE remaining `.splice_specs(` site (apply_split's partition door, whose exact-cover
-validation is its repair), and that `repair_sink_files` stays in the repair chain.
+enumerates the ONE remaining `.splice_specs(` site (the merger's gap door `splice_merge_gaps`, whose
+refusals are its repair — the idle-model judge's `apply_split` door is deleted, 2c S6), and that
+`repair_sink_files` stays in the repair chain.
 
 ## 7. THE READ-THE-WORDS GATE — the words decide; shapes only corroborate
 

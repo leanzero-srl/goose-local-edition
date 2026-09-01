@@ -99,12 +99,12 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
             opt_secs("GOOSE_SWARM_STRAGGLER_GRACE_SECS", cfg.straggler_grace_secs),
         ),
         "split": row(
-            "scheduler.rs pins `let is_split = false`; GOOSE_SWARM_SPLIT was read by nothing but this echo",
+            "the idle-model judge and its apply_split door are deleted (2c S6); GOOSE_SWARM_SPLIT was read by nothing but this echo",
             opt_gate("GOOSE_SWARM_SPLIT", cfg.split),
         ),
         // env-only while it lived: no config field exists, so unset is null.
         "split_inherit_spec": row(
-            "read only inside apply_split, which is_split = false never reaches",
+            "read only by child_description inside apply_split — both deleted with the idle-model judge (2c S6)",
             match env("GOOSE_SWARM_SPLIT_INHERIT_SPEC") {
                 Some(v) => json!(on(&v)),
                 None => Value::Null,
@@ -127,6 +127,28 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
                     v.trim().to_lowercase().as_str(),
                     "0" | "off" | "false" | "no"
                 )),
+                None => Value::Null,
+            },
+        ),
+        // 2c S6: the idle-model judge's salvage path (`apply_judge_outcome`'s Looping salvage and
+        // its `owned_file_written` check) is deleted; both env-only levers read by it are echoed as
+        // the engine read them (SALVAGE_SPIN default-ON reading, REQUIRE_CRITICAL default-OFF).
+        "salvage_spin": row(
+            "GOOSE_SWARM_SALVAGE_SPIN gated the idle-model judge's Looping salvage — deleted in 2c S6; \
+             the degrade-on-stall path is the scheduler's own and unconditional",
+            match env("GOOSE_SWARM_SALVAGE_SPIN") {
+                Some(v) => json!(!matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                )),
+                None => Value::Null,
+            },
+        ),
+        "salvage_require_critical": row(
+            "GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL tightened the same deleted salvage; degrade-on-stall \
+             is unconditionally strict (critical_owned_files_written)",
+            match env("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL") {
+                Some(v) => json!(on(&v)),
                 None => Value::Null,
             },
         ),
@@ -161,6 +183,8 @@ mod tests {
             "persona",
             "sink_review",
             "tail_review",
+            "salvage_spin",
+            "salvage_require_critical",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -183,6 +207,8 @@ mod tests {
         assert_eq!(clean["persona"]["configured"], json!(false));
         assert_eq!(clean["sink_review"]["configured"], Value::Null);
         assert_eq!(clean["tail_review"]["configured"], Value::Null);
+        assert_eq!(clean["salvage_spin"]["configured"], Value::Null);
+        assert_eq!(clean["salvage_require_critical"]["configured"], Value::Null);
 
         cfg.split_fat = true;
         cfg.fan_verify = true;
