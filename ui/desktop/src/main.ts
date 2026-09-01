@@ -3216,20 +3216,19 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
           // present, and the run looked completely healthy while building the wrong product.
           BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tier]),
-          // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
-          // paths): a user's benchmark must run the same engine configuration the baked
+          // The FULL tuned regime (REGIME.env parity, minus harness-only keys, resolved paths and
+          // retired levers): a user's benchmark must run the same engine configuration the baked
           // baselines and the campaign's numbers ran, or the board compares different swarms.
+          // NOT pinned, deliberately: GOOSE_SWARM_SPLIT_FAT and GOOSE_SWARM_FIX_SCHED. The engine reads
+          // neither (split_fat_modules is #[cfg(test)] since b0dd68eac; the fix_sched scheduler died in
+          // P1-9) and levers_resolved lists split_fat under `retired_levers`. A pin on a dead reader
+          // certifies a regime the binary cannot run — the stale-config class, from the other side.
           GOOSE_SWARM_PROBE_ADVERTISED_POST: '1',
-          GOOSE_SWARM_FIX_SCHED: '1',
           GOOSE_SWARM_SHIP_BEST: '1',
           // WHY '0' — r2: testgen calls wrote poisoned root files past the guard (test_interfaces.py
           // mtime 20:02:25Z imports task ids as modules), 0/3 generated suites landed, and the sink
           // burned 17 of its first 26 calls on them (II-5/P1-10). Reader survives until the r4 deletion.
           GOOSE_SWARM_TESTGEN: '0',
-          // Env pin: a stale saved config.yaml carried split_fat:false and silently
-          // shadowed the baked default (measured live — run 4 planned ONE web task).
-          // Env beats config, so the benchmark regime is immune to config shadows.
-          GOOSE_SWARM_SPLIT_FAT: '1',
           // F876: the scouts DO fetch the vendor's protocol docs (grounded 3/3, measured), but the
           // channel that forwards those verbatim facts to the worker writing the vendor client was
           // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
