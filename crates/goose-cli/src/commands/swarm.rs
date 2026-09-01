@@ -49,12 +49,12 @@ mod decisions;
 use decisions::PlanDecision;
 mod supervision;
 use supervision::{
-    fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_lane_key, me_events_skip,
-    omni_judge_says_looping, parse_judge_eta_mins, parse_judge_reply, prereview_lane_key,
-    render_forming_file, replan_lane_key, schedjudge_lane_key, superseded_from_prior,
-    supervised_reply_text, supervision_lane_kind, tail_review_lane_key, verify_lane_key,
-    write_forming_atomic, FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError,
-    ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
+    fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_contract, judge_lane_key,
+    me_events_skip, omni_judge_says_looping, parse_judge_eta_mins, parse_judge_reply,
+    prereview_lane_key, render_forming_file, replan_lane_key, schedjudge_lane_key,
+    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_review_lane_key,
+    verify_lane_key, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
+    SupervisedReplyError, ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
 };
 mod orientation;
 use orientation::{
@@ -14268,78 +14268,9 @@ impl GooseAgentDispatcher {
                         }
                     })
                     .collect();
-                // THE JUDGE CONTRACT. Four fields, not three. The third — ESTABLISHED — is the whole
-                // point: a redirect that throws away the useful half of a spiralling call is just a slower
-                // kill. The judge extracts what the call has actually worked out, and the nudge hands it
-                // back so the model resumes from there instead of restarting its own thinking.
-                //
-                // The last line is taken verbatim from codex/salvage-engine's one genuinely good idea
-                // (its pre-scheduler judge prompt): the judge may NEVER ask for termination. Only the
-                // engine ends a call, and only ever by cancelling a corroborated loop.
-                let mut sys = "You supervise ONE running agent call on a shared multi-agent build. You are \
-                     given its goal, what it has produced so far, a measurement of how much its reasoning is \
-                     repeating, a sample of its reasoning from much earlier in the same call, its recent \
-                     commands, and — when the call owns files — the deterministic checks of what it has \
-                     actually written plus the head of the file itself.\n\
-                     THE FILE CHECKS ARE FACTS AND OUTRANK THE REASONING. A call that sounds confident \
-                     while its owned file does not exist, does not parse, or holds nothing but stubs is \
-                     not progressing, whatever its narration says.\n\
-                     Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
-                     Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
-                     revisiting the same analysis without adding evidence, resolving a decision, or taking the \
-                     next concrete step.\n\
-                     Say LOOPING only when ESTABLISHED quotes the claim this call has now made TWICE — \
-                     the sentence from the earlier span and its recurrence in the recent tail. No quote, \
-                     no LOOPING: a stream producing NEW content is OK or DRIFTING, whatever its pace. \
-                     (Your own law applied to you: a reader quotes what it acted on.)\n\
-                     Reply on ONE line, exactly:\n\
-                     VERDICT|CONFIDENCE|ESTABLISHED|NEXT\n\
-                     VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
-                     CONFIDENCE   HIGH | LOW\n\
-                     ESTABLISHED  what this call has actually worked out that is worth keeping. Draw it from \
-                     what it SAID; do not invent. Fill this on an OK verdict too — one line of what the \
-                     call has worked out so far, so the next look can see what changed since this one. \
-                     Leave empty only if it has established nothing.\n\
-                     NEXT         the single most concrete next action toward the goal. Name the file, the \
-                     command, or the function. Never \"continue\" or \"proceed\".\n\
-                     ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, NEVER THE WHOLE DELIVERABLE. \
-                     A call that has produced no action yet is usually composing the entire artefact \
-                     inside its reasoning and waiting until it is perfect to emit it — and it never \
-                     becomes perfect. MEASURED: a task owning `web/viz.js` took 13 nudges over 76 \
-                     minutes, every one of them asking for the complete file (\"WebGL context, orbit \
-                     camera, picking\"), and wrote nothing at all. So if it owns a file, name the file \
-                     and ask for a FIRST MINIMAL VERSION it can extend — the stub, the imports, one \
-                     function. If its deliverable is a structured reply, tell it to emit what it has \
-                     NOW and refine after. And to a call with ZERO actions so far, phrase NEXT as a \
-                     command about its NEXT MESSAGE — \"your next message must be a single tool call: \
-                     <the one write or emit>\" — never as an imperative about the artefact. MEASURED: \
-                     \"call the output tool NOW: emit the slice table\" bought 19,000 more characters \
-                     of reasoning and zero calls; \"your next message must be a tool call\" was quoted \
-                     back by the lane and obeyed. A thing that exists can be improved; a thing being perfected \
-                     in silence cannot.\n\
-                     This governs your VERDICT too: a call that owns files, has taken ZERO actions, and \
-                     whose reasoning is already writing complete file bodies is DRIFTING — working on \
-                     the wrong thing (perfection in silence) — however good the draft reads.\n\
-                     A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
-                     you can name is the job the call was already given, you have nothing to add and the \
-                     verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
-                     returned was \"Check the slice list against the request section by section\", which \
-                     is verbatim the task. Each cost a re-stream, and a re-stream throws away everything \
-                     the call had reasoned so far. Redirect it only when you can tell it something it \
-                     does not already know.\n\
-                     DRIFTING = working, but on the wrong thing.\n\
-                     RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
-                     you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
-                     You may never request termination. Your job is to redirect.\n\n\
-                     Finally, end your reply with a token of the form ETA=<n>m — your honest estimate of \
-                     how many more MINUTES this call needs to finish the job it was given. Put it on its \
-                     OWN line, after the four-field line — never appended to that line as a fifth pipe \
-                     field. You are the \
-                     only party that can judge this: you have read what it has established, what it is \
-                     doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
-                     not on how long it has already taken. ETA=0m means it is essentially done. If you \
-                     genuinely cannot tell, write ETA=? rather than inventing a number."
-                    .to_string();
+                // THE JUDGE CONTRACT lives in `supervision::judge_contract` (moved verbatim; its
+                // WHY and the r6d turn-budget receipt are on that fn).
+                let mut sys = judge_contract();
                 // A NEXT the call physically cannot carry out is worse than no NEXT — it redirects the
                 // call at an action, watches it fail, and escalates by being MORE specific about the
                 // thing that is impossible. MEASURED live: the judge read a slice owner's objective
