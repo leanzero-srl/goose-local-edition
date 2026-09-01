@@ -881,3 +881,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   moim.rs's turn-budget injection into the judge's OWN message, and then read the judge lanes'
   calls files to find what nobody had: 29 of 62 looks ended in a shell call because the judge holds
   the developer toolset — the structural cause behind a prompt net. Charter gap: none.
+- 2026-09-01 09:25 tick-surgeon (r6d tick 4): EXEMPLARY at 75k/11. Closed watch A with the exact
+  abandoned event (no RESTART — E9's harm not measured, said plainly), verified api-q2 against three
+  spec lines to refute the eternal-hold worry a third time, and mined the judge calls files for two
+  new mechanisms (shell no-op retries to attempt 7; the desk summoning judge lanes — 59/79 noise).
+  Charter gap: none.

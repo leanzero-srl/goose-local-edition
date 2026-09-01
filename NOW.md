@@ -87,7 +87,10 @@ undelivered); fan 3/38 answered, one lane per host, no idle node. Queued E7 late
 before q2 landed on the same topic), E8 judge tie-break away from the worker's node, E9 judge misreads the
 worker's turn-budget line. TICK 3 (09:05): fan 19/16/0 at 6.25 min/answer (research ~4h; viz/web questions dispatch LAST); E7 real but no
 wrong mini (a hedge); the judge turn-budget misread (E9) is in three judges and one is dithering toward RESTART.
-WATCH: notifierd-q0 judge verdict; first viz-field dispatch (vs7dbg awareness). Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
+TICK 4 (09:21): fan 23/20, 4.0 min/answer this window (viz/web questions ~10:35); notifierd-q0 judge abandoned
+harmlessly (no RESTART); 3/3 held drifting looks delivered inside the hold; E14 (judge lane: no tools — 31 shell
+no-ops, retries to attempt 7) and E15 (desk skips judge-* lanes — 59/79 summons were noise) sent.
+WATCH: first viz-field dispatch (vs7dbg awareness); open_decisions-q2 (0 tools, 9.4k think). Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
 
 ## THE PRIOR THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN (ALL THREE CLOSED, see checklist)
 
