@@ -10,20 +10,20 @@ const lanes: NodeLane[] = [
 ];
 
 describe('FanInCard', () => {
-  it('renders inline node chips off the shared ramp, one distinct solid hue each', () => {
+  it('renders an identity dot per lane off the shared ramp, one distinct solid hue each', () => {
     const { getAllByTestId } = render(<FanInCard dispatch="dispatch" lanes={lanes} />);
     const chips = getAllByTestId('node-chip') as HTMLElement[];
     expect(chips).toHaveLength(3);
-    expect(chips[0].textContent).toBe('⬢A');
-    expect(chips[1].textContent).toBe('⬢B');
-    expect(chips[2].textContent).toBe('⬢C');
+    // The letter is for the reader, not the eye: a dot carries the identity, the aria-label the name.
+    expect(chips.map((c) => c.getAttribute('aria-label'))).toEqual(['node A', 'node B', 'node C']);
+    for (const c of chips) expect(c.textContent).toBe('');
 
     // Each chip takes its hue from the ONE shared ramp, in order, and no two lanes share one. This used to
     // assert hue-disjointness from the status triad instead — a check that went vacuous the moment the
     // colours became CSS tokens (a `var(...)` string never equals a hex literal, so it passed regardless).
     // Identity and status are told apart by their MARK — a filled chip versus an outline SVG icon — which
     // is what the next test pins, and which holds even where the ramp and the triad share a hue.
-    const colors = chips.map((chip) => chip.style.color.replace(/\s/g, ''));
+    const colors = chips.map((chip) => chip.style.backgroundColor.replace(/\s/g, ''));
     for (const color of colors) expect(color).not.toBe(''); // solid, never a faded or absent tint
     expect(new Set(colors).size).toBe(colors.length);
     colors.forEach((color, i) => expect(color).toBe(FORMATION_RAMP[i].replace(/\s/g, '')));

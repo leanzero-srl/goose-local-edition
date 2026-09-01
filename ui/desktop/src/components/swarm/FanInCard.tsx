@@ -6,7 +6,7 @@ import { CHIP_RADIUS, FORMATION_RAMP, SWARM_STATUS } from './formationVisualStat
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
  *
  * A sharp full-border card (NEVER a left rail): a dispatch header, one lane per node with a SOLID
- * formation-hue identity chip (`⬢`+letter, an inline leading token), the device + action, and a goose
+ * formation-hue identity DOT (the letter lives in its aria-label), the device + action, and a goose
  * status glyph whose color comes from the status triad — deliberately DISJOINT from the node identity ramp
  * so a red status never reads as a node's identity — then a rolled-up fan-in footer. This is what a
  * single-model UI cannot show; the palette matches the CLI `theme::palette`.
@@ -78,13 +78,12 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
         {lanes.map((lane, i) => (
           <div key={i} className="flex items-center gap-2" data-testid="fan-in-lane">
             <span
-              className="font-bold"
+              className="inline-block h-2 w-2 shrink-0 rounded-full"
               data-testid="node-chip"
-              style={{ color: nodeHue(i) }}
+              role="img"
+              style={{ backgroundColor: nodeHue(i) }}
               aria-label={`node ${nodeLetter(i)}`}
-            >
-              ⬢{nodeLetter(i)}
-            </span>
+            />
             <span className="w-24 shrink-0 truncate text-text-secondary">{lane.device}</span>
             <span className="flex-1 truncate">{lane.action}</span>
             {(() => {

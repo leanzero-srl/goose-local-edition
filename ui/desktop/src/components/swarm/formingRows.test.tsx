@@ -193,7 +193,7 @@ describe('the WORK pane while a call forms', () => {
     // NOTHING now — the Thinking pane gets the whole modal until the first call/narration byte.
     expect(dialog.textContent).not.toContain('Still thinking');
     const paneTitles = Array.from(
-      dialog.querySelectorAll('span.font-mono.uppercase')
+      dialog.querySelectorAll('[data-testid="pane-title"]')
     ).map((el) => el.textContent);
     expect(paneTitles).toContain('Thinking');
     expect(paneTitles).not.toContain('Work');

@@ -51,7 +51,7 @@ import {
   type SaidKind,
   type SupersededSaid,
 } from './useSwarmRun';
-import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
+import { ZoneHeader } from './ZoneHeader';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { useFleetStatus } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
@@ -63,7 +63,6 @@ import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseL
 import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
-  FORMATION_INK,
   FORMATION_RAMP,
   PANEL_RADIUS,
   SWARM_STATUS,
@@ -114,6 +113,28 @@ const STOPPED = SWARM_STATUS.stopped;
 // a tint or an opacity fade. Chrome (labels, counts, hints) deliberately stays on the secondary token.
 const GEN_TEXT = 'var(--color-text-primary)';
 
+/** Node identity: a small SOLID dot in the node's ramp hue beside its name — the same identity the
+ *  lettered ⬢ glyph and the avatar squares carried, with less sticker. The letter survives in the
+ *  aria-label so a reader still hears "node A". */
+const NodeDot: React.FC<{ hue: string; letter: string; size?: number; className?: string }> = ({
+  hue,
+  letter,
+  size = 8,
+  className = '',
+}) => (
+  <span
+    role="img"
+    aria-label={`node ${letter}`}
+    data-testid="node-dot"
+    className={`inline-block shrink-0 rounded-full ${className}`}
+    style={{ width: size, height: size, backgroundColor: hue }}
+  />
+);
+
+/** The two type scales of this panel. Zone headers use EYEBROW_CLASS (the one uppercase register);
+ *  everything else that is a pill is 11px, normal case. */
+const SOLID_PILL = 'text-[11px] font-semibold px-1.5 py-px text-white shrink-0';
+
 // Human duration from minutes: seconds under a minute, else "Nm Ss".
 function fmtDuration(min: number): string {
   const totalSec = Math.max(0, Math.round(min * 60));
@@ -129,12 +150,14 @@ function deviceIndex(device: string, order: string[]): number {
   return i < 0 ? order.length : i;
 }
 
-function ago(mtime: number | null): string {
+export function ago(mtime: number | null): string {
   if (!mtime) return '';
   const s = Math.max(0, Math.round((Date.now() - mtime) / 1000));
   if (s < 60) return `${s}s ago`;
   const m = Math.round(s / 60);
-  return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
 // Colour a call by what it MEANS, not just ok/fail: an app-error (a command that ran and reported an issue
@@ -202,7 +225,7 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
         {big && (
           <button
             onClick={() => setExpanded((e) => !e)}
-            className="text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+            className="text-[11px] text-text-secondary hover:text-text-primary transition-colors"
           >
             {expanded ? 'Show less' : `Show all (${lineCount} lines)`}
           </button>
@@ -213,7 +236,7 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           }}
-          className="text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+          className="text-[11px] text-text-secondary hover:text-text-primary transition-colors"
         >
           {copied ? 'copied' : 'copy'}
         </button>
@@ -264,20 +287,20 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
             <span className="text-xs font-medium text-text-primary">{m.action}</span>
             {pill ? (
               <span
-                className="shrink-0 font-mono text-[9px] uppercase tracking-wide px-1 py-px"
+                className="shrink-0 text-[11px] font-medium px-1.5 py-px"
                 style={{ color, border: `1px solid ${color}`, borderRadius: CHIP_RADIUS }}
               >
                 {pill}
               </span>
             ) : null}
             {m.kind !== 'ok' ? (
-              <span className="text-[10px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
+              <span className="text-[11px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
                 {m.outcome}
               </span>
             ) : null}
           </span>
           {call.summary ? (
-            <span className="block font-mono text-[10px] text-text-secondary break-words mt-px" title={call.summary}>
+            <span className="block font-mono text-[11px] text-text-secondary break-words mt-px" title={call.summary}>
               {call.summary}
             </span>
           ) : null}
@@ -286,7 +309,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
             array index is not a position; this makes "last 60 of 69" checkable and gives a reader a
             bearing inside a 60-row scroll. A numeral in the row's own flow — no rail, no chip. */}
         {ordinal != null ? (
-          <span className="shrink-0 mt-0.5 font-mono text-[10px] tabular-nums text-text-secondary">
+          <span className="shrink-0 mt-0.5 font-mono text-[11px] tabular-nums text-text-secondary">
             #{ordinal}
           </span>
         ) : null}
@@ -352,15 +375,15 @@ const ReasoningBlock: React.FC<{
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+        <span className="text-[11px] font-medium text-text-secondary">
           {label || 'Reasoning'}
         </span>
         {live ? (
-          <span className="text-[9px] font-bold uppercase tracking-[0.08em]" style={{ color: CALL_OK }}>
+          <span className="text-[11px] font-semibold" style={{ color: CALL_OK }}>
             live
           </span>
         ) : null}
-        {note ? <span className="text-[9px] text-text-secondary">{note}</span> : null}
+        {note ? <span className="text-[11px] text-text-secondary">{note}</span> : null}
       </div>
       <div
         ref={bodyRef}
@@ -375,7 +398,7 @@ const ReasoningBlock: React.FC<{
       {big && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="mt-0.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+          className="mt-0.5 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
         >
           {expanded ? 'Show less' : `Show all (${words} words)`}
         </button>
@@ -486,9 +509,7 @@ const LaneRow: React.FC<{
             </span>
           }
         >
-          <span className="font-bold shrink-0" style={{ color: hue }} aria-label={`node ${letter}`}>
-            ⬢{letter}
-          </span>
+          <NodeDot hue={hue} letter={letter} />
         </Tip>
         <Tip label={<span className="font-mono">{lane.device}</span>}>
           <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
@@ -523,7 +544,7 @@ const LaneRow: React.FC<{
             cloud fleet, where it is the whole point. */}
         {lane.model && heterogeneous && (
           <Tip label={<span className="font-mono">{lane.model}</span>}>
-            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
+            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[11px] font-mono text-text-secondary">
               {lane.model}
             </span>
           </Tip>
@@ -539,7 +560,7 @@ const LaneRow: React.FC<{
               } of work`}
             >
               <span
-                className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary"
+                className="text-[11px] font-bold px-1.5 py-0.5 text-background-primary"
                 style={{ backgroundColor: '#d97706', borderRadius: 3 }}
               >
                 ~{lane.judgeEtaMins}m
@@ -581,7 +602,7 @@ const LaneRow: React.FC<{
         <div className="px-3 pb-3 pl-9 space-y-2">
           {laneError ? (
             <div>
-              <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className="text-[11px] font-medium mb-1" style={{ color: STATUS_COLOR.error }}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
@@ -628,7 +649,7 @@ const LaneRow: React.FC<{
               )}
               {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+                  <div className="text-[11px] font-medium text-text-secondary mb-1.5">
                     Tool calls · {lane.toolCalls ?? calls.length}
                     {running.length > 0 ? ` · ${running.length} running` : ''}
                     {formingNote(lane.forming)}
@@ -1015,7 +1036,7 @@ const FollowScroll: React.FC<{
             if (boxRef.current) boxRef.current.scrollTop = 0;
           }}
           aria-label="Jump to the start of this log"
-          className="absolute top-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
+          className="absolute top-2 right-3 px-2 py-1 text-[11px] font-semibold text-white shadow-lg"
           style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
         >
           ↑ start
@@ -1028,7 +1049,7 @@ const FollowScroll: React.FC<{
             sentinelRef.current?.scrollIntoView?.({ block: 'end' });
           }}
           aria-label={jumpToStart ? 'Back to the end of this log' : 'Follow the newest text'}
-          className="absolute bottom-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
+          className="absolute bottom-2 right-3 px-2 py-1 text-[11px] font-semibold text-white shadow-lg"
           style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
         >
           {jumpToStart ? '↓ end' : '↓ follow'}
@@ -1596,12 +1617,12 @@ const InspectorPane: React.FC<{
     style={{ borderRadius: CHIP_RADIUS }}
   >
     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-primary shrink-0 bg-background-secondary">
-      <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
+      <span className={`${EYEBROW_CLASS} text-text-primary`} data-testid="pane-title">
         {title}
       </span>
       <span className="flex items-center gap-2">
         {action ?? null}
-        <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
+        <span className="text-[11px] tabular-nums text-text-secondary">{count}</span>
       </span>
     </div>
     <div className="min-h-0 flex-1 overflow-hidden">
@@ -1656,13 +1677,13 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-medium text-text-primary">{verb}</span>
             <span
-              className="shrink-0 inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide px-1 py-px text-white"
+              className={`inline-flex items-center gap-1 ${SOLID_PILL}`}
               style={{ background: color, borderRadius: CHIP_RADIUS }}
             >
               <Loader2 size={9} className="animate-spin" />
               running
             </span>
-            <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
+            <span className="font-mono text-[11px] tabular-nums" style={{ color }}>
               {elapsedSince(call.since, now)}
             </span>
           </span>
@@ -1702,24 +1723,24 @@ const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now })
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-medium text-text-primary">{verb}</span>
             <span
-              className="shrink-0 inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide px-1 py-px text-white"
+              className={`inline-flex items-center gap-1 ${SOLID_PILL}`}
               style={{ background: color, borderRadius: CHIP_RADIUS }}
             >
               <Loader2 size={9} className="animate-spin" />
               forming…
             </span>
-            <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
+            <span className="font-mono text-[11px] tabular-nums" style={{ color }}>
               {clock}
             </span>
             {bytes > 0 ? (
-              <span className="font-mono text-[10px] tabular-nums font-bold" style={{ color }}>
+              <span className="font-mono text-[11px] tabular-nums font-bold" style={{ color }}>
                 {bytes.toLocaleString()} bytes of arguments
               </span>
             ) : null}
           </span>
           {preview ? (
             <span className="block" data-testid="forming-preview">
-              <span className="block text-[9px] uppercase tracking-wide" style={{ color }}>
+              <span className="block text-[11px]" style={{ color }}>
                 forming — last {preview.length} chars of the arguments so far
               </span>
               <span className="block font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words">
@@ -1791,7 +1812,7 @@ const SaidChip: React.FC<{ bg: string; kind: SaidKind; title?: string; children:
   children,
 }) => (
   <span
-    className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+    className="px-2 py-0.5 text-[11px] font-semibold text-white"
     style={{ borderRadius: CHIP_RADIUS, background: bg }}
     title={title}
     data-said-kind={kind}
@@ -1825,13 +1846,13 @@ const SupersededSaidBlock: React.FC<{ seg: SaidSegmentView }> = ({ seg }) => {
           {`from ${attemptLabel(seg.attempt)} · ${isError ? 'error → retried' : 'superseded'}`}
         </SaidChip>
         {seg.retried ? (
-          <span className="text-[10px] font-mono" style={{ color: SWARM_STATUS.error }}>
+          <span className="text-[11px] font-mono" style={{ color: SWARM_STATUS.error }}>
             retried: {seg.retried}
           </span>
         ) : null}
         <button
           type="button"
-          className="text-[10px] underline text-text-secondary hover:text-text-primary"
+          className="text-[11px] underline text-text-secondary hover:text-text-primary"
           onClick={() => setOpen((o) => !o)}
         >
           {open ? 'hide' : 'show'}
@@ -1933,7 +1954,7 @@ const WorkPane: React.FC<{
       {hasSaid ? (
         <div>
           {calls.length > 0 || running.length > 0 ? (
-            <div className="mt-3 pt-2 border-t border-border-primary text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+            <div className="mt-3 pt-2 border-t border-border-primary text-[11px] font-medium text-text-secondary">
               Said
             </div>
           ) : null}
@@ -1956,7 +1977,7 @@ const PaneActionButton: React.FC<{
       onClick();
     }}
     aria-label={label}
-    className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+    className="px-2 py-0.5 text-[11px] font-semibold text-white"
     style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
   >
     {children}
@@ -2080,7 +2101,7 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
         }}
       >
         <span
-          className="px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider font-bold text-white shrink-0"
+          className="px-1.5 py-0.5 text-[11px] font-semibold text-white shrink-0"
           style={{
             borderRadius: CHIP_RADIUS,
             // INTERRUPTED is not FAILED: the digest went quiet without a completion stamp — a liveness
@@ -2093,7 +2114,7 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
         </span>
         <span className="min-w-0 flex-1 truncate text-text-primary">{title}</span>
         {lane.interrupted ? (
-          <span className="shrink-0 text-[10px]" style={{ color: CALL_PENDING }}>
+          <span className="shrink-0 text-[11px]" style={{ color: CALL_PENDING }}>
             went quiet mid-call — no completion stamp
           </span>
         ) : null}
@@ -2102,17 +2123,17 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
           // lane" would be true but say less than the honest rolling caption.
           const rolling = supervisionRollingCaption(lane);
           if (rolling)
-            return <span className="shrink-0 text-[10px] text-text-secondary">{rolling}</span>;
+            return <span className="shrink-0 text-[11px] text-text-secondary">{rolling}</span>;
           return priorCalls > 0 ? (
-            <span className="shrink-0 text-[10px] text-text-secondary">
+            <span className="shrink-0 text-[11px] text-text-secondary">
               {priorCalls + 1} calls on this lane
             </span>
           ) : null;
         })()}
         {durationLabel ? (
-          <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{durationLabel}</span>
+          <span className="shrink-0 text-[11px] tabular-nums text-text-secondary">{durationLabel}</span>
         ) : null}
-        <span className="shrink-0 text-[10px] tabular-nums font-mono text-text-secondary">
+        <span className="shrink-0 text-[11px] tabular-nums font-mono text-text-secondary">
           {sizes.length > 0 ? sizes.join(' · ') : 'no durable log'}
         </span>
         {open ? (
@@ -2149,7 +2170,6 @@ const NodeInspector: React.FC<{
   device: string;
   letter: string;
   hue: string;
-  ink: string;
   lane?: TurnLane;
   nodeState?: string;
   /** Every FINISHED call this node ran this run (deriveNodeHistory) — the cumulative folded log. */
@@ -2157,7 +2177,7 @@ const NodeInspector: React.FC<{
   /** The RESOLVED run dir (readSwarmRun's `dir`) — where the on-demand full-log reads aim. */
   runDir: string;
   onClose: () => void;
-}> = ({ device, letter, hue, ink, lane, nodeState, history, runDir, onClose }) => {
+}> = ({ device, letter, hue, lane, nodeState, history, runDir, onClose }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -2298,16 +2318,11 @@ const NodeInspector: React.FC<{
         style={{ borderRadius: CHIP_RADIUS }}
       >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border-primary shrink-0">
-          <span
-            className="inline-flex items-center justify-center font-mono font-semibold shrink-0"
-            style={{ width: 20, height: 20, borderRadius: CHIP_RADIUS, background: hue, color: ink, fontSize: 11 }}
-          >
-            {letter}
-          </span>
+          <NodeDot hue={hue} letter={letter} size={10} />
           <span className="font-mono text-sm text-text-primary">{device}</span>
           {nodeState && (
             <span
-              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              className="px-2 py-0.5 text-[11px] font-semibold text-white"
               style={{
                 borderRadius: CHIP_RADIUS,
                 background:
@@ -2327,7 +2342,7 @@ const NodeInspector: React.FC<{
               Next to GENERATING it read as a contradiction; it says who is doing what now. */}
           {lane?.judging && (
             <span
-              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              className="px-2 py-0.5 text-[11px] font-semibold text-white"
               style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
               title="A supervisor model is reading this call's reasoning to decide whether to redirect it. The worker keeps running."
             >
@@ -2340,7 +2355,7 @@ const NodeInspector: React.FC<{
           {lane && lane.status !== 'running' && (
             <span
               data-testid="inspector-lane-ended"
-              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              className="px-2 py-0.5 text-[11px] font-semibold text-white"
               style={{
                 borderRadius: CHIP_RADIUS,
                 background: lane.status === 'done' ? CALL_OK : CALL_ERR,
@@ -2354,8 +2369,8 @@ const NodeInspector: React.FC<{
           {lane?.supervision === true && (
             <span
               data-testid="inspector-supervision"
-              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white shrink-0"
-              style={{ borderRadius: CHIP_RADIUS, background: FORMATION_RAMP[2] }}
+              className="px-2 py-0.5 text-[11px] font-semibold text-white shrink-0"
+              style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.solidStopped }}
             >
               supervision
             </span>
@@ -2524,10 +2539,10 @@ const NodeInspector: React.FC<{
             }`}
           >
             <div className="flex items-center justify-between px-4 py-2 shrink-0">
-              <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
+              <span className={`${EYEBROW_CLASS} text-text-primary`} data-testid="pane-title">
                 {lane ? 'Earlier calls on this node' : 'Calls this node ran'}
               </span>
-              <span className="text-[10px] tabular-nums text-text-secondary">
+              <span className="text-[11px] tabular-nums text-text-secondary">
                 {shownHistory.length} finished
               </span>
             </div>
@@ -2584,8 +2599,6 @@ const FleetStrip: React.FC<{
     <div className="px-3 py-2 bg-background-primary space-y-1.5">
       {deviceOrder.map((device, i) => {
         const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
-        // Each ramp hue carries its own glyph colour: no single ink clears AA across six saturated fills.
-        const ink = FORMATION_INK[i % FORMATION_INK.length];
         const letter = String.fromCharCode(65 + (i % 26));
         const lane = runningByDevice.get(device);
         // WHAT THIS NODE IS GENERATING RIGHT NOW. The chain lives in `laneLiveLine`, which reads the
@@ -2642,12 +2655,7 @@ const FleetStrip: React.FC<{
                   : undefined
               }
             >
-              <span
-                className="inline-flex items-center justify-center font-mono font-semibold shrink-0 mt-[1px]"
-                style={{ width: 16, height: 16, borderRadius: CHIP_RADIUS, background: hue, color: ink, fontSize: 10 }}
-              >
-                {letter}
-              </span>
+              <NodeDot hue={hue} letter={letter} className="mt-[5px]" />
               <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
                 {shortName(device)}
               </span>
@@ -2788,7 +2796,7 @@ const FleetStrip: React.FC<{
                   const busy = live && (st === 'generating' || st === 'processingPrompt');
                   return busy ? (
                     <Tip label="LM Studio reports this node generating, but no lane digest is on disk for the call. Current engines write a lane for every call — supervision included — at dispatch; older engines ran supervision calls keyless, leaving only the event log.">
-                      <span style={{ color: FORMATION_RAMP[2], fontWeight: 600 }} className="flex items-center gap-1.5">
+                      <span style={{ color: SWARM_STATUS.done, fontWeight: 600 }} className="flex items-center gap-1.5">
                         <Eye size={12} className="shrink-0" />
                         generating — no lane on disk for this call yet
                       </span>
@@ -2914,7 +2922,6 @@ const FleetStrip: React.FC<{
                 device={inspect.device}
                 letter={String.fromCharCode(65 + (i % 26))}
                 hue={FORMATION_RAMP[i % FORMATION_RAMP.length]}
-                ink={FORMATION_INK[i % FORMATION_INK.length]}
                 lane={lane}
                 nodeState={nodeStatus[shortName(inspect.device)]}
                 history={deviceHistory}
@@ -2975,9 +2982,9 @@ const EventLogZone: React.FC<{
         right={
           <>
             {!open && last ? (
-              <span className="text-[10px] text-text-secondary truncate max-w-[18rem]">{last.text}</span>
+              <span className="text-[11px] text-text-secondary truncate max-w-[18rem]">{last.text}</span>
             ) : null}
-            <span className="text-[10px] tabular-nums text-text-secondary shrink-0">
+            <span className="text-[11px] tabular-nums text-text-secondary shrink-0">
               {items.length} events
             </span>
           </>
@@ -3028,12 +3035,12 @@ const ConfSignal: React.FC<{
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-text-primary">
+        <span className={`${EYEBROW_CLASS} text-text-primary`}>
           {label}
         </span>
         {binding ? (
           <span
-            className="text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-px text-background-primary"
+            className="text-[11px] font-semibold px-1.5 py-px text-background-primary"
             style={{ backgroundColor: col, borderRadius: CHIP_RADIUS }}
           >
             binding
@@ -3222,7 +3229,7 @@ const ConfidenceBreakdownBody: React.FC<{
       <div className="flex items-center gap-3.5">
         <ConfGauge value={conf.final} askFloor={askFloor} />
         <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          <div className="text-[11px] font-medium text-text-secondary">
             Plan confidence
           </div>
           <div
@@ -3261,7 +3268,7 @@ const ConfidenceBreakdownBody: React.FC<{
         />
       </div>
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+        <div className="text-[11px] font-medium text-text-secondary mb-1.5">
           What&apos;s holding it back
         </div>
         {showDecisions ? (
@@ -3278,7 +3285,7 @@ const ConfidenceBreakdownBody: React.FC<{
         )}
       </div>
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+        <div className="text-[11px] font-medium text-text-secondary mb-1.5">
           What would raise it
         </div>
         <div className="text-[12px] leading-relaxed text-text-primary">{raiseIt}</div>
@@ -3298,7 +3305,7 @@ const ConfidenceBreakdownBody: React.FC<{
               />
             ))}
           </div>
-          <span className="text-[10px] tabular-nums text-text-secondary">
+          <span className="text-[11px] tabular-nums text-text-secondary">
             {trail.map((v, i) => (
               <React.Fragment key={i}>
                 {i > 0 ? ' → ' : ''}
@@ -3319,7 +3326,7 @@ const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value
     label={`Planner confidence in how it broke this app down — ${value}/100. ${confVerdict(value, askFloor)}.`}
   >
     <span
-      className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
+      className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
       style={{ backgroundColor: confColorVsFloor(value, askFloor), borderRadius: CHIP_RADIUS }}
     >
       <Gauge className="h-2.5 w-2.5" />
@@ -3328,14 +3335,28 @@ const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value
   </Tip>
 );
 
-function fmtElapsed(min: number): string {
+/** Wall-clock elapsed in the unit a person would say it in: seconds under a minute, "Nm Ss", "Nh Nm",
+ *  and days once it passes two days ("49d 8h"). The minutes are the same fact; only the unit changes. */
+export function fmtElapsed(min: number): string {
   const totalSec = Math.max(0, Math.round(min * 60));
-  const h = Math.floor(totalSec / 3600);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}m`;
+  if (d >= 2) return `${d}d ${h}h`;
+  if (d > 0 || h > 0) return `${d * 24 + h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+/** A minute RANGE, humanely: minutes under two hours, hours under two days, days beyond ("~8–33 d").
+ *  Rounded for DISPLAY only — lo/hi are the honest estimate and are not touched. */
+export function fmtRangeMin(lo: number, hi: number): string {
+  const unit =
+    hi >= 2 * 1440 ? { div: 1440, name: 'd' } : hi >= 120 ? { div: 60, name: 'h' } : { div: 1, name: 'min' };
+  const a = Math.max(1, Math.round(lo / unit.div));
+  const b = Math.max(a, Math.round(hi / unit.div));
+  return a === b ? `~${a} ${unit.name}` : `~${a}–${b} ${unit.name}`;
 }
 
 // Live progress metrics inside the RUN HEADER band: TOTAL ELAPSED (a fact, ticking every second) + a rough,
@@ -3369,7 +3390,7 @@ const HeaderMetrics: React.FC<{
     // guess — a range that shifts is honest; a fake-precise minute count is not.
     const lo = Math.max(1, Math.round(mid * 0.5));
     const hi = Math.max(lo + 1, Math.round(mid * 2));
-    etaLabel = `~${lo}–${hi} min left`;
+    etaLabel = `${fmtRangeMin(lo, hi)} left`;
   } else if (itemsTotal > 0 && itemsDone >= itemsTotal) {
     etaLabel = 'wrapping up';
   } else {
@@ -3379,14 +3400,10 @@ const HeaderMetrics: React.FC<{
   return (
     <span className="flex items-center gap-3 shrink-0 tabular-nums">
       <Tip label="Total wall-clock time since the run started.">
-        <span className="text-xs font-semibold" style={{ color: SWARM_STATUS.action }}>
-          {fmtElapsed(elapsedMin)}
-        </span>
+        <span className="text-xs font-semibold text-text-primary">{fmtElapsed(elapsedMin)}</span>
       </Tip>
       <Tip label="A deliberately rough range — the local fleet is variable, so a precise figure would lie.">
-        <span className="text-xs font-semibold" style={{ color: AMBER }}>
-          {etaLabel}
-        </span>
+        <span className="text-xs text-text-secondary">{etaLabel}</span>
       </Tip>
     </span>
   );
@@ -3399,9 +3416,9 @@ const TODO_COLOR: Record<TodoState, string> = {
   pending: 'var(--color-text-secondary)',
   running: AMBER,
   done: STATUS_COLOR.done,
-  // Slate-blue — a real, solid colour that is deliberately NOT green: the work finished, the app was never
-  // run. It has to read as "shipped, unproven", which neither grey (pending) nor green (verified) says.
-  unverified: 'var(--color-node-2, #0891b2)',
+  // The stopped slate — solid, deliberately NOT green: the work finished, the app was never run. Distinct
+  // from pending (secondary text) by its check glyph and its darker ink; never a node hue.
+  unverified: SWARM_STATUS.stopped,
   failed: STATUS_COLOR.error,
   judge_failed: AMBER,
   blocked: 'var(--color-text-secondary)',
@@ -3424,7 +3441,7 @@ const TodoGlyph: React.FC<{ state: TodoState }> = ({ state }) => {
 
 const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) => (
   <span
-    className="text-[9px] uppercase tracking-wide px-1 py-px shrink-0"
+    className="text-[11px] px-1.5 py-px shrink-0"
     style={{ color, border: `1px solid ${color}`, borderRadius: CHIP_RADIUS }}
   >
     {text}
@@ -3434,7 +3451,7 @@ const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) =>
 // The judge's REASONING for a task — the diagnosis (verdict) + the exact corrective note it gave the worker.
 // This is what Mihai wanted surfaced: not just "judge decision" but WHY.
 const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({ judge }) => (
-  <div className="text-[10px]">
+  <div className="text-[11px]">
     <div className="flex items-center gap-1.5 flex-wrap">
       <Gavel className="h-3 w-3 shrink-0" style={{ color: AMBER }} />
       <span className="font-semibold text-text-primary">Judge</span>
@@ -3478,8 +3495,8 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
   const hasAny = toolCalls > 0 || thinking > 0 || model || reasoning.trim();
   if (!hasAny) return null;
   return (
-    <div className="text-[10px] text-text-secondary space-y-1">
-      <span className="uppercase tracking-wide text-text-tertiary">Live generation</span>
+    <div className="text-[11px] text-text-secondary space-y-1">
+      <span className="font-medium text-text-secondary">Live generation</span>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
         {model ? (
           <span>
@@ -3579,12 +3596,11 @@ const PhaseTodoRow: React.FC<{
           <TodoGlyph state={item.state} />
         )}
         {idx >= 0 ? (
-          <span
-            className="text-[9px] font-mono shrink-0"
-            style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
-          >
-            ⬢{String.fromCharCode(65 + (idx % 26))}
-          </span>
+          <NodeDot
+            hue={FORMATION_RAMP[idx % FORMATION_RAMP.length]}
+            letter={String.fromCharCode(65 + (idx % 26))}
+            size={7}
+          />
         ) : null}
         <span
           className="shrink-0 font-medium"
@@ -3599,7 +3615,7 @@ const PhaseTodoRow: React.FC<{
         {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
         {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
         {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
-        {item.detail ? <span className="text-[10px] text-text-secondary truncate">· {item.detail}</span> : null}
+        {item.detail ? <span className="text-[11px] text-text-secondary truncate">· {item.detail}</span> : null}
         {hasDetail ? (
           <span className="ml-auto shrink-0 text-text-secondary">
             {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -3609,7 +3625,7 @@ const PhaseTodoRow: React.FC<{
       {open && hasDetail ? (
         <div className="ml-5 mt-1 mb-1.5 space-y-1.5 border-l-0">
           {planTask && (planTask.difficulty || planTask.deps.length) ? (
-            <div className="text-[10px] text-text-secondary flex flex-wrap gap-x-3">
+            <div className="text-[11px] text-text-secondary flex flex-wrap gap-x-3">
               {planTask.difficulty ? (
                 <span>
                   difficulty <span className="text-text-primary">{planTask.difficulty}</span>
@@ -3623,8 +3639,8 @@ const PhaseTodoRow: React.FC<{
             </div>
           ) : null}
           {item.files && item.files.length ? (
-            <div className="text-[10px] text-text-secondary break-words">
-              <span className="uppercase tracking-wide text-text-tertiary">Files</span>{' '}
+            <div className="text-[11px] text-text-secondary break-words">
+              <span className="font-medium text-text-secondary">Files</span>{' '}
               {item.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -3649,7 +3665,7 @@ const PhaseTodoRow: React.FC<{
   );
 };
 
-// A WORK-board group header: solid state dot + the mono uppercase group name + count. The three groups
+// A WORK-board group header: solid state dot + the mono group name + count. The three groups
 // (RUNNING / QUEUED / DONE) are the "what is ongoing, what is planned, what is done" Mihai asked for.
 const BoardGroupHeader: React.FC<{ label: string; color: string; count: number; extra?: React.ReactNode }> = ({
   label,
@@ -3659,10 +3675,8 @@ const BoardGroupHeader: React.FC<{ label: string; color: string; count: number; 
 }) => (
   <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
     <span aria-hidden className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
-    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color }}>
-      {label}
-    </span>
-    <span className="text-[10px] tabular-nums text-text-secondary">· {count}</span>
+    <span className="text-[11px] font-semibold text-text-primary">{label}</span>
+    <span className="text-[11px] tabular-nums text-text-secondary">· {count}</span>
     {extra}
   </div>
 );
@@ -3741,12 +3755,11 @@ const BoardTaskRow: React.FC<{
           <TodoGlyph state={row.state} />
         )}
         {idx >= 0 ? (
-          <span
-            className="text-[9px] font-mono shrink-0"
-            style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
-          >
-            ⬢{String.fromCharCode(65 + (idx % 26))}
-          </span>
+          <NodeDot
+            hue={FORMATION_RAMP[idx % FORMATION_RAMP.length]}
+            letter={String.fromCharCode(65 + (idx % 26))}
+            size={7}
+          />
         ) : null}
         <span
           className="shrink-0 font-medium"
@@ -3761,7 +3774,7 @@ const BoardTaskRow: React.FC<{
         >
           {row.title}
         </span>
-        {row.kind === 'repair' ? <TodoPill text="repair" color="#b14cff" /> : null}
+        {row.kind === 'repair' ? <TodoPill text="repair" color="var(--color-text-secondary)" /> : null}
         {row.summary ? <span className="text-text-secondary truncate">· {row.summary}</span> : null}
         {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
         {!interrupted && row.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
@@ -3782,7 +3795,7 @@ const BoardTaskRow: React.FC<{
             label={`The judge wiped and re-streamed this call ${lane.restreams} time${lane.restreams === 1 ? '' : 's'} — the live reasoning and its counter restart; the durable thinking log keeps everything.`}
           >
             <span
-              className="text-[10px] font-bold px-1.5 py-0.5 text-white shrink-0"
+              className="text-[11px] font-bold px-1.5 py-0.5 text-white shrink-0"
               style={{ backgroundColor: SWARM_STATUS.stopped, borderRadius: 3 }}
               data-testid="lane-restreamed"
             >
@@ -3790,8 +3803,8 @@ const BoardTaskRow: React.FC<{
             </span>
           </Tip>
         ) : null}
-        {row.detail ? <span className="text-[10px] text-text-secondary truncate">· {row.detail}</span> : null}
-        <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[10px] tabular-nums text-text-secondary">
+        {row.detail ? <span className="text-[11px] text-text-secondary truncate">· {row.detail}</span> : null}
+        <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[11px] tabular-nums text-text-secondary">
           {row.state === 'running' && lane?.toolCalls ? (
             <span className="flex items-center gap-0.5">
               <Wrench className="h-3 w-3" />
@@ -3813,7 +3826,7 @@ const BoardTaskRow: React.FC<{
         </span>
       </div>
       {row.state === 'running' && !interrupted && !expanded ? (
-        <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[10px] min-w-0">
+        <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[11px] min-w-0">
           {/* A call FORMING leads even over a running one: its bytes are this instant's generation. */}
           {formingLiveLine(lane?.forming) ? (
             <>
@@ -3855,7 +3868,7 @@ const BoardTaskRow: React.FC<{
           style={{ borderRadius: CHIP_RADIUS }}
         >
           {row.difficulty || row.deps.length || lane?.model ? (
-            <div className="text-[10px] text-text-secondary flex flex-wrap gap-x-3">
+            <div className="text-[11px] text-text-secondary flex flex-wrap gap-x-3">
               {row.difficulty ? (
                 <span>
                   difficulty <span className="text-text-primary">{row.difficulty}</span>
@@ -3874,8 +3887,8 @@ const BoardTaskRow: React.FC<{
             </div>
           ) : null}
           {row.files && row.files.length ? (
-            <div className="text-[10px] text-text-secondary break-words">
-              <span className="uppercase tracking-wide text-text-tertiary">Files</span>{' '}
+            <div className="text-[11px] text-text-secondary break-words">
+              <span className="font-medium text-text-secondary">Files</span>{' '}
               {row.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -3896,7 +3909,7 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {laneError ? (
             <div>
-              <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: STATUS_COLOR.error }}>
+              <div className="text-[11px] font-medium mb-1" style={{ color: STATUS_COLOR.error }}>
                 {interrupted ? 'Last error before it stalled' : 'Why it failed'}
               </div>
               <MonoOutput text={laneError} failed />
@@ -3914,7 +3927,7 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+              <div className="text-[11px] font-medium text-text-secondary mb-1.5">
                 Tool calls · {lane?.toolCalls ?? calls.length}
                 {running.length > 0 ? ` · ${running.length} running` : ''}
                 {formingNote(lane?.forming)}
@@ -3986,7 +3999,7 @@ const WorkZone: React.FC<{
         explain="the plan as a live board — running, queued, done"
         right={
           total > 0 ? (
-            <span className="text-[10px] tabular-nums text-text-secondary">
+            <span className="text-[11px] tabular-nums text-text-secondary">
               {board.running.length} running · {board.queued.length} queued · {board.done.length} done
               {board.addedByReplan > 0 ? ` · +${board.addedByReplan} re-planned` : ''}
             </span>
@@ -4019,7 +4032,7 @@ const WorkZone: React.FC<{
                 label="Queued"
                 color={CALL_PENDING}
                 count={board.queued.length}
-                extra={<span className="text-[10px] text-text-secondary">— waiting on dependencies</span>}
+                extra={<span className="text-[11px] text-text-secondary">— waiting on dependencies</span>}
               />
               {rows(board.queued)}
             </>
@@ -4032,7 +4045,7 @@ const WorkZone: React.FC<{
                 count={board.done.length}
                 extra={
                   failedCount > 0 ? (
-                    <span className="text-[10px] font-semibold" style={{ color: STATUS_COLOR.error }}>
+                    <span className="text-[11px] font-semibold" style={{ color: STATUS_COLOR.error }}>
                       · {failedCount} failed
                     </span>
                   ) : undefined
@@ -4471,7 +4484,7 @@ const PlanningZone: React.FC<{
   const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => (
     <div key={key} className="mt-1">
       <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-        <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
+        <Braces className="h-3 w-3 text-text-secondary" />
         <span className={`${EYEBROW_CLASS} text-text-secondary`}>
           {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
           {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
@@ -4532,7 +4545,7 @@ const PlanningZone: React.FC<{
             {climb > 0 ? (
               <Tip label={`Confidence climbed ${trail[0]} → ${trail[trail.length - 1]} as goose retargeted it.`}>
                 <span
-                  className="text-[10px] tabular-nums flex items-center gap-0.5 shrink-0"
+                  className="text-[11px] tabular-nums flex items-center gap-0.5 shrink-0"
                   style={{ color: STATUS_COLOR.done }}
                 >
                   <TrendingUp className="h-2.5 w-2.5" /> +{climb}
@@ -4540,7 +4553,7 @@ const PlanningZone: React.FC<{
               </Tip>
             ) : null}
             {!open && plan.length > 0 ? (
-              <span className="text-[10px] tabular-nums text-text-secondary">
+              <span className="text-[11px] tabular-nums text-text-secondary">
                 {plan.length} task{plan.length === 1 ? '' : 's'} planned
               </span>
             ) : null}
@@ -4592,11 +4605,11 @@ const PlanningZone: React.FC<{
               return (
                 <div key={p.key} data-testid={`planning-phase-${p.key}`} data-phase-state={p.state}>
                   <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+                    <span className="text-[11px] font-medium text-text-secondary">
                       {p.label}
                     </span>
                     {p.counts.total > 0 ? (
-                      <span className="text-[10px] tabular-nums text-text-secondary">
+                      <span className="text-[11px] tabular-nums text-text-secondary">
                         {p.counts.done}/{p.counts.total}
                       </span>
                     ) : null}
@@ -4714,7 +4727,7 @@ const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
                 <span className="min-w-0 break-words whitespace-pre-wrap">
                   <InlineMarkdown content={item.answer} />
                   {item.model ? (
-                    <span className="ml-1 font-mono text-[10px] text-text-secondary">
+                    <span className="ml-1 font-mono text-[11px] text-text-secondary">
                       — {item.model}
                     </span>
                   ) : null}
@@ -4740,8 +4753,8 @@ const RunOverview: React.FC<{
 }> = ({ overview, phaseTodo, deviceOrder, workingDir }) => {
   const verifyItems = phaseTodo.find((p) => p.key === 'integrate')?.items ?? [];
   const verified = verifyItems.find((i) => i.id === 'v-e2e')?.state === 'done';
-  const hdr = 'text-[10px] uppercase tracking-wide text-text-secondary mb-1 mt-2';
-  const slate = 'var(--color-node-2, #0891b2)';
+  const hdr = 'text-[11px] font-medium text-text-secondary mb-1 mt-2';
+  const slate = SWARM_STATUS.stopped;
   return (
     <div className="border-t border-border-primary px-3 py-3 bg-background-secondary space-y-1">
       <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
@@ -4750,7 +4763,7 @@ const RunOverview: React.FC<{
           <button
             onClick={() => void window.electron.revealInFinder(workingDir)}
             title="Reveal the build folder in Finder — every file this run wrote lives here"
-            className="ml-auto flex items-center gap-1 text-[10px] font-normal text-text-secondary hover:text-text-primary"
+            className="ml-auto flex items-center gap-1 text-[11px] font-normal text-text-secondary hover:text-text-primary"
           >
             <FolderOpen className="h-3 w-3" /> Reveal build folder
           </button>
@@ -4810,7 +4823,7 @@ const RunOverview: React.FC<{
                   {overview.runCommand}
                 </code>
                 <span
-                  className="text-[9px] uppercase tracking-wide px-1 py-px"
+                  className="text-[11px] px-1.5 py-px"
                   style={{
                     color: overview.runCommandVerified ? STATUS_COLOR.done : slate,
                     border: `1px solid ${overview.runCommandVerified ? STATUS_COLOR.done : slate}`,
@@ -5043,7 +5056,7 @@ export const SwarmRunPanel: React.FC<{
   // Stable node identity: run.lanes RE-SORTS every poll (running first, then recency), so deriving letters
   // from first-seen lane order made a node's letter/hue flicker between polls. deriveFleet keys the row set
   // off the RESOLVED POOL (pool_resolved / run_started.pool), sorted deterministically, so EVERY fleet node
-  // renders — idle ones as an explicit idle row, never absence — and ⬢A/hue is fixed for the whole run.
+  // renders — idle ones as an explicit idle row, never absence — and the node's dot/hue is fixed for the whole run.
   // ALL lane kinds count toward WORKING in every mode (scouts/contracts/detailers/repair twins included):
   // the mode toggle controls display density below, not whether a busy node reads busy.
   const laneSources = [
@@ -5189,14 +5202,7 @@ export const SwarmRunPanel: React.FC<{
       <div className="border-b border-border-primary">
       <div className="flex items-center justify-between px-3 py-2 gap-2">
         <span className="flex items-center gap-2 min-w-0">
-          <span
-            aria-hidden
-            className="shrink-0"
-            style={{ width: 8, height: 8, background: ZONE_HUES.run, borderRadius: 1 }}
-          />
-          <span className={`${EYEBROW_CLASS} shrink-0`} style={{ color: ZONE_HUES.run }}>
-            Swarm run
-          </span>
+          <span className={`${EYEBROW_CLASS} shrink-0 text-text-primary`}>Swarm run</span>
           <Tip
             label={
               run.meta?.prompt ? (
@@ -5215,7 +5221,7 @@ export const SwarmRunPanel: React.FC<{
               label={`Resumed — reused the previous plan (${run.meta.resumed.tasks} task${run.meta.resumed.tasks === 1 ? '' : 's'}); planning skipped; ${run.meta.resumed.previouslyCompleted} finished task${run.meta.resumed.previouslyCompleted === 1 ? '' : 's'} re-run.`}
             >
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
                 style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
                 data-testid="run-resumed-chip"
               >
@@ -5232,7 +5238,7 @@ export const SwarmRunPanel: React.FC<{
             // the liveness banner is the honest surface, not an invitation to answer.
             <Tip label="The build is paused, waiting for your answers in the prompt below.">
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
                 style={{ backgroundColor: AMBER, borderRadius: CHIP_RADIUS }}
               >
                 <MessageCircleQuestion size={10} /> Waiting for you
@@ -5254,7 +5260,7 @@ export const SwarmRunPanel: React.FC<{
               }
             >
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
                 style={{ backgroundColor: stale ? SWARM_STATUS.solidStopped : AMBER, borderRadius: CHIP_RADIUS }}
               >
                 <Pause size={10} /> {stale ? 'Paused — engine gone' : 'Paused'}
@@ -5263,8 +5269,8 @@ export const SwarmRunPanel: React.FC<{
           ) : run.inProgress && !stale && !ended && run.phase ? (
             <Tip label={`Current phase: ${run.phase}`}>
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-                style={{ backgroundColor: STATUS_COLOR.running, borderRadius: CHIP_RADIUS }}
+                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
+                style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
               >
                 <Loader2 size={10} className="animate-spin" /> {run.phase}
               </span>
@@ -5302,16 +5308,17 @@ export const SwarmRunPanel: React.FC<{
           </span>
           {run.inProgress && !ended && !clarifyPending && workingDir ? (
             // PAUSE / RESUME — hold the build at the next task boundary (in-flight work finishes, nothing is
-            // lost) and resume re-running nothing. Amber (not red) + a ‖/▶ glyph so it never reads as the
-            // terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
+            // lost) and resume re-running nothing. An ACTION, so the accent outline (filled while the request
+            // stands) + a ‖/▶ glyph — never the warn colour, never red, so it never reads as a state or as
+            // the terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
             <button
               onClick={() => runDir && window.electron.swarmSetPaused(runDir, !run.pauseRequested)}
-              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
+              className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 border transition-colors"
               style={{
                 borderRadius: CHIP_RADIUS,
-                borderColor: AMBER,
-                color: run.pauseRequested ? '#fff' : AMBER,
-                backgroundColor: run.pauseRequested ? AMBER : 'transparent',
+                borderColor: BLUE,
+                color: run.pauseRequested ? '#fff' : BLUE,
+                backgroundColor: run.pauseRequested ? BLUE : 'transparent',
               }}
               title={
                 !run.pauseRequested
@@ -5454,7 +5461,7 @@ export const SwarmRunPanel: React.FC<{
             label="Fleet"
             explain="what each node is doing right now"
             right={
-              <span className="text-[10px] tabular-nums text-text-secondary">
+              <span className="text-[11px] tabular-nums text-text-secondary">
                 {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
                 {run.inProgress && !stale && !ended ? ` · ${fleet.workingByDevice.size} working` : ''}
               </span>
