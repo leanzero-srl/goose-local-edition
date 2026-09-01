@@ -177,3 +177,10 @@ minutes since dispatch, and r6e's counterpart (open 46 · research lane ≤ 32 �
 counterpart with no frame and no new ground in the last 20k chars → a finding with the quotes, RECOMMEND kill of the
 LANE class (the fix is an evidence arm — reasoning bytes since the last action beyond the lane kind's measured emit
 history — never seconds). A lane still breaking new ground is not a finding, whatever the clock says.
+
+**A stream requested AFTER a collected `final_output` on a planner lane is a finding now, not a WATCH** (r6f 22:49→22:55: the
+recipe collected the emit, `slices_opened` never fired, the node went PROCESSINGPROMPT→GENERATING on the same lane with nothing
+reaching the logs — a duplicate buffered emit). Proof set: the `recipe__final_output ok` row's ts, the absence of the phase's
+consuming event N minutes later, `lms ps` on the lane's node, the desk poll-counter reset. r6e's collection and consuming event
+share the same second — that is the baseline. RECOMMEND kill of the lane class with those quotes; the fix is the engine
+ending the lane at collection.
