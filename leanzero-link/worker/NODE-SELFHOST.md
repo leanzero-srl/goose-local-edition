@@ -23,7 +23,8 @@ The script reads no secret values itself and the repo contains none — the env 
 everything. On boot it logs one `config_error` line per configuration problem `parseConfig`
 found (`mesh_provider_partial_config` with the missing `HEADSCALE_*` names,
 `jwt_secret_too_short`, `ts_key_expiry_invalid`), then `node_server_listening` with the
-bound addr, KV dir, capabilities and `meshProvider`.
+bound addr, KV dir, capabilities and `meshProvider`, and `fs_kv_swept{removed}` from the
+boot-time sweep of expired KV records (below).
 
 The server binds `127.0.0.1:<PORT>` only. It never listens on a routable interface — Funnel
 terminates TLS and forwards to loopback.
@@ -67,6 +68,18 @@ file + `rename`), and every operation on a key runs on that key's promise chain,
 corrupt/half-written file, or one whose embedded key is not the key looked up, is treated as
 absent, logged (`fs_kv_corrupt`), and cleaned up — never thrown. `nodesecret:<email>` records
 have no expiry.
+
+`get` only removes a stale file when that key is read again, so a file for a never-repeated
+`rl:ip:*`, `rl:email:*` or `otp:*` key would otherwise stay forever. `sweepExpired(now)` on
+the store removes every record whose `expiresAtMs` has passed (the same `>=` predicate `get`
+uses) and returns the count; records without a TTL are never candidates. The Node server runs
+it at boot and then once per rate window (`RATE_WINDOW_SECONDS`, 3600 s — the window is what
+sets those records' `expirationTtl`, so nothing expired outlives two sweeps), logging
+`fs_kv_swept{removed}` each time and `fs_kv_sweep_error{error}` if the directory cannot be
+listed. A removal is taken on the key's own promise chain and re-checks the record there, so
+an `update` in flight on that key is never deleted underneath: a record it refreshed is kept
+and not counted. Corrupt or misplaced files are logged by the sweep (`fs_kv_corrupt{file}`)
+and left for `get` to clean up.
 
 Files written by earlier versions (base64url-named) are never read again and can be deleted.
 
