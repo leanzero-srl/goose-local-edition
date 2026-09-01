@@ -19,6 +19,10 @@ export const OTP_TTL_SECONDS = 600;
 export const OTP_MAX_ATTEMPTS = 5;
 export const EMAIL_RATE_LIMIT = 3;
 export const IP_RATE_LIMIT = 10;
+// Verify calls per email per window. A maximally clumsy legitimate hour is 3 codes × 5
+// attempts + 3 successes = 18; this bounds guessing at 20/1e6 per hour per email even
+// where the attempt counter is only eventually consistent (Cloudflare KV).
+export const VERIFY_RATE_LIMIT = 20;
 export const RATE_WINDOW_SECONDS = 3600;
 export const JWT_TTL_SECONDS = 180 * 86400;
 export const DEFAULT_TS_KEY_EXPIRY_SECONDS = 600;

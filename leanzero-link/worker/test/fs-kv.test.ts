@@ -122,6 +122,48 @@ describe("createFsKvStore", () => {
     await expect(stat(join(dir, "..", "..", "..", "..", "etc", "passwd-should-not-exist"))).rejects.toThrow();
   });
 
+  it("update is atomic per key: 500 concurrent increments land as exactly 500", async () => {
+    const kv = createFsKvStore(dir);
+    await Promise.all(
+      Array.from({ length: 500 }, () =>
+        kv.update("counter", (raw) => ({ value: String((raw === null ? 0 : Number(raw)) + 1) })),
+      ),
+    );
+    expect(await kv.get("counter")).toBe("500");
+  });
+
+  it("update sees an expired record as absent and can keep or delete", async () => {
+    let nowMs = 1_000_000;
+    const kv = createFsKvStore(dir, { now: () => nowMs });
+    await kv.put("k", "old", { expirationTtl: 60 });
+    nowMs += 61_000;
+    const seen: Array<string | null> = [];
+    await kv.update("k", (raw) => {
+      seen.push(raw);
+      return "keep";
+    });
+    expect(seen).toEqual([null]);
+    expect((await readdir(dir)).length).toBe(0);
+    await kv.put("k", "v");
+    await kv.update("k", () => "delete");
+    expect(await kv.get("k")).toBeNull();
+  });
+
+  it("serializes put/get/delete with update on the same key, never across keys", async () => {
+    const kv = createFsKvStore(dir);
+    const order: string[] = [];
+    const slow = kv.update("a", (raw) => {
+      order.push(`update:${raw}`);
+      return { value: "from-update" };
+    });
+    const later = kv.put("a", "from-put").then(() => order.push("put"));
+    const otherKey = kv.put("b", "independent").then(() => order.push("b"));
+    await Promise.all([slow, later, otherKey]);
+    expect(order.indexOf("update:null")).toBeLessThan(order.indexOf("put"));
+    expect(await kv.get("a")).toBe("from-put");
+    expect(await kv.get("b")).toBe("independent");
+  });
+
   it("writes the on-disk record as JSON with the value and an expiry", async () => {
     const kv = createFsKvStore(dir, { now: () => 5_000 });
     await kv.put("k", "v", { expirationTtl: 600 });

@@ -1,5 +1,5 @@
 import { parseConfig, type WorkerEnvVars } from "../src/lib/config";
-import type { Deps, FetchFn, KVStore } from "../src/lib/deps";
+import type { Deps, FetchFn, KVStore, KvMutation } from "../src/lib/deps";
 
 export class FakeClock {
   nowMs: number;
@@ -43,6 +43,29 @@ export class MemoryKV implements KVStore {
 
   async delete(key: string): Promise<void> {
     this.entries.delete(key);
+  }
+
+  // Read, mutate and write inside ONE synchronous step — nothing can interleave, which
+  // is the contract the handlers rely on and what fs-kv's per-key chain provides.
+  async update(key: string, mutate: (current: string | null) => KvMutation): Promise<void> {
+    const entry = this.entries.get(key);
+    const current = entry === undefined || (entry.expiresAtMs !== null && this.clock() >= entry.expiresAtMs) ? null : entry.value;
+    if (current === null) {
+      this.entries.delete(key);
+    }
+    const decision = mutate(current);
+    if (decision === "keep") {
+      return;
+    }
+    if (decision === "delete") {
+      this.entries.delete(key);
+      return;
+    }
+    if (decision.expirationTtl !== undefined && decision.expirationTtl < 60) {
+      throw new Error(`KV expirationTtl must be >= 60 seconds, got ${decision.expirationTtl}`);
+    }
+    const expiresAtMs = decision.expirationTtl !== undefined ? this.clock() + decision.expirationTtl * 1000 : null;
+    this.entries.set(key, { value: decision.value, expiresAtMs });
   }
 }
 
