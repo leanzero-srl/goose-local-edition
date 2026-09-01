@@ -42,10 +42,12 @@ proves or refutes it. STATUS: `LANDED <sha>` · `IN FLIGHT <batch>` · `MEASURE 
 r6c web-viz = ONE 39KB file = ONE session = 519 min; ledgerd-core 431 min; 65% of BUILD one node busy.
 `split_fat_modules` had been test-only since b0dd68eac; the synthesis prompt punished dependencies into fat
 tasks. IN FLIGHT 2c: fatness measured as spec sections per owned file → a PATCH request to split THAT task;
-a shard is a FILE with the module's declared interface (no stub files — model-written stubs were the measured
-CONTRACTS harm); every shard ends with a structured MERGE NOTE; a code-first MERGER per module parses, checks
-exports vs the declared interface, wires, reads the notes, and dispatches gap tasks to free nodes immediately;
-promotion on a passing interface check. Repair: one shard per finding, hunk merge of non-overlapping diffs,
+each shard works in its OWN temp folder producing PIECES (functions, sections) per its split plus a structured
+README (provides / assumes / unfinished / checked-with); nobody writes the module's final file until the MERGER,
+which is code-assisted — parse, cross-shard symbol table, pieces concatenated VERBATIM in the declared order —
+and whose model writes only the glue, fills small gaps itself and dispatches bigger ones to free nodes
+immediately; promotion on a passing interface check. (Mihai's design, 2026-09-01; my earlier "separate
+final files" narrowing was wrong — his version avoids overwrites by construction and covers one-file modules.) Repair: one shard per finding, hunk merge of non-overlapping diffs,
 no round barrier, `fix_claimed_without_edit` loud, NOT REAL must quote its replay. Expected to fail first;
 tripwires: shard bytes ≪ its sections' weight + notes full of "unfinished"; `MERGE GAP` rows outpacing free nodes.
 
