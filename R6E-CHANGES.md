@@ -26,18 +26,18 @@ proves or refutes it. STATUS: `LANDED <sha>` · `IN FLIGHT <batch>` · `MEASURE 
 |---|---|---|
 | Spec sections route to CONSUMERS + cross-cutting broadcast | r6c product-killer: `Endpoints` (the sort values) went only to ledgerd-api; web-console never saw `-created_at`, built 330m before api.py existed, sent `sort=date_desc` → 400 → zero rows. Splice is owner-only (`research.rs` `splice_claimed_sections`); no budget exists — r5's opener multi-claimed, r6c's partitioned | LANDED `645600966` — "calls into" (advertised routes, claimed parent's children) + cross-cutting broadcast; one helper for brief and research prompt |
 | Decisions rendered per slice | one identical 5,582-char block in all 5 r6c briefs (22k duplicate); truncated answer pastes | LANDED `13cae3428` + `d35733607` — only decisions naming the slice reach its brief; decisions AND research answers render whole; the duplicate worker-channel copy deleted |
-| A brief may not name a file it does not own | r6c web-console: "Ship DECISIONS.md (owned by this slice)" vs `files=[web/*]`; the worker burned its 0% and 80% spans on the contradiction | IN FLIGHT 2a D5 (rewritten + loud `brief_names_unowned_file`) |
-| Workers are told `.swarm/request.md` exists | r6c web-viz spent ~160 min extracting the 53k spec from run.jsonl with python | IN FLIGHT 2a D6 |
+| A brief may not name a file it does not own | r6c web-console: "Ship DECISIONS.md (owned by this slice)" vs `files=[web/*]`; the worker burned its 0% and 80% spans on the contradiction | LANDED `e6ea12341` |
+| Workers are told `.swarm/request.md` exists | r6c web-viz spent ~160 min extracting the 53k spec from run.jsonl with python | LANDED `39335acb5` |
 | Steer-cut turn is not a "call final_output NOW" turn | r6d q5 received the relay paired with "You MUST call the final_output tool NOW"; agent.rs arm order | LANDED `65df1cd55` (+ test proven failing on the old arm) |
 | Late minis relayed to running lanes, drained during judge looks | E7 916c7414b; the drain at the loop top was unreachable during a look | LANDED in `8d6a4eb7c` |
 | Repair ownership: every finding owned, criticals never unassigned | r5 and r6c: the product-killing criticals rode `unassigned`/`known_bugs` both rounds | LANDED `afae2eb1b` (replay: 0 unowned) |
 | Probe artifacts are not findings | 85% (r6c) / 88% (r5) of repair node-minutes went to SIX false findings: bare `curl -X POST` receiving a correct 401/400 JSON envelope; HEAD replays 6/6 → "NOT a finding" | LANDED (GAP 3 arm, `run_spec_contract`) |
 | Placement: heaviest-first onto distinct nodes; weight 1×3 | r6c stacked both hard tasks + 2 judge streams on workhorse (measured slowest, 8.28 tok/s); web-viz thought at 344 chars/min vs 1,290 alone | LANDED `623ae8eef` + config |
 | Judge looks off the busy planner node | r6c 222/222 looks on workhorse | LANDED `8b03be2da` |
-| Pre-fix tree snapshot at the REPAIR handover | `.swarm/best-tree` is overwritten every strictly-better verify → r6c's pre-fix tree is gone; "did the waves move the score" unmeasurable | IN FLIGHT 2a D7 (`.swarm/prefix-tree`, write-once; harness `score_run.sh --prefix` landed) |
+| Pre-fix tree snapshot at the REPAIR handover | `.swarm/best-tree` is overwritten every strictly-better verify → r6c's pre-fix tree is gone; "did the waves move the score" unmeasurable | LANDED `09f742a63` (+ harness `score_run.sh --prefix`) |
 | `spec_documented_keys` reads prose-documented keys too | keys documented as a fenced shape under a "shape below" label were invisible to the extractor (table cells only) | LANDED `857eb4ef2` |
 | Desktop shows research as it now runs | one lane per slice batch with its questions listed; "N answered from the spec (no lane)" in the Research header; the task card reads the one joined lane; the Thinking pane never shows a dead call's text | LANDED `970f4b22f` `88b1352db` `72b70ebc7` `bd5144bfc` `54514687d` (retired levers off the settings page; the ribbon never offers the deleted Review phase) |
-| `planner_rank` matches device id | r6d aux order [workhorse, gabee, mihai] because mihai's model_id matched no pattern | IN FLIGHT 2a D9 |
+| `planner_rank` matches device id | r6d aux order [workhorse, gabee, mihai] because mihai's model_id matched no pattern | LANDED `bd66eb2fd` |
 
 ## 3. THE BET — module shards + merger (Mihai's design, 2026-09-01)
 
@@ -77,7 +77,7 @@ HIGH: the deletions (measured zero delivery over 2–3 runs; removing them canno
 rule, ownership, skeleton deps, and the fan cut's ONE-LANE-PER-SLICE half (works structurally, no cap). MEDIUM on
 the fan cut's FACT half: its arm has never fired on a measured run (every opener so far emitted bare strings), so
 r6e's `research_planned.facts` is its first test — if 0, research still runs as 6 lanes but without the saving,
-and the opener prompt is what gets fixed — being fixed NOW in 2a D10(8): both previous openers announced a file
+and the opener prompt is what gets fixed — fixed in `ebe09decd`: both previous openers announced a file
 check and never made one, so the prompt makes the grep the default path with worked examples from this spec, and
 the schema requires a cite for every kind (the validator, not a retry count, refuses a bare `design`). MEDIUM: consumer routing (traced to change the r6c outcome, but a
 model handed the values can still guess), the judge trigger (fewer looks = less contention; the loop-breaker
