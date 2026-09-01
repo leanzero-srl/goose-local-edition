@@ -123,6 +123,13 @@ fn spec(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
     }
 }
 
+fn spec_hard(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
+    TaskSpec {
+        difficulty: Difficulty::Hard,
+        ..spec(id, deps, files)
+    }
+}
+
 fn dev(id: &str, model: &str, weight: u32) -> DeviceCfg {
     dev_sw(id, model, weight, 1)
 }
@@ -495,6 +502,136 @@ async fn speed_weight_wins_every_equal_load_tie_without_stacking() {
     assert!(
         r2.peak_per_device.get("z-fast").copied().unwrap_or(0) <= 1,
         "load stays primary: the second task spreads instead of stacking the fastest device"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_node_outranks_a_loaded_heavier_one_for_a_hard_task() {
+    // SPREAD BEFORE STACK, the first question the placement key asks. `fast` is weighted 4 — it
+    // could legally hold four concurrent workers and it is the highest speed_weight — while `slow`
+    // is weight 1 and sorts FIRST by index. Two HARD tasks are ready in the same instant. The
+    // second must go to the EMPTY node even though the fastest node still has three free slots,
+    // because a device with zero calls in flight outranks any device with one REGARDLESS of weight.
+    //
+    // WHY IT IS PINNED RATHER THAN NEW (r6c, 2026-09-01): the occupancy measurement found the
+    // scheduler never once under-dispatched (0 minutes with an idle node and a ready unclaimed
+    // task) and the five-leaf push did fill breadth-first. Breadth-first is load-primary in
+    // `pick_device` and in `hard_device_key`; nothing else in the run guarantees it, so it gets a
+    // test that fails if weight is ever promoted above load again.
+    let mut fast = dev("z-fast", "m-z", 4);
+    fast.speed_weight = 4;
+    let slow = dev("a-slow", "m-a", 1); // speed_weight 1, index 0
+
+    let dag = Dag::from_specs(vec![
+        spec_hard("h1", &[], &["h1.py"]),
+        spec_hard("h2", &[], &["h2.py"]),
+    ])
+    .unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let sched = Scheduler::new(vec![slow, fast], 3);
+    let report = sched.run(dag, mock(&rec, 40), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 2);
+    let r = rec.lock().unwrap();
+    assert_eq!(
+        r.run_devices["h1"],
+        vec!["z-fast".to_string()],
+        "the first hard task goes to the highest speed_weight host on an idle fleet"
+    );
+    assert_eq!(
+        r.run_devices["h2"],
+        vec!["a-slow".to_string()],
+        "the second must take the EMPTY node, not the fastest node's spare slot: co-locating a \
+         second worker measured -54% per lane and -8% aggregate (r6c)"
+    );
+    assert_eq!(
+        r.peak_per_device.get("z-fast").copied().unwrap_or(0),
+        1,
+        "weight 4 means 'may eventually stack 4', never 'fill me before touching an idle node'"
+    );
+}
+
+#[tokio::test]
+async fn two_heavy_ready_tasks_land_on_distinct_nodes() {
+    // r6c's 12:01:05.541 dispatch instant, reproduced task-for-task. `skeleton` completes and five
+    // leaves become ready in the same pass on a 3-node fleet (speed_weight 3/2/1, weight 2 each).
+    //
+    // MEASURED OUTCOME BEING PINNED AGAINST: `ledgerd-core` (431.2 min) and `web-viz` (518.6 min)
+    // — 6.3x and 7.6x the 68.5-min median and together 67% of all BUILD work — were placed on the
+    // SAME host at the same microsecond and nothing ever moved them. 65% of BUILD ran with exactly
+    // one node busy; the longest single-node stretch was 175 minutes with the other two at 0%.
+    //
+    // Two independent rules make that impossible here, and either one alone suffices:
+    //   (a) the ready order breaks a fan-out tie by difficulty, so `web-viz` is claimed THIRD
+    //       (onto the last empty node) instead of FOURTH (into the first doubled-up slot);
+    //   (b) at equal load, a device carrying no hard task outranks the fastest device that does.
+    //
+    // The join is deliberately named `join`, not `integrate-verify`: this test is about placement,
+    // and the real sink id would drag in the sink-only claim gates.
+    let dag = Dag::from_specs(vec![
+        spec_hard("skeleton", &[], &["app/__init__.py"]),
+        spec_hard("ledgerd-core", &["skeleton"], &["app/db.py"]),
+        spec("notifierd", &["skeleton"], &["app/notifierd/impl.py"]),
+        spec_hard("web-console", &["skeleton"], &["web/app.js"]),
+        spec_hard("web-viz", &["skeleton"], &["web/viz.js"]),
+        spec("decisions-doc", &["skeleton"], &["DECISIONS.md"]),
+        spec_hard(
+            "ledgerd-api",
+            &["ledgerd-core", "skeleton"],
+            &["app/api.py"],
+        ),
+        spec(
+            "join",
+            &[
+                "ledgerd-core",
+                "ledgerd-api",
+                "notifierd",
+                "web-console",
+                "web-viz",
+                "skeleton",
+            ],
+            &[],
+        ),
+    ])
+    .unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(
+        vec![
+            dev_sw("gabee", "m-g", 2, 1),
+            dev_sw("mihai", "m-m", 2, 2),
+            dev_sw("workhorse", "m-w", 2, 3),
+        ],
+        3,
+    )
+    .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched.run(dag, mock(&rec, 40), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 8);
+    let r = rec.lock().unwrap();
+    let core = r.run_devices["ledgerd-core"][0].clone();
+    let viz = r.run_devices["web-viz"][0].clone();
+    assert_ne!(
+        core, viz,
+        "the two longest tasks in the run must not share a host while a node is empty \
+         (r6c: both on workhorse at 12:01:05, 431 min of co-residency)"
+    );
+    assert_eq!(
+        core, "workhorse",
+        "the first hard task still takes the fastest host"
+    );
+    assert_eq!(
+        viz, "gabee",
+        "the third hard task takes the last EMPTY node instead of the fastest node's spare slot"
+    );
+    let log = log.lock().unwrap();
+    let pos = |t: &str| {
+        log.iter()
+            .position(|e| e.starts_with(&format!("dispatch:{t}:")))
+            .unwrap_or_else(|| panic!("no dispatch for {t} in {log:?}"))
+    };
+    assert!(
+        pos("web-viz") < pos("notifierd"),
+        "heaviest first: inside one fan-out tier a HARD task is claimed before an easy one, so \
+         it reaches an empty node rather than the first stacked slot; log = {log:?}"
     );
 }
 
