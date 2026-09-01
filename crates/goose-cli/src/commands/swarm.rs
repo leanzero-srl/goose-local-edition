@@ -69,10 +69,11 @@ use orientation::{
 mod research;
 use research::{
     announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
-    emit_research_planned, files_from_objective, fold_research_panic, load_research_mini,
-    persist_request_text, persist_research_row, relay_note, relay_targets, research_dispatch_text,
-    research_fan_lanes, research_prompt_head, research_request_block, research_schema,
-    research_sources_block, research_system_text, ResearchQuestion, ResearchRow, REQUEST_FILE,
+    emit_research_planned, files_from_objective, fold_research_panic, land_spec_fact,
+    load_research_mini, persist_request_text, persist_research_row, relay_note, relay_targets,
+    research_dispatch_text, research_fan_lanes, research_prompt_head, research_request_block,
+    research_schema, research_sources_block, research_system_text, ResearchQuestion, ResearchRow,
+    REQUEST_FILE,
 };
 mod research_plan;
 use research_plan::{covering_mini, route_questions_to_decisions};
@@ -21266,18 +21267,17 @@ impl GooseAgentDispatcher {
                         emit_question_disposition(self.events.as_ref(), &rq, "resumed");
                         rows.push(row);
                     }
-                    // THE FAN CUT (C1): a lookup the opener settled by reading the request —
-                    // fact AND cite — is not a question. It lands as a terminal row (the brief's
-                    // SPEC FACTS block, the ledger block and the snowball all read it) and NO
-                    // lane runs. A lookup without a fact is a search that found nothing and
-                    // rides a lane exactly like a design question — named in
-                    // `research_question_kind` with `cite`, never dropped. r6d: 13 of the 27
-                    // dispatched questions were this class, 198 lane-minutes.
+                    // THE FAN CUT (C1, VA-095): a lookup whose cite is a line range of the request
+                    // is not a question — `land_spec_fact` renders those lines of `spec` as the
+                    // terminal row (SPEC FACTS block, ledger block, snowball), persists the mini,
+                    // NO lane runs; the opener wrote no fact text (r6g: 80 facts, 61 opener-min on
+                    // one node). A cite past the file or across sections is named, and rides a lane.
                     None if q.is_cited_fact() => {
-                        emit_question_disposition(self.events.as_ref(), &rq, "fact");
-                        let row = ResearchRow::spec_fact(&rq);
-                        persist_research_row(&self.working_dir, self.events.as_ref(), &row);
-                        fact_rows.push(row);
+                        let events = self.events.as_ref();
+                        match land_spec_fact(&self.working_dir, spec, &rq, events) {
+                            Some(row) => fact_rows.push(row),
+                            None => to_dispatch.push((rq, head.clone())),
+                        }
                     }
                     // C2(a): routed to an open decision — no row of its own; the decision's
                     // settlement rides every brief and this slice's brief points at it.

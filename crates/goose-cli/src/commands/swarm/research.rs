@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use super::decisions::{self, DecisionState, PlanDecision, DECISION_SLICE};
 use super::findings::FINDING_PATH_EXTS;
-use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
+use super::opener::{OpenOutput, OpenQuestion, QuestionKind, SpecCite};
 use super::orientation::{children_of, heading_key, top_level};
 use super::research_plan::{content_words, decision_ids};
 use super::spec_surface::{
@@ -25,8 +25,9 @@ use super::{EventSink, SpecSection};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
-/// activity key and the brief partition all share. `kind`/`cite`/`fact` are the opener's own
-/// words about it (the question contract in opener.rs), carried so the row can record them.
+/// activity key and the brief partition all share. `kind`/`cite` are the opener's own words
+/// about it (the question contract in opener.rs), carried so the row can record them; there is
+/// no fact text (VA-095) — a lookup's answer is rendered from its cite (`land_spec_fact`).
 #[derive(Clone, Debug)]
 pub(super) struct ResearchQuestion {
     pub(crate) slice: String,
@@ -34,7 +35,6 @@ pub(super) struct ResearchQuestion {
     pub(crate) question: String,
     pub(crate) kind: QuestionKind,
     pub(crate) cite: String,
-    pub(crate) fact: String,
 }
 
 impl ResearchQuestion {
@@ -45,7 +45,6 @@ impl ResearchQuestion {
             question: q.text.clone(),
             kind: q.kind,
             cite: q.cite.clone(),
-            fact: q.fact.clone(),
         }
     }
 
@@ -58,7 +57,6 @@ impl ResearchQuestion {
             question: line.to_string(),
             kind: QuestionKind::Design,
             cite: String::new(),
-            fact: String::new(),
         }
     }
 }
@@ -120,18 +118,19 @@ pub(crate) struct ResearchRow {
 }
 
 impl ResearchRow {
-    /// A SPEC FACT as a terminal row: the opener answered the question from the request and cited
-    /// where. `status` is answered — the brief, the ledger block and the snowball all read it as
-    /// settled — while `origin` says NO LANE RAN, so `research_answered` is never emitted for it
-    /// (the per-question dispatched/answered accounting stays a lane count). `model` is empty
-    /// and `secs` 0 honestly: nothing was called.
-    pub(super) fn spec_fact(q: &ResearchQuestion) -> Self {
+    /// A SPEC FACT as a terminal row: the opener cited where the request answers the question
+    /// and `rendered` is those lines, rendered by code (`land_spec_fact`, VA-095). `status` is
+    /// answered — the brief, the ledger block and the snowball all read it as settled — while
+    /// `origin` says NO LANE RAN, so `research_answered` is never emitted for it (the
+    /// per-question dispatched/answered accounting stays a lane count). `model` is empty and
+    /// `secs` 0 honestly: nothing was called.
+    pub(super) fn spec_fact(q: &ResearchQuestion, rendered: &str) -> Self {
         Self {
             slice: q.slice.clone(),
             q_index: q.q_index,
             question: q.question.clone(),
             status: RESEARCH_ANSWERED.to_string(),
-            answer: q.fact.clone(),
+            answer: rendered.to_string(),
             reason: None,
             detail: None,
             raised: Vec::new(),
@@ -1427,10 +1426,10 @@ pub(super) fn emit_research_planned(
 
 /// The opener's per-question disposition, one event per question when the fan's queue is built
 /// (the loud channel for the fan cut): `kind` and `cite` as the opener wrote them (`cite` null
-/// when it named none), whether a `fact` came with it, and what the engine did — `fact` (a
-/// cited spec fact, no lane), `dispatch` (rides a lane), or `resumed` (its mini already
-/// existed). A `spec_lookup` dispatched with `cite: null` is the opener saying it searched and
-/// found nothing — visible here, never silently dropped.
+/// when it named none) and what the engine did — `fact` (a cited spec fact rendered from the
+/// request, no lane), `dispatch` (rides a lane), or `resumed` (its mini already existed). A
+/// `spec_lookup` dispatched with a grep in `cite` is the opener saying it searched and found
+/// nothing — visible here, never silently dropped.
 pub(super) fn emit_question_disposition(
     events: &dyn EventSink,
     q: &ResearchQuestion,
@@ -1442,10 +1441,58 @@ pub(super) fn emit_question_disposition(
         "q_index": q.q_index,
         "kind": q.kind.as_str(),
         "cite": (!q.cite.is_empty()).then(|| q.cite.clone()),
-        "fact": !q.fact.is_empty(),
         "disposition": disposition,
         "question": q.question.chars().take(200).collect::<String>(),
     }));
+}
+
+/// VA-095: the SPEC FACT is rendered BY CODE from the cite — the opener writes no answer text.
+/// `q.cite` names a line range of the request file (`SpecCite`, the form `is_cited_fact` tested)
+/// and those lines of `spec` — the same bytes `persist_request_text` wrote, so the cite's line
+/// numbers are this text's — become the row's answer verbatim; the row is persisted as the
+/// `spec_fact` mini and `spec_fact_rendered{slice, q_index, cite, lines, span}` says how much of
+/// the file it is. A cite past the file, across two sections or over blank lines only is NOT a
+/// fact location: `spec_fact_unrenderable{slice, q_index, cite, reason}` names it and `None`
+/// sends the question down a lane (disposition `dispatch`) — loud, never a silent drop and never
+/// an invented answer. r6g's motivating emit: 80 facts written by the model (62 over 200 chars,
+/// max 471) in a 61-minute opener on one node while two idled.
+pub(super) fn land_spec_fact(
+    root: &Path,
+    spec: &str,
+    q: &ResearchQuestion,
+    events: &dyn EventSink,
+) -> Option<ResearchRow> {
+    let rendered = match SpecCite::parse(&q.cite) {
+        None => Err("no_line_range"),
+        Some(cite) => cite.render(spec).map(|text| (cite, text)),
+    };
+    match rendered {
+        Ok((cite, text)) => {
+            emit_question_disposition(events, q, "fact");
+            events.write_value(serde_json::json!({
+                "event": "spec_fact_rendered",
+                "slice": q.slice,
+                "q_index": q.q_index,
+                "cite": q.cite,
+                "lines": text.lines().count(),
+                "span": cite.span(),
+            }));
+            let row = ResearchRow::spec_fact(q, &text);
+            persist_research_row(root, events, &row);
+            Some(row)
+        }
+        Err(reason) => {
+            events.write_value(serde_json::json!({
+                "event": "spec_fact_unrenderable",
+                "slice": q.slice,
+                "q_index": q.q_index,
+                "cite": q.cite,
+                "reason": reason,
+            }));
+            emit_question_disposition(events, q, "dispatch");
+            None
+        }
+    }
 }
 
 /// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
@@ -3041,15 +3088,16 @@ mod tests {
     /// states outright): a cited spec fact is a terminal row with `origin: spec_fact`, no model,
     /// no seconds; the brief renders it under SPEC FACTS (cited) with its cite, ABOVE the lane
     /// answers, and the question leaves the QUESTIONS block; `research_question_kind` names the
-    /// disposition with the cite; a lookup WITHOUT a fact is not a fact (it dispatches). The
-    /// event funnel never emits `research_answered` for a fact — that count stays a lane count.
+    /// disposition with the cite; a lookup whose cite is a grep is not a fact (it dispatches).
+    /// The event funnel never emits `research_answered` for a fact — that count stays a lane
+    /// count. (VA-095: the row's answer is the cited line as code rendered it, here line 148.)
     #[test]
     fn a_cited_spec_fact_is_a_row_with_no_lane_and_renders_under_its_own_heading() {
+        let line_148 = "`status` filters to one of `settled`, `pending`, `refunded`, `failed`; `currency` to one of `EUR`, `USD`, `JPY`, `KWD`; `sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT).";
         let fact: OpenQuestion = serde_json::from_value(serde_json::json!({
             "question": "Which sort keys does sort=<k> accept and in what direction(s); which status/currency values do the filters accept?",
             "kind": "spec_lookup",
-            "cite": "request.md:148",
-            "fact": "`status` filters to one of `settled`, `pending`, `refunded`, `failed`; `currency` to one of `EUR`, `USD`, `JPY`, `KWD`; `sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT)."
+            "cite": "request.md:148"
         }))
         .unwrap();
         let searched: OpenQuestion = serde_json::from_value(serde_json::json!({
@@ -3060,7 +3108,8 @@ mod tests {
         .unwrap();
         assert!(fact.is_cited_fact() && !searched.is_cited_fact());
         let q1 = ResearchQuestion::of("ledger-api", 1, &fact);
-        let row = ResearchRow::spec_fact(&q1);
+        let row = ResearchRow::spec_fact(&q1, line_148);
+        assert_eq!(row.answer, line_148);
         assert_eq!(row.status, RESEARCH_ANSWERED);
         assert_eq!(row.origin, ORIGIN_SPEC_FACT);
         assert_eq!(row.cite, "request.md:148");
@@ -3078,10 +3127,12 @@ mod tests {
             assert_eq!(ev[0]["event"], "research_question_kind");
             assert_eq!(ev[0]["disposition"], "fact");
             assert_eq!(ev[0]["cite"], "request.md:148");
-            assert_eq!(ev[0]["fact"], true);
+            assert!(
+                ev[0].get("fact").is_none(),
+                "no fact flag: the cite is the fact"
+            );
             assert_eq!(ev[1]["disposition"], "dispatch");
             assert_eq!(ev[1]["kind"], "spec_lookup");
-            assert_eq!(ev[1]["fact"], false);
             assert!(ev[1]["cite"].as_str().unwrap().starts_with("grep -n"));
         }
         let opened = OpenOutput {
@@ -3127,6 +3178,78 @@ mod tests {
             "the settled digest counts the fact: {}",
             briefs[0].settled
         );
+    }
+
+    /// VA-095 at the fan: the SPEC FACT is rendered BY CODE from the cite. A `spec_lookup`
+    /// citing `request.md:5-7` becomes a terminal `spec_fact` row whose answer is those lines of
+    /// the request verbatim (persisted as the mini), with the `fact` disposition and
+    /// `spec_fact_rendered{slice, q_index, cite, lines, span}`; a cite past the file is NOT a
+    /// fact — `spec_fact_unrenderable{…, reason}` names it, the disposition is `dispatch`, no
+    /// mini is written and `None` sends it down a lane. No answer is invented for either.
+    #[test]
+    fn a_spec_fact_is_rendered_from_its_cite_and_an_unrenderable_cite_is_named_and_dispatched() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = "# Title\nintro\n\n## Endpoints\n| Method | Path |\n|---|---|\n\
+                    | GET | /api/items |\n\n## Rules\nThe server MUST answer within 2 seconds.\n";
+        let cited: OpenQuestion = serde_json::from_value(serde_json::json!({
+            "question": "Which method and path list items?", "kind": "spec_lookup",
+            "cite": "request.md:5-7"
+        }))
+        .unwrap();
+        let past: OpenQuestion = serde_json::from_value(serde_json::json!({
+            "question": "What is the boot deadline?", "kind": "spec_lookup",
+            "cite": "request.md:40"
+        }))
+        .unwrap();
+        assert!(
+            cited.is_cited_fact() && past.is_cited_fact(),
+            "both parse as ranges; the file decides"
+        );
+        let sink = ValueSink::default();
+        let q0 = ResearchQuestion::of("ledger-api", 0, &cited);
+        let row = land_spec_fact(dir.path(), spec, &q0, &sink).expect("the range is in the file");
+        assert_eq!(
+            row.answer,
+            "| Method | Path |\n|---|---|\n| GET | /api/items |"
+        );
+        assert_eq!(row.origin, ORIGIN_SPEC_FACT);
+        assert_eq!(row.cite, "request.md:5-7");
+        assert_eq!(row.status, RESEARCH_ANSWERED);
+        assert!(row.model.is_empty() && row.secs == 0);
+        assert_eq!(
+            load_research_mini(dir.path(), "ledger-api", 0)
+                .expect("the fact is persisted as its mini")
+                .answer,
+            row.answer
+        );
+        let q3 = ResearchQuestion::of("ledger-api", 3, &past);
+        assert!(
+            land_spec_fact(dir.path(), spec, &q3, &sink).is_none(),
+            "past the file is not a fact"
+        );
+        assert!(load_research_mini(dir.path(), "ledger-api", 3).is_none());
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_question_kind",
+                "spec_fact_rendered",
+                "spec_fact_unrenderable",
+                "research_question_kind"
+            ],
+            "{ev:?}"
+        );
+        assert_eq!(ev[0]["disposition"], "fact");
+        assert_eq!(ev[1]["slice"], "ledger-api");
+        assert_eq!(ev[1]["q_index"], 0);
+        assert_eq!(ev[1]["cite"], "request.md:5-7");
+        assert_eq!(ev[1]["lines"], 3);
+        assert_eq!(ev[1]["span"], 3);
+        assert_eq!(ev[2]["q_index"], 3);
+        assert_eq!(ev[2]["cite"], "request.md:40");
+        assert_eq!(ev[2]["reason"], "out_of_range");
+        assert_eq!(ev[3]["disposition"], "dispatch");
     }
 
     fn row_answered(slice: &str, q_index: usize, answer: &str) -> ResearchRow {
@@ -3195,12 +3318,14 @@ mod tests {
             1,
             &serde_json::from_value(serde_json::json!({
                 "question": "Which sort keys does sort=<k> accept?",
-                "kind": "spec_lookup", "cite": "request.md:148",
-                "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`."
+                "kind": "spec_lookup", "cite": "request.md:148"
             }))
             .unwrap(),
         );
-        let fact = ResearchRow::spec_fact(&api_q1);
+        let fact = ResearchRow::spec_fact(
+            &api_q1,
+            "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`.",
+        );
         let q3 = rq(
             "web-page",
             3,
