@@ -30484,6 +30484,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "conflicts": outcome.conflicts,
                         "reshards": outcome.reshards,
                         "findings_left": outcome.findings_left,
+                        "setup_failed": outcome.setup_failed,
                         "unassigned": unassigned.len(),
                     }));
                 }
