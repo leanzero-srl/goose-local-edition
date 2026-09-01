@@ -825,3 +825,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the finding that matters: the handoff the new brief relies on is never persisted or consumed —
   a dead letter proven from parse_finding_verdicts' tail_chars(300) and the mid-word ledger
   detail. Corrected the commit's quote counts and order from primary data. Charter gap: none.
+- 2026-09-01 05:45 bench-scorer (r6c hermetic): EXEMPLARY. Refused to score a run that had not
+  finished (engine still in learn/reflect), waited for the harness to release 8850, scored
+  hermetically with the run's own seed, quoted the render probe and the screenshots as the product
+  check, read the `passed` emit site so the row cannot lie, and fixed two ledger-truth defects it
+  found on the way (slot-header merge, artifact-inflated code counts) with replays proving the old
+  numbers. Charter gap: none.
