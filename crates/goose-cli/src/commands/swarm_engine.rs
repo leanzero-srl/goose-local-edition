@@ -699,15 +699,51 @@ fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
 // Step C: the MLX sidecar engine — goose-sidecar's supervised Rapid-MLX process behind the trait
 // ---------------------------------------------------------------------------------------------
 
-/// Drive an engine-manager future from the SYNC trait surface. Inside the runtime (the run
-/// pipeline / dispatcher — goose-cli's runtime is multi-thread) `block_in_place` keeps the worker
-/// thread legal; outside one (unit tests, sync menu paths) a throwaway runtime drives it.
-fn block_on_engine<F: std::future::Future>(fut: F) -> F::Output {
+/// Why a sidecar engine call could not be driven from the calling thread — typed, so a caller
+/// reports it by name instead of the panic `block_in_place` raises inside a `current_thread`
+/// runtime (acp/provider.rs builds one; a sync trait call from there used to abort the process).
+#[derive(Debug)]
+pub enum EngineCallError {
+    /// The caller sits inside a `current_thread` tokio runtime, where `block_in_place` panics
+    /// and `Handle::block_on` from the runtime's own thread cannot make progress.
+    CurrentThreadRuntime,
+    /// No runtime is running and a throwaway one could not be built.
+    RuntimeBuild(std::io::Error),
+}
+
+impl std::fmt::Display for EngineCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CurrentThreadRuntime => write!(
+                f,
+                "called from inside a current_thread tokio runtime — a sidecar engine call needs \
+                 a multi-thread runtime (block_in_place) or no runtime at all"
+            ),
+            Self::RuntimeBuild(e) => write!(f, "could not build a tokio runtime: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for EngineCallError {}
+
+/// Drive an engine-manager future from the SYNC trait surface. Inside a multi-thread runtime
+/// (the run pipeline / dispatcher — goose-cli's runtime is multi-thread) `block_in_place` keeps
+/// the worker thread legal; outside one (unit tests, sync menu paths) a throwaway runtime drives
+/// it; inside a `current_thread` runtime the answer is a typed error, never a panic.
+fn block_on_engine<F: std::future::Future>(fut: F) -> Result<F::Output, EngineCallError> {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
-        Err(_) => tokio::runtime::Runtime::new()
-            .expect("fresh tokio runtime for a sidecar engine call")
-            .block_on(fut),
+        Ok(handle) => {
+            if matches!(
+                handle.runtime_flavor(),
+                tokio::runtime::RuntimeFlavor::CurrentThread
+            ) {
+                return Err(EngineCallError::CurrentThreadRuntime);
+            }
+            Ok(tokio::task::block_in_place(|| handle.block_on(fut)))
+        }
+        Err(_) => Ok(tokio::runtime::Runtime::new()
+            .map_err(EngineCallError::RuntimeBuild)?
+            .block_on(fut)),
     }
 }
 
@@ -833,22 +869,28 @@ impl SwarmEngine for SidecarEngine {
                 }
             }
         });
-        if let Err(e) = result {
-            eprintln!("engine-mount-failed: {e:#}");
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => eprintln!("engine-mount-failed: {e:#}"),
+            Err(e) => eprintln!("engine-call-unavailable: cannot mount '{model_id}' — {e}"),
         }
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
         Ok(self.catalog_probe())
     }
     fn probe_report(&self) {
-        let status = block_on_engine(self.manager.status());
         println!("{}", style("mlx-sidecar:").bold());
-        println!("  state: {}", status.state);
-        if let Some(m) = &status.model_id {
-            println!("  mounted: {m}");
-        }
-        if let Some(e) = &status.last_error {
-            println!("  last error: {e}");
+        match block_on_engine(self.manager.status()) {
+            Ok(status) => {
+                println!("  state: {}", status.state);
+                if let Some(m) = &status.model_id {
+                    println!("  mounted: {m}");
+                }
+                if let Some(e) = &status.last_error {
+                    println!("  last error: {e}");
+                }
+            }
+            Err(e) => println!("  state: (unavailable — {e})"),
         }
         println!("  port: {}", self.manager.settings().port);
         for (id, ctx) in self.served_entries() {
@@ -2086,6 +2128,35 @@ mod tests {
             lm.calls(),
             vec![("gabee-qwen".to_string(), 1)],
             "no lms load of the sidecar alias, for the planner or the device"
+        );
+    }
+
+    /// S-L9: the sync trait surface driven from each runtime shape. No runtime → a throwaway one;
+    /// a multi-thread runtime → block_in_place; a current_thread runtime (acp/provider.rs builds
+    /// one) → the typed error, where `block_in_place` used to panic the process.
+    #[test]
+    fn block_on_engine_answers_or_refuses_by_runtime_flavor_never_panics() {
+        assert_eq!(
+            block_on_engine(async { 7 }).expect("no runtime → throwaway"),
+            7
+        );
+        let current = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("current_thread runtime");
+        let refused = current.block_on(async { block_on_engine(async { 7 }) });
+        assert!(
+            matches!(refused, Err(EngineCallError::CurrentThreadRuntime)),
+            "current_thread → typed error, got {refused:?}"
+        );
+        let multi = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .build()
+            .expect("multi_thread runtime");
+        assert_eq!(
+            multi
+                .block_on(async { block_on_engine(async { 7 }) })
+                .expect("multi_thread → block_in_place"),
+            7
         );
     }
 
