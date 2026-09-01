@@ -39,8 +39,17 @@ use crate::wire::{
 /// (`NodeStateChanged` / `SessionUpserted` / `SessionDelta`).
 #[async_trait::async_trait]
 pub trait SwarmStateSource: Send + Sync + 'static {
+    /// This node's identity + Idle/Busy state. Must be computed WITHOUT reading the
+    /// session store (the busy set is tracked live), so it stays truthful while the
+    /// store is unreadable.
     async fn local_node(&self) -> NodeState;
-    async fn local_sessions(&self) -> Vec<SessionSummary>;
+    /// The local session index. `Err(text)` when the store cannot be read RIGHT NOW — a
+    /// transient sqlx timeout / SQLITE_BUSY as much as a corrupt file. The routes then
+    /// answer `503 session index unreadable: <text>` and peers keep their last mirror;
+    /// an empty `Vec` here means "no sessions", never "could not look". There is no
+    /// unchecked variant on purpose (R-M2: the old bare `Vec` published `[]` on a store
+    /// error, and a Busy node's peers purged its mirror and dispatched a second job).
+    async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String>;
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent>;
 }
 
@@ -525,26 +534,46 @@ async fn poll_peer_once(
     base_url: &str,
 ) -> Result<Vec<LinkEvent>, PollFailure> {
     let nodes: SwarmNodesResponse = fetch_json(inner, format!("{base_url}/v1/swarm/nodes")).await?;
-    let sessions: Vec<SessionSummary> =
-        fetch_json(inner, format!("{base_url}/v1/swarm/sessions?scope=local")).await?;
-    Ok(fold_peer_snapshot(
+    match fetch_json::<Vec<SessionSummary>>(
         inner,
-        &target.hostname,
-        nodes.self_node,
-        sessions,
-    ))
+        format!("{base_url}/v1/swarm/sessions?scope=local"),
+    )
+    .await
+    {
+        Ok(sessions) => Ok(fold_peer_snapshot(
+            inner,
+            &target.hostname,
+            nodes.self_node,
+            Some(sessions),
+            None,
+        )),
+        // The peer is reachable and identified itself, but its session index is not
+        // readable right now (its `/sessions` answered 503, or something unparseable):
+        // fold the node state, KEEP the mirror we have, record the failure. A mirror is
+        // never purged over an answer that carried no sessions.
+        Err(PollFailure::Answered(error)) => Ok(fold_peer_snapshot(
+            inner,
+            &target.hostname,
+            nodes.self_node,
+            None,
+            Some(error),
+        )),
+        Err(transport) => Err(transport),
+    }
 }
 
-/// Fold a successful poll into the view. Returns the change events to publish
-/// (computed under the locks, published outside them). `last_poll_error` is the
-/// POLLER's field: a clean poll clears it whatever the peer put in its own report.
+/// Fold one poll into the view. Returns the change events to publish (computed under
+/// the locks, published outside them). `last_poll_error` is the POLLER's field: it is
+/// set to `poll_error` whatever the peer put in its own report. `remote_sessions:
+/// None` folds the node state only and leaves the session mirror untouched.
 fn fold_peer_snapshot(
     inner: &Arc<RegistryInner>,
     hostname: &str,
     mut remote_self: NodeState,
-    remote_sessions: Vec<SessionSummary>,
+    remote_sessions: Option<Vec<SessionSummary>>,
+    poll_error: Option<String>,
 ) -> Vec<LinkEvent> {
-    remote_self.last_poll_error = None;
+    remote_self.last_poll_error = poll_error;
     let mut events = Vec::new();
     let mut peers = inner.peers.lock().unwrap();
     let Some(entry) = peers.get_mut(hostname) else {
@@ -555,6 +584,9 @@ fn fold_peer_snapshot(
         events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
     }
     let remote_id = remote_self.node_id;
+    let Some(remote_sessions) = remote_sessions else {
+        return events;
+    };
 
     let mut sessions = inner.sessions.lock().unwrap();
     let fresh: HashSet<&str> = remote_sessions

@@ -158,8 +158,8 @@ impl SwarmStateSource for FakeStateSource {
             last_poll_error: None,
         }
     }
-    async fn local_sessions(&self) -> Vec<SessionSummary> {
-        Vec::new()
+    async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
+        Ok(Vec::new())
     }
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
         Box::pin(futures::stream::pending())
@@ -194,8 +194,8 @@ impl SwarmStateSource for NamedIdleSource {
             last_poll_error: None,
         }
     }
-    async fn local_sessions(&self) -> Vec<SessionSummary> {
-        Vec::new()
+    async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
+        Ok(Vec::new())
     }
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
         Box::pin(futures::stream::pending())
