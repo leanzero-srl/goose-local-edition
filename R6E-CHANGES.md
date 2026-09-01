@@ -74,7 +74,10 @@ within the tick · pool weight 1×3, orphans 0, run_build `--sb7`, vendor 200.
 ## 6. Confidence, honestly
 
 HIGH: the deletions (measured zero delivery over 2–3 runs; removing them cannot lower the score), the probe
-rule, ownership, the fan cut, skeleton deps. MEDIUM: consumer routing (traced to change the r6c outcome, but a
+rule, ownership, skeleton deps, and the fan cut's ONE-LANE-PER-SLICE half (works structurally, no cap). MEDIUM on
+the fan cut's FACT half: its arm has never fired on a measured run (every opener so far emitted bare strings), so
+r6e's `research_planned.facts` is its first test — if 0, research still runs as 6 lanes but without the saving,
+and the opener prompt is what gets fixed. MEDIUM: consumer routing (traced to change the r6c outcome, but a
 model handed the values can still guess), the judge trigger (fewer looks = less contention; the loop-breaker
 for real recurrence stays). LOWER: the shards + merger — interfaces must be right in the plan before anyone
 builds; the first run is the measurement. Estimated r6e wall clock if the shards hold: ~5–6h (OPEN ~25m,
