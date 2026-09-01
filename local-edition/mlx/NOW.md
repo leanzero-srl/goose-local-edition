@@ -8,8 +8,14 @@ tailnet (worksmacstudio 100.122.51.13 + Mihai-Macbook-2 100.83.119.44, direct co
 the benchmark; Funnel enabled; gabee NOT on the tailnet yet). Architecture decisions taken (defaults,
 Mihai can override): auth backend = self-hostable Cloudflare Worker in leanzero-link/worker/
 (holds RESEND_API_KEY/AUDIENCE_ID/LINK_JWT_SECRET/TS_API_TOKEN — secrets NEVER in the desktop);
-mesh v1 rides the EXISTING tailnet (detect via `tailscale status --json`), embedded userspace
-tailscaled-as-sidecar (goose-sidecar pattern) is the end-user path. Mirroring v1 = WS pubsub of
+CORRECTION (Mihai, 2026-09-01): DO NOT ride the existing tailnet — that is Mihai's PERSONAL
+Tailscale (and LM Link is LM Studio's, separate again); Link must be fully independent so stopping
+either leaves Link intact. Mesh = goose OWNS an EMBEDDED headless userspace tailscaled sidecar
+(goose-sidecar supervisor pattern) with its OWN state dir ~/.leanzero/tailscale/, its own socket,
+--tun=userspace-networking (no root, no system TUN, invisible to the system `tailscale` CLI),
+joined to the ACCOUNT's isolated tailnet via the worker's ephemeral key. Two independent Tailscale
+worlds on one machine; the personal-tailnet detection is NOT a dependency (at most a later
+duplicate-install advisory). Mirroring v1 = WS pubsub of
 session deltas + read-only mirror; full DB bidirectional sync is explicit v2. IN FLIGHT: worker
 build (docs-verified, full local test harness) + recon (session event bus, goosed HTTP surface,
 busy/idle truth sources, workspace ws/jwt deps). NEXT: Rust crates/leanzero-link control service
