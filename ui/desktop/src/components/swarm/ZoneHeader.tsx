@@ -13,16 +13,6 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
  * meaning. Never a tint, never a left rail.
  */
 
-/** @deprecated Zones are typography, not hues. Kept only until the run panel's last readers of a
- *  zone colour are gone; nothing new may read from it. */
-export const ZONE_HUES = {
-  run: 'var(--color-accent-local, #1d4ed8)',
-  planning: 'var(--color-tertiary-local, #7c3aed)',
-  fleet: 'var(--color-secondary-local, #0891b2)',
-  work: 'var(--color-status-warn, #d97706)',
-  log: 'var(--color-text-secondary)',
-} as const;
-
 /** The zone-header scale — the ONLY place uppercase + tracking is used. */
 export const ZONE_LABEL_CLASS = 'text-[11px] font-semibold uppercase tracking-[0.08em]';
 

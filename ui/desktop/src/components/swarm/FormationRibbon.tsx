@@ -4,7 +4,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/Tooltip';
 import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
-  FORMATION_INK,
   FORMATION_RAMP,
   SWARM_STATUS,
   type FormationEvidence,
@@ -74,11 +73,13 @@ export function FormationRibbon({
         >
           {steps.map((step, index) => {
             const state = formationPhaseState(phase, index, evidence, steps);
+            // Outlined neutral pills; the CURRENT phase is the ONE accent fill; a done phase is quiet
+            // with a check (primary ink on the hairline border); skipped keeps the stopped slate.
             const color =
               state === 'active'
                 ? activeColor
                 : state === 'complete'
-                  ? SWARM_STATUS.done
+                  ? 'var(--color-text-primary)'
                   : state === 'skipped'
                     ? SWARM_STATUS.stopped
                     : 'var(--color-text-secondary)';
@@ -95,7 +96,7 @@ export function FormationRibbon({
                         borderRadius: CHIP_RADIUS,
                         borderColor: heldActive
                           ? SWARM_STATUS.stopped
-                          : state === 'upcoming'
+                          : state === 'upcoming' || state === 'complete'
                             ? 'var(--color-border-primary)'
                             : (color as string),
                         backgroundColor:
@@ -136,26 +137,26 @@ export function FormationRibbon({
                 ? nodes.map((node, nodeIndex) => {
                     const letter = String.fromCharCode(65 + (nodeIndex % 26));
                     const state = node.working ? 'working' : 'idle';
+                    // Identity is a solid hue DOT beside the node's name (the letter stays in the
+                    // aria-label). A working node reads in primary weight, an idle one in secondary —
+                    // the dot keeps full strength either way, so the fleet never reads as absent.
                     return (
                       <span
                         key={node.device}
                         aria-label={`Node ${letter}, ${shortDeviceName(node.device)}, ${state}`}
                         title={`${shortDeviceName(node.device)} · ${state}`}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center border-2 font-mono text-xs font-bold"
-                        style={{
-                          borderRadius: CHIP_RADIUS,
-                          backgroundColor: FORMATION_RAMP[nodeIndex % FORMATION_RAMP.length],
-                          color: FORMATION_INK[nodeIndex % FORMATION_INK.length],
-                          // An idle node keeps its full-strength identity fill and loses only the running
-                          // OUTLINE — dimming the fill would make the fleet read as absent rather than idle.
-                          borderColor: node.working
-                            ? SWARM_STATUS.running
-                            : 'var(--color-border-primary)',
-                        }}
+                        className={`inline-flex min-w-0 items-center gap-1 text-[11px] ${
+                          node.working ? 'font-semibold text-text-primary' : 'text-text-secondary'
+                        }`}
                         data-testid="formation-node"
                         data-node-state={state}
                       >
-                        {letter}
+                        <span
+                          aria-hidden
+                          className="inline-block h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: FORMATION_RAMP[nodeIndex % FORMATION_RAMP.length] }}
+                        />
+                        <span className="truncate">{shortDeviceName(node.device)}</span>
                       </span>
                     );
                   })

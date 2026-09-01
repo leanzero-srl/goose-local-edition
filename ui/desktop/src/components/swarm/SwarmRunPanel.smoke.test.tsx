@@ -114,7 +114,7 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
   afterEach(() => cleanup());
 
   it('mounts every zone in the one header register, with node NAMES and the three WORK groups', async () => {
-    const { findByText, queryByText, getAllByText, container } = render(
+    const { findByText, findAllByText, queryByText, getAllByText, getAllByTestId, container } = render(
       <SwarmRunPanel workingDir="/tmp/build" />
     );
 
@@ -129,9 +129,10 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     await findByText('Event log');
 
     // FLEET: canonical node names — never the truncated model-id fragments Mihai saw ("fusi, fusi, fable").
-    await findByText('gabee');
-    await findByText('mihai');
-    await findByText('workhorse');
+    // Each name appears beside its identity dot in the ribbon AND on its fleet row.
+    await findAllByText('gabee');
+    await findAllByText('mihai');
+    await findAllByText('workhorse');
     expect(container.textContent).not.toContain('fusi,');
     expect(queryByText('fusi')).toBeNull();
 
@@ -144,6 +145,19 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
 
     // The mislabel is gone: no build work sits under a "Drafting the plan" header.
     expect(container.textContent).not.toContain('Drafting the plan ·');
+    // NODE IDENTITY is a solid ramp-hue DOT beside the name (letter in the aria-label) — the ⬢ glyph
+    // and lettered avatar squares are gone; zone headers carry no colour mark before the name.
+    expect(container.textContent).not.toContain('⬢');
+    const dots = getAllByTestId('node-dot');
+    expect(dots.length).toBeGreaterThanOrEqual(3);
+    expect(dots.map((d) => d.getAttribute('aria-label'))).toEqual(
+      expect.arrayContaining(['node A', 'node B', 'node C'])
+    );
+    for (const d of dots) expect(d.style.backgroundColor).toContain('--color-node-');
+    const runLabel = await findByText('Swarm run');
+    expect(runLabel.getAttribute('style')).toBeNull();
+    expect(runLabel.className).toContain('uppercase');
+    expect(runLabel.previousElementSibling).toBeNull();
   });
 
   it('renders the rewritten pipeline: the ribbon phase, the slice fan, the proxy answer, and the known bugs', async () => {

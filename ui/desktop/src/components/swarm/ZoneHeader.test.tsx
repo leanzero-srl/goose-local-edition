@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ZoneHeader, ZONE_HUES, ZONE_LABEL_CLASS } from './ZoneHeader';
+import { ZoneHeader, ZONE_LABEL_CLASS } from './ZoneHeader';
 import { EYEBROW_CLASS } from './formationVisualState';
 
 // A zone is NOT a node: its header is typography, never a hue. The old header painted a coloured
@@ -21,9 +21,5 @@ describe('ZoneHeader — typography, not hue', () => {
   it('the zone-header scale is the one uppercase register, shared with the ribbon eyebrow', () => {
     expect(ZONE_LABEL_CLASS).toBe('text-[11px] font-semibold uppercase tracking-[0.08em]');
     expect(EYEBROW_CLASS).toBe(ZONE_LABEL_CLASS);
-  });
-
-  it('no zone colour reads from the node ramp', () => {
-    for (const hue of Object.values(ZONE_HUES)) expect(hue).not.toContain('--color-node-');
   });
 });
