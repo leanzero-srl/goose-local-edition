@@ -92,10 +92,22 @@ impl QuestionKind {
     }
 }
 
+/// VA-075: the longest `fact` the schema admits — ONE sentence. This is the SHAPE of a fact, not
+/// a cap on model work: the opener reads and thinks for as long as it needs, and the validator
+/// (`final_output_tool::validate_json_output`, jsonschema `maxLength`) hands a pasted passage
+/// back to be rewritten as a sentence — no retry count, no clock. WHY: r6f's opener wrote ~1,100
+/// characters of request.md:547-565 into ONE spec_lookup fact ("<canvas id='viz3d'>, context
+/// webgl or webgl2 created {antialias:false, alpha:false}, on the MAIN thread — no
+/// OffscreenCanvas, no Worker…") and its 33,818-completion-token reply sat 16m43s at 0 bytes
+/// while the arguments streamed (r6e's reply: 41.5 KB; r6f's ≈ 1.5×). The owning brief already
+/// splices each claimed section's FULL text and every worker holds the request file at the
+/// cited line, so a pasted passage is the plan written twice.
+pub(super) const FACT_MAX_CHARS: usize = 200;
+
 /// One slice question as the run consumes it. `text` is the question verbatim (whitespace
 /// squashed to one line — the identity the mini, the brief and the dedup all read); `cite` is the
 /// request line or heading the opener read (`request.md:148`, or a heading), empty when it named
-/// none; `fact` is the answer in the request's words, empty unless the opener found one.
+/// none; `fact` is the answer as ONE sentence (`FACT_MAX_CHARS`), empty unless the opener found one.
 #[derive(Clone, Debug)]
 pub(crate) struct OpenQuestion {
     pub(crate) text: String,
@@ -247,8 +259,14 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
          cites FROM the index, and read a section (`sed -n 'A,Bp'`) only when a fact needs its \
          words — the index IS the heading-to-line map, so never rebuild one by hand and never \
          re-read a range you have already read. Then:\n\
-         — If a line ANSWERS it, it is not a question: kind spec_lookup, cite request.md:<N>, fact = \
-         the answer in the request's own words, literals verbatim; no lane runs. Example: \
+         — If a line ANSWERS it, it is not a question: kind spec_lookup, cite {label}:<N>, fact = \
+         ONE sentence in your own words, at most {FACT_MAX_CHARS} characters (the schema refuses a \
+         longer one), saying what the line settles for a builder, literal values kept exact; no \
+         lane runs. The fact is NOT the passage: the owning brief carries each claimed section's \
+         FULL text and every builder holds the request file at the cited line, so a pasted passage \
+         is the plan written twice — MEASURED: one opener pasted ~1,100 characters of a section \
+         into a single fact and its reply sat 16 minutes at zero bytes while the arguments \
+         streamed. Example: \
          {{\"question\":\"Which sort keys does sort accept?\",\"kind\":\"spec_lookup\",\"cite\":\"request.md:148-150\",\"fact\":\"sort is one of created_at, -created_at, amount_minor, -amount_minor; default created_at (ascending by INSTANT); an unknown sort value is a validation error, not an empty result.\"}}\n\
          — If the request is SILENT and a builder must choose: kind design, cite = the closest lines \
          you read AND the grep that found nothing. Example: \
@@ -287,7 +305,9 @@ pub(super) fn open_schema() -> serde_json::Value {
                                     "question": {"type": "string"},
                                     "kind": {"type": "string", "enum": ["spec_lookup", "design", "external"]},
                                     "cite": {"type": "string", "minLength": 1},
-                                    "fact": {"type": "string"}
+                                    // VA-075: the refuser for a pasted passage — schema shape
+                                    // (what a fact IS), never a bound on model work.
+                                    "fact": {"type": "string", "maxLength": FACT_MAX_CHARS}
                                 }
                             }
                         },
@@ -623,6 +643,9 @@ mod tests {
             "D10-8: the VALIDATOR refuses a bare question — never a retry count"
         );
         assert_eq!(q["properties"]["cite"]["minLength"], 1);
+        // VA-075: the validator refuses a pasted passage as a fact; the rule says how long a
+        // fact is and why (the brief carries the section's full text).
+        assert_eq!(q["properties"]["fact"]["maxLength"], FACT_MAX_CHARS);
         assert_eq!(
             q["properties"]["kind"]["enum"],
             serde_json::json!(["spec_lookup", "design", "external"])
@@ -645,11 +668,22 @@ mod tests {
             );
             assert!(!obj["cite"].as_str().unwrap().is_empty(), "{obj}");
             if kind == "spec_lookup" {
-                assert!(!obj["fact"].as_str().unwrap().is_empty(), "{obj}");
+                let fact = obj["fact"].as_str().unwrap();
+                assert!(!fact.is_empty(), "{obj}");
+                assert!(
+                    fact.chars().count() <= FACT_MAX_CHARS,
+                    "the rule's own example obeys the schema it teaches: {} chars",
+                    fact.chars().count()
+                );
             }
             examples += 1;
         }
         assert_eq!(examples, 3, "one example per kind");
+        assert!(
+            rule.contains(&format!("at most {FACT_MAX_CHARS} characters"))
+                && rule.contains("The fact is NOT the passage"),
+            "the rule states the fact's length and WHY a passage is a duplicate"
+        );
         assert!(
             opener_questions_rule(None).contains("NOT persisted this run"),
             "a missing request file is named, never pointed at"
