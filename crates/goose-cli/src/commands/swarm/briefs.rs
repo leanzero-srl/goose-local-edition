@@ -268,15 +268,16 @@ pub(super) fn repair_owner_body(owned_files: &[String], speculative: bool) -> St
     };
     format!(
         "YOU ARE REPAIRING AN EXISTING FILE AGAINST A DEFECT THAT WAS ALREADY OBSERVED. Every \
-         numbered finding in your task was measured against the RUNNING app by the engine check \
-         named beside it — it is a report of something that happened, not a hypothesis for you to \
-         re-derive. The current content of {paths} is inlined below, so your first move is to read \
-         the part the finding names (never `cat` a file that is already inlined), then make the \
-         SMALLEST edit that removes that defect, then run the ONE check that reproduces the \
-         finding's own symptom and watch it stop: if it names a URL, request that URL; if it names \
-         a command, run that command; if it names an element or a field, look for it in the real \
-         response. Reproducing the symptom ONCE before you edit is fine — an investigation is not: \
-         a round spent re-measuring code instead of changing it closes nothing.\n\
+         numbered finding in your task comes from the engine check named beside it, which made a \
+         SPECIFIC request against the RUNNING app and observed a SPECIFIC response — both are \
+         quoted with the finding. Reproduce THAT request first, exactly as quoted (same method, \
+         path, headers and body, or the absence of them), then fix what it shows. The current \
+         content of {paths} is inlined below, so go to the part the finding names, make the \
+         SMALLEST edit that removes that defect, then run the finding's own check again and watch \
+         it stop: if it names a URL, request that URL; if it names a command, run that command; \
+         if it names an element or a field, look for it in the real response. Reproducing the \
+         quoted request ONCE before you edit is the method — an investigation with requests of \
+         your own is not: a round spent re-measuring code instead of changing it closes nothing.\n\
          KEEP THE EDIT SMALL: use `edit`, keep everything the finding does not name, and never \
          re-emit a LARGE file from memory (under ~60 lines a full corrected `write` is fine and \
          better than paralysis). READ whatever the finding points at — including the TEST that \
@@ -358,32 +359,112 @@ pub(super) fn current_content_block(
         if content.trim().is_empty() {
             continue;
         }
+        let total = content.chars().count();
         let capped: String = content.chars().take(12000).collect();
-        let note = if content.chars().count() > 12000 {
-            " [truncated — head only; cat the rest only if needed]"
+        let truncated = total > 12000;
+        // r6c, complete-fix::web/app.js attempt 0: "The truncated view only shows up to
+        // _validate_create. I need to read the actual file" — while this block said "never `cat`
+        // it". Past the cap, the part the finding names may not be here at all, so the text says
+        // so and PERMITS the one targeted read the finding requires; a whole-file `cat` stays
+        // discouraged in both arms.
+        let note = if truncated {
+            format!(
+                " [TRUNCATED: the first 12,000 of {total} chars are inlined; the rest is on disk]"
+            )
         } else {
-            ""
+            String::new()
         };
         if repairing {
+            let read_rule = if truncated {
+                "If the part the finding names is not in this head, `grep -n` the symbol and \
+                 `sed -n 'A,Bp'` exactly that region — that targeted read is expected. Do not \
+                 `cat` the whole file."
+            } else {
+                "It is inlined in full, so you never `cat` it."
+            };
             block.push_str(&format!(
-                "## CURRENT content of {f}{note} — the file you are REPAIRING, inlined so you \
-                 never `cat` it. The defect named in your task was OBSERVED against this app \
-                 while it was running; go to the part the finding points at, make the smallest \
-                 edit that removes it, and prove it with the finding's own check. Do NOT rewrite \
-                 the file from scratch — that re-does finished work and regresses code no finding \
-                 named:\n```\n{capped}\n```\n\n"
+                "## CURRENT content of {f}{note} — the file you are REPAIRING. {read_rule} The \
+                 defect named in your task was OBSERVED against this app while it was running; go \
+                 to the part the finding points at, make the smallest edit that removes it, and \
+                 prove it with the finding's own check. Do NOT rewrite the file from scratch — \
+                 that re-does finished work and regresses code no finding named:\n```\n{capped}\n```\n\n"
             ));
         } else {
+            let read_rule = if truncated {
+                "If the defect's part is past this head, `sed -n 'A,Bp'` that region; do not `cat` \
+                 the whole file"
+            } else {
+                "Do NOT `cat` it again"
+            };
             block.push_str(&format!(
                 "## CURRENT content of {f}{note} — this file ALREADY EXISTS (you were re-dispatched, \
                  or it is an amendment). Do NOT rewrite it from scratch — that re-does finished work \
                  and risks another timeout. FIRST run the program/tests to check whether it already \
                  satisfies the spec; if it does, report DONE immediately. Otherwise edit ONLY the real \
-                 defect, from here. Do NOT `cat` it again:\n```\n{capped}\n```\n\n"
+                 defect, from here. {read_rule}:\n```\n{capped}\n```\n\n"
             ));
         }
     }
     block
+}
+
+/// WEB-TRIPLET VOCABULARY (F870, the authoring-time half). swarm-3node-r0's css worker
+/// designed 36 class rules, its html worker wrote id-only markup, and its js worker invented
+/// a third vocabulary for generated rows — three honest workers, zero shared names, an
+/// unstyled page. The module contracts freeze Python signatures but nobody froze the ONE
+/// thing a web triplet actually shares: its class/id names. This note makes the vocabulary a
+/// stated obligation and licenses the ONE read that satisfies it (the sibling web files),
+/// overriding the no-exploration rule exactly as SKELETON-FIRST does. Fires for owners of
+/// .css/.html always, and for .js/.mjs only under a frontend-shaped path — a Node backend's
+/// js has no styling vocabulary to share. Gated on GOOSE_SWARM_WEB_VOCAB (default ON).
+///
+/// DISARMED for a REPAIR shard — the authoring-time half does not apply once the triplet exists.
+/// r6c: complete-fix::web/app.js (36 dispatches) and complete-fix::web/viz.js (21) read this
+/// frozen list, which has no `viz-labels` / `viz-label` / `role-token` — the ids their findings
+/// were about — beside "do not invent parallel names ... this list IS the agreement". A repair
+/// shard's vocabulary is the one on disk, and the finding names the ids it must touch; the
+/// finding is the agreement. Same `repairing` predicate the notes above branch on. Moved here
+/// from swarm.rs verbatim apart from that arm (the split law prices the wiring line).
+pub(super) fn web_vocab_note(owned_files: &[String], enabled: bool, repairing: bool) -> String {
+    let frontend_js = |f: &str| {
+        (f.ends_with(".js") || f.ends_with(".mjs") || f.ends_with(".ts") || f.ends_with(".tsx"))
+            && f.split('/')
+                .any(|seg| matches!(seg, "web" | "static" | "public" | "frontend" | "assets"))
+    };
+    let owns_web = owned_files.iter().any(|f| {
+        f.ends_with(".css") || f.ends_with(".html") || f.ends_with(".htm") || frontend_js(f)
+    });
+    if !enabled || repairing || !owns_web {
+        return String::new();
+    }
+    // A CONCRETE, FROZEN ID LIST — not an instruction to agree. Telling three workers to "share
+    // one vocabulary" is a hope, and the measured outcome is a lottery: one run drifted on 2 ids,
+    // the next on SEVEN (`summary`, `filter-btn`, `filter-menu`, `table-body`, `pagination`,
+    // `loader`, `error-banner` — every one referenced by app.js and defined by no html), which
+    // made 7 of that run's 10 findings and left the page inoperable. The contracts phase freezes
+    // Python signatures between modules for exactly this reason; the DOM is a cross-file
+    // interface too, and it was the only one left unfrozen. These ids are fixed, spelled here,
+    // and identical in every web worker's prompt, so agreement is structural rather than
+    // negotiated.
+    "\nWEB VOCABULARY — A FROZEN CONTRACT, NOT A SUGGESTION (you own a frontend file; this also \
+     ADDS one permitted read to the rules below). The page's html, css and js MUST share ONE \
+     vocabulary. Use EXACTLY these element ids, spelled exactly like this, for the parts the \
+     spec describes — the html DEFINES them, the js looks them up, the css may style them:\n\
+     - `app-root` the page container; `app-title` the heading\n\
+     - `sync-button` the control that starts a sync; `last-sync` its status/timestamp readout\n\
+     - `payments-table` the table; `payments-body` its <tbody> that rows are appended to\n\
+     - `summary-total` the count/total readout; `status-filter` the status filter control\n\
+     - `pagination` the pager container; `prev-page` and `next-page` its buttons; `page-info` its \
+     \"showing X-Y of N\" readout\n\
+     - `loading-state`, `empty-state`, `error-state` the three state containers\n\
+     An id the js queries that the html never defines is a GUARANTEED null at runtime and a \
+     BLOCKING finding — it is the single most common way this page ships broken. Do not invent \
+     parallel names, do not rename these, and do not assume a sibling used something else: this \
+     list IS the agreement. You may read the sibling web files to match their classes (class \
+     names are yours to choose, but css selectors must match the markup that exists, or the page \
+     ships unstyled and FAILS verification). State containers must be hidden by default and \
+     toggled by the js — never all visible at once."
+        .to_string()
 }
 
 #[cfg(test)]
@@ -619,5 +700,84 @@ mod tests {
             assert!(d.contains("The rules about not reading are SUSPENDED for this task"));
             assert!(d.contains("re-run the failing command itself and confirm THAT passes"));
         }
+    }
+
+    #[test]
+    fn web_vocab_note_fires_for_frontend_owners_only() {
+        // css/html owners always get the vocabulary obligation.
+        assert!(web_vocab_note(&["web/styles.css".into()], true, false).contains("ONE vocabulary"));
+        assert!(
+            web_vocab_note(&["web/index.html".into()], true, false).contains("hidden by default")
+        );
+        // js only under a frontend-shaped path — a Node backend shares no styling vocabulary.
+        assert!(web_vocab_note(&["server/api.js".into()], true, false).is_empty());
+        assert!(web_vocab_note(&["web/app.js".into()], true, false).contains("ONE vocabulary"));
+        // python-only tasks and the OFF gate stay byte-identical.
+        assert!(web_vocab_note(&["pkg/store.py".into()], true, false).is_empty());
+        assert!(web_vocab_note(&["web/styles.css".into()], false, false).is_empty());
+        // r6c: a REPAIRING web/app.js or web/viz.js shard reads no frozen list — its finding names
+        // the ids (viz-labels, role-token) and the list did not carry them.
+        assert!(web_vocab_note(&["web/app.js".into()], true, true).is_empty());
+        assert!(
+            web_vocab_note(&["web/viz.js".into(), "web/index.html".into()], true, true).is_empty()
+        );
+    }
+
+    /// r6c, complete-fix::web/app.js attempt 0: "The truncated view only shows up to
+    /// _validate_create. I need to read the actual file" — the block had said "never `cat` it".
+    /// Past the 12,000-char cap the text must say the file is truncated and permit the targeted
+    /// read of the named region; under the cap the no-`cat` rule stands in both arms.
+    #[test]
+    fn a_truncated_inline_names_its_truncation_and_permits_the_targeted_read() {
+        let dir =
+            std::env::temp_dir().join(format!("goose-briefs-truncated-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        let mut big = String::new();
+        for i in 0..400 {
+            big.push_str(&format!("function helper{i}() {{ return {i}; }}\n"));
+        }
+        big.push_str("function _validate_create(body) { return body; }\n");
+        assert!(big.chars().count() > 12000);
+        std::fs::write(dir.join("web/app.js"), &big).unwrap();
+        std::fs::write(dir.join("web/small.js"), "const x = 1;\n").unwrap();
+
+        let repair = current_content_block(&dir, &["web/app.js".to_string()], true);
+        assert!(repair.contains("TRUNCATED"), "{repair:.300}");
+        assert!(
+            repair.contains("`sed -n 'A,Bp'`") && repair.contains("`grep -n`"),
+            "the targeted read the finding requires must be permitted: {repair:.400}"
+        );
+        assert!(
+            !repair.contains("never `cat` it"),
+            "a truncated file must not forbid the read the finding needs"
+        );
+        assert!(
+            !repair.contains("_validate_create"),
+            "the fixture's named symbol really is past the cap"
+        );
+        let small = current_content_block(&dir, &["web/small.js".to_string()], true);
+        assert!(small.contains("inlined in full, so you never `cat` it"));
+        assert!(!small.contains("TRUNCATED"));
+
+        let amend_big = current_content_block(&dir, &["web/app.js".to_string()], false);
+        assert!(
+            amend_big.contains("`sed -n 'A,Bp'`") && !amend_big.contains("Do NOT `cat` it again")
+        );
+        let amend_small = current_content_block(&dir, &["web/small.js".to_string()], false);
+        assert!(amend_small.contains("Do NOT `cat` it again"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// B1 (r6c): four of eight findings were a bare bodyless `curl -X POST` answered by a JSON 401
+    /// envelope — "a report of something that happened, not a hypothesis" overstated a probe
+    /// artifact. The opener now says what is true: the check made a specific request and saw a
+    /// specific response, both quoted; reproduce THAT request first. The NOT-REAL exit stays.
+    #[test]
+    fn the_repair_order_describes_the_probe_honestly() {
+        let body = repair_owner_body(&["app/drafts.py".into()], false);
+        assert!(!body.contains("not a hypothesis for you to re-derive"));
+        assert!(body.contains("made a SPECIFIC request against the RUNNING app"));
+        assert!(body.contains("Reproduce THAT request first"));
+        assert!(body.contains("IF A FINDING IS NOT REAL, say so in ONE sentence"));
     }
 }
