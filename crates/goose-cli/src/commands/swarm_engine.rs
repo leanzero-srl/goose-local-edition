@@ -166,24 +166,14 @@ impl Engines {
         self.lmstudio.clone()
     }
 
-    /// The engine that hosts THIS device's model. A device naming an engine kind with no
-    /// registered engine (tagged mlx-sidecar without `mlx_engine` config) routes to LM Studio
-    /// with a LOUD named absence-event — never silently.
-    pub fn engine_for_device(&self, d: &SwarmDevice) -> Arc<dyn SwarmEngine> {
-        match device_engine_kind(d) {
-            EngineKind::LmStudio => self.lmstudio.clone(),
-            EngineKind::MlxSidecar => match self.sidecars.values().next() {
-                Some(e) => e.clone(),
-                None => {
-                    eprintln!(
-                        "engine-absent: device '{}' names engine 'mlx-sidecar' but no sidecar \
-                         engine is registered — operating via lmstudio until step C registers it",
-                        d.id
-                    );
-                    self.lmstudio.clone()
-                }
-            },
-        }
+    /// The engine that hosts THIS device's model — `None` for a device naming an engine kind
+    /// nobody registered (tagged mlx-sidecar without `mlx_engine` config). The pre-step-C arm
+    /// that routed such a device to LM Studio is gone: `lms load <sidecar-alias>` can never mount
+    /// a sidecar, and `merge_sidecar_devices` keeps such a device out of the pool with a named
+    /// event, so a None here is a caller that let one through (the allow_model_load bootstrap
+    /// copies the configured list wholesale) and must say so.
+    pub fn engine_for_device(&self, d: &SwarmDevice) -> Option<Arc<dyn SwarmEngine>> {
+        self.for_kind(device_engine_kind(d))
     }
 
     /// The servable-ids probe for one engine KIND. An engine kind with NO registered engine
@@ -270,7 +260,7 @@ pub(super) fn drop_unservable_devices_per_engine(
     let mut kept: Vec<(EngineKind, VecDeque<SwarmDevice>)> = Vec::new();
     for (kind, part) in parts {
         let (keep, dropped) =
-            super::swarm::drop_unservable_devices(part, served.get(&kind).and_then(|o| o.as_ref()));
+            drop_unservable_devices(part, served.get(&kind).and_then(|o| o.as_ref()));
         dropped_all.extend(dropped);
         kept.push((kind, keep.into()));
     }
@@ -308,7 +298,7 @@ pub(super) fn all_resident_unservable_per_engine(
         }
     }
     parts.iter().all(|(kind, part)| {
-        super::swarm::all_resident_unservable(part, served.get(kind).and_then(|o| o.as_ref()))
+        all_resident_unservable(part, served.get(kind).and_then(|o| o.as_ref()))
     })
 }
 
@@ -918,14 +908,28 @@ pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_m
             .iter()
             .find(|d| !d.is_cloud() && d.model_id == planner_model)
         {
-            Some(d) => engines.engine_for_device(d).ensure_loaded(planner_model, 1),
+            Some(d) => match engines.engine_for_device(d) {
+                Some(e) => e.ensure_loaded(planner_model, 1),
+                None => eprintln!(
+                    "engine-absent: planner '{planner_model}' is carried by device '{}' on engine \
+                     '{:?}' but no such engine is registered — not warmed",
+                    d.id,
+                    device_engine_kind(d)
+                ),
+            },
             None => engines.lmstudio().ensure_loaded(planner_model, 1),
         }
     }
     for d in enabled.iter().filter(|d| !d.is_cloud()) {
-        engines
-            .engine_for_device(d)
-            .ensure_loaded(&d.model_id, d.instances);
+        match engines.engine_for_device(d) {
+            Some(e) => e.ensure_loaded(&d.model_id, d.instances),
+            None => eprintln!(
+                "engine-absent: device '{}' names engine '{:?}' but no such engine is registered \
+                 — not warmed",
+                d.id,
+                device_engine_kind(d)
+            ),
+        }
     }
 }
 
@@ -1053,11 +1057,32 @@ pub(super) fn reconcile_pool_with_fleet(
 /// is declared, not discovered. Merged BEFORE the per-engine servability partition, which judges
 /// it against the SIDECAR's own catalog (a not-yet-mounted engine probes to None and is never
 /// condemned). Dedup by id, like the cloud merge.
-pub(super) fn merge_sidecar_devices(pool: &mut Vec<SwarmDevice>, configured: &[SwarmDevice]) {
+///
+/// A tagged device whose engine is NOT registered (config key `mlx_engine` missing or unparseable
+/// — `engines_for_run` already said so) is a guaranteed-dead device: its probe answers None (never
+/// dropped), its provider resolves to lmstudio, and every dispatch to it fails. It stays OUT of
+/// the pool; its id is returned so the caller can write the named absence
+/// (`sidecar-device-excluded`) to run.jsonl. Mild: the run proceeds on the devices that can work.
+pub(super) fn merge_sidecar_devices(
+    pool: &mut Vec<SwarmDevice>,
+    configured: &[SwarmDevice],
+    engines: &Engines,
+) -> Vec<String> {
+    let mut excluded = Vec::new();
+    let registered = engines.for_kind(EngineKind::MlxSidecar).is_some();
     for d in configured
         .iter()
         .filter(|d| d.enabled && d.engine == Some(EngineKind::MlxSidecar))
     {
+        if !registered {
+            eprintln!(
+                "engine-absent: device '{}' names engine 'mlx-sidecar' but no sidecar engine is \
+                 registered — excluded from this run's pool (set config key \"mlx_engine\")",
+                d.id
+            );
+            excluded.push(d.id.clone());
+            continue;
+        }
         if !pool.iter().any(|p| p.id == d.id) {
             eprintln!(
                 "  · sidecar node: {} → {} via mlx-sidecar",
@@ -1066,12 +1091,86 @@ pub(super) fn merge_sidecar_devices(pool: &mut Vec<SwarmDevice>, configured: &[S
             pool.push(d.clone());
         }
     }
+    excluded
+}
+
+/// The tying fact S-M7 lacked: a declared sidecar device whose engine serves NOTHING (its
+/// servable probe is None) while model loading is OFF can be served by nobody this run — the
+/// pre-warm is the only mount path and it is gated by allow_model_load. Such devices leave the
+/// pool here, BEFORE the planner-keep guard (a sidecar planner on an unmountable device would
+/// otherwise survive as the pinned planner and every planning call would fail); their ids come
+/// back for the named event (`sidecar-unmounted-and-load-disabled`). With loading ON the
+/// partition is untouched — the pre-warm mounts it. A partition that answered (Some) is judged by
+/// `drop_unservable_devices_per_engine` like every other. Mild: never a refusal of the run.
+pub(super) fn exclude_unmountable_sidecar_devices(
+    pool: &mut Vec<SwarmDevice>,
+    served: &HashMap<EngineKind, Option<HashSet<String>>>,
+    allow_model_load: bool,
+) -> Vec<String> {
+    if allow_model_load || served.get(&EngineKind::MlxSidecar) != Some(&None) {
+        return Vec::new();
+    }
+    let (gone, keep): (Vec<SwarmDevice>, Vec<SwarmDevice>) = pool
+        .drain(..)
+        .partition(|d| device_engine_kind(d) == EngineKind::MlxSidecar);
+    *pool = keep;
+    gone.into_iter().map(|d| d.id).collect()
+}
+
+/// Drop devices the endpoint will not serve, so a dead node cannot silently eat a third of the run.
+///
+/// THE FAILURE THIS PREVENTS, measured end-to-end on a 71-minute run that produced nothing:
+/// the `frontend` task was dispatched to a model the endpoint had withdrawn. Every attempt came back
+/// `400 Invalid model identifier` in ~2s. But `run_agent_in` returns Ok for a provider error — the 400 lands
+/// as the agent's *text* — so the dispatcher saw only "worker finished, owned files absent" and retried with
+/// "You finished WITHOUT writing your owned file(s)". Three attempts, 6.8 seconds, zero tool calls, task
+/// failed. `integrate-verify` depends on every task, so it never became ready, and the run ended with
+/// passed=false having never built the app. The engine blamed the model for a network outage.
+///
+/// Returns the surviving devices and the dropped (id, model_id) pairs.
+///
+/// NEVER EMPTIES THE POOL. If every device would be dropped, the probe disagrees with `lms ps` about
+/// literally everything, and the likeliest explanation is a broken probe — not a fleet that is 100% dead.
+/// Keep the pool, report nothing dropped, and let the run proceed as it did before this function existed.
+pub(super) fn drop_unservable_devices(
+    devices: Vec<SwarmDevice>,
+    served: Option<&std::collections::HashSet<String>>,
+) -> (Vec<SwarmDevice>, Vec<(String, String)>) {
+    let Some(served) = served else {
+        return (devices, Vec::new());
+    };
+    let (keep, drop): (Vec<SwarmDevice>, Vec<SwarmDevice>) = devices
+        .into_iter()
+        .partition(|d| served.contains(&d.model_id));
+    if keep.is_empty() {
+        return (drop, Vec::new());
+    }
+    let dropped = drop.into_iter().map(|d| (d.id, d.model_id)).collect();
+    (keep, dropped)
+}
+
+/// PROVEN-zero-servable: refuse ONLY when the `/v1/models` catalog demonstrably WORKS (it returned a non-empty
+/// list — a positive control on the SAME endpoint) yet lists NONE of the resident pool's models. That is a
+/// negative PROVEN on the same object, not an observed-empty: `endpoint_model_ids` collapses an empty/unreachable
+/// probe to `None`, and `served == None` never refuses. So this can only fire when every resident alias has been
+/// withdrawn (the LM Link node dropped off the LAN) — the exact case where proceeding dispatches a third (or all)
+/// of the run into instant 400s and a dead run. It can NEVER authorize a bad dispatch — only stop one — so it is
+/// structurally incapable of the false-"there are models" mistake.
+pub(super) fn all_resident_unservable(
+    pool: &[SwarmDevice],
+    served: Option<&std::collections::HashSet<String>>,
+) -> bool {
+    match served {
+        Some(s) if !s.is_empty() && !pool.is_empty() => {
+            pool.iter().all(|d| !s.contains(&d.model_id))
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::swarm::drop_unservable_devices;
 
     fn dev(id: &str, model: &str, engine: Option<EngineKind>) -> SwarmDevice {
         SwarmDevice {
@@ -1783,6 +1882,211 @@ mod tests {
             )
             .is_empty());
         }
+    }
+
+    /// THE 71-MINUTE RUN THIS EXISTS TO PREVENT (measured 2026-07-17, arm allon-mihai):
+    /// `lms ps` reported workhorse-qwopus3.6-27b-coder-mlx IDLE and resident, so the pool included it. The
+    /// Mac Studio had actually dropped off the LAN and LM Link had withdrawn the alias, so POSTing to it
+    /// returned `400 Invalid model identifier`. The `frontend` task went there, every attempt 400'd in ~2s,
+    /// and — because run_agent_in returns Ok for a provider error (the 400 arrives as the agent's TEXT) — the
+    /// dispatcher saw "finished, owned files absent" and retried with "You finished WITHOUT writing your
+    /// owned file(s)". 3 attempts, 6.8s, ZERO tool calls, task failed. integrate-verify depends on every
+    /// task, so it never became ready. 71 minutes, no app, and the engine blamed the model for a dead node.
+    #[test]
+    fn a_resident_but_unservable_node_is_dropped_before_it_can_eat_a_third_of_the_run() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx", None),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx", None),
+            dev("works-workhorse", "workhorse-qwopus3.6-27b-coder-mlx", None),
+        ];
+        // Exactly what /v1/models returned while `lms ps` still listed all three.
+        let served: std::collections::HashSet<String> = [
+            "mihai-qwopus3.6-27b-coder-mlx",
+            "gabee-qwopus3.6-27b-coder-mlx",
+            "text-embedding-nomic-embed-text-v1.5",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let (keep, dropped) = drop_unservable_devices(pool, Some(&served));
+        assert_eq!(keep.len(), 2, "the two servable nodes survive");
+        assert!(!keep.iter().any(|d| d.model_id.starts_with("workhorse-")));
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].1, "workhorse-qwopus3.6-27b-coder-mlx");
+    }
+
+    /// A FAILED PROBE IS NOT AN EMPTY FLEET. Seven instruments in this project have reported a confident
+    /// zero that was a bug in the instrument; gating a whole run off the eighth would be the same mistake
+    /// with worse consequences.
+    #[test]
+    fn a_probe_that_cannot_answer_never_gates_anything() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx", None),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx", None),
+        ];
+        let (keep, dropped) = drop_unservable_devices(pool.clone(), None);
+        assert_eq!(keep.len(), pool.len(), "None => byte-identical passthrough");
+        assert!(dropped.is_empty());
+    }
+
+    /// If EVERY device looks unservable, the probe disagrees with `lms ps` about literally everything. A
+    /// fleet that is 100% dead is possible; a broken probe is likelier — and dropping everything turns a
+    /// recoverable run into a guaranteed dead one. Keep the pool and let the run proceed as before.
+    #[test]
+    fn the_preflight_can_never_empty_the_pool() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx", None),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx", None),
+        ];
+        let served: std::collections::HashSet<String> = ["something-else-entirely".to_string()]
+            .into_iter()
+            .collect();
+        let (keep, dropped) = drop_unservable_devices(pool, Some(&served));
+        assert_eq!(keep.len(), 2, "never strand the run with zero nodes");
+        assert!(
+            dropped.is_empty(),
+            "and do not claim drops we did not act on"
+        );
+    }
+
+    /// #128 no-start guard: it fires ONLY on a PROVEN negative (the endpoint served a non-empty catalog that
+    /// excludes every resident) and NEVER on an observed-empty. The safety property — a broken/empty probe can
+    /// never refuse — is the one that must not regress, so it is asserted directly here.
+    #[test]
+    fn no_start_guard_fires_only_on_proven_zero_servable() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx", None),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx", None),
+        ];
+        // Endpoint WORKS (non-empty) but lists none of our models -> every alias withdrawn -> REFUSE.
+        let disjoint: std::collections::HashSet<String> = [
+            "some-other-model".to_string(),
+            "text-embedding-x".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(
+            all_resident_unservable(&pool, Some(&disjoint)),
+            "non-empty catalog disjoint from the pool is a proven zero -> refuse"
+        );
+        // At least one resident servable -> the pool is fine -> DO NOT refuse.
+        let one_ok: std::collections::HashSet<String> =
+            ["mihai-qwopus3.6-27b-coder-mlx".to_string()]
+                .into_iter()
+                .collect();
+        assert!(
+            !all_resident_unservable(&pool, Some(&one_ok)),
+            "one servable resident means the run can proceed"
+        );
+        // Probe unreachable/empty (None) -> NEVER refuse (the seven-lying-instruments rule).
+        assert!(
+            !all_resident_unservable(&pool, None),
+            "a probe that cannot answer must never gate the run"
+        );
+        // Empty catalog -> None-equivalent -> NEVER refuse.
+        let empty: std::collections::HashSet<String> = std::collections::HashSet::new();
+        assert!(!all_resident_unservable(&pool, Some(&empty)));
+        // Empty pool -> nothing to prove unservable -> NEVER refuse (falls through to the zero-resident branch).
+        assert!(!all_resident_unservable(&[], Some(&disjoint)));
+    }
+
+    /// S-M6: a tagged device whose engine nobody registered is a guaranteed-dead device (probe
+    /// None → never dropped; provider → lmstudio; every dispatch fails). It stays out of the pool
+    /// and its id comes back for the named event; with the engine registered the merge is the
+    /// additive, id-deduped one it always was.
+    #[test]
+    fn a_sidecar_device_without_a_registered_engine_is_excluded_by_name() {
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let configured = vec![
+            dev("mac-gabee", "gabee-qwen3.8-27b", None),
+            dev("workhorse-mlx", alias, Some(EngineKind::MlxSidecar)),
+        ];
+        let mut pool = vec![dev("mac-gabee", "gabee-qwen3.8-27b", None)];
+        let none = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        assert_eq!(
+            merge_sidecar_devices(&mut pool, &configured, &none),
+            vec!["workhorse-mlx".to_string()]
+        );
+        assert_eq!(pool.len(), 1, "the dead device never enters the pool");
+        assert!(none.engine_for_device(&configured[1]).is_none());
+        assert!(none.engine_for_device(&configured[0]).is_some());
+
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
+        assert!(merge_sidecar_devices(&mut pool, &configured, &engines).is_empty());
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool[1].id, "workhorse-mlx");
+        assert!(
+            merge_sidecar_devices(&mut pool, &configured, &engines).is_empty(),
+            "dedup by id"
+        );
+        assert_eq!(pool.len(), 2);
+    }
+
+    /// S-M7: a declared sidecar device whose engine serves nothing while loading is OFF has no
+    /// mount path this run — it leaves the pool by name, the LM Studio partition untouched and in
+    /// order. Loading ON, or a sidecar probe that answered, or no sidecar partition at all: nothing
+    /// moves.
+    #[test]
+    fn an_unmounted_sidecar_under_load_off_leaves_the_pool_by_name() {
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let pool = vec![
+            dev("mac-gabee", "gabee-qwen3.8-27b", None),
+            dev("workhorse-mlx", alias, Some(EngineKind::MlxSidecar)),
+            dev("local-mihai", "mihai-qwen3.8-27b", None),
+        ];
+        let lm_ids: &[&str] = &["gabee-qwen3.8-27b", "mihai-qwen3.8-27b"];
+        let unmounted = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, None),
+        ]);
+        let mut p = pool.clone();
+        assert_eq!(
+            exclude_unmountable_sidecar_devices(&mut p, &unmounted, false),
+            vec!["workhorse-mlx".to_string()]
+        );
+        assert_eq!(
+            p.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            vec!["mac-gabee", "local-mihai"]
+        );
+        let mut p = pool.clone();
+        assert!(
+            exclude_unmountable_sidecar_devices(&mut p, &unmounted, true).is_empty(),
+            "loading on: the pre-warm mounts it"
+        );
+        assert_eq!(p.len(), 3);
+        let mounted = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (EngineKind::MlxSidecar, Some(&[alias])),
+        ]);
+        let mut p = pool.clone();
+        assert!(exclude_unmountable_sidecar_devices(&mut p, &mounted, false).is_empty());
+        assert_eq!(p.len(), 3);
+        let lm_only = served(&[(EngineKind::LmStudio, Some(lm_ids))]);
+        let mut p = pool.clone();
+        assert!(exclude_unmountable_sidecar_devices(&mut p, &lm_only, false).is_empty());
+        assert_eq!(p.len(), 3);
+    }
+
+    /// The pre-warm never routes an unregistered engine's device to LM Studio (the deleted
+    /// pre-step-C arm fired a doomed `lms load <alias>`): it is named on stderr and skipped, and
+    /// the LM Studio device still warms.
+    #[test]
+    fn prewarm_skips_a_device_whose_engine_is_unregistered() {
+        let lm = RecordingEngine::new("lmstudio");
+        let engines = Engines::with_lmstudio_for_tests(lm.clone());
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let pool = vec![
+            dev("workhorse-mlx", alias, Some(EngineKind::MlxSidecar)),
+            dev("mac-gabee", "gabee-qwen", None),
+        ];
+        prewarm_pool(&engines, &pool, alias);
+        assert_eq!(
+            lm.calls(),
+            vec![("gabee-qwen".to_string(), 1)],
+            "no lms load of the sidecar alias, for the planner or the device"
+        );
     }
 
     /// The config contract of step B: a device yaml WITHOUT the engine key deserializes to None

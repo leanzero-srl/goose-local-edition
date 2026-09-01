@@ -194,9 +194,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (a partition whose probe cannot answer keeps its snapshot slots).
 /// Tightened to 44,937 (S-M5): the request-body extras block became
 /// swarm_engine::local_request_params (per-engine knob names).
+/// Tightened to 44,805 (S-M6/S-M7): the servability kernels `drop_unservable_devices` and
+/// `all_resident_unservable` moved with their four tests beside their per-engine wrappers in
+/// swarm_engine.rs, paying for the named pool-absence events (sidecar-device-excluded,
+/// sidecar-unmounted-and-load-disabled) written to run.jsonl.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_937;
+    const SWARM_RS_LINE_BASELINE: usize = 44_805;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
