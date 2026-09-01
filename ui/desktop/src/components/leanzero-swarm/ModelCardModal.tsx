@@ -28,12 +28,12 @@ import {
 } from '../lz';
 import {
   DownloadProgressRow,
-  SolidBanner,
   formatBytesShort,
   formatCount,
   formatDate,
   type DownloadLifecycleHandlers,
 } from './primitives';
+import { ToneBanner } from './studio';
 
 /** The exact file listing: path in mono, size right-aligned in tabular figures. */
 const FILE_COLUMNS: DataTableColumn<MlxRepoFile>[] = [
@@ -227,7 +227,7 @@ export function ModelCardModal({
             )}
           </Panel>
 
-          {error && <SolidBanner tone="err" label="Model card failed" text={error} />}
+          {error && <ToneBanner tone="err" label="Model card failed" text={error} />}
           {card && (
             <>
               {card.tags.length > 0 && (

@@ -1,16 +1,13 @@
-import React from 'react';
 import { Loader2, Pause, Play, X } from 'lucide-react';
 import type { MlxDownloadProgress } from '../../acp/mlx-engine';
 import {
   Button,
   Chip as StudioChip,
-  StatusDot,
   RADIUS,
   SURFACE,
   TNUM,
   TONE_DOT,
   TONE_TEXT,
-  TYPE,
   WEIGHT,
   cx,
   type Tone,
@@ -18,9 +15,9 @@ import {
 
 /**
  * A thin ADAPTER over the LeanZero Studio primitives (`src/components/lz`, ui/desktop/DESIGN.md):
- * the formatters, the SolidBanner MlxEngineView and ModelCardModal still consume, and the
- * download row. Every visual inside is a Studio token or primitive — no colour constant leaves
- * this module, so nothing here can reach the DOM as an inline style.
+ * the size/count/date formatters and the download row MlxEngineView and ModelCardModal share
+ * (banners are studio.tsx's ToneBanner). Every visual inside is a Studio token or primitive — no
+ * colour constant leaves this module, so nothing here can reach the DOM as an inline style.
  */
 
 export const GB = 1024 * 1024 * 1024;
@@ -54,36 +51,6 @@ export function formatDate(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
-}
-
-/**
- * A banner in the Studio register: a surface card carrying a solid status dot, a toned label and
- * the message in body ink. Red carries backend text VERBATIM — never paraphrased. The same
- * markup as studio.tsx's ToneBanner, kept under this name for its two remaining importers.
- */
-export function SolidBanner({
-  tone,
-  label,
-  text,
-  action,
-}: {
-  tone: Tone;
-  label: string;
-  text: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cx('flex items-center gap-3 px-4 py-3', SURFACE.card)}
-      role={tone === 'err' ? 'alert' : 'status'}
-      data-tone={tone}
-    >
-      <StatusDot tone={tone} label={label} size={10} />
-      <span className={cx('shrink-0 text-lz-meta', WEIGHT.semibold, TONE_TEXT[tone])}>{label}</span>
-      <span className={cx('min-w-0 flex-1 break-words', TYPE.body)}>{text}</span>
-      {action}
-    </div>
-  );
 }
 
 export interface DownloadLifecycleHandlers {

@@ -66,10 +66,30 @@ describe('leanzero-swarm studio compositions', () => {
 
   it('the banner is an alert only for err, and renders the text VERBATIM in its own element', () => {
     render(<ToneBanner tone="err" label="Mesh" text="mesh joined but reported no IP" />);
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    const alert = screen.getByRole('alert');
+    expect(alert).toBeInTheDocument();
+    expect(alert.getAttribute('data-tone')).toBe('err');
+    expect(alert.style.backgroundColor).toBe('');
     expect(screen.getByText('mesh joined but reported no IP')).toBeInTheDocument();
     render(<ToneBanner tone="warn" label="Deployment" text="no mail" />);
-    expect(screen.getByRole('status')).toHaveTextContent('no mail');
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('no mail');
+    expect(status.getAttribute('data-tone')).toBe('warn');
+    expect(screen.getByText('Deployment').className).toContain('text-lz-warn');
+  });
+
+  it('the banner carries its tone as a toned label on every tone MlxEngineView raises', () => {
+    render(
+      <>
+        <ToneBanner tone="accent" label="Remote" text="managing on studio" />
+        <ToneBanner tone="err" label="Mount blocked" text="not enough memory" />
+      </>
+    );
+    expect(screen.getByText('Remote').className).toContain('text-lz-accent');
+    expect(screen.getByText('Remote').closest('[role]')?.getAttribute('role')).toBe('status');
+    expect(screen.getByText('Mount blocked').closest('[role]')?.getAttribute('data-tone')).toBe(
+      'err'
+    );
   });
 
   it('the stepper clamps to 1–9 and names both buttons after the node', async () => {
@@ -128,7 +148,13 @@ describe('leanzero-swarm studio compositions', () => {
 
   it('the select is inert while loading and with no options', () => {
     render(
-      <StudioSelect aria-label="Empty" options={[]} value={null} onChange={() => {}} placeholder="—" />
+      <StudioSelect
+        aria-label="Empty"
+        options={[]}
+        value={null}
+        onChange={() => {}}
+        placeholder="—"
+      />
     );
     expect(screen.getByRole('combobox', { name: 'Empty' })).toBeDisabled();
   });
