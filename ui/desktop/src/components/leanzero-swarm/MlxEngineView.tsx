@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  ChevronDown,
   Download,
   Folder,
   HardDrive,
+  Laptop,
   Loader2,
   Pencil,
   Play,
@@ -71,6 +73,13 @@ import {
 } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
 import { ModelCardModal } from './ModelCardModal';
+import { useFeatures } from '../../contexts/FeaturesContext';
+import {
+  leanzeroLinkNodes,
+  leanzeroLinkStatus,
+  type NodeStatus,
+  type NodesResponse,
+} from '../../acp/leanzero-link';
 
 // Formatters and the author hue stay importable from this module — tests and older
 // callers reach them here.
@@ -1198,7 +1207,7 @@ interface HfBrowserState {
   loadMore: () => void;
 }
 
-function useHfBrowserState(): HfBrowserState {
+function useHfBrowserState(nodeId?: string): HfBrowserState {
   const [queryText, setQueryText] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [author, setAuthor] = useState<string | null>(null);
@@ -1234,7 +1243,7 @@ function useHfBrowserState(): HfBrowserState {
     setNextCursor(null);
     void (async () => {
       try {
-        const page = await mlxEngineBrowse(baseParams);
+        const page = await mlxEngineBrowse(baseParams, nodeId);
         if (epoch.current !== id) return;
         setHits(page.hits);
         setNextCursor(page.nextCursor ?? null);
@@ -1246,7 +1255,7 @@ function useHfBrowserState(): HfBrowserState {
         if (epoch.current === id) setLoading(false);
       }
     })();
-  }, [baseParams]);
+  }, [baseParams, nodeId]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor) return;
@@ -1254,7 +1263,7 @@ function useHfBrowserState(): HfBrowserState {
     setLoadingMore(true);
     void (async () => {
       try {
-        const page = await mlxEngineBrowse({ ...baseParams, cursor: nextCursor });
+        const page = await mlxEngineBrowse({ ...baseParams, cursor: nextCursor }, nodeId);
         if (epoch.current !== id) return;
         setHits((prev) => {
           const seen = new Set((prev ?? []).map((h) => h.id));
@@ -1268,7 +1277,7 @@ function useHfBrowserState(): HfBrowserState {
         if (epoch.current === id) setLoadingMore(false);
       }
     })();
-  }, [baseParams, nextCursor]);
+  }, [baseParams, nextCursor, nodeId]);
 
   const commitQuery = useCallback(() => setAppliedQuery(queryText.trim()), [queryText]);
 
@@ -1530,6 +1539,10 @@ interface ModelsSectionProps {
   onModelDeleted: (modelId: string) => void;
   filters: MlxBrowseFilters | null;
   filtersError: string | null;
+  /** The device every model op targets — undefined = local, byte-identical to before. */
+  nodeId?: string;
+  /** Hostname of the selected REMOTE device, or null when local — names the delete confirm. */
+  remoteHostname: string | null;
 }
 
 function ModelsSection({
@@ -1546,12 +1559,14 @@ function ModelsSection({
   onModelDeleted,
   filters,
   filtersError,
+  nodeId,
+  remoteHostname,
 }: ModelsSectionProps) {
   // Owner amendment: the Models area splits into [Hugging Face | Downloaded] — the local models
   // used to sit at the bottom of one long column and were hard to see. The browser's state lives
   // in the section (useHfBrowserState) so switching sub-tabs never loses query/filters/pages.
   const [view, setView] = useState<ModelsSubTab>('hf');
-  const browser = useHfBrowserState();
+  const browser = useHfBrowserState(nodeId);
 
   const [dirDialogOpen, setDirDialogOpen] = useState(false);
   const [dirSaving, setDirSaving] = useState(false);
@@ -1598,7 +1613,7 @@ function ModelsSection({
     setDeleting(true);
     setDeleteError(null);
     try {
-      await mlxEngineModelDelete(pendingDelete.id);
+      await mlxEngineModelDelete(pendingDelete.id, nodeId);
       onModelDeleted(pendingDelete.id);
       setPendingDelete(null);
       refreshModels();
@@ -1607,7 +1622,7 @@ function ModelsSection({
     } finally {
       setDeleting(false);
     }
-  }, [pendingDelete, refreshModels, onModelDeleted]);
+  }, [pendingDelete, refreshModels, onModelDeleted, nodeId]);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -1823,6 +1838,7 @@ function ModelsSection({
       {cardRepoId != null && (
         <ModelCardModal
           repoId={cardRepoId}
+          nodeId={nodeId}
           onClose={() => setCardRepoId(null)}
           progress={downloads[cardRepoId]}
           startError={downloadErrors[cardRepoId]}
@@ -1847,7 +1863,11 @@ function ModelsSection({
         title="Delete model"
         message={
           pendingDelete
-            ? `Delete ${pendingDelete.id} (${formatGb(pendingDelete.sizeBytes)}) from the models folder? This removes the files from disk.`
+            ? `Delete ${pendingDelete.id} (${formatGb(pendingDelete.sizeBytes)})${
+                remoteHostname ? ` on ${remoteHostname}` : ''
+              } from the models folder? This removes the files from ${
+                remoteHostname ? "that device's disk" : 'disk'
+              }.`
             : ''
         }
         confirmLabel="Delete"
@@ -1861,6 +1881,182 @@ function ModelsSection({
 }
 
 // ---------------------------------------------------------------------------
+// Device target picker — manage models on ANY linked device, not just the local
+// one. Node list comes from `leanzeroLink/nodes` (self + peers). Never a native
+// <select>: the same custom-dropdown register as the Link tab's device picker.
+// ---------------------------------------------------------------------------
+
+interface DeviceTarget {
+  /** null = THIS device (local). A peer carries its `node_id`. */
+  nodeId: string | null;
+  hostname: string;
+  isSelf: boolean;
+  /** Peers carry a live status for the idle/busy chip; self shows none. */
+  status?: NodeStatus;
+}
+
+function deviceLabel(t: DeviceTarget): string {
+  return t.isSelf ? 'This device' : t.hostname;
+}
+
+const NODE_CHIP: Record<string, { color: string; label: string }> = {
+  Idle: { color: GREEN, label: 'idle' },
+  Busy: { color: AMBER, label: 'busy' },
+  Offline: { color: SLATE, label: 'offline' },
+};
+
+function NodeStatusChip({ status }: { status: NodeStatus }) {
+  const v = NODE_CHIP[status.type] ?? NODE_CHIP.Offline;
+  return (
+    <Chip color={v.color} ink={v.color === AMBER ? INK_DARK : '#ffffff'}>
+      {v.label}
+    </Chip>
+  );
+}
+
+/**
+ * Solid benchmark-styled node dropdown. "This device" (self) is always first and default;
+ * each connected peer follows with its hostname and a live idle/busy chip. A peer stays
+ * selectable even when busy — model management (list/browse/download) works while a node
+ * runs a session; an unreachable/offline peer surfaces its backend error in the ops below.
+ */
+function DeviceTargetPicker({
+  targets,
+  value,
+  onChange,
+  disabled,
+}: {
+  targets: DeviceTarget[];
+  value: string | null;
+  onChange: (nodeId: string | null) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  const selected = targets.find((t) => t.nodeId === value) ?? targets[0] ?? null;
+
+  return (
+    <div ref={rootRef} className="relative min-w-[240px]">
+      <button
+        type="button"
+        data-testid="mlx-device-target"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded border border-border-primary bg-background-secondary px-3 py-2 text-left text-sm font-semibold text-text-primary transition-colors hover:border-text-secondary disabled:opacity-60"
+      >
+        <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
+        <span className="min-w-0 truncate">{selected ? deviceLabel(selected) : 'This device'}</span>
+        {selected?.status && <NodeStatusChip status={selected.status} />}
+        <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-text-secondary" />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Manage models on device"
+          className="absolute left-0 top-full z-[60] mt-1 w-full overflow-hidden rounded border border-border-primary bg-background-primary shadow-lg"
+        >
+          {targets.map((t) => (
+            <button
+              key={t.nodeId ?? 'self'}
+              type="button"
+              role="option"
+              aria-selected={t.nodeId === value}
+              data-testid={`mlx-device-target-option-${t.nodeId ?? 'self'}`}
+              title={deviceLabel(t)}
+              onClick={() => {
+                onChange(t.nodeId);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                t.nodeId === value ? 'bg-background-secondary' : 'hover:bg-background-secondary'
+              }`}
+            >
+              <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
+              <span className="min-w-0 truncate font-semibold text-text-primary">
+                {deviceLabel(t)}
+              </span>
+              {t.status && <NodeStatusChip status={t.status} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Poll the mesh roster for the device picker. Gated on the `leanzeroLink` capability and a
+ * `connected` auth state — the common case right now (no worker deployed) yields no peers, so
+ * the picker is hidden and the whole view behaves exactly as before. A transient status blip
+ * keeps the last roster rather than yanking the user's selection back to local; a definitive
+ * "not connected" clears the peers.
+ */
+function useLinkNodes(enabled: boolean): NodesResponse | null {
+  const [nodes, setNodes] = useState<NodesResponse | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setNodes(null);
+      return undefined;
+    }
+    let disposed = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const poll = async () => {
+      try {
+        const st = await leanzeroLinkStatus();
+        if (disposed) return;
+        if (st.auth.state === 'connected') {
+          try {
+            const n = await leanzeroLinkNodes();
+            if (!disposed) setNodes(n);
+          } catch {
+            // Keep the last roster on a transient nodes() failure — "connected" still holds.
+          }
+        } else {
+          setNodes(null);
+        }
+      } catch {
+        // Status read failed (worker unreachable): keep the last roster, don't yank selection.
+      }
+    };
+    const start = () => {
+      if (timer != null) return;
+      void poll();
+      timer = setInterval(() => void poll(), 5000);
+    };
+    const stop = () => {
+      if (timer != null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') start();
+      else stop();
+    };
+    onVisibility();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      disposed = true;
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [enabled]);
+  return nodes;
+}
+
+// ---------------------------------------------------------------------------
 // The view
 // ---------------------------------------------------------------------------
 
@@ -1870,6 +2066,53 @@ const STATUS_POLL_MS = 2000;
 
 const MlxEngineView: React.FC = () => {
   const [tab, setTab] = useState<MlxTab>('engine');
+
+  // Which linked device every op targets. `targetNodeId === null` means THIS device (local):
+  // activeNodeId is then `undefined`, omitted from the wire, so the local path is byte-identical.
+  const { leanzeroLink } = useFeatures();
+  const linkNodes = useLinkNodes(leanzeroLink);
+  const peers = useMemo(() => linkNodes?.peers ?? [], [linkNodes]);
+  const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
+  const [nodeSwitching, setNodeSwitching] = useState(false);
+
+  const selectedPeer = useMemo(
+    () => (targetNodeId != null ? (peers.find((p) => p.node_id === targetNodeId) ?? null) : null),
+    [peers, targetNodeId]
+  );
+  const activeNodeId = selectedPeer ? selectedPeer.node_id : undefined;
+  const remoteHostname = selectedPeer ? selectedPeer.hostname : null;
+
+  const deviceTargets = useMemo<DeviceTarget[]>(() => {
+    const self: DeviceTarget = {
+      nodeId: null,
+      hostname: linkNodes?.self.hostname ?? 'This device',
+      isSelf: true,
+    };
+    return [
+      self,
+      ...peers.map((p) => ({
+        nodeId: p.node_id,
+        hostname: p.hostname,
+        isSelf: false,
+        status: p.status,
+      })),
+    ];
+  }, [linkNodes, peers]);
+
+  // A selected peer that drops off the roster (disabled / removed) falls back to This device —
+  // never leave a stale peer id driving the ops once it is gone.
+  useEffect(() => {
+    if (targetNodeId != null && !peers.some((p) => p.node_id === targetNodeId)) {
+      setTargetNodeId(null);
+    }
+  }, [peers, targetNodeId]);
+
+  // The live target, mirrored into a ref so an in-flight fetch that resolves AFTER a device
+  // switch is DROPPED rather than writing the previous node's data over the new one (TRUTH LAYER).
+  const activeNodeRef = useRef(activeNodeId);
+  useEffect(() => {
+    activeNodeRef.current = activeNodeId;
+  }, [activeNodeId]);
 
   const [status, setStatus] = useState<MlxEngineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -1881,10 +2124,15 @@ const MlxEngineView: React.FC = () => {
   // mid-download must keep the rows live and the poll running while the view is open.
   const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+  // A cancel DELETES the partial on disk. On a REMOTE device that is another machine's disk, so
+  // it goes through a confirm that names the device; a local cancel stays immediate (as before).
+  const [pendingCancel, setPendingCancel] = useState<string | null>(null);
 
   const [browseFilters, setBrowseFilters] = useState<MlxBrowseFilters | null>(null);
   const [browseFiltersError, setBrowseFiltersError] = useState<string | null>(null);
-  const browseFiltersRequested = useRef(false);
+  // The device whose filter vocabulary is loaded (null = none yet). A node switch re-crawls
+  // for the new device — a peer's backend keeps its own cache.
+  const browseFiltersFor = useRef<{ node: string | undefined } | null>(null);
 
   const [mountModelId, setMountModelId] = useState<string | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
@@ -1907,13 +2155,15 @@ const MlxEngineView: React.FC = () => {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const next = await mlxEngineStatus();
+      const next = await mlxEngineStatus(activeNodeId);
+      if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
       setStatus(next);
       setStatusError(null);
     } catch (error) {
+      if (activeNodeRef.current !== activeNodeId) return;
       setStatusError(errorMessage(error, 'Could not read the engine status.'));
     }
-  }, []);
+  }, [activeNodeId]);
 
   // Poll status every 2s while this window is actually visible; stop when hidden.
   useEffect(() => {
@@ -1944,29 +2194,38 @@ const MlxEngineView: React.FC = () => {
   const refreshModels = useCallback(() => {
     void (async () => {
       try {
-        const list = await mlxEngineModelsList();
+        const list = await mlxEngineModelsList(activeNodeId);
+        if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
         setModels(list.models);
         setDisk({ availableBytes: list.diskAvailableBytes, totalBytes: list.diskTotalBytes });
       } catch (error) {
+        if (activeNodeRef.current !== activeNodeId) return;
         // The models list failing is a real fact; show it where models are picked.
         setMountError(errorMessage(error, 'Could not list local models.'));
+      } finally {
+        // The node's models have landed (or failed loudly) — the switch is done.
+        if (activeNodeRef.current === activeNodeId) setNodeSwitching(false);
       }
     })();
-  }, []);
+  }, [activeNodeId]);
 
-  // Filter vocabularies load once per view-open (cached backend-side), on the first
-  // visit to the Models tab; a failure leaves free text working and says so.
+  // Filter vocabularies load once per (device, view-open) (cached backend-side), on the first
+  // visit to the Models tab; a failure leaves free text working and says so. Switching the
+  // device re-loads for the new node.
   useEffect(() => {
-    if (tab !== 'models' || browseFiltersRequested.current) return;
-    browseFiltersRequested.current = true;
+    if (tab !== 'models') return;
+    if (browseFiltersFor.current && browseFiltersFor.current.node === activeNodeId) return;
+    browseFiltersFor.current = { node: activeNodeId };
+    setBrowseFilters(null);
+    setBrowseFiltersError(null);
     void (async () => {
       try {
-        setBrowseFilters(await mlxEngineBrowseFilters());
+        setBrowseFilters(await mlxEngineBrowseFilters(activeNodeId));
       } catch (error) {
         setBrowseFiltersError(errorMessage(error, 'Could not load the filter vocabularies.'));
       }
     })();
-  }, [tab]);
+  }, [tab, activeNodeId]);
 
   const setDownloadError = useCallback((repoId: string, message: string) => {
     setDownloadErrors((prev) => ({ ...prev, [repoId]: message }));
@@ -1988,7 +2247,7 @@ const MlxEngineView: React.FC = () => {
   const syncProgress = useCallback(
     async (repoId: string, opts: { dropIfUntracked?: boolean } = {}) => {
       try {
-        const progress = await mlxEngineDownloadProgress(repoId);
+        const progress = await mlxEngineDownloadProgress(repoId, activeNodeId);
         if (!progress) {
           if (opts.dropIfUntracked) {
             setDownloads((prev) => {
@@ -2014,7 +2273,7 @@ const MlxEngineView: React.FC = () => {
         // transient poll failure — keep the last real numbers rather than inventing any
       }
     },
-    [refreshModels]
+    [refreshModels, activeNodeId]
   );
 
   const startDownload = useCallback(
@@ -2025,7 +2284,7 @@ const MlxEngineView: React.FC = () => {
         [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 },
       }));
       try {
-        await mlxEngineDownload(repoId);
+        await mlxEngineDownload(repoId, activeNodeId);
       } catch (error) {
         setDownloads((prev) => {
           const next = { ...prev };
@@ -2035,19 +2294,19 @@ const MlxEngineView: React.FC = () => {
         setDownloadError(repoId, errorMessage(error, 'Download failed to start.'));
       }
     },
-    [clearDownloadError, setDownloadError]
+    [clearDownloadError, setDownloadError, activeNodeId]
   );
 
   const pauseDownload = useCallback(
     async (repoId: string) => {
       try {
-        await mlxEngineDownloadPause(repoId);
+        await mlxEngineDownloadPause(repoId, activeNodeId);
       } catch (error) {
         setDownloadError(repoId, errorMessage(error, 'Pause failed.'));
       }
       await syncProgress(repoId);
     },
-    [setDownloadError, syncProgress]
+    [setDownloadError, syncProgress, activeNodeId]
   );
 
   /** Also the entry point for UNTRACKED partial residue on disk (incomplete local models). */
@@ -2060,20 +2319,20 @@ const MlxEngineView: React.FC = () => {
           : { ...prev, [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 } }
       );
       try {
-        await mlxEngineDownloadResume(repoId);
+        await mlxEngineDownloadResume(repoId, activeNodeId);
       } catch (error) {
         setDownloadError(repoId, errorMessage(error, 'Resume failed.'));
       }
       // Real state replaces the optimistic entry; a refused untracked resume drops it.
       await syncProgress(repoId, { dropIfUntracked: true });
     },
-    [clearDownloadError, setDownloadError, syncProgress]
+    [clearDownloadError, setDownloadError, syncProgress, activeNodeId]
   );
 
   const cancelDownload = useCallback(
     async (repoId: string) => {
       try {
-        await mlxEngineDownloadCancel(repoId);
+        await mlxEngineDownloadCancel(repoId, activeNodeId);
       } catch (error) {
         setDownloadError(repoId, errorMessage(error, 'Cancel failed.'));
         return;
@@ -2083,7 +2342,7 @@ const MlxEngineView: React.FC = () => {
       // keeps following it until the backend reports "cancelled".
       await syncProgress(repoId, { dropIfUntracked: true });
     },
-    [setDownloadError, syncProgress]
+    [setDownloadError, syncProgress, activeNodeId]
   );
 
   const downloadHandlers = useMemo<DownloadHandlers>(
@@ -2091,9 +2350,14 @@ const MlxEngineView: React.FC = () => {
       onDownload: (repoId) => void startDownload(repoId),
       onPause: (repoId) => void pauseDownload(repoId),
       onResume: (repoId) => void resumeDownload(repoId),
-      onCancel: (repoId) => void cancelDownload(repoId),
+      // A cancel deletes the partial from disk. On a remote device that is ANOTHER machine's
+      // disk — confirm first, naming the device. Local stays immediate, byte-identical.
+      onCancel: (repoId) => {
+        if (remoteHostname) setPendingCancel(repoId);
+        else void cancelDownload(repoId);
+      },
     }),
-    [startDownload, pauseDownload, resumeDownload, cancelDownload]
+    [startDownload, pauseDownload, resumeDownload, cancelDownload, remoteHostname]
   );
 
   /**
@@ -2133,16 +2397,44 @@ const MlxEngineView: React.FC = () => {
     return () => clearInterval(timer);
   }, [activeDownloadKey, syncProgress]);
 
+  // First load AND every device switch. On a switch the previous device's data is dropped so
+  // nothing stale reads as the new node's truth (TRUTH LAYER); a loading state shows until this
+  // node's models + settings + status land. On first mount there is nothing to drop — the local
+  // load is byte-identical to before.
+  const nodeInitialized = useRef(false);
   useEffect(() => {
+    if (nodeInitialized.current) {
+      setNodeSwitching(true);
+      setStatus(null);
+      setSettings(null);
+      setModels([]);
+      setDisk(null);
+      setStatusError(null);
+      setMountError(null);
+      setSaveError(null);
+      setDownloads({});
+      setDownloadErrors({});
+      setPendingCancel(null);
+      setMountModelId(null);
+      setSamplingModelId(null);
+      setProfileDrafts({});
+      defaultedPicker.current = false;
+      userPickedModel.current = false;
+    }
+    nodeInitialized.current = true;
     refreshModels();
     void (async () => {
       try {
-        setSettings(await mlxEngineSettingsRead());
+        const next = await mlxEngineSettingsRead(activeNodeId);
+        if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
+        setSettings(next);
       } catch (error) {
+        if (activeNodeRef.current !== activeNodeId) return;
         setSaveError(errorMessage(error, 'Could not read the engine settings.'));
       }
     })();
-  }, [refreshModels]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNodeId]);
 
   // Picker follows truth: while the engine is running or mounting and the user has not
   // explicitly picked something else this visit, the picker shows the mounted model — so a
@@ -2183,7 +2475,7 @@ const MlxEngineView: React.FC = () => {
       setEngineBusy(true);
       setMountError(null);
       try {
-        await mlxEngineMount(mountModelId);
+        await mlxEngineMount(mountModelId, activeNodeId);
       } catch (error) {
         setMountError(errorMessage(error, 'Mount failed.'));
       } finally {
@@ -2191,14 +2483,14 @@ const MlxEngineView: React.FC = () => {
         void refreshStatus();
       }
     })();
-  }, [mountModelId, refreshStatus]);
+  }, [mountModelId, refreshStatus, activeNodeId]);
 
   const onUnmount = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
       try {
-        await mlxEngineUnmount();
+        await mlxEngineUnmount(activeNodeId);
       } catch (error) {
         setMountError(errorMessage(error, 'Unmount failed.'));
       } finally {
@@ -2206,7 +2498,7 @@ const MlxEngineView: React.FC = () => {
         void refreshStatus();
       }
     })();
-  }, [refreshStatus]);
+  }, [refreshStatus, activeNodeId]);
 
   const onRemount = useCallback(() => {
     const modelId = status?.modelId ?? settings?.modelId;
@@ -2215,8 +2507,8 @@ const MlxEngineView: React.FC = () => {
       setEngineBusy(true);
       setMountError(null);
       try {
-        await mlxEngineUnmount();
-        await mlxEngineMount(modelId);
+        await mlxEngineUnmount(activeNodeId);
+        await mlxEngineMount(modelId, activeNodeId);
       } catch (error) {
         setMountError(errorMessage(error, 'Remount failed.'));
       } finally {
@@ -2224,7 +2516,7 @@ const MlxEngineView: React.FC = () => {
         void refreshStatus();
       }
     })();
-  }, [status?.modelId, settings?.modelId, refreshStatus]);
+  }, [status?.modelId, settings?.modelId, refreshStatus, activeNodeId]);
 
   const savedDraftsForSelected = useMemo(
     () =>
@@ -2250,11 +2542,11 @@ const MlxEngineView: React.FC = () => {
 
   const saveSettings = useCallback(
     async (next: MlxEngineSettings) => {
-      const saved = await mlxEngineSettingsUpdate(next);
+      const saved = await mlxEngineSettingsUpdate(next, activeNodeId);
       setSettings(saved);
       void refreshStatus();
     },
-    [refreshStatus]
+    [refreshStatus, activeNodeId]
   );
 
   const onSaveProfile = useCallback(() => {
@@ -2310,6 +2602,36 @@ const MlxEngineView: React.FC = () => {
   // the engine sub-tabs (Engine / Models / Sampling) plus everything under them, unchanged.
   return (
     <div className="flex flex-col gap-4">
+      {/* Device picker — only when there ARE peers (capability present + connected + a peer on
+          the mesh). With no worker deployed the mesh is not connected, so this is hidden and the
+          view behaves exactly as before, all ops on THIS device. */}
+      {peers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+            Manage on
+          </span>
+          <DeviceTargetPicker
+            targets={deviceTargets}
+            value={targetNodeId}
+            onChange={setTargetNodeId}
+            disabled={engineBusy || nodeSwitching}
+          />
+          {nodeSwitching && (
+            <Chip color={AMBER} ink={INK_DARK}>
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              switching device
+            </Chip>
+          )}
+        </div>
+      )}
+      {selectedPeer && (
+        <SolidBanner
+          color={AZURE}
+          label="Remote"
+          text={`Managing models on ${selectedPeer.hostname} (remote)`}
+        />
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex self-start overflow-hidden rounded border border-border-primary">
           {tabBtn('engine', 'Engine')}
@@ -2363,6 +2685,8 @@ const MlxEngineView: React.FC = () => {
           onModelDeleted={clearDownloadFor}
           filters={browseFilters}
           filtersError={browseFiltersError}
+          nodeId={activeNodeId}
+          remoteHostname={remoteHostname}
         />
       )}
       {tab === 'sampling' && (
@@ -2382,6 +2706,30 @@ const MlxEngineView: React.FC = () => {
           saveError={saveError}
         />
       )}
+
+      {/* Cancelling a remote download deletes the partial from THAT device's disk — a destructive
+          op on another machine, so it names the device and asks first (a local cancel does not). */}
+      <ConfirmationModal
+        isOpen={pendingCancel !== null}
+        title="Cancel download"
+        message={
+          pendingCancel
+            ? `Cancel the download of ${pendingCancel}${
+                remoteHostname ? ` on ${remoteHostname}` : ''
+              } and delete its partial files from ${
+                remoteHostname ? "that device's disk" : 'disk'
+              }?`
+            : ''
+        }
+        confirmLabel="Cancel download"
+        cancelLabel="Keep"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          if (pendingCancel) void cancelDownload(pendingCancel);
+          setPendingCancel(null);
+        }}
+        onCancel={() => setPendingCancel(null)}
+      />
     </div>
   );
 };
