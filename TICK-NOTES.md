@@ -593,3 +593,4 @@ Appended by `loop-state/note.sh`. The tick prints only the newest three; this is
 
 ## 2026-09-01 05:20 — tick 39 (direct; no run live — slot archived)
 - Fleet idle, 8850 free, no engine/harness processes. The gate-A surgeon is mid-edit (swarm.rs, attribution.rs, findings.rs, post_probe.rs dirty in the tree) — everything else on the launch checklist queues behind it. Nothing tripped; nothing to advance without colliding.
+- Durable memory written while waiting on the gate-A surgeon: campaign skill changelog (2026-09-01 entry: ownership is the score; commit --only law; forming channel as the delivery signal; stacking not under-dispatch; sonnet vigil), memory `commit-only-while-agents-in-flight`, tick.py CRITICAL UNASSIGNED rows (loop-state 1974fe4).
