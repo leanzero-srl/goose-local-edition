@@ -1,0 +1,792 @@
+//! ACP surface for LeanZero Link: bridges the `_goose/unstable/leanzeroLink/*`
+//! custom methods to a process-wide [`LinkManager`], and implements the
+//! [`SwarmStateSource`] the control service reads from goosed's live session state.
+//!
+//! ## What lives here
+//! - [`GoosedSwarmStateSource`] — the decoupling seam. It sources the node's own
+//!   [`NodeState`], the local [`SessionSummary`] index, and a live delta stream from
+//!   goosed's [`AgentManager`] + [`SessionManager`]. No mesh, no network.
+//! - The lazily-constructed global [`LinkManager`] (an `OnceLock` holder, mirroring
+//!   `goose_sidecar::engine::global_manager`), rebuilt when the on-disk identity email
+//!   changes so the account-derived control `node_token` stays current.
+//! - The `leanzeroLink/*` ACP handlers (`impl GooseAcpAgent`).
+//!
+//! ## Delta coverage (SCOPE — read honestly)
+//! [`GoosedSwarmStateSource::subscribe_local_deltas`] emits `NodeStateChanged` on
+//! busy/idle (and active-count) transitions and `SessionUpserted` on session
+//! create/rename/update/busy-flip, derived by polling the managers. It does NOT emit
+//! `SessionDelta` (per-message mirroring): the per-session `MessageEvent` buses live in
+//! goose-server (`session_event_bus`), a crate that depends on `goose` — unreachable
+//! from here. A full-P4 per-message tap needs a process-wide fan-out of every session's
+//! events that no seam exposes today. A delta we cannot source is simply not emitted —
+//! never faked.
+
+use super::*;
+
+use std::sync::{Mutex as StdMutex, OnceLock};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
+use tokio_stream::wrappers::ReceiverStream;
+
+use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
+use leanzero_link::identity;
+use leanzero_link::manager::{AuthState, LinkError, LinkManager, LinkManagerConfig, LinkState};
+use leanzero_link::mesh::{MeshConfig, MeshStatus};
+use leanzero_link::state::SwarmStateSource;
+use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
+use leanzero_link::worker_client::DEFAULT_WORKER_BASE_URL;
+use leanzero_link::{discovery, worker_client};
+
+/// How often the delta poller re-snapshots node/session state. Matches the fabric's own
+/// peer poll cadence (`ControlConfig::poll_interval` default) so a busy/idle transition
+/// surfaces to peers on the same order of latency whether via our stream or their poll.
+const LINK_DELTA_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Compile-time app constant folded into the control `node_token`. The token is
+/// `HMAC-SHA256(key = account_email_lowercased, message = this constant)`, hex-encoded.
+/// It is shared per-account (every node of one account derives the same value) and is
+/// defense-in-depth behind the already account-isolated tailnet — never the primary
+/// auth boundary. The iOS companion must derive it identically.
+const LINK_NODE_TOKEN_APP_SECRET: &str = "leanzero-link/v1/node-token";
+
+/// Fallback binary paths used only when discovery fails, so the auth flows
+/// (health/requestCode/verify/status/logout) still work with no Tailscale installed. A
+/// `connect()` then fails loudly with a spawn error naming the path (the discovery
+/// warning is already logged), rather than the whole manager refusing to construct.
+const TAILSCALED_FALLBACK: &str = "/opt/homebrew/bin/tailscaled";
+const TAILSCALE_CLI_FALLBACK: &str = "/opt/homebrew/bin/tailscale";
+
+// ---------------------------------------------------------------------------
+// SwarmStateSource — goosed's live session state as the swarm view.
+// ---------------------------------------------------------------------------
+
+/// Implements [`SwarmStateSource`] over goosed's [`AgentManager`] + [`SessionManager`].
+pub struct GoosedSwarmStateSource {
+    agent_manager: Arc<AgentManager>,
+    session_manager: Arc<SessionManager>,
+    node_id: String,
+}
+
+impl GoosedSwarmStateSource {
+    pub fn new(agent_manager: Arc<AgentManager>, session_manager: Arc<SessionManager>) -> Self {
+        Self {
+            agent_manager,
+            session_manager,
+            node_id: stable_node_id(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SwarmStateSource for GoosedSwarmStateSource {
+    async fn local_node(&self) -> NodeState {
+        let sessions =
+            snapshot_sessions(&self.agent_manager, &self.session_manager, &self.node_id).await;
+        derive_node(&self.node_id, &sessions, Utc::now())
+    }
+
+    async fn local_sessions(&self) -> Vec<SessionSummary> {
+        snapshot_sessions(&self.agent_manager, &self.session_manager, &self.node_id).await
+    }
+
+    fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
+        let (tx, rx) = tokio::sync::mpsc::channel::<LinkEvent>(256);
+        let agent_manager = self.agent_manager.clone();
+        let session_manager = self.session_manager.clone();
+        let node_id = self.node_id.clone();
+
+        // One poller per subscription; it exits when the receiver is dropped (the
+        // control service's local delta pump ends), so nothing leaks past a disconnect.
+        tokio::spawn(async move {
+            let mut last_node_key: Option<(NodeStatus, u32)> = None;
+            let mut last_sessions: HashMap<String, SessionSummary> = HashMap::new();
+            loop {
+                let sessions = snapshot_sessions(&agent_manager, &session_manager, &node_id).await;
+
+                let node = derive_node(&node_id, &sessions, Utc::now());
+                let node_key = (node.status.clone(), node.sessions_active);
+                if last_node_key.as_ref() != Some(&node_key) {
+                    if tx.send(LinkEvent::NodeStateChanged(node)).await.is_err() {
+                        return;
+                    }
+                    last_node_key = Some(node_key);
+                }
+
+                for summary in &sessions {
+                    if last_sessions.get(&summary.session_id) != Some(summary) {
+                        if tx
+                            .send(LinkEvent::SessionUpserted(summary.clone()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                        last_sessions.insert(summary.session_id.clone(), summary.clone());
+                    }
+                }
+                let present: HashSet<&str> =
+                    sessions.iter().map(|s| s.session_id.as_str()).collect();
+                last_sessions.retain(|id, _| present.contains(id.as_str()));
+
+                tokio::time::sleep(LINK_DELTA_POLL_INTERVAL).await;
+            }
+        });
+
+        Box::pin(ReceiverStream::new(rx))
+    }
+}
+
+/// Snapshot the local session index, mapping each non-archived [`Session`] to a
+/// [`SessionSummary`]. `live` is `is_session_busy` (an in-flight reply); a read failure
+/// is logged LOUDLY and yields an empty index for this tick — never a faked list.
+async fn snapshot_sessions(
+    agent_manager: &AgentManager,
+    session_manager: &SessionManager,
+    node_id: &str,
+) -> Vec<SessionSummary> {
+    let sessions = match session_manager.list_sessions().await {
+        Ok(sessions) => sessions,
+        Err(error) => {
+            error!(%error, "leanzeroLink: reading local sessions failed; empty index this tick");
+            return Vec::new();
+        }
+    };
+
+    // A session can only be busy (hold an in-flight cancel token) while its agent is
+    // loaded, so the busy set is a subset of the active (loaded) ids — probe only those,
+    // not every session on disk.
+    let mut busy: HashSet<String> = HashSet::new();
+    for id in agent_manager.list_active_session_ids().await {
+        if agent_manager.is_session_busy(&id).await {
+            busy.insert(id);
+        }
+    }
+
+    sessions
+        .into_iter()
+        .filter(|session| session.archived_at.is_none())
+        .map(|session| SessionSummary {
+            session_id: session.id.clone(),
+            origin_node_id: node_id.to_string(),
+            working_dir: session.working_dir.to_string_lossy().into_owned(),
+            name: session.name,
+            updated_at: session.updated_at,
+            message_count: session.message_count as u64,
+            live: busy.contains(&session.id),
+        })
+        .collect()
+}
+
+/// The node's own [`NodeState`]. `mesh_ip` is left `None`: the source does not know the
+/// mesh IP (that is the mesh layer's knowledge); the control service's `/nodes` handler
+/// fills it for the direct response, and peers learn it from the tailnet + their `/nodes`
+/// polls.
+fn derive_node(node_id: &str, sessions: &[SessionSummary], now: DateTime<Utc>) -> NodeState {
+    NodeState {
+        node_id: node_id.to_string(),
+        hostname: hostname_string(),
+        mesh_ip: None,
+        status: NodeStatus::from_sessions(sessions),
+        sessions_active: sessions.iter().filter(|s| s.live).count() as u32,
+        updated_at: now,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Node identity helpers.
+// ---------------------------------------------------------------------------
+
+fn hostname_string() -> String {
+    gethostname::gethostname().to_string_lossy().into_owned()
+}
+
+/// The node id: the sanitized hostname, plus the mesh's persisted 6-hex per-machine
+/// suffix once it exists (so this matches the tailnet hostname the manager mints). Two
+/// machines that share a hostname stay distinct once each has connected at least once.
+fn stable_node_id() -> String {
+    let raw = hostname_string();
+    let base: String = sanitize_hostname(&raw).chars().take(56).collect();
+    let base = base.trim_end_matches('-').to_string();
+    match read_persisted_node_suffix() {
+        Some(suffix) => format!("{base}-{suffix}"),
+        None => base,
+    }
+}
+
+fn sanitize_hostname(raw: &str) -> String {
+    let mut out: String = raw
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "leanzero-node".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// The per-machine suffix the mesh persists at `<identity dir>/node-id`
+/// (`~/.leanzero/node-id`). Absent until the first connect; read-only here.
+fn read_persisted_node_suffix() -> Option<String> {
+    let path = identity::default_identity_path().ok()?;
+    let dir = path.parent()?;
+    let content = std::fs::read_to_string(dir.join("node-id")).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// `HMAC-SHA256(key = account_email_lowercased, message = app constant)`, hex-encoded.
+/// A `None` email (logged out) folds an empty key — a non-empty placeholder never used,
+/// since `connect()` requires a verified identity and the manager is rebuilt with the
+/// real email before then.
+fn node_token_from_email(email: Option<&str>) -> String {
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
+    let key = email.map(str::to_lowercase).unwrap_or_default();
+    let mut mac =
+        <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(LINK_NODE_TOKEN_APP_SECRET.as_bytes());
+    to_hex(&mac.finalize().into_bytes())
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// The on-disk account email (lowercased), or `None` when logged out or the identity
+/// file is unreadable/malformed — the manager surfaces a malformed file loudly on build.
+fn current_identity_email() -> Option<String> {
+    let store = identity::IdentityStore::at_default().ok()?;
+    match store.load() {
+        Ok(Some(id)) => Some(id.email.to_lowercase()),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The process-wide LinkManager (lazily built, rebuilt on identity-email change).
+// ---------------------------------------------------------------------------
+
+struct LinkHolder {
+    /// The account email (lowercased) the current manager's `node_token` was derived
+    /// from, so a login/identity change forces a rebuild.
+    email_key: Option<String>,
+    manager: Arc<LinkManager>,
+}
+
+static LINK: OnceLock<StdMutex<LinkHolder>> = OnceLock::new();
+
+/// Resolve the worker base URL from the env override, else the crate default; logs which.
+fn resolve_worker_base_url() -> String {
+    match std::env::var("LEANZERO_LINK_WORKER_URL") {
+        Ok(value) if !value.trim().is_empty() => {
+            let value = value.trim().to_string();
+            info!(worker_base_url = %value, resolved_from = "env LEANZERO_LINK_WORKER_URL",
+                  "leanzeroLink: worker URL resolved");
+            value
+        }
+        _ => {
+            info!(worker_base_url = %DEFAULT_WORKER_BASE_URL, resolved_from = "crate default",
+                  "leanzeroLink: worker URL resolved");
+            DEFAULT_WORKER_BASE_URL.to_string()
+        }
+    }
+}
+
+fn build_link_config(
+    email: Option<&str>,
+) -> Result<LinkManagerConfig, agent_client_protocol::Error> {
+    let worker_base_url = resolve_worker_base_url();
+    let identity_path = identity::default_identity_path()
+        .internal_err_ctx("resolving the LeanZero Link identity path")?;
+
+    let tailscaled = discovery::find_tailscaled().unwrap_or_else(|error| {
+        warn!(%error, "leanzeroLink: tailscaled not found; connect() will fail loudly until it is installed");
+        PathBuf::from(TAILSCALED_FALLBACK)
+    });
+    let tailscale_cli = discovery::find_tailscale_cli().unwrap_or_else(|error| {
+        warn!(%error, "leanzeroLink: tailscale CLI not found; connect() will fail loudly until it is installed");
+        PathBuf::from(TAILSCALE_CLI_FALLBACK)
+    });
+    let mesh = MeshConfig::new(tailscaled, tailscale_cli, stable_node_id())
+        .internal_err_ctx("building the LeanZero Link mesh config")?;
+
+    let control = ControlConfig::new(node_token_from_email(email), None);
+
+    Ok(LinkManagerConfig {
+        worker_base_url,
+        identity_path,
+        mesh,
+        control,
+    })
+}
+
+/// Proxy the local control service's `GET /v1/swarm/nodes` (loopback, bearer token),
+/// returning its `{ self, peers }` body verbatim so the snake_case wire shape survives.
+async fn fetch_local_swarm_nodes() -> Result<LeanzeroLinkNodesResponse, String> {
+    let email = current_identity_email()
+        .ok_or_else(|| "no identity on disk to derive the control node token".to_string())?;
+    let token = node_token_from_email(Some(&email));
+    let url = format!("http://127.0.0.1:{DEFAULT_CONTROL_PORT}/v1/swarm/nodes");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let self_node = body.get("self").cloned().unwrap_or(serde_json::Value::Null);
+    let peers = body
+        .get("peers")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    Ok(LeanzeroLinkNodesResponse { self_node, peers })
+}
+
+// ---------------------------------------------------------------------------
+// DTO conversions.
+// ---------------------------------------------------------------------------
+
+fn auth_state_tag(auth: &AuthState) -> String {
+    match auth {
+        AuthState::LoggedOut => "loggedOut",
+        AuthState::CodeSent { .. } => "codeSent",
+        AuthState::LoggedIn { .. } => "loggedIn",
+        AuthState::Connecting { .. } => "connecting",
+        AuthState::Connected { .. } => "connected",
+    }
+    .to_string()
+}
+
+fn auth_state_to_dto(auth: AuthState) -> LeanzeroLinkAuthStateDto {
+    match auth {
+        AuthState::LoggedOut => LeanzeroLinkAuthStateDto::LoggedOut,
+        AuthState::CodeSent { email, expires_at } => LeanzeroLinkAuthStateDto::CodeSent {
+            email,
+            expires_at: expires_at.to_rfc3339(),
+        },
+        AuthState::LoggedIn { email } => LeanzeroLinkAuthStateDto::LoggedIn { email },
+        AuthState::Connecting { email } => LeanzeroLinkAuthStateDto::Connecting { email },
+        AuthState::Connected { email, mesh_ip } => {
+            LeanzeroLinkAuthStateDto::Connected { email, mesh_ip }
+        }
+    }
+}
+
+fn mesh_status_to_dto(mesh: MeshStatus) -> LeanzeroLinkMeshStatusDto {
+    LeanzeroLinkMeshStatusDto {
+        self_ip: mesh.self_ip,
+        self_hostname: mesh.self_hostname,
+        backend_state: mesh.backend_state.to_string(),
+        online: mesh.online,
+        peers: mesh
+            .peers
+            .into_iter()
+            .map(|peer| LeanzeroLinkMeshPeerDto {
+                hostname: peer.hostname,
+                ip: peer.ip,
+                online: peer.online,
+                last_seen: peer.last_seen,
+            })
+            .collect(),
+    }
+}
+
+fn link_state_to_dto(state: LinkState) -> LeanzeroLinkStateResponse {
+    LeanzeroLinkStateResponse {
+        auth: auth_state_to_dto(state.auth),
+        mesh: state.mesh.map(mesh_status_to_dto),
+        node_count: state.node_count,
+        last_error: state.last_error,
+    }
+}
+
+fn capabilities_to_dto(caps: worker_client::Capabilities) -> LeanzeroLinkCapabilitiesDto {
+    LeanzeroLinkCapabilitiesDto {
+        mail: caps.mail,
+        audience: caps.audience,
+        mesh: caps.mesh,
+    }
+}
+
+/// Carry a manager [`LinkError`] to the UI as an actionable message (the mlx mount
+/// idiom): a bad code, an expired token, a mail-not-configured worker, or a mesh spawn
+/// failure must reach the panel as itself, not as a flat "Internal error".
+fn link_err(error: LinkError) -> agent_client_protocol::Error {
+    agent_client_protocol::Error::invalid_params().data(error.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// ACP handlers.
+// ---------------------------------------------------------------------------
+
+impl GooseAcpAgent {
+    fn link_source(&self) -> Arc<GoosedSwarmStateSource> {
+        Arc::new(GoosedSwarmStateSource::new(
+            self.agent_manager.clone(),
+            self.session_manager.clone(),
+        ))
+    }
+
+    fn build_link_manager(
+        &self,
+        email: Option<&str>,
+    ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+        let config = build_link_config(email)?;
+        let source = self.link_source();
+        let manager = LinkManager::new(config, source)
+            .internal_err_ctx("constructing the LeanZero Link manager")?;
+        Ok(Arc::new(manager))
+    }
+
+    /// The process-wide [`LinkManager`], built on first use in whatever auth state the
+    /// identity file implies (it does NOT auto-connect). Rebuilt when the on-disk
+    /// identity email changes so the account-derived `node_token` is always current — a
+    /// change that can only happen while NOT connected (verify/connect are refused once
+    /// Connecting/Connected, and logout clears the identity), so a rebuild never drops a
+    /// live mesh.
+    fn link_manager(&self) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+        let current = current_identity_email();
+
+        if let Some(holder) = LINK.get() {
+            {
+                let guard = holder.lock().unwrap();
+                if guard.email_key == current {
+                    return Ok(guard.manager.clone());
+                }
+            }
+            let manager = self.build_link_manager(current.as_deref())?;
+            let mut guard = holder.lock().unwrap();
+            if guard.email_key != current {
+                guard.email_key = current;
+                guard.manager = manager;
+            }
+            return Ok(guard.manager.clone());
+        }
+
+        let manager = self.build_link_manager(current.as_deref())?;
+        let holder = StdMutex::new(LinkHolder {
+            email_key: current,
+            manager,
+        });
+        match LINK.set(holder) {
+            Ok(()) => Ok(LINK.get().unwrap().lock().unwrap().manager.clone()),
+            // Lost the init race; the fast path now resolves against the winner.
+            Err(_) => self.link_manager(),
+        }
+    }
+
+    pub(super) async fn on_leanzero_link_health(
+        &self,
+        _req: LeanzeroLinkHealthRequest,
+    ) -> Result<LeanzeroLinkHealthResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        let health = manager.health().await.internal_err()?;
+        Ok(LeanzeroLinkHealthResponse {
+            ok: health.ok,
+            version: health.version,
+            capabilities: capabilities_to_dto(health.capabilities),
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_request_code(
+        &self,
+        req: LeanzeroLinkRequestCodeRequest,
+    ) -> Result<LeanzeroLinkRequestCodeResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        let result = manager.request_code(&req.email).await.map_err(link_err)?;
+        Ok(LeanzeroLinkRequestCodeResponse {
+            email: result.email,
+            expires_in_seconds: result.expires_in_seconds,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_verify(
+        &self,
+        req: LeanzeroLinkVerifyRequest,
+    ) -> Result<LeanzeroLinkVerifyResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        let result = manager
+            .verify(&req.email, &req.code)
+            .await
+            .map_err(link_err)?;
+        let state = auth_state_tag(&manager.status().await.auth);
+        Ok(LeanzeroLinkVerifyResponse {
+            state,
+            email: result.email,
+            audience_sync: result.audience_sync,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_connect(
+        &self,
+        _req: LeanzeroLinkConnectRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        manager.connect().await.map_err(link_err)?;
+        Ok(link_state_to_dto(manager.status().await))
+    }
+
+    pub(super) async fn on_leanzero_link_status(
+        &self,
+        _req: LeanzeroLinkStatusRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        Ok(link_state_to_dto(manager.status().await))
+    }
+
+    pub(super) async fn on_leanzero_link_logout(
+        &self,
+        req: LeanzeroLinkLogoutRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        manager.logout(req.wipe).await.map_err(link_err)?;
+        Ok(link_state_to_dto(manager.status().await))
+    }
+
+    pub(super) async fn on_leanzero_link_nodes(
+        &self,
+        _req: LeanzeroLinkNodesRequest,
+    ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        if let AuthState::Connected { .. } = manager.status().await.auth {
+            match fetch_local_swarm_nodes().await {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    warn!(%error, "leanzeroLink: proxying the local control service /v1/swarm/nodes failed; returning the local node only");
+                }
+            }
+        }
+        // Not connected (or the loopback proxy failed): self only, no peers.
+        let self_node = self.link_source().local_node().await;
+        Ok(LeanzeroLinkNodesResponse {
+            self_node: serde_json::to_value(self_node).internal_err()?,
+            peers: Vec::new(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_token_is_deterministic_case_insensitive_and_hex() {
+        let a = node_token_from_email(Some("Mihai@Wolfaenpak.com"));
+        let b = node_token_from_email(Some("mihai@wolfaenpak.com"));
+        assert_eq!(a, b, "email casing must not change the token");
+        assert_eq!(a.len(), 64, "SHA-256 HMAC is 32 bytes = 64 hex chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let other = node_token_from_email(Some("someone@else.com"));
+        assert_ne!(a, other, "different accounts derive different tokens");
+
+        let logged_out = node_token_from_email(None);
+        assert_eq!(logged_out.len(), 64);
+        assert_ne!(
+            logged_out, a,
+            "the empty-key placeholder is not an account token"
+        );
+    }
+
+    #[test]
+    fn sanitize_hostname_reduces_to_the_tailnet_alphabet() {
+        assert_eq!(
+            sanitize_hostname("Mihai's MacBook.local"),
+            "mihai-s-macbook-local"
+        );
+        assert_eq!(sanitize_hostname("  --Weird__Name-- "), "weird-name");
+        assert_eq!(sanitize_hostname("***"), "leanzero-node");
+    }
+
+    fn summary(id: &str, live: bool, updated: i64) -> SessionSummary {
+        SessionSummary {
+            session_id: id.to_string(),
+            origin_node_id: "node-a".to_string(),
+            working_dir: "/tmp/w".to_string(),
+            name: format!("session {id}"),
+            updated_at: chrono::TimeZone::timestamp_opt(&Utc, updated, 0).unwrap(),
+            message_count: 3,
+            live,
+        }
+    }
+
+    #[test]
+    fn derive_node_reports_busy_idle_and_active_count() {
+        let now = Utc::now();
+
+        let idle = derive_node("node-a", &[summary("s1", false, 100)], now);
+        assert_eq!(idle.status, NodeStatus::Idle);
+        assert_eq!(idle.sessions_active, 0);
+        assert!(idle.mesh_ip.is_none());
+        assert_eq!(idle.node_id, "node-a");
+
+        let busy = derive_node(
+            "node-a",
+            &[summary("old", true, 100), summary("new", true, 200)],
+            now,
+        );
+        assert_eq!(
+            busy.status,
+            NodeStatus::Busy {
+                session_id: "new".to_string()
+            },
+            "busy carries the most recently updated live session"
+        );
+        assert_eq!(busy.sessions_active, 2);
+    }
+
+    #[test]
+    fn auth_state_tag_and_dto_use_camelcase() {
+        let connected = AuthState::Connected {
+            email: "a@b.com".to_string(),
+            mesh_ip: "100.64.0.1".to_string(),
+        };
+        assert_eq!(auth_state_tag(&connected), "connected");
+
+        let dto = auth_state_to_dto(connected);
+        let value = serde_json::to_value(&dto).unwrap();
+        assert_eq!(value["state"], "connected");
+        assert_eq!(value["meshIp"], "100.64.0.1");
+        assert_eq!(value["email"], "a@b.com");
+    }
+
+    #[test]
+    fn state_response_serializes_camelcase() {
+        let state = LeanzeroLinkStateResponse {
+            auth: LeanzeroLinkAuthStateDto::LoggedIn {
+                email: "a@b.com".to_string(),
+            },
+            mesh: None,
+            node_count: 2,
+            last_error: Some("boom".to_string()),
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["auth"]["state"], "loggedIn");
+        assert_eq!(value["nodeCount"], 2);
+        assert_eq!(value["lastError"], "boom");
+        let back: LeanzeroLinkStateResponse = serde_json::from_value(value).unwrap();
+        assert_eq!(back.node_count, 2);
+    }
+
+    #[test]
+    fn nodes_response_uses_self_key() {
+        let response = LeanzeroLinkNodesResponse {
+            self_node: serde_json::json!({"node_id": "node-a"}),
+            peers: vec![serde_json::json!({"node_id": "node-b"})],
+        };
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["self"]["node_id"], "node-a");
+        assert_eq!(value["peers"][0]["node_id"], "node-b");
+        assert!(value.get("self_node").is_none());
+    }
+
+    async fn seeded_source() -> (tempfile::TempDir, GoosedSwarmStateSource) {
+        use crate::agents::{AgentConfig, GoosePlatform};
+        use crate::config::permission::PermissionManager;
+        use crate::config::GooseMode;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let session_manager = Arc::new(SessionManager::new(temp.path().to_path_buf()));
+        let agent_config = AgentConfig::new(
+            session_manager.clone(),
+            PermissionManager::instance(),
+            None,
+            GooseMode::default(),
+            false,
+            GoosePlatform::GooseDesktop,
+        );
+        let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager);
+        (temp, source)
+    }
+
+    #[tokio::test]
+    async fn local_sessions_maps_the_session_index() {
+        let (_temp, source) = seeded_source().await;
+
+        source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "First".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/other"),
+                "Second".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        let sessions = source.local_sessions().await;
+        assert_eq!(sessions.len(), 2);
+        for summary in &sessions {
+            assert_eq!(summary.origin_node_id, source.node_id);
+            assert!(!summary.live, "no agent is running, so nothing is busy");
+            assert_eq!(summary.message_count, 0);
+        }
+        let names: HashSet<&str> = sessions.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains("First") && names.contains("Second"));
+        let dirs: HashSet<&str> = sessions.iter().map(|s| s.working_dir.as_str()).collect();
+        assert!(dirs.contains("/tmp/project") && dirs.contains("/tmp/other"));
+    }
+
+    #[tokio::test]
+    async fn local_node_is_idle_with_no_running_agents() {
+        let (_temp, source) = seeded_source().await;
+        source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "First".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        let node = source.local_node().await;
+        assert_eq!(node.status, NodeStatus::Idle);
+        assert_eq!(node.sessions_active, 0);
+        assert_eq!(node.node_id, source.node_id);
+        assert!(!node.hostname.is_empty());
+    }
+}
