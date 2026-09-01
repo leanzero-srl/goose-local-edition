@@ -3,17 +3,31 @@ import { Loader2, Pause, Play, X } from 'lucide-react';
 import { Button } from '../ui/button';
 import type { MlxDownloadProgress } from '../../acp/mlx-engine';
 
-// Solid saturated palette — the benchmark register (BenchmarkView/ScoringDetail): full
-// borders, bg-background-secondary strips, solid chips. Never faded tints, never a left
-// accent rail, never a native control.
-export const AZURE = '#2e8bff';
-export const GREEN = '#2ecc71';
-export const AMBER = '#f5a623';
-export const RED = '#e5484d';
-export const SLATE = '#64748b';
-export const VIOLET = '#7c3aed';
-export const TEAL = 'var(--color-block-teal, #13bbaf)';
+// The LeanZero token doctrine (src/styles/main.css, `.local-edition`): ONE accent, the status
+// triad for state, and nothing else coloured. Every constant here routes through a theme token
+// with the light-theme value as its fallback (this window also runs without `.local-edition`,
+// where a bare var() resolves to nothing and a solid fill silently turns transparent).
+// Solid, saturated colours only — never a tint, never a left accent rail, never a native control.
+/** The single accent: primary actions, the active segment, the live progress fill. */
+export const AZURE = 'var(--color-action-solid, #1d4ed8)';
+/** Status triad FILLS — they carry white text. */
+export const GREEN = 'var(--color-status-ok-solid, #15803d)';
+export const RED = 'var(--color-status-err-solid, #dc2626)';
+export const SLATE = 'var(--color-status-stopped-solid, #475569)';
+/** Warn is the FOREGROUND token on purpose: it pairs with INK_DARK at 5.4:1, which the darker
+ *  -solid fill cannot (3.5:1). Every AMBER fill in this window carries dark ink. */
+export const AMBER = 'var(--color-status-warn, #d97706)';
 export const INK_DARK = '#1a1a1a';
+/** @deprecated Decorative hues carry no meaning under the doctrine. Aliased to the accent /
+ *  the neutral so remaining callers resolve to a sanctioned colour; delete once none remain. */
+export const TEAL = AZURE;
+export const VIOLET = SLATE;
+
+/** A publisher is NOT a node: it takes no hue from the node ramp. One neutral, whatever the
+ *  author — callers should prefer rendering the author as text or a quiet chip. */
+export function authorHue(_author: string): string {
+  return SLATE;
+}
 
 export const GB = 1024 * 1024 * 1024;
 
@@ -48,39 +62,40 @@ export function formatDate(iso: string): string {
   });
 }
 
-// Distinct solid hues for author chips — deterministic per author, full-rainbow, no washes.
-// The node ramp lives under `.local-edition`; this window also runs in builds without that
-// class, where a bare var() resolves to NOTHING — every node var carries a fallback.
-const AUTHOR_HUES = [
-  'var(--color-node-1, #1d4ed8)',
-  'var(--color-node-2, #0891b2)',
-  'var(--color-node-3, #7c3aed)',
-  'var(--color-node-4, #ea580c)',
-  'var(--color-node-5, #db2777)',
-  'var(--color-node-6, #16a34a)',
-];
-
-export function authorHue(author: string): string {
-  let h = 0;
-  for (let i = 0; i < author.length; i += 1) h = (h * 31 + author.charCodeAt(i)) >>> 0;
-  return AUTHOR_HUES[h % AUTHOR_HUES.length];
-}
-
+/**
+ * Two chip registers. FILLED (`color`) is reserved for SEMANTIC state — mounted, loading,
+ * failed, the single accent — and carries its ink. QUIET is for METADATA (a publisher, a
+ * quant, a count): a hairline outline in the secondary text colour, no fill, so a row of
+ * attributes reads as text, not as a pile of stickers. Both are 11px, normal case,
+ * tabular figures — uppercase-with-tracking belongs to section headers only.
+ */
 export function Chip({
   color,
   ink = '#ffffff',
+  quiet = false,
   children,
   title,
 }: {
-  color: string;
+  color?: string;
   ink?: string;
+  quiet?: boolean;
   children: React.ReactNode;
   title?: string;
 }) {
+  if (quiet || !color) {
+    return (
+      <span
+        title={title}
+        className="inline-flex shrink-0 items-center gap-1 rounded border border-border-primary px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-text-secondary"
+      >
+        {children}
+      </span>
+    );
+  }
   return (
     <span
       title={title}
-      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
       style={{ backgroundColor: color, color: ink }}
     >
       {children}
@@ -219,8 +234,8 @@ export function DownloadProgressRow({
               e.stopPropagation();
               onPause();
             }}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: SLATE }}
+            variant="outline"
+            className="shrink-0 rounded font-bold"
             aria-label={`Pause ${repoId}`}
           >
             <Pause className="w-3 h-3" />
@@ -235,7 +250,7 @@ export function DownloadProgressRow({
               onResume();
             }}
             className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: GREEN }}
+            style={{ backgroundColor: AZURE }}
             aria-label={`Resume ${repoId}`}
           >
             <Play className="w-3 h-3" />
