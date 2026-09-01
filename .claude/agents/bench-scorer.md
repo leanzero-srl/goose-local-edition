@@ -42,3 +42,10 @@ and amends this file in the same turn a gap shows. Changelog:
 (not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
 way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
 EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## Replay budget (added 2026-09-01 20:1x, after VA-049/043 ran 43 tool uses for two rows)
+
+Prove instrument edits by REPLAY, once per archive, not once per row: edit every row in the batch first, then run
+`tick.py <archive>` on each archive you need (the live slot, the motivating archive, one older control) and diff
+against `git show HEAD:tick.py` replayed the same way. A row-by-row replay loop multiplies tool uses without adding
+proof. Cite the archive dirs by exact path in the return.
