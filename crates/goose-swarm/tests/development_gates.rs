@@ -43,6 +43,30 @@ fn run_path_files() -> Vec<(String, String)> {
         let text = read(&rel);
         files.push((rel, text));
     }
+    // SPLIT v2 (3e99d570d) opened the first NESTED module directory (commands/swarm/shards/assembly.rs);
+    // a directory the scan did not descend into is a run-path file outside every ratchet, so one level
+    // of subdirectories is scanned the same way — "no new file enters unscanned" stays true.
+    let mut nested: Vec<_> = std::fs::read_dir(&split)
+        .unwrap_or_else(|e| panic!("{} unreadable: {e}", split.display()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .flat_map(|d| {
+            let dir_name = d.file_name().to_string_lossy().into_owned();
+            std::fs::read_dir(d.path())
+                .unwrap_or_else(|e| panic!("{} unreadable: {e}", d.path().display()))
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rs"))
+                .map(move |n| format!("{dir_name}/{n}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    nested.sort();
+    for n in nested {
+        let rel = format!("crates/goose-cli/src/commands/swarm/{n}");
+        let text = read(&rel);
+        files.push((rel, text));
+    }
     let src = root.join("crates/goose-swarm/src");
     let mut names: Vec<_> = std::fs::read_dir(&src)
         .unwrap_or_else(|e| panic!("{} unreadable: {e}", src.display()))
