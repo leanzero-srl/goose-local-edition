@@ -1,7 +1,6 @@
 import React from 'react';
 import { Check, X, Loader2 } from 'lucide-react';
-import { RADIUS, TNUM, cx } from '../lz';
-import { FORMATION_RAMP, SWARM_STATUS } from './formationVisualState';
+import { NODE_DOT, RADIUS, TNUM, TONE_TEXT, cx, type NodeIndex, type Tone } from '../lz';
 
 /**
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
@@ -15,14 +14,11 @@ import { FORMATION_RAMP, SWARM_STATUS } from './formationVisualState';
 
 export type NodeStatus = 'running' | 'done' | 'error';
 
-/** The node ramp and the status triad both come from formationVisualState — the ONE definition the run
- *  panel and the ribbon read. This file used to carry its own copies, so a palette change landed here only
- *  if someone remembered it existed, and a node's hue could differ between this card and the fleet strip. */
-const STATUS_COLOR: Record<NodeStatus, string> = {
-  running: SWARM_STATUS.running,
-  done: SWARM_STATUS.done,
-  error: SWARM_STATUS.error,
-};
+/** The node ramp and the status triad are the Studio token utilities — the ONE definition the run panel,
+ *  the ribbon and the fleet strip read (bg-lz-node-N for identity, text-lz-{ok,warn,err} for status). This
+ *  file used to carry its own copies, so a palette change landed here only if someone remembered it
+ *  existed, and a node's hue could differ between this card and the fleet strip. */
+const STATUS_TONE: Record<NodeStatus, Tone> = { running: 'warn', done: 'ok', error: 'err' };
 /**
  * SVG icons, not unicode glyphs. `✔`/`●`/`✕` get emoji-presentation on some platforms, which IGNORES the
  * CSS color and renders as a faint monochrome glyph in dark mode. Lucide SVGs always honor `color`.
@@ -33,7 +29,6 @@ const STATUS_ICON: Record<
     size?: number;
     strokeWidth?: number;
     className?: string;
-    style?: React.CSSProperties;
     'data-testid'?: string;
   }>
 > = {
@@ -54,7 +49,8 @@ interface FanInCardProps {
   className?: string;
 }
 
-const nodeHue = (i: number): string => FORMATION_RAMP[i % FORMATION_RAMP.length];
+/** A lane's slot on the six-hue ramp — IDENTITY ONLY, the same slot the panel's NodeDot uses. */
+const nodeSlot = (i: number): NodeIndex => ((i % 6) + 1) as NodeIndex;
 const nodeLetter = (i: number): string => String.fromCharCode(65 + (i % 26));
 
 const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }) => {
@@ -82,10 +78,9 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
         {lanes.map((lane, i) => (
           <div key={i} className="flex items-center gap-2" data-testid="fan-in-lane">
             <span
-              className={cx('inline-block size-2 shrink-0', RADIUS.pill)}
+              className={cx('inline-block size-2 shrink-0', RADIUS.pill, NODE_DOT[nodeSlot(i)])}
               data-testid="node-chip"
               role="img"
-              style={{ backgroundColor: nodeHue(i) }}
               aria-label={`node ${nodeLetter(i)}`}
             />
             <span className="w-24 shrink-0 truncate text-lz-ink-2">{lane.device}</span>
@@ -97,8 +92,7 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
                   size={16}
                   strokeWidth={3}
                   data-testid="node-status"
-                  className={lane.status === 'running' ? 'animate-spin' : ''}
-                  style={{ color: STATUS_COLOR[lane.status] }}
+                  className={cx(lane.status === 'running' && 'animate-spin', TONE_TEXT[STATUS_TONE[lane.status]])}
                 />
               );
             })()}
