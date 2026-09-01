@@ -868,15 +868,213 @@ impl GooseAgentDispatcher {
     }
 }
 
+/// What sizing did to one declaration (split v2 §6): the clusters synthesis declared, the free
+/// hosts at split time, and the shards that will run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Sizing {
+    pub(super) declared: usize,
+    pub(super) hosts: Option<usize>,
+    /// The declared shard ids behind each shard that runs — identity when nothing was grouped.
+    pub(super) groups: Vec<Vec<String>>,
+    /// The weight each declared cluster carried into the partition: its claimed sections, floor 1.
+    pub(super) weights: Vec<usize>,
+}
+
+/// Exactly `k` contiguous, non-empty groups over `weights` minimising the largest group's sum —
+/// the linear-partition DP (n clusters × k hosts, both single digits here). `k > n` is `n` groups.
+fn partition_contiguous(weights: &[usize], k: usize) -> Vec<std::ops::Range<usize>> {
+    let n = weights.len();
+    if k == 0 || n == 0 {
+        return Vec::new();
+    }
+    let k = k.min(n);
+    let mut prefix = vec![0usize; n + 1];
+    for (i, w) in weights.iter().enumerate() {
+        prefix[i + 1] = prefix[i] + w;
+    }
+    let sum = |a: usize, b: usize| prefix[b] - prefix[a];
+    let inf = usize::MAX;
+    // best[j][i]: the smallest possible largest-group sum splitting clusters 0..i into j groups;
+    // cut[j][i]: where that split's last group starts.
+    let mut best = vec![vec![inf; n + 1]; k + 1];
+    let mut cut = vec![vec![0usize; n + 1]; k + 1];
+    best[0][0] = 0;
+    for j in 1..=k {
+        for i in j..=n {
+            for s in (j - 1)..i {
+                if best[j - 1][s] == inf {
+                    continue;
+                }
+                let cand = best[j - 1][s].max(sum(s, i));
+                if cand < best[j][i] {
+                    best[j][i] = cand;
+                    cut[j][i] = s;
+                }
+            }
+        }
+    }
+    let mut ranges = Vec::with_capacity(k);
+    let mut i = n;
+    for j in (1..=k).rev() {
+        let s = cut[j][i];
+        ranges.push(s..i);
+        i = s;
+    }
+    ranges.reverse();
+    ranges
+}
+
+/// SIZE BY THE FLEET, not by the declaration's count (split v2 §6: "three focused shards on three
+/// nodes beat eight queued" — r6e declared EIGHT shards for a THREE-node pool and five queued).
+/// The declaration's clusters arrive in layout order and are grouped CONTIGUOUSLY onto the free
+/// hosts, the largest group's weight minimised (a cluster weighs its claimed sections, floor 1);
+/// one shard per group — id, responsibility, sections, provides and writes the union. No more
+/// clusters than hosts leaves the declaration as it is; no host count leaves it too and is SAID
+/// (`split_sized{hosts: null}`), never replaced by a literal.
+pub(super) fn size_shards_to_hosts(
+    split: ModuleSplit,
+    free_hosts: Option<usize>,
+) -> (ModuleSplit, Sizing) {
+    let declared = split.shards.len();
+    let weights: Vec<usize> = split
+        .shards
+        .iter()
+        .map(|s| s.sections.len().max(1))
+        .collect();
+    let Some(hosts) = free_hosts.filter(|h| *h >= 2 && *h < declared) else {
+        let groups = split.shards.iter().map(|s| vec![s.id.clone()]).collect();
+        return (
+            split,
+            Sizing {
+                declared,
+                hosts: free_hosts,
+                groups,
+                weights,
+            },
+        );
+    };
+    let mut shards: Vec<ShardPlan> = Vec::new();
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for r in partition_contiguous(&weights, hosts) {
+        let members = &split.shards[r];
+        groups.push(members.iter().map(|s| s.id.clone()).collect());
+        if let [only] = members {
+            shards.push(only.clone());
+            continue;
+        }
+        let mut merged = ShardPlan {
+            id: members
+                .iter()
+                .map(|s| kebab(&s.id))
+                .collect::<Vec<_>>()
+                .join("-"),
+            responsibility: members
+                .iter()
+                .map(|s| s.responsibility.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+            sections: Vec::new(),
+            provides: Vec::new(),
+            writes: Vec::new(),
+        };
+        let union = |into: &mut Vec<String>, from: &[String]| {
+            for x in from {
+                if !into.contains(x) {
+                    into.push(x.clone());
+                }
+            }
+        };
+        for s in members {
+            union(&mut merged.sections, &s.sections);
+            union(&mut merged.provides, &s.provides);
+            union(&mut merged.writes, &s.writes);
+        }
+        shards.push(merged);
+    }
+    (
+        ModuleSplit {
+            interface: split.interface,
+            shards,
+        },
+        Sizing {
+            declared,
+            hosts: free_hosts,
+            groups,
+            weights,
+        },
+    )
+}
+
+pub(super) fn sized_event(module: &str, sizing: &Sizing) -> serde_json::Value {
+    let source = if sizing.hosts.is_none() {
+        "declaration — free host count not passed by the caller (plan_slices_to_dag); the clusters stand as declared"
+    } else if sizing.groups.len() < sizing.declared {
+        "fleet — clusters grouped contiguously onto the free hosts, largest group minimised"
+    } else {
+        "declaration — no more clusters than free hosts"
+    };
+    serde_json::json!({
+        "event": "split_sized",
+        "module": module,
+        "declared": sizing.declared,
+        "hosts": sizing.hosts,
+        "shards": sizing.groups.len(),
+        "groups": sizing.groups,
+        "weights": sizing.weights,
+        "source": source,
+    })
+}
+
 /// The split step of `plan_slices_to_dag`: measure, flag, request one patch per fat task, apply,
 /// and walk the patched plan through the one door again. `split` is injected (the real one calls
 /// `request_module_split`; a test hands back a canned reply) so the whole sequence runs without a
 /// model. A plan with no fat task returns byte-identical and emits nothing.
+///
+/// SIZE BY THE FLEET (split v2 §6) needs the free host count at split time — the pool `run_swarm`
+/// resolved (`pool_resolved.worker_count`; r6e: 3), all free during planning by construction. It
+/// is not reachable from here, so this signature stays for `plan_slices_to_dag`'s one call and
+/// passes NONE, which `split_fat_tasks_sized` SAYS (`split_sized{hosts: null, source:
+/// "declaration — free host count not passed…"}`) and leaves the shard count as declared — never
+/// a literal in its place.
+/// TODO(swarm.rs surgeon): caller passes free_hosts — thread `Some(<resolved pool>.len())` from
+/// `run_swarm` through `run_linear_plan` → `plan_slices_to_dag` → the one call site
+/// (`let mut plan_json = shards::split_fat_tasks(` in `plan_slices_to_dag`), call
+/// `split_fat_tasks_sized` there, then delete this wrapper.
 pub(super) async fn split_fat_tasks<P, PFut>(
     plan_json: String,
     opened: &OpenOutput,
     spec: &str,
     every_decision_settled: bool,
+    split: P,
+    sink: &Arc<dyn EventSink>,
+) -> String
+where
+    P: Fn(serde_json::Value, serde_json::Value) -> PFut,
+    PFut: std::future::Future<Output = Result<String>>,
+{
+    split_fat_tasks_sized(
+        plan_json,
+        opened,
+        spec,
+        every_decision_settled,
+        None,
+        split,
+        sink,
+    )
+    .await
+}
+
+/// `split_fat_tasks` with the fleet: `free_hosts` is the pool free at split time (None = the
+/// caller did not pass it — said, see the wrapper). One free host declines every split before
+/// synthesis is asked (N shards would queue serially on it and still need a merge — the module is
+/// built whole by the node that would build it anyway; the flag stays); otherwise the declared
+/// clusters are sized onto the hosts (`size_shards_to_hosts`, `split_sized`) before the patch.
+pub(super) async fn split_fat_tasks_sized<P, PFut>(
+    plan_json: String,
+    opened: &OpenOutput,
+    spec: &str,
+    every_decision_settled: bool,
+    free_hosts: Option<usize>,
     split: P,
     sink: &Arc<dyn EventSink>,
 ) -> String
@@ -960,6 +1158,18 @@ where
                 "reason": reason,
             }));
         };
+        // SIZE BY THE FLEET (split v2 §6), the half that needs no declaration: on ONE free host
+        // N shards would queue serially on it and still need a merge — the module is built whole
+        // by the node that would build it anyway. Said before synthesis is asked; the flag stays.
+        if let Some(h) = free_hosts.filter(|h| *h < 2) {
+            declined(
+                format!(
+                    "{h} free host(s) at split time — parallel shards would queue serially on one node and still need a merge; the module is built whole"
+                ),
+                sink,
+            );
+            continue;
+        }
         let reply = match split(task, density).await {
             Ok(r) => r,
             Err(e) => {
@@ -974,6 +1184,8 @@ where
                 continue;
             }
         };
+        let (parsed, sizing) = size_shards_to_hosts(parsed, free_hosts);
+        sink.write_value(sized_event(&row.id, &sizing));
         match apply_module_split(&current, &row.id, &parsed) {
             Ok((next, events)) => {
                 eprintln!(
@@ -1753,6 +1965,159 @@ mod tests {
         .unwrap();
         assert_eq!(ok.shards.len(), 2);
         assert_eq!(kebab("Pick & Camera!"), "pick-camera");
+    }
+
+    /// Split v2 §6, size by the fleet. r6e declared EIGHT shards (seq 522) for a THREE-node pool
+    /// (seq 1 `pool_resolved.worker_count: 3`) — five queued behind the first three. Sized to 3
+    /// hosts the eight clusters (weight 1 each: no sections declared) group contiguously 2/3/3
+    /// with ids, responsibilities and provides unioned; 8 hosts leave the declaration; no host
+    /// count (the caller does not pass the pool yet) leaves it and SAYS so; uneven weights balance
+    /// by claimed sections; one free host declines before any planner call.
+    #[tokio::test]
+    async fn shard_count_follows_the_free_hosts_and_an_absent_count_is_said() {
+        let archived = [
+            "data-scene",
+            "rendering-core",
+            "pick-buffer",
+            "camera-inertia",
+            "labels-culling",
+            "linked-brush",
+            "streaming-diffs",
+            "vs7dbg-boot",
+        ];
+        let split: ModuleSplit = serde_json::from_value(serde_json::json!({
+            "interface": {"exports": [], "shared_state": "S", "layout": []},
+            "shards": archived.iter().map(|id| serde_json::json!({
+                "id": id, "responsibility": format!("the {id} piece"), "sections": [], "provides": [format!("{id}Fn")], "writes": []
+            })).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        let (sized, s) = size_shards_to_hosts(split.clone(), Some(3));
+        assert_eq!(s.declared, 8);
+        assert_eq!(s.hosts, Some(3));
+        assert_eq!(s.weights, vec![1; 8]);
+        assert_eq!(
+            s.groups,
+            vec![
+                vec!["data-scene", "rendering-core"],
+                vec!["pick-buffer", "camera-inertia", "labels-culling"],
+                vec!["linked-brush", "streaming-diffs", "vs7dbg-boot"],
+            ]
+        );
+        assert_eq!(sized.shards.len(), 3);
+        assert_eq!(sized.shards[0].id, "data-scene-rendering-core");
+        assert_eq!(
+            sized.shards[0].responsibility,
+            "the data-scene piece; the rendering-core piece"
+        );
+        assert_eq!(
+            sized.shards[1].provides,
+            vec!["pick-bufferFn", "camera-inertiaFn", "labels-cullingFn"]
+        );
+        assert_eq!(sized.interface, split.interface);
+        let ev = sized_event("viz3d-engine", &s);
+        assert_eq!(ev["event"], "split_sized");
+        assert_eq!(ev["module"], "viz3d-engine");
+        assert_eq!(ev["declared"], 8);
+        assert_eq!(ev["hosts"], 3);
+        assert_eq!(ev["shards"], 3);
+        assert_eq!(ev["groups"][1][2], "labels-culling");
+        assert!(ev["source"].as_str().unwrap().starts_with("fleet"), "{ev}");
+
+        let (same, eight) = size_shards_to_hosts(split.clone(), Some(8));
+        assert_eq!(same, split);
+        assert_eq!(eight.groups.len(), 8);
+        assert!(sized_event("m", &eight)["source"]
+            .as_str()
+            .unwrap()
+            .starts_with("declaration — no more clusters"));
+        let (same, none) = size_shards_to_hosts(split.clone(), None);
+        assert_eq!(same, split, "no count: the declaration stands");
+        assert!(none.hosts.is_none());
+        let ev = sized_event("m", &none);
+        assert!(ev["hosts"].is_null());
+        assert!(
+            ev["source"]
+                .as_str()
+                .unwrap()
+                .contains("not passed by the caller"),
+            "{ev}"
+        );
+
+        let mut uneven = split.clone();
+        uneven.shards.truncate(5);
+        uneven.shards[0].sections = (1..=4).map(|k| format!("### {k}. Section {k}")).collect();
+        let (grouped, u) = size_shards_to_hosts(uneven, Some(2));
+        assert_eq!(u.weights, vec![4, 1, 1, 1, 1]);
+        assert_eq!(
+            u.groups,
+            vec![
+                vec!["data-scene"],
+                vec![
+                    "rendering-core",
+                    "pick-buffer",
+                    "camera-inertia",
+                    "labels-culling"
+                ],
+            ]
+        );
+        assert_eq!(
+            grouped.shards[0].id, "data-scene",
+            "a lone cluster keeps its id"
+        );
+        assert_eq!(grouped.shards[0].sections.len(), 4);
+        assert_eq!(partition_contiguous(&[3, 3, 3], 3), vec![0..1, 1..2, 2..3]);
+        assert_eq!(partition_contiguous(&[1, 1], 5), vec![0..1, 1..2]);
+        assert!(partition_contiguous(&[], 3).is_empty());
+
+        // ONE free host: the split is declined before synthesis is asked; flag and plan intact.
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let before = plan(&[
+            (
+                "ledgerd-core",
+                &["app/db.py", "app/sync.py", "app/ledger.py"],
+            ),
+            (
+                "notifierd",
+                &["app/notifierd/impl.py", "app/notify_store.py"],
+            ),
+            (
+                "web-console",
+                &["web/index.html", "web/styles.css", "web/app.js"],
+            ),
+            ("web-viz", &["web/viz.js"]),
+        ])
+        .to_string();
+        let after = split_fat_tasks_sized(
+            before.clone(),
+            &r6c_like_opened(),
+            spec,
+            false,
+            Some(1),
+            |_task, _density| async move { panic!("one free host: synthesis is never asked") },
+            &sink_dyn,
+        )
+        .await;
+        assert_eq!(after, before);
+        let events = sink.0.lock().unwrap().clone();
+        assert!(events
+            .iter()
+            .any(|e| e["event"] == "plan_flag" && e["task"] == "web-viz"));
+        let declined = events
+            .iter()
+            .find(|e| e["event"] == "split_declined")
+            .expect("declined, said");
+        assert_eq!(declined["task"], "web-viz");
+        assert!(
+            declined["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("1 free host(s) at split time"),
+            "{declined}"
+        );
+        assert!(!events.iter().any(|e| e["event"] == "split_sized"));
     }
 
     #[derive(Default)]
