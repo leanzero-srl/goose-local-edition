@@ -64,11 +64,16 @@ pub enum MeshError {
         source: std::io::Error,
     },
     #[error(
-        "a tailscaled already answers on socket '{}' — LeanZero Link never adopts a daemon it \
-         did not spawn; stop the other goose (or the stale daemon) first",
-        socket.display()
+        "a tailscaled already answers on socket '{}' (listener pid {}) — LeanZero Link never \
+         adopts a daemon it did not spawn; stop the other goose (or the stale daemon) first",
+        socket.display(),
+        listener_pid.map_or("unknown".to_string(), |p| p.to_string())
     )]
-    AlreadyRunning { socket: PathBuf },
+    AlreadyRunning {
+        socket: PathBuf,
+        /// The pid the kernel reports behind the socket (peer credentials), when readable.
+        listener_pid: Option<u32>,
+    },
     /// The supervised daemon is gone — raised by `start` (died before the socket
     /// answered) and by every later `status` read (died under a live connection).
     #[error("tailscaled exited ({status}). stderr tail:\n{stderr_tail}")]
@@ -435,15 +440,22 @@ impl MeshEngine {
     /// `status --json` (any backend state — a fresh daemon reports `NeedsLogin`).
     ///
     /// Before spawning, the socket is probed: a daemon already answering there is
-    /// [`MeshError::AlreadyRunning`] — never adopted. After the readiness probe answers,
-    /// the child is `try_wait`ed again: the probe proves SOMETHING answers on the
-    /// socket, not that OUR child does, so a child that died meanwhile (another process
-    /// won the socket) is [`MeshError::DaemonExited`], never an engine holding a corpse.
+    /// [`MeshError::AlreadyRunning`] — never adopted. Readiness itself is PROVEN, not
+    /// inferred: after `status --json` answers, the kernel's peer credentials on a fresh
+    /// connection ([`listener_pid`]) must name OUR child as the listener. A child that
+    /// died meanwhile is [`MeshError::DaemonExited`]; a listener that is not our child
+    /// (the pre-spawn probe was fooled by a transient CLI failure) is
+    /// [`MeshError::AlreadyRunning`] with our own spawn terminated per-pid — never an
+    /// engine holding a corpse over someone else's daemon.
     pub async fn start(config: MeshConfig) -> Result<Self, MeshError> {
         config.validate()?;
         prepare_state_dir(&config.state_dir)?;
-        if config.socket_path.exists() && probe_socket(&config).await.is_ok() {
+        // The pre-spawn probe waits the full CLI timeout: a daemon that answers SLOWLY
+        // (a loaded machine) still owns the socket, and a probe cut short here would
+        // spawn a second daemon on top of it.
+        if config.socket_path.exists() && probe_socket(&config, config.cli_timeout).await.is_ok() {
             return Err(MeshError::AlreadyRunning {
+                listener_pid: listener_pid(&config.socket_path).ok(),
                 socket: config.socket_path.clone(),
             });
         }
@@ -462,19 +474,48 @@ impl MeshEngine {
                     stderr_tail: stderr_tail_string(&handle.stderr_tail),
                 });
             }
-            if engine.config.socket_path.exists() && probe_socket(&engine.config).await.is_ok() {
+            if engine.config.socket_path.exists()
+                && probe_socket(&engine.config, READY_PROBE_TIMEOUT)
+                    .await
+                    .is_ok()
+            {
                 if let Some(status) = child_exit(&mut handle, &engine.config)? {
                     return Err(MeshError::DaemonExited {
                         status: status.to_string(),
                         stderr_tail: stderr_tail_string(&handle.stderr_tail),
                     });
                 }
-                tracing::info!(
-                    socket = %engine.config.socket_path.display(),
-                    "leanzero-link tailscaled ready"
-                );
-                *engine.state.lock().await = Some(handle);
-                return Ok(engine);
+                match listener_pid(&engine.config.socket_path) {
+                    Ok(pid) if Some(pid) == handle.child.id() => {
+                        tracing::info!(
+                            socket = %engine.config.socket_path.display(),
+                            pid,
+                            "leanzero-link tailscaled ready"
+                        );
+                        *engine.state.lock().await = Some(handle);
+                        return Ok(engine);
+                    }
+                    Ok(pid) => {
+                        tracing::error!(
+                            socket = %engine.config.socket_path.display(),
+                            listener_pid = pid,
+                            our_pid = ?handle.child.id(),
+                            "a daemon we did not spawn answers on our socket; \
+                             terminating our own spawn per-pid"
+                        );
+                        terminate_per_pid(&mut handle.child).await;
+                        return Err(MeshError::AlreadyRunning {
+                            socket: engine.config.socket_path.clone(),
+                            listener_pid: Some(pid),
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            "socket answered but its listener pid is not readable yet; retrying"
+                        );
+                    }
+                }
             }
             if started.elapsed() >= engine.config.startup_timeout {
                 let stderr_tail = stderr_tail_string(&handle.stderr_tail);
@@ -702,13 +743,78 @@ fn child_exit(
     })
 }
 
-/// Does a tailscaled answer `status --json` on the configured socket right now?
+/// The pid of the process LISTENING behind `socket_path`, read from the kernel's peer
+/// credentials on a fresh (never accepted) connection: macOS `LOCAL_PEERPID` (measured
+/// on 26.6: an un-accepted connection reports the listener's pid), Linux `SO_PEERCRED`.
+/// This is the proof `status --json` cannot give — WHO answers, not just that someone
+/// does. Any other platform is a loud `Unsupported` (readiness then times out with that
+/// text), never an assumption.
+#[cfg(unix)]
+fn listener_pid(socket_path: &Path) -> std::io::Result<u32> {
+    use std::os::unix::io::AsRawFd;
+    let stream = std::os::unix::net::UnixStream::connect(socket_path)?;
+    let fd = stream.as_raw_fd();
+    #[cfg(target_os = "macos")]
+    {
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                &mut pid as *mut libc::pid_t as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(pid as u32)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut libc::ucred as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(cred.pid as u32)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = fd;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "listener pid proof (peer credentials) is not implemented on this platform",
+        ))
+    }
+}
+
+#[cfg(not(unix))]
+fn listener_pid(_socket_path: &Path) -> std::io::Result<u32> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "listener pid proof (peer credentials) is not implemented on this platform",
+    ))
+}
+
+/// Does a tailscaled answer `status --json` on the configured socket within `wait`?
 /// `Err` carries why not (CLI failure text or the parse error) for the caller's record.
-async fn probe_socket(config: &MeshConfig) -> Result<(), String> {
+async fn probe_socket(config: &MeshConfig, wait: Duration) -> Result<(), String> {
     let output = run_cli(
         "tailscale status (readiness probe)",
         config.status_argv(),
-        READY_PROBE_TIMEOUT,
+        wait,
     )
     .await
     .map_err(|err| err.to_string())?;
