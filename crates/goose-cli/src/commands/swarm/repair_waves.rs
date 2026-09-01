@@ -221,6 +221,31 @@ fn safe_rel(rel: &str) -> Option<&Path> {
     Some(p)
 }
 
+/// The tree a shard's composition is graded in: a fresh temp dir holding the real tree NOW. A
+/// failure here is the HARNESS failing (no temp space, an unreadable tree) and never the shard's
+/// edit — it is returned BY NAME so the wave counts it as a failed shard instead of reading the
+/// ungraded shard as "beat nothing" (VA-080: both arms returned `(None, …)` silently).
+fn preview_workspace(real_root: &Path) -> Result<tempfile::TempDir, String> {
+    let preview = tempfile::TempDir::new().map_err(|e| format!("preview temp dir: {e}"))?;
+    copy_tree_excluding(real_root, preview.path())
+        .map_err(|e| format!("preview copy of {}: {e}", real_root.display()))?;
+    Ok(preview)
+}
+
+/// What grading a shard's composition returned.
+#[derive(Debug, Default)]
+pub(super) struct Preview {
+    /// The one ruler's finding count on the preview tree. None = not graded: nothing changed, a
+    /// conflicted or tool-less composition, no shadow, or `setup_error` says the preview itself
+    /// could not be built.
+    pub(super) verified: Option<usize>,
+    /// The shard's owned files differ from the tree (merged, conflicted or unavailable).
+    pub(super) changed: bool,
+    pub(super) composed: Composed,
+    /// The preview workspace could not be set up — the harness's failure, named.
+    pub(super) setup_error: Option<String>,
+}
+
 impl GooseAgentDispatcher {
     /// Compose the shard's owned files as a promotion would land them: each merged three-way
     /// against the tree now, from the base snapshotted at dispatch.
@@ -296,8 +321,8 @@ impl GooseAgentDispatcher {
     }
 
     /// Grade EXACTLY what a promotion would land — the tree now plus the shard's MERGED files
-    /// (and its created source files when it owns several). Returns (findings, changed,
-    /// composition): a conflicted composition cannot be graded and never lands.
+    /// (and its created source files when it owns several). A conflicted composition cannot be
+    /// graded and never lands; a preview that could not be built is a named `setup_error`.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn grade_merged_preview(
         &self,
@@ -308,9 +333,12 @@ impl GooseAgentDispatcher {
         all_files: &[String],
         composite: bool,
         missing_gate: bool,
-    ) -> (Option<usize>, bool, Composed) {
+    ) -> Preview {
+        // No shadow: the shard never ran in one (`make_shadow` bailed the dispatch Transient —
+        // `agent_ok: false` and `agent_error` on `complete_fix_completed` carry that) or it was
+        // already promoted/discarded; nothing to compose is honest here.
         let Some(mut composed) = self.compose_merged(task_id, real_root) else {
-            return (None, false, Composed::default());
+            return Preview::default();
         };
         let shadow_root = {
             let g = self.spec_shadows.lock().unwrap();
@@ -320,13 +348,17 @@ impl GooseAgentDispatcher {
             let g = self.spec_shadows.lock().unwrap();
             g.get(task_id).map(|(_, o)| o.len()).unwrap_or(0)
         };
-        let preview = match tempfile::TempDir::new() {
+        let preview = match preview_workspace(real_root) {
             Ok(t) => t,
-            Err(_) => return (None, composed.changed(), composed),
+            Err(e) => {
+                return Preview {
+                    verified: None,
+                    changed: composed.changed(),
+                    composed,
+                    setup_error: Some(e),
+                }
+            }
         };
-        if copy_tree_excluding(real_root, preview.path()).is_err() {
-            return (None, composed.changed(), composed);
-        }
         let mut created = 0;
         if let Some(shadow_root) = shadow_root {
             if owned_n > 1 {
@@ -334,10 +366,20 @@ impl GooseAgentDispatcher {
             }
         }
         if !composed.changed() && created == 0 {
-            return (None, false, composed);
+            return Preview {
+                verified: None,
+                changed: false,
+                composed,
+                setup_error: None,
+            };
         }
         if !composed.conflicts.is_empty() || !composed.unavailable.is_empty() {
-            return (None, true, composed);
+            return Preview {
+                verified: None,
+                changed: true,
+                composed,
+                setup_error: None,
+            };
         }
         for (f, bytes) in &composed.merged {
             if let Some(rel) = safe_rel(f) {
@@ -360,7 +402,12 @@ impl GooseAgentDispatcher {
             // created files only: changed, landable through the created-files copy below
             composed.three_way += 0;
         }
-        (verified, true, composed)
+        Preview {
+            verified,
+            changed: true,
+            composed,
+            setup_error: None,
+        }
     }
 
     /// Land the shard: write every merged file into the real tree (never outside it), copy its
@@ -439,6 +486,9 @@ pub(super) struct WaveOutcome {
     pub(super) promoted: usize,
     pub(super) conflicts: usize,
     pub(super) reshards: usize,
+    /// Shards whose preview workspace could not be built — the harness's failures, counted apart
+    /// from shards that ran, were graded and beat nothing.
+    pub(super) setup_failed: usize,
     pub(super) findings_left: usize,
 }
 
@@ -452,6 +502,10 @@ pub(super) struct ShardOutcome {
     /// The merge tool could not run — no progress on this tree (parked, never re-armed).
     pub(super) unavailable: bool,
     pub(super) handoff_files: Vec<String>,
+    /// The preview workspace could not be built (`grade_merged_preview`'s `setup_error`): the
+    /// shard was never graded, so its edit could not promote — the driver says so with the
+    /// finding and counts it, instead of parking it as a quiet no-op.
+    pub(super) setup_error: Option<String>,
 }
 
 /// The wave's seam: what runs ONE finding-shard and what re-grades the tree. The production
@@ -617,6 +671,21 @@ pub(super) async fn drive_wave<R: ShardRunner>(
                 }
             }
             continue;
+        }
+        if let Some(error) = &res.setup_error {
+            // The HARNESS failed this shard (no preview temp dir / the tree copy failed): said
+            // with the finding and counted as a failed shard — never read as "ran and beat
+            // nothing". The finding then takes the same road as any ungraded shard below
+            // (conflict re-arm, handoff reshard, or parked until the tree moves): an environment
+            // fault re-dispatched at once would spin, and the tree changing is the retry signal.
+            outcome.setup_failed += 1;
+            sink.write_value(serde_json::json!({
+                "event": "repair_shard_setup_failed",
+                "round": round,
+                "finding": super::findings::elide_middle(&f.text, 150, 400),
+                "shard": f.file,
+                "error": error,
+            }));
         }
         if let Some(note) = res.conflict_note {
             outcome.conflicts += 1;
@@ -878,7 +947,12 @@ async fn run_finding_shard(
             "longest_still_secs": st.longest_still_secs,
         }));
     }
-    let (verified, shard_changed, composed) = me
+    let Preview {
+        verified,
+        changed: shard_changed,
+        composed,
+        setup_error,
+    } = me
         .grade_merged_preview(
             &task_id,
             cwd,
@@ -1002,6 +1076,8 @@ async fn run_finding_shard(
         "task_id": task_id,
         "secs": started.elapsed().as_secs(),
         "agent_ok": ran.is_ok(),
+        "agent_error": ran.as_ref().err().map(|e| e.to_string()),
+        "setup_failed": setup_error,
         "verified_findings": verified,
         "baseline_findings": baseline_now,
         "shard_changed": shard_changed,
@@ -1019,6 +1095,7 @@ async fn run_finding_shard(
         conflict_note: conflicted.then(|| conflict_note(&composed.conflicts)),
         unavailable,
         handoff_files,
+        setup_error,
     }
 }
 
@@ -1219,6 +1296,7 @@ mod tests {
                     conflict_note: None,
                     unavailable: false,
                     handoff_files: Vec::new(),
+                    setup_error: None,
                 }
             }
             // S14-5: a SLOW gate — the sibling finishing during it must still read the re-graded
@@ -1321,5 +1399,92 @@ mod tests {
             assert_eq!(in_force, vec![8, 7], "{events:?}");
             assert_eq!(out.findings_left, 1, "S3 stays open; S1/S2 are done");
         }
+    }
+
+    /// VA-080 item 2: a shard whose preview workspace could not be built is the HARNESS failing,
+    /// not "ran and beat nothing" — the wave says so with the finding and the error, counts it
+    /// as a failed shard, and does not spin it: parked until the tree moves, like any ungraded
+    /// shard. `preview_workspace` itself returns the copy failure by name (the arm that returned
+    /// `(None, …)` silently).
+    #[tokio::test]
+    async fn a_failed_preview_setup_is_said_with_its_finding_and_counted() {
+        use std::sync::Mutex;
+        let err = preview_workspace(Path::new("/nonexistent/swarm-va080/tree")).unwrap_err();
+        assert!(
+            err.starts_with("preview copy of /nonexistent/swarm-va080/tree: "),
+            "{err}"
+        );
+
+        #[derive(Default)]
+        struct Rec(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for Rec {
+            fn emit(&self, _e: &goose_swarm::SwarmEvent) {}
+            fn write_value(&self, v: serde_json::Value) {
+                self.0.lock().unwrap().push(v);
+            }
+        }
+        struct Broken {
+            dispatched: Mutex<Vec<String>>,
+            error: String,
+        }
+        #[async_trait]
+        impl ShardRunner for Broken {
+            async fn run_shard(
+                &self,
+                f: &OpenFinding,
+                _slot: &str,
+                _baseline: Arc<tokio::sync::RwLock<usize>>,
+            ) -> ShardOutcome {
+                self.dispatched.lock().unwrap().push(f.text.clone());
+                ShardOutcome {
+                    setup_error: Some(self.error.clone()),
+                    ..ShardOutcome::default()
+                }
+            }
+            async fn regrade(&self) -> Option<usize> {
+                panic!("nothing promoted, nothing to regrade")
+            }
+        }
+        let runner = Arc::new(Broken {
+            dispatched: Mutex::new(Vec::new()),
+            error: err.clone(),
+        });
+        let sink = Arc::new(Rec::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let out = drive_wave(
+            runner.clone(),
+            sink_dyn,
+            2,
+            9,
+            vec![OpenFinding {
+                text: "GET /api/drafts returns HTML".into(),
+                file: "app/api.py".into(),
+                owned: vec!["app/api.py".into()],
+                order_note: String::new(),
+                k: 0,
+                attempted_at: None,
+                conflict_note: None,
+                replay_required: false,
+            }],
+            vec!["m1".into(), "m2".into()],
+        )
+        .await;
+        assert_eq!(out.setup_failed, 1, "{out:?}");
+        assert_eq!(out.promoted, 0, "{out:?}");
+        assert_eq!(
+            out.shards, 1,
+            "parked on this tree, not re-dispatched: {out:?}"
+        );
+        assert_eq!(out.findings_left, 1, "{out:?}");
+        assert_eq!(runner.dispatched.lock().unwrap().len(), 1);
+        let events = sink.0.lock().unwrap().clone();
+        let said = events
+            .iter()
+            .find(|e| e["event"] == "repair_shard_setup_failed")
+            .unwrap_or_else(|| panic!("{events:?}"));
+        assert_eq!(said["round"], 2);
+        assert_eq!(said["finding"], "GET /api/drafts returns HTML");
+        assert_eq!(said["shard"], "app/api.py");
+        assert_eq!(said["error"], err);
     }
 }
