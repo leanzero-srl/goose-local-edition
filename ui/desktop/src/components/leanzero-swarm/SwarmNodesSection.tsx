@@ -20,8 +20,10 @@ const i18nMsg = defineMessages({
   nodesTitle: { id: 'swarmSettings.nodesTitle', defaultMessage: 'Nodes' },
   nodesDesc: {
     id: 'swarmSettings.nodesDesc',
-    defaultMessage: 'Every node the swarm runs. Weight: higher gets a bigger share of the tasks.',
+    defaultMessage:
+      'Share: relative share of work across nodes — higher gets more tasks.',
   },
+  shareLabel: { id: 'swarmSettings.shareLabel', defaultMessage: 'Share' },
   addNode: { id: 'swarmSettings.addNode', defaultMessage: 'Add node' },
   autoChip: { id: 'swarmSettings.autoChip', defaultMessage: 'auto' },
   autoChipTitle: {
@@ -69,10 +71,17 @@ function providerChipOf(row: NodeRow): { seg: string; chip: string } {
 /**
  * The Swarm Settings tab — NODES ONLY, per the owner's simplification: "I just want Add node, for
  * each node choose provider, and then for all nodes choose weights. That is it." Per row: label,
- * provider chip (click = the remove+re-add reassign flow), model id, ONE weight (SwarmDevice.weight),
- * remove. No tunables, no toggles — the full lever panel stays in Settings until the golden-formula
- * strip retires it. Cloud rows are mutated ONLY through the engine CLI (the invariant); a weight
- * change on one is therefore CLI rm→add with the new weight.
+ * provider chip (click = the remove+re-add reassign flow), model id, ONE stepper — the ROUTING SHARE
+ * (SwarmDevice.speed_weight), how much of the work a node gets — remove. Concurrency
+ * (SwarmDevice.weight) is left at its default and is NOT edited here.
+ *
+ * SHARE PERSISTENCE mirrors the engine's read (`d.speed_weight.unwrap_or_else(|| speed_weight_for(&d.id))`
+ * in swarm.rs — the node's own field wins, the `speed_weights` substring map is the fallback):
+ *  - local/discovered rows own a device row, so the share writes to that row's `speed_weight`;
+ *  - cloud rows are CLI-owned and the CLI `add` has no share flag, so their share writes to the
+ *    top-level `speed_weights` map keyed by the device id — which never touches the CLI-owned device
+ *    LIST, keeping the invariant intact and the engine's fallback coherent.
+ * An untouched node persists nothing: it shows the default share (1) until the user changes it.
  */
 export default function SwarmNodesSection({
   onOpenCloudProviders,
@@ -108,20 +117,28 @@ export default function SwarmNodesSection({
   const [pendingRemove, setPendingRemove] = useState<NodeRow | null>(null);
   const [pendingReassign, setPendingReassign] = useState<NodeRow | null>(null);
   const [removing, setRemoving] = useState(false);
-  const [busyRow, setBusyRow] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
 
-  /** Fresh-read the config and mutate its device list — never from possibly-stale panel state. */
-  const mutateDevicesFresh = useCallback(
-    async (mutate: (devices: SwarmDeviceRow[]) => SwarmDeviceRow[]) => {
+  /** Fresh-read the whole swarm config and mutate it — never from possibly-stale panel state. */
+  const mutateConfigFresh = useCallback(
+    async (mutate: (base: SwarmConfig) => SwarmConfig) => {
       const raw = (await read('swarm', false)) as SwarmConfig | null;
       const base: SwarmConfig = { ...DEFAULTS, ...(raw ?? {}) };
-      const devices = Array.isArray(base.devices) ? [...base.devices] : [];
-      const next = { ...base, devices: mutate(devices) };
+      const next = mutate(base);
       await upsert('swarm', next, false);
       setCfg(next);
     },
     [read, upsert]
+  );
+
+  /** Fresh-read the config and mutate its device list. */
+  const mutateDevicesFresh = useCallback(
+    (mutate: (devices: SwarmDeviceRow[]) => SwarmDeviceRow[]) =>
+      mutateConfigFresh((base) => ({
+        ...base,
+        devices: mutate(Array.isArray(base.devices) ? [...base.devices] : []),
+      })),
+    [mutateConfigFresh]
   );
 
   /** Remove one node by its identity — cloud rows via the CLI, local rows via the config. */
@@ -183,66 +200,66 @@ export default function SwarmNodesSection({
   }, [reassignTarget, removeNodeRow]);
 
   /**
-   * ONE weight per node = SwarmDevice.weight.
-   *  - configured local rows: rewrite the row in place;
-   *  - discovered LM Studio rows: materialize a device row so the weight has somewhere to live
-   *    (id = the machine short name when free, else the model id — the pool CLI's own shape);
-   *  - cloud rows: the CLI owns them (the invariant) — rm then re-add with the new weight; a
-   *    failed re-add is reported LOUDLY because the node is then out of the pool.
+   * ONE routing SHARE per node = how much of the work it gets. Persisted where the engine reads it
+   * (device field wins over the `speed_weights` map), by node kind:
+   *  - configured local rows: write `speed_weight` on the row in place, leaving `weight` (concurrency)
+   *    untouched;
+   *  - discovered LM Studio rows: materialize a device row so the share has somewhere to live
+   *    (id = the machine short name when free, else the model id — the pool CLI's own shape), with
+   *    `weight` at its default;
+   *  - cloud rows: the CLI owns the device list and its `add` has no share flag, so the share lands in
+   *    the top-level `speed_weights` map keyed by the device id (updating an existing matching key in
+   *    place, else adding one). No CLI call, no device-row mutation — the invariant holds.
    */
-  const setNodeWeight = useCallback(
-    (row: NodeRow, w: number) => {
+  const setNodeShare = useCallback(
+    (row: NodeRow, share: number) => {
       setNodeError(null);
+      const fail = (e: unknown) => setNodeError(e instanceof Error ? e.message : String(e));
       if (row.provider) {
-        setBusyRow(row.id);
-        void (async () => {
-          try {
-            const rm = await window.electron.swarmCloud(row.provider as string, [
-              'rm',
-              row.modelId,
-            ]);
-            if (!rm.ok) throw new Error(cloudCliErr(rm));
-            const add = await window.electron.swarmCloud(row.provider as string, [
-              'add',
-              row.modelId,
-              '--weight',
-              String(w),
-            ]);
-            if (!add.ok) {
-              throw new Error(
-                `${cloudCliErr(add)} — the node was removed and the re-add failed; add it back from “Add node”.`
-              );
-            }
-            await reloadSwarm();
-          } catch (e) {
-            setNodeError(e instanceof Error ? e.message : String(e));
-            await reloadSwarm();
-          } finally {
-            setBusyRow(null);
-          }
-        })();
+        void mutateConfigFresh((base) => {
+          const sw = { ...(base.speed_weights ?? {}) };
+          // The engine substring-matches these keys (id.contains(key)); a full device id contains
+          // itself, so a newly written full-id key always matches its node. Update an existing
+          // matching key in place so the map never carries two values for one node.
+          const existing =
+            row.id in sw ? row.id : Object.keys(sw).find((k) => row.id.includes(k));
+          sw[existing ?? row.id] = share;
+          return { ...base, speed_weights: sw };
+        }).catch(fail);
         return;
       }
       void mutateDevicesFresh((devices) => {
         if (row.configured) {
-          return devices.map((d) => (d.id === row.id ? { ...d, weight: w } : d));
+          return devices.map((d) => (d.id === row.id ? { ...d, speed_weight: share } : d));
         }
         const machine = deviceFromModelId(row.modelId) || row.modelId;
         const id = devices.some((d) => d.id === machine) ? row.modelId : machine;
-        return [...devices, { id, model_id: row.modelId, weight: w, enabled: true }];
-      }).catch((e: unknown) => setNodeError(e instanceof Error ? e.message : String(e)));
+        return [
+          ...devices,
+          { id, model_id: row.modelId, weight: 1, speed_weight: share, enabled: true },
+        ];
+      }).catch(fail);
     },
-    [mutateDevicesFresh, reloadSwarm]
+    [mutateConfigFresh, mutateDevicesFresh]
   );
 
   const configuredDevices: SwarmDeviceRow[] = Array.isArray(cfg.devices) ? cfg.devices : [];
   // EVERY node the swarm would actually run, in one list. `nodeRows` (golden.ts) owns the union so
   // the test exercises the shipped rule rather than a copy of it.
   const rows = nodeRows(configuredDevices, fleet.models);
-  const weightOf = (row: NodeRow): number => {
-    if (row.configured) return row.weight;
-    const machine = deviceFromModelId(row.modelId);
-    return configuredDevices.find((d) => d.id === machine)?.weight ?? row.weight;
+  // The node's routing SHARE, exactly as the engine resolves it: the device's own `speed_weight`
+  // wins, then the `speed_weights` substring map (id.contains(key)), then 1. Reading the map keeps
+  // a legacy map-only config honest — the stepper shows the share the engine actually routes by.
+  const speedWeights = cfg.speed_weights ?? {};
+  const shareFromMap = (id: string): number | undefined => {
+    if (id in speedWeights) return speedWeights[id];
+    const key = Object.keys(speedWeights).find((k) => id.includes(k));
+    return key ? speedWeights[key] : undefined;
+  };
+  const shareOf = (row: NodeRow): number => {
+    const deviceId = row.configured ? row.id : deviceFromModelId(row.modelId);
+    const device = configuredDevices.find((d) => d.id === deviceId);
+    return device?.speed_weight ?? shareFromMap(row.id) ?? 1;
   };
 
   const endpoint = cfg.endpoint ?? DEFAULTS.endpoint ?? '';
@@ -347,15 +364,14 @@ export default function SwarmNodesSection({
                     )}
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
-                    {busyRow === row.id ? (
-                      <span className="text-xs text-text-secondary">…</span>
-                    ) : (
-                      <WeightStepper
-                        value={weightOf(row)}
-                        onChange={(v) => setNodeWeight(row, v)}
-                        label={row.id}
-                      />
-                    )}
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary">
+                      {intl.formatMessage(i18nMsg.shareLabel)}
+                    </span>
+                    <WeightStepper
+                      value={shareOf(row)}
+                      onChange={(v) => setNodeShare(row, v)}
+                      label={row.id}
+                    />
                     {row.configured && (
                       <button
                         type="button"
@@ -426,7 +442,8 @@ export default function SwarmNodesSection({
             modelId: pendingReassign.modelId,
             provider: pendingReassign.provider,
             engine: pendingReassign.engine,
-            weight: weightOf(pendingReassign),
+            // Reassign re-adds the node via the CLI, which carries CONCURRENCY (weight), not share.
+            weight: pendingReassign.weight,
           });
           setPendingReassign(null);
           setAddOpen(true);
