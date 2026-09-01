@@ -843,3 +843,7 @@ research_request_block's armed-no-claimed-sections arm wording.
   agreeing. Corrected the surgeon's own count (six artifacts, not four), caught the handoff parser
   extracting a path from a NEGATION, and labeled the drafts.py machinery a net for this run
   honestly. Charter gap: none.
+- 2026-09-01 06:40 swarm-surgeon (twelve smalls, three commits): EXEMPLARY. Twelve items, twelve
+  one-line traces with honest NET labels, a compiler-proven lever audit table, and the stack-key
+  root cause quoted from the spec's own physics prose. Paid every line with extractions (persona.rs,
+  web_vocab_note move). Charter gap: none.
