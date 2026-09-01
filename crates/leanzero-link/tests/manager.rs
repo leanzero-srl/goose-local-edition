@@ -24,7 +24,8 @@ use leanzero_link::manager::{
 };
 use leanzero_link::mesh::{BackendState, MeshConfig, MeshError, MeshStatus};
 use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerTarget, RemoteExecutor, SwarmStateSource,
+    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
+    RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
 use serde_json::json;
@@ -173,6 +174,41 @@ impl RemoteExecutor for RecordingExecutor {
         Ok(ExecuteAccepted {
             session_id: self.session_id.clone(),
         })
+    }
+}
+
+/// A scripted [`MlxControl`] that records the (op, request) it is handed and returns a
+/// fixed outcome — the same stand-in the control tests use, no engine involved.
+struct RecordingMlxControl {
+    recorded: StdMutex<Vec<(MlxOp, serde_json::Value)>>,
+    outcome: Result<serde_json::Value, MlxControlError>,
+}
+
+impl RecordingMlxControl {
+    fn returning(value: serde_json::Value) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Ok(value),
+        })
+    }
+
+    fn failing(error: MlxControlError) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Err(error),
+        })
+    }
+}
+
+#[async_trait]
+impl MlxControl for RecordingMlxControl {
+    async fn dispatch(
+        &self,
+        op: MlxOp,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, MlxControlError> {
+        self.recorded.lock().unwrap().push((op, request));
+        self.outcome.clone()
     }
 }
 
@@ -543,6 +579,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
             node_id: "node-b".to_string(),
         }),
         Some(b_executor.clone()),
+        None,
     )
     .await
     .expect("node B starts");
@@ -618,5 +655,253 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
     }
 
     b.shutdown();
+    manager.logout(false).await.unwrap();
+}
+
+// ── mlx_proxy: self short-circuit + peer forwarding over /v1/swarm/mlx ────
+
+#[tokio::test]
+async fn mlx_proxy_self_short_circuits_to_the_local_control() {
+    let server = MockServer::start().await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    let payload = json!({"settings": {"modelsDir": "~/models", "port": 8090, "spawnCommand": []}});
+    let control = RecordingMlxControl::returning(payload.clone());
+    // FakeStateSource reports node_id "self-node"; targeting it takes the no-network path.
+    let manager = h.manager(&server, false).with_mlx_control(control.clone());
+
+    let out = manager
+        .mlx_proxy(
+            "self-node",
+            MlxOp::SettingsRead,
+            json!({"nodeId": "self-node"}),
+        )
+        .await
+        .expect("self mlx op runs the local control");
+    assert_eq!(
+        out, payload,
+        "the local control's payload is returned verbatim"
+    );
+
+    let recorded = control.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "no network hop; the local control ran");
+    assert_eq!(recorded[0].0, MlxOp::SettingsRead);
+}
+
+#[tokio::test]
+async fn mlx_proxy_self_without_control_is_loud() {
+    let server = MockServer::start().await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    let manager = h.manager(&server, false); // no mlx control wired
+
+    let err = manager
+        .mlx_proxy("self-node", MlxOp::Status, json!({}))
+        .await
+        .expect_err("no mlx control is a loud typed error, not a fabricated result");
+    assert!(
+        matches!(err, LinkError::MlxControlUnavailable),
+        "got {err:?}"
+    );
+}
+
+/// Node A forwards a mlx op to node B over `POST /v1/swarm/mlx/<op>` and returns B's
+/// payload; a peer's own failure surfaces verbatim as a typed error.
+#[tokio::test]
+async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors() {
+    // Node B: a real control service with a recording mlx control, on ephemeral loopback.
+    let b_payload = json!({
+        "models": [{"id": "org/model", "sizeBytes": 42, "complete": true, "missingFiles": 0}],
+        "diskAvailableBytes": 100,
+        "diskTotalBytes": 200
+    });
+    let b_control = RecordingMlxControl::returning(b_payload.clone());
+    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    b_config.port = 0;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        Some(b_control.clone()),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    // Node A: a connected manager (fake mesh reports zero peers of its own).
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let a_control = RecordingMlxControl::returning(json!({"unused": true}));
+    let manager = h
+        .manager(&server, false)
+        .with_mlx_control(a_control.clone());
+    manager.connect().await.expect("A connects");
+
+    let registry = manager
+        .active_registry()
+        .await
+        .expect("A has a live peer registry while connected");
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b_port,
+    };
+
+    // Re-seed B until the POST lands (the peer-sync loop reconciles to [] once at connect).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let out = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager
+            .mlx_proxy("node-b", MlxOp::ModelsList, json!({"nodeId": "node-b"}))
+            .await
+        {
+            Ok(value) => break value,
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => panic!("unexpected mlx_proxy error: {other:?}"),
+        }
+    };
+    assert_eq!(
+        out, b_payload,
+        "A got B's models-list payload back over the mesh"
+    );
+    {
+        let recorded = b_control.recorded.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "the op reached B's control over HTTP");
+        assert_eq!(recorded[0].0, MlxOp::ModelsList);
+        assert!(
+            a_control.recorded.lock().unwrap().is_empty(),
+            "A's local control must not run for a peer target"
+        );
+    }
+
+    b.shutdown();
+    manager.logout(false).await.unwrap();
+}
+
+#[tokio::test]
+async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
+    // Node B refuses a mount with a memory-gate BLOCK (the local invalid_params class).
+    let b_control = RecordingMlxControl::failing(MlxControlError::BadRequest(
+        "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
+    ));
+    let mut b_config = ControlConfig::new("shared-node-token".to_string(), None);
+    b_config.port = 0;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        Some(b_control.clone()),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h
+        .manager(&server, false)
+        .with_mlx_control(RecordingMlxControl::returning(json!({})));
+    manager.connect().await.expect("A connects");
+
+    let registry = manager.active_registry().await.expect("live registry");
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b_port,
+    };
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let err = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager
+            .mlx_proxy("node-b", MlxOp::Mount, json!({"modelId": "org/big"}))
+            .await
+        {
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => break other,
+            Ok(v) => panic!("expected a BLOCK error, got a payload: {v:?}"),
+        }
+    };
+    match err {
+        LinkError::MlxControl(MlxControlError::BadRequest(text)) => {
+            assert_eq!(text, "memory gate BLOCK: model needs 40GB, 12GB free");
+        }
+        other => panic!("expected a verbatim BadRequest, got {other:?}"),
+    }
+
+    b.shutdown();
+    manager.logout(false).await.unwrap();
+}
+
+#[tokio::test]
+async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h
+        .manager(&server, false)
+        .with_mlx_control(RecordingMlxControl::returning(json!({})));
+    manager.connect().await.expect("A connects");
+
+    let registry = manager.active_registry().await.expect("live registry");
+    // A port that answers nothing: bind, take the number, drop the listener.
+    let dead_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: dead_port,
+    };
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let err = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager.mlx_proxy("node-b", MlxOp::Status, json!({})).await {
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => break other,
+            Ok(v) => panic!("an unreachable peer must not yield a payload: {v:?}"),
+        }
+    };
+    assert!(
+        matches!(err, LinkError::MlxProxy(_)),
+        "an unreachable peer is a loud typed error, got {err:?}"
+    );
+
     manager.logout(false).await.unwrap();
 }

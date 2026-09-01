@@ -88,6 +88,121 @@ pub trait RemoteExecutor: Send + Sync + 'static {
     async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError>;
 }
 
+/// One mlxEngine operation the mesh proxy forwards. Each variant maps 1:1 to a
+/// `_goose/unstable/mlxEngine/<op>` ACP method AND to the control route
+/// `POST /v1/swarm/mlx/<path()>`. The wire carries the [`Self::path`] string as the last
+/// path segment; the request/response bodies are the mlxEngine DTOs passed through as
+/// opaque JSON (this crate never re-types the 16 shapes). Adding an op is: a variant here,
+/// a route in [`crate::control`], and an arm in the goose-side `MlxControl` impl.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlxOp {
+    Status,
+    Mount,
+    Unmount,
+    SettingsRead,
+    SettingsUpdate,
+    ModelsList,
+    ModelDelete,
+    HfSearch,
+    Browse,
+    BrowseFilters,
+    ModelCard,
+    Download,
+    DownloadProgress,
+    DownloadPause,
+    DownloadResume,
+    DownloadCancel,
+}
+
+impl MlxOp {
+    /// The last path segment of the control route and the ACP method suffix (camelCase),
+    /// so `/v1/swarm/mlx/settingsUpdate` mirrors `mlxEngine/settingsUpdate` exactly.
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Mount => "mount",
+            Self::Unmount => "unmount",
+            Self::SettingsRead => "settingsRead",
+            Self::SettingsUpdate => "settingsUpdate",
+            Self::ModelsList => "modelsList",
+            Self::ModelDelete => "modelDelete",
+            Self::HfSearch => "hfSearch",
+            Self::Browse => "browse",
+            Self::BrowseFilters => "browseFilters",
+            Self::ModelCard => "modelCard",
+            Self::Download => "download",
+            Self::DownloadProgress => "downloadProgress",
+            Self::DownloadPause => "downloadPause",
+            Self::DownloadResume => "downloadResume",
+            Self::DownloadCancel => "downloadCancel",
+        }
+    }
+
+    pub fn from_path(path: &str) -> Option<Self> {
+        Some(match path {
+            "status" => Self::Status,
+            "mount" => Self::Mount,
+            "unmount" => Self::Unmount,
+            "settingsRead" => Self::SettingsRead,
+            "settingsUpdate" => Self::SettingsUpdate,
+            "modelsList" => Self::ModelsList,
+            "modelDelete" => Self::ModelDelete,
+            "hfSearch" => Self::HfSearch,
+            "browse" => Self::Browse,
+            "browseFilters" => Self::BrowseFilters,
+            "modelCard" => Self::ModelCard,
+            "download" => Self::Download,
+            "downloadProgress" => Self::DownloadProgress,
+            "downloadPause" => Self::DownloadPause,
+            "downloadResume" => Self::DownloadResume,
+            "downloadCancel" => Self::DownloadCancel,
+            _ => return None,
+        })
+    }
+
+    /// True for ops that destroy on-disk state or a running engine over the mesh: model
+    /// delete and download-cancel (which also deletes the partial repo). These are logged
+    /// at `warn` on the executing node so a remote destructive action is never silent.
+    pub fn is_destructive(self) -> bool {
+        matches!(self, Self::ModelDelete | Self::DownloadCancel)
+    }
+}
+
+/// A local mlxEngine failure surfaced to a remote caller through the proxy. The two
+/// variants preserve the local ACP error CLASS so node A can re-raise it with the same
+/// currency: [`Self::BadRequest`] is a user-actionable / params problem (mounts that hit a
+/// memory-gate BLOCK, a malformed repo id — the local `invalid_params` bucket) → `400`;
+/// [`Self::Failed`] is the node's own internal failure (disk read, HF fetch — the local
+/// `internal_error` bucket) → `500`. Never an empty-success. See
+/// [`crate::control::mlx_control_error_status`].
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum MlxControlError {
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// What the control service needs to actually RUN a mlxEngine operation on THIS machine.
+/// goose implements it (`GoosedMlxControl`) over the very code path its local
+/// `mlxEngine/*` ACP handlers call (`goose_sidecar`'s engine manager + HF tracker), so a
+/// download/delete/settings-change reached over the mesh is byte-for-byte the local
+/// operation. The trait is the seam — this crate never touches `goose_sidecar`. Injected
+/// into the control service beside the [`SwarmStateSource`]; `None` there means the
+/// `/v1/swarm/mlx/*` routes answer `501` (loud-absent, never a fabricated result).
+///
+/// `request` is the op's request DTO as opaque JSON and the `Ok` value is the op's
+/// response DTO as opaque JSON — the exact `mlxEngine/<op>` shapes; the implementor is the
+/// only party that types them.
+#[async_trait::async_trait]
+pub trait MlxControl: Send + Sync + 'static {
+    async fn dispatch(
+        &self,
+        op: MlxOp,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, MlxControlError>;
+}
+
 /// One mesh peer as a polling/subscription target. `mesh_ip: None` (tailscaled
 /// knows the peer but reports no IP) yields a permanently `Offline` row — shown
 /// loudly, never silently skipped.

@@ -37,6 +37,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use futures::StreamExt;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio_stream::wrappers::ReceiverStream;
 
 use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
@@ -56,6 +58,12 @@ pub use leanzero_link::wire::SessionDeltaKind;
 /// [`RemoteExecutor`] and drive [`ExecuteRequest`]/[`ExecuteAccepted`]/[`ExecuteError`]
 /// through `goose::acp::server::*` without a direct `leanzero-link` dependency.
 pub use leanzero_link::state::{ExecuteAccepted, ExecuteError, ExecuteRequest, RemoteExecutor};
+
+/// The remote model-management seam types, re-exported so goose's `GoosedMlxControl` (in
+/// `mlx_engine.rs`) and the boot path can drive the mesh MLX proxy without naming
+/// `leanzero-link` directly. [`MlxOp`] is the op enum both the control routes and the
+/// forwarding handlers key on; [`MlxControlError`] carries a peer's failure class verbatim.
+pub use leanzero_link::state::{MlxControl, MlxControlError, MlxOp};
 
 /// How often the delta poller re-snapshots node/session state. Matches the fabric's own
 /// peer poll cadence (`ControlConfig::poll_interval` default) so a busy/idle transition
@@ -137,6 +145,25 @@ pub fn set_executor(executor: impl RemoteExecutor) {
 
 fn current_executor() -> Option<Arc<dyn RemoteExecutor>> {
     EXECUTOR.get().cloned()
+}
+
+static MLX_CONTROL: OnceLock<Arc<dyn MlxControl>> = OnceLock::new();
+
+/// Inject the process-wide local MLX-engine control (goose's `GoosedMlxControl`). Called
+/// once at boot (mirroring [`set_executor`]). Threaded into every [`LinkManager`] built
+/// afterwards — so this node's `POST /v1/swarm/mlx/*` routes run real model-management ops
+/// against the local `goose_sidecar` engine. If never set, those routes answer `501`
+/// (loud-absent, never a fabricated result). A second call is ignored with a warning: the
+/// control is a process singleton over the one global engine manager.
+pub fn set_mlx_control(control: impl MlxControl) {
+    let control: Arc<dyn MlxControl> = Arc::new(control);
+    if MLX_CONTROL.set(control).is_err() {
+        warn!("leanzeroLink: mlx control already injected; ignoring the duplicate");
+    }
+}
+
+fn current_mlx_control() -> Option<Arc<dyn MlxControl>> {
+    MLX_CONTROL.get().cloned()
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +613,39 @@ fn not_connected_to_mesh_err() -> agent_client_protocol::Error {
     agent_client_protocol::Error::invalid_params().data("not connected to the mesh")
 }
 
+/// Map a [`LinkManager::mlx_proxy`](LinkManager::mlx_proxy) failure to an ACP error that
+/// preserves the local mlxEngine error CLASS, so a remote op fails exactly as its local
+/// twin would. A peer's `invalid_params`-class failure (a mount memory-gate BLOCK, a
+/// malformed repo id → HTTP `400` → [`MlxControlError::BadRequest`]) and the target-
+/// selection errors (unknown peer, not connected, mlx control unwired) ride through as
+/// `invalid_params` with their text verbatim — the panel shows "…" as itself. A peer's own
+/// internal failure (disk read, HF fetch → `500` → [`MlxControlError::Failed`]) and any
+/// transport/proxy failure ([`LinkError::MlxProxy`]) are `internal_error` (verbatim text),
+/// never swallowed or faked.
+/// The pure local-vs-remote decision for a mlxEngine `nodeId`: `None` (absent) and a
+/// `nodeId` equal to `self_node_id` both run locally (`None`); a different id names a peer
+/// (`Some`). Free and side-effect-free so the "self behaves identically to absent" contract
+/// is pinned by a unit test without an agent.
+fn mlx_remote_target(self_node_id: &str, requested: Option<&str>) -> Option<String> {
+    match requested {
+        None => None,
+        Some(id) if id == self_node_id => None,
+        Some(id) => Some(id.to_string()),
+    }
+}
+
+fn mlx_proxy_err(error: LinkError) -> agent_client_protocol::Error {
+    match error {
+        LinkError::MlxControl(MlxControlError::BadRequest(_))
+        | LinkError::MlxControlUnavailable
+        | LinkError::NotConnected
+        | LinkError::UnknownPeer(_) => {
+            agent_client_protocol::Error::invalid_params().data(error.to_string())
+        }
+        _ => agent_client_protocol::Error::internal_error().data(error.to_string()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ACP handlers.
 // ---------------------------------------------------------------------------
@@ -610,6 +670,11 @@ impl GooseAcpAgent {
         // node built without it serves `/v1/swarm/execute` as `501` (execution not wired).
         if let Some(executor) = current_executor() {
             manager = manager.with_executor(executor);
+        }
+        // Attach the process-wide MLX control if the boot path injected one; a node built
+        // without it serves `/v1/swarm/mlx/*` as `501` (mlx control not wired).
+        if let Some(mlx_control) = current_mlx_control() {
+            manager = manager.with_mlx_control(mlx_control);
         }
         Ok(Arc::new(manager))
     }
@@ -764,6 +829,56 @@ impl GooseAcpAgent {
         Ok(LeanzeroLinkRemoteExecuteResponse {
             session_id: accepted.session_id,
         })
+    }
+
+    /// Decide where a mlxEngine op runs, from its optional `nodeId`. `None` and a `nodeId`
+    /// equal to THIS node's id both mean "run locally" (returns `None`) — so the local path
+    /// stays byte-identical whether `nodeId` is absent or names self. A different id names a
+    /// peer to forward to (returns `Some(id)`). Pure and connection-agnostic; the connect
+    /// check happens in [`Self::mlx_engine_forward`].
+    pub(super) fn mlx_engine_remote_target(&self, node_id: Option<&str>) -> Option<String> {
+        mlx_remote_target(&stable_node_id(), node_id)
+    }
+
+    /// Forward one mlxEngine op to peer `node_id` over the mesh proxy, returning the peer's
+    /// response DTO as opaque JSON. Requires the mesh be `Connected` (else the short
+    /// `not connected to the mesh` message so the panel routes to Connect); a peer's own
+    /// failure surfaces verbatim via [`mlx_proxy_err`].
+    pub(super) async fn mlx_engine_forward(
+        &self,
+        node_id: &str,
+        op: MlxOp,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, agent_client_protocol::Error> {
+        let manager = self.link_manager()?;
+        if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
+            return Err(not_connected_to_mesh_err());
+        }
+        manager
+            .mlx_proxy(node_id, op, body)
+            .await
+            .map_err(mlx_proxy_err)
+    }
+
+    /// Serialize a mlxEngine request, forward it to `node_id`, and decode the peer's
+    /// response DTO — the one-liner every mlxEngine handler's remote branch calls. `Req`
+    /// and `Resp` are the op's ACP request/response types; the peer runs the identical
+    /// operation against its local engine and returns the identical shape.
+    pub(super) async fn mlx_engine_relay<Req, Resp>(
+        &self,
+        node_id: &str,
+        op: MlxOp,
+        req: &Req,
+    ) -> Result<Resp, agent_client_protocol::Error>
+    where
+        Req: Serialize,
+        Resp: DeserializeOwned,
+    {
+        let body = serde_json::to_value(req)
+            .internal_err_ctx("serializing a mlxEngine request for the mesh proxy")?;
+        let value = self.mlx_engine_forward(node_id, op, body).await?;
+        serde_json::from_value(value)
+            .internal_err_ctx("decoding a peer's mlxEngine response from the mesh proxy")
     }
 }
 
@@ -995,6 +1110,67 @@ mod tests {
         )));
         assert_eq!(internal.code, internal_error_code());
         assert_eq!(err_text(&internal), "internal error: boom");
+    }
+
+    #[test]
+    fn mlx_remote_target_treats_absent_and_self_identically_and_names_peers() {
+        // Absent nodeId → local (None): the byte-identical local path.
+        assert_eq!(mlx_remote_target("studio-ab12cd", None), None);
+        // nodeId == self → local (None), so a handler with nodeId=self behaves exactly like
+        // nodeId absent — the short-circuit the contract requires.
+        assert_eq!(
+            mlx_remote_target("studio-ab12cd", Some("studio-ab12cd")),
+            None
+        );
+        // A different id → forward to that peer.
+        assert_eq!(
+            mlx_remote_target("studio-ab12cd", Some("laptop-99")),
+            Some("laptop-99".to_string())
+        );
+    }
+
+    #[test]
+    fn mlx_proxy_err_preserves_the_local_error_class_and_text() {
+        // A peer's invalid_params-class failure (mount gate BLOCK, malformed repo id) rides
+        // through as invalid_params with its text verbatim.
+        let bad = mlx_proxy_err(LinkError::MlxControl(MlxControlError::BadRequest(
+            "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
+        )));
+        assert_eq!(bad.code, invalid_params_code());
+        assert_eq!(
+            err_text(&bad),
+            "memory gate BLOCK: model needs 40GB, 12GB free"
+        );
+
+        // Target-selection errors are user-actionable → invalid_params.
+        let unknown = mlx_proxy_err(LinkError::UnknownPeer("ghost".to_string()));
+        assert_eq!(unknown.code, invalid_params_code());
+        assert_eq!(
+            err_text(&unknown),
+            "no known mesh peer with node id 'ghost'"
+        );
+
+        let unwired = mlx_proxy_err(LinkError::MlxControlUnavailable);
+        assert_eq!(unwired.code, invalid_params_code());
+        assert_eq!(err_text(&unwired), "mlx control is not wired on this node");
+
+        // A peer's own internal failure (disk read, HF fetch → 500) → internal_error, verbatim.
+        let failed = mlx_proxy_err(LinkError::MlxControl(MlxControlError::Failed(
+            "reading local models failed: permission denied".to_string(),
+        )));
+        assert_eq!(failed.code, internal_error_code());
+        assert_eq!(
+            err_text(&failed),
+            "reading local models failed: permission denied"
+        );
+
+        // A transport/proxy failure reaching the peer → internal_error, verbatim.
+        let transport = mlx_proxy_err(LinkError::MlxProxy("connection refused".to_string()));
+        assert_eq!(transport.code, internal_error_code());
+        assert_eq!(
+            err_text(&transport),
+            "mlx proxy request to a peer failed: connection refused"
+        );
     }
 
     #[test]

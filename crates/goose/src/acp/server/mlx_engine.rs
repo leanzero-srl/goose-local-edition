@@ -9,6 +9,8 @@ use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile,
 };
 use goose_sidecar::hf::{self, DownloadTracker};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
 
 const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
@@ -182,22 +184,277 @@ fn progress_to_dto(progress: hf::DownloadProgress) -> MlxDownloadProgressDto {
     }
 }
 
+// ============================================================================
+// Local operation cores.
+//
+// Each `core_*` runs one mlxEngine op against THIS node's engine/tracker with the exact
+// logic the ACP handler used to inline. Two callers share them, byte-for-byte: the ACP
+// handler's local branch (below) and `GoosedMlxControl` (the mesh proxy's executing side).
+// Only `status`'s provider-inventory refresh stays in the handler (it needs the agent);
+// everything else is here so there is a single implementation to reuse, never a second.
+// ============================================================================
+
+async fn core_status() -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
+    let manager = synced_manager()?;
+    Ok(MlxEngineStatusResponse {
+        status: status_to_dto(manager.status().await),
+    })
+}
+
+async fn core_mount(
+    req: MlxEngineMountRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    let manager = synced_manager()?;
+    manager.mount(&req.model_id).await.invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
+async fn core_unmount(
+    _req: MlxEngineUnmountRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    global_manager().unmount().await;
+    Ok(EmptyResponse {})
+}
+
+async fn core_settings_read(
+    _req: MlxEngineSettingsReadRequest,
+) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
+    Ok(MlxEngineSettingsResponse {
+        settings: settings_to_dto(load_engine_settings()?),
+    })
+}
+
+async fn core_settings_update(
+    req: MlxEngineSettingsUpdateRequest,
+) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
+    let mut settings = settings_from_dto(req.settings);
+    // A legacy UI state may still send flat sampling fields — same migration,
+    // so what persists is always profile truth.
+    settings.migrate_legacy();
+    Config::global()
+        .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
+        .internal_err_ctx("persisting mlx_engine config")?;
+    global_manager().set_settings(settings.clone());
+    Ok(MlxEngineSettingsResponse {
+        settings: settings_to_dto(settings),
+    })
+}
+
+async fn core_models_list(
+    _req: MlxEngineModelsListRequest,
+) -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    let models_dir = expand_tilde(&settings.models_dir);
+    let models = hf::list_local_models(&models_dir).internal_err()?;
+    let (disk_available_bytes, disk_total_bytes) =
+        goose_sidecar::disk_space(&models_dir).internal_err()?;
+    Ok(MlxEngineModelsListResponse {
+        models: models
+            .into_iter()
+            .map(|m| MlxLocalModelDto {
+                id: m.id,
+                size_bytes: m.size_bytes,
+                complete: m.complete,
+                missing_files: m.missing_files,
+            })
+            .collect(),
+        disk_available_bytes,
+        disk_total_bytes,
+    })
+}
+
+async fn core_model_delete(
+    req: MlxEngineModelDeleteRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    hf::delete_local_model(&expand_tilde(&settings.models_dir), &req.model_id)
+        .invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
+async fn core_hf_search(
+    req: MlxEngineHfSearchRequest,
+) -> Result<MlxEngineHfSearchResponse, agent_client_protocol::Error> {
+    let token = huggingface_token().await;
+    let hits = hf::search_mlx_models(&req.query, req.limit.unwrap_or(20), token.as_deref())
+        .await
+        .internal_err()?;
+    Ok(MlxEngineHfSearchResponse {
+        hits: hits
+            .into_iter()
+            .map(|h| MlxHfModelHitDto {
+                id: h.id,
+                downloads: h.downloads,
+                likes: h.likes,
+                updated_at: h.updated_at,
+            })
+            .collect(),
+    })
+}
+
+async fn core_browse(
+    req: MlxEngineBrowseRequest,
+) -> Result<MlxEngineBrowseResponse, agent_client_protocol::Error> {
+    let sort = match req.sort.as_str() {
+        "downloads" => hf::BrowseSort::Downloads,
+        "newest" => hf::BrowseSort::Newest,
+        other => {
+            return Err(anyhow::anyhow!(
+                "invalid sort '{other}': expected \"downloads\" or \"newest\""
+            ))
+            .invalid_params_err()
+        }
+    };
+    let params = hf::BrowseParams {
+        query: req.query,
+        author: req.author,
+        quant: req.quant,
+        arch: req.arch,
+        sort,
+        cursor: req.cursor,
+        limit: req.limit.unwrap_or(20),
+    };
+    let token = huggingface_token().await;
+    // invalid_params carries the anyhow chain to the client (the mount idiom); a
+    // flattened "Internal error" hid a refused quant filter from the UI (shot 19).
+    let page = hf::browse_mlx_models(&params, token.as_deref())
+        .await
+        .invalid_params_err()?;
+    Ok(MlxEngineBrowseResponse {
+        hits: page
+            .hits
+            .into_iter()
+            .map(|h| MlxBrowseHitDto {
+                id: h.id,
+                author: h.author,
+                downloads: h.downloads,
+                likes: h.likes,
+                created_at: h.created_at,
+                last_modified: h.last_modified,
+                tags: h.tags,
+                quant: h.quant,
+                arch: h.arch,
+                size_bytes_estimate: h.size_bytes_estimate,
+            })
+            .collect(),
+        next_cursor: page.next_cursor,
+    })
+}
+
+async fn core_browse_filters(
+    _req: MlxEngineBrowseFiltersRequest,
+) -> Result<MlxEngineBrowseFiltersResponse, agent_client_protocol::Error> {
+    let token = huggingface_token().await;
+    let vocab = hf::browse_filter_vocab(token.as_deref())
+        .await
+        .internal_err()?;
+    Ok(MlxEngineBrowseFiltersResponse {
+        quants: vocab.quants,
+        archs: vocab.archs,
+        authors: vocab.authors,
+        sampled_repos: vocab.sampled_repos,
+        computed_at: vocab.computed_at_epoch_s,
+        refresh_error: vocab.refresh_error,
+    })
+}
+
+async fn core_model_card(
+    req: MlxEngineModelCardRequest,
+) -> Result<MlxEngineModelCardResponse, agent_client_protocol::Error> {
+    let token = huggingface_token().await;
+    // invalid_params carries the anyhow chain (the mount idiom): a malformed repo id
+    // must reach the UI as itself, not as "Internal error".
+    let card = hf::model_card(&req.repo_id, token.as_deref())
+        .await
+        .invalid_params_err()?;
+    Ok(MlxEngineModelCardResponse {
+        readme_markdown: card.readme_markdown,
+        readme_truncated: card.readme_truncated,
+        files: card
+            .files
+            .into_iter()
+            .map(|f| MlxRepoFileDto {
+                path: f.path,
+                size_bytes: f.size,
+            })
+            .collect(),
+        total_bytes: card.total_bytes,
+        tags: card.tags,
+        downloads: card.downloads,
+        likes: card.likes,
+        license: card.license,
+        created_at: card.created_at,
+        last_modified: card.last_modified,
+    })
+}
+
+async fn core_download(
+    req: MlxEngineDownloadRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    let token = huggingface_token().await;
+    DOWNLOAD_TRACKER
+        .start_download(&req.repo_id, &expand_tilde(&settings.models_dir), token)
+        .invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
+async fn core_download_progress(
+    req: MlxEngineDownloadProgressRequest,
+) -> Result<MlxEngineDownloadProgressResponse, agent_client_protocol::Error> {
+    Ok(MlxEngineDownloadProgressResponse {
+        progress: DOWNLOAD_TRACKER.progress(&req.repo_id).map(progress_to_dto),
+    })
+}
+
+async fn core_download_cancel(
+    req: MlxEngineDownloadCancelRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    DOWNLOAD_TRACKER
+        .cancel(&req.repo_id, &expand_tilde(&settings.models_dir))
+        .invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
+async fn core_download_pause(
+    req: MlxEngineDownloadPauseRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    DOWNLOAD_TRACKER.pause(&req.repo_id).invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
+async fn core_download_resume(
+    req: MlxEngineDownloadResumeRequest,
+) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    let token = huggingface_token().await;
+    DOWNLOAD_TRACKER
+        .resume(&req.repo_id, &expand_tilde(&settings.models_dir), token)
+        .invalid_params_err()?;
+    Ok(EmptyResponse {})
+}
+
 impl GooseAcpAgent {
     pub(super) async fn on_mlx_engine_status(
         &self,
-        _req: MlxEngineStatusRequest,
+        req: MlxEngineStatusRequest,
     ) -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
-        let manager = synced_manager()?;
-        let status = manager.status().await;
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::Status, &req).await;
+        }
+        let response = core_status().await?;
         let entered_running = {
             let mut last = LAST_ENGINE_STATE.lock().unwrap();
-            let entered = status.state == "running" && *last != "running";
-            *last = status.state.clone();
+            let entered = response.status.state == "running" && *last != "running";
+            *last = response.status.state.clone();
             entered
         };
         if entered_running {
             // The engine just came up serving a (possibly new) model id; without a refresh
-            // the provider inventory rejects it on the next model switch.
+            // the provider inventory rejects it on the next model switch. This local-only
+            // step is a desktop-chat concern for THIS node — the mesh proxy's `core_status`
+            // deliberately skips it (a remote poller does not drive the peer's chat).
             if let Err(e) = self
                 .start_provider_inventory_refresh(&["omlx".to_string()])
                 .await
@@ -205,257 +462,281 @@ impl GooseAcpAgent {
                 warn!(error = ?e, "omlx inventory refresh after engine start failed");
             }
         }
-        Ok(MlxEngineStatusResponse {
-            status: status_to_dto(status),
-        })
+        Ok(response)
     }
 
     pub(super) async fn on_mlx_engine_mount(
         &self,
         req: MlxEngineMountRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let manager = synced_manager()?;
-        manager.mount(&req.model_id).await.invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::Mount, &req).await;
+        }
+        core_mount(req).await
     }
 
     pub(super) async fn on_mlx_engine_unmount(
         &self,
-        _req: MlxEngineUnmountRequest,
+        req: MlxEngineUnmountRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        global_manager().unmount().await;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::Unmount, &req).await;
+        }
+        core_unmount(req).await
     }
 
     pub(super) async fn on_mlx_engine_settings_read(
         &self,
-        _req: MlxEngineSettingsReadRequest,
+        req: MlxEngineSettingsReadRequest,
     ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
-        Ok(MlxEngineSettingsResponse {
-            settings: settings_to_dto(load_engine_settings()?),
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::SettingsRead, &req)
+                .await;
+        }
+        core_settings_read(req).await
     }
 
     pub(super) async fn on_mlx_engine_settings_update(
         &self,
         req: MlxEngineSettingsUpdateRequest,
     ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
-        let mut settings = settings_from_dto(req.settings);
-        // A legacy UI state may still send flat sampling fields — same migration,
-        // so what persists is always profile truth.
-        settings.migrate_legacy();
-        Config::global()
-            .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
-            .internal_err_ctx("persisting mlx_engine config")?;
-        global_manager().set_settings(settings.clone());
-        Ok(MlxEngineSettingsResponse {
-            settings: settings_to_dto(settings),
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::SettingsUpdate, &req)
+                .await;
+        }
+        core_settings_update(req).await
     }
 
     pub(super) async fn on_mlx_engine_models_list(
         &self,
-        _req: MlxEngineModelsListRequest,
+        req: MlxEngineModelsListRequest,
     ) -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
-        let settings = load_engine_settings()?;
-        let models_dir = expand_tilde(&settings.models_dir);
-        let models = hf::list_local_models(&models_dir).internal_err()?;
-        let (disk_available_bytes, disk_total_bytes) =
-            goose_sidecar::disk_space(&models_dir).internal_err()?;
-        Ok(MlxEngineModelsListResponse {
-            models: models
-                .into_iter()
-                .map(|m| MlxLocalModelDto {
-                    id: m.id,
-                    size_bytes: m.size_bytes,
-                    complete: m.complete,
-                    missing_files: m.missing_files,
-                })
-                .collect(),
-            disk_available_bytes,
-            disk_total_bytes,
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::ModelsList, &req).await;
+        }
+        core_models_list(req).await
     }
 
     pub(super) async fn on_mlx_engine_model_delete(
         &self,
         req: MlxEngineModelDeleteRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let settings = load_engine_settings()?;
-        hf::delete_local_model(&expand_tilde(&settings.models_dir), &req.model_id)
-            .invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::ModelDelete, &req).await;
+        }
+        core_model_delete(req).await
     }
 
     pub(super) async fn on_mlx_engine_hf_search(
         &self,
         req: MlxEngineHfSearchRequest,
     ) -> Result<MlxEngineHfSearchResponse, agent_client_protocol::Error> {
-        let token = huggingface_token().await;
-        let hits = hf::search_mlx_models(&req.query, req.limit.unwrap_or(20), token.as_deref())
-            .await
-            .internal_err()?;
-        Ok(MlxEngineHfSearchResponse {
-            hits: hits
-                .into_iter()
-                .map(|h| MlxHfModelHitDto {
-                    id: h.id,
-                    downloads: h.downloads,
-                    likes: h.likes,
-                    updated_at: h.updated_at,
-                })
-                .collect(),
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::HfSearch, &req).await;
+        }
+        core_hf_search(req).await
     }
 
     pub(super) async fn on_mlx_engine_browse(
         &self,
         req: MlxEngineBrowseRequest,
     ) -> Result<MlxEngineBrowseResponse, agent_client_protocol::Error> {
-        let sort = match req.sort.as_str() {
-            "downloads" => hf::BrowseSort::Downloads,
-            "newest" => hf::BrowseSort::Newest,
-            other => {
-                return Err(anyhow::anyhow!(
-                    "invalid sort '{other}': expected \"downloads\" or \"newest\""
-                ))
-                .invalid_params_err()
-            }
-        };
-        let params = hf::BrowseParams {
-            query: req.query,
-            author: req.author,
-            quant: req.quant,
-            arch: req.arch,
-            sort,
-            cursor: req.cursor,
-            limit: req.limit.unwrap_or(20),
-        };
-        let token = huggingface_token().await;
-        // invalid_params carries the anyhow chain to the client (the mount idiom); a
-        // flattened "Internal error" hid a refused quant filter from the UI (shot 19).
-        let page = hf::browse_mlx_models(&params, token.as_deref())
-            .await
-            .invalid_params_err()?;
-        Ok(MlxEngineBrowseResponse {
-            hits: page
-                .hits
-                .into_iter()
-                .map(|h| MlxBrowseHitDto {
-                    id: h.id,
-                    author: h.author,
-                    downloads: h.downloads,
-                    likes: h.likes,
-                    created_at: h.created_at,
-                    last_modified: h.last_modified,
-                    tags: h.tags,
-                    quant: h.quant,
-                    arch: h.arch,
-                    size_bytes_estimate: h.size_bytes_estimate,
-                })
-                .collect(),
-            next_cursor: page.next_cursor,
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::Browse, &req).await;
+        }
+        core_browse(req).await
     }
 
     pub(super) async fn on_mlx_engine_browse_filters(
         &self,
-        _req: MlxEngineBrowseFiltersRequest,
+        req: MlxEngineBrowseFiltersRequest,
     ) -> Result<MlxEngineBrowseFiltersResponse, agent_client_protocol::Error> {
-        let token = huggingface_token().await;
-        let vocab = hf::browse_filter_vocab(token.as_deref())
-            .await
-            .internal_err()?;
-        Ok(MlxEngineBrowseFiltersResponse {
-            quants: vocab.quants,
-            archs: vocab.archs,
-            authors: vocab.authors,
-            sampled_repos: vocab.sampled_repos,
-            computed_at: vocab.computed_at_epoch_s,
-            refresh_error: vocab.refresh_error,
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::BrowseFilters, &req)
+                .await;
+        }
+        core_browse_filters(req).await
     }
 
     pub(super) async fn on_mlx_engine_model_card(
         &self,
         req: MlxEngineModelCardRequest,
     ) -> Result<MlxEngineModelCardResponse, agent_client_protocol::Error> {
-        let token = huggingface_token().await;
-        // invalid_params carries the anyhow chain (the mount idiom): a malformed repo id
-        // must reach the UI as itself, not as "Internal error".
-        let card = hf::model_card(&req.repo_id, token.as_deref())
-            .await
-            .invalid_params_err()?;
-        Ok(MlxEngineModelCardResponse {
-            readme_markdown: card.readme_markdown,
-            readme_truncated: card.readme_truncated,
-            files: card
-                .files
-                .into_iter()
-                .map(|f| MlxRepoFileDto {
-                    path: f.path,
-                    size_bytes: f.size,
-                })
-                .collect(),
-            total_bytes: card.total_bytes,
-            tags: card.tags,
-            downloads: card.downloads,
-            likes: card.likes,
-            license: card.license,
-            created_at: card.created_at,
-            last_modified: card.last_modified,
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::ModelCard, &req).await;
+        }
+        core_model_card(req).await
     }
 
     pub(super) async fn on_mlx_engine_download(
         &self,
         req: MlxEngineDownloadRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let settings = load_engine_settings()?;
-        let token = huggingface_token().await;
-        DOWNLOAD_TRACKER
-            .start_download(&req.repo_id, &expand_tilde(&settings.models_dir), token)
-            .invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::Download, &req).await;
+        }
+        core_download(req).await
     }
 
     pub(super) async fn on_mlx_engine_download_progress(
         &self,
         req: MlxEngineDownloadProgressRequest,
     ) -> Result<MlxEngineDownloadProgressResponse, agent_client_protocol::Error> {
-        Ok(MlxEngineDownloadProgressResponse {
-            progress: DOWNLOAD_TRACKER.progress(&req.repo_id).map(progress_to_dto),
-        })
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::DownloadProgress, &req)
+                .await;
+        }
+        core_download_progress(req).await
     }
 
     pub(super) async fn on_mlx_engine_download_cancel(
         &self,
         req: MlxEngineDownloadCancelRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let settings = load_engine_settings()?;
-        DOWNLOAD_TRACKER
-            .cancel(&req.repo_id, &expand_tilde(&settings.models_dir))
-            .invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::DownloadCancel, &req)
+                .await;
+        }
+        core_download_cancel(req).await
     }
 
     pub(super) async fn on_mlx_engine_download_pause(
         &self,
         req: MlxEngineDownloadPauseRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        DOWNLOAD_TRACKER.pause(&req.repo_id).invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::DownloadPause, &req)
+                .await;
+        }
+        core_download_pause(req).await
     }
 
     pub(super) async fn on_mlx_engine_download_resume(
         &self,
         req: MlxEngineDownloadResumeRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let settings = load_engine_settings()?;
-        let token = huggingface_token().await;
-        DOWNLOAD_TRACKER
-            .resume(&req.repo_id, &expand_tilde(&settings.models_dir), token)
-            .invalid_params_err()?;
-        Ok(EmptyResponse {})
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::DownloadResume, &req)
+                .await;
+        }
+        core_download_resume(req).await
+    }
+}
+
+// ============================================================================
+// GoosedMlxControl — the executing side of the mesh MLX proxy.
+//
+// goose implements the `leanzero-link` `MlxControl` seam over the SAME local cores the ACP
+// handlers call, so an op reached via `POST /v1/swarm/mlx/<op>` from a peer runs against
+// this node's `goose_sidecar` engine byte-for-byte identically to a local ACP call. It is
+// stateless (the engine manager + download tracker are process globals it shares with the
+// ACP handlers), so a download started locally is visible over the proxy and vice versa.
+// ============================================================================
+
+/// The local MLX-engine executor injected into the LeanZero Link control service at boot
+/// (`set_mlx_control`). Runs a peer's forwarded op against this node's engine.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GoosedMlxControl;
+
+impl GoosedMlxControl {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// Deserialize a proxied request body into the op's ACP request type. A malformed body is a
+/// `BadRequest` (the local `invalid_params` class), never a silent default.
+fn mlx_req_from_value<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, MlxControlError> {
+    serde_json::from_value(value)
+        .map_err(|e| MlxControlError::BadRequest(format!("invalid mlx request body: {e}")))
+}
+
+/// Serialize an op's ACP response into opaque JSON for the proxy, or map its ACP error to a
+/// [`MlxControlError`] that preserves the local error CLASS: an `invalid_params`-class error
+/// (mount memory-gate BLOCK, malformed repo id) → `BadRequest`; anything else → `Failed`.
+/// The verbatim cause text (the handler's `.data`, else its message) rides through so node A
+/// re-raises the peer's failure as itself.
+fn mlx_response_to_value<T: Serialize>(
+    result: Result<T, agent_client_protocol::Error>,
+) -> Result<serde_json::Value, MlxControlError> {
+    match result {
+        Ok(response) => serde_json::to_value(response)
+            .map_err(|e| MlxControlError::Failed(format!("serializing mlx response: {e}"))),
+        Err(error) => Err(acp_error_to_mlx_control(error)),
+    }
+}
+
+fn acp_error_to_mlx_control(error: agent_client_protocol::Error) -> MlxControlError {
+    let text = error
+        .data
+        .as_ref()
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| error.message.to_string());
+    if error.code == agent_client_protocol::Error::invalid_params().code {
+        MlxControlError::BadRequest(text)
+    } else {
+        MlxControlError::Failed(text)
+    }
+}
+
+#[async_trait::async_trait]
+impl MlxControl for GoosedMlxControl {
+    async fn dispatch(
+        &self,
+        op: MlxOp,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, MlxControlError> {
+        match op {
+            MlxOp::Status => mlx_response_to_value(core_status().await),
+            MlxOp::Mount => mlx_response_to_value(core_mount(mlx_req_from_value(request)?).await),
+            MlxOp::Unmount => {
+                mlx_response_to_value(core_unmount(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::SettingsRead => {
+                mlx_response_to_value(core_settings_read(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::SettingsUpdate => {
+                mlx_response_to_value(core_settings_update(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::ModelsList => {
+                mlx_response_to_value(core_models_list(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::ModelDelete => {
+                mlx_response_to_value(core_model_delete(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::HfSearch => {
+                mlx_response_to_value(core_hf_search(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::Browse => mlx_response_to_value(core_browse(mlx_req_from_value(request)?).await),
+            MlxOp::BrowseFilters => {
+                mlx_response_to_value(core_browse_filters(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::ModelCard => {
+                mlx_response_to_value(core_model_card(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::Download => {
+                mlx_response_to_value(core_download(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::DownloadProgress => {
+                mlx_response_to_value(core_download_progress(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::DownloadPause => {
+                mlx_response_to_value(core_download_pause(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::DownloadResume => {
+                mlx_response_to_value(core_download_resume(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::DownloadCancel => {
+                mlx_response_to_value(core_download_cancel(mlx_req_from_value(request)?).await)
+            }
+        }
     }
 }

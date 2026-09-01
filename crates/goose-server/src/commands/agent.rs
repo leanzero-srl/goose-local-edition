@@ -72,6 +72,14 @@ pub async fn run() -> Result<()> {
         app_state.clone(),
     ));
 
+    // Inject the LeanZero Link MLX control (in `goose`, over the same local mlxEngine cores
+    // the ACP handlers call). Once set, this node's `POST /v1/swarm/mlx/*` routes run real
+    // model-management ops (download/delete/settings/mount/status) against the local
+    // `goose_sidecar` engine for a same-account peer. Without this path those routes answer
+    // `501` (mlx control not wired) — loud-absent, not broken. It is stateless, so it is
+    // constructed here directly rather than from `AppState`.
+    goose::acp::server::set_mlx_control(goose::acp::server::GoosedMlxControl::new());
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)

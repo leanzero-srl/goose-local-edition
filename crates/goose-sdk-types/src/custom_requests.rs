@@ -2388,7 +2388,15 @@ pub struct MlxDownloadProgressDto {
     response = MlxEngineStatusResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineStatusRequest {}
+pub struct MlxEngineStatusRequest {
+    /// LeanZero Link mesh target. Absent or equal to the local node → runs on THIS node's
+    /// MLX engine exactly as before. A peer's `nodeId` forwards the operation over the mesh
+    /// to that node's control service, which runs it against ITS local engine and returns
+    /// the result. A named peer must be Connected on the mesh, else a loud
+    /// `not connected to the mesh` error — never a local fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -2403,13 +2411,22 @@ pub struct MlxEngineStatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineMountRequest {
     pub model_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Stop the MLX engine and unmount its model.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/mlxEngine/unmount", response = EmptyResponse)]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineUnmountRequest {}
+pub struct MlxEngineUnmountRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 /// Read the persisted MLX engine settings.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
@@ -2418,7 +2435,12 @@ pub struct MlxEngineUnmountRequest {}
     response = MlxEngineSettingsResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineSettingsReadRequest {}
+pub struct MlxEngineSettingsReadRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -2436,6 +2458,10 @@ pub struct MlxEngineSettingsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineSettingsUpdateRequest {
     pub settings: MlxEngineSettingsDto,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (the settings persist on THAT node).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// List models present in the configured models dir.
@@ -2445,7 +2471,12 @@ pub struct MlxEngineSettingsUpdateRequest {
     response = MlxEngineModelsListResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineModelsListRequest {}
+pub struct MlxEngineModelsListRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (the models + disk space are THAT node's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -2462,6 +2493,11 @@ pub struct MlxEngineModelsListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineModelDeleteRequest {
     pub model_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh. DESTRUCTIVE remotely too: the model is deleted from THAT
+    /// node's disk and the op is logged loudly there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Search HuggingFace for MLX models, sorted by downloads.
@@ -2475,6 +2511,10 @@ pub struct MlxEngineHfSearchRequest {
     pub query: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (runs the HF search from THAT node's network/token).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2489,6 +2529,11 @@ pub struct MlxEngineHfSearchResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (the download runs on THAT node; poll its progress with the
+    /// same `nodeId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Poll download progress for a repo. `progress` is unset when no download was tracked.
@@ -2500,6 +2545,10 @@ pub struct MlxEngineDownloadRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadProgressRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (reads progress from THAT node's tracker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2520,6 +2569,11 @@ pub struct MlxEngineDownloadProgressResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadCancelRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh. DESTRUCTIVE remotely too: the partial repo is deleted on
+    /// THAT node and the op is logged loudly there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// One MLX browse hit. `quant`/`arch` are DERIVED display fields (the repo's tags
@@ -2578,6 +2632,10 @@ pub struct MlxEngineBrowseRequest {
     /// Page size, default 20, capped at 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (browses from THAT node's network/token).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2599,7 +2657,12 @@ pub struct MlxEngineBrowseResponse {
     response = MlxEngineBrowseFiltersResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineBrowseFiltersRequest {}
+pub struct MlxEngineBrowseFiltersRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -2641,6 +2704,10 @@ pub struct MlxRepoFileDto {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineModelCardRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2674,6 +2741,10 @@ pub struct MlxEngineModelCardResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadPauseRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (pauses the download on THAT node).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Resume a paused/failed/cancelled download — or partial files left on disk by an
@@ -2688,6 +2759,10 @@ pub struct MlxEngineDownloadPauseRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadResumeRequest {
     pub repo_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+    /// forwards over the mesh (resumes the download on THAT node).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 // ============================================================================
@@ -2910,4 +2985,75 @@ pub struct LeanzeroLinkRemoteExecuteRequest {
 pub struct LeanzeroLinkRemoteExecuteResponse {
     /// The session id created on the target node — mirror it over the swarm stream.
     pub session_id: String,
+}
+
+#[cfg(test)]
+mod mlx_node_id_tests {
+    use super::*;
+
+    // The mesh `nodeId` on every mlxEngine request is optional (camelCase `nodeId`),
+    // defaults to absent, and an absent value must NOT serialize as `null` — the wire
+    // contract the panel-surgeon and the control proxy both read.
+
+    #[test]
+    fn status_node_id_absent_stays_absent_and_present_round_trips() {
+        let minimal = MlxEngineStatusRequest::default();
+        let value = serde_json::to_value(&minimal).unwrap();
+        assert!(
+            value.get("nodeId").is_none(),
+            "an absent nodeId must not serialize as null"
+        );
+
+        let targeted = MlxEngineStatusRequest {
+            node_id: Some("studio-ab12cd".to_string()),
+        };
+        let value = serde_json::to_value(&targeted).unwrap();
+        assert_eq!(value["nodeId"], "studio-ab12cd");
+        let back: MlxEngineStatusRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(back.node_id.as_deref(), Some("studio-ab12cd"));
+
+        // A body from an older UI that omits nodeId still deserializes (absent).
+        let legacy: MlxEngineStatusRequest = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(legacy.node_id.is_none());
+    }
+
+    #[test]
+    fn field_carrying_requests_keep_their_fields_and_gain_node_id() {
+        let dl = MlxEngineDownloadRequest {
+            repo_id: "org/model".to_string(),
+            node_id: Some("peer-1".to_string()),
+        };
+        let value = serde_json::to_value(&dl).unwrap();
+        assert_eq!(value["repoId"], "org/model");
+        assert_eq!(value["nodeId"], "peer-1");
+        let back: MlxEngineDownloadRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(back.repo_id, "org/model");
+        assert_eq!(back.node_id.as_deref(), Some("peer-1"));
+
+        // A legacy download body without nodeId still parses, nodeId absent.
+        let legacy: MlxEngineDownloadRequest =
+            serde_json::from_value(serde_json::json!({ "repoId": "org/model" })).unwrap();
+        assert!(legacy.node_id.is_none());
+        let legacy_value = serde_json::to_value(&legacy).unwrap();
+        assert!(legacy_value.get("nodeId").is_none());
+    }
+
+    #[test]
+    fn settings_update_carries_node_id_alongside_settings() {
+        let req = MlxEngineSettingsUpdateRequest {
+            settings: MlxEngineSettingsDto {
+                models_dir: "~/models".to_string(),
+                port: 8090,
+                spawn_command: vec!["mlx_lm.server".to_string()],
+                ..Default::default()
+            },
+            node_id: Some("peer-2".to_string()),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["nodeId"], "peer-2");
+        assert_eq!(value["settings"]["modelsDir"], "~/models");
+        let back: MlxEngineSettingsUpdateRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(back.node_id.as_deref(), Some("peer-2"));
+        assert_eq!(back.settings.port, 8090);
+    }
 }
