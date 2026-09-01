@@ -207,3 +207,41 @@ describe('isSwarmRunStampAlive — the cached stamp decays with the poll that wr
     expect(isSwarmRunStampAlive({ heartbeat: null, heartbeatExited: false }, NOW)).toBe(false);
   });
 });
+
+/**
+ * Q2 (branch review, 2026-09-01): the chord is REFUSED here; the CLICK on the same window is ASKED by
+ * closeGuard.ts (main intercepts `close`, the renderer shows a dialog). Both read the same
+ * `windowHoldsLiveRun`, so a window the guard would refuse Cmd+W on is exactly the window whose
+ * close button opens the dialog — and a window it lets Cmd+W through on closes untouched.
+ */
+describe('the click path agrees with the chord path on which window is protected', () => {
+  const noBench = { benchmarkRunning: false, onBenchmarkView: false } as const;
+
+  it('same inputs: chord refused ⇔ click asked; chord allowed ⇔ click passes', async () => {
+    const { decideClose } = await import('../closeGuard');
+    for (const windowHoldsLiveRun of [true, false]) {
+      const chordRefused = shouldRefuseShortcut({
+        ...noBench,
+        action: 'close',
+        triggeredByAccelerator: true,
+        sessionRunLive: windowHoldsLiveRun,
+        windowHoldsLiveRun,
+      });
+      const click = decideClose({ confirmed: false, windowHoldsLiveRun, rendererCanAnswer: true });
+      expect(chordRefused).toBe(windowHoldsLiveRun);
+      expect(click).toBe(windowHoldsLiveRun ? 'ask' : 'pass');
+    }
+  });
+
+  it('a mouse close is still never REFUSED by this guard — the ask lives in closeGuard', () => {
+    expect(
+      shouldRefuseShortcut({
+        ...noBench,
+        action: 'close',
+        triggeredByAccelerator: false,
+        sessionRunLive: true,
+        windowHoldsLiveRun: true,
+      })
+    ).toBe(false);
+  });
+});
