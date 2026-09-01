@@ -1039,22 +1039,30 @@ pub(super) fn load_research_minis(root: &Path) -> Vec<ResearchRow> {
     rows
 }
 
-/// The path-shaped words of a question — `/api/health`, `app/db.py`, `web/` — lowercased: the
-/// one literal, explainable link between two lanes' questions across slices. Punctuation that
-/// prose hangs on a path (`/api/health,` or `(web/)`) is trimmed; a trailing full stop too.
+/// The ROUTE PATHS a question names — `/api/health`, `/api/events`, `/api/payments/<id>/note`
+/// — lowercased: the one literal, explainable link between two lanes' questions across slices.
+/// A PATH RULE (VA-032, the works-prover): a token is a path only when it starts with `/`.
+/// "Contains a slash" was the rule before, and r6d's questions carried `maker/checker`,
+/// `status/currency`, `d1/d2/d3`, `size/framing`, `html/css/js/ico`, `received/applied/duplicate`
+/// — prose alternations, none of them a place two lanes could be talking about. Punctuation
+/// that prose hangs on a path (`/api/health,` or `(/api/events)`) is trimmed; a trailing full
+/// stop too. A route written without its leading slash (`api/health`) is not recognised: the
+/// clause that would recognise it — a match against the request's advertised route prefixes —
+/// needs the spec surface at `relay_targets`' and `research_dispatch_text`'s call sites (both
+/// in swarm.rs); measured on r6c's 26 and r6d's 29 questions no route was written that way.
 fn path_tokens(text: &str) -> BTreeSet<String> {
     text.split_whitespace()
         .map(|t| {
             t.trim_matches(|c: char| "`'\"(),;:?![]{}<>".contains(c))
                 .trim_end_matches('.')
         })
-        .filter(|t| t.contains('/') && t.len() > 2 && t.chars().any(char::is_alphanumeric))
+        .filter(|t| t.starts_with('/') && t.len() > 2 && t.chars().any(char::is_alphanumeric))
         .map(str::to_lowercase)
         .collect()
 }
 
-/// Does any question of a lane's batch name a path `row`'s question names? THE ONE cross-slice
-/// link — `/api/health`, `app/db.py`, `web/` — shared by the dispatch-time snowball
+/// Does any question of a lane's batch name a route path `row`'s question names? THE ONE
+/// cross-slice link — `/api/health`, `/api/events` — shared by the dispatch-time snowball
 /// (`prior_minis_for`) and the late relay (`relay_targets`), so the two channels cannot
 /// disagree about which stranger's mini a lane should see.
 fn names_a_shared_path(batch: &[ResearchQuestion], row: &ResearchRow) -> bool {
@@ -2727,6 +2735,122 @@ mod tests {
         assert!(
             relay_targets(&pathless, &running).is_empty(),
             "a landed question naming no path links to nobody"
+        );
+    }
+
+    /// VA-032 (the works-prover): the cross-slice link is a PATH rule. r6d's real questions
+    /// carried `maker/checker`, `status/currency`, `d1/d2/d3` and `size/framing` — prose
+    /// alternations that "contains a slash" took for paths — beside the two real links the
+    /// fan measured: drafts-workflow-q4 ⇄ ledger-api-q5 via `/api/events` and ledger-api-q0
+    /// ⇄ ledger-core-q4 via `/api/health`. The four are not paths; the two are; a stranger
+    /// that repeats an alternation word-for-word links to nobody, and both real pairs survive
+    /// in the relay and in the dispatch-time snowball alike.
+    #[test]
+    fn the_cross_slice_link_is_a_path_rule_not_a_slash_rule() {
+        for prose in [
+            "maker/checker",
+            "status/currency",
+            "d1/d2/d3",
+            "size/framing",
+        ] {
+            assert!(
+                path_tokens(&format!("Do {prose} see it (the {prose}) — {prose}?")).is_empty(),
+                "{prose} is an alternation, not a path"
+            );
+        }
+        assert_eq!(
+            path_tokens("Do maker/checker see /api/events at all (auth applies to the endpoint)?"),
+            BTreeSet::from(["/api/events".to_string()])
+        );
+        assert_eq!(
+            path_tokens("How is 'vendor down' surfaced to /api/health and the UI degraded state?"),
+            BTreeSet::from(["/api/health".to_string()])
+        );
+        assert_eq!(
+            path_tokens(
+                "What are the exact /api/health, /api/summary and /api/buckets response shapes?"
+            ),
+            BTreeSet::from([
+                "/api/health".to_string(),
+                "/api/summary".to_string(),
+                "/api/buckets".to_string()
+            ])
+        );
+        assert!(path_tokens("a lone / and a trailing /. end").is_empty());
+
+        // r6d, the two real pairs and one false pair under the old rule's shape.
+        let api_q5 = rq(
+            "ledger-api",
+            5,
+            "Does GET /api/events require a token of ANY known role, and does admin's \
+             read-everything include the full event history from seq 1?",
+        );
+        let drafts_q4 = rq(
+            "drafts-workflow",
+            4,
+            "Do maker/checker see /api/events at all (auth applies to the endpoint; is there \
+             any role-based filtering of event visibility)?",
+        );
+        let core_q4 = rq(
+            "ledger-core",
+            4,
+            "How is 'vendor down' surfaced to /api/health and the UI degraded state, and how \
+             long does registration retry before giving up (it must keep retrying)?",
+        );
+        let api_q0 = rq(
+            "ledger-api",
+            0,
+            "What are the exact /api/health, /api/summary and /api/buckets response shapes \
+             ('shape below' in full text), and what is the bucket key/granularity?",
+        );
+        let stranger = rq(
+            "web-page",
+            9,
+            "Which maker/checker controls show, and which status/currency filters become \
+             visible for d1/d2/d3 and the size/framing of the table?",
+        );
+        let api_q1 = rq(
+            "ledger-api",
+            1,
+            "Which sort keys does sort=<k> accept; which status/currency values do the filters \
+             accept?",
+        );
+        let landed = |q: &ResearchQuestion| {
+            let mut r = row(&q.slice, q.q_index, RESEARCH_ANSWERED, &[]);
+            r.question = q.question.clone();
+            r
+        };
+        let running = vec![
+            (
+                "research-drafts-workflow-q4".to_string(),
+                vec![drafts_q4.clone()],
+            ),
+            ("research-ledger-core-q4".to_string(), vec![core_q4.clone()]),
+            ("research-web-page-q9".to_string(), vec![stranger.clone()]),
+        ];
+        assert_eq!(
+            relay_targets(&landed(&api_q5), &running),
+            vec!["research-drafts-workflow-q4".to_string()],
+            "/api/events links api-q5 to drafts-q4 and to nobody else"
+        );
+        assert_eq!(
+            relay_targets(&landed(&api_q0), &running),
+            vec!["research-ledger-core-q4".to_string()],
+            "/api/health links api-q0 to core-q4"
+        );
+        assert!(
+            relay_targets(&landed(&api_q1), &running).is_empty(),
+            "`status/currency` shared word-for-word with the stranger links nobody"
+        );
+        let rows = vec![landed(&api_q5), landed(&api_q0), landed(&api_q1)];
+        let seen: Vec<String> = prior_minis_for(std::slice::from_ref(&drafts_q4), &rows)
+            .iter()
+            .map(|r| format!("{}-q{}", r.slice, r.q_index))
+            .collect();
+        assert_eq!(seen, vec!["ledger-api-q5".to_string()]);
+        assert!(
+            prior_minis_for(std::slice::from_ref(&stranger), &rows).is_empty(),
+            "the snowball agrees with the relay: no alternation links a stranger"
         );
     }
 
