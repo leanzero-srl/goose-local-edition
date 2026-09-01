@@ -10,6 +10,11 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   size?: ButtonSize;
   /** Leading icon slot (a lucide icon); sized by the button. */
   icon?: ReactNode;
+  /**
+   * A square control for a lone icon (the caller supplies the aria-label). Its own class set:
+   * MEASURED, `px-0` sorts before `px-2.5` in this pipeline and cannot zero the text padding.
+   */
+  iconOnly?: boolean;
   className?: string;
 }
 
@@ -26,10 +31,17 @@ const SIZE: Record<ButtonSize, string> = {
   md: 'h-8 gap-2 px-3 text-lz-body [&_svg]:size-4',
 };
 
+/** Square: 28 and 32, the control heights of DESIGN.md, with no text padding. */
+const SIZE_ICON_ONLY: Record<ButtonSize, string> = {
+  sm: 'size-7 [&_svg]:size-3.5',
+  md: 'size-8 [&_svg]:size-4',
+};
+
 export function Button({
   variant = 'secondary',
   size = 'md',
   icon,
+  iconOnly = false,
   className,
   type = 'button',
   children,
@@ -39,10 +51,11 @@ export function Button({
     <button
       type={type}
       data-variant={variant}
+      data-icon-only={iconOnly || undefined}
       className={cx(
         'inline-flex shrink-0 items-center justify-center whitespace-nowrap font-lz-medium [&_svg]:shrink-0',
         RADIUS.control,
-        SIZE[size],
+        iconOnly ? SIZE_ICON_ONLY[size] : SIZE[size],
         VARIANT[variant],
         DISABLED,
         FOCUS,
