@@ -123,6 +123,34 @@ describe('swarm golden preset', () => {
     expect(next.ask_max_q).toBe(5);
   });
 
+  it('engine-retired levers never enter DEFAULTS or PRESET_KEYS, and a config carrying them round-trips', () => {
+    // The names are the engine's own `retired_levers` object in levers_resolved (swarm.rs, ee4c73d15):
+    // each mechanism is #[cfg(test)] or unreachable. golden.generated.json STILL carries these keys as
+    // true/null because it is a byte-exact dump of SwarmConfig::default() and the struct fields survive
+    // for the config round-trip — so a true there is a struct default, not a live lever. What the panel
+    // must guarantee is that it never turns them back into controls: no default, no reset key, and a
+    // config.yaml that still carries one is written back untouched.
+    const RETIRED = [
+      'split_fat',
+      'fan_verify',
+      'fan_e2e',
+      'straggler_stop',
+      'straggler_stop_degrade',
+      'straggler_grace_secs',
+      'split',
+      'split_inherit_spec',
+    ] as const;
+    for (const k of RETIRED) {
+      expect(DEFAULTS[k], `${k} is engine-retired but DEFAULTS defines it`).toBeUndefined();
+      expect(PRESET_KEYS, `${k} is engine-retired but "reset to golden" would write it`).not.toContain(k);
+    }
+    const carried: SwarmConfig = { ...DEFAULTS, split_fat: true, fan_verify: true, straggler_stop: true };
+    const next = { ...carried, ...presetPatch(GOLDEN) };
+    expect(next.split_fat).toBe(true);
+    expect(next.fan_verify).toBe(true);
+    expect(next.straggler_stop).toBe(true);
+  });
+
   it('every key the panel can reset is one the engine baseline actually defines', () => {
     // A PRESET_KEY missing from DEFAULTS would reset that control to `undefined` — silently dropping the
     // key from config.yaml rather than restoring the golden value.
