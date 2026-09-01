@@ -380,6 +380,7 @@ impl MlxEngineManager {
             bail!("memory gate BLOCK for '{model_id}': {block_message}");
         }
 
+        let argv = build_serve_command(&settings, model_id);
         let mut state = self.state.lock().await;
         if let ManagerState::Mounting { model_id: current } = &*state {
             bail!("mount already in progress for '{current}'");
@@ -390,10 +391,27 @@ impl MlxEngineManager {
                 model_id: model_id.to_string(),
             },
         );
-        if let ManagerState::Running { sidecar, .. } = previous {
-            sidecar.shutdown().await;
-        }
-        if port_has_listener(settings.port) {
+        // The IDENTICAL configuration already has a supervisor: keep it and let its circuit
+        // breaker judge — a crashed engine restarts with backoff, a crash loop trips the
+        // breaker into Failed, a healthy engine is verified and kept. This is the crash
+        // re-mount path (the swarm's ensure_loaded → mount); a different model or argv is a
+        // deliberate change and gets a fresh supervisor.
+        let supervised = match previous {
+            ManagerState::Running {
+                model_id: previous_model,
+                sidecar,
+                argv: previous_argv,
+            } => {
+                if previous_model == model_id && previous_argv == argv {
+                    Some(sidecar)
+                } else {
+                    sidecar.shutdown().await;
+                    None
+                }
+            }
+            _ => None,
+        };
+        if supervised.is_none() && port_has_listener(settings.port) {
             *state = ManagerState::Stopped;
             return Err(UnsupervisedListenerError {
                 port: settings.port,
@@ -402,18 +420,21 @@ impl MlxEngineManager {
         }
         drop(state);
 
-        let argv = build_serve_command(&settings, model_id);
         let base_url = format!("http://127.0.0.1:{}", settings.port);
         let expected_model_id = served_model_id(&settings, model_id);
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
         tokio::spawn(async move {
-            let mut config =
-                SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
-            // A cold uv resolve of the pinned fork legitimately takes minutes on first mount.
-            config.startup_timeout = Duration::from_secs(600);
-            config.env = vec![("PATH".to_string(), sidecar_spawn_path())];
-            match Sidecar::start(config).await {
+            let started = match supervised {
+                Some(sidecar) => sidecar.ensure_running().await.map(|()| sidecar),
+                None => {
+                    let mut config =
+                        SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
+                    config.env = vec![("PATH".to_string(), sidecar_spawn_path())];
+                    Sidecar::start(config).await.map(Box::new)
+                }
+            };
+            match started {
                 Ok(sidecar) => {
                     let mut state = state_arc.lock().await;
                     let still_mounting = matches!(
@@ -423,7 +444,7 @@ impl MlxEngineManager {
                     if still_mounting {
                         *state = ManagerState::Running {
                             model_id,
-                            sidecar: Box::new(sidecar),
+                            sidecar,
                             argv,
                         };
                     } else {
@@ -965,6 +986,171 @@ mod tests {
         manager.unmount().await;
         assert!(!port_has_listener(port), "unmount did not reclaim the port");
         let _ = orphan.wait();
+    }
+
+    /// A fake engine launched through the REAL serve argv (`spawn_command` + `serve <dir>
+    /// --port N --served-model-name X …`): it reads the port and the alias from argv and
+    /// serves that alias in `/v1/models`, so the manager's own path is exercised end to end.
+    const ARGV_FAKE_ENGINE: &str = r#"
+import http.server, json, sys
+argv = sys.argv
+port = int(argv[argv.index("--port") + 1])
+name = argv[argv.index("--served-model-name") + 1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"object": "list", "data": [{"id": name}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#;
+
+    async fn settle(manager: &MlxEngineManager) -> EngineStatus {
+        loop {
+            let status = manager.status().await;
+            if status.state != "mounting" {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// S-L8: the circuit breaker now sits on the production re-mount path. A mount of the
+    /// IDENTICAL configuration keeps the supervisor (a healthy engine is verified, not
+    /// restarted); after the engine is killed, the same mount restarts it through
+    /// `ensure_running`; a crash loop trips the breaker into a NAMED Failed state.
+    #[tokio::test]
+    async fn identical_mount_reuses_the_supervisor_and_a_crash_loop_trips_the_breaker() {
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            served_model_name: Some("node-alias".to_string()),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+
+        manager.mount("pub/small").await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_eq!(status.served_model_id.as_deref(), Some("node-alias"));
+        let first_pid = status.pid.unwrap();
+
+        manager.mount("pub/small").await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running");
+        assert_eq!(
+            status.pid,
+            Some(first_pid),
+            "a healthy identical mount must verify, not restart"
+        );
+
+        let mut pids = vec![first_pid];
+        let mut tripped = None;
+        for _ in 0..5 {
+            let pid = *pids.last().unwrap();
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            manager.mount("pub/small").await.unwrap();
+            let status = settle(&manager).await;
+            match status.state.as_str() {
+                "running" => {
+                    let restarted = status.pid.unwrap();
+                    assert!(!pids.contains(&restarted));
+                    pids.push(restarted);
+                }
+                "failed" => {
+                    tripped = status.last_error;
+                    break;
+                }
+                other => panic!("unexpected state {other}"),
+            }
+        }
+        let error = tripped.expect("a crash loop must trip the breaker into Failed");
+        assert!(
+            error.contains("circuit breaker open"),
+            "Failed must NAME the breaker: {error}"
+        );
+        assert_eq!(pids.len(), 4, "three restarts, then the breaker");
+        assert_eq!(manager.status().await.state, "failed");
+        assert!(
+            !port_has_listener(port),
+            "the tripped supervisor must leave nothing on the port"
+        );
+        manager.unmount().await;
+    }
+
+    /// The real engine through the manager: `uvx … rapid-mlx serve` on a free port with an
+    /// alias, driven to Running by the progress terminator, the alias checked in the
+    /// catalog, then unmounted — port free, the wrapper's whole group gone. Reads a model
+    /// from `GOOSE_SIDECAR_LIVE_MODELS_DIR` / `GOOSE_SIDECAR_LIVE_MODEL_ID` (never deletes).
+    #[tokio::test]
+    #[ignore = "spawns the real uvx/rapid-mlx engine; set GOOSE_SIDECAR_LIVE_MODELS_DIR and GOOSE_SIDECAR_LIVE_MODEL_ID"]
+    async fn live_mount_of_the_real_engine_runs_and_unmounts_clean() {
+        let models_dir = std::env::var("GOOSE_SIDECAR_LIVE_MODELS_DIR").unwrap();
+        let model_id = std::env::var("GOOSE_SIDECAR_LIVE_MODEL_ID").unwrap();
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            models_dir,
+            port,
+            served_model_name: Some("live-alias".to_string()),
+            ..Default::default()
+        });
+
+        let started = std::time::Instant::now();
+        manager.mount(&model_id).await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_eq!(status.served_model_id.as_deref(), Some("live-alias"));
+        let leader = status.pid.unwrap();
+        assert!(crate::owns_process_group(leader));
+        let members = std::process::Command::new("pgrep")
+            .args(["-g", &leader.to_string()])
+            .output()
+            .unwrap();
+        let members = String::from_utf8_lossy(&members.stdout);
+        eprintln!(
+            "live: running after {:.1}s, leader {leader}, group members [{}], context_window {:?}, parser {:?}",
+            started.elapsed().as_secs_f64(),
+            members.split_whitespace().collect::<Vec<_>>().join(" "),
+            status.context_window,
+            status.tool_call_parser
+        );
+        assert!(
+            members.split_whitespace().count() >= 2,
+            "uv and its engine must both sit in the leader's group: [{members}]"
+        );
+
+        manager.unmount().await;
+        assert!(!port_has_listener(port), "port still served after unmount");
+        let leftover = std::process::Command::new("pgrep")
+            .args(["-g", &leader.to_string()])
+            .output()
+            .unwrap();
+        assert!(
+            leftover.stdout.is_empty(),
+            "group {leader} survived unmount: {}",
+            String::from_utf8_lossy(&leftover.stdout)
+        );
+        assert_eq!(manager.status().await.state, "stopped");
     }
 
     fn complete_small_model(models_dir: &std::path::Path, id: &str) {

@@ -33,12 +33,14 @@ mod subprocess;
 
 pub use memory::{dir_size_bytes, disk_space, measure, GateResult, MemoryGate, Verdict, GIB};
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -62,7 +64,14 @@ pub struct SidecarConfig {
     /// healthy. A 200 from some OTHER engine on the same port — an orphan of a previous
     /// goosed answering while this child is still resolving — is not readiness.
     pub expected_model_id: String,
-    pub startup_timeout: Duration,
+    /// The startup terminator is PROGRESS, not a clock: while the child tree keeps making
+    /// progress — a stderr line, CPU time, memory, or a pid appearing or leaving — the
+    /// start waits as long as it takes (a cold uv resolve of the pinned fork, a 5.6 GB
+    /// safetensors load). This is the longest ZERO-progress interval tolerated before the
+    /// start is declared failed with the stderr tail. Measured 2026-09-01: a legitimate
+    /// warm load of the 9B model held one 4.91 s zero-progress interval (uv alone, silent,
+    /// before it spawned python), so this must sit well above single-digit seconds.
+    pub startup_stall_window: Duration,
     pub restart_window: Duration,
     pub max_restarts_in_window: u32,
     pub backoff_initial: Duration,
@@ -82,7 +91,7 @@ impl SidecarConfig {
             env: Vec::new(),
             base_url: base_url.into(),
             expected_model_id: expected_model_id.into(),
-            startup_timeout: Duration::from_secs(180),
+            startup_stall_window: Duration::from_secs(180),
             restart_window: Duration::from_secs(600),
             max_restarts_in_window: 3,
             backoff_initial: Duration::from_secs(1),
@@ -94,6 +103,7 @@ impl SidecarConfig {
 struct ChildHandle {
     child: Child,
     stderr_tail: Arc<StdMutex<VecDeque<String>>>,
+    stderr_lines: Arc<AtomicU64>,
 }
 
 struct State {
@@ -109,7 +119,8 @@ pub struct Sidecar {
 }
 
 impl Sidecar {
-    /// Spawn the engine and wait until it serves `/v1/models`.
+    /// Spawn the engine and wait until `/v1/models` serves the expected id. Bounded by
+    /// progress (see `startup_stall_window`), never by a clock on the load itself.
     pub async fn start(config: SidecarConfig) -> Result<Self> {
         anyhow::ensure!(!config.command.is_empty(), "sidecar command is empty");
         let client = reqwest::Client::builder()
@@ -167,7 +178,7 @@ impl Sidecar {
                     state.backoff = self.config.backoff_initial;
                     return Ok(());
                 }
-                Err(reason) => reason,
+                Err(reason) => reason.to_string(),
             }
         };
 
@@ -244,13 +255,16 @@ impl Sidecar {
         })?;
 
         let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        let stderr_lines = Arc::new(AtomicU64::new(0));
         if let Some(stderr) = child.stderr.take() {
             let tail = Arc::clone(&stderr_tail);
+            let count = Arc::clone(&stderr_lines);
             let name = self.config.name.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::debug!(sidecar = %name, "{line}");
+                    count.fetch_add(1, Ordering::Relaxed);
                     let mut tail = tail.lock().unwrap();
                     if tail.len() == STDERR_TAIL_LINES {
                         tail.pop_front();
@@ -259,11 +273,22 @@ impl Sidecar {
                 }
             });
         }
-        Ok(ChildHandle { child, stderr_tail })
+        Ok(ChildHandle {
+            child,
+            stderr_tail,
+            stderr_lines,
+        })
     }
 
+    /// Wait for readiness with a PROGRESS terminator: the child exiting is an immediate loud
+    /// failure; otherwise the start continues for as long as the child tree keeps changing,
+    /// and fails only after `startup_stall_window` of NO change — no stderr line, no CPU
+    /// time, no memory movement, no pid joining or leaving — with the last probe reason and
+    /// the stderr tail. A slow load that is working is never declared failed by a clock.
     async fn await_ready(&self, state: &mut State, mut handle: ChildHandle) -> Result<()> {
-        let deadline = Instant::now() + self.config.startup_timeout;
+        let mut sys = System::new();
+        let mut last_mark = progress_mark(&mut sys, &handle);
+        let mut last_progress = Instant::now();
         loop {
             if let Some(status) = handle.child.try_wait().context("try_wait during startup")? {
                 let tail = stderr_tail_string(&handle.stderr_tail);
@@ -272,22 +297,51 @@ impl Sidecar {
                     self.config.name
                 );
             }
+            let mark = progress_mark(&mut sys, &handle);
             let not_ready = match self.probe().await {
                 Ok(()) => {
                     state.handle = Some(handle);
                     tracing::info!(sidecar = %self.config.name, base_url = %self.config.base_url, "sidecar ready");
                     return Ok(());
                 }
-                Err(reason) => reason,
+                Err(NotReady::OtherId(served)) => {
+                    // A catalog with another id is decisive when OUR OWN tree is the listener:
+                    // the engine ignored the alias, and every probe it answers would count as
+                    // progress forever. A listener outside the tree is someone else's engine;
+                    // our child then dies on its bind and the exit above reports it.
+                    if self.port_served_by_tree(&mark).await {
+                        let tail = stderr_tail_string(&handle.stderr_tail);
+                        let owned_group = terminate(&mut handle.child).await;
+                        self.release_port(owned_group).await;
+                        bail!(
+                            "sidecar '{}' serves '{served}', expected '{}' — its own listener \
+                             answered, so the engine ignored the served model name. stderr:\n{tail}",
+                            self.config.name,
+                            self.config.expected_model_id
+                        );
+                    }
+                    format!(
+                        "{}/v1/models serves '{served}', expected '{}' — a listener outside this \
+                         sidecar's process tree holds the port",
+                        self.config.base_url, self.config.expected_model_id
+                    )
+                }
+                Err(NotReady::Unanswered(reason)) => reason,
             };
-            if Instant::now() >= deadline {
+            if mark != last_mark {
+                last_mark = mark;
+                last_progress = Instant::now();
+            } else if last_progress.elapsed() >= self.config.startup_stall_window {
+                let stalled_for = last_progress.elapsed();
                 let tail = stderr_tail_string(&handle.stderr_tail);
                 let owned_group = terminate(&mut handle.child).await;
                 self.release_port(owned_group).await;
                 bail!(
-                    "sidecar '{}' not ready within {:?}: {not_ready}. stderr:\n{tail}",
+                    "sidecar '{}' stalled during startup: no progress for {stalled_for:?} \
+                     (no stderr, no CPU time, no memory change across {} process(es)); \
+                     last probe: {not_ready}. stderr:\n{tail}",
                     self.config.name,
-                    self.config.startup_timeout
+                    mark.tree.len()
                 );
             }
             tokio::time::sleep(Duration::from_millis(400)).await;
@@ -296,22 +350,24 @@ impl Sidecar {
 
     /// Ready/healthy means `/v1/models` answers 200 AND `data[0].id` is the expected id.
     /// The `Err` carries why not, so a startup that never gets there says which it was:
-    /// nothing listening, a non-2xx, or another engine's catalog on our port.
-    async fn probe(&self) -> std::result::Result<(), String> {
+    /// nothing listening, a non-2xx, a catalog without an id, or another id on our port.
+    async fn probe(&self) -> std::result::Result<(), NotReady> {
         let url = format!("{}/v1/models", self.config.base_url);
         let resp = self
             .client
             .get(&url)
             .send()
             .await
-            .map_err(|e| format!("GET {url}: {e}"))?;
+            .map_err(|e| NotReady::Unanswered(format!("GET {url}: {e}")))?;
         let status = resp.status();
         let body = resp
             .text()
             .await
-            .map_err(|e| format!("reading {url} body: {e}"))?;
+            .map_err(|e| NotReady::Unanswered(format!("reading {url} body: {e}")))?;
         if !status.is_success() {
-            return Err(format!("GET {url} returned HTTP {status}"));
+            return Err(NotReady::Unanswered(format!(
+                "GET {url} returned HTTP {status}"
+            )));
         }
         let served = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
@@ -324,14 +380,11 @@ impl Sidecar {
             });
         match served {
             Some(id) if id == self.config.expected_model_id => Ok(()),
-            Some(id) => Err(format!(
-                "{url} serves '{id}', expected '{}' — another engine holds this port",
-                self.config.expected_model_id
-            )),
-            None => Err(format!(
+            Some(id) => Err(NotReady::OtherId(id)),
+            None => Err(NotReady::Unanswered(format!(
                 "{url} answered {status} without a data[0].id: {}",
                 body.chars().take(200).collect::<String>()
-            )),
+            ))),
         }
     }
 
@@ -339,6 +392,22 @@ impl Sidecar {
         reqwest::Url::parse(&self.config.base_url)
             .ok()
             .and_then(|u| u.port_or_known_default())
+    }
+
+    /// Whether a LISTEN socket on our port belongs to a pid in the child's sampled tree.
+    async fn port_served_by_tree(&self, mark: &ProgressMark) -> bool {
+        let Some(port) = self.listen_port() else {
+            return false;
+        };
+        match listening_pids(port).await {
+            Ok(listeners) => listeners
+                .iter()
+                .any(|pid| mark.tree.iter().any(|(member, _, _)| member == pid)),
+            Err(e) => {
+                tracing::warn!(port, error = %e, "cannot attribute the listener; lsof unavailable");
+                false
+            }
+        }
     }
 
     /// After the child is gone, wait (the grace window) for the listen port to clear. What
@@ -522,6 +591,73 @@ pub(crate) async fn listening_pids(port: u16) -> Result<Vec<u32>> {
         .split_whitespace()
         .filter_map(|s| s.parse().ok())
         .collect())
+}
+
+/// Why `/v1/models` did not count as ready. `OtherId` is kept apart because it is the one
+/// answer whose meaning depends on WHO answered (see `await_ready`).
+enum NotReady {
+    Unanswered(String),
+    OtherId(String),
+}
+
+impl std::fmt::Display for NotReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotReady::Unanswered(reason) => f.write_str(reason),
+            NotReady::OtherId(served) => write!(f, "/v1/models serves '{served}'"),
+        }
+    }
+}
+
+/// One sample of "is the start still doing something": stderr lines received so far, and
+/// for every process in the child's tree (the child and its descendants by parent link —
+/// uv AND the engine it launches) the accumulated CPU time and resident memory. Any change
+/// between two samples is progress.
+#[derive(PartialEq, Eq)]
+struct ProgressMark {
+    stderr_lines: u64,
+    tree: Vec<(u32, u64, u64)>,
+}
+
+fn progress_mark(sys: &mut System, handle: &ChildHandle) -> ProgressMark {
+    ProgressMark {
+        stderr_lines: handle.stderr_lines.load(Ordering::Relaxed),
+        tree: handle
+            .child
+            .id()
+            .map(|pid| process_tree_sample(sys, pid))
+            .unwrap_or_default(),
+    }
+}
+
+fn process_tree_sample(sys: &mut System, root: u32) -> Vec<(u32, u64, u64)> {
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    let mut members = BTreeSet::from([Pid::from_u32(root)]);
+    loop {
+        let before = members.len();
+        for (pid, process) in sys.processes() {
+            if process
+                .parent()
+                .is_some_and(|parent| members.contains(&parent))
+            {
+                members.insert(*pid);
+            }
+        }
+        if members.len() == before {
+            break;
+        }
+    }
+    members
+        .iter()
+        .filter_map(|pid| {
+            sys.process(*pid)
+                .map(|p| (pid.as_u32(), p.accumulated_cpu_time(), p.memory()))
+        })
+        .collect()
 }
 
 fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {

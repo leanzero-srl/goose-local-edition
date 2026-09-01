@@ -40,7 +40,7 @@ fn fake_engine_config(port: u16) -> SidecarConfig {
         format!("http://127.0.0.1:{port}"),
         "fake",
     );
-    config.startup_timeout = Duration::from_secs(20);
+    config.startup_stall_window = Duration::from_secs(20);
     config.backoff_initial = Duration::from_millis(100);
     config.backoff_cap = Duration::from_millis(200);
     config
@@ -53,7 +53,7 @@ async fn a_catalog_serving_another_id_is_not_ready() {
     let port = free_port();
     let mut config = fake_engine_config(port);
     config.expected_model_id = "other".to_string();
-    config.startup_timeout = Duration::from_secs(3);
+    config.startup_stall_window = Duration::from_secs(3);
     let err = match Sidecar::start(config).await {
         Ok(_) => panic!("start accepted a catalog serving a different id"),
         Err(e) => e.to_string(),
@@ -66,6 +66,69 @@ async fn a_catalog_serving_another_id_is_not_ready() {
     assert!(
         std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
         "the failed start must not leave its child listening"
+    );
+}
+
+/// S-L8: the startup terminator is progress, not a clock. An engine that keeps reporting
+/// (a stderr line every 500 ms for 4 s, then serving) must START under a 2 s stall window
+/// — a 2 s startup *timeout* would have failed it at t=2.
+#[tokio::test]
+async fn a_slow_engine_that_keeps_progressing_is_never_failed_by_the_clock() {
+    let port = free_port();
+    let mut config = fake_engine_config(port);
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        format!(
+            "import sys, time\nfor i in range(8):\n    print('loading shard', i, \
+             file=sys.stderr, flush=True); time.sleep(0.5)\n{FAKE_ENGINE}"
+        ),
+        port.to_string(),
+    ];
+    config.startup_stall_window = Duration::from_secs(2);
+    let started = std::time::Instant::now();
+    let sidecar = Sidecar::start(config).await.unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_secs(4),
+        "the engine served before its 4 s of loading — the test proves nothing"
+    );
+    assert!(sidecar.healthy().await);
+    sidecar.shutdown().await;
+}
+
+/// The other half: a child that never serves AND never progresses (no stderr, no CPU, no
+/// memory movement) fails after the stall window, loudly, and is not left behind.
+#[tokio::test]
+async fn a_silent_engine_that_never_serves_fails_by_stall() {
+    let port = free_port();
+    let marker = format!("stall-marker-{port}");
+    let mut config = fake_engine_config(port);
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        format!("import time  # {marker}\ntime.sleep(600)"),
+    ];
+    config.startup_stall_window = Duration::from_secs(2);
+    let err = match Sidecar::start(config).await {
+        Ok(_) => panic!("a silent child must not count as started"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        err.contains("stalled during startup: no progress for"),
+        "err was: {err}"
+    );
+    assert!(
+        err.contains("connection refused") || err.contains("GET http"),
+        "err was: {err}"
+    );
+    let leftover = std::process::Command::new("pgrep")
+        .args(["-f", &marker])
+        .output()
+        .unwrap();
+    assert!(
+        leftover.stdout.is_empty(),
+        "stalled child left running: {}",
+        String::from_utf8_lossy(&leftover.stdout)
     );
 }
 
