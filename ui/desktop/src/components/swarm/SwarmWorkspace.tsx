@@ -1,7 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { MessageSquare, RadioTower } from 'lucide-react';
-import { cn } from '../../utils';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import { FOCUS, MOTION, RADIUS, SURFACE, WEIGHT, cx } from '../lz';
 
 export type SwarmWorkspaceTab = 'conversation' | 'run';
 
@@ -81,12 +80,16 @@ export function SwarmWorkspace({
   const conversationPanelId = `${id}-conversation-panel`;
   const runPanelId = `${id}-run-panel`;
 
+  // The Studio segmented register by hand: selected = the accent fill with white ink, unselected = the
+  // surface with a solid hover step; the app's accent outline on :focus-visible. Kept as a real
+  // tablist (roles, aria-controls, roving tabIndex) rather than the radiogroup Segmented primitive.
   const tabClass = (selected: boolean) =>
-    cn(
-      'flex items-center justify-center gap-2 px-3 text-xs font-semibold outline-none',
-      selected
-        ? 'text-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white'
-        : 'bg-background-primary text-text-primary hover:bg-background-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-action-solid,#1d4ed8)]'
+    cx(
+      'flex items-center justify-center gap-2 px-3 text-lz-meta',
+      WEIGHT.semibold,
+      MOTION,
+      FOCUS,
+      selected ? SURFACE.selected : cx('bg-lz-surface text-lz-ink', SURFACE.hover)
     );
 
   return (
@@ -100,8 +103,10 @@ export function SwarmWorkspace({
         <div
           role="tablist"
           aria-label="Active swarm workspace"
-          className="mx-3 mb-2 grid h-10 shrink-0 grid-cols-2 overflow-hidden border border-border-primary bg-background-primary"
-          style={{ borderRadius: CHIP_RADIUS }}
+          className={cx(
+            'mx-3 mb-2 grid h-10 shrink-0 grid-cols-2 overflow-hidden border border-lz-border-strong bg-lz-surface',
+            RADIUS.control
+          )}
         >
           <button
             ref={conversationTabRef}
@@ -113,10 +118,7 @@ export function SwarmWorkspace({
             tabIndex={activeTab === 'conversation' ? 0 : -1}
             onClick={() => selectTab('conversation')}
             onKeyDown={onTabKeyDown}
-            className={cn('border-r border-border-primary', tabClass(activeTab === 'conversation'))}
-            style={
-              activeTab === 'conversation' ? { backgroundColor: SWARM_STATUS.action } : undefined
-            }
+            className={cx('border-r border-lz-border-strong', tabClass(activeTab === 'conversation'))}
           >
             <MessageSquare className="h-4 w-4" />
             Conversation
@@ -132,7 +134,6 @@ export function SwarmWorkspace({
             onClick={() => selectTab('run')}
             onKeyDown={onTabKeyDown}
             className={tabClass(activeTab === 'run')}
-            style={activeTab === 'run' ? { backgroundColor: SWARM_STATUS.action } : undefined}
           >
             <RadioTower className="h-4 w-4" />
             Run
@@ -141,7 +142,7 @@ export function SwarmWorkspace({
       )}
 
       <div
-        className={cn(
+        className={cx(
           'flex flex-1 min-h-0',
           active && isWide && 'grid grid-cols-[minmax(360px,0.9fr)_minmax(520px,1.1fr)]'
         )}
@@ -152,9 +153,9 @@ export function SwarmWorkspace({
           aria-label={!active || isWide ? 'Conversation' : undefined}
           aria-labelledby={!active || isWide ? undefined : conversationTabId}
           hidden={active && !isWide && activeTab !== 'conversation'}
-          className={cn(
+          className={cx(
             'flex min-h-0 min-w-0 flex-1 flex-col',
-            active && isWide && 'border-r border-border-primary'
+            active && isWide && 'border-r border-lz-border'
           )}
           data-testid="swarm-workspace-conversation"
         >
@@ -167,7 +168,7 @@ export function SwarmWorkspace({
           aria-labelledby={!active || isWide ? undefined : runTabId}
           aria-hidden={!active ? true : undefined}
           hidden={!active || (!isWide && activeTab !== 'run')}
-          className="flex min-h-0 min-w-0 flex-col bg-background-secondary"
+          className="flex min-h-0 min-w-0 flex-col bg-lz-bg"
           data-testid="swarm-workspace-run"
         >
           {run}
