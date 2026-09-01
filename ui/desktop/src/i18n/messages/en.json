@@ -410,6 +410,27 @@
   "configureApproveMode.title": {
     "defaultMessage": "Configure approve mode"
   },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Closing this window stops the run: the window's backend is released and the swarm engine under it is signalled to exit."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Keep running"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Run {runId} in {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Stop run and close"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Stopping the run…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "A swarm run is live in this window"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Warning"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "No"
   },
