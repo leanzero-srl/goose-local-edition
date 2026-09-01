@@ -57,6 +57,14 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
             "split_fat_modules is #[cfg(test)] since b0dd68eac",
             gate("GOOSE_SWARM_SPLIT_FAT", cfg.split_fat),
         ),
+        // Config-only while it lived (no env override ever read it): null when unset — the
+        // fan cut found it printed as a live bound (`levers_resolved.max_research_questions:
+        // 4`) on r6d while `research_fan` dispatched all 38 questions.
+        "max_research_questions": row(
+            "bounded v1's scout lenses (deleted with P1-5); consumed nowhere since — the v2 fan \
+             dispatches every opener question, uncapped",
+            json!(cfg.max_research_questions),
+        ),
         "fan_verify": row(
             "fan_verify_split is #[cfg(test)] since P1-4",
             gate("GOOSE_SWARM_FAN_VERIFY", cfg.fan_verify),
@@ -114,12 +122,18 @@ mod tests {
             "straggler_grace_secs",
             "split",
             "split_inherit_spec",
+            "max_research_questions",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
                 "{k}"
             );
         }
+        assert_eq!(
+            clean["max_research_questions"]["configured"],
+            Value::Null,
+            "unset is an honest absence, never the old default 4 impersonating a choice"
+        );
         assert_eq!(clean["split_fat"]["configured"], json!(false));
         assert_eq!(clean["fan_verify"]["configured"], json!(false));
         assert_eq!(clean["straggler_stop"]["configured"], Value::Null);
@@ -130,7 +144,13 @@ mod tests {
         cfg.split_fat = true;
         cfg.fan_verify = true;
         cfg.straggler_grace_secs = Some(45);
+        cfg.max_research_questions = Some(4);
         let stale = retired_levers(&cfg, &none);
+        assert_eq!(
+            stale["max_research_questions"]["configured"],
+            json!(4),
+            "a config.yaml that still pins the retired bound is visible beside its reason"
+        );
         assert_eq!(stale["split_fat"]["configured"], json!(true));
         assert_eq!(
             stale["split_fat"]["reason"],

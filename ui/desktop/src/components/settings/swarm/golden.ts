@@ -300,7 +300,8 @@ export const DEFAULTS: SwarmConfig = {
   progress_watchdog_secs: 900, // baked
   planner_timeout_secs: 900, // default_planner_timeout_secs
   research_planning: 'on', // ResearchPlanningMode::On
-  max_research_questions: 4, // default_max_research
+  // max_research_questions is deliberately absent: RETIRED by the fan cut (engine-dead since P1-5,
+  // echoed under levers_resolved.retired_levers) — a reset must not write a bound that bounds nothing.
   // UNBOUNDED. Replan is suppressed while the sink is in flight and refuses when too little of the DAG
   // is left; both are structural. A count on top of them only decides that the LAST honest replan does
   // not happen. The panel said 2.
@@ -327,7 +328,6 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'progress_watchdog_secs',
   'planner_timeout_secs',
   'research_planning',
-  'max_research_questions',
   'max_replans',
   'scout_max_lookups',
   'scout_budget_secs',

@@ -301,9 +301,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// fleet_order.rs (-116) and the terminal-fold test to research.rs beside its fold, paying for
 /// the one-lane-per-slice fan (batches, per-question rows, strays named) and E7's second drain
 /// site inside the judge-probe select! (the loop-top drain was unreachable during a look).
+/// Tightened to 39,583: the dead `max_research_questions` lever retired (its default fn, the
+/// CLI printer/menu/editor arms and the live levers echo deleted; the field survives as
+/// `Option` for the config round-trip and is echoed under `retired_levers`).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 39_588;
+    const SWARM_RS_LINE_BASELINE: usize = 39_583;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
