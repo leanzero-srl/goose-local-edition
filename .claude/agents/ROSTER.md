@@ -886,3 +886,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   spec lines to refute the eternal-hold worry a third time, and mined the judge calls files for two
   new mechanisms (shell no-op retries to attempt 7; the desk summoning judge lanes — 59/79 noise).
   Charter gap: none.
+
+### 2026-09-01 — gate 9 measurements (grades)
+- `refuter` as VALUE AUDITOR (r5/r6c/r6d step-by-step cost·delivery·consumer): excellent — every verdict quoted with L-numbers; found LEARN's dead `judge_verdict` filter and the 208m unsupervised replan. Second inline brief of this shape (first: the r6c occupancy). A THIRD mints `value-auditor` (charter: per-step table, ranked deletions, missing instruments). Brief leak: none.
+- `refuter` as brief-composition measurer: excellent; REFUTED two of the orchestrator's claims (auth never attached; brief size → thinking). Keep the "measure, do not theorize" framing.
+- `fix-tracer` on VA-008: excellent — replayed 28 sections through a Python port, refuted a sub-claim of the composition report (web-viz DID get linked brush), gave anchors + test. Charter gap: none.
+- `Explore` agenda audit: good; 12 rows with shas. Charter fine for doc sweeps.
+
