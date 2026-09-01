@@ -198,9 +198,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `all_resident_unservable` moved with their four tests beside their per-engine wrappers in
 /// swarm_engine.rs, paying for the named pool-absence events (sidecar-device-excluded,
 /// sidecar-unmounted-and-load-disabled) written to run.jsonl.
+/// Tightened to 44,777 (LM-token probe): `gen_entry_id`/`short_model` moved beside
+/// `reconcile_pool_with_fleet` in swarm_engine.rs, paying for the `lm-probe-unauthorized`
+/// absence drain into run.jsonl.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_805;
+    const SWARM_RS_LINE_BASELINE: usize = 44_777;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

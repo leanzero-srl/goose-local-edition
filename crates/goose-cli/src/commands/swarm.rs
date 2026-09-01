@@ -34,8 +34,9 @@ use std::sync::{Arc, Mutex};
 use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
     drop_unservable_devices_per_engine, engines_for_run, exclude_unmountable_sidecar_devices,
-    live_fleet_slots, local_request_params, merge_sidecar_devices, planner_fallback, prewarm_pool,
-    reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind, Engines, LmsProcess,
+    gen_entry_id, live_fleet_slots, local_request_params, merge_sidecar_devices, planner_fallback,
+    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind,
+    Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -2813,41 +2814,9 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
 // The servability kernels (`drop_unservable_devices`, `all_resident_unservable`) live in
 // swarm_engine.rs beside their per-engine wrappers, with their tests.
 
-// Fleet import — add every loaded model to the pool. The `lms ps` parser and the LmsProcess row
-// type live in swarm_engine.rs with the probes that produce them.
-
-fn short_model(identifier: &str) -> String {
-    identifier
-        .rsplit('/')
-        .next()
-        .unwrap_or(identifier)
-        .to_lowercase()
-        .chars()
-        .take(28)
-        .collect()
-}
-
-/// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
-/// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
-/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
-/// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
-pub(super) fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
-    let dev = device
-        .map(|d| d.split('.').next().unwrap_or(d).to_lowercase())
-        .unwrap_or_default();
-    let base = if dev.is_empty() {
-        short_model(identifier)
-    } else {
-        format!("{dev}-{}", short_model(identifier))
-    };
-    let mut id = base.clone();
-    let mut n = 2;
-    while cfg.devices.iter().any(|d| d.id == id) {
-        id = format!("{base}-{n}");
-        n += 1;
-    }
-    id
-}
+// Fleet import — add every loaded model to the pool. The `lms ps` parser, the LmsProcess row
+// type and the pool-entry id derivation (`gen_entry_id`) live in swarm_engine.rs with the probes
+// that produce them.
 
 struct ImportSummary {
     added: Vec<SwarmDevice>,
@@ -36277,6 +36246,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // only against its own engine's catalog, so a dead sidecar can never condemn LM Studio devices or vice
     // versa. See drop_unservable_devices (the unchanged kernel) and its per-engine wrapper.
     let served = served_by_engine(&engines, &fleet_pool);
+    // The probes' own named absences (`lm-probe-unauthorized`: LM Studio refused the catalog
+    // probe for want of a token, so its partition is unproven) ride to run.jsonl with the rest.
+    pool_absences.extend(engines.take_probe_absences());
     // A declared sidecar device whose engine serves nothing while loading is OFF has no mount path
     // this run (the pre-warm is the only one and allow_model_load gates it): out of the pool by
     // name, before the planner-keep guard can pin an unmountable planner. Mild — the run goes on.
