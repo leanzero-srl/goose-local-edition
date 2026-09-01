@@ -31077,16 +31077,9 @@ impl GooseAgentDispatcher {
                 // — so css workers ran the full Python suite (measured: 11 css-owner tasks,
                 // 57 shell calls, ~2,500 node-s above floor; web-css ran the whole suite
                 // twice in one run). No Python suite applies to a static asset.
-                let is_asset_owner = !req.owned_files.is_empty()
-                    && req.owned_files.iter().all(|f| {
-                        f.ends_with(".html")
-                            || f.ends_with(".htm")
-                            || f.ends_with(".css")
-                            || f.ends_with(".js")
-                            || f.ends_with(".mjs")
-                            || f.ends_with(".md")
-                            || f.ends_with(".txt")
-                    });
+                // ONE classifier in briefs.rs, because the rules_delivered event must report the
+                // arm this dispatch actually took (it reported "generic" for every asset owner).
+                let is_asset_owner = briefs::is_asset_owner(&req.owned_files);
                 let owner_body = if repairing {
                     // The repair worker used to receive the first-authoring script verbatim: "your
                     // VERY FIRST action must be to `write` your owned file(s) IN FULL", "NEVER `cat`
@@ -31094,23 +31087,11 @@ impl GooseAgentDispatcher {
                     // whose file exists, whose defect was proven by running the app, and whose
                     // evidence is usually a test the worker was forbidden to read. Rewriting the file
                     // from scratch is also how a repair round REGRESSES work that was already right.
-                    "YOU ARE REPAIRING AN EXISTING FILE. It is already written and mostly works — the \
-                     finding below names a PROVEN defect in it. ACT ON A CLOCK: your FIRST tool call \
-                     is `read` on the named file; by your THIRD tool call you MUST have made an `edit`. \
-                     MEASURED across four repair attempts on two runs: every worker given this task \
-                     read, planned eloquently, and ended its whole 15-minute budget with ZERO edits — \
-                     the attempt was discarded and the defect survived. Planning is not the deliverable; \
-                     the edit is. Make the SMALLEST edit that removes the defect: use `edit`, keep \
-                     everything the finding does not name, and never re-emit a LARGE file from memory \
-                     (for a file under ~60 lines a full corrected `write` is acceptable and better than \
-                     paralysis). You MAY read any file the finding mentions — including the TEST that \
-                     failed, which is the definition of the expected behaviour. Fix the side that is \
-                     wrong against the spec, not the side that is easier to edit. Then re-run the exact \
-                     command from the finding and confirm THAT passes. A turn that ends with ZERO file \
-                     modifications FAILS, is retried, and wastes a fleet slot — an imperfect edit that \
-                     the gate rejects costs nothing (your work runs in a shadow; only a strictly better \
-                     tree is kept), so there is NO reason to withhold an edit.\n\n"
-                        .to_string()
+                    //
+                    // The body itself now lives in briefs.rs with the two blocks it used to
+                    // CONTRADICT (the current-content note and the fix directive) — r6c's lanes read
+                    // all three in one prompt and resolved the collision against repairing.
+                    briefs::repair_owner_body(&req.owned_files, req.speculative)
                 } else if is_asset_owner {
                     "WRITE FIRST. Your owned file(s) are STATIC ASSETS (frontend/docs) — no \
                      Python test suite applies to them, so do NOT run pytest or start the \
@@ -31240,27 +31221,16 @@ impl GooseAgentDispatcher {
             // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
             // EDITING it) so the worker need not re-`cat` it. Integration/wire-into-existing-file tasks
             // otherwise over-read the whole project; handing them the file up front cuts the dominant tail.
-            let mut existing_block = String::new();
-            for f in &req.owned_files {
-                let p = std::path::Path::new(&cwd).join(f);
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    if !content.trim().is_empty() {
-                        let capped: String = content.chars().take(12000).collect();
-                        let note = if content.chars().count() > 12000 {
-                            " [truncated — head only; cat the rest only if needed]"
-                        } else {
-                            ""
-                        };
-                        existing_block.push_str(&format!(
-                            "## CURRENT content of {f}{note} — this file ALREADY EXISTS (you were re-dispatched, \
-                             or it is an amendment). Do NOT rewrite it from scratch — that re-does finished work \
-                             and risks another timeout. FIRST run the program/tests to check whether it already \
-                             satisfies the spec; if it does, report DONE immediately. Otherwise edit ONLY the real \
-                             defect, from here. Do NOT `cat` it again:\n```\n{capped}\n```\n\n"
-                        ));
-                    }
-                }
-            }
+            // AND THE ORDER IT CARRIES IS THE TASK'S KIND. The one text above served both kinds and
+            // was written for the amendment: "FIRST run the program/tests to check whether it already
+            // satisfies the spec; if it does, report DONE immediately" is right for a re-dispatched
+            // author and is an EXIT for a repair shard, whose defect was already observed. Measured on
+            // r6c: three shards quoted that sentence back and closed their round with zero edits.
+            let existing_block = briefs::current_content_block(
+                std::path::Path::new(&cwd),
+                &req.owned_files,
+                repairing,
+            );
             // Inject the CURRENT content of the task's DEPENDENCY source files (already-built modules it
             // imports from) so cli/integration tasks need not `cat` them — a cli-edit-delete task over-read
             // 16 deps and paralysed at 82 msgs / 0 writes. Only files that EXIST on disk (i.e. completed
@@ -31559,10 +31529,17 @@ impl GooseAgentDispatcher {
             // test-author dispatch read "generic" over a tailored WRITE-FIRST section, manufacturing
             // 12 of 23 "mismatches" in one audited run out of the label alone.
             "rules_sections": {
+                // Mirrors owned_part's DELIVERY branch INCLUDING owner_body's own arms — a repair
+                // shard reads the repair order and an asset owner reads the assets rules, and both
+                // were reported "generic", which is the F851 mislabel one layer down.
                 "owned_part": if read_only_shard && kind_prompt_on {
                     "read-only-shard"
                 } else if req.owned_files.is_empty() {
                     "owns-nothing"
+                } else if repairing {
+                    "repair"
+                } else if briefs::is_asset_owner(&req.owned_files) {
+                    "asset-owner"
                 } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else {
@@ -31585,6 +31562,8 @@ impl GooseAgentDispatcher {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
                     "read-only-shard"
+                } else if repairing {
+                    "repair"
                 } else if kind_prompt_on {
                     "kind-generic"
                 } else {
@@ -31646,6 +31625,19 @@ impl GooseAgentDispatcher {
             "- STOP AFTER ONE HONEST PASS. Run the named checks ONCE, report exactly what each \
              printed (verbatim output, pass or fail), then call final_output. There is nothing for \
              you to fix and no green to chase — a failing check reported faithfully IS the job done.\n"
+        } else if repairing {
+            // THE THIRD EXIT IN A REPAIR PROMPT, and the quietest. "STOP WHEN GREEN, the MOMENT
+            // your file's tests pass" is satisfied on the still-broken app: the unit suite cannot
+            // see a page that renders no rows or an endpoint that answers non-JSON — the task text
+            // says so itself ("passing them proves only that you did not break the build"). So the
+            // repair kind's stop is the task's OWN completion condition, restated, not a green to
+            // chase: one verdict line per numbered finding.
+            "- YOU STOP WHEN EVERY NUMBERED FINDING HAS ITS VERDICT LINE, not when a test suite is \
+             green: the suite passes on the app the findings were measured against. For each \
+             finding, the line your task asks for — FIXED with the command/URL you ran and its \
+             output, NOT FIXED with what still fails, or NOT REAL with the output that rules it \
+             out — then call final_output. A finding left silent is one the next round repeats \
+             from scratch.\n"
         } else if kind_prompt_on {
             "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
              re-run pytest more than ~2 times, and pick a sensible default for anything UNSPECIFIED \
@@ -31658,6 +31650,12 @@ impl GooseAgentDispatcher {
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n"
         };
+        // "Write each file COMPLETE in ONE `write` … plan the whole file first, then write it
+        // once" is the authoring economy rule, and it is the one universal TOOLS bullet that
+        // reverses under repair: the shard's own order is the SMALLEST edit that removes an
+        // observed defect, and re-emitting a live file from memory is how a repair round regresses
+        // work no finding named. Branched in briefs.rs; the authoring text is byte-identical.
+        let write_granularity_rule = briefs::write_granularity_rule(repairing);
         let worker_directive = lang.directive();
         // LANGUAGE- AND FRAMEWORK-SPECIFIC RULES, GATED — they used to be unconditional.
         //
@@ -31799,22 +31797,16 @@ impl GooseAgentDispatcher {
         } else {
             "You are the engineer who owns the files listed below, and you finish them. "
         };
+        // ITS OWNERSHIP BULLET IS THE THIRD BLOCK IN THE COLLISION. "You own no files by default:
+        // you may edit ANY file the fix requires" is TRUE for the owns-nothing sink and FALSE for a
+        // per-file repair shard, which reads it ~1,400 chars before "write NOTHING outside them" and
+        // then spends turns on the conflict (r6c, complete-fix::app/ledgerd/__init__.py: "I can only
+        // write to app/ledgerd/__init__.py! Hmm, 'write NOTHING outside them.'"). Branched on the
+        // dispatch's own owned_files inside briefs::fix_directive; the sink's text is unchanged.
         let fix_directive = if read_on_fix {
-            "\nYOU ARE FIXING A PROVEN DEFECT, NOT WRITING NEW CODE. The rules about not reading are \
-             SUSPENDED for this task, because the failure below was already reproduced by running the \
-             app and may span SEVERAL files:\n\
-             - READ every file named in the error, and the file that DEFINES any symbol the error \
-             mentions. A signature mismatch lives in TWO files — the caller and the callee — and you \
-             cannot fix it from one.\n\
-             - Before editing, confirm the REAL signature/behaviour by reading the definition. Do NOT \
-             guess it and do NOT trust an injected excerpt over the actual source here.\n\
-             - Fix the side that is WRONG relative to the project's own spec, not whichever is easier \
-             to edit.\n\
-             - You own no files by default: you may edit ANY file the fix requires.\n\
-             - Do not stop at the first green sub-test; re-run the failing command itself and confirm \
-             THAT passes.\n"
+            briefs::fix_directive(&req.owned_files)
         } else {
-            ""
+            String::new()
         };
         let system_prompt = format!(
             "{role_opener}{worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
@@ -31844,14 +31836,7 @@ impl GooseAgentDispatcher {
              - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \
              `content` (the whole file). A write with `content` but no `path` FAILS with 'missing field path' \
              and wastes the turn — ALWAYS include the `path`. Same for `edit`: pass `path` every time.\n\
-             - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
-             it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
-             round-trip costs ~30-60s on a local model and is the main reason tasks run slow. EXCEPTION: a \
-             SUPERVISOR NOTE asking for a FIRST MINIMAL VERSION of a file OVERRIDES this rule — a minimal \
-             version IS a complete file (it parses/loads clean and exports the named API; stub bodies are \
-             fine), which you then EXTEND with further complete writes. When such a note arrives, the bytes \
-             on disk are the deliverable; composing more of the file in your reasoning instead of writing \
-             it is the failure mode the note is correcting.\n\
+             {write_granularity_rule}\
              - If a test or command fails, read the ERROR TEXT first — it names the file, line and symbol. \
              Re-read a file ONLY if the error points at something you do not already have in front of you; \
              do NOT reflexively `cat` the whole file before every fix. Never speculate about \

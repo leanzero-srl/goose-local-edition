@@ -270,9 +270,16 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (`ladder::durable_clamped_produced` — a look's produced claim the durable think.log does
 /// not back reads as zero, so a stream dead across a whole look cycle can no longer hold a
 /// drift verdict on "fresh content" that was backlog draining through the meter).
+/// Tightened to 41,872 (r6c repair brief): the THREE colliding repair-prompt blocks — the repair
+/// owner body, the current-content note and the fix directive's ownership bullet — moved to
+/// commands/swarm/briefs.rs as `repair_owner_body`/`current_content_block`/`fix_directive`, beside
+/// the asset-owner and write-granularity classifiers that now serve both the dispatch and the
+/// `rules_delivered` labels. The move paid for the repair arms of `stopping_rules` and
+/// `rules_sections` (a repair shard no longer reads "report DONE immediately", "STOP WHEN GREEN"
+/// and "you may edit ANY file" against its own order).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 41_922;
+    const SWARM_RS_LINE_BASELINE: usize = 41_872;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
