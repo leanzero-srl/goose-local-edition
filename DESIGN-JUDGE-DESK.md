@@ -113,3 +113,20 @@ RECEIVER WIRING UNDERSPECIFIED (walked, mostly sound, two holes): the mailbox ar
 ### Objection 10
 END-STATE BLAST RADIUS IS PINNED BY GATES: deleting the probe race and Site B removes the code path the AGENTS.md two-write-site invariant and the abandon rule are written against, and development_gates.rs pins doc text; the r8 commit must move those invariant texts in the same commit or the tripwires refuse — the design admits the blast radius but does not name the doc/gate edits. Also the gate-8 trace obligation the design assigns itself (r1's six-ignored-steers lane walked through the desk path) cannot produce a YES verdict for the steer-ignored class as currently argued: those steers were DELIVERED and ignored by the model (:18746-18760 measured receipt), which the desk does not change — only the mailbox-RESTART restream (item 7) changes that outcome, and it is deliberately sequenced last. The r8 cut-over as staged would therefore ship labeled a NET for the steer-ignored class, not the fix — the design should say so now rather than discover it at commit time.
 
+
+## Qualifying data from r6d (2026-09-01, ticks 1–2)
+- **The judge is the least reliable reader in the loop on research content.** judge-research-q2 flipped across
+  four looks on one question (look 1 "yes, note bumps version" → look 3 "bumps payment.version (same int)" →
+  look 4 "note write does NOT touch payment.version" — WRONG per request.md:189-192); only the look-2 steer
+  was delivered and it happened to be spec-compatible; the lane's mini was CORRECT because it read the spec,
+  not the judge. The hold ladder is what kept the wrong look 4 undelivered. Design consequence: a desk that
+  DICTATES content is worse than none; a desk that points at spec lines and sibling minis is the only safe
+  shape (E6 lands the prompt half; the desk should structurally forbid content assertions on research lanes).
+- **Supervision spend with no verdict**: q0's 7 looks = 5 abandoned (call finished while the judge read it),
+  1 failed (turn-cap filler — the judge read the WORKER's "1/1 used" line as its own and ended in a tool call),
+  1 skipped. tick.py now prints JUDGE LOOK OUTCOMES. The desk should read the durable transcript position
+  (b8f915841) and skip a look on a lane whose call ended since the trigger.
+- **Placement**: with weight 1 and three busy hosts, least-loaded ties put every q0 look on q0's own node
+  (gabee, inflight 1). The desk/aux picker needs "avoid the supervised lane's own model on ties" (E8).
+- **Late snowball**: a mini that lands 33 s after a same-topic sibling dispatches is invisible to it (q5 vs q2);
+  the desk holds the sibling minis at look time and can deliver them as the steer's ESTABLISHED (E7).
