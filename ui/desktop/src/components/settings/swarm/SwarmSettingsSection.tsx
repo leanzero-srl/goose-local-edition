@@ -1,8 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, Check } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
-import { Switch } from '../../ui/switch';
-import { Input } from '../../ui/input';
+import { ChevronDown, Check, Plus, Radar } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +32,34 @@ import {
   type SamplingKnobId,
   type SamplingSettings,
 } from '../../swarm/sampling';
+import {
+  Button,
+  Chip,
+  DataTable,
+  EmptyState,
+  Panel,
+  SectionHeader,
+  Segmented as LzSegmented,
+  StatusDot,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TYPE,
+  WEIGHT,
+  cx,
+  type DataTableColumn,
+  type NodeIndex,
+} from '../../lz';
+import {
+  INPUT,
+  StudioSwitch,
+  ToneBanner,
+  WeightStepper,
+  nodeHue,
+} from '../../leanzero-swarm/studio';
 
 // The engine-config (config.yaml) field each UI knob writes through to — snake_case, the same
 // fields `goose swarm run` resolves when no per-run env override is present.
@@ -57,24 +82,24 @@ const SAMPLING_ROW_LABEL: Record<SamplingKnobId, string> = {
 /**
  * Goose Local Edition — Swarm settings. Surfaces the `swarm:` config (previously CLI-only, editable only
  * through `goose swarm pool`) as a real desktop panel, plus a LIVE fleet view (LM Link). Reads/writes the
- * `swarm` key via the existing config API — no new backend. Honors the hard UI rules: sharp/flat, full
- * borders (never a left rail), solid saturated color + bold numbers, custom controls (no native <select>).
+ * `swarm` key via the existing config API — no new backend. LeanZero Studio register: Panels on the
+ * surface, 1px hairlines (never a left rail), solid colour with meaning, custom controls only.
  */
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     // items-START, not items-center: a wrapped hint makes the row tall, and a centered control then floats
     // in the middle of a paragraph instead of sitting beside the thing it toggles.
-    <div className="flex items-start justify-between gap-4 py-2">
+    <div className="flex items-start justify-between gap-4 py-2.5">
       <div className="min-w-0">
-        <div className="text-sm text-text-primary">{label}</div>
+        <div className={TYPE.body}>{label}</div>
         {/* The hint is the WHOLE POINT of this panel — it is what each setting costs you and what it
             bought, measured. `truncate` killed every one of them at the viewport edge mid-sentence:
             "…it shipped the first plan anyway. This stops after a round that fails to beat the be…" and
             "…Model-free, so it can't be argue…". A one-line rule cannot explain a quality/speed trade-off,
             and a reader who cannot finish the sentence cannot make the choice. Let it wrap; cap the
             measure so it stays readable next to the control. */}
-        {hint && <p className="text-xs text-text-secondary max-w-[92ch] mt-0.5">{hint}</p>}
+        {hint && <p className={cx(TYPE.bodyMuted, 'mt-0.5 max-w-[92ch]')}>{hint}</p>}
       </div>
       <div className="shrink-0 pt-0.5">{children}</div>
     </div>
@@ -95,10 +120,9 @@ function NumberField({
   const [text, setText] = useState(value == null ? '' : String(value));
   useEffect(() => setText(value == null ? '' : String(value)), [value]);
   return (
-    <Input
+    <input
       type="number"
-      className={`${width} text-right`}
-      style={{ borderRadius: 3 }}
+      className={cx(INPUT, width, 'text-right', TNUM)}
       value={text}
       placeholder={placeholder}
       onChange={(e) => setText(e.target.value)}
@@ -111,70 +135,25 @@ function NumberField({
   );
 }
 
-// Custom −/number/+ stepper for a node's relative task-share weight (no native slider/select, per UI rules).
-function WeightStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const clamp = (v: number) => Math.max(1, Math.min(9, v));
-  const btn =
-    'h-6 w-6 flex items-center justify-center border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none';
-  return (
-    <div className="flex items-center gap-1.5">
-      <button onClick={() => onChange(clamp(value - 1))} className={btn} style={{ borderRadius: 3 }} aria-label="Less work">
-        −
-      </button>
-      <span className="w-4 text-center font-bold tabular-nums" style={{ color: '#2e8bff' }}>
-        {value}
-      </span>
-      <button onClick={() => onChange(clamp(value + 1))} className={btn} style={{ borderRadius: 3 }} aria-label="More work">
-        +
-      </button>
-    </div>
-  );
-}
-
-/** Custom segmented control — never a native <select>. Solid inverse fill on the active option. */
+/** The Studio Segmented over a plain string vocabulary — never a native <select>. */
 function Segmented<T extends string>({
   options,
   value,
   onChange,
+  label,
 }: {
   options: readonly T[];
   value: T;
   onChange: (v: T) => void;
+  label: string;
 }) {
   return (
-    <div className="inline-flex border border-border-primary" style={{ borderRadius: 3 }}>
-      {options.map((opt, i) => {
-        const active = opt === value;
-        return (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onChange(opt)}
-            className={`px-2.5 py-1 text-xs ${
-              active ? 'text-background-primary font-semibold' : 'text-text-secondary'
-            } ${i > 0 ? 'border-l border-border-primary' : ''}`}
-            style={{ backgroundColor: active ? '#2e8bff' : 'transparent' }}
-          >
-            {opt}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * Local-Edition switch. The shared Switch `default` variant makes the thumb `bg-background-primary`, which
- * equals the dark track in dark mode = invisible. Use the `mono` variant (visible thumb) with a solid azure
- * ON state (per the hard UI rule: solid saturated color, never faded).
- */
-function SwarmSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <Switch
-      variant="mono"
-      checked={checked}
-      onCheckedChange={onChange}
-      className="data-[state=checked]:!bg-[#2e8bff] dark:data-[state=checked]:!bg-[#2e8bff]"
+    <LzSegmented
+      aria-label={label}
+      size="sm"
+      options={options.map((o) => ({ value: o, label: o }))}
+      value={value}
+      onChange={onChange}
     />
   );
 }
@@ -198,15 +177,10 @@ function Group({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border border-border-primary" style={{ borderRadius: 3 }}>
-      <div className="px-3 py-1.5 bg-background-secondary border-b border-border-primary">
-        <div className="flex items-baseline justify-between gap-3 flex-wrap">
-          <span className="text-xs font-semibold text-text-primary">{title}</span>
-          {cost ? <span className="text-[11px] text-text-secondary">{cost}</span> : null}
-        </div>
-      </div>
-      <div className="px-3 py-1 divide-y divide-border-primary">{children}</div>
-    </div>
+    <Panel title={title}>
+      {cost ? <p className={cx(TYPE.bodyMuted, 'mb-2 max-w-[92ch]')}>{cost}</p> : null}
+      <div className="divide-y divide-lz-border">{children}</div>
+    </Panel>
   );
 }
 
@@ -231,23 +205,35 @@ function ModelPicker({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex items-center justify-between gap-2 w-56 border border-border-primary px-2.5 py-1 text-xs text-text-primary hover:border-text-secondary transition-colors"
-          style={{ borderRadius: 3 }}
+          className={cx(
+            'flex h-8 w-56 items-center justify-between gap-2 bg-lz-surface px-2.5 text-left text-lz-body text-lz-ink [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
+            SURFACE.outline,
+            RADIUS.control,
+            FOCUS,
+            MOTION
+          )}
         >
           <span className="truncate">{value || 'auto (best resident)'}</span>
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+          <ChevronDown />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto w-56">
+      <DropdownMenuContent
+        align="end"
+        className="max-h-64 w-56 overflow-y-auto rounded-lz-card border-lz-border bg-lz-surface p-1"
+      >
         {options.length > 0 ? (
           options.map((opt) => (
-            <DropdownMenuItem key={opt} onClick={() => onChange(opt)} className="text-xs">
-              <span className="truncate">{opt}</span>
-              {opt === value && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+            <DropdownMenuItem
+              key={opt}
+              onClick={() => onChange(opt)}
+              className="rounded-lz-control focus:bg-lz-surface-2 focus:text-lz-ink"
+            >
+              <span className={cx('truncate', TYPE.body)}>{opt}</span>
+              {opt === value && <Check className="ml-auto size-3.5 shrink-0 text-lz-accent" />}
             </DropdownMenuItem>
           ))
         ) : (
-          <div className="px-2 py-1.5 text-xs text-text-secondary">
+          <div className={cx('px-2 py-1.5', TYPE.bodyMuted)}>
             {online ? 'No models loaded' : 'Start LM Studio to list models'}
           </div>
         )}
@@ -259,47 +245,32 @@ function ModelPicker({
 /**
  * Preset bar — one click to apply the GOLDEN formula (the tested tuning that builds passing apps) or the
  * faithful Defaults. Applying only touches the portable tuning keys (PRESET_KEYS), never the fleet identity
- * (devices/speed_weights/endpoint). A solid azure fill marks the active preset; a solid amber chip flags a
- * diverged "Custom" config. Custom control per the hard UI rules — never a native <select>.
+ * (devices/speed_weights/endpoint). A Chip tone=warn flags a diverged "Custom" config; the preset buttons
+ * are secondary Buttons, solid-disabled while the golden formula is already running.
  */
 function PresetBar({ active, onApply }: { active: PresetId; onApply: () => void }) {
   return (
-    <div
-      className="flex items-center justify-between gap-3 border border-border-primary px-3 py-2"
-      style={{ borderRadius: 3 }}
-    >
+    <div className={cx('flex items-center justify-between gap-3 px-4 py-3', SURFACE.card)}>
       <div className="min-w-0">
-        <div className="text-sm font-semibold text-text-primary">Golden formula</div>
-        <div className="text-xs text-text-secondary truncate">
+        <div className={TYPE.h2}>Golden formula</div>
+        <div className={cx(TYPE.bodyMuted, 'truncate')}>
           {active === 'golden'
             ? 'Running the tested tuning that builds passing apps — everything below is at its golden value.'
             : 'You’ve changed a setting below. The golden formula is one click away.'}
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {active === 'custom' && (
-          <span
-            className="text-xs font-semibold px-2 py-0.5 text-background-primary"
-            style={{ backgroundColor: '#f5a623', borderRadius: 3 }}
-          >
-            Custom
-          </span>
-        )}
+      <div className="flex shrink-0 items-center gap-2">
+        {active === 'custom' && <Chip tone="warn">Custom</Chip>}
         {PRESETS.map((p) => (
-          <button
+          <Button
             key={p.id}
-            type="button"
+            variant="secondary"
+            size="sm"
             onClick={onApply}
             disabled={active === 'golden'}
-            className={`px-3 py-1 text-xs font-semibold border border-border-primary ${
-              active === 'golden'
-                ? 'text-text-secondary opacity-50 cursor-default'
-                : 'text-text-primary hover:bg-background-secondary'
-            }`}
-            style={{ borderRadius: 3, backgroundColor: 'transparent' }}
           >
             {p.label}
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -307,7 +278,7 @@ function PresetBar({ active, onApply }: { active: PresetId; onApply: () => void 
 }
 
 /** Free-form JSON object editor for the LM Studio extra-body passthrough. Commits on blur only
- *  when the text parses as a JSON OBJECT; a bad parse shows a solid red border and commits
+ *  when the text parses as a JSON OBJECT; a bad parse shows a solid err ring and commits
  *  nothing. Empty = clears the field. */
 function ExtraBodyField({
   value,
@@ -323,9 +294,9 @@ function ExtraBodyField({
     setBad(false);
   }, [value]);
   return (
-    <Input
-      className="w-64 font-mono text-xs"
-      style={{ borderRadius: 3, ...(bad ? { borderColor: '#e5484d', borderWidth: 2 } : {}) }}
+    <input
+      className={cx(INPUT, 'w-64 font-mono', bad && 'ring-2 ring-inset ring-lz-err')}
+      aria-invalid={bad || undefined}
       placeholder="{}"
       value={text}
       onChange={(e) => setText(e.target.value)}
@@ -360,22 +331,19 @@ function bedrockErr(r: { stdout: string; stderr: string; error: string | null })
 }
 
 /** The cloud providers the panel can add nodes from — mirrors the engine's CLOUD_DEFS (cli =
- *  the `goose swarm cloud <cli>` name and the SwarmDevice.provider value). Distinct SOLID chip
- *  hues per provider, per the UI rules. */
+ *  the `goose swarm cloud <cli>` name and the SwarmDevice.provider value). */
 const CLOUD_PROVIDERS = [
-  { seg: 'Bedrock', cli: 'bedrock', label: 'Amazon Bedrock', keyPlaceholder: 'Bedrock API key (ABSK…)', region: true, chip: '#8e4ec6' },
-  { seg: 'Z.ai', cli: 'zai', label: 'Z.ai', keyPlaceholder: 'Z.ai API key', region: false, chip: '#f76b15' },
-  { seg: 'Gemini', cli: 'google', label: 'Google Gemini', keyPlaceholder: 'Gemini API key (AIza…)', region: false, chip: '#12a594' },
-  { seg: 'DeepSeek', cli: 'deepseek', label: 'DeepSeek', keyPlaceholder: 'DeepSeek API key (sk-…)', region: false, chip: '#d6409f' },
+  { seg: 'Bedrock', cli: 'bedrock', label: 'Amazon Bedrock', keyPlaceholder: 'Bedrock API key (ABSK…)', region: true },
+  { seg: 'Z.ai', cli: 'zai', label: 'Z.ai', keyPlaceholder: 'Z.ai API key', region: false },
+  { seg: 'Gemini', cli: 'google', label: 'Google Gemini', keyPlaceholder: 'Gemini API key (AIza…)', region: false },
+  { seg: 'DeepSeek', cli: 'deepseek', label: 'DeepSeek', keyPlaceholder: 'DeepSeek API key (sk-…)', region: false },
 ] as const;
 type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
 const chipFor = (provider: string | null | undefined) =>
   CLOUD_PROVIDERS.find((c) => c.cli === provider) ?? null;
-/** A node is local unless a cloud provider claims it. Local gets its own solid hue so EVERY row in the
- *  Nodes list is labelled by what serves it — the list is node-first, so the provider has to travel with
- *  the node rather than being a mode the whole panel is in. */
-const LOCAL_CHIP = { seg: 'LM Studio', chip: '#1d4ed8' } as const;
-const NODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+/** A node is local unless a cloud provider claims it. The list is node-first, so the provider travels
+ *  with the node as a quiet label rather than being a mode the whole panel is in. */
+const LOCAL_CHIP = { seg: 'LM Studio' } as const;
 
 const NODE_PROVIDERS = ['LM Studio', ...CLOUD_PROVIDERS.map((c) => c.seg)] as [string, ...string[]];
 type NodeProvider = string;
@@ -514,163 +482,148 @@ function CloudPane({
     (m) => !filter.trim() || m.toLowerCase().includes(filter.trim().toLowerCase())
   );
   const keyEntry = (
-    <div className="space-y-2">
-      <div className="text-xs text-text-secondary max-w-[92ch]">
+    <div className="flex flex-col gap-2">
+      <div className={cx(TYPE.bodyMuted, 'max-w-[92ch]')}>
         Paste a {def.label} API key. goose validates it live first — the key is stored (encrypted,
         in your goose secret store) only when {def.label} accepts it, and the models it can run
         auto-populate below.
       </div>
       <div className="flex items-center gap-2">
-        <Input
+        <input
           type="password"
-          className="flex-1"
-          style={{ borderRadius: 3 }}
+          className={cx(INPUT, 'flex-1')}
           placeholder={def.keyPlaceholder}
           value={keyText}
           onChange={(e) => setKeyText(e.target.value)}
         />
         {def.region && (
-          <Input
-            className="w-28"
-            style={{ borderRadius: 3 }}
+          <input
+            className={cx(INPUT, 'w-28')}
             placeholder="region"
             value={region}
             onChange={(e) => setRegion(e.target.value)}
           />
         )}
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           disabled={busy === 'validate' || !keyText.trim()}
           onClick={() => void validateKey()}
-          className="px-3 py-1.5 text-xs font-semibold text-background-primary disabled:opacity-50"
-          style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
         >
           {busy === 'validate' ? 'Validating…' : 'Validate & save'}
-        </button>
+        </Button>
       </div>
     </div>
   );
 
+  const modelColumn: DataTableColumn<{ id: string }>[] = [
+    {
+      key: 'model',
+      header: 'Model',
+      cell: (r) => (
+        <span className="block truncate font-mono text-lz-mono" title={r.id}>
+          {r.id}
+        </span>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-3">
       {phase === 'checking' ? (
-        <div className="text-sm text-text-secondary">Checking for a stored Bedrock key…</div>
+        <div className={TYPE.bodyMuted}>Checking for a stored {def.label} key…</div>
       ) : phase === 'no-key' || editKey ? (
         keyEntry
       ) : (
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs">
-            <span style={{ color: '#2ecc71' }} className="font-semibold">
-              key valid
-            </span>
-            <span className="text-text-secondary">
-              {' '}
-              · {region} · {roster.length} model{roster.length === 1 ? '' : 's'} available
+          <span className="inline-flex items-center gap-2">
+            <Chip tone="ok">key valid</Chip>
+            <span className={cx(TYPE.meta, TNUM)}>
+              {region} · {roster.length} model{roster.length === 1 ? '' : 's'} available
             </span>
           </span>
-          <button
-            type="button"
-            onClick={() => setEditKey(true)}
-            className="px-2.5 py-1 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors"
-            style={{ borderRadius: 3 }}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setEditKey(true)}>
             Replace key
-          </button>
+          </Button>
         </div>
       )}
 
-      {error && (
-        <div
-          className="text-xs font-semibold px-3 py-2 text-background-primary"
-          style={{ backgroundColor: '#e5484d', borderRadius: 3 }}
-        >
-          {error}
-        </div>
-      )}
+      {error && <ToneBanner tone="err" label={def.seg} text={error} />}
 
       {devices.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-xs text-text-secondary">Cloud nodes in your swarm pool:</div>
-          {devices.map((d) => (
-            <div
-              key={d.id}
-              className="flex items-center justify-between gap-3 border border-border-primary px-2.5 py-1.5"
-              style={{ borderRadius: 3 }}
-            >
-              <span className="min-w-0 flex items-center gap-2">
-                <span
-                  className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                  style={{ backgroundColor: def.chip, borderRadius: 3 }}
-                >
-                  {def.seg.toUpperCase()}
-                </span>
-                <span className="text-xs font-mono text-text-primary truncate" title={d.model_id}>
-                  {d.model_id}
-                </span>
-              </span>
-              <button
-                type="button"
-                disabled={busy === d.model_id}
-                onClick={() => void rmNode(d.model_id)}
-                className="px-2 py-0.5 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors shrink-0 disabled:opacity-50"
-                style={{ borderRadius: 3 }}
+        <div className="flex flex-col gap-1">
+          <SectionHeader as="h3" title="Cloud nodes in your swarm pool" count={devices.length} />
+          <DataTable
+            dense
+            aria-label={`${def.label} nodes in the pool`}
+            columns={modelColumn}
+            rows={devices.map((d) => ({ id: d.model_id }))}
+            rowKey={(r) => r.id}
+            rowAction={(r) => (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy === r.id}
+                onClick={() => void rmNode(r.id)}
               >
-                {busy === d.model_id ? 'Removing…' : 'Remove'}
-              </button>
-            </div>
-          ))}
+                {busy === r.id ? 'Removing…' : 'Remove'}
+              </Button>
+            )}
+          />
         </div>
       )}
 
       {phase === 'ready' && (
-        <div className="space-y-1.5">
+        <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-text-secondary">
-              Available models — <span className="text-text-primary font-medium">add one as a swarm node</span>:
-            </div>
-            <Input
-              className="w-44"
-              style={{ borderRadius: 3 }}
+            <SectionHeader as="h3" title="Available models" count={shown.length} />
+            <input
+              className={cx(INPUT, 'w-44')}
               placeholder="filter…"
+              aria-label="Filter models"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
-          <div
-            className="max-h-52 overflow-y-auto border border-border-primary divide-y divide-border-primary"
-            style={{ borderRadius: 3 }}
-          >
-            {shown.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-text-secondary">no model matches the filter</div>
-            ) : (
-              shown.map((m) => (
-                <div key={m} className="flex items-center justify-between gap-3 px-2.5 py-1.5">
-                  <span className="text-xs font-mono text-text-primary truncate" title={m}>
-                    {m}
-                  </span>
-                  {configured.has(m) ? (
-                    <span className="text-[10px] font-bold shrink-0" style={{ color: '#2ecc71' }}>
-                      IN POOL
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy === m}
-                      onClick={() => void addNode(m)}
-                      className="px-2 py-0.5 text-xs font-semibold text-background-primary shrink-0 disabled:opacity-50"
-                      style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
-                    >
-                      {busy === m ? 'Adding…' : '+ Add'}
-                    </button>
-                  )}
-                </div>
-              ))
-            )}
+          <div className={cx('max-h-64 overflow-y-auto', SURFACE.card)}>
+            <DataTable
+              dense
+              aria-label={`${def.label} models — add one as a swarm node`}
+              columns={modelColumn}
+              rows={shown.map((m) => ({ id: m }))}
+              rowKey={(r) => r.id}
+              rowAction={(r) =>
+                configured.has(r.id) ? (
+                  <Chip tone="ok">in pool</Chip>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Plus />}
+                    disabled={busy === r.id}
+                    onClick={() => void addNode(r.id)}
+                  >
+                    {busy === r.id ? 'Adding…' : 'Add'}
+                  </Button>
+                )
+              }
+              empty={<EmptyState title="No match" body="No model matches the filter." />}
+            />
           </div>
         </div>
       )}
     </div>
   );
+}
+
+/** A weight row with its identity hue by list position. */
+interface WeightRow {
+  id: string;
+  name: string;
+  provider: string;
+  modelId: string;
+  supervises: boolean;
+  hue: NodeIndex;
 }
 
 export default function SwarmSettingsSection() {
@@ -818,16 +771,15 @@ export default function SwarmSettingsSection() {
     : [];
   // EVERY node the swarm would actually run, in one list. `nodeRows` (golden.ts) owns the union so the
   // test exercises the shipped rule rather than a copy of it.
-  const weightRows = nodeRows(configuredDevices, fleet.models).map((r) => {
+  const weightRows: WeightRow[] = nodeRows(configuredDevices, fleet.models).map((r, i) => {
     const chip = chipFor(r.provider);
     return {
       id: r.id,
       name: chip ? r.modelId : deviceFromModelId(r.modelId) || r.id,
-      chip,
       provider: chip ? chip.seg : LOCAL_CHIP.seg,
-      providerChip: chip ? chip.chip : LOCAL_CHIP.chip,
       modelId: r.modelId,
       supervises: r.supervises,
+      hue: nodeHue(i),
     };
   });
   const weightFor = (id: string): number => {
@@ -837,38 +789,96 @@ export default function SwarmSettingsSection() {
     return key ? (sw[key] ?? 1) : 1;
   };
 
+  const weightColumns: DataTableColumn<WeightRow>[] = [
+    {
+      key: 'node',
+      header: 'Node',
+      cell: (row) => (
+        <span className="flex items-center gap-2">
+          <StatusDot node={row.hue} label={`node ${row.name}`} />
+          <span className={cx('truncate', WEIGHT.semibold)} title={row.id}>
+            {row.name}
+          </span>
+        </span>
+      ),
+    },
+    { key: 'provider', header: 'Provider', cell: (row) => <Chip>{row.provider}</Chip> },
+    {
+      key: 'supervisor',
+      header: 'Supervisor',
+      cell: (row) => (
+        <button
+          type="button"
+          onClick={() => setSupervisor(row.id, row.modelId, !row.supervises)}
+          aria-pressed={row.supervises}
+          title={
+            row.supervises
+              ? 'Supervisor: takes the judge, review and synthesis calls and does not build'
+              : 'Make this the supervisor — the strongest model, kept out of the build pool'
+          }
+          className={cx(
+            'inline-flex h-7 items-center px-2.5 text-[12px] font-lz-medium',
+            RADIUS.control,
+            row.supervises
+              ? TONE_FILL.secondary
+              : cx(SURFACE.outline, 'bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink'),
+            FOCUS,
+            MOTION
+          )}
+        >
+          Smartest
+        </button>
+      ),
+    },
+    {
+      key: 'weight',
+      header: 'Weight',
+      numeric: true,
+      cell: (row) => (
+        <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} label={row.id} />
+      ),
+    },
+  ];
+
   return (
-    <section id="swarm" className="space-y-4 pr-4 pb-8">
-      <Card className="rounded-lg">
-        <CardHeader className="pb-0">
-          <CardTitle className="mb-1">Swarm LeanZero — fleet</CardTitle>
-          <CardDescription>
+    <section id="swarm" className="flex flex-col gap-lz-section pb-8 pr-4">
+      <Panel
+        title="Swarm LeanZero — fleet"
+        headerRight={
+          <Segmented
+            options={NODE_PROVIDERS}
+            value={nodeProvider}
+            onChange={setNodeProvider}
+            label="Add a node from"
+          />
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className={TYPE.bodyMuted}>
             Your local model fleet (LM Studio / LM Link), live. The swarm auto-pools whatever is resident.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-4 px-4 space-y-2">
-          {/* ADD A NODE, by choosing what will serve it. The list above is the nodes you HAVE; this row is
-              how a new one is made, which is the order the user thinks in — a node first, then what runs
-              it. A provider only appears here once it has been configured with a working key (the panes
-              below validate engine-side), so the list can never offer a node that cannot run. */}
-          <div className="text-xs flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary shrink-0">
-                + Add node
-              </span>
-              <Segmented options={NODE_PROVIDERS} value={nodeProvider} onChange={setNodeProvider} />
-            </span>
+          </p>
+          {/* ADD A NODE, by choosing what will serve it. The list below is the nodes you HAVE; the
+              Segmented in the header is how a new one is made, which is the order the user thinks in —
+              a node first, then what runs it. A provider only appears here once it has been configured
+              with a working key (the panes validate engine-side), so the list can never offer a node
+              that cannot run. */}
+          <div className="flex items-center justify-between gap-3">
             {nodeProvider === 'LM Studio' ? (
-              <span className="flex items-center gap-2 min-w-0">
-                <span className="text-text-secondary truncate">{cfg.endpoint}</span>
-                <span className="shrink-0" style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-mono text-lz-mono text-lz-ink-3">{cfg.endpoint}</span>
+                <span className={cx('inline-flex shrink-0 items-center gap-1.5', TYPE.meta, TNUM)}>
+                  <StatusDot
+                    tone={fleet.online ? 'ok' : 'stopped'}
+                    label={fleet.online ? 'fleet live' : 'fleet offline'}
+                    live={fleet.online}
+                  />
                   {fleet.online
                     ? `${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
                     : 'offline'}
                 </span>
               </span>
             ) : (
-              <span className="text-text-secondary">
+              <span className={cx(TYPE.meta, TNUM)}>
                 {activeCloudDevices.length} {activeCloud?.label} node
                 {activeCloudDevices.length === 1 ? '' : 's'} in the pool
               </span>
@@ -878,9 +888,11 @@ export default function SwarmSettingsSection() {
             fleet.online && fleet.lanes.length > 0 ? (
               <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
             ) : (
-              <div className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center" style={{ borderRadius: 3 }}>
-                No fleet detected. Start LM Studio (LM Link) at {cfg.endpoint} to see your nodes.
-              </div>
+              <EmptyState
+                icon={<Radar />}
+                title="No fleet detected"
+                body={`Start LM Studio (LM Link) at ${cfg.endpoint} to see your nodes.`}
+              />
             )
           ) : activeCloud ? (
             <CloudPane
@@ -892,66 +904,34 @@ export default function SwarmSettingsSection() {
           ) : null}
 
           {weightRows.length > 0 && (
-            <div className="pt-2 mt-1 border-t border-border-primary space-y-1.5">
-              <div className="text-xs text-text-secondary">
-                Node weights — <span className="text-text-primary font-medium">higher = a bigger share of the tasks</span>.
-                Turn a slower machine down so it does less.
-              </div>
-              {weightRows.map((row) => (
-                <div key={row.id} className="flex items-center justify-between gap-3 py-0.5">
-                  <span className="min-w-0 flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-text-secondary shrink-0 w-12 uppercase tracking-wide">
-                      Node {NODE_LETTERS[weightRows.indexOf(row)] ?? '+'}
-                    </span>
-                    <span
-                      className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                      style={{ backgroundColor: row.providerChip, borderRadius: 3 }}
-                    >
-                      {row.provider.toUpperCase()}
-                    </span>
-                    <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
-                      {row.name}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setSupervisor(row.id, row.modelId, !row.supervises)}
-                      aria-pressed={row.supervises}
-                      title={
-                        row.supervises
-                          ? 'Supervisor: takes the judge, review and synthesis calls and does not build'
-                          : 'Make this the supervisor — the strongest model, kept out of the build pool'
-                      }
-                      className="text-[10px] font-bold px-2 py-1 uppercase tracking-wide"
-                      style={{
-                        borderRadius: 4,
-                        backgroundColor: row.supervises ? '#7c3aed' : 'transparent',
-                        color: row.supervises ? '#ffffff' : 'var(--text-secondary)',
-                        border: `1px solid ${row.supervises ? '#7c3aed' : 'var(--border-primary)'}`,
-                      }}
-                    >
-                      Smartest
-                    </button>
-                    <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} />
-                  </span>
-                </div>
-              ))}
+            <div className={cx('flex flex-col gap-1 border-t pt-3', SURFACE.hairline)}>
+              <SectionHeader as="h3" title="Node weights" count={weightRows.length} />
+              <p className={cx(TYPE.bodyMuted, 'mb-1')}>
+                Higher = a bigger share of the tasks. Turn a slower machine down so it does less.
+              </p>
+              <DataTable
+                dense
+                aria-label="Node weights"
+                columns={weightColumns}
+                rows={weightRows}
+                rowKey={(r) => r.id}
+              />
             </div>
           )}
 
-          <div className="pt-2 mt-1 border-t border-border-primary">
+          <div className={cx('divide-y divide-lz-border border-t', SURFACE.hairline)}>
             <Row
               label="Run panel detail"
               hint="Compact = headline phases · Verbose = full timeline + reasoning + tool calls · Developer = everything expanded & raw"
             >
-              <Segmented options={SWARM_LOG_MODES} value={logMode} onChange={setLogMode} />
+              <Segmented options={SWARM_LOG_MODES} value={logMode} onChange={setLogMode} label="Run panel detail" />
             </Row>
             <Row
               label="Ask when uncertain"
               hint="When the planner isn't confident how to break the app down, it pauses and asks YOU a few clarifying questions instead of guessing. On by default — the single most useful choice for a weak local planner. Turn it off (0) for an unattended/CI build that must never block on a human."
             >
-              <SwarmSwitch
+              <StudioSwitch
+                aria-label="Ask when uncertain"
                 checked={(cfg.ask_floor ?? 80) > 0}
                 onChange={(v) => set({ ask_floor: v ? 80 : 0 })}
               />
@@ -961,145 +941,142 @@ export default function SwarmSettingsSection() {
                 old hint described (3 of 5 asked, 2 guessed silently) is exactly what the kill fixed. */}
           </div>
 
-          <div className="text-xs text-text-secondary pt-1">
-            Download and manage the models each node runs in the <span className="text-text-primary font-medium">Local Inference</span> tab.
-          </div>
-        </CardContent>
-      </Card>
+          <p className={TYPE.bodyMuted}>
+            Download and manage the models each node runs in the{' '}
+            <span className={cx('text-lz-ink', WEIGHT.medium)}>LeanZero MLX</span> tab.
+          </p>
+        </div>
+      </Panel>
 
-      <Card className="rounded-lg">
-        <CardHeader className="pb-0">
-          <CardTitle className="mb-1">Swarm LeanZero — tunables</CardTitle>
-          <CardDescription>
-            The knobs that were CLI-only (`goose swarm pool`). Changes save to your goose config immediately.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-4 px-4 space-y-3">
-          {!loaded ? (
-            <div className="text-sm text-text-secondary">Loading swarm config…</div>
-          ) : (
-            <>
-              <PresetBar active={activePreset} onApply={applyPreset} />
+      <Panel title="Swarm LeanZero — tunables">
+        <p className={TYPE.bodyMuted}>
+          The knobs that were CLI-only (`goose swarm pool`). Changes save to your goose config immediately.
+        </p>
+      </Panel>
 
-              <Group title="Advanced — timeouts &amp; budgets" cost="Per-hardware tuning. The defaults are the golden formula; change these only for an unusually fast or slow fleet.">
-                <Row label="Worker max turns" hint="cap per worker before it must finish">
-                  <NumberField value={cfg.worker_max_turns} onCommit={(v) => set({ worker_max_turns: v ?? 40 })} />
-                </Row>
-                <Row label="Max attempts" hint="retries per subtask">
-                  <NumberField value={cfg.max_attempts} onCommit={(v) => set({ max_attempts: v ?? 3 })} />
-                </Row>
-                <Row label="Worker timeout (s)" hint="no-progress re-route failsafe per worker (0 = off)">
-                  <NumberField value={cfg.worker_timeout_secs} onCommit={(v) => set({ worker_timeout_secs: v ?? 900 })} />
-                </Row>
-                <Row
-                  label="Progress watchdog (s)"
-                  hint="cut a worker that streams reasoning tokens forever without a real tool call, output, or code — measured live, tasks ran 15-26 min emitting only thinking and were never stopped (the worker timeout is idle-based, and thinking resets it). This bounds the max time WITHOUT productive progress; a slow-but-working model keeps resetting it, so only a thinking-only spiral is cut. Never touches the final integrate-verify step (that has its own cap). Try ~720. 0 = off."
-                >
-                  <NumberField
-                    value={cfg.progress_watchdog_secs}
-                    onCommit={(v) => set({ progress_watchdog_secs: v ?? 0 })}
-                  />
-                </Row>
-                <Row label="Planner timeout (s)" hint="hang failsafe for planner-side calls">
-                  <NumberField value={cfg.planner_timeout_secs} onCommit={(v) => set({ planner_timeout_secs: v ?? 900 })} />
-                </Row>
-                <Row label="Context cap (tokens)" hint="blank = off">
-                  <NumberField value={cfg.context_cap ?? null} placeholder="off" onCommit={(v) => set({ context_cap: v })} />
-                </Row>
-                <Row label="Max tool-response chars" hint="hard cap on any tool result fed to a worker (blank = 30000)">
-                  <NumberField value={cfg.max_tool_response_chars ?? null} placeholder="30000" onCommit={(v) => set({ max_tool_response_chars: v })} />
-                </Row>
-              </Group>
+      {!loaded ? (
+        <div className={TYPE.bodyMuted}>Loading swarm config…</div>
+      ) : (
+        <>
+          <PresetBar active={activePreset} onApply={applyPreset} />
 
-              <Group title="Research &amp; planning">
-                <Row label="Research planning" hint="off / on / auto (auto = only with source files). Grounds the plan in looked-up fact; costs a research phase.">
-                  <Segmented options={RESEARCH_MODES} value={(cfg.research_planning ?? 'on') as ResearchMode} onChange={(v) => set({ research_planning: v })} />
-                </Row>
-                <Row label="Max replans" hint="cap on dynamic-replan rounds">
-                  <NumberField value={cfg.max_replans} onCommit={(v) => set({ max_replans: v ?? 2 })} />
-                </Row>
-                <Row label="Max research questions" hint="scoping questions before planning">
-                  <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
-                </Row>
-                <Row
-                  label="Research lookups per scout"
-                  hint="how many searches a scout may run before it must answer. This is the real limit on research — it stops when it has looked enough things up, not when a clock runs out."
-                >
-                  <NumberField
-                    value={cfg.scout_max_lookups}
-                    onCommit={(v) => set({ scout_max_lookups: v ?? 10 })}
-                  />
-                </Row>
-                <Row
-                  label="Scout time limit (s)"
-                  hint="a backstop so a stuck model can't hang the run — not the budget. It was 120s and that was the real limit: a measured run's research ended at 120.023s, cut off mid-thought, and handed the planner an apology instead of a finding."
-                >
-                  <NumberField value={cfg.scout_budget_secs} onCommit={(v) => set({ scout_budget_secs: v ?? 900 })} />
-                </Row>
-                <Row label="Best-of-N skeletons" hint="candidate plans; pick the structurally-best">
-                  <NumberField value={cfg.best_of_n_skeletons} onCommit={(v) => set({ best_of_n_skeletons: v ?? 1 })} />
-                </Row>
-              </Group>
+          <Group title="Advanced — timeouts & budgets" cost="Per-hardware tuning. The defaults are the golden formula; change these only for an unusually fast or slow fleet.">
+            <Row label="Worker max turns" hint="cap per worker before it must finish">
+              <NumberField value={cfg.worker_max_turns} onCommit={(v) => set({ worker_max_turns: v ?? 40 })} />
+            </Row>
+            <Row label="Max attempts" hint="retries per subtask">
+              <NumberField value={cfg.max_attempts} onCommit={(v) => set({ max_attempts: v ?? 3 })} />
+            </Row>
+            <Row label="Worker timeout (s)" hint="no-progress re-route failsafe per worker (0 = off)">
+              <NumberField value={cfg.worker_timeout_secs} onCommit={(v) => set({ worker_timeout_secs: v ?? 900 })} />
+            </Row>
+            <Row
+              label="Progress watchdog (s)"
+              hint="cut a worker that streams reasoning tokens forever without a real tool call, output, or code — measured live, tasks ran 15-26 min emitting only thinking and were never stopped (the worker timeout is idle-based, and thinking resets it). This bounds the max time WITHOUT productive progress; a slow-but-working model keeps resetting it, so only a thinking-only spiral is cut. Never touches the final integrate-verify step (that has its own cap). Try ~720. 0 = off."
+            >
+              <NumberField
+                value={cfg.progress_watchdog_secs}
+                onCommit={(v) => set({ progress_watchdog_secs: v ?? 0 })}
+              />
+            </Row>
+            <Row label="Planner timeout (s)" hint="hang failsafe for planner-side calls">
+              <NumberField value={cfg.planner_timeout_secs} onCommit={(v) => set({ planner_timeout_secs: v ?? 900 })} />
+            </Row>
+            <Row label="Context cap (tokens)" hint="blank = off">
+              <NumberField value={cfg.context_cap ?? null} placeholder="off" onCommit={(v) => set({ context_cap: v })} />
+            </Row>
+            <Row label="Max tool-response chars" hint="hard cap on any tool result fed to a worker (blank = 30000)">
+              <NumberField value={cfg.max_tool_response_chars ?? null} placeholder="30000" onCommit={(v) => set({ max_tool_response_chars: v })} />
+            </Row>
+          </Group>
 
-              <Group title="Verification" cost="goose already runs its full verification suite on every build — real end-to-end command checks, per-module import gates, contract-stub parsing, cross-module wiring. That is baked in and always on. Below is one EXTRA, optional check on top.">
-                <Row
-                  label="Also flag dead code after the build"
-                  hint="reads the finished code and flags modules that were built but nothing imports — they can never run. Model-free. OFF by default: it occasionally flags an intentional standalone script as dead. Turn it on for stricter builds where every module must be wired in."
-                >
-                  <SwarmSwitch checked={!!cfg.review} onChange={(v) => set({ review: v })} />
-                </Row>
-              </Group>
+          <Group title="Research & planning">
+            <Row label="Research planning" hint="off / on / auto (auto = only with source files). Grounds the plan in looked-up fact; costs a research phase.">
+              <Segmented options={RESEARCH_MODES} value={(cfg.research_planning ?? 'on') as ResearchMode} onChange={(v) => set({ research_planning: v })} label="Research planning" />
+            </Row>
+            <Row label="Max replans" hint="cap on dynamic-replan rounds">
+              <NumberField value={cfg.max_replans} onCommit={(v) => set({ max_replans: v ?? 2 })} />
+            </Row>
+            <Row label="Max research questions" hint="scoping questions before planning">
+              <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
+            </Row>
+            <Row
+              label="Research lookups per scout"
+              hint="how many searches a scout may run before it must answer. This is the real limit on research — it stops when it has looked enough things up, not when a clock runs out."
+            >
+              <NumberField
+                value={cfg.scout_max_lookups}
+                onCommit={(v) => set({ scout_max_lookups: v ?? 10 })}
+              />
+            </Row>
+            <Row
+              label="Scout time limit (s)"
+              hint="a backstop so a stuck model can't hang the run — not the budget. It was 120s and that was the real limit: a measured run's research ended at 120.023s, cut off mid-thought, and handed the planner an apology instead of a finding."
+            >
+              <NumberField value={cfg.scout_budget_secs} onCommit={(v) => set({ scout_budget_secs: v ?? 900 })} />
+            </Row>
+            <Row label="Best-of-N skeletons" hint="candidate plans; pick the structurally-best">
+              <NumberField value={cfg.best_of_n_skeletons} onCommit={(v) => set({ best_of_n_skeletons: v ?? 1 })} />
+            </Row>
+          </Group>
 
-              <Group
-                title="Sampling defaults"
-                cost="The default knobs every run starts from. Each run window (benchmark or build) shows these and can override them per run — the run's own strip wins for that run only."
-              >
-                {SAMPLING_KNOBS.map((k) => (
-                  <Row key={k.id} label={SAMPLING_ROW_LABEL[k.id]} hint={k.hint}>
-                    <NumberField
-                      value={samplingDefaults[k.id] ?? null}
-                      placeholder="default"
-                      onCommit={(v) => setSamplingDefault(k.id, v)}
-                    />
-                  </Row>
-                ))}
-                <Row
-                  label="Extra LM Studio request fields (JSON)"
-                  hint='Merged verbatim into every LM Studio request body — the passthrough for fields LM Studio honors per request. Note: per-model CUSTOM fields (like this model&apos;s thinking effort) are applied by LM Studio itself, not per request — set those in LM Studio&apos;s model settings on each host. Example: {"seed": 7}'
-                >
-                  <ExtraBodyField
-                    value={cfg.lm_extra_body}
-                    onCommit={(v) => set({ lm_extra_body: v })}
-                  />
-                </Row>
-              </Group>
+          <Group title="Verification" cost="goose already runs its full verification suite on every build — real end-to-end command checks, per-module import gates, contract-stub parsing, cross-module wiring. That is baked in and always on. Below is one EXTRA, optional check on top.">
+            <Row
+              label="Also flag dead code after the build"
+              hint="reads the finished code and flags modules that were built but nothing imports — they can never run. Model-free. OFF by default: it occasionally flags an intentional standalone script as dead. Turn it on for stricter builds where every module must be wired in."
+            >
+              <StudioSwitch aria-label="Also flag dead code after the build" checked={!!cfg.review} onChange={(v) => set({ review: v })} />
+            </Row>
+          </Group>
 
-              <Group title="Pool & planner">
-                <Row label="Planner model" hint="pick a live LM Studio model for planning/architecting">
-                  <ModelPicker
-                    value={cfg.planner_model ?? ''}
-                    options={fleet.models}
-                    online={fleet.online}
-                    onChange={(v) => set({ planner_model: v })}
-                  />
-                </Row>
-                <Row label="Planner also works" hint="planner node also runs worker tasks">
-                  <SwarmSwitch checked={!!cfg.planner_also_works} onChange={(v) => set({ planner_also_works: v })} />
-                </Row>
-                <Row label="Planner weight" hint="worker weight for the planner when it pitches in">
-                  <NumberField value={cfg.planner_weight} onCommit={(v) => set({ planner_weight: v ?? 1 })} />
-                </Row>
-                <Row label="Homogeneous models" hint="all workers same weights/tokenizer → planner splits more aggressively">
-                  <SwarmSwitch checked={!!cfg.homogeneous_models} onChange={(v) => set({ homogeneous_models: v })} />
-                </Row>
-                <Row label="Allow model load" hint="let the swarm spin up non-resident models (off = warm fleet only)">
-                  <SwarmSwitch checked={!!cfg.allow_model_load} onChange={(v) => set({ allow_model_load: v })} />
-                </Row>
-              </Group>
-            </>
-          )}
-        </CardContent>
-      </Card>
+          <Group
+            title="Sampling defaults"
+            cost="The default knobs every run starts from. Each run window (benchmark or build) shows these and can override them per run — the run's own strip wins for that run only."
+          >
+            {SAMPLING_KNOBS.map((k) => (
+              <Row key={k.id} label={SAMPLING_ROW_LABEL[k.id]} hint={k.hint}>
+                <NumberField
+                  value={samplingDefaults[k.id] ?? null}
+                  placeholder="default"
+                  onCommit={(v) => setSamplingDefault(k.id, v)}
+                />
+              </Row>
+            ))}
+            <Row
+              label="Extra LM Studio request fields (JSON)"
+              hint='Merged verbatim into every LM Studio request body — the passthrough for fields LM Studio honors per request. Note: per-model CUSTOM fields (like this model&apos;s thinking effort) are applied by LM Studio itself, not per request — set those in LM Studio&apos;s model settings on each host. Example: {"seed": 7}'
+            >
+              <ExtraBodyField
+                value={cfg.lm_extra_body}
+                onCommit={(v) => set({ lm_extra_body: v })}
+              />
+            </Row>
+          </Group>
+
+          <Group title="Pool & planner">
+            <Row label="Planner model" hint="pick a live LM Studio model for planning/architecting">
+              <ModelPicker
+                value={cfg.planner_model ?? ''}
+                options={fleet.models}
+                online={fleet.online}
+                onChange={(v) => set({ planner_model: v })}
+              />
+            </Row>
+            <Row label="Planner also works" hint="planner node also runs worker tasks">
+              <StudioSwitch aria-label="Planner also works" checked={!!cfg.planner_also_works} onChange={(v) => set({ planner_also_works: v })} />
+            </Row>
+            <Row label="Planner weight" hint="worker weight for the planner when it pitches in">
+              <NumberField value={cfg.planner_weight} onCommit={(v) => set({ planner_weight: v ?? 1 })} />
+            </Row>
+            <Row label="Homogeneous models" hint="all workers same weights/tokenizer → planner splits more aggressively">
+              <StudioSwitch aria-label="Homogeneous models" checked={!!cfg.homogeneous_models} onChange={(v) => set({ homogeneous_models: v })} />
+            </Row>
+            <Row label="Allow model load" hint="let the swarm spin up non-resident models (off = warm fleet only)">
+              <StudioSwitch aria-label="Allow model load" checked={!!cfg.allow_model_load} onChange={(v) => set({ allow_model_load: v })} />
+            </Row>
+          </Group>
+        </>
+      )}
     </section>
   );
 }
