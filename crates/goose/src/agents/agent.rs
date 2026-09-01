@@ -2936,8 +2936,23 @@ impl Agent {
                 // summarization is already joined and session metrics were persisted synchronously above,
                 // so a fresh get_session reads the current token count. Mirrors the reactive block below
                 // but continues the loop (no break) since this is proactive, not error recovery.
+                //
+                // VA-076 (the swarm's r6f, killed at OPEN 77m): a structured `final_output` collected
+                // on THIS tool-calling turn is taken at the loop top and ends the reply, but
+                // `exit_chat` is only set on the no-tools path — so a turn that ended by calling
+                // final_output with the session past the threshold (r6f: 107,199 tokens) ran a full
+                // summarization call over a conversation that was already over, on the same node,
+                // invisible to the caller. Read the tool's collected state: once it is set, the
+                // conversation has no next turn to compact for.
+                let structured_output_collected = self
+                    .final_output_tool
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|fot| fot.final_output.is_some());
                 if !did_recovery_compact_this_iteration
                     && !exit_chat
+                    && !structured_output_collected
                     && !is_token_cancelled(&cancel_token)
                 {
                     if let Ok(check_session) =
