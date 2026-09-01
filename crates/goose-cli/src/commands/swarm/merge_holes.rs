@@ -17,6 +17,12 @@
 //! back to `<SHARDS_DIR>/<module>/<shard>`), and a README "counts" by the same rule — it parses
 //! to a `ShardNote` (`parse_shard_note`); a README with none of the four fields is a missing
 //! handoff, as the dossier's `readmes_missing` already says.
+//!
+//! SPLIT v2 mechanism 2 (DESIGN-SPLIT-V2): a shard's completion verification (`shard_verify.rs`)
+//! leaves its findings in the shard's ledger row under `verify` — the names its pieces use that
+//! nothing defines, the pieces that do not parse. This module reads them back at the merger's
+//! dispatch and lists them as GAPS beside the holes: an undefined name is a definition the merge
+//! must supply or send out, exactly as an UNFINISHED item is.
 
 use std::path::Path;
 
@@ -35,6 +41,12 @@ pub(super) struct ShardFolderState {
     pub(super) note_present: bool,
     /// Every file in the folder that is not the README, sorted.
     pub(super) pieces: Vec<String>,
+    /// SPLIT v2 mechanism 2: names the shard's pieces use that nothing defines, as its completion
+    /// verification left them in its ledger row (`shard_verify::merge_into_row`); empty when the
+    /// row or the key is absent — the shard's own completion events said what happened there.
+    pub(super) undefined_refs: Vec<String>,
+    /// (piece, the parser's error line), from the same row.
+    pub(super) pieces_unparsed: Vec<(String, String)>,
 }
 
 pub(super) fn shard_folder_states(root: &Path, merger: &MergerOf) -> Vec<ShardFolderState> {
@@ -63,11 +75,32 @@ pub(super) fn shard_folder_states(root: &Path, merger: &MergerOf) -> Vec<ShardFo
                 .filter(|n| n != "README.md")
                 .collect();
             pieces.sort();
+            let verify = super::shard_verify::ledger_verify_row(root, id);
+            let undefined_refs: Vec<String> = match &verify {
+                Some(v) => super::string_list(&v["undefined_refs"]),
+                None => Vec::new(),
+            };
+            let pieces_unparsed: Vec<(String, String)> = match &verify {
+                Some(v) => v["pieces_unparsed"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| {
+                        Some((
+                            e["piece"].as_str()?.to_string(),
+                            e["error"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
             ShardFolderState {
                 id: id.clone(),
                 folder,
                 note_present,
                 pieces,
+                undefined_refs,
+                pieces_unparsed,
             }
         })
         .collect()
@@ -81,11 +114,18 @@ pub(super) fn shard_folder_states(root: &Path, merger: &MergerOf) -> Vec<ShardFo
 pub(super) struct DispatchGaps {
     pub(super) readmes_missing: Vec<String>,
     pub(super) pieces_absent: Vec<String>,
+    /// SPLIT v2 mechanism 2: (shard id, the names its pieces use that nothing defines).
+    pub(super) undefined_refs: Vec<(String, Vec<String>)>,
+    /// (shard id, piece, the parser's error line).
+    pub(super) pieces_unparsed: Vec<(String, String, String)>,
 }
 
 impl DispatchGaps {
     pub(super) fn is_empty(&self) -> bool {
-        self.readmes_missing.is_empty() && self.pieces_absent.is_empty()
+        self.readmes_missing.is_empty()
+            && self.pieces_absent.is_empty()
+            && self.undefined_refs.is_empty()
+            && self.pieces_unparsed.is_empty()
     }
 }
 
@@ -100,6 +140,19 @@ pub(super) fn dispatch_gaps(states: &[ShardFolderState]) -> DispatchGaps {
             .iter()
             .filter(|s| s.note_present && s.pieces.is_empty())
             .map(|s| s.id.clone())
+            .collect(),
+        undefined_refs: states
+            .iter()
+            .filter(|s| !s.undefined_refs.is_empty())
+            .map(|s| (s.id.clone(), s.undefined_refs.clone()))
+            .collect(),
+        pieces_unparsed: states
+            .iter()
+            .flat_map(|s| {
+                s.pieces_unparsed
+                    .iter()
+                    .map(move |(p, e)| (s.id.clone(), p.clone(), e.clone()))
+            })
             .collect(),
     }
 }
@@ -141,6 +194,28 @@ pub(super) fn gap_paragraph(module: &str, states: &[ShardFolderState]) -> Option
                 st.id, st.folder
             ));
         }
+        for (piece, error) in &st.pieces_unparsed {
+            s.push_str(&format!(
+                "  - shard `{}` (folder `{}`): piece `{piece}` does NOT parse — {error}. A piece \
+                 that does not parse delivers nothing: fix it in the merge or send it out.\n",
+                st.id, st.folder
+            ));
+        }
+        if !st.undefined_refs.is_empty() {
+            s.push_str(&format!(
+                "  - shard `{}` (folder `{}`): its pieces USE {} name(s) that no piece in the folder \
+                 defines, the declared interface does not export and its README's ASSUMES does not \
+                 name: {} — each is a definition the merge must supply, or send out.\n",
+                st.id,
+                st.folder,
+                st.undefined_refs.len(),
+                st.undefined_refs
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
     s.push_str(
         "Each line above is a GAP in this module, the same as an UNFINISHED item: fill it yourself \
@@ -168,6 +243,8 @@ pub(super) fn dispatch_incomplete_event(
             "task_id": task_id,
             "missing": gaps.readmes_missing,
             "pieces_absent": gaps.pieces_absent,
+            "undefined_refs": gaps.undefined_refs.iter().map(|(s, n)| serde_json::json!({"shard": s, "names": n})).collect::<Vec<_>>(),
+            "pieces_unparsed": gaps.pieces_unparsed.iter().map(|(s, p, e)| serde_json::json!({"shard": s, "piece": p, "error": e})).collect::<Vec<_>>(),
         })
     })
 }
@@ -414,6 +491,7 @@ mod tests {
         let gaps = DispatchGaps {
             readmes_missing: vec!["labels".into()],
             pieces_absent: vec!["pick".into()],
+            ..Default::default()
         };
         let ev = dispatch_incomplete_event("web-viz", "web-viz", &gaps).expect("holes → event");
         assert_eq!(ev["event"], "merge_dossier_incomplete");
@@ -475,6 +553,82 @@ mod tests {
             merge_hole_event(&root, &m, "web-viz", "MERGE_GAP: the picker\n").is_some(),
             "`picker` is not the token `pick`"
         );
+    }
+
+    /// SPLIT v2 mechanism 2: what a shard's completion verification left in its ledger row —
+    /// the names its pieces use that nothing defines, the piece that does not parse — reaches the
+    /// merger as GAPS by shard, in the paragraph and in the dispatch event; a shard whose `verify`
+    /// is clean adds nothing, and a shard with no row says nothing.
+    #[test]
+    fn a_shards_undefined_refs_and_unparsed_pieces_reach_the_merger_as_gaps() {
+        let root = tmp("verify-gaps");
+        for s in ["render", "pick", "labels"] {
+            let dir = root.join(format!(".swarm/shards/web-viz/{s}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("README.md"), NOTE).unwrap();
+            std::fs::write(dir.join(format!("{s}.js")), "x\n").unwrap();
+        }
+        let ledger = root.join(super::super::LEDGER_DIR);
+        std::fs::create_dir_all(&ledger).unwrap();
+        let key = |id: &str| ledger.join(format!("{}.json", super::super::activity_digest_key(id)));
+        std::fs::write(
+            key("render"),
+            serde_json::json!({"verify": {
+                "undefined_refs": ["drawBrush"],
+                "pieces_unparsed": [{"piece": "render.js", "error": "SyntaxError: Unexpected token"}],
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            key("pick"),
+            serde_json::json!({"verify": {"undefined_refs": [], "pieces_unparsed": []}})
+                .to_string(),
+        )
+        .unwrap();
+
+        let states = shard_folder_states(&root, &merger(&["render", "pick", "labels"]));
+        assert_eq!(states[0].undefined_refs, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            states[0].pieces_unparsed,
+            vec![(
+                "render.js".to_string(),
+                "SyntaxError: Unexpected token".to_string()
+            )]
+        );
+        assert!(states[1].undefined_refs.is_empty() && states[1].pieces_unparsed.is_empty());
+        assert!(
+            states[2].undefined_refs.is_empty(),
+            "no row → nothing to say"
+        );
+        let gaps = dispatch_gaps(&states);
+        assert!(gaps.readmes_missing.is_empty() && gaps.pieces_absent.is_empty());
+        assert_eq!(
+            gaps.undefined_refs,
+            vec![("render".to_string(), vec!["drawBrush".to_string()])]
+        );
+        assert_eq!(gaps.pieces_unparsed.len(), 1);
+        let p = gap_paragraph("web-viz", &states).expect("verification gaps → a paragraph");
+        assert!(
+            p.contains("shard `render`") && p.contains("`drawBrush`"),
+            "{p}"
+        );
+        assert!(
+            p.contains("does NOT parse") && p.contains("render.js"),
+            "{p}"
+        );
+        assert!(
+            !p.contains("shard `pick`") && !p.contains("shard `labels`"),
+            "{p}"
+        );
+        let ev = dispatch_incomplete_event("web-viz", "web-viz", &gaps).expect("said as an event");
+        assert_eq!(ev["undefined_refs"][0]["shard"], "render");
+        assert_eq!(
+            ev["undefined_refs"][0]["names"],
+            serde_json::json!(["drawBrush"])
+        );
+        assert_eq!(ev["pieces_unparsed"][0]["piece"], "render.js");
+        assert_eq!(ev["missing"], serde_json::json!([]));
     }
 
     /// No MERGE.md at all: an empty shard is still a hole (and the event says the README is absent);
