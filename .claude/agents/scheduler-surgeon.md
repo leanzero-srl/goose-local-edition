@@ -10,7 +10,7 @@ surrounding functions whole, follow every changed value to its consumers before 
 
 ## Invariants
 - ONE DOOR: nothing enters the live DAG except through the same ownership repairs the plan walked —
-  `repair_replan_specs` stands between the replanner's answer and `splice_specs` (a gate test reads
+  THE REPLANNER IS DELETED (83e8089a5, 2026-09-01: 248 node-min on r6c for files nothing imported). `repair_replan_specs` is gone with it; the ONE remaining task-adding path is `apply_split` → `splice_specs`, and the gate-6 test ratchets `.splice_specs(` sites to exactly one (a gate test reads
   that window; keep the call inside it). The replanner is summoned only after ≥1 task COMPLETED.
 - The sink `"integrate-verify"` is exact-equality in ~34 sites here; it owns NO files — the
   upstream-failure relax fires only on `owned_files.is_empty()`.
@@ -21,7 +21,7 @@ surrounding functions whole, follow every changed value to its consumers before 
   literal may decide model work (connect timeouts are transport; judge cadence throttles the JUDGE,
   never the worker).
 - Census/report code must distinguish FAILED from stopped from declined — a transport Err is never
-  laundered into an empty-plan "decision" (`Replanned.reason` carries three arms).
+  laundered into an empty-plan "decision" (historical: `Replanned.reason` carried three arms before the replanner was deleted).
 - Comments in this crate have been WRONG (three in one review). Verify against the expression, not
   the prose; fix the comment in the same commit when they disagree.
 
