@@ -10,7 +10,8 @@
 //! - connect failure (mesh join) → back to LoggedIn, mesh torn down per-pid.
 //! - logout while merely LoggedIn → LoggedOut, identity cleared.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -46,8 +47,17 @@ struct MeshCalls {
     shutdown_count: u32,
 }
 
+/// Runtime knobs the tests flip on the fake mesh mid-flight (all shared with the
+/// harness). Default: a healthy daemon.
+#[derive(Default)]
+struct MeshScript {
+    /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
+    daemon_dead: AtomicBool,
+}
+
 struct FakeMesh {
     calls: Arc<StdMutex<MeshCalls>>,
+    script: Arc<MeshScript>,
     join_fails: bool,
     status: MeshStatus,
 }
@@ -69,6 +79,12 @@ impl Mesh for FakeMesh {
         }
     }
     async fn status(&self) -> Result<MeshStatus, MeshError> {
+        if self.script.daemon_dead.load(Ordering::SeqCst) {
+            return Err(MeshError::DaemonExited {
+                status: "exit status: 1".to_string(),
+                stderr_tail: "fake tailscaled crashed".to_string(),
+            });
+        }
         Ok(self.status.clone())
     }
     async fn logout(&self) -> Result<(), MeshError> {
@@ -82,6 +98,7 @@ impl Mesh for FakeMesh {
 
 struct FakeFactory {
     calls: Arc<StdMutex<MeshCalls>>,
+    script: Arc<MeshScript>,
     start_count: Arc<AtomicU32>,
     join_fails: bool,
     status: MeshStatus,
@@ -93,9 +110,28 @@ impl MeshFactory for FakeFactory {
         self.start_count.fetch_add(1, Ordering::SeqCst);
         Ok(Arc::new(FakeMesh {
             calls: self.calls.clone(),
+            script: self.script.clone(),
             join_fails: self.join_fails,
             status: self.status.clone(),
         }))
+    }
+}
+
+async fn wait_until<F, Fut>(what: &str, mut probe: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if probe().await {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -224,6 +260,7 @@ struct Harness {
     identity_path: std::path::PathBuf,
     state_dir: std::path::PathBuf,
     calls: Arc<StdMutex<MeshCalls>>,
+    script: Arc<MeshScript>,
     start_count: Arc<AtomicU32>,
 }
 
@@ -236,6 +273,7 @@ impl Harness {
             identity_path,
             state_dir,
             calls: Arc::new(StdMutex::new(MeshCalls::default())),
+            script: Arc::new(MeshScript::default()),
             start_count: Arc::new(AtomicU32::new(0)),
         }
     }
@@ -269,6 +307,7 @@ impl Harness {
         };
         let factory = Arc::new(FakeFactory {
             calls: self.calls.clone(),
+            script: self.script.clone(),
             start_count: self.start_count.clone(),
             join_fails,
             status: connected_status(),
@@ -516,6 +555,119 @@ async fn node_token_is_none_until_connected_then_the_secret_derived_value() {
         manager.node_token().await.is_none(),
         "gone with the connection"
     );
+}
+
+/// FH#1: the supervised tailscaled dies under a live connection. The poll loop must
+/// drop the connection per-pid, keep the credential, and return auth to `LoggedIn` so
+/// `connect()` re-arms — never a calm `Connected`/`Stopped`, never a wiped identity.
+#[tokio::test]
+async fn dead_daemon_drops_to_logged_in_keeps_identity_and_re_arms() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+    assert!(matches!(
+        manager.status().await.auth,
+        AuthState::Connected { .. }
+    ));
+
+    h.script.daemon_dead.store(true, Ordering::SeqCst);
+
+    // Observed through `active_registry()` only — it never polls the mesh, so the
+    // demotion seen here is the POLL LOOP's, not a status read's.
+    wait_until("the poll loop to drop the dead connection", || {
+        let manager = &manager;
+        async move { manager.active_registry().await.is_none() }
+    })
+    .await;
+
+    let state = manager.status().await;
+    match &state.auth {
+        AuthState::LoggedIn { email } => assert_eq!(email, "a@example.com"),
+        other => panic!("expected LoggedIn after the daemon died, got {other:?}"),
+    }
+    let err = state.last_error.expect("the death is recorded, not erased");
+    assert!(
+        err.contains("tailscaled exited") && err.contains("fake tailscaled crashed"),
+        "last_error carries the daemon's exit + stderr tail: {err}"
+    );
+    assert!(state.mesh.is_none());
+    assert_eq!(state.node_count, 0);
+    assert!(
+        h.identity_present(),
+        "a daemon crash never clears the credential"
+    );
+    assert!(manager.node_token().await.is_none());
+    {
+        let calls = h.calls.lock().unwrap();
+        assert_eq!(calls.shutdown_count, 1, "torn down per-pid");
+        assert_eq!(
+            calls.logout_count, 0,
+            "no `tailscale logout` against a dead daemon, and no account logout"
+        );
+    }
+
+    // Re-arm: the same identity connects again once the daemon can come back.
+    h.script.daemon_dead.store(false, Ordering::SeqCst);
+    manager
+        .connect()
+        .await
+        .expect("re-connects with the kept identity");
+    assert!(matches!(
+        manager.status().await.auth,
+        AuthState::Connected { .. }
+    ));
+    assert_eq!(
+        h.start_count.load(Ordering::SeqCst),
+        2,
+        "a fresh daemon was started"
+    );
+    manager.logout(false).await.unwrap();
+}
+
+/// The same death seen first by a `status()` read (the UI's poll) instead of the loop:
+/// that read demotes in place and reports the demoted state, never `Connected` over a
+/// dead daemon.
+#[tokio::test]
+async fn status_read_that_finds_the_daemon_dead_demotes_in_place() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    h.script.daemon_dead.store(true, Ordering::SeqCst);
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "the very read that saw the death reports LoggedIn, got {:?}",
+        state.auth
+    );
+    assert!(state.mesh.is_none());
+    assert_eq!(state.node_count, 0);
+    assert!(state
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("tailscaled exited")));
+    assert!(h.identity_present());
+    assert!(manager.active_registry().await.is_none());
 }
 
 #[tokio::test]
