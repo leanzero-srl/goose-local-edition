@@ -77,6 +77,22 @@ the supervisor" register — measurably COSTS: 51.6 / 45.3 against 53.5 for no r
 **Rule now:** ownership and duty lines, not identity. `kind_prompt` SUBTRACTS rules; it never adds a
 persona. Instruction density is the mechanism that pays.
 
+### LEARN & REFLECT — the per-stack persona skill (deleted 2026-09-01, VA-016)
+**Tried:** after a run that PASSED, one model call reflected on the build and wrote
+`~/.config/goose/skills/stack-<key>/SKILL.md`; the next run of the same stack injected it on the
+advisory channel (`persona_loaded`). Keyed by `detect_stack_key`, lessons harvested from the run's
+own log.
+**Measured (r5, r6c — the only two runs that wrote one):** `persona_learned … lessons: 0` both times —
+the harvester filtered `event == "judge_verdict"`, which no run.jsonl has ever carried (the engine
+emits `judge_look` / `judge_nudge`); `stack_key: "angular"` for a Python backend + vanilla-JS app (the
+spec's physics adjective); r6c LOADED r5's 2,729-byte skill at 07:29:30 and scored 0.1420 against r5's
+0.3609; r6d had the file on disk and never loaded it. Cost: 3.6 min (r5) / 7 min (r6c) of tail after the
+verdict, on the fleet's first model.
+**Rule now (gate 9 / works-not-appears):** zero happy paths in every measured run → deleted, not fixed
+(persona.rs, `reflect_on_success`, the read/snapshot/write halves, the `reflect` lane; `persona`
+survives as a retired config field). A cross-run memory returns only with a measurement that says what
+it buys and which step consumes it.
+
 ### Killing a spiralling call
 **Tried:** the judge ends an unproductive call; re-stream on drift.
 **Measured:** every one of 13 nudges in one run was a re-stream that discarded the call's work — one

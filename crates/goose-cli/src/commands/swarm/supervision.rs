@@ -57,12 +57,6 @@ pub(super) const ASK_ANSWER_LANE: &str = "ask-answer";
 /// The pillars distillation's lane (`distill_pillars`) — one planner call per run, at plan time.
 pub(super) const PILLARS_LANE: &str = "pillars";
 
-/// The stack-skill reflection's lane (`reflect_on_success`) — one call per successful run, at
-/// the very end. Exact-match keys (`pillars`, `reflect`, `ask-answer`) carry the same accepted
-/// hazard as the prefix classes below: a model-chosen task id could collide; live plans name
-/// tasks after modules and none of these three is a module name any measured plan has produced.
-pub(super) const REFLECT_LANE: &str = "reflect";
-
 /// Which supervision class a lane key belongs to — None for every build/planner lane. This is the
 /// ONE derivation behind both consumers: the shared digest builders stamp `"supervision": true`
 /// from it (never hand-set per write site), and `run_agent_in_inner` disarms the omni judge and
@@ -97,9 +91,6 @@ pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
     if key == PILLARS_LANE {
         return Some("pillars");
     }
-    if key == REFLECT_LANE {
-        return Some("reflect");
-    }
     None
 }
 
@@ -127,7 +118,6 @@ mod tests {
         assert_eq!(supervision_lane_kind(&verify_lane_key(3)), Some("verify"));
         assert_eq!(supervision_lane_kind(ASK_ANSWER_LANE), Some("ask"));
         assert_eq!(supervision_lane_kind(PILLARS_LANE), Some("pillars"));
-        assert_eq!(supervision_lane_kind(REFLECT_LANE), Some("reflect"));
         for worker in [
             "test-store-core",
             "review",
@@ -793,7 +783,7 @@ impl std::fmt::Display for SupervisedReplyError {
 }
 
 /// The ONE door a small-turn supervision reply (judge probe, prereview, tail review, finding
-/// verify, reflect, ask-answer) walks before any parser sees it:
+/// verify, ask-answer) walks before any parser sees it:
 ///   1. the A-2 error-closer reclassification (absorbs the old `supervision_reply`),
 ///   2. a trailing `MAX_TURNS_MESSAGE` is STRIPPED — r6c (live, run.jsonl seq 312) measured a real
 ///      DRIFTING verdict whose `next` ended with the filler as its own trailing line, one drift-hold

@@ -72,6 +72,12 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
             json!(cfg.dynamic_replan),
         ),
         "max_replans": row("same mechanism", json!(cfg.max_replans)),
+        "persona": row(
+            "LEARN/persona is deleted (VA-016): lessons were structurally 0 on both runs that wrote a \
+             skill (persona.rs harvested `judge_verdict`, an event no run.jsonl carries) and the stack \
+             key read `angular` for a Python + vanilla-JS app",
+            gate("GOOSE_SWARM_PERSONA", cfg.persona),
+        ),
         "fan_verify": row(
             "fan_verify_split is #[cfg(test)] since P1-4",
             gate("GOOSE_SWARM_FAN_VERIFY", cfg.fan_verify),
@@ -132,6 +138,7 @@ mod tests {
             "max_research_questions",
             "dynamic_replan",
             "max_replans",
+            "persona",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -151,6 +158,7 @@ mod tests {
         assert_eq!(clean["split_inherit_spec"]["configured"], Value::Null);
         assert_eq!(clean["dynamic_replan"]["configured"], Value::Null);
         assert_eq!(clean["max_replans"]["configured"], Value::Null);
+        assert_eq!(clean["persona"]["configured"], json!(false));
 
         cfg.split_fat = true;
         cfg.fan_verify = true;
