@@ -2231,8 +2231,9 @@ struct SplitRoleDispatcher {
     seen: Arc<Mutex<Vec<SplitRun>>>,
     seq: AtomicUsize,
     terminal: HashSet<String>,
-    /// Follow-ups the MERGER's attempt-0 completion carries (its `MERGE_GAP:` lines as specs).
-    merger_gaps: Mutex<Vec<TaskSpec>>,
+    /// Follow-ups the MERGER's completions carry, one batch per attempt in order (its `MERGE_GAP:`
+    /// lines as specs); an attempt with no batch left completes plain.
+    merger_gaps: Mutex<std::collections::VecDeque<Vec<TaskSpec>>>,
 }
 
 #[async_trait]
@@ -2244,8 +2245,10 @@ impl TaskDispatcher for SplitRoleDispatcher {
             Err(DispatchError::Terminal("shard lane died".into()))
         } else {
             let mut out: TaskRunOutput = format!("output-of-{}", req.task_id).into();
-            if req.merger_of.is_some() && req.attempt == 0 {
-                out.follow_ups = std::mem::take(&mut *self.merger_gaps.lock().unwrap());
+            if req.merger_of.is_some() {
+                if let Some(batch) = self.merger_gaps.lock().unwrap().pop_front() {
+                    out.follow_ups = batch;
+                }
             }
             Ok(out)
         };
@@ -2288,7 +2291,7 @@ async fn a_failed_shard_relaxes_its_merger_but_cascades_a_file_owning_dependent(
         seen: seen.clone(),
         seq: AtomicUsize::new(0),
         terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
-        merger_gaps: Mutex::new(Vec::new()),
+        merger_gaps: Mutex::new(std::collections::VecDeque::new()),
     });
     let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
@@ -2366,10 +2369,10 @@ async fn a_failed_shards_gap_is_accepted_not_refused_as_repeated() {
         seen: seen.clone(),
         seq: AtomicUsize::new(0),
         terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
-        merger_gaps: Mutex::new(vec![
+        merger_gaps: Mutex::new(std::collections::VecDeque::from([vec![
             gap("gap-pick-buffer", "pick buffer"),
             gap("gap-camera-inertia", "camera inertia"),
-        ]),
+        ]])),
     });
     let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
     let report = sched.run(dag, disp, String::new()).await.unwrap();
@@ -2414,5 +2417,87 @@ async fn a_failed_shards_gap_is_accepted_not_refused_as_repeated() {
         merger_attempts,
         vec![0, 1],
         "the merger ran once, sent the gap out, and ran again after it landed"
+    );
+}
+
+/// VA-072 (the refuter's correction to VA-064): gap ids are fresh per lap, so a gap shard that
+/// FAILED relaxed its merger (rule 1), whose brief then asked for the same piece again; with
+/// `landed` meaning only Done, the identical gap was accepted under a new id, failed again, and
+/// cycled forever. A gap the door already sent out counts as landed whatever its state — the
+/// identical request is refused `merge_gap_repeated{landed_as, state: "failed"}` — while a
+/// DIFFERENT gap text is still accepted. A progress rule, not a count.
+#[tokio::test]
+async fn a_failed_gap_shards_identical_request_is_refused_a_different_one_accepted() {
+    let specs = vec![
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["camera-inertia"]),
+        spec(
+            "integrate-verify",
+            &["viz3d-engine-camera-inertia", "viz3d-engine"],
+            &[],
+        ),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let gap = |shard: &str, words: &str| {
+        let mut g = viz_shard(
+            shard,
+            &format!("MERGE GAP sent out by the merger of `viz3d-engine`: {words}"),
+        );
+        g.deps.clear();
+        g
+    };
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(EventLog::default());
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-gap-1".to_string()]),
+        merger_gaps: Mutex::new(std::collections::VecDeque::from([
+            vec![gap("gap-1", "pick buffer")],
+            vec![gap("gap-2", "pick buffer"), gap("gap-3", "labels culling")],
+        ])),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let accepted: Vec<String> = events
+        .named("merge_gap")
+        .iter()
+        .map(|e| e["shard"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        accepted,
+        vec![
+            "viz3d-engine-gap-1".to_string(),
+            "viz3d-engine-gap-3".to_string()
+        ],
+        "the first request and the DIFFERENT text enter; the identical re-send does not"
+    );
+    let repeated = events.named("merge_gap_repeated");
+    assert_eq!(repeated.len(), 1, "{repeated:?}");
+    assert_eq!(repeated[0]["gap"], "viz3d-engine-gap-2");
+    assert_eq!(repeated[0]["landed_as"], "viz3d-engine-gap-1");
+    assert_eq!(
+        repeated[0]["state"], "failed",
+        "the reader sees it was a FAILED gap, not a done one"
+    );
+    assert_eq!(events.named("merge_rearmed").len(), 2);
+    assert_eq!(report.failed, vec!["viz3d-engine-gap-1".to_string()]);
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("viz3d-engine-gap-3")
+            && done.contains("viz3d-engine")
+            && done.contains("integrate-verify"),
+        "{done:?}"
+    );
+    let seen = seen.lock().unwrap();
+    let merger_attempts: Vec<u32> = seen
+        .iter()
+        .filter(|r| r.task == "viz3d-engine")
+        .map(|r| r.attempt)
+        .collect();
+    assert_eq!(
+        merger_attempts,
+        vec![0, 1, 2],
+        "sent out, relaxed past the failed gap, re-armed on the new gap, completed — no lap on the failed text"
     );
 }
