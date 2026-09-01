@@ -963,6 +963,34 @@ const getActiveExternalBackend = (settings: Settings): ExternalBackend | null =>
   return null;
 };
 
+// `swarm.endpoint` from goose's config.yaml, for the renderer CSP (U-M3): the host the engine builds
+// against must be reachable from the fleet probes, so its origin joins connect-src (csp.ts). Read from
+// the same ~/.config/goose tree BENCH_DIR uses; re-parsed only when the file's mtime moves, since the
+// CSP is recomputed per response. Absent file/key → null → the defaults, which already cover loopback.
+const gooseConfigYamlPath = path.join(os.homedir(), '.config', 'goose', 'config.yaml');
+let swarmEndpointForCsp: { mtimeMs: number; endpoint: string | null } | null = null;
+const readSwarmEndpointForCsp = (): string | null => {
+  let mtimeMs: number;
+  try {
+    mtimeMs = fsSync.statSync(gooseConfigYamlPath).mtimeMs;
+  } catch {
+    return null;
+  }
+  if (swarmEndpointForCsp?.mtimeMs === mtimeMs) return swarmEndpointForCsp.endpoint;
+  let endpoint: string | null = null;
+  try {
+    const doc = yaml.parse(fsSync.readFileSync(gooseConfigYamlPath, 'utf8')) as {
+      swarm?: { endpoint?: unknown };
+    } | null;
+    const raw = doc?.swarm?.endpoint;
+    endpoint = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  } catch (err) {
+    console.error('[csp] config.yaml unreadable; swarm endpoint not added to connect-src:', err);
+  }
+  swarmEndpointForCsp = { mtimeMs, endpoint };
+  return endpoint;
+};
+
 const getExternalBackendForCsp = (settings: Settings) => {
   const envUrl = getExternalBackendUrlFromEnv();
   if (!envUrl) {
@@ -4238,7 +4266,10 @@ async function appMain() {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': buildCSP(getExternalBackendForCsp(currentSettings)),
+        'Content-Security-Policy': buildCSP(
+          getExternalBackendForCsp(currentSettings),
+          readSwarmEndpointForCsp()
+        ),
       },
     });
   });

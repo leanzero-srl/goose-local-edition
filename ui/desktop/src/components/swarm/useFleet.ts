@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { acpReadConfig } from '../../acp/config';
+import { DEFAULTS, type SwarmConfig } from '../settings/swarm/golden';
 import { NodeLane, NodeStatus } from './FanInCard';
 
 /**
@@ -6,15 +8,50 @@ import { NodeLane, NodeStatus } from './FanInCard';
  * fan-in reflects the REAL resident nodes, never hardcoded sample data. This mirrors what the CLI swarm
  * does with `lms ps` (auto-pool from resident models), but from the desktop over LM Studio's native
  * `/api/v0/models` endpoint (returns each model's id, arch, state).
+ *
+ * WHICH HOST (U-M3, branch review 2026-09-01): the engine talks to `swarm.endpoint` from config.yaml
+ * (swarm.rs sets LMSTUDIO_HOST from it), while every desktop probe was pinned to 127.0.0.1:1234 — so a
+ * fleet configured on another machine read "offline" here while the engine was building on it, and the
+ * settings card named one host in its message and probed another. Every URL below is DERIVED from the
+ * configured endpoint, which is a HOST BASE (`http://localhost:1234`, golden.ts DEFAULTS — the engine's
+ * baked default_endpoint); main adds that origin to the renderer CSP (csp.ts) so a non-loopback host is
+ * reachable at all.
  */
 
-// Use 127.0.0.1, not localhost: the app CSP allows `connect-src http://127.0.0.1:*` but treats
-// `localhost` as a different (blocked) origin. Same LM Studio server, either way.
-const DEFAULT_ENDPOINT = 'http://127.0.0.1:1234/api/v0/models';
+/** The engine's own default host base — what an absent `swarm.endpoint` means, not a UI fallback. */
+export const DEFAULT_SWARM_ENDPOINT: string = DEFAULTS.endpoint ?? 'http://localhost:1234';
 
-/** Rewrite localhost -> 127.0.0.1 so the fetch is not blocked by the app CSP. */
-function cspSafe(url: string): string {
-  return url.replace('localhost', '127.0.0.1');
+/** The endpoint's http(s) origin. Throws on anything else so a probe against a bad value fails loudly
+ *  (offline, naming the configured text) rather than probing some other host — `new URL('localhost:1234')`
+ *  parses as scheme `localhost:` with origin `null`, which would otherwise become `null/api/v0/models`. */
+function swarmOriginOf(endpoint: string): string {
+  const url = new URL(endpoint);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`swarm endpoint is not an http(s) host base: ${endpoint}`);
+  }
+  return url.origin;
+}
+
+/** `<origin>/api/v0/models` from a host base. */
+export function modelsUrl(endpoint: string): string {
+  return `${swarmOriginOf(endpoint)}/api/v0/models`;
+}
+
+/** `<origin>/v1/chat/completions` from a host base — LM Studio's OpenAI-compatible chat route. */
+export function chatCompletionsUrl(endpoint: string): string {
+  return `${swarmOriginOf(endpoint)}/v1/chat/completions`;
+}
+
+/** The configured `swarm.endpoint`, or the engine's default when the key is absent. An unreadable
+ *  config answers the default too, because that is exactly what the engine runs with in that case. */
+export async function resolveSwarmEndpoint(): Promise<string> {
+  try {
+    const raw = (await acpReadConfig('swarm', false)) as SwarmConfig | null;
+    const ep = typeof raw?.endpoint === 'string' ? raw.endpoint.trim() : '';
+    return ep || DEFAULT_SWARM_ENDPOINT;
+  } catch {
+    return DEFAULT_SWARM_ENDPOINT;
+  }
 }
 
 export interface FleetState {
@@ -24,6 +61,8 @@ export interface FleetState {
   models: string[];
   online: boolean;
   loading: boolean;
+  /** The HOST BASE being probed — the same text the settings card shows, so "offline at X" is X. Empty
+   *  until the configured endpoint has been resolved (or while discovery is disabled). */
   endpoint: string;
 }
 
@@ -32,10 +71,12 @@ export interface FleetState {
  * `loaded_context_length` (what the model was actually loaded with) and `max_context_length` (its ceiling).
  * Returns the MIN across loaded non-embedding models — the honest ceiling the whole fleet can rely on — or
  * null if the endpoint is unreachable or reports no usable length (caller then keeps its own default).
+ * Without an explicit host base it probes the CONFIGURED one — the host the engine actually runs against.
  */
-export async function fetchSwarmContextLimit(endpoint = DEFAULT_ENDPOINT): Promise<number | null> {
+export async function fetchSwarmContextLimit(endpoint?: string): Promise<number | null> {
   try {
-    const res = await fetchWithTimeout(cspSafe(endpoint), 3000);
+    const base = endpoint ?? (await resolveSwarmEndpoint());
+    const res = await fetchWithTimeout(modelsUrl(base), 3000);
     const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
     const loaded = (data.data ?? []).filter(
       (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
@@ -110,30 +151,51 @@ async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
 
 /**
  * Poll the LM Link endpoint for resident models and map them to fan-in lanes.
+ * `endpoint` is the HOST BASE (`swarm.endpoint`); callers holding the swarm config pass `cfg.endpoint`,
+ * the rest pass nothing and the configured value is resolved here — no discovery fetch goes out before
+ * it is known, so the first probe is never against a host the engine does not use.
  * `online: false` means the endpoint is unreachable (LM Studio not running) — the caller shows an
  * explicit offline state rather than fabricating data.
  */
-export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT, enabled = true): FleetState {
+export function useFleet(pollMs = 5000, endpoint?: string, enabled = true): FleetState {
+  const [resolved, setResolved] = useState<string | null>(endpoint ?? null);
+  useEffect(() => {
+    if (endpoint) {
+      setResolved(endpoint);
+      return undefined;
+    }
+    if (!enabled) return undefined;
+    let alive = true;
+    void resolveSwarmEndpoint().then((ep) => {
+      if (alive) setResolved(ep);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [endpoint, enabled]);
+
   const [state, setState] = useState<FleetState>({
     lanes: [],
     models: [],
     online: false,
     loading: true,
-    endpoint,
+    endpoint: resolved ?? '',
   });
 
   useEffect(() => {
     if (!enabled) {
       // LM Studio surfaces disabled (showLmStudioFleet, default off): no discovery fetches, and the
       // state reads exactly like an unreachable endpoint — no fabricated rows.
-      setState({ lanes: [], models: [], online: false, loading: false, endpoint });
+      setState({ lanes: [], models: [], online: false, loading: false, endpoint: '' });
       return undefined;
     }
+    if (!resolved) return undefined;
+    const base = resolved;
     let alive = true;
 
     const tick = async () => {
       try {
-        const res = await fetchWithTimeout(cspSafe(endpoint), 3000);
+        const res = await fetchWithTimeout(modelsUrl(base), 3000);
         const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
         const loaded = (data.data ?? []).filter(
           (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
@@ -148,9 +210,9 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT, enabled = t
             status: 'done' as NodeStatus, // resident + loaded = ready to serve
           };
         });
-        if (alive) setState({ lanes, models, online: true, loading: false, endpoint });
+        if (alive) setState({ lanes, models, online: true, loading: false, endpoint: base });
       } catch {
-        if (alive) setState({ lanes: [], models: [], online: false, loading: false, endpoint });
+        if (alive) setState({ lanes: [], models: [], online: false, loading: false, endpoint: base });
       }
     };
 
@@ -160,7 +222,7 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT, enabled = t
       alive = false;
       clearInterval(iv);
     };
-  }, [pollMs, endpoint, enabled]);
+  }, [pollMs, resolved, enabled]);
 
   return state;
 }

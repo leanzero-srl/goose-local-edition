@@ -96,8 +96,9 @@ export default function SwarmNodesSection({
   // 'showLmStudioFleet' setting is on (default off) — same switch as every other LM Studio surface.
   // Configured rows are config truth and always render.
   const lmStudioVisible = useLmStudioFleetVisible();
-  const fleet = useFleet(5000, undefined, lmStudioVisible);
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
+  // Discovery probes the configured `swarm.endpoint` — the host the engine builds against.
+  const fleet = useFleet(5000, cfg.endpoint, lmStudioVisible);
 
   const reloadSwarm = useCallback(async () => {
     try {

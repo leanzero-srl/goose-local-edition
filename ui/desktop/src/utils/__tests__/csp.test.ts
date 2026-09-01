@@ -146,3 +146,39 @@ describe('buildCSP', () => {
     expect(csp).toContain("object-src 'none'");
   });
 });
+
+/**
+ * U-M3 (branch review, 2026-09-01): the engine builds against `swarm.endpoint`, but connect-src named
+ * only loopback + github, so a fleet on another machine was unreachable from the renderer no matter
+ * what useFleet probed — and upgrade-insecure-requests would have rewritten an http LAN probe to https.
+ */
+describe('the swarm endpoint origin', () => {
+  it('is added to connect-src, once, as an origin', () => {
+    const result = buildConnectSrc(undefined, 'http://192.168.8.220:1234');
+    expect(result.split(' ').filter((s) => s === 'http://192.168.8.220:1234')).toHaveLength(1);
+  });
+
+  it('adds nothing for loopback, an absent key, or junk — the defaults already cover loopback', () => {
+    const base = buildConnectSrc(undefined);
+    expect(buildConnectSrc(undefined, 'http://localhost:1234')).toBe(base);
+    expect(buildConnectSrc(undefined, undefined)).toBe(base);
+    expect(buildConnectSrc(undefined, '')).toBe(base);
+    expect(buildConnectSrc(undefined, 'not a url')).toBe(base);
+    expect(buildConnectSrc(undefined, 'ftp://x:1')).toBe(base);
+  });
+
+  it('skips upgrade-insecure-requests for a plain-http swarm host off loopback, keeps it on loopback', () => {
+    expect(shouldUpgradeInsecureRequests(undefined, 'http://192.168.8.220:1234')).toBe(false);
+    expect(shouldUpgradeInsecureRequests(undefined, 'http://localhost:1234')).toBe(true);
+    expect(shouldUpgradeInsecureRequests(undefined, 'http://127.0.0.1:1234')).toBe(true);
+    expect(shouldUpgradeInsecureRequests(undefined, 'https://lms.company.net')).toBe(true);
+  });
+
+  it('lands in the full header the same way the external backend does', () => {
+    const csp = buildCSP(undefined, 'http://192.168.8.220:1234');
+    expect(csp).toContain('http://192.168.8.220:1234');
+    expect(csp).not.toContain('upgrade-insecure-requests');
+    const loop = buildCSP(undefined, 'http://localhost:1234');
+    expect(loop).toContain('upgrade-insecure-requests');
+  });
+});

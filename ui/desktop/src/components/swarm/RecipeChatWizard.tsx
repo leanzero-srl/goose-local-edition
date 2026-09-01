@@ -3,7 +3,7 @@ import { X, Send, Loader2, Check, Sparkles, Pencil, ChevronDown } from 'lucide-r
 import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { useFleet } from './useFleet';
+import { chatCompletionsUrl, useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
@@ -15,13 +15,13 @@ import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
  * edits, and saves. This is the "work with the swarm to build it" path, distinct from the by-hand form and
  * from the build orchestrator (which produces apps, not recipes, and cannot hold a conversation).
  *
- * The model is driven directly over LM Studio's OpenAI-compatible endpoint on 127.0.0.1 (the app CSP allows
- * that origin; `localhost` is blocked). Weak local models don't always follow a protocol, so there is always
- * a "Draft the recipe now" escape hatch that forces the JSON, and the parsed draft is fully editable.
+ * The model is driven directly over LM Studio's OpenAI-compatible chat route on the CONFIGURED swarm
+ * endpoint (`chatCompletionsUrl(fleet.endpoint)` — the same host the engine and the fleet probe use; main
+ * puts its origin in the CSP). Weak local models don't always follow a protocol, so there is always a
+ * "Draft the recipe now" escape hatch that forces the JSON, and the parsed draft is fully editable.
  */
 
 const AZURE = SWARM_STATUS.action;
-const CHAT_URL = 'http://127.0.0.1:1234/v1/chat/completions';
 
 // The conversation is an INTERVIEW only — the model asks questions and never writes the recipe or any
 // JSON. The recipe itself is produced by a separate, schema-constrained call (draftRecipe) so a weak local
@@ -141,7 +141,7 @@ export function RecipeChatWizard({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      const res = await fetch(CHAT_URL, {
+      const res = await fetch(chatCompletionsUrl(fleet.endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
