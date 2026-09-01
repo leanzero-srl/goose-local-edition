@@ -52,7 +52,8 @@ README, never the final file) and S4 `5ca441ec9` (the merger: code builds the do
 checks after) are in — the independent refuter of S4 found its after-check was a text-mention test that would green a
 wrong file, non-JS/Python pieces unchecked, and the generic prompt frame pushing the merger to retype; all of it
 (S12) lands before the build; the repair pipeline landed — S5a-c `b2b71e4b9` (one shard per finding, three-way
-merge, no round barrier, immediate re-shard on a non-owned handoff) and S5d+S8 `66d2551a8` (FIXED-without-an-edit
+merge, no round barrier, immediate re-shard on a non-owned handoff; its wave DRIVER was refuted — index bookkeeping
+lost the second parallel fix — and is being corrected as S13 before the build) and S5d+S8 `66d2551a8` (FIXED-without-an-edit
 named, NOT-REAL-without-a-replay keeps the finding open, the gate's boot command and curl in the evidence); the
 deletions (S6) and the refuters' corrections are being written: fatness measured as spec sections per owned file → a PATCH request to split THAT task;
 each shard works in its OWN temp folder producing PIECES (functions, sections) per its split plus a structured
