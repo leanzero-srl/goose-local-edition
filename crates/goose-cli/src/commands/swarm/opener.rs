@@ -47,7 +47,27 @@ pub(crate) struct OpenSlice {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct OpenOutput {
     pub(super) slices: Vec<OpenSlice>,
-    pub(super) open_decisions: Vec<String>,
+    pub(super) open_decisions: Vec<OpenDecision>,
+}
+
+/// One QUALIFIED open decision: `line` is its rendered identity everywhere downstream (the ASK
+/// question text, the user's `Q:` match, the fan's question, the briefs); `options` are the two
+/// or more concrete choices the opener named, carried STRUCTURED so the ASK payload
+/// (`clarify-questions.json`, `low_confidence_ask`, the desktop clarify card) offers them as
+/// one-click answers — r6d seq 91 shipped `options: []` on every question while the choices sat
+/// inside the rendered line (r6e E10).
+#[derive(Clone, Debug)]
+pub(crate) struct OpenDecision {
+    pub(super) line: String,
+    pub(super) options: Vec<String>,
+}
+
+impl OpenOutput {
+    /// The decisions' rendered lines, for the consumers whose identity IS the line
+    /// (`still_open_after_user`, `partition_decisions`, the ask event's not-asked diff).
+    pub(super) fn decision_lines(&self) -> Vec<String> {
+        self.open_decisions.iter().map(|d| d.line.clone()).collect()
+    }
 }
 
 /// The opener's contract, deliberately small: no files FIELD (owned files are declared inside the
@@ -136,7 +156,7 @@ impl OpenOutputRaw {
 pub(super) fn qualify_open_decisions(
     raw: Vec<OpenDecisionRaw>,
     events: &dyn EventSink,
-) -> Vec<String> {
+) -> Vec<OpenDecision> {
     let mut out = Vec::new();
     for entry in raw {
         // `miss` is the schema-miss shape when the entry was not the framed object.
@@ -187,7 +207,10 @@ pub(super) fn qualify_open_decisions(
             }));
             continue;
         }
-        out.push(render_open_decision(&question, &options, cite.trim()));
+        out.push(OpenDecision {
+            line: render_open_decision(&question, &options, cite.trim()),
+            options,
+        });
     }
     out
 }
@@ -245,25 +268,40 @@ mod tests {
         let out = raw.qualify(&sink);
         assert_eq!(out.open_decisions.len(), 2, "{:?}", out.open_decisions);
         assert!(
-            out.open_decisions[0].starts_with("HTTP framework for ledgerd/notifierd:"),
-            "{}",
+            out.open_decisions[0]
+                .line
+                .starts_with("HTTP framework for ledgerd/notifierd:"),
+            "{:?}",
             out.open_decisions[0]
         );
         assert!(
             out.open_decisions[0]
+                .line
                 .contains("— options: stdlib http.server (threaded) | Flask | FastAPI"),
-            "{}",
+            "{:?}",
             out.open_decisions[0]
         );
         assert!(
-            out.open_decisions[0].ends_with("(the request leaves it open: p95 <150ms under load)"),
-            "{}",
+            out.open_decisions[0]
+                .line
+                .ends_with("(the request leaves it open: p95 <150ms under load)"),
+            "{:?}",
             out.open_decisions[0]
         );
         assert!(
-            !out.open_decisions[1].contains("leaves it open"),
+            !out.open_decisions[1].line.contains("leaves it open"),
             "no cite, no clause"
         );
+        // E10: the options ride STRUCTURED beside the line, in the opener's order.
+        assert_eq!(
+            out.open_decisions[0].options,
+            vec!["stdlib http.server (threaded)", "Flask", "FastAPI"]
+        );
+        assert_eq!(
+            out.open_decisions[1].options,
+            vec!["prompt field", "config", "hardcoded dev tokens in the page"]
+        );
+        assert_eq!(out.decision_lines()[0], out.open_decisions[0].line);
         let events = sink.0.lock().unwrap();
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0]["event"], "decision_self_resolved");
