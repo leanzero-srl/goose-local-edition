@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Salin jalur"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Sesi saat ini"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Tambahkan folder proyek untuk mengelompokkan sesi Anda"
   },

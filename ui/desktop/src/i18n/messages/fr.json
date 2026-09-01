@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Copier le chemin"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Session en cours"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Ajoutez un dossier de projet pour regrouper vos sessions"
   },

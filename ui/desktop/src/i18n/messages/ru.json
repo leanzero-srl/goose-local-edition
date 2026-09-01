@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Скопировать путь"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Текущая сессия"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Добавьте папку проекта, чтобы сгруппировать сеансы"
   },

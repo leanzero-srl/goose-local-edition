@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "경로 복사"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "현재 세션"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "프로젝트 폴더를 추가해 세션을 정리하세요"
   },

@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "复制路径"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "当前会话"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "添加项目文件夹来归类你的会话"
   },

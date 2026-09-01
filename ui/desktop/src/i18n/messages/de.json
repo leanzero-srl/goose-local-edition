@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Pfad kopieren"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Aktuelle Sitzung"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Fügen Sie einen Projektordner hinzu, um Ihre Sitzungen zu bündeln"
   },
