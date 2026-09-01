@@ -407,8 +407,18 @@ function CloudPane({
   const [busy, setBusy] = useState<string | null>(null); // 'validate' | model_id being added/removed
   const [editKey, setEditKey] = useState(false);
 
+  // Every bridge call below is guarded: a REJECTED invoke (goosed gone, IPC torn down) used to leave
+  // `phase` on 'checking' or `busy` pinned on a model id forever — a spinner claiming work nobody
+  // was doing. A rejection is an error the user reads, and busy always clears.
   const refresh = useCallback(async () => {
-    const r = await window.electron.swarmCloud(def.cli, ['models', '--json']);
+    let r: Awaited<ReturnType<typeof window.electron.swarmCloud>>;
+    try {
+      r = await window.electron.swarmCloud(def.cli, ['models', '--json']);
+    } catch (e) {
+      setError(`engine bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+      setPhase('no-key');
+      return;
+    }
     if (r.ok) {
       try {
         const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
@@ -440,46 +450,63 @@ function CloudPane({
     const args = ['key', key, '--json'];
     const reg = region.trim();
     if (def.region && reg) args.push('--region', reg);
-    const r = await window.electron.swarmCloud(def.cli, args);
-    setBusy(null);
-    if (r.ok) {
-      try {
-        const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
-        setRoster(Array.isArray(v.models) ? v.models : []);
-        if (v.region) setRegion(v.region);
-        setKeyText('');
-        setEditKey(false);
-        setPhase('ready');
-      } catch {
-        setError('unreadable roster answer from the engine');
+    try {
+      const r = await window.electron.swarmCloud(def.cli, args);
+      if (r.ok) {
+        try {
+          const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
+          setRoster(Array.isArray(v.models) ? v.models : []);
+          if (v.region) setRegion(v.region);
+          setKeyText('');
+          setEditKey(false);
+          setPhase('ready');
+        } catch {
+          setError('unreadable roster answer from the engine');
+        }
+      } else {
+        setError(bedrockErr(r));
       }
-    } else {
-      setError(bedrockErr(r));
+    } catch (e) {
+      setError(`engine bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
     }
   }, [keyText, region, def.cli, def.region]);
 
+  // `def.cli` is a real input of both callbacks — it was missing from their deps, so a pane whose
+  // provider changed under it kept calling the OLD provider's CLI.
   const addNode = useCallback(
     async (modelId: string) => {
       setBusy(modelId);
       setError(null);
-      const r = await window.electron.swarmCloud(def.cli, ['add', modelId, '--weight', '2']);
-      setBusy(null);
-      if (!r.ok) setError(bedrockErr(r));
-      await onChanged();
+      try {
+        const r = await window.electron.swarmCloud(def.cli, ['add', modelId, '--weight', '2']);
+        if (!r.ok) setError(bedrockErr(r));
+        await onChanged();
+      } catch (e) {
+        setError(`engine bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setBusy(null);
+      }
     },
-    [onChanged]
+    [def.cli, onChanged]
   );
 
   const rmNode = useCallback(
     async (modelId: string) => {
       setBusy(modelId);
       setError(null);
-      const r = await window.electron.swarmCloud(def.cli, ['rm', modelId]);
-      setBusy(null);
-      if (!r.ok) setError(bedrockErr(r));
-      await onChanged();
+      try {
+        const r = await window.electron.swarmCloud(def.cli, ['rm', modelId]);
+        if (!r.ok) setError(bedrockErr(r));
+        await onChanged();
+      } catch (e) {
+        setError(`engine bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setBusy(null);
+      }
     },
-    [onChanged]
+    [def.cli, onChanged]
   );
 
   const configured = new Set(devices.map((d) => d.model_id));
