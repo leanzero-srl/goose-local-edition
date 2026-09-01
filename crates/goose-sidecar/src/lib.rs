@@ -58,6 +58,10 @@ pub struct SidecarConfig {
     pub env: Vec<(String, String)>,
     /// e.g. "http://127.0.0.1:8090" — readiness and health poll GET {base_url}/v1/models.
     pub base_url: String,
+    /// The id `/v1/models` must report at `data[0].id` before a 200 counts as ready or
+    /// healthy. A 200 from some OTHER engine on the same port — an orphan of a previous
+    /// goosed answering while this child is still resolving — is not readiness.
+    pub expected_model_id: String,
     pub startup_timeout: Duration,
     pub restart_window: Duration,
     pub max_restarts_in_window: u32,
@@ -66,12 +70,18 @@ pub struct SidecarConfig {
 }
 
 impl SidecarConfig {
-    pub fn new(name: impl Into<String>, command: Vec<String>, base_url: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        command: Vec<String>,
+        base_url: impl Into<String>,
+        expected_model_id: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             command,
             env: Vec::new(),
             base_url: base_url.into(),
+            expected_model_id: expected_model_id.into(),
             startup_timeout: Duration::from_secs(180),
             restart_window: Duration::from_secs(600),
             max_restarts_in_window: 3,
@@ -137,7 +147,7 @@ impl Sidecar {
     }
 
     pub async fn healthy(&self) -> bool {
-        self.probe().await
+        self.probe().await.is_ok()
     }
 
     /// Restart the engine if its process died or it stops answering. Errors once the
@@ -149,10 +159,17 @@ impl Sidecar {
             None => true,
             Some(h) => h.child.try_wait().context("try_wait on sidecar")?.is_some(),
         };
-        if !process_dead && self.probe().await {
-            state.backoff = self.config.backoff_initial;
-            return Ok(());
-        }
+        let unhealthy = if process_dead {
+            "process exited".to_string()
+        } else {
+            match self.probe().await {
+                Ok(()) => {
+                    state.backoff = self.config.backoff_initial;
+                    return Ok(());
+                }
+                Err(reason) => reason,
+            }
+        };
 
         let tail = state
             .handle
@@ -162,7 +179,7 @@ impl Sidecar {
         tracing::warn!(
             sidecar = %self.config.name,
             process_dead,
-            "sidecar unhealthy; restarting. stderr tail:\n{tail}"
+            "sidecar unhealthy ({unhealthy}); restarting. stderr tail:\n{tail}"
         );
 
         if let Some(mut h) = state.handle.take() {
@@ -255,17 +272,20 @@ impl Sidecar {
                     self.config.name
                 );
             }
-            if self.probe().await {
-                state.handle = Some(handle);
-                tracing::info!(sidecar = %self.config.name, base_url = %self.config.base_url, "sidecar ready");
-                return Ok(());
-            }
+            let not_ready = match self.probe().await {
+                Ok(()) => {
+                    state.handle = Some(handle);
+                    tracing::info!(sidecar = %self.config.name, base_url = %self.config.base_url, "sidecar ready");
+                    return Ok(());
+                }
+                Err(reason) => reason,
+            };
             if Instant::now() >= deadline {
                 let tail = stderr_tail_string(&handle.stderr_tail);
                 let owned_group = terminate(&mut handle.child).await;
                 self.release_port(owned_group).await;
                 bail!(
-                    "sidecar '{}' not ready within {:?}. stderr:\n{tail}",
+                    "sidecar '{}' not ready within {:?}: {not_ready}. stderr:\n{tail}",
                     self.config.name,
                     self.config.startup_timeout
                 );
@@ -274,9 +294,45 @@ impl Sidecar {
         }
     }
 
-    async fn probe(&self) -> bool {
+    /// Ready/healthy means `/v1/models` answers 200 AND `data[0].id` is the expected id.
+    /// The `Err` carries why not, so a startup that never gets there says which it was:
+    /// nothing listening, a non-2xx, or another engine's catalog on our port.
+    async fn probe(&self) -> std::result::Result<(), String> {
         let url = format!("{}/v1/models", self.config.base_url);
-        matches!(self.client.get(&url).send().await, Ok(r) if r.status().is_success())
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("GET {url}: {e}"))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("reading {url} body: {e}"))?;
+        if !status.is_success() {
+            return Err(format!("GET {url} returned HTTP {status}"));
+        }
+        let served = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.get("data")?
+                    .get(0)?
+                    .get("id")?
+                    .as_str()
+                    .map(str::to_string)
+            });
+        match served {
+            Some(id) if id == self.config.expected_model_id => Ok(()),
+            Some(id) => Err(format!(
+                "{url} serves '{id}', expected '{}' — another engine holds this port",
+                self.config.expected_model_id
+            )),
+            None => Err(format!(
+                "{url} answered {status} without a data[0].id: {}",
+                body.chars().take(200).collect::<String>()
+            )),
+        }
     }
 
     fn listen_port(&self) -> Option<u16> {
