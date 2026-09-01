@@ -422,14 +422,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 227996
-- **answer_chars**: 68335
+- **reasoning_chars**: 312405
+- **answer_chars**: 108746
 - **code_files**: 0
 - **code_bytes**: 0
-- **elapsed_min**: 69
-- **phase_split**: open 46m · ask 0m · research 23m
+- **elapsed_min**: 99
+- **phase_split**: open 46m · ask 0m · research 52m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 227,996 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 312,405 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
@@ -438,13 +438,13 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_patched**: 0
 - **plan_loaded**: 0
 - **review_rounds**: none
-- **judge_looks**: 25
-- **judge_nudges**: 0
+- **judge_looks**: 38
+- **judge_nudges**: 3
 - **judge_ended**: 0
-- **drift_held**: 0
+- **drift_held**: 3
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
-- **ledger**: 25 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+- **ledger**: 36 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
 
 ## r4b_noabs
 
