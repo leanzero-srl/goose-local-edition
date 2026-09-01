@@ -25,6 +25,7 @@ import {
   supervisionRollingCaption,
   type TurnStatus,
   type TurnLane,
+  type ResearchQuestionRow,
   type LiveChannel,
   type SwarmCall,
   type InflightCall,
@@ -384,6 +385,73 @@ const ReasoningBlock: React.FC<{
   );
 };
 
+/**
+ * THE QUESTIONS A RESEARCH LANE CARRIES (VA-029), numbered by the engine's own q_index, each with the
+ * outcome its terminal event recorded. Module scope, like every component here. One lane per slice
+ * since the fan cut; the lane's digest names only the key, so this list is the ONLY place a reader
+ * learns what the lane was asked — and which of its questions came back unanswered (the loud twin: an
+ * unanswered question stays a raw question in the brief, never a fabricated answer). Solid status
+ * chips, full borders — no rails, no tints.
+ */
+const ResearchQuestionRows: React.FC<{ questions: ResearchQuestionRow[]; live: boolean }> = ({
+  questions,
+  live,
+}) => {
+  const answered = questions.filter((q) => q.status === 'answered').length;
+  const missed = questions.filter((q) => q.status === 'unanswered').length;
+  const open = questions.length - answered - missed;
+  const chipColor = (q: ResearchQuestionRow) =>
+    q.status === 'answered'
+      ? STATUS_COLOR.done
+      : q.status === 'unanswered'
+        ? STATUS_COLOR.error
+        : live
+          ? STATUS_COLOR.running
+          : CALL_PENDING;
+  const caption = (q: ResearchQuestionRow) => {
+    if (q.status === 'answered')
+      return `${(q.chars ?? 0).toLocaleString()} chars${q.raised ? ` · ${q.raised} raised` : ''}`;
+    if (q.status === 'unanswered')
+      return `unanswered${q.reason ? ` · ${q.reason.replace(/_/g, ' ')}` : ''}`;
+    // Dispatched, no terminal event: answering while the lane runs; on a lane that is over, the
+    // honest words are that no outcome was recorded — never "answered".
+    return live ? 'answering…' : 'no outcome recorded';
+  };
+  return (
+    <div data-testid="research-questions">
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+        Questions · {questions.length}
+        {answered > 0 ? ` · ${answered} answered` : ''}
+        {missed > 0 ? ` · ${missed} unanswered` : ''}
+        {open > 0 && live ? ` · ${open} open` : ''}
+      </div>
+      <ol
+        className="bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
+        style={{ borderRadius: CHIP_RADIUS }}
+      >
+        {questions.map((q) => (
+          <li
+            key={`${q.slice}::${q.qIndex}`}
+            className="flex items-start gap-2 text-[11px] min-w-0"
+            data-testid="research-question"
+            data-status={q.status}
+            title={q.detail || undefined}
+          >
+            <span
+              className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+              style={{ background: chipColor(q), borderRadius: 3 }}
+            >
+              q{q.qIndex}
+            </span>
+            <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
+            <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+};
+
 const LaneRow: React.FC<{
   lane: TurnLane;
   deviceOrder: string[];
@@ -430,7 +498,8 @@ const LaneRow: React.FC<{
     (lane.forming?.length ?? 0) > 0 ||
     (lane.recent?.length ?? 0) > 0 ||
     laneError.length > 0 ||
-    saidChips;
+    saidChips ||
+    (lane.researchQuestions?.length ?? 0) > 0;
   // The first call NEEDING ATTENTION auto-expands so the reason is zero clicks away. One definition —
   // this site used `c.ok === false`, which opens on productive app-errors (the worker testing), while the
   // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
@@ -586,6 +655,11 @@ const LaneRow: React.FC<{
               </div>
               <MonoOutput text={laneError} failed />
             </div>
+          ) : null}
+          {/* A research lane's questions (VA-029) — the lane's identity, not a reasoning dump, so every
+              mode shows them: numbered, each with its own outcome from the per-question events. */}
+          {lane.researchQuestions && lane.researchQuestions.length > 0 ? (
+            <ResearchQuestionRows questions={lane.researchQuestions} live={live} />
           ) : null}
           {mode === 'compact' ? (
             // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
@@ -4447,7 +4521,8 @@ const PlanningZone: React.FC<{
   planLanes: TurnLane[];
   /** RESEARCH's per-slice lanes — one node per slice, each writing that module's spec (v1, archived). */
   sliceLanes: TurnLane[];
-  /** The v2 research fan (research-<slice>-q<n>) — the live engine's Research work, one question each. */
+  /** The v2 research fan — one lane per batch (`research-<slice>` since the fan cut; one per question
+   *  on r6b–r6d logs), each listing its questions from the per-question events (VA-029). */
   researchLanes: TurnLane[];
   /** CONTRACTS' per-module lanes — one node per module, each freezing that module's interface. */
   contractLanes: TurnLane[];
@@ -4502,15 +4577,20 @@ const PlanningZone: React.FC<{
     { key: 'planning', label: 'Planning calls', lanes: planningLanes },
     { key: 'drafts', label: 'Candidate drafts', lanes: planLanes },
   ].filter((g) => g.lanes.length > 0);
-  const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => (
-    <div key={key} className="mt-1">
-      <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-        <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
-        <span className={`${EYEBROW_CLASS} text-text-secondary`}>
-          {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
-          {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
-        </span>
-      </div>
+  const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => {
+    // A header counts what the body shows: research lanes list their questions, so the group header
+    // says how many questions those lanes carry between them (VA-029) — zero on every other fan.
+    const questions = lanes.reduce((n, l) => n + (l.researchQuestions?.length ?? 0), 0);
+    return (
+      <div key={key} className="mt-1">
+        <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
+          <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
+          <span className={`${EYEBROW_CLASS} text-text-secondary`}>
+            {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
+            {questions > 0 ? ` · ${questions} question${questions === 1 ? '' : 's'}` : ''}
+            {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
+          </span>
+        </div>
       <div className="divide-y divide-border-primary">
         {lanes.map((lane) => {
           const defaultOpen = lane.status === 'running';
@@ -4532,7 +4612,8 @@ const PlanningZone: React.FC<{
         })}
       </div>
     </div>
-  );
+    );
+  };
   const hasBody =
     clarifyPending ||
     clarifyInterrupted ||
@@ -4633,6 +4714,14 @@ const PlanningZone: React.FC<{
                     {p.counts.total > 0 ? (
                       <span className="text-[10px] tabular-nums text-text-secondary">
                         {p.counts.done}/{p.counts.total}
+                      </span>
+                    ) : null}
+                    {/* What no row below can carry — Research: the questions the opener settled as cited
+                        spec facts, answered with NO lane, so they are outside the lane list under this
+                        header and the words say so (VA-029; from research_planned.facts, events only). */}
+                    {p.note ? (
+                      <span className="text-[10px] text-text-secondary" data-testid={`planning-phase-${p.key}-note`}>
+                        · {p.note}
                       </span>
                     ) : null}
                   </div>
