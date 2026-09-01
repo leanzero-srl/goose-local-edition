@@ -35,6 +35,7 @@ proves or refutes it. STATUS: `LANDED <sha>` · `IN FLIGHT <batch>` · `MEASURE 
 | Placement: heaviest-first onto distinct nodes; weight 1×3 | r6c stacked both hard tasks + 2 judge streams on workhorse (measured slowest, 8.28 tok/s); web-viz thought at 344 chars/min vs 1,290 alone | LANDED `623ae8eef` + config |
 | Judge looks off the busy planner node | r6c 222/222 looks on workhorse | LANDED `8b03be2da` |
 | Pre-fix tree snapshot at the REPAIR handover | `.swarm/best-tree` is overwritten every strictly-better verify → r6c's pre-fix tree is gone; "did the waves move the score" unmeasurable | IN FLIGHT 2a D7 (`.swarm/prefix-tree`, write-once; harness `score_run.sh --prefix` landed) |
+| `spec_documented_keys` reads prose-documented keys too | keys documented as a fenced shape under a "shape below" label were invisible to the extractor (table cells only) | LANDED `857eb4ef2` |
 | `planner_rank` matches device id | r6d aux order [workhorse, gabee, mihai] because mihai's model_id matched no pattern | IN FLIGHT 2a D9 |
 
 ## 3. THE BET — module shards + merger (Mihai's design, 2026-09-01)
