@@ -1294,6 +1294,92 @@ mod tests {
         assert_eq!(again, finalized, "idempotent");
     }
 
+    /// VA-063, the r6e seam verbatim (killed at BUILD+4m): `viz3d-engine` (`web/viz.js`, no planner
+    /// deps) split into these EIGHT shards, then walked the door with `every_decision_settled ==
+    /// true` (D1–D3 settled by the `__open_decisions__` lane). The run's decision-doc gate read all
+    /// eight shard READMEs as docs-only and stripped them off the merger — `plan_repaired{source:
+    /// split}` 16:28:46Z "dep dropped", `task_dispatched viz3d-engine deps: []` at plan_loaded,
+    /// `merge_dossier{pieces: 0}`. The sibling test above passes `false` and could never see it.
+    #[test]
+    fn the_split_merger_keeps_its_shards_through_the_door_when_every_decision_settled() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let archived_shards = [
+            "data-scene",
+            "rendering-core",
+            "pick-buffer",
+            "camera-inertia",
+            "labels-culling",
+            "linked-brush",
+            "streaming-diffs",
+            "vs7dbg-boot",
+        ];
+        let split: ModuleSplit = serde_json::from_value(serde_json::json!({
+            "interface": {
+                "exports": [
+                    {"name": "window.vs7dbg.layout", "kind": "function", "signature": "layout() -> {d0, D0, R0}", "purpose": "the locked layout basis"},
+                    {"name": "buildScene", "kind": "function", "signature": "buildScene(data) -> void", "purpose": "fill the instance buffers"}
+                ],
+                "shared_state": "S = {yaw, pitch, distance, brush: Set<id>, count, dirty}",
+                "layout": ["constants", "state S", "GL programs", "pick FBO", "camera", "labels", "brush", "stream", "window.vs7dbg", "boot"]
+            },
+            "shards": archived_shards.iter().map(|id| serde_json::json!({
+                "id": id, "responsibility": format!("the {id} piece"), "sections": [], "provides": []
+            })).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        let p = plan(&[
+            (
+                "frontend-console",
+                &[
+                    "web/index.html",
+                    "web/styles.css",
+                    "web/app.js",
+                    "DECISIONS.md",
+                ],
+            ),
+            ("viz3d-engine", &["web/viz.js"]),
+        ]);
+        let (patched, event) = apply_module_split(&p.to_string(), "viz3d-engine", &split).unwrap();
+        let expected: Vec<String> = archived_shards
+            .iter()
+            .map(|x| format!("viz3d-engine-{x}"))
+            .collect();
+        assert_eq!(string_list(&event["shards"]), expected, "the archived ids");
+
+        let sink = Arc::new(RecordingSink::default());
+        let dyn_sink: Arc<dyn EventSink> = sink.clone();
+        let finalized = finalize_plan_before_dag(patched, spec, true, &dyn_sink, "split");
+        let f: serde_json::Value = serde_json::from_str(&finalized).unwrap();
+        let merger = f["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "viz3d-engine")
+            .expect("the merger survives the door");
+        let deps = string_list(&merger["depends_on"]);
+        for id in &expected {
+            assert!(deps.contains(id), "merger lost `{id}`: {deps:?}");
+        }
+        assert!(merger["merger_of"].is_object(), "{merger}");
+        let repaired = sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["event"] == "plan_repaired")
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(repaired.len(), 1, "{repaired:?}");
+        let actions = repaired[0]["actions"].as_array().unwrap();
+        assert!(
+            !actions
+                .iter()
+                .any(|a| a.as_str().unwrap_or("").contains("gated on docs-only")),
+            "no shard is a decision doc: {actions:?}"
+        );
+        goose_swarm::Dag::from_planner_json(&finalized).expect("loads");
+    }
+
     #[test]
     fn a_split_reply_needs_two_shards_with_ids_and_responsibilities() {
         assert!(parse_module_split("no json here").is_err());
