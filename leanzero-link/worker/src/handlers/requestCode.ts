@@ -1,3 +1,4 @@
+import { resolveClientIp } from "../lib/clientIp";
 import { EMAIL_RATE_LIMIT, IP_RATE_LIMIT, OTP_TTL_SECONDS, RATE_WINDOW_SECONDS } from "../lib/config";
 import type { Deps } from "../lib/deps";
 import { jsonResponse, readJsonBody } from "../lib/http";
@@ -16,6 +17,8 @@ export function otpKey(email: string): string {
   return `otp:${email}`;
 }
 
+const PATH = "/v1/auth/request-code";
+
 export async function handleRequestCode(request: Request, deps: Deps): Promise<Response> {
   const { config } = deps;
   if (!config.resendApiKey || !config.mailFrom) {
@@ -29,7 +32,23 @@ export async function handleRequestCode(request: Request, deps: Deps): Promise<R
   if (email === null) {
     return jsonResponse(400, { error: "invalid email" });
   }
-  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  // The ip bucket is checked BEFORE the email bucket so one exhausted source cannot keep
+  // burning a victim's 3-per-hour email budget with requests that would be refused anyway.
+  const client = resolveClientIp(request);
+  if (client.ok) {
+    deps.log("client_ip_resolved", { path: PATH, ip: client.ip, source: client.source, forwardedFor: client.forwardedFor });
+    const ipLimit = await bumpFixedWindow(deps.kv, `rl:ip:${client.ip}`, IP_RATE_LIMIT, RATE_WINDOW_SECONDS, deps.now());
+    if (ipLimit.limited) {
+      deps.log("rate_limited", { scope: "ip", ip: client.ip, retryAfterSeconds: ipLimit.retryAfterSeconds });
+      return jsonResponse(
+        429,
+        { error: "rate limited", scope: "ip", retryAfterSeconds: ipLimit.retryAfterSeconds },
+        { "Retry-After": String(ipLimit.retryAfterSeconds) },
+      );
+    }
+  } else {
+    deps.log("client_ip_unresolved", { path: PATH, forwardedFor: client.forwardedFor });
+  }
   const emailLimit = await bumpFixedWindow(deps.kv, `rl:email:${email}`, EMAIL_RATE_LIMIT, RATE_WINDOW_SECONDS, deps.now());
   if (emailLimit.limited) {
     deps.log("rate_limited", { scope: "email", email, retryAfterSeconds: emailLimit.retryAfterSeconds });
@@ -37,15 +56,6 @@ export async function handleRequestCode(request: Request, deps: Deps): Promise<R
       429,
       { error: "rate limited", scope: "email", retryAfterSeconds: emailLimit.retryAfterSeconds },
       { "Retry-After": String(emailLimit.retryAfterSeconds) },
-    );
-  }
-  const ipLimit = await bumpFixedWindow(deps.kv, `rl:ip:${ip}`, IP_RATE_LIMIT, RATE_WINDOW_SECONDS, deps.now());
-  if (ipLimit.limited) {
-    deps.log("rate_limited", { scope: "ip", ip, retryAfterSeconds: ipLimit.retryAfterSeconds });
-    return jsonResponse(
-      429,
-      { error: "rate limited", scope: "ip", retryAfterSeconds: ipLimit.retryAfterSeconds },
-      { "Retry-After": String(ipLimit.retryAfterSeconds) },
     );
   }
   const code = deps.randomOtp();

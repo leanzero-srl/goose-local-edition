@@ -57,12 +57,18 @@ function collectBody(req: IncomingMessage): Promise<Buffer | null> {
   });
 }
 
-function toWebRequest(req: IncomingMessage, body: Buffer | null, port: number): Request {
+// Headers a client may send to impersonate a trusted proxy. Nothing in front of this
+// server ever sets CF-Connecting-IP (Cloudflare is not on this path), so any inbound value
+// is client-supplied and is dropped before the handlers see it; X-Forwarded-For is kept
+// because Tailscale Funnel/Serve SETS it (replacing any inbound value) — see lib/clientIp.ts.
+const UNTRUSTED_PROXY_HEADERS = new Set(["cf-connecting-ip"]);
+
+export function toWebRequest(req: IncomingMessage, body: Buffer | null, port: number): Request {
   const host = req.headers.host ?? `127.0.0.1:${port}`;
   const url = `http://${host}${req.url ?? "/"}`;
   const headers = new Headers();
   for (const [name, value] of Object.entries(req.headers)) {
-    if (value === undefined) {
+    if (value === undefined || UNTRUSTED_PROXY_HEADERS.has(name.toLowerCase())) {
       continue;
     }
     if (Array.isArray(value)) {
