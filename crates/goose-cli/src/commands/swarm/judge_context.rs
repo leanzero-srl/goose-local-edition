@@ -9,6 +9,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use goose_swarm::ShardOf;
+
 use super::shape_excerpt;
 
 /// Declared here rather than in swarm.rs: `verify_owned_files` below is its only consumer, and
@@ -79,10 +81,16 @@ pub(super) fn judge_delivery_block(
     owned: &[String],
     defects: &[String],
     unowned_writes: &[String],
+    shard_pieces: Option<&ShardPiecesView>,
 ) -> String {
     if owned.is_empty() {
         return String::new();
     }
+    // A lane that is no shard has no pieces block — not a fallback, the absence of a section.
+    let shard_block = match shard_pieces {
+        Some(view) => shard_pieces_block(view),
+        None => String::new(),
+    };
     let listed: Vec<String> = owned
         .iter()
         .map(|f| {
@@ -190,8 +198,76 @@ pub(super) fn judge_delivery_block(
          yet and it has taken no action, it is composing the file in its head and \
          waiting for it to be perfect — the single most expensive failure this run \
          can have. Tell it to write a first minimal version of that exact path NOW \
-         and extend it afterwards.{defect_block}{unowned_block}{excerpt_block}",
+         and extend it afterwards.{defect_block}{unowned_block}{shard_block}{excerpt_block}",
         listed.join("\n")
+    )
+}
+
+/// VA-066: a shard's PIECES, measured for the judge.
+///
+/// A shard owns ONE file — `.swarm/shards/<module>/<shard>/README.md`, its handoff — and builds
+/// its part as piece files beside it. `tree.rs`'s `SKIP_DIRS` holds `.swarm`, so the attempt's
+/// fs_delta never flags those pieces (correct: they are the engine's staging, not the app), but
+/// the delivery block above read only the owned README, so the judge never SAW them either: a
+/// shard that had written six pieces read as "owns README.md — DOES NOT EXIST" and nothing else,
+/// the exact shape the census exists to refute. This is the stat of that folder — names, bytes and
+/// the same per-file parser the merger's dossier runs (`shards::parse_piece`; `None` = parses,
+/// `Some("unchecked …")` = no parser for the extension, `Some(err)` = a parse error).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ShardPiecesView {
+    pub(super) module: String,
+    pub(super) shard: String,
+    pub(super) folder: String,
+    pub(super) pieces: Vec<(String, u64, Option<String>)>,
+}
+
+pub(super) async fn shard_pieces_view(working_dir: &Path, shard: &ShardOf) -> ShardPiecesView {
+    let dir = working_dir.join(&shard.folder);
+    let mut names: Vec<(String, u64)> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let name = e.file_name().to_str().map(String::from)?;
+            (name != "README.md").then(|| (name, e.metadata().map(|m| m.len()).unwrap_or(0)))
+        })
+        .collect();
+    names.sort();
+    let mut pieces = Vec::with_capacity(names.len());
+    for (name, bytes) in names {
+        let verdict = super::shards::parse_piece(&dir.join(&name)).await;
+        pieces.push((name, bytes, verdict));
+    }
+    ShardPiecesView {
+        module: shard.module.clone(),
+        shard: shard.shard.clone(),
+        folder: shard.folder.clone(),
+        pieces,
+    }
+}
+
+fn shard_pieces_block(view: &ShardPiecesView) -> String {
+    let listed = if view.pieces.is_empty() {
+        "  (no piece files yet — the README alone is not the part; a shard composing its piece in          its head is the same failure as a task composing its file)"
+            .to_string()
+    } else {
+        view.pieces
+            .iter()
+            .map(|(name, bytes, verdict)| {
+                let parse = match verdict {
+                    None => "parses".to_string(),
+                    Some(e) if e.contains("unchecked") => e.clone(),
+                    Some(e) => format!("PARSE ERROR: {e}"),
+                };
+                format!("  {}/{name} — {bytes} bytes — {parse}", view.folder)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "\n\nTHIS TASK IS SHARD `{}` OF MODULE `{}`. Its deliverable is the PIECE FILES in `{}/`          (the README above is its handoff, not its part), and the tree stat cannot see that folder.          What is in it right now — a stat, not its claim:\n{listed}",
+        view.shard, view.module, view.folder
     )
 }
 
@@ -560,5 +636,174 @@ mod tests {
             "a tree with no .swarm directory yields nothing, and the caller must SAY so"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// N-7: the judge's delivery view is a measurement, and each of its four parts must actually
+    /// reach the prompt text. The r2 shape is pinned end to end: an owned file with a syntax error
+    /// shows the census line AND the py_compile fact; an owned path with nothing on disk SAYS so;
+    /// and a same-named file written where nobody owns one is called out as a WRONG-PATH fact —
+    /// the camera-system defect the r2 judge okayed because it read only reasoning.
+    #[test]
+    fn judge_delivery_block_carries_census_parse_state_and_wrong_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("app")).unwrap();
+        std::fs::write(dir.path().join("app/store.py"), "def broken(:\n    pass\n").unwrap();
+        let owned = vec!["app/store.py".to_string(), "app/api.py".to_string()];
+        let defects = verify_owned_files(dir.path(), &owned);
+        let block = judge_delivery_block(dir.path(), &owned, &defects, &[], None);
+        assert!(
+            block.contains("app/store.py — EXISTS,"),
+            "census names what is on disk: {block}"
+        );
+        assert!(
+            block.contains("app/api.py — DOES NOT EXIST"),
+            "a task with nothing on disk says so: {block}"
+        );
+        assert!(
+            block.contains("app/store.py DOES NOT PARSE"),
+            "the py_compile fact reaches the judge's user text: {block}"
+        );
+        assert!(
+            block.contains("What `app/store.py` holds right now"),
+            "a budgeted content excerpt is included: {block}"
+        );
+
+        // The r2 camera-system shape: the owned path is missing while a file with the SAME NAME
+        // appeared at the tree root during this attempt's window.
+        let owned = vec!["web/viz_camera.js".to_string()];
+        let block = judge_delivery_block(
+            dir.path(),
+            &owned,
+            &[
+                "web/viz_camera.js does not exist — this task owns it and nothing has written it"
+                    .to_string(),
+            ],
+            &["viz_camera.js".to_string()],
+            None,
+        );
+        assert!(
+            block.contains("NO PLANNED TASK OWNS") && block.contains("viz_camera.js"),
+            "the window's unowned writes are in the prompt: {block}"
+        );
+        assert!(
+            block.contains("WRONG PATH") && block.contains("move it to `web/viz_camera.js`"),
+            "a basename match is stated as a misplaced deliverable with the exact owned path: {block}"
+        );
+
+        // A task owning nothing gets no block at all — planning lanes are covered by the
+        // structured-reply block, and an empty census would misread them as undelivered builds.
+        assert_eq!(judge_delivery_block(dir.path(), &[], &[], &[], None), "");
+    }
+
+    /// N-7: the excerpt honours its budget and says when it cut — a file larger than the per-file
+    /// cap must arrive marked as an excerpt, never looking complete (the same honesty rule the
+    /// scheduler judge's 1800-char cut learned the hard way).
+    #[test]
+    fn judge_delivery_excerpt_is_budgeted_and_admits_the_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = format!("SEED = 1\n{}", "x = 2\n".repeat(2_000));
+        std::fs::write(dir.path().join("big.py"), &big).unwrap();
+        let owned = vec!["big.py".to_string()];
+        let block = judge_delivery_block(dir.path(), &owned, &[], &[], None);
+        assert!(
+            block.contains("… (cut — an excerpt"),
+            "a cut excerpt admits it: {block}"
+        );
+        let excerpt = block.split("holds right now").nth(1).unwrap();
+        assert!(
+            excerpt.chars().count() < 2_000,
+            "the excerpt respects the per-file budget, got {} chars",
+            excerpt.chars().count()
+        );
+    }
+
+    /// VA-066: a shard lane's delivery view names its PIECES with bytes and the parse verdict, and
+    /// says when the folder is empty — the README alone is not the part.
+    #[test]
+    fn a_shard_lanes_delivery_block_lists_its_pieces_or_says_the_folder_is_empty() {
+        let d = tmp("shard-pieces");
+        std::fs::create_dir_all(d.join(".swarm/shards/web-viz/render")).unwrap();
+        std::fs::write(
+            d.join(".swarm/shards/web-viz/render/README.md"),
+            "PROVIDES: buildScene\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: none\n",
+        )
+        .unwrap();
+        let owned = vec![".swarm/shards/web-viz/render/README.md".to_string()];
+        let view = ShardPiecesView {
+            module: "web-viz".into(),
+            shard: "render".into(),
+            folder: ".swarm/shards/web-viz/render".into(),
+            pieces: vec![
+                ("render.js".into(), 1_204, None),
+                (
+                    "scene.js".into(),
+                    88,
+                    Some("SyntaxError: Unexpected token".into()),
+                ),
+                ("notes.txt".into(), 12, Some("unchecked (txt)".into())),
+            ],
+        };
+        let block = judge_delivery_block(&d, &owned, &[], &[], Some(&view));
+        assert!(
+            block.contains("THIS TASK IS SHARD `render` OF MODULE `web-viz`"),
+            "{block}"
+        );
+        assert!(
+            block.contains(".swarm/shards/web-viz/render/render.js — 1204 bytes — parses"),
+            "{block}"
+        );
+        assert!(
+            block.contains("scene.js — 88 bytes — PARSE ERROR: SyntaxError"),
+            "{block}"
+        );
+        assert!(
+            block.contains("notes.txt — 12 bytes — unchecked (txt)"),
+            "{block}"
+        );
+        let empty = ShardPiecesView {
+            pieces: vec![],
+            ..view.clone()
+        };
+        let block = judge_delivery_block(&d, &owned, &[], &[], Some(&empty));
+        assert!(
+            block.contains("no piece files yet — the README alone is not the part"),
+            "{block}"
+        );
+        // A build lane that is no shard reads exactly as before.
+        let block = judge_delivery_block(&d, &owned, &[], &[], None);
+        assert!(!block.contains("THIS TASK IS SHARD"), "{block}");
+    }
+
+    /// The view is a stat of the folder: names sorted, bytes measured, README excluded, an
+    /// extension no parser covers said as unchecked.
+    #[tokio::test]
+    async fn the_pieces_view_stats_the_folder_and_skips_the_readme() {
+        let d = tmp("shard-view");
+        std::fs::create_dir_all(d.join(".swarm/shards/web-viz/pick")).unwrap();
+        std::fs::write(
+            d.join(".swarm/shards/web-viz/pick/README.md"),
+            "PROVIDES: x\n",
+        )
+        .unwrap();
+        std::fs::write(d.join(".swarm/shards/web-viz/pick/zeta.txt"), "12345").unwrap();
+        std::fs::write(d.join(".swarm/shards/web-viz/pick/alpha.txt"), "1").unwrap();
+        let shard = ShardOf {
+            module: "web-viz".into(),
+            shard: "pick".into(),
+            folder: ".swarm/shards/web-viz/pick".into(),
+            ..Default::default()
+        };
+        let view = shard_pieces_view(&d, &shard).await;
+        assert_eq!(view.pieces.len(), 2, "{view:?}");
+        assert_eq!(view.pieces[0].0, "alpha.txt");
+        assert_eq!(view.pieces[0].1, 1);
+        assert_eq!(view.pieces[1].0, "zeta.txt");
+        assert_eq!(view.pieces[1].1, 5);
+        assert!(
+            view.pieces
+                .iter()
+                .all(|(_, _, v)| v.as_deref().is_some_and(|v| v.contains("unchecked"))),
+            "{view:?}"
+        );
     }
 }
