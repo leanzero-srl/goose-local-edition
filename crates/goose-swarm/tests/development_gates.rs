@@ -282,9 +282,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `spec_post_endpoints`) and its two table tests moved to commands/swarm/spec_surface.rs,
 /// paying for the header-named expected-shape column (r6c's briefs read §5's ROLE column as the
 /// response shape: "POST /api/drafts -> EXPECT maker or checker").
+/// Tightened to 40,716 (r6e decision contract): `OpenSlice`/`OpenOutput`/`open_schema` moved to
+/// commands/swarm/opener.rs beside the new parse-time decision gate (`OpenOutputRaw::qualify`),
+/// paying for the opener prompt's open-decision contract (question + two options + citation) and
+/// the qualified parse at the OPEN call site.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 40_765;
+    const SWARM_RS_LINE_BASELINE: usize = 40_716;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
