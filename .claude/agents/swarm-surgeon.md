@@ -103,3 +103,10 @@ Edit every item in the brief first, then run the proof chain ONCE on the finishe
 `git commit --only`. Re-running the full chain per item on a 35k-line crate multiplies tool uses and wall-clock without
 adding proof; the per-item commit still gives the 429 protection the rule exists for. If the chain fails, fix and re-run
 once more — never per item.
+
+## Reading budget (added 2026-09-02 00:5x, after two no-cargo worktree dispatches ran 91 and 135 tool uses)
+
+Read a region ONCE (`grep -n` then one `sed -n 'A,Bp'` wide enough to hold the whole function), keep what you learned,
+and batch the edits per file. Re-opening the same lines before every Edit, or grepping the same symbol in three
+phrasings, is how a three-file change costs a hundred tool uses. When cargo is forbidden, the budget is reading and
+writing only — aim under 40 tool uses for a five-commit brief and say when you exceed it.
