@@ -132,19 +132,25 @@ fn tailscaled_argv_uses_verified_isolation_flags() {
 }
 
 #[test]
-fn up_argv_carries_socket_key_hostname_and_pins_settings() {
+fn up_argv_carries_socket_key_file_hostname_and_pins_settings() {
     let mut config = test_config();
     config.tag = Some("tag:leanzero".to_string());
-    let argv = config.up_argv("tskey-auth-abc", "lz-node-self");
+    let key_file = std::path::Path::new("/home/lz/.leanzero/tailscale/auth-key.4242");
+    let argv = config.up_argv(key_file, "lz-node-self");
     assert_eq!(argv[0], "/opt/leanzero/bin/tailscale");
     assert_eq!(
         argv[1], "--socket=/home/lz/.leanzero/tailscale/tailscaled.sock",
         "--socket is a global flag and must precede the subcommand"
     );
     assert_eq!(argv[2], "up");
+    // R-L1: the key is referenced by file, never carried on argv.
     assert!(
-        argv.contains(&"--auth-key=tskey-auth-abc".to_string()),
+        argv.contains(&"--auth-key=file:/home/lz/.leanzero/tailscale/auth-key.4242".to_string()),
         "{argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|a| a.contains("tskey")),
+        "no key material on argv: {argv:?}"
     );
     assert!(
         argv.contains(&"--hostname=lz-node-self".to_string()),
@@ -168,7 +174,7 @@ fn up_argv_carries_socket_key_hostname_and_pins_settings() {
 
 #[test]
 fn up_argv_omits_tags_when_unset() {
-    let argv = test_config().up_argv("tskey-auth-abc", "lz-node-self");
+    let argv = test_config().up_argv(std::path::Path::new("/tmp/k"), "lz-node-self");
     assert!(
         !argv.iter().any(|a| a.starts_with("--advertise-tags")),
         "{argv:?}"

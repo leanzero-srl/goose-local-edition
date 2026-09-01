@@ -87,6 +87,11 @@ pub enum MeshError {
     },
     #[error("auth key is empty — LeanZero Link joins only with an injected, minted key")]
     EmptyAuthKey,
+    #[error("cannot write the private auth-key file '{}': {source}", path.display())]
+    AuthKeyFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to run {what} ('{program}'): {source}")]
     CliRun {
         what: &'static str,
@@ -220,11 +225,14 @@ impl MeshConfig {
 
     /// `--reset` pins unspecified `up` settings to their defaults so this argv is the
     /// complete, deterministic node config; `--timeout` bounds the CLI itself, derived
-    /// from `join_timeout`.
-    pub fn up_argv(&self, auth_key: &str, hostname: &str) -> Vec<String> {
+    /// from `join_timeout`. The auth key is never on argv (ps-visible to every local
+    /// user): it is passed as `--auth-key=file:<path>` — `tailscale up --help` on 1.98.5:
+    /// "node authorization key; if it begins with "file:", then it's a path to a file
+    /// containing the authkey" — and [`MeshEngine::join`] owns that file's lifetime.
+    pub fn up_argv(&self, auth_key_file: &Path, hostname: &str) -> Vec<String> {
         let mut argv = self.cli_prefix();
         argv.push("up".to_string());
-        argv.push(format!("--auth-key={auth_key}"));
+        argv.push(format!("--auth-key=file:{}", auth_key_file.display()));
         argv.push(format!("--hostname={hostname}"));
         argv.push("--accept-routes=false".to_string());
         argv.push(format!("--login-server={}", self.login_server));
@@ -540,16 +548,36 @@ impl MeshEngine {
     /// Join the tailnet with an injected auth key. The key is a string minted by the
     /// LeanZero Link worker; this crate never talks to any auth backend. Verifies the
     /// backend actually reached `Running` — a green exit code alone is not a join.
+    ///
+    /// The key is written `0600` under the state dir (a `0700` directory) and handed to
+    /// the CLI as `--auth-key=file:<path>`, so it never appears in `ps`; the file is
+    /// removed as soon as `up` returns, success or failure (R-L1).
     pub async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
         if auth_key.trim().is_empty() {
             return Err(MeshError::EmptyAuthKey);
         }
-        let output = run_cli(
+        let key_path = self
+            .config
+            .state_dir
+            .join(format!("auth-key.{}", std::process::id()));
+        write_private(&key_path, auth_key.as_bytes()).map_err(|source| MeshError::AuthKeyFile {
+            path: key_path.clone(),
+            source,
+        })?;
+        let result = run_cli(
             "tailscale up",
-            self.config.up_argv(auth_key, hostname),
+            self.config.up_argv(&key_path, hostname),
             self.config.join_timeout + JOIN_WAIT_GRACE,
         )
-        .await?;
+        .await;
+        if let Err(err) = std::fs::remove_file(&key_path) {
+            tracing::error!(
+                path = %key_path.display(),
+                error = %err,
+                "could not remove the auth-key file after `tailscale up`"
+            );
+        }
+        let output = result?;
         if !output.status.success() {
             return Err(MeshError::JoinFailed {
                 stderr: cli_failure_text(&output),
@@ -824,6 +852,27 @@ async fn probe_socket(config: &MeshConfig, wait: Duration) -> Result<(), String>
     parse_status_json(&String::from_utf8_lossy(&output.stdout))
         .map(|_| ())
         .map_err(|err| err.to_string())
+}
+
+/// Create-or-truncate `path` with `0600` and write `bytes`. The mode is applied at open
+/// AND re-applied afterwards (`OpenOptions::mode` only affects creation).
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 fn prepare_state_dir(dir: &Path) -> Result<(), MeshError> {
