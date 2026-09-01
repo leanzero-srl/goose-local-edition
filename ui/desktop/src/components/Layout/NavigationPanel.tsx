@@ -11,16 +11,21 @@ import {
   getNavItemLabel,
   type NavItem,
 } from '../../hooks/useNavigationItems';
-import { cn } from '../../utils';
+import { FOCUS, MOTION, RADIUS, ROW, SURFACE, TNUM, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
+import { LeanZeroGlyph } from '../ProjectLanding';
 import { useIntl } from '../../i18n';
 
+// A 36px icon+label row. Selected = the accent fill with accent ink (never a rail); hover = a
+// solid step to surface-2. Studio classes are joined with cx — cn/twMerge deletes text-lz-* steps.
 const navItemClass = (active: boolean) =>
-  cn(
-    'flex flex-row items-center gap-3 outline-none no-drag w-full',
-    'rounded-full px-3 py-2 text-sm font-medium transition-colors',
-    active
-      ? 'bg-background-tertiary text-text-primary'
-      : 'text-text-primary hover:bg-background-tertiary/60'
+  cx(
+    'no-drag flex w-full items-center gap-3 px-3 text-left text-lz-body',
+    ROW.default,
+    RADIUS.control,
+    WEIGHT.medium,
+    FOCUS,
+    MOTION,
+    active ? SURFACE.selected : cx('text-lz-ink', SURFACE.hover)
   );
 
 interface NavRowProps {
@@ -36,28 +41,44 @@ export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
     <button
       onClick={onClick}
       className={navItemClass(active)}
-      // The active view was styled and nothing more: bg-background-tertiary against a transparent
-      // sibling, with no aria-current and no aria-selected anywhere in the panel. So the current view
-      // was visible to a sighted mouse user and invisible to everything else — a screen reader, and any
-      // automated check of "which view am I on". Measured live over CDP on #/benchmark: the Benchmark
-      // row computed rgb(71,78,87) against rgba(0,0,0,0), and a sweep of all 19 nav controls found ZERO
-      // with either attribute set.
+      // The current view must be identifiable without reading colours: measured live over CDP a
+      // sweep of all 19 nav controls once found ZERO with aria-current or aria-selected set.
       aria-current={active ? 'page' : undefined}
     >
-      <Icon className="w-5 h-5 flex-shrink-0 text-text-secondary" />
-      <span className="text-left flex-1 truncate">{getNavItemLabel(item, intl)}</span>
+      <Icon className={cx('size-4 shrink-0', !active && 'text-lz-ink-3')} />
+      <span className="flex-1 truncate">{getNavItemLabel(item, intl)}</span>
       {item.getTag && (
-        <span className="text-xs font-mono text-text-secondary">{item.getTag()}</span>
+        <span className={cx('text-lz-meta', TNUM, active ? 'text-lz-accent-ink' : 'text-lz-ink-3')}>
+          {item.getTag()}
+        </span>
       )}
     </button>
   );
 };
 
+/** The brand block: a solid accent square carrying the LeanZero mark beside the wordmark. */
+const BrandBlock: React.FC = () => (
+  <div data-testid="brand-block" className="no-drag flex items-center gap-2.5 px-4 pb-3 pt-1">
+    <span
+      aria-hidden
+      data-testid="brand-mark"
+      className={cx(
+        'flex size-6 shrink-0 items-center justify-center [&_svg]:size-3.5',
+        RADIUS.control,
+        TONE_FILL.accent
+      )}
+    >
+      <LeanZeroGlyph />
+    </span>
+    <span className={cx(TYPE.h2, 'truncate')}>LeanZero Swarm</span>
+  </div>
+);
+
 /**
- * Goose Swarm sidebar: nav rows, then the Projects tree (pass B — user-curated project folders,
- * each expanding to its own sessions via the server-side cwd filter), then Settings pinned to the
- * bottom. The old recent-chats CHATS section was removed in pass A; the Projects tree is its
- * replacement, with "Unfiled" catching sessions that belong to no registered project.
+ * Goose Swarm sidebar: brand block, nav rows, then the Projects tree (pass B — user-curated
+ * project folders, each expanding to its own sessions via the server-side cwd filter), then
+ * Settings pinned to the bottom. The old recent-chats CHATS section was removed in pass A; the
+ * Projects tree is its replacement, with "Unfiled" catching sessions that belong to no project.
  */
 export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
   const { isNavExpanded } = useNavigationContext();
@@ -99,12 +120,13 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className={cn('bg-background-primary outline-none flex flex-col h-full', className)}
+      className={cx('flex h-full flex-col bg-lz-surface text-lz-ink outline-none', className)}
     >
       <div className="h-[48px] no-drag" />
 
-      {/* Nav items */}
-      <div className="px-2 flex flex-col gap-0.5">
+      <BrandBlock />
+
+      <nav aria-label="Primary" className="flex flex-col gap-px px-2">
         {visibleItems.map((item) => (
           <NavRow
             key={item.id}
@@ -113,13 +135,13 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
             onClick={() => navigate(item.path)}
           />
         ))}
-      </div>
+      </nav>
 
       {/* Projects tree — the pass-B replacement for the removed CHATS section. */}
-      <ProjectsSection className="flex-1 mt-3" />
+      <ProjectsSection className="mt-2 flex-1" />
 
-      {/* Settings pinned to bottom */}
-      <div className="px-2 pt-2 pb-2 border-t border-border-secondary">
+      {/* Settings pinned to bottom, as one more nav row above a hairline. */}
+      <div className={cx('border-t px-2 py-2', SURFACE.hairline)}>
         <NavRow
           item={SETTINGS_NAV_ITEM}
           active={isActive(SETTINGS_NAV_ITEM.path)}
