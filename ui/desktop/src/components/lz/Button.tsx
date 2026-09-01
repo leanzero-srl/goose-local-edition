@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { DISABLED, FOCUS, MOTION, RADIUS, cx } from './tokens';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost';
@@ -37,18 +37,23 @@ const SIZE_ICON_ONLY: Record<ButtonSize, string> = {
   md: 'size-8 [&_svg]:size-4',
 };
 
-export function Button({
-  variant = 'secondary',
-  size = 'md',
-  icon,
-  iconOnly = false,
-  className,
-  type = 'button',
-  children,
-  ...rest
-}: ButtonProps) {
+/** The ref reaches the <button>: Radix `asChild` (Slot) and focus management depend on it. */
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    variant = 'secondary',
+    size = 'md',
+    icon,
+    iconOnly = false,
+    className,
+    type = 'button',
+    children,
+    ...rest
+  },
+  ref
+) {
   return (
     <button
+      ref={ref}
       type={type}
       data-variant={variant}
       data-icon-only={iconOnly || undefined}
@@ -68,4 +73,5 @@ export function Button({
       {children}
     </button>
   );
-}
+});
+Button.displayName = 'Button';

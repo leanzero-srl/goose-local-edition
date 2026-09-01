@@ -1,3 +1,5 @@
+import { createRef } from 'react';
+import { Slot } from '@radix-ui/react-slot';
 import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
@@ -62,6 +64,24 @@ describe('lz/Button', () => {
     expect(b.querySelector('svg')).not.toBeNull();
     fireEvent.click(b);
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards its ref to the DOM button — directly and through a Radix Slot (asChild)', () => {
+    const direct = createRef<HTMLButtonElement>();
+    const slotted = createRef<HTMLButtonElement>();
+    render(
+      <>
+        <Button ref={direct}>Run</Button>
+        <Slot ref={slotted}>
+          <Button>Slotted</Button>
+        </Slot>
+      </>
+    );
+    expect(direct.current).toBeInstanceOf(HTMLButtonElement);
+    expect(direct.current?.textContent).toBe('Run');
+    expect(slotted.current).toBeInstanceOf(HTMLButtonElement);
+    expect(slotted.current?.textContent).toBe('Slotted');
+    expect(Button.displayName).toBe('Button');
   });
 
   it('iconOnly is a square control (28 / 32) with its own class set and no text padding', async () => {
