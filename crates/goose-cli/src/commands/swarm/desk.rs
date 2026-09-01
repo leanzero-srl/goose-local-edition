@@ -63,6 +63,7 @@ use std::sync::Arc;
 
 use goose_swarm::EventSink;
 
+use super::supervision::supervision_lane_kind;
 use super::{
     tail_chars, JUDGE_WAKE, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS, REPEAT_BREAK_N,
 };
@@ -991,6 +992,17 @@ impl Desk {
             if key.is_empty() || self.finished.contains(key) || self.lanes.contains_key(key) {
                 continue;
             }
+            // SUPERVISION LANES ARE NOT WATCHED (r6e E15). The judge/prereview/tail-review/
+            // schedjudge/replan/verify lanes write the same artifacts as workers, so the desk
+            // discovered them and ran its detectors on the supervisors: r6d run.jsonl carried 62
+            // desk_summon on `judge-research-*` keys ("[growth_without_acting] 4297 reasoning
+            // chars since the last tool call") against 22 on workers, plus 236 desk_look / 160
+            // desk_silent rows — and no judge look is ever dispatched on a judge-* key, so every
+            // one was noise in the A/B this shadow exists to feed. The classifier is the one
+            // `supervision_lane_kind` already keeps (no second name list).
+            if supervision_lane_kind(key).is_some() {
+                continue;
+            }
             self.lanes
                 .insert(key.to_string(), LaneWatch::new(key.to_string()));
         }
@@ -1410,5 +1422,46 @@ mod tests {
         assert_eq!(format!("{first}{second}"), s);
         let mut carry2 = Vec::new();
         assert!(decode_utf8_append(&mut carry2, &[0xff, 0xfe]).is_err());
+    }
+
+    /// r6e E15 (r6d: 62 of 84 desk_summon named `judge-research-*` keys): a supervision lane's
+    /// artifacts — here a judge lane whose think.log has grown past the growth-without-acting
+    /// trip with zero tool calls — never become a desk lane, so no desk_look and no desk_summon
+    /// can carry its key; the worker lane beside it is discovered and watched as before.
+    #[test]
+    fn a_supervision_lanes_artifacts_never_produce_a_desk_summon() {
+        let dir = tempfile::tempdir().unwrap();
+        let activity = dir.path().join("activity");
+        std::fs::create_dir_all(&activity).unwrap();
+        let big = format!(
+            "{}{}",
+            marker(0, "2026-09-01T04:47:59+00:00"),
+            "judge reasoning that never acts ".repeat(400)
+        );
+        for key in [
+            "judge-research-ledger-core-q5",
+            "prereview-web-viz",
+            "replan-r0",
+        ] {
+            std::fs::write(activity.join(format!("{key}.think.log")), &big).unwrap();
+            std::fs::write(activity.join(format!("{key}.json")), "{}").unwrap();
+        }
+        std::fs::write(activity.join("research-ledger-core-q5.think.log"), &big).unwrap();
+        let sink = Arc::new(RecordingSink::new());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let mut desk = Desk::new(activity, dir.path().join("run.jsonl"), sink_dyn);
+        desk.poll();
+        desk.poll();
+        let keys: Vec<&String> = desk.lanes.keys().collect();
+        assert_eq!(keys, vec!["research-ledger-core-q5"], "{keys:?}");
+        for ev in ["desk_summon", "desk_look", "desk_silent"] {
+            for e in sink.events(ev) {
+                let lane = e["lane"].as_str().unwrap_or("");
+                assert!(
+                    supervision_lane_kind(lane).is_none(),
+                    "{ev} on a supervision lane: {e}"
+                );
+            }
+        }
     }
 }
