@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
   Laptop,
   Link2,
   Loader2,
   LogOut,
   Mail,
+  Play,
   RefreshCw,
   Wifi,
   WifiOff,
@@ -30,6 +32,7 @@ import {
   leanzeroLinkHealth,
   leanzeroLinkLogout,
   leanzeroLinkNodes,
+  leanzeroLinkRemoteExecute,
   leanzeroLinkRequestCode,
   leanzeroLinkStatus,
   leanzeroLinkVerify,
@@ -56,6 +59,9 @@ const i18n = defineMessages({
 // ---------------------------------------------------------------------------
 
 const CODE_LENGTH = 6;
+
+/** Consecutive failed status() polls (≈3s each) before the connected view flags staleness. */
+const STALE_POLL_THRESHOLD = 3;
 
 function emailOf(auth: AuthState): string {
   return 'email' in auth ? auth.email : '';
@@ -496,6 +502,283 @@ function ConnectingCard({ email }: { email: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Run-a-prompt-on-a-device card (P5 made tangible) + its custom node dropdown.
+// ---------------------------------------------------------------------------
+
+/** One entry in the target dropdown — self (always runnable) or a peer (only when Idle). */
+interface RunTargetOption {
+  nodeId: string;
+  hostname: string;
+  isSelf: boolean;
+  status: NodeStatus;
+  /** Self and Idle peers are selectable; Busy/Offline peers show DISABLED with a reason. */
+  selectable: boolean;
+  /** Why a non-selectable peer can't be targeted right now ("busy" / "offline"). */
+  reason?: string;
+}
+
+function targetLabel(opt: RunTargetOption): string {
+  return opt.isSelf ? `This device · ${opt.hostname}` : opt.hostname;
+}
+
+/**
+ * Custom device dropdown — never a native <select>. Busy/Offline peers are rendered
+ * DISABLED (honest: shown, not hidden) with their live state as the reason; self and Idle
+ * peers are pickable. Solid benchmark chrome: full border, status chips, no rails/tints.
+ */
+function NodeSelect({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: RunTargetOption[];
+  value: string | null;
+  onChange: (nodeId: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  const selected = options.find((o) => o.nodeId === value) ?? null;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-testid="link-run-target"
+        disabled={disabled || options.length === 0}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded border border-border-primary bg-background-secondary px-3 py-2 text-left text-sm font-semibold text-text-primary transition-colors hover:border-text-secondary disabled:opacity-60"
+      >
+        <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
+        <span className="min-w-0 truncate">
+          {selected ? targetLabel(selected) : 'No runnable device'}
+        </span>
+        {selected && <StatusChip status={selected.status} />}
+        <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-text-secondary" />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Target device"
+          className="absolute left-0 top-full z-[60] mt-1 w-full overflow-hidden rounded border border-border-primary bg-background-primary shadow-lg"
+        >
+          {options.map((opt) => (
+            <button
+              key={opt.nodeId}
+              type="button"
+              role="option"
+              aria-selected={opt.nodeId === value}
+              aria-disabled={!opt.selectable}
+              disabled={!opt.selectable}
+              data-testid={`link-run-target-option-${opt.nodeId}`}
+              title={opt.selectable ? targetLabel(opt) : `${targetLabel(opt)} — ${opt.reason}`}
+              onClick={() => {
+                if (!opt.selectable) return;
+                onChange(opt.nodeId);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                opt.nodeId === value ? 'bg-background-secondary' : 'hover:bg-background-secondary'
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              <Laptop className="h-4 w-4 shrink-0 text-text-secondary" />
+              <span className="min-w-0 truncate font-semibold text-text-primary">
+                {targetLabel(opt)}
+              </span>
+              <StatusChip status={opt.status} />
+              {!opt.selectable && opt.reason && (
+                <span className="ml-auto shrink-0 text-xs font-semibold text-text-secondary">
+                  can&apos;t run — {opt.reason}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildRunTargets(nodes: NodesResponse | null): RunTargetOption[] {
+  if (!nodes?.self) return [];
+  const self: RunTargetOption = {
+    nodeId: nodes.self.node_id,
+    hostname: nodes.self.hostname,
+    isSelf: true,
+    status: nodes.self.status,
+    selectable: true,
+  };
+  const peers: RunTargetOption[] = (nodes.peers ?? []).map((p) => {
+    const idle = p.status.type === 'Idle';
+    return {
+      nodeId: p.node_id,
+      hostname: p.hostname,
+      isSelf: false,
+      status: p.status,
+      selectable: idle,
+      reason: idle ? undefined : p.status.type === 'Busy' ? 'busy' : 'offline',
+    };
+  });
+  return [self, ...peers];
+}
+
+/**
+ * Below the device list: pick an idle device, type a prompt, Run. Fires
+ * `leanzeroLinkRemoteExecute` and confirms with the started session id (the deltas already
+ * mirror here via P4 — no stream viewer is built). Errors ("node is busy", "remote
+ * execution disabled on this node", …) ride through VERBATIM via `linkBannerText`.
+ */
+function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
+  const options = useMemo(() => buildRunTargets(nodes), [nodes]);
+  const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState('');
+  const [workingDir, setWorkingDir] = useState('');
+  const [inFlight, setInFlight] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ sessionId: string; hostname: string } | null>(null);
+
+  // Keep the selection valid: preserve it while still selectable, else default to self
+  // (always runnable), else the first selectable, else nothing (dropdown/Run disabled).
+  useEffect(() => {
+    const selectable = options.filter((o) => o.selectable);
+    if (selectable.length === 0) {
+      setTargetNodeId(null);
+      return;
+    }
+    setTargetNodeId((prev) => {
+      if (prev && selectable.some((o) => o.nodeId === prev)) return prev;
+      return (selectable.find((o) => o.isSelf) ?? selectable[0]).nodeId;
+    });
+  }, [options]);
+
+  const trimmedPrompt = prompt.trim();
+  const selectedSelectable =
+    targetNodeId != null && options.some((o) => o.nodeId === targetNodeId && o.selectable);
+  const canRun = !inFlight && trimmedPrompt !== '' && selectedSelectable;
+
+  const run = useCallback(async () => {
+    if (inFlight || targetNodeId == null || trimmedPrompt === '' || !selectedSelectable) return;
+    const target = options.find((o) => o.nodeId === targetNodeId);
+    setError(null);
+    setResult(null);
+    setInFlight(true);
+    try {
+      const res = await leanzeroLinkRemoteExecute({
+        targetNodeId,
+        prompt: trimmedPrompt,
+        workingDir,
+      });
+      setResult({ sessionId: res.sessionId, hostname: target?.hostname ?? targetNodeId });
+      setPrompt('');
+    } catch (e) {
+      setError(linkBannerText(e));
+    } finally {
+      setInFlight(false);
+    }
+  }, [inFlight, targetNodeId, trimmedPrompt, selectedSelectable, options, workingDir]);
+
+  const inputBase =
+    'w-full rounded border border-border-primary bg-background-primary px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-secondary focus:border-text-secondary';
+
+  return (
+    <Card>
+      <CardHeader label="Run a prompt on a linked device" />
+      <div className="flex flex-col gap-3 px-3 py-3" data-testid="link-run-card">
+        <label className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+          Device
+        </label>
+        <NodeSelect
+          options={options}
+          value={targetNodeId}
+          onChange={setTargetNodeId}
+          disabled={inFlight}
+        />
+
+        <label
+          htmlFor="link-run-prompt"
+          className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
+        >
+          Prompt
+        </label>
+        <textarea
+          id="link-run-prompt"
+          data-testid="link-run-prompt"
+          rows={3}
+          value={prompt}
+          disabled={inFlight}
+          placeholder="Describe what this device should do…"
+          onChange={(e) => setPrompt(e.target.value)}
+          className={`${inputBase} resize-y font-mono`}
+        />
+
+        <label
+          htmlFor="link-run-workdir"
+          className="text-xs font-semibold uppercase tracking-wider text-text-secondary"
+        >
+          Working directory (optional)
+        </label>
+        <input
+          id="link-run-workdir"
+          data-testid="link-run-workdir"
+          type="text"
+          value={workingDir}
+          disabled={inFlight}
+          placeholder="defaults to the device's home"
+          onChange={(e) => setWorkingDir(e.target.value)}
+          className={`${inputBase} font-mono`}
+        />
+
+        {error && (
+          <div data-testid="link-run-error">
+            <SolidBanner color={RED} label="Run" text={error} />
+          </div>
+        )}
+
+        {result && (
+          <div
+            className="flex items-center gap-2 rounded px-4 py-3"
+            style={{ backgroundColor: GREEN }}
+            role="status"
+            data-testid="link-run-success"
+          >
+            <Check className="h-4 w-4 shrink-0 text-white" />
+            <span className="min-w-0 flex-1 break-words text-sm font-semibold text-white">
+              Started session {result.sessionId} on {result.hostname} — its activity will mirror
+              here.
+            </span>
+          </div>
+        )}
+
+        <Button
+          type="button"
+          disabled={!canRun}
+          data-testid="link-run-submit"
+          onClick={() => void run()}
+          className="w-full rounded font-bold text-white hover:opacity-90 disabled:opacity-60"
+          style={{ backgroundColor: AZURE }}
+        >
+          {inFlight ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          Run
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Connected dashboard.
 // ---------------------------------------------------------------------------
 
@@ -504,12 +787,14 @@ function ConnectedView({
   linkState,
   nodes,
   now,
+  stale,
   onLogout,
 }: {
   email: string;
   linkState: LinkState;
   nodes: NodesResponse | null;
   now: number;
+  stale: boolean;
   onLogout: () => void;
 }) {
   const mesh = linkState.mesh;
@@ -517,6 +802,19 @@ function ConnectedView({
 
   return (
     <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
+      {stale && (
+        <div
+          className="flex items-center gap-2 rounded px-4 py-3"
+          style={{ backgroundColor: AMBER }}
+          role="status"
+          data-testid="link-reconnecting"
+        >
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: INK_DARK }} />
+          <span className="text-sm font-semibold" style={{ color: INK_DARK }}>
+            Reconnecting… (lost contact with the local node)
+          </span>
+        </div>
+      )}
       <Card>
         <CardHeader
           label="Account"
@@ -596,6 +894,8 @@ function ConnectedView({
           </div>
         )}
       </Card>
+
+      <RunPromptCard nodes={nodes} />
     </div>
   );
 }
@@ -623,6 +923,12 @@ const LeanZeroLinkSection: React.FC = () => {
   // A 1s clock for the connected view's relative last-seen labels.
   const [now, setNow] = useState(() => Date.now());
 
+  // Staleness gate: count CONSECUTIVE failed status() polls. A single blip must not yank
+  // the user out of the connected view, so we DEBOUNCE — only after N in a row do we
+  // surface the "Reconnecting…" strip. A successful poll resets it. Auth transitions ride
+  // the success path (setLinkState) and are never debounced; only the error case is.
+  const [staleFailures, setStaleFailures] = useState(0);
+
   const disposedRef = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -631,6 +937,7 @@ const LeanZeroLinkSection: React.FC = () => {
       if (disposedRef.current) return;
       setLinkState(next);
       setStatusError(null);
+      setStaleFailures(0);
       if (next.auth.state === 'connected') {
         try {
           const n = await leanzeroLinkNodes();
@@ -643,8 +950,10 @@ const LeanZeroLinkSection: React.FC = () => {
       }
     } catch (e) {
       if (disposedRef.current) return;
-      // Keep the last known state; surface the read failure as a truth line.
+      // Keep the last known state; surface the read failure as a truth line and count it
+      // toward the staleness debounce (the connected view flips to "Reconnecting…" at N).
       setStatusError(linkErrorText(e));
+      setStaleFailures((n) => n + 1);
     }
   }, []);
 
@@ -857,6 +1166,7 @@ const LeanZeroLinkSection: React.FC = () => {
           linkState={linkState}
           nodes={nodes}
           now={now}
+          stale={staleFailures >= STALE_POLL_THRESHOLD}
           onLogout={() => setLogoutOpen(true)}
         />
       )}

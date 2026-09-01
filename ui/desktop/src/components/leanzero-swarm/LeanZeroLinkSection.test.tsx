@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render as rtlRender, screen } from '@testing-library/react';
+import { act, cleanup, render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
@@ -14,6 +14,7 @@ const mockConnect = vi.fn();
 const mockLogout = vi.fn();
 const mockNodes = vi.fn();
 const mockHealth = vi.fn();
+const mockRemoteExecute = vi.fn();
 
 vi.mock('../../acp/leanzero-link', async (importActual) => {
   const actual = await importActual<typeof import('../../acp/leanzero-link')>();
@@ -26,6 +27,7 @@ vi.mock('../../acp/leanzero-link', async (importActual) => {
     leanzeroLinkLogout: (...a: unknown[]) => mockLogout(...a),
     leanzeroLinkNodes: (...a: unknown[]) => mockNodes(...a),
     leanzeroLinkHealth: (...a: unknown[]) => mockHealth(...a),
+    leanzeroLinkRemoteExecute: (...a: unknown[]) => mockRemoteExecute(...a),
   };
 });
 
@@ -104,6 +106,44 @@ const NODES_WITH_PEERS: NodesResponse = {
       status: { type: 'Offline' },
       sessions_active: 0,
       updated_at: new Date(Date.now() - 3_600_000).toISOString(),
+    },
+  ],
+};
+
+/** A roster for the run-card: an idle self, plus idle / busy / offline peers. */
+const RUN_NODES: NodesResponse = {
+  self: {
+    node_id: 'self-aa',
+    hostname: 'works-mac-studio',
+    mesh_ip: '100.64.0.1',
+    status: { type: 'Idle' },
+    sessions_active: 0,
+    updated_at: new Date().toISOString(),
+  },
+  peers: [
+    {
+      node_id: 'peer-idle',
+      hostname: 'mihai-macbook-2',
+      mesh_ip: '100.64.0.2',
+      status: { type: 'Idle' },
+      sessions_active: 0,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      node_id: 'peer-busy',
+      hostname: 'studio-b',
+      mesh_ip: '100.64.0.3',
+      status: { type: 'Busy', session_id: 'sess-xyz9' },
+      sessions_active: 1,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      node_id: 'peer-offline',
+      hostname: 'studio-c',
+      mesh_ip: '100.64.0.4',
+      status: { type: 'Offline' },
+      sessions_active: 0,
+      updated_at: new Date().toISOString(),
     },
   ],
 };
@@ -385,5 +425,208 @@ describe('LeanZeroLinkSection — health + error surfacing', () => {
     ).toBeInTheDocument();
     // The raw URL is NOT leaked to the banner.
     expect(screen.queryByText(/failed to send/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('LeanZeroLinkSection — run-a-prompt-on-a-device card', () => {
+  it('the node dropdown lists Idle targets as pickable and Busy/Offline peers DISABLED with a reason', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    await userEvent.click(screen.getByTestId('link-run-target'));
+
+    // Self is always runnable (labeled "This device"), even were it busy.
+    const selfOpt = screen.getByTestId('link-run-target-option-self-aa');
+    expect(selfOpt).not.toBeDisabled();
+    expect(selfOpt).toHaveTextContent(/This device/i);
+
+    // An Idle peer is pickable.
+    const idle = screen.getByTestId('link-run-target-option-peer-idle');
+    expect(idle).not.toBeDisabled();
+
+    // Busy / Offline peers are SHOWN (honest) but disabled, carrying their state as reason.
+    const busy = screen.getByTestId('link-run-target-option-peer-busy');
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveTextContent(/busy/i);
+    const offline = screen.getByTestId('link-run-target-option-peer-offline');
+    expect(offline).toBeDisabled();
+    expect(offline).toHaveTextContent(/offline/i);
+  });
+
+  it('Run calls remoteExecute with the selected target + prompt + workingDir, then confirms with the session id', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    // Pick the idle peer as target.
+    await userEvent.click(screen.getByTestId('link-run-target'));
+    await userEvent.click(screen.getByTestId('link-run-target-option-peer-idle'));
+
+    await userEvent.type(screen.getByTestId('link-run-prompt'), 'build the thing');
+    await userEvent.type(screen.getByTestId('link-run-workdir'), '/Users/mihai/proj');
+
+    mockRemoteExecute.mockResolvedValue({ sessionId: 'sess-remote-1' });
+    await userEvent.click(screen.getByTestId('link-run-submit'));
+
+    expect(mockRemoteExecute).toHaveBeenCalledWith({
+      targetNodeId: 'peer-idle',
+      prompt: 'build the thing',
+      workingDir: '/Users/mihai/proj',
+    });
+
+    const success = await screen.findByTestId('link-run-success');
+    expect(success).toHaveTextContent(
+      /Started session sess-remote-1 on mihai-macbook-2 — its activity will mirror here/i
+    );
+  });
+
+  it('defaults the target to "This device" (self) when nothing is picked', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    await userEvent.type(screen.getByTestId('link-run-prompt'), 'do it here');
+    mockRemoteExecute.mockResolvedValue({ sessionId: 'sess-self-1' });
+    await userEvent.click(screen.getByTestId('link-run-submit'));
+
+    expect(mockRemoteExecute).toHaveBeenCalledWith({
+      targetNodeId: 'self-aa',
+      prompt: 'do it here',
+      workingDir: '',
+    });
+  });
+
+  it('a backend rejection ("node is busy") renders VERBATIM in a solid banner', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    await userEvent.type(screen.getByTestId('link-run-prompt'), 'anything');
+    mockRemoteExecute.mockRejectedValue(rpcError('node is busy'));
+    await userEvent.click(screen.getByTestId('link-run-submit'));
+
+    expect(await screen.findByTestId('link-run-error')).toHaveTextContent('node is busy');
+    // Not left claiming success.
+    expect(screen.queryByTestId('link-run-success')).not.toBeInTheDocument();
+  });
+
+  it('Run is DISABLED until a prompt is typed', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
+    await userEvent.type(screen.getByTestId('link-run-prompt'), 'now runnable');
+    expect(screen.getByTestId('link-run-submit')).not.toBeDisabled();
+  });
+
+  it('Run is DISABLED while a request is in flight', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(RUN_NODES);
+    render();
+    await screen.findByTestId('link-run-card');
+
+    await userEvent.type(screen.getByTestId('link-run-prompt'), 'hold');
+    let resolveRun: (v: { sessionId: string }) => void = () => {};
+    mockRemoteExecute.mockReturnValue(
+      new Promise<{ sessionId: string }>((resolve) => {
+        resolveRun = resolve;
+      })
+    );
+    await userEvent.click(screen.getByTestId('link-run-submit'));
+
+    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
+    expect(screen.getByTestId('link-run-target')).toBeDisabled();
+
+    resolveRun({ sessionId: 'sess-late' });
+    await screen.findByTestId('link-run-success');
+  });
+
+  it('with no reachable roster (nodes unavailable) there is no runnable target and Run is disabled', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockRejectedValue(new Error('roster read failed'));
+    render();
+    await screen.findByTestId('link-run-card');
+
+    expect(screen.getByTestId('link-run-target')).toBeDisabled();
+    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
+  });
+});
+
+describe('LeanZeroLinkSection — connected-view staleness gate', () => {
+  it('surfaces the Reconnecting strip only after 3 consecutive status failures, then clears on success', async () => {
+    vi.useFakeTimers();
+    try {
+      currentState = CONNECTED;
+      mockNodes.mockResolvedValue(RUN_NODES);
+      render();
+      // Flush the mount-time status()+nodes() poll.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId('link-connected')).toBeInTheDocument();
+      expect(screen.queryByTestId('link-reconnecting')).not.toBeInTheDocument();
+
+      // status() starts failing — a goosed death mid-connected.
+      mockStatus.mockRejectedValue(rpcError('agent connection lost'));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000); // failure #1
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000); // failure #2
+      });
+      // A transient blip (2) must NOT yank the user out or show the strip.
+      expect(screen.queryByTestId('link-reconnecting')).not.toBeInTheDocument();
+      expect(screen.getByTestId('link-connected')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000); // failure #3
+      });
+      expect(screen.getByTestId('link-reconnecting')).toBeInTheDocument();
+      // Still connected — not flashed back to loggedOut.
+      expect(screen.getByTestId('link-connected')).toBeInTheDocument();
+      expect(screen.queryByTestId('link-login-card')).not.toBeInTheDocument();
+
+      // A single successful poll clears the strip.
+      mockStatus.mockImplementation(async () => CONNECTED);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.queryByTestId('link-reconnecting')).not.toBeInTheDocument();
+      expect(screen.getByTestId('link-connected')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a genuine auth transition (status → loggedOut) updates immediately and is not debounced', async () => {
+    vi.useFakeTimers();
+    try {
+      currentState = CONNECTED;
+      mockNodes.mockResolvedValue(RUN_NODES);
+      render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId('link-connected')).toBeInTheDocument();
+
+      // goosed reports a real logout on the very next poll.
+      currentState = LOGGED_OUT;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.getByTestId('link-login-card')).toBeInTheDocument();
+      expect(screen.queryByTestId('link-connected')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('link-reconnecting')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
