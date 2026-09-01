@@ -837,3 +837,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   (no probe change, no name list); and BOOTED the archived app to replay the gate's bare curl,
   discovering four of eight findings were probe artifacts (JSON 401 envelopes) — turning "the
   lanes refuted the gate" from a suspicion into a measurement. Charter gap: none.
+- 2026-09-01 06:20 fix-tracer (gate A re-trace, afae2eb1b): EXEMPLARY. Detached-worktree test run,
+  re-execution of the committed functions on raw archive data in the real file order, AND a
+  hermetic boot of the archived app with a positive control — three independent instruments
+  agreeing. Corrected the surgeon's own count (six artifacts, not four), caught the handoff parser
+  extracting a path from a NEGATION, and labeled the drafts.py machinery a net for this run
+  honestly. Charter gap: none.
