@@ -2926,9 +2926,28 @@ pub struct LeanzeroLinkMeshStatusDto {
     pub peers: Vec<LeanzeroLinkMeshPeerDto>,
 }
 
+/// One mesh binary as discovered when the Link manager was built: `found` at `path`, or
+/// `missing` with the full text of where discovery looked (the env override, every PATH
+/// directory, the known install locations) — so the UI can show a broken bundle BEFORE
+/// the connect click, and `connect` is refused with the same text.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum LeanzeroLinkBinaryDto {
+    Found { path: String },
+    Missing { error: String },
+}
+
+/// The two binaries the goose-owned mesh needs.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkMeshBinariesDto {
+    pub tailscaled: LeanzeroLinkBinaryDto,
+    pub tailscale: LeanzeroLinkBinaryDto,
+}
+
 /// What goosed surfaces for the Link tab: auth + live mesh + total node count
 /// (self + reachable peers) + the last error (never swallowed).
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct LeanzeroLinkStateResponse {
     pub auth: LeanzeroLinkAuthStateDto,
@@ -2946,6 +2965,8 @@ pub struct LeanzeroLinkStateResponse {
     /// it differs from `remote_execution_allowed`, the change applies at the next connect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_execution_allowed_live: Option<bool>,
+    /// Discovery's verdict on the mesh binaries at manager build — shown before any click.
+    pub mesh_binaries: LeanzeroLinkMeshBinariesDto,
 }
 
 /// The swarm node view (`self` + peers). Proxies the local control service's
