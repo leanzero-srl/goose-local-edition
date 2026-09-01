@@ -5,12 +5,25 @@ edition = "2021"
 description = "LeanZero Link: goose-owned userspace Tailscale mesh sidecar, fully isolated from any system tailscaled"
 
 [dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
+bytes = { workspace = true }
+chrono = { workspace = true, features = ["now"] }
 dirs = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+subtle = { version = "2.5", default-features = false, features = ["std"] }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util"] }
+tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util", "net"] }
+# WebSocket CLIENT for the peer fabric (PeerRegistry subscribing to each peer's
+# /v1/swarm/stream): axum's ws is server-side only and reqwest 0.13 has no ws
+# feature. Pinned to the minor axum 0.8 already pulls in, so no new crate enters
+# the dependency tree.
+tokio-tungstenite = "0.29"
 tracing = { workspace = true }
+url = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
