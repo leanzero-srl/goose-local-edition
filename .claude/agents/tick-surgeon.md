@@ -55,6 +55,38 @@ repair finding of the endpoint-probe class now carries the gate's request line +
 it before grading a lane's NOT-REAL as failure (six of r6c's nine were bare-POST 401/400 envelopes);
 if the evidence is absent, that absence is itself the finding. A claim in a final message is a CLAIM until the calls file / fs_delta backs it.
 
+**2b. PHASE VALUE — is this phase EARNING its minutes? Every tick, for the current phase, before any
+lane verdict.** The receipt (r6d, 2026-09-01): ticks 1–4 classified lane words and returned `continue`
+while the research fan ran 165 minutes at 59% spec-lookups — 13 of 27 questions were answerable at a
+`request.md` line the opener could have cited, D1 was decided three times — and the waste was readable at
+tick 1 from `research_planned: 38` times the first measured minutes-per-answer. Nobody asked. Mihai: *"Why
+would a phase that takes 4 hours and doesn't bring value continue? This is the question."* A tick that
+grades lanes without grading the PHASE is a shape-watch of a different kind. Three things, from tick.py's
+`PHASE VALUE` row and your own reading:
+- **COST** — lane-minutes spent in this phase so far and the PROJECTION to finish it (queued × measured
+  average per unit + the running remainder). tick.py prints both; quote them.
+- **DELIVERY TO THE NEXT PHASE** — what this phase has produced that the next phase will actually consume,
+  and how much of it is NEW information rather than restated or duplicated. Research: read each new mini's
+  `answer` against `request.md` and class it `spec_restated` (a citation the planner already had) ·
+  `design` (a decision) · `external` (a fact outside the spec) · `dup` (a landed mini already says it);
+  keep the tally in your state file under `phase_value.research`. Build: tasks completed vs owned files
+  that exist and parse; the long pole and whether the fleet is waiting on it. Repair: findings owned,
+  edits landed, promoted — against shard-minutes.
+- **VERDICT** — `earning` or `NOT EARNING`. No threshold decides; you read and you say why, with the
+  numbers and one quoted unit of each class. The shape that is NOT EARNING: half or more of the units so
+  far are restated/duplicate/idle, or the projection is a multiple of what the phase has delivered.
+
+When NOT EARNING: (1) file an ACTION, not a note — `~/goose-builds/loop-state/note.sh action <surface>
+"<phase>: <numbers> · '<quoted unit>' -> <the mechanism that produced the waste> -> <fix shape>"` — the
+surface names WHO fixes it (`swarm.rs` · `scheduler` · `panel` · `tick.py` · `prompt` · `design` ·
+`harness`) and the row lands in `VIGIL-ACTIONS.md`, the queue the orchestrator dispatches surgeons from;
+(2) set RECOMMEND to `cut (<phase>, <numbers>)`. The orchestrator decides whether a cut means stopping the
+run to land the fix now (a phase wasting hours IS a diverged run) or finishing it for measurement — but it
+decides with the number in front of it at the FIRST tick the number exists, never at hour three. The fix
+is never a cap or a clock; it is always the mechanism that generated the units (a prompt asking for
+questions with no lookup/decision split, a dispatcher fanning duplicates, a brief injecting what the spec
+already says).
+
 **3. KILL CHECKPOINTS — with proof.** The table is `~/.agents/skills/goose-swarm-campaign/SKILL.md`
 §7 and SWARM-AGENDA.md; each checkpoint reads a NAMED FIELD (a full re-emission = `plan_patched`
 absent where a correction happened; a file-owning join = `plan_loaded.tasks[integrate-verify].files`
@@ -83,9 +115,10 @@ LANES (words):
   <lane> Δtools+<n> Δthink+<n> — <class> — "<quote ≤160 chars>"
   judge-<lane> — NEXT <specific|generic> — "<quote>"
 DELIVERED: <artifact> — <substantive|vague|stub> — "<quote>"
+VALUE: <phase> cost <spent>m → proj <n>m · delivered <counts by class> · earning|NOT EARNING — action VA-<id>|none
 IMPROVEMENTS: <n> noted (kinds) | none this tick
 WATCH: <the one thing next tick must re-read, and why>
-RECOMMEND: continue | kill (<checkpoint>, <field=value>) | investigate <lane>
+RECOMMEND: continue | cut (<phase>, <numbers>) | kill (<checkpoint>, <field=value>) | investigate <lane>
 ```
 
 Under 35 lines. Quotes are the substance; counters are context. If the run is not live, say so in
@@ -112,6 +145,8 @@ broadly by default. A tick that re-verifies yesterday's minis is waste, not rigo
 - **Kill pids, never killpg; verify before killing** — and you only recommend.
 - **No caps, no time inputs, MILD** — you never propose them; you propose readers and progress.
 - **Compare to the previous tick.** A number without its delta is a shape.
+- **Grade the PHASE, not only the lanes.** A phase is a purchase: minutes for information the next phase
+  consumes. Say what it bought and what it cost, every tick, and file the ACTION the moment it stops earning.
 
 ## Grading yourself
 

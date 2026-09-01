@@ -534,3 +534,42 @@ fn the_read_the_words_gate_is_carried() {
         "the campaign skill lost the words-first checkpoint procedure"
     );
 }
+
+/// GATE 9 — THE VALUE GATE (Mihai 2026-09-01, three hours into r6d's 4-hour research fan under four
+/// ticks that said `continue`: "Why would a phase that takes 4 hours and doesn't bring value continue?
+/// This is the question." / "we don't want steps that consume time and not a lot of value. Get that
+/// straight"). A step exists only while its measured delivery is consumed downstream; the vigil grades
+/// the CURRENT phase every tick and files ACTIONS into the queue surgeons are dispatched from. This is
+/// the tripwire: it pins the practice in the docs and instruments that arm every session. The reader
+/// is the gate.
+#[test]
+fn the_value_gate_is_carried() {
+    for (doc, needle) in [
+        ("AGENTS.md", "THE VALUE GATE"),
+        (".claude/rules/development-gates.md", "THE VALUE GATE"),
+        (".claude/agents/tick-surgeon.md", "PHASE VALUE"),
+        (".claude/agents/tick-surgeon.md", "note.sh action"),
+        (
+            "VIGIL-ACTIONS.md",
+            "| id | filed | surface | status | action |",
+        ),
+        ("CLAUDE.md", "VIGIL-ACTIONS.md"),
+    ] {
+        assert!(
+            read(doc).contains(needle),
+            "{doc} lost the VALUE gate ({needle})"
+        );
+    }
+    let home = std::env::var("HOME").expect("HOME set");
+    let loop_state = std::path::Path::new(&home).join("goose-builds/loop-state");
+    let note = std::fs::read_to_string(loop_state.join("note.sh")).expect("note.sh readable");
+    assert!(
+        note.contains("VIGIL-ACTIONS.md") && note.contains("\"action\""),
+        "note.sh lost the `action` kind that feeds the surgeons' queue"
+    );
+    let tick = std::fs::read_to_string(loop_state.join("tick.py")).expect("tick.py readable");
+    assert!(
+        tick.contains("PHASE VALUE research") && tick.contains("PHASE VALUE build"),
+        "tick.py lost the PHASE VALUE cost rows"
+    );
+}

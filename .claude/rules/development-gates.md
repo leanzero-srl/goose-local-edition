@@ -256,6 +256,49 @@ Refusing enforcement: `development_gates.rs` pins this section and the AGENTS.md
 campaign/knob-turning skills carry the trace template; in review, a fix-commit without a trace block
 is returned on sight — the same standing as a new seconds-literal under gate 5.
 
+## 9. THE VALUE GATE — a step exists only while its measured delivery is consumed downstream
+
+Ordered by Mihai 2026-09-01, three hours into r6d: *"Why would a phase that takes 4 hours and doesn't bring
+value continue? This is the question. Think and implement."* Then, when the first answer was about the
+vigil alone: *"something needs to change correct. we don't want steps that consume time and not a lot of
+value. Get that straight please."* It binds the ENGINE (which steps exist) and the OPERATOR (what the vigil
+grades) at once.
+
+What happened: r6d's research fan planned 38 questions and dispatched them one lane per question at
+~6 minutes each — a 4-hour phase on 3 nodes. Four vigil ticks read every lane's words, found them
+advancing, and returned `continue`. At tick 5, asked directly, the same reader classified the 27
+dispatched questions: 13 SPEC-LOOKUPS answerable at a `request.md` line the opener could have cited
+(198 lane-minutes), 3 duplicates, one decision (D1) decided three times — 16 of 27 need not have run.
+The projection (`research_planned: 38` × the first measured minutes-per-answer) was computable at tick 1;
+nobody computed it, because the vigil graded LANES (is it looping?) and never the PHASE (is it earning?).
+r6c had already paid 126 minutes for the same fan and scored 0.1420 against r5's 0.3609 with no fan at all.
+
+The rule, both halves:
+
+- **ENGINE.** Every phase and sub-step is a purchase: node-minutes for information the next step
+  CONSUMES. A step that cannot name its consumer, or whose delivery is restated from an input the consumer
+  already has (a spec citation the planner could read itself, a duplicate of a landed artifact), is
+  deleted — its MECHANISM is removed, never capped, clocked or counted (gates 1 and 5). Every finished run
+  is audited step by step (cost · delivery · consumed-by · verdict); a step NOT EARNING on two runs goes in
+  the next engine change. A NEW step lands only with the measurement that says what it buys and who reads it.
+- **OPERATOR.** The tick-surgeon grades the CURRENT phase every tick (its step 2b): COST (lane-minutes
+  spent and the projection, from tick.py's `PHASE VALUE` row), DELIVERY (the units READ and classed —
+  research: `spec_restated` · `design` · `external` · `dup`; build: owned files that exist and parse; repair:
+  findings owned, edits landed, promoted), VERDICT (`earning` / `NOT EARNING`, with the numbers and one
+  quoted unit per class). NOT EARNING files an ACTION — `note.sh action <surface> "..."` →
+  `VIGIL-ACTIONS.md`, the queue surgeons are dispatched from — and recommends `cut` at the FIRST tick the
+  numbers exist. The orchestrator triages every OPEN row at its next turn (IMPLEMENT / DROP with reason /
+  SCHEDULED); no OPEN row survives two ticks. A finding that needs a surgeon is never left as a note.
+
+Receipts: the research fan (r6c 126m; r6d 165m spent, 4h projected; 59% waste) — cut landing as spec facts
+at synthesis, decisions once, one lane per slice; fix waves (r5 144m, r6c 215m; zero score value in both;
+r6c's criticals unowned) — ownership landed (afae2eb1b), graded again on r6e; briefs 6k → 21k chars while
+BUILD went 325m → 608m and reasoning 1.48M → 2.44M chars — the brief diet measured before it is cut.
+
+Refusing enforcement: `development_gates.rs::the_value_gate_is_carried` pins this section, the AGENTS.md
+short form, the tick-surgeon's PHASE VALUE step, `VIGIL-ACTIONS.md`, note.sh's `action` kind and tick.py's
+cost row. The reader is the gate (see below); the test is the tripwire.
+
 ## HOW GATES 7 AND 8 ACTUALLY DECIDE — the reader is the gate, the test is only a tripwire
 
 **SCOPE (Mihai, same conversation): gates 7 and 8 are about HOW CLAUDE OPERATES ON GOOSE — the
@@ -314,6 +357,8 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "read the WORDS not the fucking shape... stop wasting my money" | words first, quoted; shapes corroborate only | 7 READ-WORDS |
 | "run the changes mentally... be more exact. This is why I pay a fortune" | every fix-commit carries its would-it-have-fired trace | 8 TRACE |
 | "not pure deterministic garbage right?... Rethink please that gate" | tests are tripwires; an independent AI reading the primary data decides | 7+8 |
+| "Why would a phase that takes 4 hours and doesn't bring value continue?" | grade the PHASE every tick; NOT EARNING → an ACTION + cut | 9 VALUE |
+| "we don't want steps that consume time and not a lot of value. Get that straight" | a step lives only while its delivery is consumed; delete the mechanism | 9 VALUE |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file

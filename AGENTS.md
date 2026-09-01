@@ -262,6 +262,25 @@ REFUSES: `development_gates.rs` pins this gate's presence here and in developmen
 knob-turning/campaign skills carry the trace template; and in review, a fix-commit with no trace
 block is sent back on sight.
 
+**9. THE VALUE GATE (engine design AND operating) — a step exists only while its measured delivery is
+CONSUMED downstream; a step that costs hours and delivers little is DELETED, never capped.** Mihai,
+2026-09-01, after r6d's research fan ran 165 minutes at 59% spec-lookups under four vigil ticks that said
+`continue`: *"Why would a phase that takes 4 hours and doesn't bring value continue? This is the
+question."* and *"we don't want steps that consume time and not a lot of value. Get that straight."*
+Every phase and sub-step is a PURCHASE — node-minutes for information the next step consumes — and it is
+graded on BOTH sides: the vigil grades the CURRENT phase every tick (tick-surgeon step 2b: cost and
+projection from tick.py's `PHASE VALUE` row, delivery by class from READING the units, verdict
+`earning`/`NOT EARNING`; NOT EARNING files an ACTION in `VIGIL-ACTIONS.md` — the queue surgeons are
+dispatched from — and recommends `cut` at the FIRST tick the numbers exist), and every finished run is
+audited step by step (cost, delivery, who consumed it) so a step that fails on two runs is deleted in
+the next engine change. The fix for a wasteful step is its MECHANISM — the prompt that asks for
+questions with no lookup/decision split, the fan that dispatches duplicates, the brief that injects what
+the spec already says — never a cap, clock or count (gates 1 and 5 refuse those). Receipts: the research
+fan (r6c 126m, r6d 4h projected, 16 of 27 questions need not have run); fix waves r5 144m / r6c 215m with
+zero score value both runs. HOW IT REFUSES: `development_gates.rs` pins this gate, the tick-surgeon's
+PHASE VALUE step, `VIGIL-ACTIONS.md` and tick.py's cost row; in review, a new phase or step lands only
+with the measurement that says what it buys and which step consumes it.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`
