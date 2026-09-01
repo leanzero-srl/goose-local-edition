@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use super::decisions::{self, DECISION_SLICE};
 use super::findings::FINDING_PATH_EXTS;
 use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
-use super::orientation::heading_key;
+use super::orientation::{children_of, heading_key, top_level};
+use super::spec_surface::spec_surface_rows;
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
@@ -558,6 +559,197 @@ pub(super) fn splice_claimed_sections(
     spliced
 }
 
+/// The routes a section's endpoint table ADVERTISES, as base paths: `spec_surface_rows` (the one
+/// table parser) over the section's own body, each row's path cut at its query and at its
+/// first template segment (`/api/drafts/<id>/submit` → `/api/drafts`), trailing slash dropped.
+/// The bare `/` is not a route anyone "calls into" by name.
+fn advertised_paths(sec: &SpecSection) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, row) in spec_surface_rows(&sec.body).rows {
+        let Some(path) = row.split_whitespace().nth(1) else {
+            continue;
+        };
+        let base = path
+            .split(['?', '<', '{'])
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/');
+        if base.starts_with('/') && base.len() > 1 && !out.iter().any(|p| p == base) {
+            out.push(base.to_string());
+        }
+    }
+    out
+}
+
+/// Does `text` name `route` as a whole path token? Bounded on both sides so notifierd's
+/// `/health` is not found inside ledgerd's `/api/health` (the r6c prototype's one false hit),
+/// and `/api/drafts` is not found inside `/api/drafts/<id>/submit` — that longer row has its own
+/// path. A byte before or after that is not part of a path token (alphanumeric, `_`, `/`, `.`,
+/// `-`) is a boundary; the routes are ASCII, so byte offsets are char offsets around them.
+fn route_named(route: &str, text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let is_path_byte = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'.' | b'-');
+    text.match_indices(route).any(|(at, _)| {
+        let before_ok = at == 0 || !is_path_byte(bytes[at - 1]);
+        let end = at + route.len();
+        let after_ok = end >= bytes.len() || !is_path_byte(bytes[end]);
+        before_ok && after_ok
+    })
+}
+
+/// The sections a slice CONSUMES without owning them (VA-008), rendered in the same
+/// `### heading\nbody` shape as its own splice, plus the sections that bind every slice.
+pub(super) struct ConsumedSections {
+    /// Rules (a) and (b): the spec's own text for what this slice reaches into.
+    pub(super) called_into: String,
+    /// Rule (c): the cross-cutting top-level sections, for every slice that did not claim them.
+    pub(super) cross_cutting: String,
+}
+
+/// SPEC SECTIONS ROUTE TO CONSUMERS, not only to owners — THE ONE helper beside
+/// `splice_claimed_sections`, called by both the brief (`briefs_from_slices`) and the research
+/// prompt (`research_request_block`), so the routing rule cannot diverge between them.
+///
+/// WHY (r6c, the product-killer, archive local-sb7-swarm-r6c-FINISHED-0.1420-…-build-608m):
+/// the opener claimed a perfect 28-section PARTITION (0 overlaps) and the splice gave each
+/// slice only its OWN claims. `#### Endpoints` (4,927 chars — the `sort` values at
+/// request.md:148-149: `created_at`, `-created_at`, `amount_minor`, `-amount_minor`) went to
+/// ledgerd-api alone; web-console (claims: §7, §9) shipped `sort=date_desc`, api.py answered
+/// 400, `apiFetch` saw `r.ok` false and the table showed zero rows for the whole run. `Data →
+/// scene` and `Streaming diffs` — `####` children of web-viz's claimed §8 — went to ledgerd-api;
+/// the four cross-cutting `##` sections (What WILL happen / Consistency rules / Performance
+/// budgets / Rules — 7,698 chars) went to ledgerd-core only. Three rules, each derived from the
+/// document's own structure and this slice's own claims — no budget on any of it, and a section
+/// already in the slice's claims is never spliced twice:
+///
+/// (a) ADVERTISED ROUTE — a section whose endpoint table advertises a path that the slice's
+///     claimed bodies or declared files name (token-bounded) is called into by the slice. The
+///     cross-cutting sections are excluded from the slice's vocabulary: under (c) they belong to
+///     everyone, so one slice's claim on the graded schedule does not make it the caller of
+///     every route the schedule exercises.
+/// (b) CHILD OF A CLAIMED PARENT — the descendants of a claimed section BELOW the top level
+///     (a `###` component's `####` details). A claimed top-level grouping (`## What to build`)
+///     inherits nothing: its children are the components other slices own.
+/// (c) CROSS-CUTTING — a top-level section with no children, claimed by at most one slice, in a
+///     document where some top-level section HAS children (a flat document with only top-level
+///     sections has no rules-vs-components distinction to read and broadcasts nothing).
+///
+/// Each rule that fires emits `spec_sections_consumed{slice, rule, sections}` beside the
+/// existing `spec_sections_unclaimed`, so the tick can read where every section went.
+pub(super) fn consumed_spec_sections(
+    slice_id: &str,
+    claimed: &[String],
+    files: &[String],
+    every_claim: &[&[String]],
+    sections: &[SpecSection],
+    events: &dyn EventSink,
+) -> ConsumedSections {
+    let index_of = |heading: &str| {
+        let key = heading_key(heading);
+        sections.iter().position(|s| heading_key(&s.heading) == key)
+    };
+    let own: BTreeSet<usize> = claimed.iter().filter_map(|h| index_of(h)).collect();
+    let top = top_level(sections);
+    let cross: BTreeSet<usize> = match top {
+        Some(top)
+            if sections
+                .iter()
+                .enumerate()
+                .any(|(i, s)| s.level == top && !children_of(sections, i).is_empty()) =>
+        {
+            let mut claim_count: std::collections::HashMap<usize, usize> = Default::default();
+            for claims in every_claim {
+                for h in claims.iter() {
+                    if let Some(i) = index_of(h) {
+                        *claim_count.entry(i).or_insert(0) += 1;
+                    }
+                }
+            }
+            sections
+                .iter()
+                .enumerate()
+                .filter(|(i, s)| {
+                    s.level == top
+                        && children_of(sections, *i).is_empty()
+                        && claim_count.get(i).copied().unwrap_or(0) <= 1
+                })
+                .map(|(i, _)| i)
+                .collect()
+        }
+        _ => BTreeSet::new(),
+    };
+    let mut vocabulary = String::new();
+    for i in own.iter().filter(|i| !cross.contains(i)) {
+        vocabulary.push_str(&sections[*i].body);
+        vocabulary.push('\n');
+    }
+    for f in files {
+        vocabulary.push_str(f);
+        vocabulary.push('\n');
+    }
+    let mut by_route: Vec<usize> = Vec::new();
+    for (i, sec) in sections.iter().enumerate() {
+        if own.contains(&i) || cross.contains(&i) {
+            continue;
+        }
+        if advertised_paths(sec)
+            .iter()
+            .any(|p| route_named(p, &vocabulary))
+        {
+            by_route.push(i);
+        }
+    }
+    let mut by_parent: Vec<usize> = Vec::new();
+    if let Some(top) = top {
+        for parent in own.iter().filter(|i| sections[**i].level > top) {
+            for child in children_of(sections, *parent) {
+                if !own.contains(&child)
+                    && !cross.contains(&child)
+                    && !by_route.contains(&child)
+                    && !by_parent.contains(&child)
+                {
+                    by_parent.push(child);
+                }
+            }
+        }
+    }
+    let broadcast: Vec<usize> = cross.iter().copied().filter(|i| !own.contains(i)).collect();
+    let render = |ids: &[usize]| {
+        let mut ordered = ids.to_vec();
+        ordered.sort_unstable();
+        ordered
+            .iter()
+            .map(|i| {
+                format!(
+                    "\n### {}\n{}",
+                    sections[*i].heading,
+                    sections[*i].body.trim()
+                )
+            })
+            .collect::<String>()
+    };
+    for (rule, ids) in [
+        ("advertised_route", &by_route),
+        ("child_of_claimed", &by_parent),
+        ("cross_cutting", &broadcast),
+    ] {
+        if !ids.is_empty() {
+            events.write_value(serde_json::json!({
+                "event": "spec_sections_consumed",
+                "slice": slice_id,
+                "rule": rule,
+                "sections": ids.iter().map(|i| sections[*i].heading.clone()).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    let mut called: Vec<usize> = by_route;
+    called.extend(by_parent);
+    ConsumedSections {
+        called_into: render(&called),
+        cross_cutting: render(&broadcast),
+    }
+}
+
 /// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
 /// spec when orientation is armed — it carries the orientation index plus the slice's claimed
 /// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
@@ -574,8 +766,20 @@ pub(super) fn research_request_block(
         return format!("THE REQUEST:\n{spec}");
     }
     let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
+    // The research prompt knows only ITS slice's claims (no objective, no other slices), so
+    // rule (a) reads claimed bodies alone and rule (c)'s claim count sees one claimant — every
+    // childless top-level section reads as cross-cutting here. The brief builder, which has
+    // the whole opener output, applies the same helper with the plan-wide view.
+    let consumed = consumed_spec_sections(
+        slice_id,
+        claimed,
+        &[],
+        std::slice::from_ref(&claimed),
+        sections,
+        events,
+    );
     let orientation = spec_orientation(sections);
-    if spliced.is_empty() {
+    let mut block = if spliced.is_empty() {
         format!(
             "THE REQUEST, AS ITS ORIENTATION INDEX (this slice claimed no sections — every \
              section's full text is in the request file named under SOURCES; open the ones your \
@@ -596,7 +800,33 @@ pub(super) fn research_request_block(
              request file named under SOURCES and answer from its words — never from the \
              index's excerpt alone:{spliced}"
         )
+    };
+    block.push_str(&consumed_sections_blocks(&consumed));
+    block
+}
+
+/// The two labeled blocks a consumer appends after the slice's own sections — one rendering for
+/// the brief and the research prompt, so the labels a builder and a researcher read are the
+/// same words. Empty when nothing was consumed (no heading, no filler).
+fn consumed_sections_blocks(consumed: &ConsumedSections) -> String {
+    let mut out = String::new();
+    if !consumed.called_into.is_empty() {
+        out.push_str(&format!(
+            "\n\nSECTIONS THIS SLICE CALLS INTO — not owned, verbatim: the request's own text for \
+             the routes this slice's sections and files name and for the details under its \
+             claimed parents. Another slice builds these; this slice must match their exact \
+             paths, parameter VALUES and shapes — never a paraphrase of them:{}",
+            consumed.called_into
+        ));
     }
+    if !consumed.cross_cutting.is_empty() {
+        out.push_str(&format!(
+            "\n\nCROSS-CUTTING SPEC RULES — the request's top-level rules that bind every \
+             slice, verbatim; no slice owns them and every slice is graded on them:{}",
+            consumed.cross_cutting
+        ));
+    }
+    out
 }
 
 /// The HEAD of one slice-question prompt, assembled from THIS run's facts (the specificity
@@ -1143,11 +1373,17 @@ pub(super) fn briefs_from_slices(
     // conventional-choice framing, verbatim. With no decisions the block is empty and every
     // brief is byte-identical to the pre-partition form.
     let folded_decisions = decisions::decisions_brief_block(plan_decisions);
+    let every_claim: Vec<&[String]> = opened
+        .slices
+        .iter()
+        .map(|sl| sl.sections.as_slice())
+        .collect();
     opened
         .slices
         .iter()
         .map(|sl| {
             let mut brief = sl.objective.clone();
+            let files = files_from_objective(&sl.objective);
             // RESEARCH FAN v2: the slice's own questions, partitioned against what the fan
             // settled. A cited SPEC FACT (the opener read the request; no lane ran) renders
             // FIRST, under its own heading, with the cite — the builder can check it against
@@ -1270,6 +1506,18 @@ pub(super) fn briefs_from_slices(
                          authority over any paraphrase above:{spliced}"
                     ));
                 }
+                // VA-008: the sections this slice CALLS INTO and the rules that bind every
+                // slice — the same helper the research prompt uses, here with the plan-wide
+                // view (every slice's claims, this slice's declared files).
+                let consumed = consumed_spec_sections(
+                    &sl.id,
+                    &sl.sections,
+                    &files,
+                    &every_claim,
+                    &sections,
+                    events,
+                );
+                brief.push_str(&consumed_sections_blocks(&consumed));
             }
             brief.push_str(&folded_decisions);
             // The one-line settled digest slice_index renders for SYNTHESIS — answered/total
@@ -1303,7 +1551,7 @@ pub(super) fn briefs_from_slices(
                 title: sl.title.clone(),
                 objective: sl.objective.clone(),
                 brief,
-                files: files_from_objective(&sl.objective),
+                files,
                 settled,
             }
         })
@@ -2662,5 +2910,309 @@ mod tests {
                 "every outcome is terminal"
             );
         }
+    }
+
+    /// r6c's five slices with the sections they claimed, verbatim from the run's plan_loaded
+    /// task descriptions (the `### ` headings the splice wrote — a perfect 28-section
+    /// partition, 0 overlaps) and the heads of their objectives (which declared no backticked
+    /// files: `slice_files_unnamed` fired five times in r6c, so routing rests on the claimed
+    /// BODIES exactly as it did there).
+    fn r6c_slices() -> OpenOutput {
+        let slice = |id: &str, objective: &str, sections: &[&str]| OpenSlice {
+            id: id.into(),
+            title: id.into(),
+            objective: objective.into(),
+            questions: Vec::new(),
+            weight: 3,
+            sections: sections.iter().map(|s| s.to_string()).collect(),
+        };
+        OpenOutput {
+            slices: vec![
+                slice(
+                    "ledgerd-core",
+                    "Own app/__main__.py (single-command wrapper that boots BOTH services), \
+                     app/ledgerd.py (ledgerd entrypoint), app/db.py (ledger.db schema), \
+                     app/sync.py, app/ledger.py, app/outbox.py.",
+                    &[
+                        "Build `app` — Meridian Payments Console",
+                        "What to build",
+                        "1. The `app` package — two services, one boot contract",
+                        "2. The collection you are syncing",
+                        "3. `ledgerd` — vendor sync, event ledger, API, UI host",
+                        "Sync discipline",
+                        "The event ledger",
+                        "The outbox",
+                        "What WILL happen during a graded run",
+                        "Consistency rules — graded continuously over the live run",
+                        "Performance budgets",
+                        "Rules",
+                    ],
+                ),
+                slice(
+                    "ledgerd-api",
+                    "Own app/api.py (every ledgerd endpoint from the Endpoints table), \
+                     app/webhooks.py, app/drafts.py, app/auth.py.",
+                    &[
+                        "Endpoints",
+                        "Error envelope",
+                        "4. Webhooks — the vendor calls YOU",
+                        "5. The approval workflow — maker, checker, admin",
+                        "Data → scene",
+                        "Streaming diffs — SSE with byte accounting",
+                    ],
+                ),
+                slice(
+                    "notifierd",
+                    "Own app/notifierd.py (service entrypoint per the boot contract) and \
+                     app/notify_store.py.",
+                    &["6. `notifierd` — the idempotent consumer"],
+                ),
+                slice(
+                    "web-console",
+                    "Own web/index.html (structure only), web/styles.css (all styling), \
+                     web/app.js (page behavior: payments table with status/currency filters, \
+                     sorting on the instant-backed fields, pagination).",
+                    &[
+                        "7. `web/` — the frontend",
+                        "9. `DECISIONS.md` — three corners you must decide",
+                    ],
+                ),
+                slice(
+                    "web-viz",
+                    "Own web/viz.js (the 3D engine and nothing else).",
+                    &[
+                        "8. The 3D field — 12,288 instances, five mechanisms",
+                        "Rendering — bounded draw calls, demand rendering",
+                        "The pick buffer",
+                        "Camera — orbit + inertia",
+                        "Screen-space labels — deterministic collision culling",
+                        "The linked brush — table ⇄ instances",
+                        "`vs7dbg` — REQUIRED and graded",
+                    ],
+                ),
+            ],
+            open_decisions: Vec::new(),
+        }
+    }
+
+    /// VA-008, the r6c product-killer: with the opener's real 28-section partition against the
+    /// same spec, the web-console brief carried §7 and §9 only — never `#### Endpoints`, where
+    /// request.md:148 lists the four `sort` values — and app.js sent `sort=date_desc` (400,
+    /// zero rows for 608 minutes). Now every section routes to its CONSUMERS too: web-console
+    /// gets Endpoints (rule a: §7's body names `/api/viz/records`, `/api/sync`,
+    /// `/api/notifications`) with `-created_at` in it; web-viz gets `Data → scene` and
+    /// `Streaming diffs` (rule b: children of its claimed §8, which r6c gave to ledgerd-api);
+    /// every brief gets the four cross-cutting `##` sections (rule c) — and nothing twice.
+    #[test]
+    fn r6c_s_partitioned_claims_route_each_section_to_its_consumers_too() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let opened = r6c_slices();
+        let sections = spec_sections(spec);
+        let sink = ValueSink::default();
+        let briefs = briefs_from_slices(&opened, spec, &[], &[], &sink);
+        let by_id = |id: &str| &briefs.iter().find(|b| b.id == id).unwrap().brief;
+
+        let console = by_id("web-console");
+        assert!(
+            console.contains("SECTIONS THIS SLICE CALLS INTO"),
+            "{console}"
+        );
+        assert!(console.contains("\n### Endpoints\n"), "{console}");
+        assert!(
+            console.contains("`-created_at`"),
+            "the sort VALUES reach the slice that sends sort="
+        );
+        let viz = by_id("web-viz");
+        assert!(viz.contains("\n### Data → scene\n"), "{viz}");
+        assert!(
+            viz.contains("\n### Streaming diffs — SSE with byte accounting\n"),
+            "{viz}"
+        );
+        for b in &briefs {
+            assert!(
+                b.brief.contains("\n### Performance budgets\n"),
+                "{}: every slice is graded on the budgets",
+                b.id
+            );
+            for heading in [
+                "Endpoints",
+                "Performance budgets",
+                "Rules",
+                "Data → scene",
+                "What WILL happen during a graded run",
+            ] {
+                let needle = format!("\n### {heading}\n");
+                assert!(
+                    b.brief.matches(&needle).count() <= 1,
+                    "{}: {heading} spliced twice",
+                    b.id
+                );
+            }
+        }
+        assert_eq!(
+            by_id("ledgerd-core")
+                .matches("CROSS-CUTTING SPEC RULES")
+                .count(),
+            0,
+            "the slice that claimed the cross-cutting sections owns them; no second copy"
+        );
+        assert!(by_id("ledgerd-api").contains("CROSS-CUTTING SPEC RULES"));
+        assert_eq!(
+            by_id("ledgerd-api").matches("\n### Endpoints\n").count(),
+            1,
+            "the owner's own splice, once"
+        );
+        assert!(
+            !by_id("ledgerd-api").contains("6. `notifierd`"),
+            "notifierd's `/health` row is not found inside ledgerd's `/api/health` (token-bounded)"
+        );
+        assert!(
+            by_id("ledgerd-core").contains("\n### Error envelope\n")
+                && by_id("ledgerd-core").contains("\n### Endpoints\n"),
+            "§3's children reach the slice that claimed §3 (r6c's core lanes invented the \
+             health shape for want of them)"
+        );
+
+        // Where every section went, as events the tick reads beside spec_sections_unclaimed.
+        let ev = sink.0.lock().unwrap();
+        let consumed: Vec<&serde_json::Value> = ev
+            .iter()
+            .filter(|e| e["event"] == "spec_sections_consumed")
+            .collect();
+        let rule_for = |slice: &str, rule: &str| -> Vec<String> {
+            consumed
+                .iter()
+                .filter(|e| e["slice"] == slice && e["rule"] == rule)
+                .flat_map(|e| e["sections"].as_array().unwrap().iter())
+                .map(|h| h.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            rule_for("web-console", "advertised_route"),
+            vec!["Endpoints".to_string()]
+        );
+        assert_eq!(
+            rule_for("web-viz", "child_of_claimed"),
+            vec![
+                "Data → scene".to_string(),
+                "Streaming diffs — SSE with byte accounting".to_string()
+            ]
+        );
+        assert_eq!(rule_for("notifierd", "cross_cutting").len(), 4);
+        assert!(rule_for("ledgerd-core", "cross_cutting").is_empty());
+
+        // The gate-8 table: own / called-into / cross-cutting section chars per r6c slice.
+        let every_claim: Vec<&[String]> = opened
+            .slices
+            .iter()
+            .map(|s| s.sections.as_slice())
+            .collect();
+        for sl in &opened.slices {
+            let own = splice_claimed_sections(&sl.id, &sl.sections, &sections, &NullSink);
+            let c = consumed_spec_sections(
+                &sl.id,
+                &sl.sections,
+                &[],
+                &every_claim,
+                &sections,
+                &NullSink,
+            );
+            eprintln!(
+                "r6c {:13} own {:2}/{:6} | calls-into {}/{:5} | cross {}/{:5} | sections after {}",
+                sl.id,
+                sl.sections.len(),
+                own.chars().count(),
+                c.called_into.matches("\n### ").count(),
+                c.called_into.chars().count(),
+                c.cross_cutting.matches("\n### ").count(),
+                c.cross_cutting.chars().count(),
+                own.chars().count()
+                    + c.called_into.chars().count()
+                    + c.cross_cutting.chars().count()
+            );
+        }
+    }
+
+    /// The three routing rules on a small document, each edge named: a claimed TOP-LEVEL
+    /// grouping inherits no children (its children are other slices' components); a section
+    /// two slices claim is not cross-cutting; a flat document (only top-level sections)
+    /// broadcasts nothing; the route match is token-bounded; the research prompt's one-claimant
+    /// view yields the same blocks through the same helper.
+    #[test]
+    fn consumer_routing_follows_the_documents_own_structure_and_nothing_else() {
+        let doc = "# Title\n\n## Build\n\n### X\nX calls `/api/y` and reads `/health` of nobody.\n\n\
+                   #### X1\nx1 detail\n\n#### X2\nx2 detail\n\n### Y\n\n| Method | Path | Response |\n\
+                   |---|---|---|\n| `GET` | `/api/y` | `{\"y\": 1}` |\n| `GET` | `/api/yz/<id>` | `{\"z\": 1}` |\n\n\
+                   ### Z\n\n| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{\"ok\": 1}` |\n\n\
+                   ## Rules\nrule text\n\n## Budgets\nbudget text\n\n## Shared\nshared text\n";
+        let sections = spec_sections(doc);
+        assert_eq!(top_level(&sections), Some(2));
+        let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (x, y, shared, build) = (
+            s(&["X"]),
+            s(&["Y", "Shared"]),
+            s(&["Shared"]),
+            s(&["Build"]),
+        );
+        let every: Vec<&[String]> = vec![&x, &y, &shared, &build];
+        let sink = ValueSink::default();
+        let cx = consumed_spec_sections("x", &x, &[], &every, &sections, &sink);
+        assert!(
+            cx.called_into.contains("\n### Y\n"),
+            "rule a: X's body names /api/y"
+        );
+        assert!(
+            !cx.called_into.contains("\n### Z\n"),
+            "`/health` in X's body is not `/api/health`: {}",
+            cx.called_into
+        );
+        assert!(cx.called_into.contains("\n### X1\n") && cx.called_into.contains("\n### X2\n"));
+        assert!(
+            cx.cross_cutting.contains("\n### Rules\n")
+                && cx.cross_cutting.contains("\n### Budgets\n")
+        );
+        assert!(
+            !cx.cross_cutting.contains("Shared"),
+            "claimed by two slices: theirs, not everyone's"
+        );
+        let cb = consumed_spec_sections("b", &build, &[], &every, &sections, &NullSink);
+        assert!(
+            cb.called_into.is_empty(),
+            "a claimed top-level grouping inherits none of its components: {}",
+            cb.called_into
+        );
+        let cy = consumed_spec_sections("y", &y, &[], &every, &sections, &NullSink);
+        assert!(cy.called_into.is_empty(), "{}", cy.called_into);
+        assert_eq!(cy.cross_cutting.matches("\n### ").count(), 2);
+        let ev = sink.0.lock().unwrap();
+        let rules: Vec<&str> = ev
+            .iter()
+            .filter(|e| e["event"] == "spec_sections_consumed")
+            .map(|e| e["rule"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            rules,
+            vec!["advertised_route", "child_of_claimed", "cross_cutting"]
+        );
+        drop(ev);
+
+        // The research prompt: the same helper from the one-claimant view (armed by a spec
+        // over the floor), the same labels.
+        let padded = format!("{doc}\n{}", "padding line\n".repeat(1_000));
+        let padded_sections = spec_sections(&padded);
+        let block = research_request_block(&padded, &padded_sections, true, "x", &x, &NullSink);
+        assert!(block.contains("SECTIONS THIS SLICE CALLS INTO") && block.contains("\n### X1\n"));
+        assert!(block.contains("CROSS-CUTTING SPEC RULES") && block.contains("\n### Rules\n"));
+
+        // A flat document: nothing to broadcast, nothing to inherit.
+        let flat = spec_sections("## A\na\n\n## B\nb\n\n## C\nc\n");
+        let a = s(&["A"]);
+        let cf = consumed_spec_sections("a", &a, &[], &[&a], &flat, &NullSink);
+        assert!(cf.called_into.is_empty() && cf.cross_cutting.is_empty());
+
+        assert!(route_named("/api/y", "GET `/api/y` now"));
+        assert!(!route_named("/health", "GET /api/health"));
+        assert!(!route_named("/api/drafts", "/api/drafts/<id>/submit"));
+        assert!(route_named("/api/drafts", "POST /api/drafts?state=x"));
     }
 }

@@ -27,6 +27,13 @@ use super::OpenOutput;
 pub(super) struct SpecSection {
     pub(super) heading: String,
     pub(super) body: String,
+    /// The heading's `#` count (1..=6; 0 for the heading-less preamble). Kept so the consumer
+    /// routing (`research::consumed_spec_sections`) can read the document's OWN hierarchy — a
+    /// claimed parent's children, the top-level sections that bind every slice — instead of
+    /// guessing it from heading text. r6c's opener partitioned the 28 headings perfectly and
+    /// the `####` children of §3 and §8 went to whichever slice named them, never to the
+    /// slice that claimed the parent.
+    pub(super) level: usize,
 }
 
 pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
@@ -34,6 +41,7 @@ pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
     let mut cur = SpecSection {
         heading: String::new(),
         body: String::new(),
+        level: 0,
     };
     for line in spec.lines() {
         let t = line.trim_start();
@@ -50,6 +58,7 @@ pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
             cur = SpecSection {
                 heading: rest.trim().to_string(),
                 body: String::new(),
+                level: hashes,
             };
         } else {
             cur.body.push_str(line);
@@ -60,6 +69,34 @@ pub(super) fn spec_sections(spec: &str) -> Vec<SpecSection> {
         out.push(cur);
     }
     out
+}
+
+/// The document's TOP LEVEL: the shallowest heading level that occurs more than once — the
+/// level the request's own sections sit at. A lone deeper-than-title heading is a title, not
+/// a section level (sb-7: one `#`, five `##` → top level 2). None when no level repeats (a
+/// document with no section structure to read).
+pub(super) fn top_level(sections: &[SpecSection]) -> Option<usize> {
+    (1..=6usize).find(|lvl| {
+        sections
+            .iter()
+            .filter(|s| !s.heading.is_empty() && s.level == *lvl)
+            .count()
+            >= 2
+    })
+}
+
+/// The indices of `parent`'s descendants: every section after it up to the next heading at
+/// its level or shallower — the document's own nesting, so a `###` component's `####` details
+/// are its children whatever their headings say.
+pub(super) fn children_of(sections: &[SpecSection], parent: usize) -> Vec<usize> {
+    let level = sections[parent].level;
+    sections
+        .iter()
+        .enumerate()
+        .skip(parent + 1)
+        .take_while(|(_, s)| s.level > level)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// OPEN-1's arming floor. NOT a cap on model work (nothing is bounded or terminated by it) —
@@ -238,6 +275,37 @@ mod tests {
         assert!(
             !orientation_armed(small, &spec_sections(small)),
             "a small spec keeps the whole-text opener prompt byte-identical"
+        );
+        // The document's own hierarchy, read for the consumer routing: sb-7's one `#` is the
+        // title, its five `##` the top level; §3's children are its five `####` details.
+        assert_eq!(top_level(&sections), Some(2));
+        let s3 = sections
+            .iter()
+            .position(|s| s.heading.starts_with("3. `ledgerd`"))
+            .unwrap();
+        assert_eq!(sections[s3].level, 3);
+        let kids: Vec<&str> = children_of(&sections, s3)
+            .into_iter()
+            .map(|i| sections[i].heading.as_str())
+            .collect();
+        assert_eq!(
+            kids,
+            vec![
+                "Sync discipline",
+                "Endpoints",
+                "The event ledger",
+                "The outbox",
+                "Error envelope"
+            ]
+        );
+        assert_eq!(top_level(&spec_sections(small)), Some(1));
+        assert_eq!(
+            top_level(&spec_sections(
+                "# only
+x
+"
+            )),
+            None
         );
     }
 }
