@@ -479,6 +479,18 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
     out
 }
 
+/// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
+/// the log and the one number that matters — how often the supervisor actually formed a judgement —
+/// cannot be attributed to a cause. (Moved verbatim from swarm.rs under the incremental-split law,
+/// paying for the E8 avoid-rank wiring.)
+pub(super) fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
+    events.write_value(serde_json::json!({
+        "event": "judge_skipped",
+        "task_id": task_id,
+        "reason": reason,
+    }));
+}
+
 /// The goose core agent loop returns a FIXED meta-message when a weak worker exhausts its turn budget
 /// without calling final_output ("I've reached the maximum number of actions I can do without user input.
 /// Would you like me to continue?", agent.rs MAX_TURNS_MESSAGE). That filler is NOT a usable result: the

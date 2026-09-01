@@ -489,20 +489,37 @@ pub(super) fn aux_candidate_models(
 /// its live count, for the routing event. A model with no map entry has zero calls in flight —
 /// that empty means empty. A preference, never a refusal: whatever the counts say, SOME model is
 /// returned and the call proceeds.
+///
+/// `avoid` is the model of the lane this call SUPERVISES: it is walked LAST, so among equally
+/// idle models the look lands anywhere but on the worker it reads — never excluded, so a
+/// single-node fleet still serves its own looks. MEASURED (r6d, research-ledger-core-q0): all
+/// seven looks landed on gabee — q0's own node — at in-flight 1 while mihai also sat at 1;
+/// `aux_candidate_models` had ordered gabee before mihai (equal rank, id order), so the
+/// strictly-fewer walk kept the tie on the supervised node every time.
 pub(super) fn least_loaded_aux_model(
     planner: &str,
     ranked_candidates: &[String],
     inflight: &std::collections::HashMap<String, u32>,
+    avoid: Option<&str>,
 ) -> (String, u32) {
     let load = |m: &str| inflight.get(m).copied().unwrap_or(0);
-    let mut best = (planner.to_string(), load(planner));
-    for m in ranked_candidates {
+    // Walk order IS tie-break order: planner, then rank — with the supervised lane's model
+    // moved to the end (stable sort: everything else keeps its place).
+    let mut order: Vec<&str> = std::iter::once(planner)
+        .chain(ranked_candidates.iter().map(String::as_str))
+        .collect();
+    if let Some(a) = avoid {
+        order.sort_by_key(|m| *m == a);
+    }
+    // `order` always holds the planner, so index 0 exists by construction.
+    let mut best: (&str, u32) = (order[0], load(order[0]));
+    for m in &order[1..] {
         let c = load(m);
         if c < best.1 {
-            best = (m.clone(), c);
+            best = (m, c);
         }
     }
-    best
+    (best.0.to_string(), best.1)
 }
 
 /// The live load meter behind `least_loaded_aux_model`, held for the LIFE of one dispatcher
@@ -1071,9 +1088,80 @@ mod aux_routing_tests {
             ("workhorse-qwen3.8-27b".to_string(), 3u32),
             ("gabee-qwen3.8-27b".to_string(), 1u32),
         ]);
-        let (model, seen) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &inflight);
+        let (model, seen) =
+            least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &inflight, None);
         assert_eq!(model, "mihai-qwen3.8-27b", "the idle host serves the look");
         assert_eq!(seen, 0, "and the event can say what the pick saw");
+    }
+
+    /// THE r6d SHAPE (research-ledger-core-q0, looks 6 and 7 at 04:42:30Z / 04:48:21Z): the
+    /// counters read workhorse 2, gabee 1, mihai 1, the candidate list ran
+    /// [workhorse, gabee, mihai] (gabee and mihai tie on rank, id order), and every look landed
+    /// on gabee — the very node running the lane under review. Handing the pick the supervised
+    /// lane's model walks it last: the equally idle stranger serves the look. Single-node fleet:
+    /// the only model is the avoided one and it still serves — a preference, never a refusal.
+    #[test]
+    fn a_look_leaves_the_supervised_lanes_node_when_another_is_as_idle() {
+        let cands = vec![
+            "workhorse-qwen3.8-27b".to_string(),
+            "gabee-qwen3.8-27b".to_string(),
+            "mihai-qwen3.8-27b".to_string(),
+        ];
+        let r6d = std::collections::HashMap::from([
+            ("workhorse-qwen3.8-27b".to_string(), 2u32),
+            ("gabee-qwen3.8-27b".to_string(), 1u32),
+            ("mihai-qwen3.8-27b".to_string(), 1u32),
+        ]);
+        let (without, _) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &r6d, None);
+        assert_eq!(
+            without, "gabee-qwen3.8-27b",
+            "the measured pick: the tie stays on gabee"
+        );
+        let (model, seen) = least_loaded_aux_model(
+            "workhorse-qwen3.8-27b",
+            &cands,
+            &r6d,
+            Some("gabee-qwen3.8-27b"),
+        );
+        assert_eq!(
+            model, "mihai-qwen3.8-27b",
+            "the equally idle stranger serves q0's look"
+        );
+        assert_eq!(seen, 1);
+        // Three candidates all idle, avoid = gabee: anything but gabee.
+        let (model, _) = least_loaded_aux_model(
+            "gabee-qwen3.8-27b",
+            &cands,
+            &Default::default(),
+            Some("gabee-qwen3.8-27b"),
+        );
+        assert_ne!(
+            model, "gabee-qwen3.8-27b",
+            "even as planner, the supervised node is last"
+        );
+        // Strictly fewer still wins over the avoid rank: gabee at 0 against everyone at 1.
+        let gabee_idle = std::collections::HashMap::from([
+            ("workhorse-qwen3.8-27b".to_string(), 1u32),
+            ("mihai-qwen3.8-27b".to_string(), 1u32),
+        ]);
+        let (model, _) = least_loaded_aux_model(
+            "workhorse-qwen3.8-27b",
+            &cands,
+            &gabee_idle,
+            Some("gabee-qwen3.8-27b"),
+        );
+        assert_eq!(model, "gabee-qwen3.8-27b", "a rank, not an exclusion");
+        // Single candidate = the avoided one: it serves.
+        let (model, _) = least_loaded_aux_model(
+            "gabee-qwen3.8-27b",
+            &["gabee-qwen3.8-27b".to_string()],
+            &Default::default(),
+            Some("gabee-qwen3.8-27b"),
+        );
+        assert_eq!(
+            model, "gabee-qwen3.8-27b",
+            "a single-node fleet still serves its looks"
+        );
     }
 
     /// An idle fleet must resolve byte-identically to the frozen planner pick: the planner wins
@@ -1086,7 +1174,7 @@ mod aux_routing_tests {
             "mihai-qwen3.8-27b".to_string(),
         ];
         let (model, seen) =
-            least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &Default::default());
+            least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &Default::default(), None);
         assert_eq!(model, "workhorse-qwen3.8-27b");
         assert_eq!(seen, 0);
         // Equal non-zero load is still a tie the planner keeps.
@@ -1094,7 +1182,7 @@ mod aux_routing_tests {
             ("workhorse-qwen3.8-27b".to_string(), 1u32),
             ("mihai-qwen3.8-27b".to_string(), 1u32),
         ]);
-        let (model, _) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &even);
+        let (model, _) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &even, None);
         assert_eq!(
             model, "workhorse-qwen3.8-27b",
             "strictly fewer displaces, equal never does"
@@ -1120,7 +1208,7 @@ mod aux_routing_tests {
             "low-quant, small and cloud devices are all outside the bar"
         );
         let (model, _) =
-            least_loaded_aux_model("planner-27b", &[], &std::collections::HashMap::new());
+            least_loaded_aux_model("planner-27b", &[], &std::collections::HashMap::new(), None);
         assert_eq!(
             model, "planner-27b",
             "no candidates -> the planner keeps the call"

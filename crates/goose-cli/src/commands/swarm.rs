@@ -49,7 +49,7 @@ mod decisions;
 use decisions::PlanDecision;
 mod supervision;
 use supervision::{
-    fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_lane_key,
+    fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_lane_key, me_events_skip,
     omni_judge_says_looping, parse_judge_eta_mins, parse_judge_reply, prereview_lane_key,
     render_forming_file, replan_lane_key, schedjudge_lane_key, superseded_from_prior,
     supervised_reply_text, supervision_lane_kind, tail_review_lane_key, verify_lane_key,
@@ -12950,7 +12950,10 @@ impl GooseAgentDispatcher {
     /// queued on the planner's node while two hosts sat READY, and the first delivery-armed look
     /// of the build waited at 0 chars behind the pile. Returns (model, its in-flight count at
     /// pick time) — the count is data for the routing event, nothing branches on it.
-    fn aux_model_for_call(&self) -> (String, u32) {
+    /// `avoid` is the SUPERVISED lane's model (the omni-look passes its worker's; the replanner
+    /// has none): ranked last among equal loads, never excluded — r6d's q0 looks all landed on
+    /// q0's own node while another sat as idle (`least_loaded_aux_model`).
+    fn aux_model_for_call(&self, avoid: Option<&str>) -> (String, u32) {
         // Same poison-recovery idiom as `fleet_order::InflightGuard`'s enter/Drop arms: the map
         // holds plain u32 counters, so a panic mid-increment leaves at worst an off-by-one that
         // the next Drop corrects — a poisoned map is still readable, and the read path must not
@@ -12959,7 +12962,7 @@ impl GooseAgentDispatcher {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        least_loaded_aux_model(&self.planner_model, &self.aux_models, &counts)
+        least_loaded_aux_model(&self.planner_model, &self.aux_models, &counts, avoid)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -14698,7 +14701,9 @@ impl GooseAgentDispatcher {
                 // to clone `self.planner_model`, so a worker, two judge lanes and a replan round
                 // all queued on one node while two hosts sat READY. Re-picked per look — the
                 // planner still wins every tie, so an idle fleet behaves byte-identically.
-                let (pm, pm_inflight) = self.aux_model_for_call();
+                // The worker's own model is passed so the look never co-locates with the lane
+                // it reads while another node is as idle (r6d q0: 7/7 looks on its own node).
+                let (pm, pm_inflight) = self.aux_model_for_call(Some(model_id));
                 // THE JUDGE'S OWN GENERATION GETS A LANE (r6 blocker; Mihai's third ask). One
                 // ROLLING lane per supervised task — `judge-<task_id>` — never per look: each look
                 // reseeds the digest (attempt = look number, prior look folded into `superseded`)
@@ -24487,17 +24492,6 @@ fn corrupt_store_crash(out: &str, err: &str) -> bool {
 // II-7: default_complete_cap_secs / complete_cap_fitting_rounds deleted with the repair
 // wall they budgeted — the phase has no deadline to fit rounds into any more.
 
-/// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
-/// the log and the one number that matters — how often the supervisor actually formed a judgement —
-/// cannot be attributed to a cause.
-fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
-    events.write_value(serde_json::json!({
-        "event": "judge_skipped",
-        "task_id": task_id,
-        "reason": reason,
-    }));
-}
-
 /// The whole-run deliverable census for the SUPERVISOR prompt, one `path [state]` line each.
 ///
 /// The per-task file list can only answer "is this worker doing its job". A worker importing from a
@@ -31611,7 +31605,7 @@ impl Replanner for GooseAgentDispatcher {
         // ties (`aux_model_for_call`). r6c 18:38: replan-r0 queued on the planner's node behind a
         // worker and two judge lanes while two hosts sat READY. The event is the reroute's
         // artifact: model + the in-flight count the pick saw, so tick can print reroutes.
-        let (aux_model, aux_inflight) = self.aux_model_for_call();
+        let (aux_model, aux_inflight) = self.aux_model_for_call(None);
         self.events.write_value(serde_json::json!({
             "event": "aux_routed",
             "lane": lane,
