@@ -92,8 +92,8 @@ LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by m
 PARALLEL > 1); add swarm.devices entries for the three qwen3.8-27b model_ids with weight: 1 in
 ~/.config/goose/config.yaml (config.yaml currently lists only disabled qwopus devices) — NOT an LMS change · [x]
 r6c ended; HERMETIC 0.1420 (inner 0.7282 × crit 0.216 — zero rows in the browser: unauthenticated fetches +
-viz.js Illegal invocation = the two unowned criticals); ledger 796fc001e; archived; slot absent · [ ] launch-prep:
-remove the mis-derived ~/.config/goose/skills/stack-angular/SKILL.md (learn phase called a py+vanilla-js tree angular) · [ ] build+install, verify bundled sha · [ ] CDP-verify
+viz.js Illegal invocation = the two unowned criticals); ledger 796fc001e; archived; slot absent · [x] stack-angular skill inspected: content correct, kept; two learn-phase defects queued (stack_key
+derivation; regeneration embeds instead of replacing) · [ ] build+install, verify bundled sha · [ ] CDP-verify
 the redesigned Benchmark view · [ ] Benchmark-view launch.
 
 r6c itself: BUILD 9/9, INTEGRATE green (app boots, both ports, full battery), REPAIR r1 open at
