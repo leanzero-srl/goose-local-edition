@@ -21,6 +21,8 @@ These you should open yourself:
 - **`RUN-LEDGER.md`** — one row per run, in comparable numbers, so runs are judged by measurement rather
   than recollection.
 - **`TICK-NOTES.md`** — every finding, newest last.
+- **`VIGIL-ACTIONS.md`** — the queue the surgeons are dispatched from: every OPEN row is triaged at your next
+  turn (IMPLEMENT → dispatch + CLAIMED · DROP with reason · SCHEDULED <run>); no OPEN row survives two ticks.
 - **`.claude/rules/development-gates.md`** — the five refusing gates in full detail (fallbacks,
   generic text, benchmark launch, reaping, time inputs) with the rebukes that paid for each.
 - **`REFUSED.md`** — items culled by review, kept for revival. **Check before proposing something new.**
@@ -99,7 +101,9 @@ flight is summarised, and the summary keeps the SHAPE of the task while losing t
 was mid-flight, which of the user's exact words are load-bearing. Before you are close to that:
 
 1. **Write the finding down, do not carry it.** `note.sh <kind> "<finding>"` costs nothing and survives;
-   holding it in context costs on every subsequent turn and survives nothing.
+   holding it in context costs on every subsequent turn and survives nothing. **An improvement that needs a
+   surgeon is an ACTION, not a note**: `note.sh action <surface> "<text>"` → `VIGIL-ACTIONS.md`, triaged at
+   the next turn — that file is where the tick-surgeon's findings become the surgeons' work (Mihai 2026-09-01).
 2. **Commit.** A committed step is recoverable; an uncommitted one is not. A brace-matching script here
    once deleted 34,827 lines of `swarm.rs` and `git checkout` undid it in one command *because the
    previous step was committed*.
