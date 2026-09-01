@@ -476,6 +476,58 @@ async fn join_key_401_expired_logs_out_and_clears_identity() {
     );
 }
 
+/// R-M7: a 401 from a proxy (HTML body, no worker reason) is an ordinary connect
+/// failure — the credential stays on disk and auth stays `LoggedIn`.
+#[tokio::test]
+async fn join_key_401_without_a_worker_reason_keeps_the_identity() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html><body>401 Authorization Required</body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "still-good-token");
+    let manager = h.manager(&server, false);
+
+    let err = manager
+        .connect()
+        .await
+        .expect_err("the proxy 401 fails the connect");
+    assert!(
+        matches!(
+            err,
+            LinkError::Worker(leanzero_link::worker_client::WorkerError::Unexpected {
+                status: 401,
+                ..
+            })
+        ),
+        "got {err:?}"
+    );
+
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "no worker verdict → still LoggedIn, got {:?}",
+        state.auth
+    );
+    assert!(state
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("401") && e.contains("<html>")));
+    assert!(h.identity_present(), "a proxy can never sign the user out");
+    assert_eq!(
+        h.start_count.load(Ordering::SeqCst),
+        0,
+        "mesh never started"
+    );
+}
+
 #[tokio::test]
 async fn connect_without_a_node_secret_is_loud_and_starts_no_mesh() {
     let server = MockServer::start().await;

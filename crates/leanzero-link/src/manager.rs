@@ -413,8 +413,12 @@ impl LinkManager {
 
     /// Bring up the mesh + control service (requires `LoggedIn`). On any step failing
     /// the resources are torn down per-pid and the state returns to `LoggedIn` (still
-    /// authed) with `last_error` set — except a join-key `401` (the 180-day token
-    /// expired/was rejected), which clears the identity and drops to `LoggedOut`.
+    /// authed) with `last_error` set — except a join-key `401` whose body carries the
+    /// WORKER's own dead-token verdict (`reason` ∈ expired / malformed / bad_signature /
+    /// bad_claims, see [`crate::worker_client::IDENTITY_DEAD_REASONS`]), which clears
+    /// the identity and drops to `LoggedOut`. A `401` with any other body (a proxy's
+    /// HTML, a truncated body) is an ordinary failure: `LoggedIn` + `last_error`, the
+    /// credential untouched.
     pub async fn connect(&self) -> Result<(), LinkError> {
         let email = {
             let mut inner = self.inner.lock().await;
@@ -467,6 +471,8 @@ impl LinkManager {
 
         let key = match self.worker.join_key(&identity.token).await {
             Ok(key) => key,
+            // Only the worker's NAMED verdict on the token clears the credential; the
+            // client maps every other 401 to `Unexpected` (see `WorkerClient::join_key`).
             Err(err @ (WorkerError::AuthExpired { .. } | WorkerError::AuthInvalid { .. })) => {
                 if let Err(clear_err) = self.identity.clear() {
                     tracing::error!(error = %clear_err, "failed to clear the dead identity");

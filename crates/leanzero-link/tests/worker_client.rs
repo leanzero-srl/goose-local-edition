@@ -63,11 +63,41 @@ async fn request_code_429_maps_to_rate_limited_with_body() {
             error,
         } => {
             assert_eq!(scope, "email");
-            assert_eq!(retry_after_seconds, 42);
+            assert_eq!(retry_after_seconds, Some(42));
             assert!(error.contains("rate limited"), "body carried: {error}");
         }
         other => panic!("expected RateLimited, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn request_code_429_without_retry_after_reports_none_not_zero() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/auth/request-code"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_json(json!({ "error": "slow down", "scope": "ip" })),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .await
+        .request_code("a@example.com")
+        .await
+        .expect_err("429 is an error");
+    match err {
+        WorkerError::RateLimited {
+            retry_after_seconds,
+            ..
+        } => assert_eq!(retry_after_seconds, None, "absent is absent, not 0"),
+        other => panic!("expected RateLimited, got {other:?}"),
+    }
+    assert!(
+        err.to_string().contains("unspecified interval"),
+        "the message says the interval is unknown: {err}"
+    );
 }
 
 #[tokio::test]
@@ -251,6 +281,104 @@ async fn join_key_401_bad_signature_maps_to_auth_invalid() {
         }
         other => panic!("expected AuthInvalid, got {other:?}"),
     }
+}
+
+/// R-M7: a 401 that is NOT the worker's own verdict must never read as a dead token —
+/// a proxy in front of the worker answers with an HTML page.
+#[tokio::test]
+async fn join_key_401_html_body_is_unexpected_not_an_auth_verdict() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html><body><h1>401 Authorization Required</h1></body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .await
+        .join_key("still-good-jwt")
+        .await
+        .expect_err("401 is an error");
+    match err {
+        WorkerError::Unexpected { status, error, .. } => {
+            assert_eq!(status, 401);
+            assert!(
+                error.contains("<html>"),
+                "the HTML body is carried: {error}"
+            );
+        }
+        other => panic!("an HTML 401 must be Unexpected, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn join_key_401_truncated_body_is_unexpected_not_an_auth_verdict() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .insert_header("content-type", "application/json")
+                .set_body_string(r#"{"error":"invalid token","reason":"exp"#),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .await
+        .join_key("still-good-jwt")
+        .await
+        .expect_err("401 is an error");
+    match err {
+        WorkerError::Unexpected { status, error, .. } => {
+            assert_eq!(status, 401);
+            assert!(
+                error.contains(r#""reason":"exp"#),
+                "the truncated body is carried verbatim: {error}"
+            );
+        }
+        other => panic!("a truncated 401 must be Unexpected, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn join_key_401_named_dead_reasons_map_to_auth_invalid_and_unknown_reason_does_not() {
+    for reason in ["malformed", "bad_claims"] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/mesh/join-key"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": "invalid token",
+                "reason": reason
+            })))
+            .mount(&server)
+            .await;
+        let err = client(&server).await.join_key("jwt").await.unwrap_err();
+        assert!(
+            matches!(&err, WorkerError::AuthInvalid { reason: r, .. } if r == reason),
+            "{reason} is the worker's verdict, got {err:?}"
+        );
+    }
+
+    // Negative control: a reason this client does not know is NOT a verdict.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/mesh/join-key"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": "invalid token",
+            "reason": "rotated"
+        })))
+        .mount(&server)
+        .await;
+    let err = client(&server).await.join_key("jwt").await.unwrap_err();
+    assert!(
+        matches!(err, WorkerError::Unexpected { status: 401, .. }),
+        "an unknown reason must be Unexpected, got {err:?}"
+    );
 }
 
 #[tokio::test]

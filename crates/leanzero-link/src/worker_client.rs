@@ -97,10 +97,15 @@ pub enum WorkerError {
     },
 
     // POST /v1/auth/request-code
-    #[error("rate limited on {scope}; retry after {retry_after_seconds}s (worker said: {error})")]
+    #[error(
+        "rate limited on {scope}; retry after {} (worker said: {error})",
+        retry_after_text(.retry_after_seconds)
+    )]
     RateLimited {
         scope: String,
-        retry_after_seconds: u64,
+        /// `None` when the worker's body carried no `retryAfterSeconds` — reported as
+        /// absent, never as a fabricated `0`.
+        retry_after_seconds: Option<u64>,
         error: String,
     },
     #[error("mail is not configured on this worker deployment (worker said: {error})")]
@@ -120,7 +125,10 @@ pub enum WorkerError {
     #[error("mesh keys are not configured on this worker deployment (worker said: {error})")]
     MeshNotConfigured { error: String },
 
-    /// Any other non-2xx — carries the status and the worker's body verbatim.
+    /// Any other non-2xx — carries the status and the worker's body verbatim. Includes a
+    /// `401` on join-key whose body is NOT the worker's own dead-token verdict (a
+    /// proxy's HTML page, a truncated body, an unknown `reason`): it is never a reason
+    /// to clear the stored identity.
     #[error("worker returned {status} for {what} at {url}: {error}")]
     Unexpected {
         status: u16,
@@ -129,6 +137,18 @@ pub enum WorkerError {
         error: String,
     },
 }
+
+fn retry_after_text(retry_after_seconds: &Option<u64>) -> String {
+    match retry_after_seconds {
+        Some(secs) => format!("{secs}s"),
+        None => "an unspecified interval (the worker sent no retryAfterSeconds)".to_string(),
+    }
+}
+
+/// The `reason` values the worker's JWT check emits for a token it has judged dead
+/// (`leanzero-link/worker/src/jwt.ts`): the only 401 bodies that move the manager to
+/// `LoggedOut` and clear the credential. Any other 401 body stays [`WorkerError::Unexpected`].
+pub const IDENTITY_DEAD_REASONS: &[&str] = &["expired", "malformed", "bad_signature", "bad_claims"];
 
 /// The structured fields a worker error body may carry that this client acts on. The
 /// human-readable `error` string is not modelled here — it is carried verbatim as the
@@ -154,14 +174,11 @@ impl ErrorEnvelope {
             .clone()
             .unwrap_or_else(|| "unknown".to_string())
     }
-    fn retry_after(&self) -> u64 {
-        self.parsed.retry_after_seconds.unwrap_or(0)
+    fn retry_after(&self) -> Option<u64> {
+        self.parsed.retry_after_seconds
     }
-    fn reason(&self) -> String {
-        self.parsed
-            .reason
-            .clone()
-            .unwrap_or_else(|| "unspecified".to_string())
+    fn reason(&self) -> Option<&str> {
+        self.parsed.reason.as_deref()
     }
 }
 
@@ -267,10 +284,14 @@ impl WorkerClient {
         })
     }
 
-    /// `POST /v1/mesh/join-key` — mint an ephemeral Tailscale join key for the mesh.
-    /// A `401` means the stored identity token is no longer good: `expired` (the
-    /// 180-day lifetime elapsed) maps to [`WorkerError::AuthExpired`], anything else to
-    /// [`WorkerError::AuthInvalid`]; the manager clears the identity on either.
+    /// `POST /v1/mesh/join-key` — mint an ephemeral mesh join key (plus the account's
+    /// node secret). A `401` is a verdict on the stored identity token ONLY when the
+    /// worker says so: a JSON body whose `reason` is one of [`IDENTITY_DEAD_REASONS`] —
+    /// `expired` (the 180-day lifetime elapsed) → [`WorkerError::AuthExpired`],
+    /// `malformed` / `bad_signature` / `bad_claims` → [`WorkerError::AuthInvalid`]; the
+    /// manager clears the identity on those and only those. A `401` with any other body
+    /// — a proxy's HTML page, a truncated body, a reason this client does not know — is
+    /// [`WorkerError::Unexpected`], so a middlebox can never sign the user out.
     pub async fn join_key(&self, token: &str) -> Result<JoinKeyResult, WorkerError> {
         let url = self.url("/v1/mesh/join-key");
         let response = self
@@ -288,22 +309,19 @@ impl WorkerClient {
             return decode("join-key", &url, response).await;
         }
         let envelope = error_envelope(response).await;
-        Err(match status {
-            401 => {
-                let reason = envelope.reason();
-                if reason == "expired" {
-                    WorkerError::AuthExpired {
-                        reason,
-                        error: envelope.raw,
-                    }
-                } else {
-                    WorkerError::AuthInvalid {
-                        reason,
-                        error: envelope.raw,
-                    }
+        let reason = envelope.reason().map(str::to_string);
+        Err(match (status, reason.as_deref()) {
+            (401, Some("expired")) => WorkerError::AuthExpired {
+                reason: "expired".to_string(),
+                error: envelope.raw,
+            },
+            (401, Some(reason)) if IDENTITY_DEAD_REASONS.contains(&reason) => {
+                WorkerError::AuthInvalid {
+                    reason: reason.to_string(),
+                    error: envelope.raw,
                 }
             }
-            501 => WorkerError::MeshNotConfigured {
+            (501, _) => WorkerError::MeshNotConfigured {
                 error: envelope.raw,
             },
             _ => WorkerError::Unexpected {
@@ -361,7 +379,15 @@ async fn decode<T: serde::de::DeserializeOwned>(
 }
 
 async fn error_envelope(response: reqwest::Response) -> ErrorEnvelope {
-    let raw = response.text().await.unwrap_or_default();
+    let raw = match response.text().await {
+        Ok(text) => text,
+        // The read failure IS the body the user sees — never an empty string that
+        // reads as "the worker said nothing".
+        Err(err) => format!("<body unreadable: {err}>"),
+    };
+    // An unparseable body yields NO structured hints (all `None`); every caller treats
+    // an absent hint as "unknown" — a 401 without a named reason is `Unexpected`, a 429
+    // without `retryAfterSeconds` reports `None` — never as a verdict.
     let parsed = serde_json::from_str(&raw).unwrap_or_default();
     ErrorEnvelope { raw, parsed }
 }
