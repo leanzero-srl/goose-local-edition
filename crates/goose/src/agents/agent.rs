@@ -2747,6 +2747,16 @@ impl Agent {
                             // Continue from the compacted conversation instead of treating the
                             // provider error as a missing structured result.
                         }
+                        // A STEER-CUT TURN IS NOT A FORGOT-FINAL-OUTPUT TURN. The steer select
+                        // above stops the generation at a chunk boundary the moment a steer is
+                        // queued, so this turn ended with no tool call and no final output
+                        // BECAUSE a message is waiting — not because the model stopped short.
+                        // Nudging here paired every relayed note with a contradictory "call
+                        // final_output NOW" (measured: the swarm's r6d research-ledger-core-q5.log
+                        // shows the relay and the continuation message back to back). The steer
+                        // drains at the loop top and is the next user message; nothing else is
+                        // owed. Same shape as the `None if has_pending_steers` arm below.
+                        Some(None) if self.has_pending_steers(&session_config.id).await => {}
                         Some(None) => {
                             warn!("Final output tool has not been called yet. Continuing agent loop.");
                             let message = Message::user().with_text(FINAL_OUTPUT_CONTINUATION_MESSAGE);

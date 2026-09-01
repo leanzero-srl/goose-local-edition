@@ -3039,6 +3039,97 @@ mod tests {
             Ok(())
         }
 
+        /// E7's correction (the swarm's r6d research-ledger-core-q5.log, confirmed by the
+        /// independent refuter): a turn the STEER select cut — no tool call, no final output,
+        /// because a message was already queued — is not a turn that forgot final_output.
+        /// Without the `Some(None) if has_pending_steers` arm the continuation nudge and the
+        /// steer landed back to back: a relayed fact paired with a contradictory "call
+        /// final_output NOW". The steer must be the next user message, alone; a LATER turn that
+        /// truly stops without the tool (no steer pending) still gets the nudge.
+        #[tokio::test]
+        async fn test_steer_cut_turn_on_a_structured_lane_is_not_nudged_for_final_output(
+        ) -> Result<()> {
+            use goose::agents::final_output_tool::FINAL_OUTPUT_CONTINUATION_MESSAGE;
+            use goose::recipe::Response;
+
+            let agent = Agent::new();
+            let session = agent
+                .config
+                .session_manager
+                .create_session(
+                    PathBuf::default(),
+                    "steer-cut-final-output".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            agent
+                .update_provider(
+                    Arc::new(EmptyThenTextProvider::new(usize::MAX)),
+                    ModelConfig::new("mock-model"),
+                    &session.id,
+                )
+                .await?;
+            agent
+                .add_final_output_tool(Response {
+                    json_schema: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": { "answers": { "type": "array" } }
+                    })),
+                })
+                .await;
+            // Queued BEFORE reply: the first turn's steer select breaks at once, so that turn
+            // ends with nothing said and the final_output tool uncalled — the steer-cut shape.
+            let steer = "A MINI LANDED — build on it; continue the SAME questions";
+            agent
+                .steer(&session.id, Message::user().with_text(steer))
+                .await;
+
+            let session_id = session.id.clone();
+            let session_config = SessionConfig {
+                id: session.id,
+                schedule_id: None,
+                max_turns: Some(3),
+                retry_config: None,
+            };
+            let reply_stream = agent
+                .reply(Message::user().with_text("Hi"), session_config, None)
+                .await?;
+            tokio::pin!(reply_stream);
+            while let Some(event) = reply_stream.next().await {
+                event?;
+            }
+
+            let persisted = agent
+                .config
+                .session_manager
+                .get_session(&session_id, true)
+                .await?
+                .conversation
+                .map(|c| c.messages().to_vec())
+                .unwrap_or_default();
+            let texts: Vec<String> = persisted.iter().map(|m| m.as_concat_text()).collect();
+            let steer_at = texts
+                .iter()
+                .position(|t| t.contains(steer))
+                .expect("the queued steer was consumed as a user message");
+            assert_eq!(
+                texts[..steer_at]
+                    .iter()
+                    .filter(|t| t.contains(FINAL_OUTPUT_CONTINUATION_MESSAGE))
+                    .count(),
+                0,
+                "a steer-cut turn must not be nudged for final_output ahead of the steer: {texts:?}"
+            );
+            assert!(
+                texts[steer_at + 1..]
+                    .iter()
+                    .any(|t| t.contains(FINAL_OUTPUT_CONTINUATION_MESSAGE)),
+                "a later empty turn with NO steer pending still owes the nudge: {texts:?}"
+            );
+            Ok(())
+        }
+
         /// A recipe with retry_config owns the turn: recipe retry logic runs
         /// its success checks before the empty-turn fallback. When the check
         /// already passes, an empty final turn is the successful end of the
