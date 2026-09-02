@@ -201,9 +201,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 44,777 (LM-token probe): `gen_entry_id`/`short_model` moved beside
 /// `reconcile_pool_with_fleet` in swarm_engine.rs, paying for the `lm-probe-unauthorized`
 /// absence drain into run.jsonl.
+/// Tightened to 44,763 (S-H3 pool half): the sidecar-exclusion reporting (stderr line + run.jsonl
+/// event per exclusion) became swarm_engine::sidecar_exclusion_events, paying for the
+/// `sidecar-device-serves-other-alias` proven negative.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_777;
+    const SWARM_RS_LINE_BASELINE: usize = 44_763;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
