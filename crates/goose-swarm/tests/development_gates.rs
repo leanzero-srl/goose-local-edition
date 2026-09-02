@@ -430,7 +430,7 @@ fn swarm_rs_line_count_only_decreases() {
     // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
     // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
     // the baseline is the count AFTER all three, so each intermediate commit sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 34_378; // VA-098 deleted shard_beats_baseline + its test from 34_406: the ratchet is set to what the tree IS, never above it
+    const SWARM_RS_LINE_BASELINE: usize = 34_344; // VA-089: the fan's per-question queue (facts, cover, routing) became one lane per slice; research_plan.rs deleted; 34_378 → 34_344
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
