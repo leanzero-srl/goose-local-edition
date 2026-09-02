@@ -207,9 +207,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 44,733 (fleet-probe-failed): `fleet_slot_models` moved beside its live variant
 /// `live_fleet_slots` in swarm_engine.rs, paying for the run-sink threading that names a
 /// residency probe that errs.
+/// Tightened to    44,666 (Q3 node names): the `swarm pool import` cluster (ImportSummary,
+/// import_processes, print_import_summary) moved beside reconcile_pool_with_fleet in
+/// swarm_engine.rs, paying for the `engine` + canonical `node` fields on run_started.pool and
+/// pool_resolved.devices.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_733;
+    const SWARM_RS_LINE_BASELINE: usize = 44_666;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

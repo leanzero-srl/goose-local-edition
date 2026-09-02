@@ -32,11 +32,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
-    all_resident_unservable_per_engine, default_engine, device_engine_kind,
-    drop_unservable_devices_per_engine, engines_for_run, exclude_unmountable_sidecar_devices,
-    gen_entry_id, live_fleet_slots, local_request_params, merge_sidecar_devices, planner_fallback,
-    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine,
-    sidecar_exclusion_events, EngineKind, Engines, LmsProcess,
+    all_resident_unservable_per_engine, canonical_node_name, default_engine, device_engine_kind,
+    drop_unservable_devices_per_engine, engine_kind_of_model, engines_for_run,
+    exclude_unmountable_sidecar_devices, import_processes, live_fleet_slots, local_request_params,
+    merge_sidecar_devices, planner_fallback, prewarm_pool, print_import_summary,
+    reconcile_pool_with_fleet, require_servable, served_by_engine, sidecar_exclusion_events,
+    EngineKind, Engines,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -2818,85 +2819,6 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
 // type and the pool-entry id derivation (`gen_entry_id`) live in swarm_engine.rs with the probes
 // that produce them.
 
-struct ImportSummary {
-    added: Vec<SwarmDevice>,
-    skipped_existing: Vec<String>,
-    /// (model_id, kept_device, dropped_device) — same identifier loaded on two hosts.
-    skipped_collision: Vec<(String, String, String)>,
-}
-
-/// Add loaded models as pool entries. Dedup by identifier first (the SAME identifier on two hosts
-/// cannot be routed by LM Link → keep the first, flag the rest), then skip identifiers already pooled.
-fn import_processes(
-    cfg: &mut SwarmConfig,
-    procs: &[LmsProcess],
-    default_weight: u32,
-    enabled: bool,
-) -> ImportSummary {
-    let mut summary = ImportSummary {
-        added: Vec::new(),
-        skipped_existing: Vec::new(),
-        skipped_collision: Vec::new(),
-    };
-    let mut kept: HashMap<String, String> = HashMap::new();
-    for p in procs {
-        let dev_label = p.device.clone().unwrap_or_else(|| "?".to_string());
-        if let Some(prev) = kept.get(&p.identifier) {
-            summary
-                .skipped_collision
-                .push((p.identifier.clone(), prev.clone(), dev_label));
-            continue;
-        }
-        kept.insert(p.identifier.clone(), dev_label);
-        if cfg.devices.iter().any(|d| d.model_id == p.identifier) {
-            summary.skipped_existing.push(p.identifier.clone());
-            continue;
-        }
-        let dev = SwarmDevice {
-            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
-            model_id: p.identifier.clone(),
-            weight: default_weight.max(1),
-            enabled,
-            instances: 1,
-            host: p.device.clone(),
-            provider: None,
-            speed_weight: None,
-            supervision: None,
-            engine: None,
-        };
-        cfg.devices.push(dev.clone());
-        summary.added.push(dev);
-    }
-    summary
-}
-
-fn print_import_summary(s: &ImportSummary) {
-    for d in &s.added {
-        println!(
-            "  {} {:<14} {}{}",
-            style("+ added").green().bold(),
-            style(&d.id).bold(),
-            style(&d.model_id).dim(),
-            d.host
-                .as_deref()
-                .map(|h| format!("  @{h}"))
-                .unwrap_or_default()
-        );
-    }
-    for m in &s.skipped_existing {
-        println!("  {} {} (already in pool)", style("· skip").dim(), m);
-    }
-    for (m, keep, drop) in &s.skipped_collision {
-        println!(
-            "  {} {} on {} — same model_id already taken by {} (LM Link can't distinguish)",
-            style("! collision").red().bold(),
-            m,
-            drop,
-            keep
-        );
-    }
-}
-
 /// The pure precedence, split out so it is testable (the wrapper reads the process env + config).
 fn ask_replan_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
     match env {
@@ -3805,7 +3727,9 @@ mod tests {
     };
     use super::*;
     use crate::commands::swarm_engine::fleet_slot_models;
+    use crate::commands::swarm_engine::import_processes;
     use crate::commands::swarm_engine::parse_lms_ps;
+    use crate::commands::swarm_engine::LmsProcess;
 
     /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
     /// spawned as its OWN group leader, exactly what the shell tool now produces. The direct sh
@@ -36705,6 +36629,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // The RESOLVED speed weight — the placement tie-break rides on it, and until this
             // echo existed no run could prove what it resolved (key/id mismatches ran silent).
             "speed_weight": configured_speed_weight(&cfg.speed_weights, &d.id),
+            // The serving engine and the CANONICAL node name (engine-qualified off LM Studio):
+            // the one map every fleet surface should group by — see canonical_node_name.
+            "engine": device_engine_kind(d).name(),
+            "node": canonical_node_name(device_engine_kind(d), &d.model_id),
         })).collect::<Vec<_>>(),
         // The RESOLVED gate set (assured bundle + explicit overrides applied) so a run's config is legible.
         "assured": assured_enabled(),
@@ -36799,11 +36727,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let startup_started = std::time::Instant::now();
     sink.write_value(serde_json::json!({
         "event": "pool_resolved",
-        "devices": devices.iter().map(|d| serde_json::json!({
-            "id": d.id,
-            "model_id": d.model_id,
-            "weight": d.weight,
-        })).collect::<Vec<_>>(),
+        "devices": devices.iter().map(|d| {
+            let kind = engine_kind_of_model(&enabled, &cfg.devices, &d.model_id);
+            serde_json::json!({
+                "id": d.id,
+                "model_id": d.model_id,
+                "weight": d.weight,
+                "engine": kind.name(),
+                "node": canonical_node_name(kind, &d.model_id),
+            })
+        }).collect::<Vec<_>>(),
         "worker_count": devices.len(),
         "planner_pushed": devices.iter().any(|d| d.id == "planner"),
         // F779 i3: NEVER folded into worker_count — the harness reads that as node-count ground

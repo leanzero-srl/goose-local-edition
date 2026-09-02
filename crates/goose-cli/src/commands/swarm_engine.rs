@@ -735,6 +735,38 @@ pub(super) fn device_from_lms_id(id: &str) -> Option<String> {
     seg.split_once('-').map(|(prefix, _)| prefix.to_string())
 }
 
+/// The CANONICAL node name for a model served by `kind` — what run.jsonl's `node` field carries
+/// and what every fleet surface groups by. LM Studio names are `device_from_lms_id` byte for
+/// byte (`workhorse-qwen3.8-27b` → `workhorse`). A NON-LM-Studio engine carries its kind in the
+/// name (`workhorse-qwen3.5-9b-4bit-mlx` on the sidecar → `workhorse-mlx`): the sidecar and LM
+/// Studio on the same host are two feeds, and collapsing both to `workhorse` made the desktop's
+/// fleet corroboration and FLEET rows conflate them (Q3). An LM Studio canonical name never
+/// contains a dash (it is the segment before the first one), so the suffixed form can never
+/// collide with one.
+pub(super) fn canonical_node_name(kind: EngineKind, model_id: &str) -> Option<String> {
+    let node = device_from_lms_id(model_id)?;
+    Some(match kind {
+        EngineKind::LmStudio => node,
+        EngineKind::MlxSidecar => format!("{node}-mlx"),
+    })
+}
+
+/// The engine KIND serving `model_id`: the first pool device carrying it (the resolved pool
+/// first, the configured list second — the pushed planner device is in neither by id, but its
+/// model is). No device carries it = LM Studio by definition (`None` = LmStudio), not a fallback.
+pub(super) fn engine_kind_of_model(
+    enabled: &[SwarmDevice],
+    configured: &[SwarmDevice],
+    model_id: &str,
+) -> EngineKind {
+    enabled
+        .iter()
+        .chain(configured.iter())
+        .find(|d| d.model_id == model_id)
+        .map(device_engine_kind)
+        .unwrap_or(EngineKind::LmStudio)
+}
+
 impl LmStudioEngine {
     /// One HTTP catalog probe of `url` on `host`, carrying `token` as the chat path would. A
     /// refusal (401/403) is recorded through `note_unauthorized`; the caller still sees only an
@@ -1055,7 +1087,8 @@ impl SwarmEngine for SidecarEngine {
             .served_entries()
             .into_iter()
             .map(|(id, context_window)| LmsProcess {
-                device: device_from_lms_id(&id),
+                // The sidecar's own feed, named apart from LM Studio's on the same host.
+                device: canonical_node_name(EngineKind::MlxSidecar, &id),
                 identifier: id,
                 // A serving rapid-mlx holds its model resident — served IS loaded here.
                 status: "loaded".to_string(),
@@ -1260,6 +1293,87 @@ pub(super) fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: 
         n += 1;
     }
     id
+}
+
+/// The `swarm pool import` half of the pool build: every loaded model the engine reports becomes a
+/// pool entry (the run-time twin is `reconcile_pool_with_fleet`).
+pub(super) struct ImportSummary {
+    pub(super) added: Vec<SwarmDevice>,
+    pub(super) skipped_existing: Vec<String>,
+    /// (model_id, kept_device, dropped_device) — same identifier loaded on two hosts.
+    pub(super) skipped_collision: Vec<(String, String, String)>,
+}
+
+/// Add loaded models as pool entries. Dedup by identifier first (the SAME identifier on two hosts
+/// cannot be routed by LM Link → keep the first, flag the rest), then skip identifiers already pooled.
+pub(super) fn import_processes(
+    cfg: &mut SwarmConfig,
+    procs: &[LmsProcess],
+    default_weight: u32,
+    enabled: bool,
+) -> ImportSummary {
+    let mut summary = ImportSummary {
+        added: Vec::new(),
+        skipped_existing: Vec::new(),
+        skipped_collision: Vec::new(),
+    };
+    let mut kept: HashMap<String, String> = HashMap::new();
+    for p in procs {
+        let dev_label = p.device.clone().unwrap_or_else(|| "?".to_string());
+        if let Some(prev) = kept.get(&p.identifier) {
+            summary
+                .skipped_collision
+                .push((p.identifier.clone(), prev.clone(), dev_label));
+            continue;
+        }
+        kept.insert(p.identifier.clone(), dev_label);
+        if cfg.devices.iter().any(|d| d.model_id == p.identifier) {
+            summary.skipped_existing.push(p.identifier.clone());
+            continue;
+        }
+        let dev = SwarmDevice {
+            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+            model_id: p.identifier.clone(),
+            weight: default_weight.max(1),
+            enabled,
+            instances: 1,
+            host: p.device.clone(),
+            provider: None,
+            speed_weight: None,
+            supervision: None,
+            engine: None,
+        };
+        cfg.devices.push(dev.clone());
+        summary.added.push(dev);
+    }
+    summary
+}
+
+pub(super) fn print_import_summary(s: &ImportSummary) {
+    for d in &s.added {
+        println!(
+            "  {} {:<14} {}{}",
+            style("+ added").green().bold(),
+            style(&d.id).bold(),
+            style(&d.model_id).dim(),
+            d.host
+                .as_deref()
+                .map(|h| format!("  @{h}"))
+                .unwrap_or_default()
+        );
+    }
+    for m in &s.skipped_existing {
+        println!("  {} {} (already in pool)", style("· skip").dim(), m);
+    }
+    for (m, keep, drop) in &s.skipped_collision {
+        println!(
+            "  {} {} on {} — same model_id already taken by {} (LM Link can't distinguish)",
+            style("! collision").red().bold(),
+            m,
+            drop,
+            keep
+        );
+    }
 }
 
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the
@@ -1820,6 +1934,53 @@ mod tests {
         assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
     }
 
+    /// Q3: the sidecar and LM Studio on ONE host are two feeds. LM Studio canonical names are
+    /// `device_from_lms_id` byte for byte; a non-LM-Studio engine's name carries its kind, so
+    /// `workhorse-qwen3.8-27b` (LM Studio) and `workhorse-qwen3.5-9b-4bit-mlx` (sidecar) no
+    /// longer collapse to one `workhorse`.
+    #[test]
+    fn a_non_lmstudio_engines_canonical_node_name_carries_its_kind() {
+        assert_eq!(
+            canonical_node_name(EngineKind::LmStudio, "workhorse-qwen3.8-27b").as_deref(),
+            Some("workhorse")
+        );
+        assert_eq!(
+            canonical_node_name(EngineKind::LmStudio, "mihai-qwen/qwen3.8-27b").as_deref(),
+            device_from_lms_id("mihai-qwen/qwen3.8-27b").as_deref(),
+            "LM Studio names are byte-identical to device_from_lms_id"
+        );
+        assert_eq!(
+            canonical_node_name(EngineKind::MlxSidecar, "workhorse-qwen3.5-9b-4bit-mlx").as_deref(),
+            Some("workhorse-mlx")
+        );
+        assert_ne!(
+            canonical_node_name(EngineKind::MlxSidecar, "workhorse-qwen3.5-9b-4bit-mlx"),
+            canonical_node_name(EngineKind::LmStudio, "workhorse-qwen3.8-27b"),
+            "two feeds on one host must not share a name"
+        );
+        assert_eq!(
+            canonical_node_name(EngineKind::MlxSidecar, "solomodel"),
+            None
+        );
+        // The kind behind a model id: the resolved pool first, the configured list second (the
+        // pushed planner is in neither by id but its model is), LM Studio by definition otherwise.
+        let alias = "workhorse-qwen3.5-9b-4bit-mlx";
+        let configured = vec![dev("workhorse-mlx", alias, Some(EngineKind::MlxSidecar))];
+        let enabled = vec![dev("mac-gabee", "gabee-qwen3.8-27b", None)];
+        assert_eq!(
+            engine_kind_of_model(&enabled, &configured, alias),
+            EngineKind::MlxSidecar
+        );
+        assert_eq!(
+            engine_kind_of_model(&enabled, &configured, "gabee-qwen3.8-27b"),
+            EngineKind::LmStudio
+        );
+        assert_eq!(
+            engine_kind_of_model(&enabled, &configured, "nowhere-planner"),
+            EngineKind::LmStudio
+        );
+    }
+
     /// Golden rapid-mlx `/v1/models` body — the exact field shape the manager's own
     /// probe_model_info reads (data[].id / context_window / tool_call_parser).
     const GOLDEN_V1_MODELS: &str = r#"{"object":"list","data":[{"id":"workhorse-qwen3-coder-30b-mlx","object":"model","context_window":262144,"tool_call_parser":"qwen3_coder"}]}"#;
@@ -1974,7 +2135,11 @@ mod tests {
         assert_eq!(procs.len(), 1);
         assert_eq!(procs[0].identifier, "workhorse-qwen3-coder-30b-mlx");
         assert_eq!(procs[0].status, "loaded");
-        assert_eq!(procs[0].device.as_deref(), Some("workhorse"));
+        assert_eq!(
+            procs[0].device.as_deref(),
+            Some("workhorse-mlx"),
+            "the sidecar's feed is named apart from LM Studio's on the same host"
+        );
         assert_eq!(procs[0].parallel, None, "never invented");
         assert_eq!(procs[0].loaded_context_length, Some(262_144));
     }
