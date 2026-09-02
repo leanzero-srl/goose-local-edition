@@ -59,6 +59,37 @@ const COMPLETE_RESULT = {
   ts: '2026-08-30T20:27:16.856695+00:00',
 };
 
+// r6h's REAL terminal verdict, verbatim from
+// ~/goose-builds/local-sb7-swarm-r6h-FINISHED-0.4616-passed-507m-3d-draws-393a99351/run.jsonl (seq 1386):
+// passed+verified with ONE known bug whose authoring check rates it `critical` — the class the panel
+// never showed before VA-129 (the row read as a cosmetic minor).
+const R6H_BUG =
+  'the app ships NO executable tests (`pytest -q` collected 0) — an empty suite is not a passing suite. Write real tests that assert the spec\'s concrete expected values, and never delete or skip a failing test to go green.';
+const R6H_COMPLETE_RESULT = {
+  event: 'complete_result',
+  passed: true,
+  passed_means: LIVE_PASSED_MEANS,
+  render_class_known_bugs: 0,
+  verified: true,
+  remaining_findings: 1,
+  shipped: 'final tree',
+  known_active_bugs: [R6H_BUG],
+  known_active_bugs_severities: ['critical'],
+  ts: '2026-09-02T08:55:32.393365+00:00',
+};
+// r6h's two known_bugs rounds (0 and 1), same finding both times — the union the snapshot supersedes.
+const R6H_KNOWN_BUGS_ROUNDS = [
+  { event: 'known_bugs', round: 0, count: 1, severities: ['critical'], findings: [R6H_BUG] },
+  { event: 'known_bugs', round: 1, count: 1, severities: ['critical'], findings: [R6H_BUG] },
+];
+// Two bugs of different classes: r6h's critical beside r5's first (a contract-shape finding, medium).
+const TWO_BUGS_COMPLETE_RESULT = {
+  ...R6H_COMPLETE_RESULT,
+  remaining_findings: 2,
+  known_active_bugs: [R6H_BUG, R5_BUGS[0]],
+  known_active_bugs_severities: ['critical', 'medium'],
+};
+
 const PERSONA_LEARNED = {
   event: 'persona_learned',
   stack_key: 'angular',
@@ -156,11 +187,51 @@ describe('buildActivity — the verdict is run-level state through the one reduc
       passedMeans: LIVE_PASSED_MEANS,
       remainingFindings: 7,
       shipped: 'final tree',
+      renderClassKnownBugs: null,
     });
     expect(phase).toBe('Wrapping up');
     expect(knownActiveBugs).toHaveLength(7);
+    // r5's archive carries no severities array — no class is claimed, none is invented.
+    expect(knownActiveBugs.every((b) => b.severity === null)).toBe(true);
     // The verdict is a compact feed moment too — the compact lane is what a user watches.
     expect(activity.some((a) => a.text.includes('Verdict — PASSED, verified end-to-end'))).toBe(true);
+  });
+
+  it('complete_result pairs each known bug with its class and carries the render-class count (r6h, verbatim)', () => {
+    const { verdict, knownActiveBugs, activity } = buildActivity([...BASE, ...R6H_KNOWN_BUGS_ROUNDS, R6H_COMPLETE_RESULT]);
+    expect(knownActiveBugs).toEqual([{ text: R6H_BUG, severity: 'critical' }]);
+    expect(verdict?.renderClassKnownBugs).toBe(0);
+    expect(activity.some((a) => a.text === 'Verdict — PASSED, verified end-to-end · 1 known bug ship')).toBe(true);
+  });
+
+  it('an EMPTY known_active_bugs snapshot supersedes the known_bugs union — fixed bugs do not linger as known-active', () => {
+    const { knownActiveBugs, activity } = buildActivity([
+      ...BASE,
+      ...R6H_KNOWN_BUGS_ROUNDS,
+      { ...R6H_COMPLETE_RESULT, remaining_findings: 0, known_active_bugs: [], known_active_bugs_severities: [] },
+    ]);
+    expect(knownActiveBugs).toEqual([]);
+    expect(activity.some((a) => a.text === 'Verdict — PASSED, verified end-to-end')).toBe(true);
+    // A legacy event with NO field keeps the union — absence is not an empty snapshot.
+    const legacy = buildActivity([...BASE, ...R6H_KNOWN_BUGS_ROUNDS, { event: 'complete_result', passed: true, verified: true }]);
+    expect(legacy.knownActiveBugs.map((b) => b.text)).toEqual([R6H_BUG]);
+  });
+
+  it('a mismatched severities array claims no class rather than a wrong one', () => {
+    const { knownActiveBugs } = buildActivity([
+      ...BASE,
+      { ...TWO_BUGS_COMPLETE_RESULT, known_active_bugs_severities: ['critical'] },
+    ]);
+    expect(knownActiveBugs.map((b) => b.severity)).toEqual([null, null]);
+  });
+
+  it('a FAILED gate with zero criticals names the render-class findings that blocked the green', () => {
+    const { verdict, activity } = buildActivity([
+      ...BASE,
+      { ...TWO_BUGS_COMPLETE_RESULT, passed: false, verified: false, render_class_known_bugs: 2 },
+    ]);
+    expect(verdict?.renderClassKnownBugs).toBe(2);
+    expect(activity.some((a) => a.text === 'Verdict — FAILED · 2 findings remain · 2 render-class findings blocked the green')).toBe(true);
   });
 
   it('run_finished supersedes the wrap-up label with Done and finished=true', () => {
@@ -266,6 +337,69 @@ describe('SwarmRunPanel — the r5 terminal sequence renders the verdict, not de
     expect(banner.textContent).toContain('goose ran this command itself');
     // The wrap-up banner has flipped away.
     expect(queryByTestId('wrapup-banner')).toBeNull();
+  });
+
+  it('two known bugs render VERBATIM with their class chips, and the verdict chip counts the same two', async () => {
+    mockRun([...BASE, TWO_BUGS_COMPLETE_RESULT, RUN_OVERVIEW, RUN_FINISHED]);
+    const { findByTestId, findAllByTestId, container } = render(
+      <IntlTestWrapper>
+        <SwarmRunPanel workingDir="/tmp/build" />
+      </IntlTestWrapper>
+    );
+    const banner = await findByTestId('terminal-banner');
+    expect(banner.textContent).toContain('PASSED — verified end-to-end');
+    expect((await findByTestId('verdict-bug-chip')).textContent).toBe('2 known bugs shipped');
+    const block = await findByTestId('known-active-bugs');
+    expect(block.textContent).toContain('the run passed — these are what it passed WITH');
+    expect((await findByTestId('known-bugs-count-chip')).textContent).toBe('2');
+    const classes = await findAllByTestId('known-bug-class');
+    expect(classes.map((c) => c.textContent)).toEqual(['critical', 'medium']);
+    // Each bug's text verbatim — InlineMarkdown renders the backticked span as code, so match on the
+    // surrounding plain text of each finding.
+    expect(block.textContent).toContain('the app ships NO executable tests');
+    expect(block.textContent).toContain('an empty suite is not a passing suite');
+    expect(block.textContent).toContain("POST /api/payments/<id>/note's response does not carry the documented field(s)");
+    // Zero render-class on a pass: no render-class chip.
+    expect(container.querySelector('[data-testid="known-bugs-render-class-chip"]')).toBeNull();
+  });
+
+  it('a zero-bug verdict after known_bugs rounds renders NO block and NO chip', async () => {
+    mockRun([
+      ...BASE,
+      ...R6H_KNOWN_BUGS_ROUNDS,
+      { ...R6H_COMPLETE_RESULT, remaining_findings: 0, known_active_bugs: [], known_active_bugs_severities: [] },
+      RUN_OVERVIEW,
+      RUN_FINISHED,
+    ]);
+    const { findByTestId, queryByTestId, queryByText } = render(
+      <IntlTestWrapper>
+        <SwarmRunPanel workingDir="/tmp/build" />
+      </IntlTestWrapper>
+    );
+    const banner = await findByTestId('terminal-banner');
+    expect(banner.textContent).toContain('PASSED — verified end-to-end');
+    expect(queryByTestId('verdict-bug-chip')).toBeNull();
+    expect(queryByTestId('known-active-bugs')).toBeNull();
+    expect(queryByText('Known active bugs')).toBeNull();
+  });
+
+  it('a FAILED verdict on render-class findings says so in the banner and on the block', async () => {
+    mockRun([
+      ...BASE,
+      { ...TWO_BUGS_COMPLETE_RESULT, passed: false, verified: false, render_class_known_bugs: 2 },
+      RUN_OVERVIEW,
+      { ...RUN_FINISHED, report: { ...RUN_FINISHED.report, failed: ['integrate-verify'] } },
+    ]);
+    const { findByTestId } = render(
+      <IntlTestWrapper>
+        <SwarmRunPanel workingDir="/tmp/build" />
+      </IntlTestWrapper>
+    );
+    const banner = await findByTestId('terminal-banner');
+    expect(banner.textContent).toContain('FAILED — 2 findings remain · 2 render-class findings blocked the green');
+    const block = await findByTestId('known-active-bugs');
+    expect(block.textContent).toContain('still active when the run ended — 2 render-class findings blocked the green');
+    expect((await findByTestId('known-bugs-render-class-chip')).textContent).toBe('2 render-class');
   });
 
   it('a retracted green ships as PASSED — but not verified, never as a clean pass', async () => {

@@ -275,10 +275,10 @@ describe('finding 9 — the REPAIR-tail decisions are visible', () => {
       { event: 'known_bugs', round: 1, count: 2, findings: ['a', 'b'] },
       { event: 'known_bugs', round: 2, count: 2, findings: ['b', 'c'] },
     ];
-    expect(buildActivity(events).knownActiveBugs).toEqual(['a', 'b', 'c']);
+    expect(buildActivity(events).knownActiveBugs.map((b) => b.text)).toEqual(['a', 'b', 'c']);
     expect(
       buildActivity([...events, { event: 'complete_result', known_active_bugs: ['c', 'd'] }])
-        .knownActiveBugs
+        .knownActiveBugs.map((b) => b.text)
     ).toEqual(['c', 'd']);
   });
 
