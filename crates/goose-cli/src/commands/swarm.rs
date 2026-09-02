@@ -111,6 +111,7 @@ mod plan_shape;
 use plan_shape::decomposition_of;
 mod briefs;
 use briefs::thin_brief_missing;
+mod dep_sources;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
 mod opener;
@@ -25923,86 +25924,31 @@ impl GooseAgentDispatcher {
                 &req.owned_files,
                 repairing,
             );
-            // Inject the CURRENT content of the task's DEPENDENCY source files (already-built modules it
-            // imports from) so cli/integration tasks need not `cat` them — a cli-edit-delete task over-read
-            // 16 deps and paralysed at 82 msgs / 0 writes. Only files that EXIST on disk (i.e. completed
-            // deps); skip owned files (already injected above), test files, and non-`.py`. Capped per-file
-            // and total to bound context on slow local models.
-            let owned_set: std::collections::HashSet<&String> = req.owned_files.iter().collect();
-            // SWARM-COHERENCE Phase-1 (Tier-A): inject deterministically-extracted dependency SIGNATURES
-            // instead of full bodies when enabled. Computed once; OFF => the full body path below is
-            // byte-identical to before.
-            let dep_sig_on = dep_signatures_on();
-            let sig_lang = match lang {
-                TargetLang::Python => goose_swarm::SigLang::Python,
-                TargetLang::Rust => goose_swarm::SigLang::Rust,
-                TargetLang::Go => goose_swarm::SigLang::Go,
-                TargetLang::TypeScript => goose_swarm::SigLang::TypeScript,
-                TargetLang::Other => goose_swarm::SigLang::Other,
-            };
-            let mut dep_block = String::new();
-            let mut dep_budget: usize = 14000;
-            for f in &req.all_files {
-                if dep_budget == 0 {
-                    break;
-                }
-                if owned_set.contains(f) || !lang.is_source_file(f) {
-                    continue;
-                }
-                let base = std::path::Path::new(f)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                if lang.is_test_file(base) {
-                    continue;
-                }
-                if let Ok(content) = std::fs::read_to_string(std::path::Path::new(&cwd).join(f)) {
-                    let trimmed = content.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    // Tier-A (P1-6): when the lever is on, the excerpt is `shape_excerpt` —
-                    // signatures PLUS the shape-carrying lines — never signatures alone, which
-                    // withheld the behaviour r0's five worst defects needed. Falls back to the
-                    // full body if extraction yields nothing, so ON never injects an empty API.
-                    // OFF (the shipped default) => `api_source` is `trimmed` => the real body.
-                    let api_source: std::borrow::Cow<str> = if dep_sig_on {
-                        let excerpt = shape_excerpt(trimmed, sig_lang);
-                        if excerpt.trim().is_empty() {
-                            std::borrow::Cow::Borrowed(trimmed)
-                        } else {
-                            std::borrow::Cow::Owned(excerpt)
-                        }
-                    } else {
-                        std::borrow::Cow::Borrowed(trimmed)
-                    };
-                    // CUT ON A LINE BOUNDARY AND SAY SO. The raw `.take(n)` sliced mid-identifier and the
-                    // fence below closed unconditionally, so the worker received a file that stops in the
-                    // middle of a `def` formatted exactly like a complete one. MEASURED (F196) on a live
-                    // test-author prompt: 3 of 4 blocks ended mid-token — `meridian.py` at `    def _up`,
-                    // whose pasted body FAILS `ast.parse` — and NONE of the four carried any indication it
-                    // had been truncated. The same prompt forbids the worker to `cat` the real file, so the
-                    // missing remainder was unrecoverable by any permitted action.
-                    let budget = dep_budget.min(3500);
-                    let head: String = api_source.chars().take(budget).collect();
-                    let truncated = head.chars().count() < api_source.chars().count();
-                    let capped = if truncated {
-                        let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
-                        format!(
-                            "{whole}\n# … TRUNCATED — this is a PARTIAL view of {f}. If you need what is \
-                             missing, read the file; it is not all shown here."
-                        )
-                    } else {
-                        head
-                    };
-                    dep_budget = dep_budget.saturating_sub(capped.chars().count().min(budget));
-                    dep_block.push_str(&format!(
-                        "## API of {f} (a dependency you import — build against THIS; for any \
-                         symbol, key or route it does not show, read the real file TARGETED: \
-                         `grep -n '<name>' {f}` then `sed -n 'A,Bp' {f}` — never a whole-file cat):\n```\n{capped}\n```\n\n"
-                    ));
-                }
+            // The task's DEPENDENCY sources — every plan file on disk it does not own — as fenced
+            // "API of" sections, so cli/integration tasks need not `cat` them (a cli-edit-delete task
+            // once over-read 16 deps and paralysed at 82 msgs / 0 writes). VA-103: assembled in
+            // swarm/dep_sources.rs — a file that names the task's own module is its CONTRACT and is
+            // carried whole; every cut or omission the budget forces is emitted here as
+            // `dep_source_truncated` (r6h's ledgerd-core lost `run()`/`impl.run(...)` at byte 5,128
+            // of the 6,104-byte skeleton `app/ledgerd/__init__.py` to a 3,500-char cut nothing logged).
+            let dep_sources = dep_sources::dependency_sources_block(
+                std::path::Path::new(&cwd),
+                &req.owned_files,
+                &req.all_files,
+                lang,
+                dep_signatures_on(),
+            );
+            for cut in &dep_sources.cuts {
+                self.events.write_value(serde_json::json!({
+                    "event": "dep_source_truncated",
+                    "task_id": req.task_id,
+                    "file": cut.file,
+                    "bytes": cut.bytes,
+                    "kept": cut.kept,
+                    "reason": cut.reason,
+                }));
             }
+            let dep_block = dep_sources.text;
             // D3: the worker prompts point at "'API of …'" as the authoritative surface, and for a
             // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY and the
             // heading is absent, so the worker is pointed at a section that is not there. Emitting
