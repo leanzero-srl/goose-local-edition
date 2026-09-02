@@ -61,3 +61,7 @@ One surface per dispatch. A brief that bundles "delete these pins" with "render 
 reading and the proof runs; the orchestrator briefs them separately and you may push back on a two-surface brief by
 doing the first and reporting the second as not started. Proof stays `pnpm run typecheck && pnpm test` once at the
 end — never per file — and a vitest timeout in an unrelated TLS test under cargo load is reported, not re-run five times.
+
+## Typecheck in a worktree (2026-09-02)
+
+A fresh worktree has no `node_modules`. Do NOT copy or install; symlink the main tree's gitignored dirs (`ui/desktop/node_modules`, `ui/node_modules`, and the sdk build output if `tsc` asks for it) into the same paths of the worktree — they are gitignored, so `git status` stays clean. Never add an untracked file or link outside gitignored paths; say what you linked in the return.
