@@ -2,8 +2,7 @@ import { AppEvents } from '../../constants/events';
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { FaCircle } from 'react-icons/fa';
 import { isEqual } from 'lodash';
-import { cn } from '../../utils';
-import { cx } from '../lz';
+import { TONE_TEXT, cx } from '../lz';
 import { Alert, AlertType } from '../alerts';
 import { AlertBox } from '../alerts';
 
@@ -197,10 +196,10 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
   const hasError = alerts.some((alert) => alert.type === AlertType.Error);
   const hasInfo = alerts.some((alert) => alert.type === AlertType.Info);
   const triggerColor = hasError
-    ? 'text-[#d7040e]' // Red color for error alerts
-    : hasInfo || alerts.length === 0 // Default to green for context info when no alerts
-      ? 'text-[#00b300]' // Green color for info alerts
-      : 'text-[#cc4b03]'; // Orange color for warning alerts
+    ? TONE_TEXT.err
+    : hasInfo || alerts.length === 0 // Default to ok for context info when no alerts
+      ? TONE_TEXT.ok
+      : TONE_TEXT.warn;
 
   return (
     <>
@@ -233,7 +232,7 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
           }}
         >
           {shouldShowIndicator && (
-            <div className={cn('relative', triggerColor)}>
+            <div className={cx('relative', triggerColor)}>
               <FaCircle size={5} />
             </div>
           )}
