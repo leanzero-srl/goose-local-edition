@@ -577,16 +577,80 @@ pub(crate) async fn wait_port_clear(port: u16) -> bool {
     !port_has_listener(port)
 }
 
+/// Where `lsof` lives on the platforms goosed ships to, tried BEFORE the PATH walk. The
+/// packaged app's goosed runs with a PATH that has no `/usr/sbin` (measured 2026-09-02:
+/// `…/Resources/bin:…:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`) while macOS keeps
+/// lsof there — so a bare-name spawn ENOENTed under the app, and every reclaim ended in
+/// "lsof unavailable; port left occupied" with the reclaim itself never reachable.
+const LSOF_KNOWN_LOCATIONS: [&str; 3] =
+    ["/usr/sbin/lsof", "/usr/bin/lsof", "/opt/homebrew/bin/lsof"];
+
+/// `lsof` exists at none of the known locations and in no PATH directory. Carries every
+/// path that was looked at, in the order it was looked at, so the operator sees exactly
+/// what the search covered instead of a bare-name ENOENT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LsofUnavailable {
+    pub searched: Vec<std::path::PathBuf>,
+}
+
+impl std::fmt::Display for LsofUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "lsof not found; searched {} location(s): ",
+            self.searched.len()
+        )?;
+        for (i, path) in self.searched.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{}", path.display())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for LsofUnavailable {}
+
+/// The `lsof` binary this crate runs: the first of [`LSOF_KNOWN_LOCATIONS`] that exists,
+/// else the first PATH directory holding one.
+pub fn resolve_lsof() -> Result<std::path::PathBuf, LsofUnavailable> {
+    resolve_lsof_in(
+        &LSOF_KNOWN_LOCATIONS.map(std::path::PathBuf::from),
+        std::env::var_os("PATH").as_deref(),
+    )
+}
+
+fn resolve_lsof_in(
+    known: &[std::path::PathBuf],
+    path_env: Option<&std::ffi::OsStr>,
+) -> Result<std::path::PathBuf, LsofUnavailable> {
+    let from_path = path_env
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join("lsof"));
+    let mut searched = Vec::new();
+    for candidate in known.iter().cloned().chain(from_path) {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        searched.push(candidate);
+    }
+    Err(LsofUnavailable { searched })
+}
+
 /// Pids with a LISTEN socket on `port`. `-sTCP:LISTEN` is load-bearing: a bare `lsof -i :port`
 /// also lists every process holding a CLIENT connection to the port — goosed's own keep-alive
 /// pool included (measured 2026-09-01: the connected client pid appeared alongside the
 /// listener) — and signalling that list would have signalled the caller.
 pub(crate) async fn listening_pids(port: u16) -> Result<Vec<u32>> {
-    let output = tokio::process::Command::new("lsof")
+    let lsof = resolve_lsof()?;
+    let output = tokio::process::Command::new(&lsof)
         .args(["-ti", &format!("TCP:{port}"), "-sTCP:LISTEN"])
         .output()
         .await
-        .context("lsof")?;
+        .with_context(|| format!("running {}", lsof.display()))?;
     Ok(String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .filter_map(|s| s.parse().ok())
@@ -676,5 +740,86 @@ pub fn mount_block_error(result: &GateResult) -> Option<anyhow::Error> {
     match result.verdict {
         Verdict::Block => Some(anyhow!("memory gate BLOCK: {}", result.message)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn dir_with_lsof(root: &std::path::Path, name: &str) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lsof"), "#!/bin/sh\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_known_location_wins_over_path() {
+        let root = tempfile::tempdir().unwrap();
+        let known = dir_with_lsof(root.path(), "known").join("lsof");
+        let on_path = dir_with_lsof(root.path(), "onpath");
+        let resolved =
+            resolve_lsof_in(std::slice::from_ref(&known), Some(on_path.as_os_str())).unwrap();
+        assert_eq!(resolved, known);
+    }
+
+    #[test]
+    fn path_is_walked_in_order_when_no_known_location_exists() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = root.path().join("absent").join("lsof");
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let first = dir_with_lsof(root.path(), "first");
+        let second = dir_with_lsof(root.path(), "second");
+        let path_env = std::env::join_paths([&empty, &first, &second]).unwrap();
+        let resolved = resolve_lsof_in(&[absent], Some(&path_env)).unwrap();
+        assert_eq!(resolved, first.join("lsof"));
+    }
+
+    #[test]
+    fn absence_names_every_path_searched_in_order() {
+        let root = tempfile::tempdir().unwrap();
+        let known_a = root.path().join("a").join("lsof");
+        let known_b = root.path().join("b").join("lsof");
+        let dir_c = root.path().join("c");
+        let dir_d = root.path().join("d");
+        std::fs::create_dir_all(&dir_c).unwrap();
+        let path_env = std::env::join_paths([&dir_c, &dir_d]).unwrap();
+
+        let err =
+            resolve_lsof_in(&[known_a.clone(), known_b.clone()], Some(&path_env)).unwrap_err();
+
+        assert_eq!(
+            err.searched,
+            vec![
+                known_a.clone(),
+                known_b.clone(),
+                dir_c.join("lsof"),
+                dir_d.join("lsof")
+            ]
+        );
+        let text = err.to_string();
+        assert!(
+            text.starts_with("lsof not found; searched 4 location(s): "),
+            "{text}"
+        );
+        for path in [&known_a, &known_b, &dir_c.join("lsof"), &dir_d.join("lsof")] {
+            assert!(text.contains(&path.display().to_string()), "{text}");
+        }
+    }
+
+    /// The measured packaged-app case: a PATH with no `/usr/sbin` (the app's is
+    /// `…/Resources/bin:…:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`). The known
+    /// locations resolve lsof anyway — the bare-name spawn is what ENOENTed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_packaged_apps_path_without_usr_sbin_still_resolves_lsof() {
+        let known = LSOF_KNOWN_LOCATIONS.map(PathBuf::from);
+        let packaged_path = std::ffi::OsStr::new("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+        let resolved = resolve_lsof_in(&known, Some(packaged_path)).unwrap();
+        assert_eq!(resolved, PathBuf::from("/usr/sbin/lsof"));
+        assert_eq!(resolve_lsof().unwrap(), PathBuf::from("/usr/sbin/lsof"));
     }
 }
