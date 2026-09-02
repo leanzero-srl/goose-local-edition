@@ -67,6 +67,8 @@ pub(super) enum GapVerdict {
 /// The tree-relative paths a module resolves to, mirroring `tree_import_gaps`: an absolute module at
 /// the root or under `src/`; a relative one against the importer's directory, one level up per extra
 /// dot. Err when the dots climb above the tree — the one lookup the plan cannot answer.
+// string_slice: `dots` counts leading ASCII `.` characters, one byte each.
+#[allow(clippy::string_slice)]
 fn candidate_files(importer: &str, module: &str) -> Result<Vec<String>, String> {
     let dots = module.chars().take_while(|c| *c == '.').count();
     let tail = &module[dots..];
@@ -389,13 +391,16 @@ mod tests {
         (routed, events, notices)
     }
 
-    /// r6h's plan (plan-loaded.json, `files` per subtask) and ledger at 04:22:40: ledgerd-core and
-    /// skeleton done, webhooks-workflow dispatched with no terminal row.
-    fn r6h() -> (
+    /// (ownership: task → files, states: task → state, dispatched tasks)
+    type PlanAndLedger = (
         HashMap<String, Vec<String>>,
         HashMap<String, String>,
         HashSet<String>,
-    ) {
+    );
+
+    /// r6h's plan (plan-loaded.json, `files` per subtask) and ledger at 04:22:40: ledgerd-core and
+    /// skeleton done, webhooks-workflow dispatched with no terminal row.
+    fn r6h() -> PlanAndLedger {
         let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
         ownership.insert(
             "ledgerd-core".into(),
@@ -448,7 +453,7 @@ mod tests {
         for module in [".webhooks", ".drafts", ".auth"] {
             let verdict =
                 classify_import_gap("app/api.py", module, &ownership, &states, &dispatched);
-            let file = format!("app/{}.py", &module[1..]);
+            let file = format!("app/{}.py", module.trim_start_matches('.'));
             assert_eq!(
                 verdict,
                 Ok(GapVerdict::Pending {
@@ -579,7 +584,7 @@ mod tests {
         assert_eq!(owner, "webhooks-workflow");
         assert!(
             line.contains("webhooks-workflow (state: done) did not write app/webhooks.py")
-                && line.contains("app/api.py imports it as `.webhooks`"),
+                && line.contains("which app/api.py imports as `.webhooks`"),
             "{line}"
         );
         assert!(!line.contains("ledgerd-core"), "{line}");

@@ -33406,8 +33406,8 @@ mod audit_regressions {
 
     /// P1-5: THE PLANNER IS A STRAIGHT LINE. Driven end to end with fake model closures (the
     /// fake-dispatcher seam), the sequence from OPEN's output is exactly
-    /// synthesis -> plan_synthesized -> review (one round) -> plan_repaired — with NO coverage,
-    /// RESEARCH, resplit or ask-proxy event between. r2 measured what those cost: 48 min of
+    /// synthesis -> plan_synthesized -> plan_repaired — the review round is DELETED (VA-014), and
+    /// no coverage, RESEARCH, resplit or ask-proxy event comes between. r2 measured what those cost: 48 min of
     /// RESEARCH with 2 of 3 nodes idle, a resplit-manufactured file collision, and a coverage
     /// slice writing code at the tree root. SYNTHESIS takes the slices directly; a decision that
     /// stayed open after the user and the fan is folded as "choose the conventional option".
@@ -33428,11 +33428,11 @@ mod audit_regressions {
             &[],
             &pd,
             |briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
-                // SYNTHESIS receives the slices DIRECTLY: objective, the slice's own questions,
-                // and the opener's open decisions folded as conventional-option instructions.
+                // SYNTHESIS receives the slices DIRECTLY: objective and the opener's open decisions
+                // folded as conventional-option instructions. The opener writes NO per-slice
+                // questions since VA-089 (each research lane derives its own), so none reach here.
                 assert_eq!(briefs.len(), 2);
                 assert!(briefs[0].brief.contains("serve GET /health"));
-                assert!(briefs[0].brief.contains("which port"));
                 assert!(briefs[0].brief.contains("which storage backend"));
                 assert!(briefs[0].brief.contains("CONVENTIONAL"));
                 assert!(briefs[1].brief.contains("which storage backend"));

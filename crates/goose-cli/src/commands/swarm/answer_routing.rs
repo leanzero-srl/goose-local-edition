@@ -52,6 +52,9 @@ pub(super) const ROUTED_ANSWERS_HEADER: &str = "SETTLED BY ANOTHER SLICE'S RESEA
 /// Every position where `path` occurs in `text` as a WHOLE path — not the tail of a longer one
 /// (`xapp/api.py`, `pkg/app/api.py`), not the head of one (`app/api.pyc`, `app/api.py/x`). The
 /// plan's own file string is the needle: reference syntax, never a bare word (VA-103's rule).
+// string_slice: `i` is a `match_indices` hit and `i + path.len()` that match's end — char
+// boundaries by construction.
+#[allow(clippy::string_slice)]
 fn path_positions(text: &str, path: &str) -> Vec<usize> {
     let path_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '.' | '-');
     text.match_indices(path)
@@ -81,6 +84,9 @@ fn module_form(file: &str) -> Option<String> {
 /// The sentence of `text` around the first whole occurrence of `path`: from the previous line
 /// break or sentence end to the next. This is the one line of a task's OBJECTIVE that says what
 /// it does with a file it does not own, quoted back to it.
+// string_slice: `at`/`after` bound a `find_path` match; every other offset is a `find`/`rfind` hit
+// moved past an ASCII needle (`\n`, `. `) or `text.len()` — char boundaries by construction.
+#[allow(clippy::string_slice)]
 fn sentence_naming(text: &str, path: &str) -> Option<String> {
     let at = find_path(text, path)?;
     let head = &text[..at];
@@ -118,8 +124,8 @@ fn path_tokens(text: &str) -> Vec<String> {
     };
     let mut out: Vec<String> = Vec::new();
     for word in text.split(split) {
-        let tok = word.trim_matches(|c: char| matches!(c, '.' | '*' | '—' | '-'));
-        let tok = tok.strip_prefix("./").unwrap_or(tok);
+        let tok = word.strip_prefix("./").unwrap_or(word);
+        let tok = tok.trim_matches(|c: char| matches!(c, '.' | '*' | '—' | '-'));
         if tok.is_empty()
             || !tok.contains('/')
             || tok.starts_with('/')
@@ -187,6 +193,8 @@ impl Arm {
 /// The routed block goes ABOVE the decisions partition when the brief carries one, so
 /// `decisions::brief_decisions_block`'s header-to-tail cut (what a repair shard is handed as
 /// "decisions") never swallows another slice's answers — 2a D11's lesson, kept structurally.
+// string_slice: `at` is a `find` hit or `description.len()`.
+#[allow(clippy::string_slice)]
 pub(super) fn insert_above_decisions(description: &str, block: &str) -> String {
     let at = [SETTLED_DECISIONS_HEADER, OPEN_DECISIONS_HEADER]
         .iter()
