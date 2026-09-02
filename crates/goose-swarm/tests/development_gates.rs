@@ -43,6 +43,30 @@ fn run_path_files() -> Vec<(String, String)> {
         let text = read(&rel);
         files.push((rel, text));
     }
+    // SPLIT v2 (3e99d570d) opened the first NESTED module directory (commands/swarm/shards/assembly.rs);
+    // a directory the scan did not descend into is a run-path file outside every ratchet, so one level
+    // of subdirectories is scanned the same way — "no new file enters unscanned" stays true.
+    let mut nested: Vec<_> = std::fs::read_dir(&split)
+        .unwrap_or_else(|e| panic!("{} unreadable: {e}", split.display()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .flat_map(|d| {
+            let dir_name = d.file_name().to_string_lossy().into_owned();
+            std::fs::read_dir(d.path())
+                .unwrap_or_else(|e| panic!("{} unreadable: {e}", d.path().display()))
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rs"))
+                .map(move |n| format!("{dir_name}/{n}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    nested.sort();
+    for n in nested {
+        let rel = format!("crates/goose-cli/src/commands/swarm/{n}");
+        let text = read(&rel);
+        files.push((rel, text));
+    }
     let src = root.join("crates/goose-swarm/src");
     let mut names: Vec<_> = std::fs::read_dir(&src)
         .unwrap_or_else(|e| panic!("{} unreadable: {e}", src.display()))
@@ -401,7 +425,12 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 34,564 (VA-065): rule (a) `repair_owning_nothing` + `repoint_dependency` moved
     // to commands/swarm/plan_repairs.rs beside rules (d)-(f), carrying THE SPLIT exemption, paying
     // for `merge_dossier_incomplete` at the merger's dispatch and `merge_hole` at its completion.
-    const SWARM_RS_LINE_BASELINE: usize = 34_564;
+    // Tightened to 34,429 (SPLIT v2, part 2): `mentions_ext` / `detect_language` and their two tests
+    // moved to commands/swarm/lang.rs, paying for the shard-completion verification seam
+    // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
+    // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
+    // the baseline is the count AFTER all three, so each intermediate commit sits under it.
+    const SWARM_RS_LINE_BASELINE: usize = 34_378; // VA-098 deleted shard_beats_baseline + its test from 34_406: the ratchet is set to what the tree IS, never above it
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -458,7 +487,7 @@ fn do_everything_never_reaches_a_model() {
 // To 96 (VA-080 item 3): shards.rs's `measure_fatness` RECORDS a task no opener slice is named
 // for (`FatMeasure::unclaimed`) instead of defaulting its claim away; a plan whose every row is
 // unclaimed is said (`fatness_unmeasurable`) rather than measured as a flat nothing.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 96;
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 95; // r6h-staging: shards.rs sibling constructor rewritten as one match (provides + writes), 97 → 95
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
