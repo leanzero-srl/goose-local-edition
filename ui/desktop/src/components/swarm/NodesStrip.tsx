@@ -4,6 +4,7 @@ import { DEFAULTS, type SwarmConfig, type SwarmDeviceRow } from '../settings/swa
 import { chipFor, LOCAL_CHIP, MLX_CHIP } from '../leanzero-swarm/cloud';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { defineMessages, useIntl } from '../../i18n';
+import { Clipped } from './Clipped';
 import {
   Chip,
   NODE_INDEXES,
@@ -127,13 +128,23 @@ export default function NodesStrip({ className = '' }: { className?: string }) {
                 className={cx('flex items-center gap-2.5 px-4', ROW.dense)}
               >
                 <StatusDot node={nodeHue(i)} live={occ?.kind === 'serving'} label={d.id} />
-                <span className={cx('min-w-0 truncate', TYPE.body, WEIGHT.medium)}>{d.id}</span>
+                <Clipped
+                  text={d.id}
+                  label="Node"
+                  className={cx(TYPE.body, WEIGHT.medium)}
+                  testId="nodes-strip-id"
+                />
                 <Chip tone={engine.tone} title={engine.label}>
                   {engine.label}
                 </Chip>
-                <span className={cx('min-w-0 flex-1 truncate', TYPE.meta)} title={d.model_id}>
-                  {d.model_id}
-                </span>
+                <Clipped
+                  text={d.model_id}
+                  mono
+                  label="Model"
+                  context={[{ label: 'node', value: d.id }]}
+                  className={cx('flex-1', TYPE.meta)}
+                  testId="nodes-strip-model"
+                />
                 {occ && (
                   <span
                     data-testid={`nodes-strip-occupancy-${d.id}`}
@@ -142,9 +153,15 @@ export default function NodesStrip({ className = '' }: { className?: string }) {
                   >
                     <Chip tone={OCCUPANCY_TONE[occ.kind]}>{occupancyLabel[occ.kind]}</Chip>
                     {occ.detail && (
-                      <span className="max-w-[16rem] truncate font-mono text-lz-mono text-lz-ink-3">
-                        {occ.detail}
-                      </span>
+                      <Clipped
+                        text={occ.detail}
+                        mono
+                        label="Occupancy"
+                        context={[{ label: 'node', value: d.id }]}
+                        hoverTitle={false}
+                        className="max-w-[16rem] font-mono text-lz-mono text-lz-ink-3"
+                        testId="nodes-strip-occupancy-detail"
+                      />
                     )}
                   </span>
                 )}

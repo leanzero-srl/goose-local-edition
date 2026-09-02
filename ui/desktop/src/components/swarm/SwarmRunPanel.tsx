@@ -5328,7 +5328,14 @@ const TerminalBanner: React.FC<{
         <Tip label={<span className="font-mono break-all">{outputDir}</span>}>
           <div className="flex min-w-0 cursor-default items-center gap-1.5 border-t border-lz-border px-3 py-1.5 text-lz-meta text-lz-ink-3">
             <FolderOpen className="size-3 shrink-0" />
-            <span className="truncate font-mono text-lz-mono text-lz-ink-3">{outputDir}</span>
+            <Clipped
+              text={outputDir}
+              mono
+              label="Output directory"
+              hoverTitle={false}
+              className="font-mono text-lz-mono text-lz-ink-3"
+              testId="run-output-dir"
+            />
           </div>
         </Tip>
       ) : null}
@@ -5566,7 +5573,16 @@ export const SwarmRunPanel: React.FC<{
               )
             }
           >
-            <span className={cx(TYPE.h2, 'truncate')}>{appName}</span>
+            {/* The whole prompt is one click away: the tip shows its first 400 chars, the reveal all of it. */}
+            <Clipped
+              text={appName}
+              full={run.meta?.prompt?.trim() || undefined}
+              label="Prompt"
+              context={run.meta?.plannerModel ? [{ label: 'planner', value: run.meta.plannerModel }] : undefined}
+              hoverTitle={false}
+              className={TYPE.h2}
+              testId="run-header-name"
+            />
           </Tip>
           {run.meta?.resumed ? (
             // FINDING 7: a resumed run skips planning and re-runs finished tasks — without this badge

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, X, Loader2 } from 'lucide-react';
 import { NODE_DOT, RADIUS, TNUM, TONE_TEXT, cx, type NodeIndex, type Tone } from '../lz';
+import { Clipped } from './Clipped';
 
 /**
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
@@ -83,8 +84,24 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
               role="img"
               aria-label={`node ${nodeLetter(i)}`}
             />
-            <span className="w-24 shrink-0 truncate text-lz-ink-2">{lane.device}</span>
-            <span className="flex-1 truncate">{lane.action}</span>
+            <Clipped
+              text={lane.device}
+              mono
+              label="Node"
+              context={[{ label: 'node', value: nodeLetter(i) }]}
+              className="w-24 shrink-0 text-lz-ink-2"
+              testId="fan-in-device"
+            />
+            <Clipped
+              text={lane.action}
+              label="Action"
+              context={[
+                { label: 'node', value: nodeLetter(i) },
+                { label: 'status', value: lane.status },
+              ]}
+              className="flex-1"
+              testId="fan-in-action"
+            />
             {(() => {
               const Icon = STATUS_ICON[lane.status];
               return (

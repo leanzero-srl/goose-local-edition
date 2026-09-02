@@ -366,3 +366,38 @@ describe('Lane rows, the node inspector header, and history rows', () => {
     expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).not.toBeNull();
   });
 });
+
+describe('Run header and footer', () => {
+  it('the app name is a door to the run’s whole prompt, not the tip’s first 400 chars', async () => {
+    mockRun();
+    renderPanel();
+    const name = await screen.findByTestId('run-header-name');
+    expect(name).toHaveAttribute('data-clipped', 'true');
+    expect(name).not.toHaveAttribute('title');
+    fireEvent.click(name);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Prompt');
+    expect(screen.getByTestId('reveal-body')).toHaveTextContent('A small operations tool.');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(document.activeElement).toBe(name);
+  });
+
+  it('the output directory line is a mono door', async () => {
+    mockRun([
+      ...EVENTS,
+      { event: 'task_completed', ts, task_id: 'store', status: 'done', device: 'gabee-qwen3.6-27b', attempts: 1, elapsed_ms: 1000, tool_calls: [] },
+      { event: 'task_dispatched', ts, task_id: 'api', device: 'mihai-qwen3.6-27b', model: POOL[1].model_id },
+      { event: 'task_completed', ts, task_id: 'api', status: 'done', device: 'mihai-qwen3.6-27b', attempts: 1, elapsed_ms: 1000, tool_calls: [] },
+      { event: 'task_dispatched', ts, task_id: 'integrate-verify', device: 'mihai-qwen3.6-27b', model: POOL[1].model_id },
+      { event: 'task_completed', ts, task_id: 'integrate-verify', status: 'done', device: 'mihai-qwen3.6-27b', attempts: 1, elapsed_ms: 1000, tool_calls: [] },
+      { event: 'run_finished', ts, done: 3, failed: 0, phases: {}, per_device: [] },
+    ]);
+    renderPanel();
+    const dir = await screen.findByTestId('run-output-dir');
+    expect(dir).toHaveAttribute('data-clipped', 'true');
+    fireEvent.click(dir);
+    expect(screen.getByTestId('reveal-body')).toHaveTextContent('/tmp/build');
+    expect(screen.getByTestId('reveal-body').className).toContain('font-mono');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  });
+});
