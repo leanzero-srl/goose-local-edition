@@ -188,6 +188,21 @@ pub(super) fn rank_fix_target(
     ))
 }
 
+/// Heaviest-first item order for a fan (VA-113, r6i research tail): a STABLE descending sort on
+/// the caller's own size measure, ties keeping plan order. `fanout_over_fleet` starts items in
+/// list order onto a fastest-first device queue, so the heaviest item lands on the fastest free
+/// host and no host waits idle for a heavier item queued behind a lighter one. MEASURED r6i:
+/// `research_planned{per_slice_sections {ledgerd-service 17, viz-engine 12, web-console-behavior
+/// 9, notifierd-service 6, web-console-structure 2}}` dispatched in PLAN order — viz, structure,
+/// behavior at 10:29:44Z, notifierd at 11:09, and ledgerd (17 sections, the heaviest) LAST at
+/// 11:28:37Z to gabee (decode 11.6 t/s, the slowest node; workhorse 17.2, mihai 12.8) — so from
+/// 11:32 ledgerd ran alone while two nodes idled ≥ 49 minutes until the run was stopped.
+pub(super) fn order_heaviest_first<T>(items: Vec<T>, weight: impl Fn(&T) -> usize) -> Vec<T> {
+    let mut items = items;
+    items.sort_by_key(|i| std::cmp::Reverse(weight(i)));
+    items
+}
+
 /// One entry per SLOT the fleet can actually run, not one per device.
 ///
 /// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
@@ -1294,6 +1309,312 @@ mod aux_routing_tests {
         );
     }
 
+    // MOVED VERBATIM from swarm.rs's test module (incremental-split law, paying for VA-113/VA-117's
+    // wiring in the root): the fan-out's own tests live beside the fan-out.
+    use goose_swarm::{NullSink, SwarmEvent};
+    use std::collections::HashMap;
+    use std::sync::atomic::Ordering;
+
+    /// The fan-outs hold `DeviceCfg` (the resolved runtime pool), not the config-file `SwarmDevice`
+    /// that `dev()` above builds. Two structs, both with a `weight` field, and the compiler is the
+    /// only thing that tells them apart.
+    fn cfg_w(id: &str, model: &str, weight: u32) -> DeviceCfg {
+        DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+            is_cloud: false,
+        }
+    }
+
+    /// THE CONTRACT F350 ACTUALLY SHIPPED, which nothing was checking.
+    ///
+    /// `fanout_caps_one_call_per_device` above still passes, and that is the problem: its fixture is three
+    /// UNIQUE device strings, while every production caller now passes `fleet_slot_models()` — each model_id
+    /// repeated `weight` times. So the guard that exists asserts one-call-per-device on a shape the engine no
+    /// longer sends, and the shape it does send (six entries, three models) was asserted nowhere. F350 tested
+    /// that the LIST is six long; the list length is the shape, and running six at once is the contract.
+    #[tokio::test]
+    async fn fanout_runs_one_call_per_slot_so_a_weight_two_device_takes_two() {
+        use std::sync::atomic::AtomicUsize;
+        // Exactly what fleet_slot_models() yields for the bed: 3 devices x weight 2.
+        let slots = fleet_slot_models(&[
+            cfg_w("a", "m-a", 2),
+            cfg_w("b", "m-b", 2),
+            cfg_w("c", "m-c", 2),
+        ]);
+        assert_eq!(slots.len(), 6);
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..18).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results = fanout_over_fleet("test-slots", &NullSink, slots, items, move |i, dev| {
+            let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+            async move {
+                let cur = {
+                    let mut g = inf.lock().unwrap();
+                    let e = g.entry(dev.clone()).or_insert(0);
+                    *e += 1;
+                    *e
+                };
+                {
+                    let mut m = mpd.lock().unwrap();
+                    let e = m.entry(dev.clone()).or_insert(0);
+                    if cur > *e {
+                        *e = cur;
+                    }
+                }
+                let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                mtot.fetch_max(t, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                tot.fetch_sub(1, Ordering::SeqCst);
+                *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                i
+            }
+        })
+        .await;
+        assert_eq!(results.len(), 18, "every item returns a result");
+        // Three DISTINCT models, six slots: the duplicates must not collapse the pool.
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should still touch every device"
+        );
+        // The whole point of the change: a weight-2 device runs TWO at once, and the fleet reaches SIX.
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(
+                m <= 2,
+                "device {dev} exceeded its weight with {m} concurrent"
+            );
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 6,
+            "never more than the slot count"
+        );
+        assert!(
+            max_total.load(Ordering::SeqCst) > 3,
+            "if this caps at 3 the fan is still sized by DEVICES and F350 is inert: got {}",
+            max_total.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn fanout_caps_one_call_per_device() {
+        use std::sync::atomic::AtomicUsize;
+        let devices = vec!["d0".to_string(), "d1".to_string(), "d2".to_string()];
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..9).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results =
+            fanout_over_fleet("test-devices", &NullSink, devices, items, move |i, dev| {
+                let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+                async move {
+                    let cur = {
+                        let mut g = inf.lock().unwrap();
+                        let e = g.entry(dev.clone()).or_insert(0);
+                        *e += 1;
+                        *e
+                    };
+                    {
+                        let mut m = mpd.lock().unwrap();
+                        let e = m.entry(dev.clone()).or_insert(0);
+                        if cur > *e {
+                            *e = cur;
+                        }
+                    }
+                    let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                    mtot.fetch_max(t, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    tot.fetch_sub(1, Ordering::SeqCst);
+                    *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                    i * 2
+                }
+            })
+            .await;
+        assert_eq!(results.len(), 9, "every item returns a result");
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(
+                m <= 1,
+                "device {dev} ran {m} concurrent calls; must be <= 1"
+            );
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 3,
+            "no more than 3 concurrent across a 3-device fleet"
+        );
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should use every device"
+        );
+    }
+
+    /// THE PANIC CASCADE, pinned. Before the DeviceReturn guard, a panicking lane on a
+    /// single-device pool stranded its device: the next lane's "a device is free whenever a
+    /// permit is held" expect fired inside the MutexGuard temporary, poisoned the pool, every
+    /// later `lock().unwrap()` panicked in turn, and the `if let Ok(r)` join swallowed the lot —
+    /// one panic consumed the whole fan and this test would have hung or returned 0 results.
+    /// Now: the device rides Drop back to the pool, the surviving lanes run to completion, the
+    /// panicked lane's slot arrives as Err, and the join names it with a lane_panicked event.
+    #[tokio::test]
+    async fn a_panicked_lane_returns_its_device_and_the_rest_of_the_fan_survives() {
+        #[derive(Default)]
+        struct ValueSink(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for ValueSink {
+            fn emit(&self, _event: &SwarmEvent) {}
+            fn write_value(&self, value: serde_json::Value) {
+                self.0.lock().unwrap().push(value);
+            }
+        }
+        let sink = ValueSink::default();
+        let items: Vec<usize> = vec![0, 1, 2];
+        let results = fanout_over_fleet(
+            "panic-test",
+            &sink,
+            vec!["only-device".to_string()],
+            items,
+            move |i, dev| async move {
+                assert_eq!(dev, "only-device");
+                if i == 0 {
+                    panic!("lane 0 exploded on purpose");
+                }
+                i * 10
+            },
+        )
+        .await;
+        assert_eq!(
+            results.len(),
+            3,
+            "one slot per item, panicked lane included"
+        );
+        assert!(
+            results[0].as_ref().is_err_and(|e| e.contains("exploded")),
+            "the panicked lane's slot carries its panic message, got {:?}",
+            results[0]
+        );
+        assert_eq!(results[1], Ok(10), "the device came back for lane 1");
+        assert_eq!(results[2], Ok(20), "and again for lane 2");
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1, "exactly the one lost lane is named");
+        assert_eq!(
+            events[0].get("event").and_then(|v| v.as_str()),
+            Some("lane_panicked")
+        );
+        assert_eq!(
+            events[0].get("context").and_then(|v| v.as_str()),
+            Some("panic-test")
+        );
+        assert!(events[0]
+            .get("error")
+            .and_then(|v| v.as_str())
+            .is_some_and(|e| e.contains("exploded")));
+    }
+
+    /// r6i's five research slices, weighed by their section counts, dispatch heaviest-first onto
+    /// the fastest-first pool: ledgerd(17)@workhorse(3), viz(12)@mihai(2), behavior(9)@gabee(1),
+    /// then notifierd(6) and structure(2) to whichever host frees first. Plan order was viz,
+    /// structure, behavior, notifierd, ledgerd — the heaviest last, to the slowest node.
+    #[tokio::test]
+    async fn heaviest_first_pins_r6i_dispatch_order_and_the_fastest_host_pairing() {
+        let plan_order = vec![
+            ("viz-engine", 12usize),
+            ("web-console-structure", 2),
+            ("web-console-behavior", 9),
+            ("notifierd-service", 6),
+            ("ledgerd-service", 17),
+        ];
+        let ordered = order_heaviest_first(plan_order, |(_, sections)| *sections);
+        assert_eq!(
+            ordered.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+            vec![
+                "ledgerd-service",
+                "viz-engine",
+                "web-console-behavior",
+                "notifierd-service",
+                "web-console-structure"
+            ]
+        );
+        // r6i's pool_resolved: speed_weight workhorse 3, mihai 2, gabee 1 — discovery order gabee,
+        // mihai, workhorse; the fan's own ordering puts the fastest first.
+        let weights: std::collections::HashMap<String, u32> = [
+            ("gabee-q".to_string(), 1u32),
+            ("mihai-q".to_string(), 2),
+            ("workhorse-q".to_string(), 3),
+        ]
+        .into_iter()
+        .collect();
+        let pool = order_fleet_by_speed(
+            vec!["gabee-q".into(), "mihai-q".into(), "workhorse-q".into()],
+            &weights,
+        );
+        assert_eq!(pool, vec!["workhorse-q", "mihai-q", "gabee-q"]);
+        // The dispatch loop starts items in list order, so the first wave is the pairing above
+        // whatever the runtime's poll order (test device ids match no config entry: all-tie
+        // weights keep the given order inside the fan).
+        let started: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = started.clone();
+        let results = fanout_over_fleet(
+            "test-heaviest-first",
+            &goose_swarm::NullSink,
+            pool,
+            ordered,
+            move |(slice, sections): (&'static str, usize), dev: String| {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push((slice.to_string(), dev));
+                    // The heavier the lane the longer it holds its host, so the light lanes free
+                    // a host for the tail items; wall-clock is a test ordering device only.
+                    tokio::time::sleep(std::time::Duration::from_millis(sections as u64 * 4)).await;
+                    slice
+                }
+            },
+        )
+        .await;
+        assert_eq!(results.len(), 5);
+        let started = started.lock().unwrap().clone();
+        assert_eq!(
+            started.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(),
+            vec![
+                "ledgerd-service",
+                "viz-engine",
+                "web-console-behavior",
+                "notifierd-service",
+                "web-console-structure"
+            ],
+            "items START heaviest-first; the tail items take the first host to free"
+        );
+        assert_eq!(
+            started[..3]
+                .iter()
+                .map(|(s, d)| format!("{s}@{d}"))
+                .collect::<Vec<_>>(),
+            vec![
+                "ledgerd-service@workhorse-q",
+                "viz-engine@mihai-q",
+                "web-console-behavior@gabee-q"
+            ],
+            "the first wave pairs the heaviest lane with the fastest host"
+        );
+    }
+
     /// The guard is the whole counting story: entry increments, drop decrements — including the
     /// drop that comes from a CANCELLED future, which is just a drop. A leaked count would route
     /// every later aux call away from a healthy node forever.
@@ -1375,22 +1696,29 @@ where
         devices.into_iter().collect::<VecDeque<String>>(),
     ));
     let mut handles = Vec::with_capacity(items.len());
+    // ITEMS START IN LIST ORDER (VA-113). The permit is awaited HERE, in the dispatch loop, so
+    // item k cannot start before item k-1: the first wave pairs item 0 with the front (fastest)
+    // device, item 1 with the next, and every later item takes the first device to free up. The
+    // spawn-all-then-acquire shape it replaces left that to the runtime's poll order, so "front
+    // == the node that gets the first work" (`order_fleet_by_speed`) held only by luck and a
+    // heaviest-first caller could not rely on its own ordering.
     for item in items {
-        let permits = permits.clone();
+        let permit = permits
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("fleet semaphore never closed");
+        let popped = match pool.lock() {
+            Ok(mut g) => g.pop_front(),
+            Err(poisoned) => poisoned.into_inner().pop_front(),
+        };
+        // The expect fires OUTSIDE the lock: even a broken invariant costs one lane a
+        // panic (named at the join) without poisoning the pool for the rest.
+        let dev = popped.expect("a device is free whenever a permit is held");
         let pool = pool.clone();
         let f = f.clone();
         handles.push(tokio::spawn(async move {
-            let _permit = permits
-                .acquire_owned()
-                .await
-                .expect("fleet semaphore never closed");
-            let popped = match pool.lock() {
-                Ok(mut g) => g.pop_front(),
-                Err(poisoned) => poisoned.into_inner().pop_front(),
-            };
-            // The expect fires OUTSIDE the lock: even a broken invariant costs one lane a
-            // panic (named at the join) without poisoning the pool for the rest.
-            let dev = popped.expect("a device is free whenever a permit is held");
+            let _permit = permit;
             let _return_guard = DeviceReturn {
                 pool,
                 dev: Some(dev.clone()),
