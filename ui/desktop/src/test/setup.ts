@@ -90,5 +90,19 @@ Object.defineProperty(window, 'electron', {
     on: vi.fn(),
     off: vi.fn(),
     onSwarmDelta: vi.fn(() => () => {}),
+    // The fleet probes run in main (utils/fleetProbe.ts); with no LM Studio in a test the honest answer
+    // is a NAMED unreachable — the same offline state a real install without a fleet shows.
+    fleetProbe: vi.fn(async (endpoint: string) => ({
+      ok: false,
+      url: endpoint,
+      error: 'unreachable',
+      detail: 'no fleet in tests',
+    })),
+    fleetChat: vi.fn(async (endpoint: string) => ({
+      ok: false,
+      url: endpoint,
+      error: 'unreachable',
+      detail: 'no fleet in tests',
+    })),
   },
 });

@@ -15,8 +15,6 @@ const DEFAULT_CONNECT_SOURCES = [
   'https://objects.githubusercontent.com',
 ];
 
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
-
 /**
  * Rewrite a `localhost` URL to `127.0.0.1` so a renderer fetch is not blocked by the app's CSP.
  *
@@ -40,28 +38,15 @@ export function cspSafe(url: string): string {
   }
 }
 
-/** The configured swarm host base as an origin, or null when absent/unparseable (nothing is added —
- *  the defaults already cover loopback, which is what an absent endpoint means engine-side). */
-function swarmOrigin(swarmEndpoint?: string | null): URL | null {
-  if (!swarmEndpoint || !swarmEndpoint.trim()) return null;
-  try {
-    const url = new URL(swarmEndpoint.trim());
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * `swarmEndpoint` is `swarm.endpoint` from goose's config.yaml — the LM Studio / LM Link host the ENGINE
- * builds against (U-M3). The renderer probes the same host (useFleet derives every URL from it), and
- * without its origin here a fleet configured on another machine is blocked by connect-src and reads
- * "offline" while the engine is using it.
+ * The HEADER policy. It is enforced TOGETHER with index.html's static meta policy (CSP policies
+ * intersect), so an origin listed here is reachable only if the meta allows it too: the meta's
+ * connect-src is `'self' http://127.0.0.1:* https: ws: wss:`, which is why the `localhost` entries
+ * below are inert and why the swarm host is NOT added here — the fleet probes run in main
+ * (utils/fleetProbe.ts) instead. 949d3fa6e added the swarm origin here believing the header could
+ * widen the meta; gate 8's tracer refuted it (2026-09-02).
  */
-export function buildConnectSrc(
-  externalGoosed?: ExternalGoosedConfig,
-  swarmEndpoint?: string | null
-): string {
+export function buildConnectSrc(externalGoosed?: ExternalGoosedConfig): string {
   const sources = [...DEFAULT_CONNECT_SOURCES];
 
   if (externalGoosed?.enabled && externalGoosed.url) {
@@ -73,12 +58,6 @@ export function buildConnectSrc(
     } catch {
       console.warn('Invalid external goosed URL in settings, skipping CSP entry');
     }
-  }
-
-  // Loopback is already covered by the wildcard-port defaults above; only another host needs an entry.
-  const swarm = swarmOrigin(swarmEndpoint);
-  if (swarm && !LOOPBACK_HOSTS.has(swarm.hostname) && !sources.includes(swarm.origin)) {
-    sources.push(swarm.origin);
   }
 
   return sources.join(' ');
@@ -94,19 +73,8 @@ export function buildConnectSrc(
  *
  * Loopback addresses (127.0.0.1 / localhost) are exempt from the upgrade
  * per the CSP spec, which is why the built-in local backend is unaffected.
- *
- * The same rule applies to a plain-HTTP swarm endpoint on a non-loopback host
- * (an LM Studio server on the LAN speaks no TLS either).
  */
-export function shouldUpgradeInsecureRequests(
-  externalGoosed?: ExternalGoosedConfig,
-  swarmEndpoint?: string | null
-): boolean {
-  const swarm = swarmOrigin(swarmEndpoint);
-  if (swarm && swarm.protocol === 'http:' && !LOOPBACK_HOSTS.has(swarm.hostname)) {
-    return false;
-  }
-
+export function shouldUpgradeInsecureRequests(externalGoosed?: ExternalGoosedConfig): boolean {
   if (!externalGoosed?.enabled || !externalGoosed.url) {
     return true;
   }
@@ -119,9 +87,9 @@ export function shouldUpgradeInsecureRequests(
   }
 }
 
-export function buildCSP(externalGoosed?: ExternalGoosedConfig, swarmEndpoint?: string | null): string {
-  const connectSrc = buildConnectSrc(externalGoosed, swarmEndpoint);
-  const upgradeDirective = shouldUpgradeInsecureRequests(externalGoosed, swarmEndpoint)
+export function buildCSP(externalGoosed?: ExternalGoosedConfig): string {
+  const connectSrc = buildConnectSrc(externalGoosed);
+  const upgradeDirective = shouldUpgradeInsecureRequests(externalGoosed)
     ? 'upgrade-insecure-requests;'
     : '';
 
