@@ -27452,17 +27452,6 @@ fn spawn_fix_progress_sampler(
     })
 }
 
-/// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
-/// `pick_repair_winner`, per shard: `None` (no shadow, or the gate could not run there) is
-/// UNKNOWN and never promotes — scoring it as clean would land an unchecked tree on the real
-/// app, the vacuous-pass trap. Equal-to-baseline promotes nothing either: an unimproved tree
-/// gains nothing and still risks cross-shard interaction. Shards own disjoint single files,
-/// so each promote decision is independent and their compositions are re-judged at the loop
-/// head by the same gate.
-fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
-    verified.is_some_and(|v| v < baseline)
-}
-
 /// F779 i3: the supervision-pool lever. Env wins, config falls back, default OFF.
 fn supervision_pool_on() -> bool {
     swarm_gate_cfg(
@@ -33668,23 +33657,6 @@ mod audit_regressions {
         // and it attributes: the endpoint literal is backticked, so the P1-3 evidence rules can
         // grep the tree for the handler that owns it
         assert!(finding.contains("`POST /api/sync`"));
-    }
-
-    /// REPAIR v2 (VA-087): the count rule is no longer THE promotion rule — a shard promotes when
-    /// its own finding's check flips on the merged preview (`repair_waves::decide_promotion`).
-    /// `shard_beats_baseline` survives only as the LABELLED fallback for a finding with no
-    /// authoring check (`finding_unverifiable`), and its truth table is unchanged: `None` is
-    /// UNKNOWN and promotes nothing; equal promotes nothing; only strictly lower does.
-    #[test]
-    fn a_non_improving_shard_is_not_promoted() {
-        assert!(shard_beats_baseline(Some(2), 3));
-        assert!(
-            !shard_beats_baseline(Some(3), 3),
-            "equal is not improvement"
-        );
-        assert!(!shard_beats_baseline(Some(4), 3));
-        assert!(!shard_beats_baseline(None, 3), "unknown never promotes");
-        assert!(!shard_beats_baseline(Some(0), 0));
     }
 
     /// P1-9: the tail is a straight line and its terminator is the TREE. The deleted steering —

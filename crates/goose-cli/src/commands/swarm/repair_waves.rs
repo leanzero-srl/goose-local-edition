@@ -4,7 +4,7 @@
 //! What stopped us, measured: findings were grouped BY FILE (`group_findings_by_file`), so r5 put
 //! six findings on one shard and worked them serially; rounds were BARRIERS (`fanout_over_fleet`
 //! joins every shard — r6c round 1 waited 125.6 minutes on one shard while two nodes idled);
-//! promotion was whole-file strictly-better (`shard_beats_baseline` on a preview that OVERWROTE
+//! promotion was whole-file strictly-better (`shard_beats_baseline`, since deleted, on a preview that OVERWROTE
 //! the owned file), so two fixes to one file could only race and the loser's work was discarded;
 //! an edit to a non-owned file was dropped silently at promote (r5 `__main__` r1 → httpapi.py;
 //! r6c app.js r1 → drafts.py; `verified: null`).
@@ -39,11 +39,14 @@
 //!       first_change_secs null — 70 minutes without one byte, nothing said which);
 //!     - a preview is PROMOTED ON THE FLIP (`decide_promotion`): the gate re-run on the merged
 //!       preview fails the finding's own check FEWER times than the tree now AND fails no check
-//!       more — `finding_flipped` / `finding_still_failing{quote}` / `preview_regressed`. The
-//!       count-strictly-lower rule (`shard_beats_baseline`) survives ONLY for a finding with no
-//!       authoring check, labelled `finding_unverifiable` (r6c: the `web/viz.js` shard sent for
-//!       `TypeError: Illegal invocation` was promoted 9→8 for closing a DOM id while the
-//!       exception stood in the next verify, verbatim).
+//!       more — `finding_flipped` / `finding_still_failing{quote}` / `preview_regressed`. A
+//!       finding with no authoring check has nothing to re-run, so its preview NEVER promotes
+//!       (`finding_unverifiable{promote: false}`, VA-098): the count-strictly-lower rule
+//!       (`shard_beats_baseline`, deleted) ran no `regressions_from`, and every finding the
+//!       round loop composes is sourced, so that arm had zero happy-path traffic — under the
+//!       fallback gate a 0-happy-path arm never promotes (r6c: the `web/viz.js` shard sent for
+//!       `TypeError: Illegal invocation` was promoted 9→8 by the count rule for closing a DOM id
+//!       while the exception stood in the next verify, verbatim).
 //!
 //! Sibling module under the incremental-split law; the per-file fan's closure body moved here
 //! from swarm.rs's wave loop, which now calls `run_wave`; `one_ruler_grade` moved here with the
@@ -70,8 +73,8 @@ use super::{
     activity_digest_key, app_scope_py, copy_created_source_files, copy_tree_excluding,
     cross_module_drift, css_coherence_scan, dom_id_scan, http_timeout_scan,
     is_intentional_empty_marker, is_test_path, load_config, render_repair_history, run_smoke_gate,
-    run_spec_contract, shard_beats_baseline, smoke_fix_description, spawn_fix_progress_sampler,
-    swarm_gate_cfg, FixAttemptProgress, GooseAgentDispatcher, TargetLang,
+    run_spec_contract, smoke_fix_description, spawn_fix_progress_sampler, swarm_gate_cfg,
+    FixAttemptProgress, GooseAgentDispatcher, TargetLang,
 };
 
 /// One open finding and the shard that will work it.
@@ -1091,7 +1094,7 @@ async fn run_finding_shard(
                     "event": "finding_unverifiable",
                     "round": round, "shard": f.file, "task_id": task_id,
                     "finding": finding_short,
-                    "rule": "count strictly lower — LABELLED: no authoring check is recorded for this finding, so nothing can be re-run for it",
+                    "rule": "never promotes — no authoring check is recorded for this finding, so nothing was re-run on the preview and nothing vouches for it (VA-098)",
                     "verified_findings": verified, "baseline_findings": baseline,
                     "promote": promote,
                 }))
@@ -1377,8 +1380,11 @@ pub(super) enum Promotion {
     /// The finding's check no longer fails on the tree either — a sibling's landed fix closed it
     /// while this shard worked; nothing to credit, nothing to re-dispatch.
     AlreadyClosed { key: String },
-    /// No authoring check is recorded for the finding, so nothing can be re-run for it: the count
-    /// rule (`shard_beats_baseline`) decides, LABELLED as such in the event.
+    /// No authoring check is recorded for the finding, so nothing can be re-run for it — and a
+    /// preview nothing re-ran NEVER promotes (VA-098: the count rule that once decided here ran
+    /// no `regressions_from`, and every finding the round loop composes is sourced, so the arm
+    /// had zero happy-path traffic; a 0-happy-path arm is the implementation impersonating one).
+    /// `promote` is carried so the event says it by name; it is always false.
     Unverifiable {
         promote: bool,
         verified: usize,
@@ -1410,7 +1416,7 @@ pub(super) fn decide_promotion(
     };
     let Some(check) = check else {
         return Promotion::Unverifiable {
-            promote: shard_beats_baseline(Some(preview.count), baseline.count),
+            promote: false,
             verified: preview.count,
             baseline: baseline.count,
         };
@@ -2273,14 +2279,16 @@ mod tests {
             }
             other => panic!("a new failure must refuse the promotion: {other:?}"),
         }
-        // No authoring check: the LABELLED count rule, exactly the old `shard_beats_baseline`.
+        // No authoring check: NEVER promotes (VA-098) — a lower count is not a re-run check, and
+        // this arm ran no `regressions_from`; the counts ride the event, the verdict is fixed.
         assert_eq!(
             decide_promotion(None, Some(&preview), &baseline),
             Promotion::Unverifiable {
-                promote: true,
+                promote: false,
                 verified: 2,
                 baseline: 3
-            }
+            },
+            "strictly lower count, no check: never promotes"
         );
         assert_eq!(
             decide_promotion(None, Some(&baseline), &baseline),
@@ -2288,6 +2296,14 @@ mod tests {
                 promote: false,
                 verified: 3,
                 baseline: 3
+            }
+        );
+        assert_eq!(
+            decide_promotion(None, Some(&TreeGrade::unkeyed(0)), &TreeGrade::unkeyed(0)),
+            Promotion::Unverifiable {
+                promote: false,
+                verified: 0,
+                baseline: 0
             }
         );
         assert_eq!(
