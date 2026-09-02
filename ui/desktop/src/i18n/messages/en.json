@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Cancel"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Configure in Cloud Providers"
+  },
   "addNode.description": {
     "defaultMessage": "A node is made by choosing what serves it: pick a provider, then a model."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "One LeanZero MLX engine serves ONE model: every MLX node shares whatever the engine has mounted, so a different model per node is not possible yet. Adding this node points the engine at the model you pick here."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "no key"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} has no API key on this machine yet. Add it under Cloud Providers, then come back to add the node."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Provider"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Pick a provider…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Node providers are the ones the swarm engine supports — more cloud families arrive with engine support."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Remove & re-add"
@@ -225,16 +237,16 @@
     "defaultMessage": "Extension Updated"
   },
   "bottomMenuExtensionSelection.extensionWillBeDisabled": {
-    "defaultMessage": "{name} will be disabled in new chats"
+    "defaultMessage": "{name} will be disabled in new sessions"
   },
   "bottomMenuExtensionSelection.extensionWillBeEnabled": {
-    "defaultMessage": "{name} will be enabled in new chats"
+    "defaultMessage": "{name} will be enabled in new sessions"
   },
   "bottomMenuExtensionSelection.extensionsForNewChats": {
-    "defaultMessage": "Extensions for new chats"
+    "defaultMessage": "Extensions for new sessions"
   },
   "bottomMenuExtensionSelection.extensionsForThisSession": {
-    "defaultMessage": "Extensions for this chat session"
+    "defaultMessage": "Extensions for this session"
   },
   "bottomMenuExtensionSelection.manageExtensions": {
     "defaultMessage": "manage extensions"
@@ -1173,7 +1185,7 @@
     "defaultMessage": "Streamable HTTP"
   },
   "extensionInstallModal.alreadyInstalledMessage": {
-    "defaultMessage": "''{name}'' extension has already been installed successfully. Start a new chat session to use it."
+    "defaultMessage": "''{name}'' extension has already been installed successfully. Start a new session to use it."
   },
   "extensionInstallModal.alreadyInstalledTitle": {
     "defaultMessage": "Extension ''{name}'' Already Installed"
@@ -1323,7 +1335,7 @@
     "defaultMessage": "Certificate fingerprint requires an https URL"
   },
   "externalBackendSection.restartNote": {
-    "defaultMessage": "Changes apply to new chat windows. Restart Goose to update existing windows."
+    "defaultMessage": "Changes apply to new session windows. Restart Goose to update existing windows."
   },
   "externalBackendSection.secretKey": {
     "defaultMessage": "Secret Key"
@@ -1793,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Ask goose anything..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Sign in to link your devices into a private mesh — no password, just a code by email."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "One place for the whole swarm: the in-house MLX engine, cloud provider credentials, and the node pool the swarm builds with."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Cloud Providers"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Swarm Settings"
@@ -2486,6 +2504,21 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "nodesStrip.failed": {
+    "defaultMessage": "failed"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "idle"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "mounting"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "serving"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Nodes"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
   },
@@ -3093,7 +3126,7 @@
     "defaultMessage": "Submit"
   },
   "recipeActivityEditor.activitiesDescription": {
-    "defaultMessage": "The top-line prompts and activity buttons that will display in the recipe chat window."
+    "defaultMessage": "The top-line prompts and activity buttons that will display in the recipe session window."
   },
   "recipeActivityEditor.activitiesLabel": {
     "defaultMessage": "Activities"
@@ -3357,7 +3390,7 @@
     "defaultMessage": "No saved recipes"
   },
   "recipesView.noSavedRecipesDescription": {
-    "defaultMessage": "Recipe saved from chats will show up here."
+    "defaultMessage": "Recipes saved from sessions will show up here."
   },
   "recipesView.openInNewWindow": {
     "defaultMessage": "Open in new window"
@@ -3411,7 +3444,7 @@
     "defaultMessage": "Share recipe"
   },
   "recipesView.slashCommandDescription": {
-    "defaultMessage": "Set a slash command to quickly run this recipe from any chat"
+    "defaultMessage": "Set a slash command to quickly run this recipe from any session"
   },
   "recipesView.slashCommandPlaceholder": {
     "defaultMessage": "command-name"
@@ -3432,7 +3465,7 @@
     "defaultMessage": "Slash Command"
   },
   "recipesView.slashCommandUsageHint": {
-    "defaultMessage": "Use /{command} in any chat to run this recipe"
+    "defaultMessage": "Use /{command} in any session to run this recipe"
   },
   "recipesView.tryAgain": {
     "defaultMessage": "Try Again"
@@ -3981,7 +4014,7 @@
     "defaultMessage": "Cancel"
   },
   "sessions.chatHistory": {
-    "defaultMessage": "Chat history"
+    "defaultMessage": "Session history"
   },
   "sessions.chatHistoryDesc": {
     "defaultMessage": "View and search your past conversations with Goose. {shortcut} to search."
@@ -4002,10 +4035,10 @@
     "defaultMessage": "Edit Session Description"
   },
   "sessions.empty.description": {
-    "defaultMessage": "Your chat history will appear here"
+    "defaultMessage": "Your session history will appear here"
   },
   "sessions.empty.title": {
-    "defaultMessage": "No chat sessions found"
+    "defaultMessage": "No sessions found"
   },
   "sessions.error.loading": {
     "defaultMessage": "Error Loading Sessions"
@@ -4189,6 +4222,15 @@
   },
   "settings.language.zhTW": {
     "defaultMessage": "Chinese (Traditional)"
+  },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Bring back the LM Studio-discovered fleet rows and node status across the app. Off, nothing polls LM Studio and no discovered rows render."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio fleet hidden (legacy) — enable it above to see live nodes here"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "Show LM Studio fleet (legacy)"
   },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Show goose in the menu bar"
@@ -4499,11 +4541,8 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "A remote machine’s MLX node — saved in the pool, served once per-node engine routing ships"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "No nodes yet — add one, or start LM Studio at {endpoint} to be discovered."
-  },
   "swarmSettings.nodesDesc": {
-    "defaultMessage": "Every node the swarm runs — configured rows plus whatever LM Studio has resident right now. Weight: higher gets a bigger share of the tasks."
+    "defaultMessage": "Share: relative share of work across nodes — higher gets more tasks."
   },
   "swarmSettings.nodesTitle": {
     "defaultMessage": "Nodes"
@@ -4531,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Remove node"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Share"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Back to model list"
