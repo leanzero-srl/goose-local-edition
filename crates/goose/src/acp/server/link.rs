@@ -931,6 +931,27 @@ fn link_err(error: LinkError) -> agent_client_protocol::Error {
     agent_client_protocol::Error::invalid_params().data(error.to_string())
 }
 
+/// A Connect failure's text, with the one step the user can take appended where the
+/// crate's refusal already names a pid. The "a tailscaled already answers on socket …
+/// (listener pid N)" refusal is a daemon a previous goosed left behind when it was ended
+/// before its teardown (measured 2026-09-02: pid 14022, PPID 1, after every relaunch —
+/// `goose serve` now stops its own daemon on SIGTERM). The refusal STANDS: nothing is
+/// adopted; the text tells the user which pid to stop, per-pid, before connecting again.
+fn connect_failure_text(error: &LinkError) -> String {
+    let text = error.to_string();
+    match error {
+        LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
+            listener_pid: Some(pid),
+            ..
+        }) => format!(
+            "{text}. That daemon was left behind by a goosed that exited without its teardown; \
+             stop it per-pid (`kill {pid}`), then Connect again — goosed now stops its own \
+             daemon when it quits."
+        ),
+        _ => text,
+    }
+}
+
 /// Map a [`remote_execute`](LinkManager::remote_execute) failure the same way the mlx
 /// mount handlers do: a target-STATE / target-SELECTION problem the user can act on (a
 /// busy peer, remote-exec disabled on the peer, an unwired executor, an unknown target
@@ -1199,7 +1220,14 @@ impl GooseAcpAgent {
             return Err(agent_client_protocol::Error::invalid_params().data(refusal));
         }
         record_connect_refusal(None);
-        manager.connect().await.map_err(link_err)?;
+        if let Err(error) = manager.connect().await {
+            let text = connect_failure_text(&error);
+            error!(%text, "leanzeroLink: connect failed");
+            // Recorded so `status.lastError` carries the actionable text (the manager's
+            // own `last_error` holds the crate's refusal without the step to take).
+            record_connect_refusal(Some(text.clone()));
+            return Err(agent_client_protocol::Error::invalid_params().data(text));
+        }
         Ok(self.status_response(&manager).await)
     }
 
@@ -2502,5 +2530,34 @@ mod tests {
             registry.shutdown_live().await,
             "no mesh daemon running under this goosed"
         );
+    }
+
+    /// The socket-occupied refusal keeps the crate's text (no adoption) and gains the
+    /// per-pid step; every other connect failure passes through verbatim.
+    #[test]
+    fn connect_refusal_for_a_stale_daemon_names_the_pid_and_the_per_pid_step() {
+        let refused = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
+            socket: PathBuf::from("/Users/me/.leanzero/tailscale/tailscaled.sock"),
+            listener_pid: Some(14022),
+        });
+        let text = connect_failure_text(&refused);
+        assert!(text.contains("listener pid 14022"), "{text}");
+        assert!(
+            text.contains("never adopts a daemon it did not spawn"),
+            "{text}"
+        );
+        assert!(text.contains("`kill 14022`"), "{text}");
+        assert!(text.contains("goosed now stops its own daemon"), "{text}");
+
+        let unreadable = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
+            socket: PathBuf::from("/x/tailscaled.sock"),
+            listener_pid: None,
+        });
+        let text = connect_failure_text(&unreadable);
+        assert!(text.contains("listener pid unknown"), "{text}");
+        assert!(!text.contains("`kill"), "no pid, no kill step: {text}");
+
+        let other = LinkError::NotConnected;
+        assert_eq!(connect_failure_text(&other), other.to_string());
     }
 }
