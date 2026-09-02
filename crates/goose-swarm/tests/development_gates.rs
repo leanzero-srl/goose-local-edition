@@ -211,9 +211,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// import_processes, print_import_summary) moved beside reconcile_pool_with_fleet in
 /// swarm_engine.rs, paying for the `engine` + canonical `node` fields on run_started.pool and
 /// pool_resolved.devices.
+/// Tightened to    44,651 (sidecar admission cap): the provider-failure readers (AGENT_ERROR_CLOSERS,
+/// said_kind_of, supervision_reply, is_stream_decode_interrupt + its test) became the sibling
+/// commands/swarm/provider_failures.rs beside the new admission-cap reader, paying for the
+/// dispatcher's `sidecar-admission-cap` Transient branch.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_666;
+    const SWARM_RS_LINE_BASELINE: usize = 44_651;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
