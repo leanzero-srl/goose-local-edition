@@ -441,7 +441,7 @@ pub(super) fn refresh_skeleton_description(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        finalize_plan_before_dag, repair_plan_flags, string_list, unassigned_endpoints,
+        finalize_plan_before_dag, repair_plan_flags, string_list, unassigned_endpoints, TargetLang,
     };
     use super::{prepend_skeleton_task, refresh_skeleton_description};
     use goose_swarm::{EventSink, NullSink};
@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(ev["relaxed"], 2);
         // THE FENCE: after the repair passes, no module task owns a skeleton file — rule (b)'s
         // first claimant is the skeleton by position, and the action rows say so.
-        let repairs = repair_plan_flags(&mut v, spec);
+        let repairs = repair_plan_flags(&mut v, spec, TargetLang::Python);
         for f in &files {
             let owners: Vec<String> = v["subtasks"]
                 .as_array()
@@ -561,8 +561,9 @@ mod tests {
         let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
         let sink: Arc<dyn EventSink> = Arc::new(NullSink);
         let plan = include_str!("../../../tests/fixtures/r2-plan.json").to_string();
-        let once = finalize_plan_before_dag(plan, spec, false, &sink, "plan");
-        let twice = finalize_plan_before_dag(once.clone(), spec, false, &sink, "plan");
+        let once = finalize_plan_before_dag(plan, spec, false, TargetLang::Python, &sink, "plan");
+        let twice =
+            finalize_plan_before_dag(once.clone(), spec, false, TargetLang::Python, &sink, "plan");
         assert_eq!(once, twice, "the second finalize must be a no-op");
         let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
         let skeletons = v["subtasks"]
@@ -629,7 +630,7 @@ mod tests {
             stale.contains("- ledgerd-core: app/__main__.py, app/ledgerd.py"),
             "the prepend-time brief bakes the pre-repair paths (the r6c defect):\n{stale}"
         );
-        let r = repair_plan_flags(&mut v, spec);
+        let r = repair_plan_flags(&mut v, spec, TargetLang::Python);
         let desc = v["subtasks"][0]["description"].as_str().unwrap();
         assert!(
             desc.contains(
@@ -755,7 +756,7 @@ mod tests {
             reason(&relaxed, "decisions-doc")
         );
         // the repairs neither undo a verdict nor need to revisit one, and the DAG loads
-        repair_plan_flags(&mut v, spec);
+        repair_plan_flags(&mut v, spec, TargetLang::Python);
         assert_eq!(deps_of(&v, "web-console"), vec!["ledgerd-api"]);
         assert!(deps_of(&v, "ledgerd-core").contains(&"skeleton".to_string()));
         let dag = goose_swarm::Dag::from_planner_json(&v.to_string()).unwrap();
@@ -792,7 +793,7 @@ mod tests {
             "{reason}"
         );
         assert_eq!(ev["skeleton_dep_relaxed"][0]["task"], "docs");
-        let r = repair_plan_flags(&mut v, spec);
+        let r = repair_plan_flags(&mut v, spec, TargetLang::Python);
         assert!(
             r.actions
                 .iter()
@@ -815,6 +816,7 @@ mod tests {
             R6C_SHAPED_PLAN.to_string(),
             spec,
             false,
+            TargetLang::Python,
             &sink,
             "dag_fallback",
         );
@@ -845,7 +847,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let r = repair_plan_flags(&mut v, spec);
+        let r = repair_plan_flags(&mut v, spec, TargetLang::Python);
         assert!(r.is_noop(), "{:?}", r.actions);
         assert_eq!(v["subtasks"][0]["description"].as_str().unwrap(), before);
         let mut none = Vec::new();

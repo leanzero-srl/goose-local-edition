@@ -53,7 +53,7 @@ use super::opener::OpenOutput;
 use super::orientation::{heading_key, spec_sections};
 use super::plan_shape::decomposition_of;
 use super::skeleton::SKELETON_ID;
-use super::{finalize_plan_before_dag, string_list, GooseAgentDispatcher};
+use super::{finalize_plan_before_dag, string_list, GooseAgentDispatcher, TargetLang};
 
 /// ASSEMBLE, then glue (DESIGN-SPLIT-V2 §1): before the merger model runs, CODE writes every
 /// piece's definitions into `ASSEMBLED.<ext>` in the declared interface's order; the merger's job
@@ -1316,11 +1316,13 @@ pub(super) fn weigh_tasks_by_sections(
 /// still need a merge — the module is built whole by the node that would build it anyway; the
 /// flag stays); otherwise the declared clusters are sized onto the hosts (`size_shards_to_hosts`,
 /// `split_sized`) before the patch.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn split_fat_tasks_sized<P, PFut>(
     plan_json: String,
     opened: &OpenOutput,
     spec: &str,
     every_decision_settled: bool,
+    lang: TargetLang,
     free_hosts: Option<usize>,
     split: P,
     sink: &Arc<dyn EventSink>,
@@ -1475,7 +1477,7 @@ where
     // ONE DOOR: the shard tasks meet every repair the first pass ran — rule (e) marks the module's
     // final file not-theirs-to-write, the skeleton's brief regenerates without them, the join's
     // deps widen to them (rule (f)).
-    finalize_plan_before_dag(current, spec, every_decision_settled, sink, "split")
+    finalize_plan_before_dag(current, spec, every_decision_settled, lang, sink, "split")
 }
 
 #[cfg(test)]
@@ -1781,6 +1783,7 @@ mod tests {
             &r6c_like_opened(),
             spec,
             false,
+            TargetLang::Python,
             None,
             |_task, _density| async move { panic!("nothing measurable, nothing to split") },
             &sink_dyn,
@@ -2187,7 +2190,8 @@ mod tests {
         // Through the one door: the shards survive every repair (they own a file), the module's
         // final file is marked not-theirs, the skeleton lists no README, the join waits on them.
         let sink: Arc<dyn EventSink> = Arc::new(NullSink);
-        let finalized = finalize_plan_before_dag(out.clone(), spec, false, &sink, "split");
+        let finalized =
+            finalize_plan_before_dag(out.clone(), spec, false, TargetLang::Python, &sink, "split");
         let f: serde_json::Value = serde_json::from_str(&finalized).unwrap();
         let tasks = f["subtasks"].as_array().unwrap();
         let get = |id: &str| {
@@ -2214,7 +2218,14 @@ mod tests {
             get("skeleton")["files"].as_array().unwrap().len() >= 3,
             "the real skeleton was prepended by finalize"
         );
-        let again = finalize_plan_before_dag(finalized.clone(), spec, false, &sink, "split");
+        let again = finalize_plan_before_dag(
+            finalized.clone(),
+            spec,
+            false,
+            TargetLang::Python,
+            &sink,
+            "split",
+        );
         assert_eq!(again, finalized, "idempotent");
     }
 
@@ -2339,7 +2350,8 @@ mod tests {
 
         let sink = Arc::new(RecordingSink::default());
         let dyn_sink: Arc<dyn EventSink> = sink.clone();
-        let finalized = finalize_plan_before_dag(patched, spec, true, &dyn_sink, "split");
+        let finalized =
+            finalize_plan_before_dag(patched, spec, true, TargetLang::Python, &dyn_sink, "split");
         let f: serde_json::Value = serde_json::from_str(&finalized).unwrap();
         let merger = f["subtasks"]
             .as_array()
@@ -2632,6 +2644,7 @@ mod tests {
             &r6c_like_opened(),
             spec,
             false,
+            TargetLang::Python,
             Some(1),
             move |_task, _density| {
                 let r = reply.clone();
@@ -2920,6 +2933,7 @@ mod tests {
             &r6c_like_opened(),
             spec,
             false,
+            TargetLang::Python,
             None,
             |_task, _density| async move { Ok("I would rather not.".to_string()) },
             &sink_dyn,

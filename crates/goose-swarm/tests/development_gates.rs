@@ -440,7 +440,11 @@ fn swarm_rs_line_count_only_decreases() {
     // dep sources, user notes, the sink's ledger block, the doc fetch, the vendor probe, the
     // judge's excerpts and both model-facing look tails) and the vendor probe's
     // `vendor_probe_pagination_skipped` events.
-    const SWARM_RS_LINE_BASELINE: usize = 33_583;
+    // Tightened to 33,508 (VA-060): rules (b) `repair_shared_files` and (c)
+    // `repair_module_package_collisions` moved to commands/swarm/plan_repairs.rs beside (a) and
+    // (d)-(f), paying for `mod lang_arms;` (the run's language on the dispatcher) and the three
+    // Python-only arms' `lang_unsupported` wiring (rule (c), the AST review, the pytest tail).
+    const SWARM_RS_LINE_BASELINE: usize = 33_508;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

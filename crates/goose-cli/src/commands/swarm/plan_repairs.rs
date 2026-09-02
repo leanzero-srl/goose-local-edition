@@ -24,8 +24,10 @@ pub(super) const ADVERTISED_SURFACE_HEADER: &str = "ADVERTISED SURFACE (engine-r
 /// `answer_routing` reads it back to recognise the module form the opener and the research lanes
 /// wrote before the repair ran.
 pub(super) const PACKAGE_IMPL_FILE: &str = "impl.py";
+use super::lang_arms::lang_unsupported_event;
+use super::prose::rewrite_path_token;
 use super::spec_surface::{path_token_named, spec_surface_rows, SpecSurface};
-use super::string_list;
+use super::{string_list, TargetLang};
 
 /// THE JOIN OWNS NOTHING — structurally, at repair time, whatever synthesis said. r4 (2026-08-30)
 /// shipped `integrate-verify` owning `README.md`: scheduler.rs relaxes a dependent through an
@@ -644,6 +646,190 @@ fn repoint_dependency(
     }
 }
 
+/// Rule (b). Moved verbatim from swarm.rs (VA-060) beside the other rules.
+pub(super) fn repair_shared_files(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let mut claimed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for t in subtasks.iter_mut() {
+        let id = t
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(files) = t.get_mut("files").and_then(|f| f.as_array_mut()) else {
+            continue;
+        };
+        files.retain(|f| {
+            let Some(path) = f.as_str() else {
+                return true;
+            };
+            match claimed.get(path) {
+                Some(first) => {
+                    actions.push(format!(
+                        "shared file `{path}`: kept by `{first}` (first claimant), dropped from `{id}`"
+                    ));
+                    false
+                }
+                None => {
+                    claimed.insert(path.to_string(), id.clone());
+                    true
+                }
+            }
+        });
+    }
+}
+
+/// Rule (c). Moved verbatim from swarm.rs (VA-060) beside rules (a) and (d)-(f); the one change is
+/// the language branch at the top — the Python path below is byte-identical.
+pub(super) fn repair_module_package_collisions(
+    plan: &mut serde_json::Value,
+    actions: &mut Vec<String>,
+    lang: TargetLang,
+    skips: &mut Vec<serde_json::Value>,
+) {
+    let collisions = string_list(&decomposition_of(&plan.to_string())["module_package_collisions"]);
+    if lang != TargetLang::Python {
+        // VA-060 (gate 10): the detector (`plan_shape.rs`: `X.py` beside `X/`) and this rewrite
+        // (`X/__init__.py`, `X/impl.py`) are Python's import semantics. On any other run the arm
+        // says so — once per door pass, beside `plan_repaired` — and leaves the plan alone: a
+        // Node/Rust/Go plan is never rewritten into a Python package, and a `.py` collision in a
+        // non-Python plan is named here instead of silently repaired.
+        let skipped = if collisions.is_empty() {
+            "module/package collision detection and rewrite (Python import semantics: `X.py` \
+             beside `X/` becomes `X/impl.py`)"
+                .to_string()
+        } else {
+            format!(
+                "module/package rewrite of {} (Python import semantics: `X.py` beside `X/` \
+                 becomes `X/impl.py`)",
+                collisions.join(", ")
+            )
+        };
+        skips.push(lang_unsupported_event(
+            "module_package_rewrite",
+            lang,
+            &skipped,
+        ));
+        return;
+    }
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let owns = |st: &serde_json::Value, path: &str| {
+        st.get("files")
+            .and_then(|f| f.as_array())
+            .is_some_and(|a| a.iter().any(|f| f.as_str() == Some(path)))
+    };
+    let id_at = |subtasks: &[serde_json::Value], i: usize| {
+        subtasks[i]
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    for module in collisions {
+        let dir = module.trim_end_matches(".py").to_string();
+        let prefix = format!("{dir}/");
+        let init = format!("{dir}/__init__.py");
+        let Some(module_owner) = subtasks.iter().position(|st| owns(st, &module)) else {
+            continue;
+        };
+        // Ties go to the earliest task, so the outcome depends on plan order and nothing else.
+        let mut package_owner: Option<(usize, usize)> = None;
+        for (i, st) in subtasks.iter().enumerate() {
+            let n = st.get("files").and_then(|f| f.as_array()).map_or(0, |a| {
+                a.iter()
+                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(&prefix)))
+                    .count()
+            });
+            if n > 0 && package_owner.is_none_or(|(_, best)| n > best) {
+                package_owner = Some((i, n));
+            }
+        }
+        let Some((package_owner, _)) = package_owner else {
+            continue;
+        };
+        let module_owner_id = id_at(subtasks, module_owner);
+        let package_owner_id = id_at(subtasks, package_owner);
+        // REWRITE, don't drop (r4 kill, 2026-08-30): dropping the shadowed module file left the
+        // service task owning NOTHING, rule (c) removed it, its brief died with it, and the live
+        // replanner re-added the task four minutes into BUILD with the shadow back. The work the
+        // planner assigned survives at an unshadowed path inside the package; only a path some
+        // other task already claims falls back to the old drop.
+        let rewritten = format!("{prefix}{}", PACKAGE_IMPL_FILE);
+        let rewrite_free = !subtasks.iter().any(|st| owns(st, &rewritten));
+        if let Some(files) = subtasks[module_owner]
+            .get_mut("files")
+            .and_then(|f| f.as_array_mut())
+        {
+            if rewrite_free {
+                for f in files.iter_mut() {
+                    if f.as_str() == Some(module.as_str()) {
+                        *f = serde_json::Value::String(rewritten.clone());
+                    }
+                }
+            } else {
+                files.retain(|f| f.as_str() != Some(module.as_str()));
+            }
+        }
+        if rewrite_free {
+            // The package marker must still exist, and it belongs to the PACKAGE owner (the task
+            // holding most of the package's files) — the same home the drop-arm below gives it.
+            if !subtasks.iter().any(|st| owns(st, &init)) {
+                if let Some(files) = subtasks[package_owner]
+                    .get_mut("files")
+                    .and_then(|f| f.as_array_mut())
+                {
+                    files.push(serde_json::Value::String(init.clone()));
+                }
+            }
+            // THE WORDS FOLLOW THE METADATA (r6c): the model reads the DESCRIPTION, not files[].
+            // Rewriting the path only in files[] shipped ledgerd-core a brief still opening
+            // "Own ... app/ledgerd.py (ledgerd entrypoint ...)" and the live skeleton lane
+            // tripped on the contradiction. Same rewrite, same task only, boundary-aware
+            // (see prose::rewrite_path_token). MILD: text repair, never a refusal.
+            let prose_rewrites = match subtasks[module_owner]
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|d| rewrite_path_token(d, &module, &rewritten))
+            {
+                Some((desc, n)) if n > 0 => {
+                    subtasks[module_owner]["description"] = serde_json::Value::String(desc);
+                    n
+                }
+                _ => 0,
+            };
+            actions.push(format!(
+                "module `{module}` shadowed by package `{prefix}`: rewritten to `{rewritten}` \
+                 (kept by `{module_owner_id}` — the task keeps its work at an unshadowed path; \
+                 prose_rewrites: {prose_rewrites})"
+            ));
+            continue;
+        }
+        match subtasks.iter().position(|st| owns(st, &init)) {
+            Some(init_owner) => actions.push(format!(
+                "module `{module}` shadowed by package `{prefix}`: dropped from `{module_owner_id}` \
+                 (`{init}` is already owned by `{}`)",
+                id_at(subtasks, init_owner)
+            )),
+            None => {
+                if let Some(files) = subtasks[package_owner]
+                    .get_mut("files")
+                    .and_then(|f| f.as_array_mut())
+                {
+                    files.push(serde_json::Value::String(init.clone()));
+                }
+                actions.push(format!(
+                    "module `{module}` shadowed by package `{prefix}`: became `{init}` under \
+                     `{package_owner_id}` (was `{module_owner_id}`)"
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,5 +1190,50 @@ mod tests {
             actions.iter().any(|a| a.contains("removed `ghost`")),
             "{actions:?}"
         );
+    }
+
+    /// VA-060 (gate 10): rule (c) is Python's import semantics. Under a TypeScript run the same
+    /// collision shape is left UNCHANGED and said by name (`lang_unsupported{arm:
+    /// module_package_rewrite}`), never rewritten into `impl.py`; under Python the rewrite is
+    /// the one the r4 kill bought.
+    #[test]
+    fn module_package_rewrite_is_python_only_and_is_said_off_python() {
+        let plan = || {
+            serde_json::json!({"subtasks": [
+                {"id": "ledgerd", "files": ["app/ledgerd.py"], "depends_on": [],
+                 "description": "Own app/ledgerd.py (ledgerd entrypoint)"},
+                {"id": "ledgerd-routes", "files": ["app/ledgerd/routes.py"], "depends_on": [],
+                 "description": "Own app/ledgerd/routes.py"}
+            ]})
+        };
+        let mut ts = plan();
+        let (mut actions, mut skips) = (Vec::new(), Vec::new());
+        repair_module_package_collisions(&mut ts, &mut actions, TargetLang::TypeScript, &mut skips);
+        assert_eq!(ts, plan(), "a TypeScript plan is left unchanged");
+        assert!(actions.is_empty(), "{actions:?}");
+        assert_eq!(skips.len(), 1, "{skips:?}");
+        assert_eq!(skips[0]["event"], "lang_unsupported");
+        assert_eq!(skips[0]["arm"], "module_package_rewrite");
+        assert_eq!(skips[0]["lang"], "TypeScript");
+        assert!(
+            skips[0]["skipped"]
+                .as_str()
+                .unwrap()
+                .contains("app/ledgerd.py"),
+            "the row names the collision it left alone: {}",
+            skips[0]
+        );
+
+        let mut py = plan();
+        let (mut actions, mut skips) = (Vec::new(), Vec::new());
+        repair_module_package_collisions(&mut py, &mut actions, TargetLang::Python, &mut skips);
+        assert!(skips.is_empty(), "Python says nothing: {skips:?}");
+        assert_eq!(
+            strings(&task(&py, "ledgerd")["files"]),
+            vec!["app/ledgerd/impl.py".to_string()]
+        );
+        assert!(strings(&task(&py, "ledgerd-routes")["files"])
+            .contains(&"app/ledgerd/__init__.py".to_string()));
+        assert_eq!(actions.len(), 1, "{actions:?}");
     }
 }

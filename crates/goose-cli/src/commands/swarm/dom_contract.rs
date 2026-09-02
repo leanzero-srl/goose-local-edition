@@ -45,7 +45,7 @@ use std::sync::Arc;
 use super::answer_routing::{insert_above_decisions, route_cross_slice_answers};
 use super::orientation::{heading_key, spec_sections, SpecSection};
 use super::research::ResearchRow;
-use super::{EventSink, OpenOutput, SliceBrief};
+use super::{EventSink, OpenOutput, SliceBrief, TargetLang};
 
 pub(super) const DOM_CONTRACT_HEADER: &str =
     "MUST PROVIDE — DOM ids other tasks' spec sections name";
@@ -56,6 +56,8 @@ pub(super) const DOM_CONTRACT_HEADER: &str =
 pub(super) struct PlanDoor<'a> {
     pub(super) spec: &'a str,
     pub(super) every_decision_settled: bool,
+    /// VA-060: the run's language — rule (c) is Python-only and says so on any other run.
+    pub(super) lang: TargetLang,
     pub(super) briefs: &'a [SliceBrief],
     pub(super) research: &'a [ResearchRow],
     pub(super) opened: &'a OpenOutput,
@@ -70,6 +72,7 @@ pub(super) fn finalize_and_route(plan_json: String, source: &str, door: &PlanDoo
         plan_json,
         door.spec,
         door.every_decision_settled,
+        door.lang,
         door.sink,
         source,
     );
