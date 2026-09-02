@@ -430,7 +430,10 @@ fn swarm_rs_line_count_only_decreases() {
     // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
     // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
     // the baseline is the count AFTER all three, so each intermediate commit sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 34_344; // VA-089: the fan's per-question queue (facts, cover, routing) became one lane per slice; research_plan.rs deleted; 34_378 → 34_344
+    // Tightened to 34,291 (VA-103): the dependency-source block (`dep_block`'s loop) moved to
+    // commands/swarm/dep_sources.rs, where a file naming the task's own module is carried
+    // whole and every cut is a `dep_source_truncated` event, paying for that event's wiring.
+    const SWARM_RS_LINE_BASELINE: usize = 34_291; // VA-103: dep_sources.rs extracted; 34_344 → 34_291
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
