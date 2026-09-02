@@ -92,6 +92,12 @@ use super::{
 /// is what makes the r7 fidelity comparison (replayed rate/span vs the judge_look record) mean
 /// anything. The worker loop keeps using it through `use desk::RecurrenceMeter`.
 pub(crate) struct RecurrenceMeter {
+    /// Shingle reach — how many shingle fingerprints the deque holds, i.e. how far back a
+    /// repetition period stays visible. Derived from the fleet's probed context window
+    /// (`budgets::ShownBudgets::recurrence_reach`, one quarter of it: 65,536 on the 262,144
+    /// reference window — VA-137) and handed in at construction, so the shadow desk's replay
+    /// and the live meter share one reach.
+    reach: usize,
     counts: std::collections::HashMap<u64, u32>,
     order: std::collections::VecDeque<u64>,
     carry: String,
@@ -101,9 +107,6 @@ pub(crate) struct RecurrenceMeter {
     since_rotate: usize,
 }
 
-/// Shingle reach. 65,536 shingles ~= 65k characters of memory at ~3 MB per live call — 16x the
-/// longest repetition period measured (~4,000 chars), and 27x the window that was blind to it.
-const RECURRENCE_REACH: usize = 65_536;
 /// Below this much observed reasoning the rate is noise: a call restating a structured prompt to
 /// itself shares shingles with itself early on. 8,000 is the span the r2 pathology was measured
 /// over, so the threshold below is calibrated on a directly comparable number.
@@ -116,8 +119,9 @@ const RECURRENCE_TRIGGER: f32 = 0.25;
 impl RecurrenceMeter {
     const WIN: usize = 48;
 
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(reach: usize) -> Self {
         Self {
+            reach,
             counts: std::collections::HashMap::new(),
             order: std::collections::VecDeque::new(),
             carry: String::new(),
@@ -129,7 +133,7 @@ impl RecurrenceMeter {
     }
 
     pub(crate) fn reset(&mut self) {
-        *self = Self::new();
+        *self = Self::new(self.reach);
     }
 
     pub(crate) fn push(&mut self, chunk: &str) {
@@ -159,7 +163,7 @@ impl RecurrenceMeter {
     fn push_hash(&mut self, h: u64) {
         *self.counts.entry(h).or_insert(0) += 1;
         self.order.push_back(h);
-        if self.order.len() > RECURRENCE_REACH {
+        if self.order.len() > self.reach {
             if let Some(old) = self.order.pop_front() {
                 if let Some(c) = self.counts.get_mut(&old) {
                     *c -= 1;
@@ -865,7 +869,7 @@ struct LaneWatch {
 }
 
 impl LaneWatch {
-    fn new(key: String) -> Self {
+    fn new(key: String, recurrence_reach: usize) -> Self {
         Self {
             key,
             think_offset: 0,
@@ -877,7 +881,7 @@ impl LaneWatch {
             think_text: String::new(),
             log_text: String::new(),
             log_tail: String::new(),
-            recur: RecurrenceMeter::new(),
+            recur: RecurrenceMeter::new(recurrence_reach),
             settled: SettledListMeter::new(),
             attempt_dispatched_at: None,
             pending_cuts: VecDeque::new(),
@@ -1383,10 +1387,17 @@ struct Desk {
     finished: HashSet<String>,
     read_failures: HashSet<(String, String)>,
     sink: Arc<dyn EventSink>,
+    /// The live meter's shingle reach (VA-137), so the replay measures with the same memory.
+    recurrence_reach: usize,
 }
 
 impl Desk {
-    fn new(activity_dir: PathBuf, run_jsonl: PathBuf, sink: Arc<dyn EventSink>) -> Self {
+    fn new(
+        activity_dir: PathBuf,
+        run_jsonl: PathBuf,
+        sink: Arc<dyn EventSink>,
+        recurrence_reach: usize,
+    ) -> Self {
         Self {
             activity_dir,
             run_jsonl,
@@ -1396,6 +1407,7 @@ impl Desk {
             finished: HashSet::new(),
             read_failures: HashSet::new(),
             sink,
+            recurrence_reach,
         }
     }
 
@@ -1474,10 +1486,11 @@ impl Desk {
                 let Some(task) = v.get("task_id").and_then(|t| t.as_str()) else {
                     return;
                 };
+                let reach = self.recurrence_reach;
                 let lane = self
                     .lanes
                     .entry(task.to_string())
-                    .or_insert_with(|| LaneWatch::new(task.to_string()));
+                    .or_insert_with(|| LaneWatch::new(task.to_string(), reach));
                 let ts = v
                     .get("ts")
                     .and_then(|t| t.as_str())
@@ -1545,8 +1558,8 @@ impl Desk {
             if supervision_lane_kind(key).is_some() {
                 continue;
             }
-            self.lanes
-                .insert(key.to_string(), LaneWatch::new(key.to_string()));
+            let lane = LaneWatch::new(key.to_string(), self.recurrence_reach);
+            self.lanes.insert(key.to_string(), lane);
         }
     }
 
@@ -1646,12 +1659,13 @@ pub(crate) fn spawn_shadow_desk(
     working_dir: PathBuf,
     run_jsonl: PathBuf,
     sink: Arc<dyn EventSink>,
+    recurrence_reach: usize,
 ) -> DeskGuard {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_task = stop.clone();
     let task = tokio::spawn(async move {
         let activity_dir = working_dir.join(".swarm").join("activity");
-        let mut desk = Desk::new(activity_dir, run_jsonl, sink.clone());
+        let mut desk = Desk::new(activity_dir, run_jsonl, sink.clone(), recurrence_reach);
         loop {
             if stop_task.load(Ordering::SeqCst) {
                 break;
@@ -1677,8 +1691,14 @@ pub(crate) fn spawn_shadow_desk(
 
 #[cfg(test)]
 mod tests {
+    use super::super::budgets::ShownBudgets;
     use super::*;
     use std::sync::Mutex;
+
+    /// The reach on the reference window — 65,536 shingles, r6h's fleet to the byte.
+    fn reference_reach() -> usize {
+        ShownBudgets::reference().recurrence_reach
+    }
 
     struct RecordingSink(Mutex<Vec<serde_json::Value>>);
     impl RecordingSink {
@@ -1731,7 +1751,7 @@ mod tests {
             "then verify boot with python -m app and stop deliberating. ",
         ];
 
-        let mut live = RecurrenceMeter::new();
+        let mut live = RecurrenceMeter::new(reference_reach());
         for c in &stream_a {
             live.push(c);
         }
@@ -1748,7 +1768,7 @@ mod tests {
         }
 
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("skeleton".into());
+        let mut lane = LaneWatch::new("skeleton".into(), reference_reach());
         lane.note_restream_cut(ts("2026-08-30T10:05:00+00:00"), abandoned);
         for chunk in file.as_bytes().chunks(7) {
             lane.ingest_think_bytes(chunk, &sink);
@@ -1772,7 +1792,7 @@ mod tests {
         let text_a = "attempt zero reasoning that ends mid-sentence because the node dropped ";
         let text_b = "attempt one starts clean and reasons about the same files again here. ";
 
-        let mut live = RecurrenceMeter::new();
+        let mut live = RecurrenceMeter::new(reference_reach());
         live.push(text_a);
         live.reset(); // new attempt = new meter in a fresh run_agent call
         live.push(text_b);
@@ -1785,7 +1805,7 @@ mod tests {
             text_b
         );
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("boot".into());
+        let mut lane = LaneWatch::new("boot".into(), reference_reach());
         for chunk in file.as_bytes().chunks(11) {
             lane.ingest_think_bytes(chunk, &sink);
         }
@@ -1797,7 +1817,7 @@ mod tests {
     #[test]
     fn a_cut_behind_the_replay_is_named_never_silent() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("late".into());
+        let mut lane = LaneWatch::new("late".into(), reference_reach());
         let file = format!(
             "{}{}",
             marker(0, "2026-08-30T09:00:00+00:00"),
@@ -1836,7 +1856,7 @@ mod tests {
             a1_post
         );
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("catchup".into());
+        let mut lane = LaneWatch::new("catchup".into(), reference_reach());
         lane.note_restream_cut(ts("2026-08-30T09:25:00+00:00"), 120);
         lane.ingest_think_bytes(file.as_bytes(), &sink);
         assert!(lane.replay_validated(), "{:?}", lane.segment_invalid);
@@ -1850,7 +1870,7 @@ mod tests {
     #[test]
     fn growth_fires_at_the_reused_floor_and_an_action_resets_it() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("g".into());
+        let mut lane = LaneWatch::new("g".into(), reference_reach());
         lane.ingest_think_bytes(marker(0, "2026-08-30T09:00:00+00:00").as_bytes(), &sink);
         lane.ingest_think_bytes("z".repeat(OMNI_JUDGE_GROWTH_CHARS - 1).as_bytes(), &sink);
         lane.assess(&sink);
@@ -1877,7 +1897,7 @@ mod tests {
     #[test]
     fn repeat_fires_at_repeat_break_n_identical_rows() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("r".into());
+        let mut lane = LaneWatch::new("r".into(), reference_reach());
         let row = b"{\"name\":\"shell\",\"summary\":\"curl :8850\",\"ok\":true,\"result_tail\":\"same\"}\n";
         for _ in 0..REPEAT_BREAK_N - 1 {
             lane.ingest_calls_bytes(row, &sink);
@@ -1895,7 +1915,7 @@ mod tests {
     #[test]
     fn degenerate_answer_bypasses_the_readiness_floor() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("d".into());
+        let mut lane = LaneWatch::new("d".into(), reference_reach());
         // Zero reasoning chars: readiness floor NOT met — degenerate must still summon, exactly
         // as the in-loop trigger lets degenerate_answer bypass the char floor.
         lane.ingest_log_bytes(" \n\t".repeat(140).as_bytes(), &sink);
@@ -1911,7 +1931,7 @@ mod tests {
     #[test]
     fn recurrence_respects_the_readiness_floor_and_the_meter_thresholds() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("rec".into());
+        let mut lane = LaneWatch::new("rec".into(), reference_reach());
         lane.ingest_think_bytes(marker(0, "2026-08-30T09:00:00+00:00").as_bytes(), &sink);
         // A verbatim cycle long past RECURRENCE_MIN_SPAN: recurring() goes true, floor is met.
         let period = "The webhook envelope carries id, kind, payment, and signature fields. ";
@@ -1933,7 +1953,7 @@ mod tests {
     #[test]
     fn a_quiet_lane_below_min_chars_emits_no_look() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("q".into());
+        let mut lane = LaneWatch::new("q".into(), reference_reach());
         lane.ingest_think_bytes(marker(0, "2026-08-30T09:00:00+00:00").as_bytes(), &sink);
         lane.ingest_think_bytes("short healthy reasoning".as_bytes(), &sink);
         lane.assess(&sink);
@@ -2217,7 +2237,7 @@ mod tests {
     #[test]
     fn the_desk_row_carries_the_r6h_re_list_with_both_lists_and_offsets() {
         let sink = RecordingSink::new();
-        let mut lane = LaneWatch::new("open".into());
+        let mut lane = LaneWatch::new("open".into(), reference_reach());
         lane.ingest_think_bytes(marker(0, "2026-09-02T00:30:00+00:00").as_bytes(), &sink);
         let third = "With this, I've finished reading the full request and the vendor docs. Let me lock in the slice design.\n\n\
             **Slices (5):**\n\n\
@@ -2329,7 +2349,12 @@ mod tests {
         std::fs::write(activity.join("research-ledger-core-q5.think.log"), &big).unwrap();
         let sink = Arc::new(RecordingSink::new());
         let sink_dyn: Arc<dyn EventSink> = sink.clone();
-        let mut desk = Desk::new(activity, dir.path().join("run.jsonl"), sink_dyn);
+        let mut desk = Desk::new(
+            activity,
+            dir.path().join("run.jsonl"),
+            sink_dyn,
+            reference_reach(),
+        );
         desk.poll();
         desk.poll();
         let keys: Vec<&String> = desk.lanes.keys().collect();
