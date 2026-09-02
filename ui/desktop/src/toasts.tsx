@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { toast, type CloseButtonProps, type ToastOptions } from 'react-toastify';
-import { Button, WEIGHT } from './components/lz';
+import { Button, StatusDot, WEIGHT, type Tone } from './components/lz';
 import {
   GroupedExtensionLoadingToast,
   ExtensionLoadingStatus,
@@ -9,8 +9,11 @@ import {
 /**
  * Every toast's close: a ghost icon Button on the tokens. The container is the Studio overlay
  * surface, so the library's default close (`--text-inverse`, faded) would be white on white.
+ * App's ToastContainer carries this as its `closeButton` default, so a toast option of
+ * `closeButton: true` resolves to it as well (react-toastify substitutes the container's
+ * renderer for `true`).
  */
-function renderStudioCloseButton({ closeToast }: CloseButtonProps) {
+export function renderStudioCloseButton({ closeToast }: CloseButtonProps) {
   return (
     <Button
       variant="ghost"
@@ -21,6 +24,34 @@ function renderStudioCloseButton({ closeToast }: CloseButtonProps) {
       className="self-start"
       onClick={() => closeToast()}
     />
+  );
+}
+
+/**
+ * Toast content on the tokens: a StatusDot carries the tone beside the title and one body line.
+ * App's ToastContainer renders no library icon (`icon={false}`), so the dot IS the tone mark.
+ */
+function ToastNotice({
+  tone,
+  live = false,
+  label,
+  title,
+  msg,
+}: {
+  tone: Tone;
+  live?: boolean;
+  label: string;
+  title?: string;
+  msg?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <StatusDot tone={tone} live={live} label={label} size={10} className="mt-1.5" />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
+        {title ? <div>{msg}</div> : null}
+      </div>
+    </div>
   );
 }
 
@@ -168,13 +199,11 @@ const commonToastOptions: ToastOptions = {
 type ToastSuccessProps = { title?: string; msg?: string; toastOptions?: ToastOptions };
 
 export function toastSuccess({ title, msg, toastOptions = {} }: ToastSuccessProps) {
-  return toast.success(
-    <div>
-      {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
-      {title ? <div>{msg}</div> : null}
-    </div>,
-    { ...commonToastOptions, autoClose: 3000, ...toastOptions }
-  );
+  return toast.success(<ToastNotice tone="ok" label="Success" title={title} msg={msg} />, {
+    ...commonToastOptions,
+    autoClose: 3000,
+    ...toastOptions,
+  });
 }
 
 type ToastErrorProps = {
@@ -199,6 +228,7 @@ function ToastErrorContent({ title, msg, traceback }: ToastErrorProps) {
 
   return (
     <div className="flex gap-4 pr-8">
+      <StatusDot tone="err" label="Error" size={10} className="mt-1.5" />
       <div className="flex-grow">
         {title && <strong className={WEIGHT.semibold}>{title}</strong>}
         {msg && <div>{msg}</div>}
@@ -229,10 +259,7 @@ type ToastLoadingProps = {
 
 export function toastLoading({ title, msg, toastOptions }: ToastLoadingProps) {
   return toast.loading(
-    <div>
-      {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
-      {title ? <div>{msg}</div> : null}
-    </div>,
+    <ToastNotice tone="accent" live label="In progress" title={title} msg={msg} />,
     { ...commonToastOptions, autoClose: false, ...toastOptions }
   );
 }
