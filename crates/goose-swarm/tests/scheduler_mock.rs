@@ -2409,6 +2409,15 @@ async fn a_failed_shards_gap_is_accepted_not_refused_as_repeated() {
         events.named("merge_gap_refused")
     );
     assert_eq!(events.named("merge_rearmed").len(), 1);
+    // VA-120: the gap shard entered the DAG with no plan weight, and the door says so — the same
+    // `plan_weight_derived` line every unweighed task gets at DAG build.
+    let said_for_gap: Vec<serde_json::Value> = events
+        .named("plan_weight_derived")
+        .into_iter()
+        .filter(|e| e["task_id"] == "viz3d-engine-gap-pick-buffer")
+        .collect();
+    assert_eq!(said_for_gap.len(), 1, "{said_for_gap:?}");
+    assert_eq!(said_for_gap[0]["reason"], "no section claim");
     let done: HashSet<_> = report.done.iter().cloned().collect();
     assert!(
         done.contains("viz3d-engine-gap-pick-buffer")
@@ -2893,4 +2902,89 @@ async fn the_chain_head_outranks_a_waiting_shard_when_ledgerd_core_completes() {
         ],
         "longest remaining chain first, plan order on ties; log = {log:?}"
     );
+}
+
+/// VA-120: the CLI writes a plan `weight` only for a task that claims spec sections, so a task
+/// with no claim (r6j: the skeleton, the join) ranks by `derived_weight` — files × difficulty
+/// rank, r6h's order — and nothing in the jsonl said which tasks did: a plan where nobody claimed
+/// would have reverted to the old order silently. One `plan_weight_derived` per such task at DAG
+/// build, before any dispatch, with the exact number the order ranks by; `dispatch_order` carries
+/// the plan's declared/derived split. The ranking itself is untouched: a 9, the derived c 6, b 4.
+#[tokio::test]
+async fn a_task_the_plan_never_weighed_is_said_once_with_its_derived_weight() {
+    let plan = serde_json::json!({ "subtasks": [
+        {"id": "a", "description": "do a", "difficulty": "hard",
+         "files": ["app/a.py", "app/a2.py"], "depends_on": [], "weight": 9},
+        {"id": "b", "description": "do b", "difficulty": "easy",
+         "files": ["app/b.py"], "depends_on": [], "weight": 4},
+        {"id": "c", "description": "do c", "difficulty": "hard",
+         "files": ["app/c.py", "app/c2.py", "app/c3.py"], "depends_on": []},
+    ]});
+    let dag = Dag::from_planner_json(&plan.to_string()).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let events = Arc::new(EventLog::default());
+    let sched = Scheduler::new(vec![dev("d0", "m0", 1)], 3).with_sink(events.clone());
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 3);
+    let derived = events.named("plan_weight_derived");
+    assert_eq!(derived.len(), 1, "{derived:?}");
+    assert_eq!(derived[0]["task_id"], "c");
+    assert_eq!(derived[0]["weight"], 6, "3 files × hard rank 2");
+    assert_eq!(derived[0]["reason"], "no section claim");
+    assert_eq!(derived[0]["files"], 3);
+    assert_eq!(derived[0]["difficulty"], "hard");
+    let orders = events.named("dispatch_order");
+    assert_eq!(orders.len(), 3);
+    for o in &orders {
+        assert_eq!(o["weights_declared"], 2, "{o}");
+        assert_eq!(o["weights_derived"], 1, "{o}");
+    }
+    let claimed: Vec<&str> = orders
+        .iter()
+        .map(|o| o["task_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        claimed,
+        ["a", "c", "b"],
+        "the order is unchanged: 9, then the derived 6, then 4"
+    );
+    let all = events.0.lock().unwrap();
+    let first_said = all
+        .iter()
+        .position(|e| e["event"] == "plan_weight_derived")
+        .unwrap();
+    let first_order = all
+        .iter()
+        .position(|e| e["event"] == "dispatch_order")
+        .unwrap();
+    assert!(
+        first_said < first_order,
+        "a derived weight is a DAG-build fact, said before the first claim"
+    );
+}
+
+/// `apply_plan_weights` refuses a declared 0 — a zero would sort behind every ready task for no
+/// measured reason — and the task ranks derived; the refusal is said under its own reason, not
+/// folded into "no section claim".
+#[tokio::test]
+async fn a_declared_zero_weight_is_refused_and_said_as_derived() {
+    let plan = serde_json::json!({ "subtasks": [
+        {"id": "z", "description": "do z", "difficulty": "easy",
+         "files": ["app/z.py", "app/z2.py"], "depends_on": [], "weight": 0},
+    ]});
+    let dag = Dag::from_planner_json(&plan.to_string()).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let events = Arc::new(EventLog::default());
+    let sched = Scheduler::new(vec![dev("d0", "m0", 1)], 3).with_sink(events.clone());
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 1);
+    let derived = events.named("plan_weight_derived");
+    assert_eq!(derived.len(), 1, "{derived:?}");
+    assert_eq!(derived[0]["task_id"], "z");
+    assert_eq!(derived[0]["weight"], 2, "2 files × easy rank 1");
+    assert_eq!(derived[0]["reason"], "plan weight 0 refused");
+    let orders = events.named("dispatch_order");
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0]["weights_declared"], 0);
+    assert_eq!(orders[0]["weights_derived"], 1);
 }

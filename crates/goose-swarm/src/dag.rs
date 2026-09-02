@@ -140,6 +140,13 @@ pub struct Node {
     /// rank — so a task the split or a splice created without a section count still ranks by the
     /// facts it does carry. Never a wall-clock estimate: that would be invented data.
     pub weight: u32,
+    /// The plan's `weight` for this task AS WRITTEN — `None` when the plan carried none. `weight`
+    /// is the number the order ranks by; this is where it came from. A declared value > 0 IS
+    /// `weight`; anything else (absent, or 0 which `apply_plan_weights` refuses) means `weight` is
+    /// `derived_weight`, and the scheduler says so per task (`plan_weight_derived`, VA-120): the
+    /// CLI writes `weight` only for a task that claims spec sections, so a plan where nothing
+    /// claimed would otherwise rank by files × difficulty — r6h's order — with no line saying so.
+    pub declared_weight: Option<u32>,
     /// Position in the plan (load order; a spliced task appends). The LAST tie-break of the
     /// dispatch order — the planner's sequence, not the alphabet (r6h's alphabet put
     /// `console-page` ahead of `webhooks-workflow` at the exact moment the chain needed the latter).
@@ -149,6 +156,20 @@ pub struct Node {
     pub result: Option<String>,
     /// On a transient re-dispatch, steer away from the device that just failed this task.
     pub avoid_device: Option<String>,
+}
+
+impl Node {
+    /// `Some(reason)` when `weight` is `derived_weight` rather than the plan's own number: the plan
+    /// wrote no `weight` for this task (the CLI's only writers are the section-claim count and a
+    /// split shard's share of its module's), or wrote 0, which `apply_plan_weights` refuses.
+    /// `None` when the plan's measured weight is in force.
+    pub fn derived_weight_reason(&self) -> Option<&'static str> {
+        match self.declared_weight {
+            Some(w) if w > 0 => None,
+            Some(_) => Some("plan weight 0 refused"),
+            None => Some("no section claim"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -162,8 +183,10 @@ pub struct Dag {
 /// difficulty rank (hard 2, easy 1), floor 1. Files are the plan's only per-task volume fact besides
 /// sections, and difficulty is its only intensity fact; a file-less task (the join) is 1 × rank so it
 /// adds the same small constant to every chain that ends in it. This is a DERIVATION from the plan's
-/// facts, not a default: `dispatch_order` prints every weight it ranked by, so a plan that never
-/// wrote `weight` is readable as such in the jsonl.
+/// facts, not a default, and it is SAID: `plan_weight_derived` names every task that ranks by it and
+/// `dispatch_order` carries the plan's declared/derived split (VA-120) — a bare weight number cannot
+/// tell 10 sections from 5 hard files, so a plan that never wrote `weight` is readable as such only
+/// through those two.
 pub fn derived_weight(difficulty: Difficulty, owned_files: &[String]) -> u32 {
     let rank = match difficulty {
         Difficulty::Hard => 2,
@@ -187,6 +210,7 @@ impl Dag {
                     indegree_remaining: indegree,
                     fan_out: 0,
                     weight: derived_weight(spec.difficulty, &spec.owned_files),
+                    declared_weight: None,
                     plan_index,
                     state: if indegree == 0 {
                         TaskState::Ready
@@ -288,10 +312,13 @@ impl Dag {
     /// CLI's per-task spec-section count) wherever the plan carries a positive value; a task the
     /// plan did not measure keeps `derived_weight`. Zero is not "unknown" here — it is refused,
     /// because a zero-weight task would sort behind every other ready task for no measured reason.
+    /// What the plan wrote is kept as `declared_weight` either way, so the refusal and the absence
+    /// are each readable (`Node::derived_weight_reason`).
     pub fn apply_plan_weights(&mut self, weights: &[(TaskId, u32)]) {
         for (id, w) in weights {
-            if *w > 0 {
-                if let Some(n) = self.tasks.get_mut(id) {
+            if let Some(n) = self.tasks.get_mut(id) {
+                n.declared_weight = Some(*w);
+                if *w > 0 {
                     n.weight = *w;
                 }
             }
@@ -436,6 +463,7 @@ impl Dag {
                     indegree_remaining: indeg_remaining,
                     fan_out: 0,
                     weight: derived_weight(s.difficulty, &s.owned_files),
+                    declared_weight: None,
                     plan_index,
                     state,
                     attempts: 0,
