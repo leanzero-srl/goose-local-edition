@@ -8,10 +8,14 @@ import {
   FORMATION_RAMP,
   SWARM_STATUS,
   type FormationEvidence,
+  type PhaseSpans,
   type RunPhase,
+  fmtPhaseClock,
+  fmtPhaseDuration,
   formationPhaseIndex,
   formationPhaseState,
   formationPhasesFor,
+  phaseDurationMs,
 } from './formationVisualState';
 
 export type FormationRibbonNode = {
@@ -35,6 +39,8 @@ export function FormationRibbon({
   activeColor = SWARM_STATUS.action,
   metrics,
   evidence,
+  spans,
+  now,
   held = false,
 }: {
   phase: RunPhase | null;
@@ -42,6 +48,13 @@ export function FormationRibbon({
   activeColor?: string;
   metrics?: React.ReactNode;
   evidence?: FormationEvidence;
+  /** Each phase's time on the clock from the event timestamps (foldRunPhase) — rendered under every
+   *  chip and stated in its tooltip with the clock range (VA-138: "synthesis took 35 min" was a
+   *  12-minute synthesis and a 23-minute split lane under one chip). */
+  spans?: PhaseSpans;
+  /** The live clock for the active phase's open segment. Absent — a finished, killed or silent run —
+   *  the newest event timestamp stands in, so a dead run's chip never keeps counting. */
+  now?: number;
   /** Engine-truth hold (run_paused with no later run_unpaused). The active chip renders in a distinct
    *  held style — stopped-grey border, no fill — so nothing asserts work while every node is
    *  deliberately idle, WITHOUT un-completing the phases behind it. The phase used to be nulled for
@@ -85,6 +98,9 @@ export function FormationRibbon({
             // A HELD active chip claims position, never work: stopped-grey border and ink, no fill.
             // Prior chips keep their evidence-based complete/skipped states untouched.
             const heldActive = held && state === 'active';
+            const span = spans?.phases[step.key];
+            const durationMs = step.key === 'done' ? null : phaseDurationMs(spans, step.key, now);
+            const duration = durationMs != null ? fmtPhaseDuration(durationMs) : null;
             return (
               <li key={step.key} data-state={state} data-held={heldActive || undefined} className="min-w-0">
                 <Tooltip>
@@ -114,8 +130,34 @@ export function FormationRibbon({
                       </span>
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent>{step.tip}</TooltipContent>
+                  <TooltipContent>
+                    {duration && span ? (
+                      <span className="block font-mono text-xs font-bold tabular-nums">
+                        {step.label} · {duration}
+                        {state === 'active' && !heldActive ? ' so far' : ''} · {fmtPhaseClock(span, now)}
+                      </span>
+                    ) : null}
+                    {step.tip}
+                  </TooltipContent>
                 </Tooltip>
+                {/* THE STEP'S OWN CLOCK, under its chip: solid ink in the chip's colour, mono and
+                    tabular so the row reads as a timeline — never inside the chip, where eleven
+                    columns at 900px leave no room and the label would truncate first. */}
+                <div
+                  className="mt-0.5 text-center font-mono text-[10px] font-bold tabular-nums"
+                  data-testid="formation-duration"
+                  data-duration-phase={step.key}
+                  style={{
+                    color: heldActive
+                      ? SWARM_STATUS.stopped
+                      : state === 'active'
+                        ? activeColor
+                        : (color as string),
+                    minHeight: '0.875rem',
+                  }}
+                >
+                  {duration ?? ''}
+                </div>
               </li>
             );
           })}

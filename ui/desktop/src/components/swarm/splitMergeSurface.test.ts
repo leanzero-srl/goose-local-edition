@@ -397,33 +397,33 @@ describe('the checklist and the board carry the split as engine truth', () => {
   const items = (events: Array<Record<string, unknown>>, key: string) =>
     todo(events).find((p) => p.key === key)?.items ?? [];
 
-  it('synthesis: the split row is done with its facts; the flag row is superseded by it', () => {
+  // VA-138: the split is its OWN step after Synthesize — its rows moved out of the synthesis list.
+  it('split: the split row is done with its facts; the flag row is superseded by it', () => {
+    const split = items(R6E, 'split');
+    const row = split.find((i) => i.id === 's-split-viz3d-engine');
+    expect(row?.label).toBe('Fat task viz3d-engine split into 8 shards + a merger');
+    expect(row?.state).toBe('done');
+    expect(row?.detail).toBe('23 exports declared · plan now 16 tasks');
+    expect(split.some((i) => i.id === 's-fat-viz3d-engine')).toBe(false);
     const synthesis = items(R6E, 'synthesis');
-    const split = synthesis.find((i) => i.id === 's-split-viz3d-engine');
-    expect(split?.label).toBe('Fat task viz3d-engine split into 8 shards + a merger');
-    expect(split?.state).toBe('done');
-    expect(split?.detail).toBe('23 exports declared · plan now 16 tasks');
-    expect(synthesis.some((i) => i.id === 's-fat-viz3d-engine')).toBe(false);
-    // The split precedes "Plan wired" — the order the engine runs.
-    const ids = synthesis.map((i) => i.id);
-    expect(ids.indexOf('s-split-viz3d-engine')).toBeLessThan(ids.indexOf('s-done'));
+    expect(synthesis.some((i) => i.id.startsWith('s-split') || i.id.startsWith('s-fat'))).toBe(false);
     // The fixture's plan_loaded is trimmed to 11 of r6e's 16 tasks; the label counts what it lists.
     expect(synthesis.find((i) => i.id === 's-done')?.label).toBe('Plan wired — 11 tasks');
   });
 
   it('a flagged task is RUNNING while the plan is open, and an ADVISORY once the plan loaded without a split', () => {
-    const live = items([OPEN, SYNTHESIS, FAT], 'synthesis').find(
+    const live = items([OPEN, SYNTHESIS, FAT], 'split').find(
       (i) => i.id === 's-fat-viz3d-engine'
     );
     expect(live?.state).toBe('running');
     expect(live?.label).toBe('Fat task viz3d-engine — asking synthesis for a split');
     expect(live?.detail).toBe('11 spec sections for 1 file · 11.0/file vs threshold 7.2');
-    const gone = items([OPEN, SYNTHESIS, FAT, PLAN_LOADED], 'synthesis').find(
+    const gone = items([OPEN, SYNTHESIS, FAT, PLAN_LOADED], 'split').find(
       (i) => i.id === 's-fat-viz3d-engine'
     );
     expect(gone?.state).toBe('advisory');
     expect(gone?.label).toBe('Fat task viz3d-engine flagged — no split event followed');
-    const declined = items([OPEN, SYNTHESIS, FAT, DECLINED, PLAN_LOADED], 'synthesis');
+    const declined = items([OPEN, SYNTHESIS, FAT, DECLINED, PLAN_LOADED], 'split');
     expect(declined.some((i) => i.id === 's-fat-viz3d-engine')).toBe(false);
     expect(declined.find((i) => i.id === 's-split-declined-viz3d-engine')).toMatchObject({
       state: 'advisory',
