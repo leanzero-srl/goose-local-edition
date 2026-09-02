@@ -421,12 +421,14 @@ mod tests {
             "ledger-api",
             1,
             &serde_json::from_value(serde_json::json!({
-                "question": API_Q1, "kind": "spec_lookup", "cite": "request.md:148",
-                "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`."
+                "question": API_Q1, "kind": "spec_lookup", "cite": "request.md:148"
             }))
             .unwrap(),
         );
-        let landed_fact = ResearchRow::spec_fact(&api_q1);
+        let landed_fact = ResearchRow::spec_fact(
+            &api_q1,
+            "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`.",
+        );
         let mut cited_web: OpenQuestion = OpenQuestion::from(
             "Which sort keys and status/currency filter values does the table's query accept?",
         );
@@ -468,12 +470,14 @@ mod tests {
             "ledger-api",
             5,
             &serde_json::from_value(serde_json::json!({
-                "question": API_Q5, "kind": "spec_lookup", "cite": "request.md:218",
-                "fact": "It requires a bearer token (any of the three roles)."
+                "question": API_Q5, "kind": "spec_lookup", "cite": "request.md:218"
             }))
             .unwrap(),
         );
-        let q5_fact = ResearchRow::spec_fact(&api_q5);
+        let q5_fact = ResearchRow::spec_fact(
+            &api_q5,
+            "It requires a bearer token (any of the three roles).",
+        );
         let mut cited_q4: OpenQuestion = OpenQuestion::from(DRAFTS_Q4);
         cited_q4.cite = "request.md:218".into();
         let q4 = ResearchQuestion::of("drafts-workflow", 4, &cited_q4);

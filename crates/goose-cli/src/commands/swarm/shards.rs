@@ -55,6 +55,11 @@ use super::plan_shape::decomposition_of;
 use super::skeleton::SKELETON_ID;
 use super::{finalize_plan_before_dag, string_list, GooseAgentDispatcher};
 
+/// ASSEMBLE, then glue (DESIGN-SPLIT-V2 §1): before the merger model runs, CODE writes every
+/// piece's definitions into `ASSEMBLED.<ext>` in the declared interface's order; the merger's job
+/// becomes the glue. A child of this module so swarm.rs gains no wiring line.
+mod assembly;
+
 /// Where a module's shards work. Under `.swarm/` on purpose: every tree lister, snapshot and
 /// manifest already excludes it (`tree::SNAPSHOT_EXCLUDES`), so pieces never reach the scored tree
 /// and never read as stray files — the merger reads them by path from its dossier.
@@ -323,6 +328,9 @@ pub(super) struct ShardPlan {
     pub(super) sections: Vec<String>,
     #[serde(default)]
     pub(super) provides: Vec<String>,
+    /// The shared state this shard is the single WRITER of (split v2 §4); a pure reader lists none.
+    #[serde(default)]
+    pub(super) writes: Vec<String>,
 }
 
 pub(super) fn split_schema() -> serde_json::Value {
@@ -355,12 +363,13 @@ pub(super) fn split_schema() -> serde_json::Value {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["id", "responsibility", "sections", "provides"],
+                    "required": ["id", "responsibility", "sections", "provides", "writes"],
                     "properties": {
                         "id": {"type": "string"},
                         "responsibility": {"type": "string"},
                         "sections": {"type": "array", "items": {"type": "string"}},
-                        "provides": {"type": "array", "items": {"type": "string"}}
+                        "provides": {"type": "array", "items": {"type": "string"}},
+                        "writes": {"type": "array", "items": {"type": "string"}}
                     }
                 }
             }
@@ -378,9 +387,12 @@ pub(super) fn split_system_prompt() -> String {
      Do TWO things and nothing else:\n\
      1. DECLARE THE MODULE'S INTERFACE as plan text: every exported/public name the module must \
         define (functions, classes, the debug/graded API's methods, event handlers wired at load), \
-        each with its kind, exact signature (parameters, return shape) and one-line purpose; the \
-        SHARED STATE shape every part reads or writes (object/record names and their fields and \
-        types); and the LAYOUT — the final file(s) in assembly order (which regions come first: \
+        each with its kind, exact signature (parameters, return shape) and one-line purpose; EVERY \
+        SHARED STATE (an object, record or typed array more than one part reads or writes) with its \
+        name, its exact SHAPE — fields and types, and for a typed array its stride and offsets — \
+        and the ONE shard that WRITES it (every other shard only reads; two shards that would both \
+        write one state are one shard, not two — merge them); and the LAYOUT — the final file(s) in \
+        assembly order (which regions come first: \
         constants, state, helpers, mechanisms, the exported API, boot). Names you declare are \
         BINDING on every shard and the merger, so declare real, complete signatures, not \
         placeholders.\n\
@@ -388,8 +400,9 @@ pub(super) fn split_system_prompt() -> String {
         block of the brief (the brief also carries consumed context) — into 2 or more SHARDS that \
         can be written independently and in parallel — usually one per mechanism or section group. \
         Each shard: a short kebab-case id, one sentence of responsibility, the exact claimed \
-        headings it implements (every claimed heading goes to exactly one shard), and the declared \
-        names it provides. Shards write PIECES (functions/classes) in private folders; a MERGER \
+        headings it implements (every claimed heading goes to exactly one shard), the declared \
+        names it provides, and `writes`: the shared-state names it is the single writer of (an \
+        empty list for a pure reader). Shards write PIECES (functions/classes) in private folders; a MERGER \
         assembles the final file from them afterwards — so no shard needs another shard's file to \
         exist.\n\n\
      IF THIS TASK SHOULD NOT BE SPLIT — its sections are one mechanism no two people could write \
@@ -398,7 +411,7 @@ pub(super) fn split_system_prompt() -> String {
      in one sentence, and an empty interface; the plan then stays exactly as it is.\n\n\
      Do not restate the spec and do not write code. Call the final_output tool once with \
      {interface: {exports: [{name, kind, signature, purpose}], shared_state, layout: []}, \
-     shards: [{id, responsibility, sections: [], provides: []}]}."
+     shards: [{id, responsibility, sections: [], provides: [], writes: []}]}."
         .to_string()
 }
 
@@ -535,8 +548,16 @@ pub(super) fn render_interface(interface: &ModuleInterface) -> String {
 }
 
 /// The README every shard leaves — STRUCTURED, one line per item, so the engine and the merger
-/// read it without guessing (S3 parses these lines into the handoff channel).
-pub(super) const README_FIELDS: [&str; 4] = ["PROVIDES", "ASSUMES", "UNFINISHED", "CHECKED_WITH"];
+/// read it without guessing (S3 parses these lines into the handoff channel). `WRITES` (split v2
+/// §4): the shared state this shard is the ONE writer of — two shards naming the same state is
+/// `shard_shared_state_writers`, the `cooperate` edge the declaration should have merged.
+pub(super) const README_FIELDS: [&str; 5] = [
+    "PROVIDES",
+    "ASSUMES",
+    "UNFINISHED",
+    "CHECKED_WITH",
+    "WRITES",
+];
 
 /// A shard's brief, assembled by CODE from this run's facts: its split, its siblings' splits, the
 /// declared interface, its folder, the README contract, and the module's whole brief (the settled
@@ -589,19 +610,39 @@ pub(super) fn shard_brief(
                 .join(", ")
         ));
     }
+    if !shard.writes.is_empty() {
+        s.push_str(&format!(
+            "You are the ONLY WRITER of shared state: {} — every sibling reads it through the \
+             declared shape and writes it nowhere; declare each under {w}: in your README with the \
+             shape you write.\n",
+            shard
+                .writes
+                .iter()
+                .map(|st| format!("`{st}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            w = README_FIELDS[4]
+        ));
+    }
     let others: Vec<&ShardPlan> = siblings.iter().filter(|o| o.id != shard.id).collect();
     if !others.is_empty() {
         s.push_str("Your SIBLINGS implement the rest — read their split so you neither duplicate nor depend on writing it:\n");
         for o in others {
+            let mut detail = String::new();
+            if !o.provides.is_empty() {
+                detail.push_str(&format!(" (provides {})", o.provides.join(", ")));
+            }
+            if !o.writes.is_empty() {
+                detail.push_str(&format!(
+                    " (the ONLY writer of {} — you read it, never write it)",
+                    o.writes.join(", ")
+                ));
+            }
             s.push_str(&format!(
                 "- `{}`: {}{}\n",
                 o.id,
                 o.responsibility.trim(),
-                if o.provides.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (provides {})", o.provides.join(", "))
-                }
+                detail
             ));
         }
     }
@@ -619,13 +660,17 @@ pub(super) fn shard_brief(
          {a}: <what you assume about a sibling's symbol or the shared state> — one per line\n\
          {u}: <what you did not finish> — one per line, or `{u}: none`\n\
          {c}: <the parse/lint command you ran and what it printed>\n\
-         End your final message with the same four fields (they are your HANDOFF to the merger).\n\n\
+         {w}: <a shared state you WRITE, with the shape you write (fields/types, stride/offsets)> — \
+         one per line, or `{w}: none`; you write ONLY the state your split names you the writer of, \
+         every other state you read\n\
+         End your final message with the same five fields (they are your HANDOFF to the merger).\n\n\
          THE MODULE'S BRIEF — whole. Your split is the part named above; the rest is the context \
          your siblings implement and the answers you all build to:\n\n{module_brief}",
         p = README_FIELDS[0],
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     ));
     s
 }
@@ -761,6 +806,22 @@ pub(super) fn apply_module_split(
             "reason": "the module task carries no difficulty; its shards carry none either and the DAG reads both as its default",
         }));
     }
+    // ONE WRITER PER SHARED STATE (split v2 §4): the declaration names each state's single writer;
+    // two shards claiming one state is the `cooperate` edge synthesis should have merged into one
+    // shard. Said here from the declaration and again from the READMEs at the merger's dispatch;
+    // the patch applies either way (MILD).
+    let declared_writers: Vec<(String, Vec<String>)> = split
+        .shards
+        .iter()
+        .zip(shard_ids.iter())
+        .map(|(s, id)| (id.clone(), s.writes.clone()))
+        .collect();
+    events.extend(shared_state_writer_events(
+        module_id,
+        &shared_state_writers(&declared_writers),
+        "declaration",
+        None,
+    ));
     events.push(serde_json::json!({
         "event": "plan_patched",
         "source": "split",
@@ -807,15 +868,183 @@ impl GooseAgentDispatcher {
     }
 }
 
+/// What sizing did to one declaration (split v2 §6): the clusters synthesis declared, the free
+/// hosts at split time, and the shards that will run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Sizing {
+    pub(super) declared: usize,
+    pub(super) hosts: Option<usize>,
+    /// The declared shard ids behind each shard that runs — identity when nothing was grouped.
+    pub(super) groups: Vec<Vec<String>>,
+    /// The weight each declared cluster carried into the partition: its claimed sections, floor 1.
+    pub(super) weights: Vec<usize>,
+}
+
+/// Exactly `k` contiguous, non-empty groups over `weights` minimising the largest group's sum —
+/// the linear-partition DP (n clusters × k hosts, both single digits here). `k > n` is `n` groups.
+fn partition_contiguous(weights: &[usize], k: usize) -> Vec<std::ops::Range<usize>> {
+    let n = weights.len();
+    if k == 0 || n == 0 {
+        return Vec::new();
+    }
+    let k = k.min(n);
+    let mut prefix = vec![0usize; n + 1];
+    for (i, w) in weights.iter().enumerate() {
+        prefix[i + 1] = prefix[i] + w;
+    }
+    let sum = |a: usize, b: usize| prefix[b] - prefix[a];
+    let inf = usize::MAX;
+    // best[j][i]: the smallest possible largest-group sum splitting clusters 0..i into j groups;
+    // cut[j][i]: where that split's last group starts.
+    let mut best = vec![vec![inf; n + 1]; k + 1];
+    let mut cut = vec![vec![0usize; n + 1]; k + 1];
+    best[0][0] = 0;
+    for j in 1..=k {
+        for i in j..=n {
+            for s in (j - 1)..i {
+                if best[j - 1][s] == inf {
+                    continue;
+                }
+                let cand = best[j - 1][s].max(sum(s, i));
+                if cand < best[j][i] {
+                    best[j][i] = cand;
+                    cut[j][i] = s;
+                }
+            }
+        }
+    }
+    let mut ranges = Vec::with_capacity(k);
+    let mut i = n;
+    for j in (1..=k).rev() {
+        let s = cut[j][i];
+        ranges.push(s..i);
+        i = s;
+    }
+    ranges.reverse();
+    ranges
+}
+
+/// SIZE BY THE FLEET, not by the declaration's count (split v2 §6: "three focused shards on three
+/// nodes beat eight queued" — r6e declared EIGHT shards for a THREE-node pool and five queued).
+/// The declaration's clusters arrive in layout order and are grouped CONTIGUOUSLY onto the free
+/// hosts, the largest group's weight minimised (a cluster weighs its claimed sections, floor 1);
+/// one shard per group — id, responsibility, sections, provides and writes the union. No more
+/// clusters than hosts leaves the declaration as it is; no host count leaves it too and is SAID
+/// (`split_sized{hosts: null}`), never replaced by a literal.
+pub(super) fn size_shards_to_hosts(
+    split: ModuleSplit,
+    free_hosts: Option<usize>,
+) -> (ModuleSplit, Sizing) {
+    let declared = split.shards.len();
+    let weights: Vec<usize> = split
+        .shards
+        .iter()
+        .map(|s| s.sections.len().max(1))
+        .collect();
+    let Some(hosts) = free_hosts.filter(|h| *h >= 2 && *h < declared) else {
+        let groups = split.shards.iter().map(|s| vec![s.id.clone()]).collect();
+        return (
+            split,
+            Sizing {
+                declared,
+                hosts: free_hosts,
+                groups,
+                weights,
+            },
+        );
+    };
+    let mut shards: Vec<ShardPlan> = Vec::new();
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for r in partition_contiguous(&weights, hosts) {
+        let members = &split.shards[r];
+        groups.push(members.iter().map(|s| s.id.clone()).collect());
+        if let [only] = members {
+            shards.push(only.clone());
+            continue;
+        }
+        let mut merged = ShardPlan {
+            id: members
+                .iter()
+                .map(|s| kebab(&s.id))
+                .collect::<Vec<_>>()
+                .join("-"),
+            responsibility: members
+                .iter()
+                .map(|s| s.responsibility.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+            sections: Vec::new(),
+            provides: Vec::new(),
+            writes: Vec::new(),
+        };
+        let union = |into: &mut Vec<String>, from: &[String]| {
+            for x in from {
+                if !into.contains(x) {
+                    into.push(x.clone());
+                }
+            }
+        };
+        for s in members {
+            union(&mut merged.sections, &s.sections);
+            union(&mut merged.provides, &s.provides);
+            union(&mut merged.writes, &s.writes);
+        }
+        shards.push(merged);
+    }
+    (
+        ModuleSplit {
+            interface: split.interface,
+            shards,
+        },
+        Sizing {
+            declared,
+            hosts: free_hosts,
+            groups,
+            weights,
+        },
+    )
+}
+
+pub(super) fn sized_event(module: &str, sizing: &Sizing) -> serde_json::Value {
+    let source = if sizing.hosts.is_none() {
+        "declaration — free host count not passed by the caller (plan_slices_to_dag); the clusters stand as declared"
+    } else if sizing.groups.len() < sizing.declared {
+        "fleet — clusters grouped contiguously onto the free hosts, largest group minimised"
+    } else {
+        "declaration — no more clusters than free hosts"
+    };
+    serde_json::json!({
+        "event": "split_sized",
+        "module": module,
+        "declared": sizing.declared,
+        "hosts": sizing.hosts,
+        "shards": sizing.groups.len(),
+        "groups": sizing.groups,
+        "weights": sizing.weights,
+        "source": source,
+    })
+}
+
 /// The split step of `plan_slices_to_dag`: measure, flag, request one patch per fat task, apply,
 /// and walk the patched plan through the one door again. `split` is injected (the real one calls
 /// `request_module_split`; a test hands back a canned reply) so the whole sequence runs without a
 /// model. A plan with no fat task returns byte-identical and emits nothing.
-pub(super) async fn split_fat_tasks<P, PFut>(
+///
+/// SIZE BY THE FLEET (split v2 §6): `free_hosts` is the pool free at split time — the pool
+/// `run_swarm` resolved (`pool_resolved.worker_count`; r6e: 3), all free during planning by
+/// construction, threaded to the one call in `plan_slices_to_dag`. `None` = the caller did not
+/// pass it, which is SAID (`split_sized{hosts: null, source: "declaration — free host count not
+/// passed…"}`) and leaves the shard count as declared — never a literal in its place. One free
+/// host declines every split before synthesis is asked (N shards would queue serially on it and
+/// still need a merge — the module is built whole by the node that would build it anyway; the
+/// flag stays); otherwise the declared clusters are sized onto the hosts (`size_shards_to_hosts`,
+/// `split_sized`) before the patch.
+pub(super) async fn split_fat_tasks_sized<P, PFut>(
     plan_json: String,
     opened: &OpenOutput,
     spec: &str,
     every_decision_settled: bool,
+    free_hosts: Option<usize>,
     split: P,
     sink: &Arc<dyn EventSink>,
 ) -> String
@@ -899,6 +1128,19 @@ where
                 "reason": reason,
             }));
         };
+        // SIZE BY THE FLEET (split v2 §6): with fewer than two FREE hosts at split time the shards
+        // cannot be partitioned onto hosts, so the declaration's clusters are the shards as declared
+        // (`size_shards_to_hosts` applies only at >= 2). The split itself is NEVER declined for
+        // scarcity — r6g measured shards dispatching as nodes freed (two at BUILD start, two later),
+        // so "they would queue" is a fleet fact, not a reason to build the fat file whole. Said:
+        if let Some(h) = free_hosts.filter(|h| *h < 2) {
+            sink.write_value(serde_json::json!({
+                "event": "split_hosts_scarce",
+                "task": row.id,
+                "free_hosts": h,
+                "detail": "fewer than two free hosts at split time — shards are sized by the declaration's clusters and queue as nodes free",
+            }));
+        }
         let reply = match split(task, density).await {
             Ok(r) => r,
             Err(e) => {
@@ -913,6 +1155,8 @@ where
                 continue;
             }
         };
+        let (parsed, sizing) = size_shards_to_hosts(parsed, free_hosts);
+        sink.write_value(sized_event(&row.id, &sizing));
         match apply_module_split(&current, &row.id, &parsed) {
             Ok((next, events)) => {
                 eprintln!(
@@ -1126,7 +1370,7 @@ mod tests {
 
     /// S10(1)+(2): the request lists the CLAIMED headings as the partition (the brief is context),
     /// and the prompt's decline ramp — one shard named `whole` — parses as a loud decline with the
-    /// planner's reason, so `split_fat_tasks` emits `split_declined` and leaves the plan alone.
+    /// planner's reason, so `split_fat_tasks_sized` emits `split_declined` and leaves the plan alone.
     #[test]
     fn the_split_request_partitions_the_claimed_headings_and_whole_declines_with_a_reason() {
         let task = serde_json::json!({
@@ -1209,7 +1453,7 @@ mod tests {
 
     /// VA-080 item 3: when the opener's slice names match no plan slice, every row measures
     /// zero and nothing is ever fat — `plan_flag` fires only for fat rows, so the plan used to
-    /// pass in silence. The measure RECORDS the unclaimed ids; `split_fat_tasks` says
+    /// pass in silence. The measure RECORDS the unclaimed ids; `split_fat_tasks_sized` says
     /// `fatness_unmeasurable` with both sides' names and leaves the plan byte-identical. r6c's
     /// shape (SOME rows carry sections) says nothing — the NET half.
     #[tokio::test]
@@ -1237,11 +1481,12 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn EventSink> = sink.clone();
         let before = renamed.to_string();
-        let after = split_fat_tasks(
+        let after = split_fat_tasks_sized(
             before.clone(),
             &r6c_like_opened(),
             spec,
             false,
+            None,
             |_task, _density| async move { panic!("nothing measurable, nothing to split") },
             &sink_dyn,
         )
@@ -1605,6 +1850,79 @@ mod tests {
         goose_swarm::Dag::from_planner_json(&finalized).expect("loads");
     }
 
+    /// Split v2 §4, at the declaration: synthesis is asked for every shared state's shape and its
+    /// ONE writer (`writes` per shard, required by the schema); a shard's brief names it the only
+    /// writer and its siblings read; two shards declaring the same state is
+    /// `shard_shared_state_writers{source: declaration}` before `plan_patched` — said, the patch
+    /// applies.
+    #[test]
+    fn two_declared_writers_of_one_shared_state_are_said_and_the_brief_names_the_writer() {
+        assert!(split_system_prompt().contains("the ONE shard that WRITES it"));
+        assert!(split_system_prompt().contains("provides: [], writes: []"));
+        assert!(split_schema()["properties"]["shards"]["items"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r == "writes"));
+        let mut split = viz_split();
+        split.shards[0].writes = vec!["S.brush".into(), "instanceData".into()];
+        split.shards[2].writes = vec!["S.brush".into()];
+        let p = plan(&[
+            ("web-console", &["web/app.js"]),
+            ("web-viz", &["web/viz.js"]),
+        ]);
+        let (out, events) = apply_module_split(&p.to_string(), "web-viz", &split).unwrap();
+        let said: Vec<&serde_json::Value> = events
+            .iter()
+            .filter(|e| e["event"] == "shard_shared_state_writers")
+            .collect();
+        assert_eq!(said.len(), 1, "{events:?}");
+        assert_eq!(said[0]["module"], "web-viz");
+        assert_eq!(said[0]["state"], "S.brush");
+        assert_eq!(
+            said[0]["shards"],
+            serde_json::json!(["web-viz-render", "web-viz-labels-brush-api"])
+        );
+        assert_eq!(said[0]["source"], "declaration");
+        assert!(said[0]["task_id"].is_null(), "no task exists at plan time");
+        assert_eq!(events.last().unwrap()["event"], "plan_patched");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let brief_of = |id: &str| {
+            v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .and_then(|t| t["description"].as_str())
+                .unwrap_or_else(|| panic!("{id}"))
+                .to_string()
+        };
+        let render = brief_of("web-viz-render");
+        assert!(
+            render.contains("You are the ONLY WRITER of shared state: `S.brush`, `instanceData`"),
+            "{render}"
+        );
+        assert!(
+            render.contains("WRITES: <a shared state you WRITE, with the shape you write"),
+            "{render}"
+        );
+        assert!(
+            render.contains("End your final message with the same five fields"),
+            "{render}"
+        );
+        let pick = brief_of("web-viz-pick-camera");
+        assert!(
+            pick.contains("`render`: WebGL programs, instanced geometry, demand rendering (provides initGL, render, buildScene) (the ONLY writer of S.brush, instanceData — you read it, never write it)"),
+            "{pick}"
+        );
+        assert!(!pick.contains("You are the ONLY WRITER"), "{pick}");
+        // A declaration with one writer per state says nothing.
+        let (_, quiet) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        assert!(!quiet
+            .iter()
+            .any(|e| e["event"] == "shard_shared_state_writers"));
+    }
+
     #[test]
     fn a_split_reply_needs_two_shards_with_ids_and_responsibilities() {
         assert!(parse_module_split("no json here").is_err());
@@ -1619,6 +1937,175 @@ mod tests {
         .unwrap();
         assert_eq!(ok.shards.len(), 2);
         assert_eq!(kebab("Pick & Camera!"), "pick-camera");
+    }
+
+    /// Split v2 §6, size by the fleet. r6e declared EIGHT shards (seq 522) for a THREE-node pool
+    /// (seq 1 `pool_resolved.worker_count: 3`) — five queued behind the first three. Sized to 3
+    /// hosts the eight clusters (weight 1 each: no sections declared) group contiguously 2/3/3
+    /// with ids, responsibilities and provides unioned; 8 hosts leave the declaration; no host
+    /// count (the caller does not pass the pool yet) leaves it and SAYS so; uneven weights balance
+    /// by claimed sections; one free host declines before any planner call.
+    #[tokio::test]
+    async fn shard_count_follows_the_free_hosts_and_an_absent_count_is_said() {
+        let archived = [
+            "data-scene",
+            "rendering-core",
+            "pick-buffer",
+            "camera-inertia",
+            "labels-culling",
+            "linked-brush",
+            "streaming-diffs",
+            "vs7dbg-boot",
+        ];
+        let split: ModuleSplit = serde_json::from_value(serde_json::json!({
+            "interface": {"exports": [], "shared_state": "S", "layout": []},
+            "shards": archived.iter().map(|id| serde_json::json!({
+                "id": id, "responsibility": format!("the {id} piece"), "sections": [], "provides": [format!("{id}Fn")], "writes": []
+            })).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        let (sized, s) = size_shards_to_hosts(split.clone(), Some(3));
+        assert_eq!(s.declared, 8);
+        assert_eq!(s.hosts, Some(3));
+        assert_eq!(s.weights, vec![1; 8]);
+        assert_eq!(
+            s.groups,
+            vec![
+                vec!["data-scene", "rendering-core"],
+                vec!["pick-buffer", "camera-inertia", "labels-culling"],
+                vec!["linked-brush", "streaming-diffs", "vs7dbg-boot"],
+            ]
+        );
+        assert_eq!(sized.shards.len(), 3);
+        assert_eq!(sized.shards[0].id, "data-scene-rendering-core");
+        assert_eq!(
+            sized.shards[0].responsibility,
+            "the data-scene piece; the rendering-core piece"
+        );
+        assert_eq!(
+            sized.shards[1].provides,
+            vec!["pick-bufferFn", "camera-inertiaFn", "labels-cullingFn"]
+        );
+        assert_eq!(sized.interface, split.interface);
+        let ev = sized_event("viz3d-engine", &s);
+        assert_eq!(ev["event"], "split_sized");
+        assert_eq!(ev["module"], "viz3d-engine");
+        assert_eq!(ev["declared"], 8);
+        assert_eq!(ev["hosts"], 3);
+        assert_eq!(ev["shards"], 3);
+        assert_eq!(ev["groups"][1][2], "labels-culling");
+        assert!(ev["source"].as_str().unwrap().starts_with("fleet"), "{ev}");
+
+        let (same, eight) = size_shards_to_hosts(split.clone(), Some(8));
+        assert_eq!(same, split);
+        assert_eq!(eight.groups.len(), 8);
+        assert!(sized_event("m", &eight)["source"]
+            .as_str()
+            .unwrap()
+            .starts_with("declaration — no more clusters"));
+        let (same, none) = size_shards_to_hosts(split.clone(), None);
+        assert_eq!(same, split, "no count: the declaration stands");
+        assert!(none.hosts.is_none());
+        let ev = sized_event("m", &none);
+        assert!(ev["hosts"].is_null());
+        assert!(
+            ev["source"]
+                .as_str()
+                .unwrap()
+                .contains("not passed by the caller"),
+            "{ev}"
+        );
+
+        let mut uneven = split.clone();
+        uneven.shards.truncate(5);
+        uneven.shards[0].sections = (1..=4).map(|k| format!("### {k}. Section {k}")).collect();
+        let (grouped, u) = size_shards_to_hosts(uneven, Some(2));
+        assert_eq!(u.weights, vec![4, 1, 1, 1, 1]);
+        assert_eq!(
+            u.groups,
+            vec![
+                vec!["data-scene"],
+                vec![
+                    "rendering-core",
+                    "pick-buffer",
+                    "camera-inertia",
+                    "labels-culling"
+                ],
+            ]
+        );
+        assert_eq!(
+            grouped.shards[0].id, "data-scene",
+            "a lone cluster keeps its id"
+        );
+        assert_eq!(grouped.shards[0].sections.len(), 4);
+        assert_eq!(partition_contiguous(&[3, 3, 3], 3), vec![0..1, 1..2, 2..3]);
+        assert_eq!(partition_contiguous(&[1, 1], 5), vec![0..1, 1..2]);
+        assert!(partition_contiguous(&[], 3).is_empty());
+
+        // ONE free host: the split is declined before synthesis is asked; flag and plan intact.
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let before = plan(&[
+            (
+                "ledgerd-core",
+                &["app/db.py", "app/sync.py", "app/ledger.py"],
+            ),
+            (
+                "notifierd",
+                &["app/notifierd/impl.py", "app/notify_store.py"],
+            ),
+            (
+                "web-console",
+                &["web/index.html", "web/styles.css", "web/app.js"],
+            ),
+            ("web-viz", &["web/viz.js"]),
+        ])
+        .to_string();
+        // ONE free host: the split is asked anyway (r6g measured shards dispatching as nodes
+        // freed), the scarcity is SAID, and the shards are the declaration's clusters — sizing by
+        // hosts applies only at two or more.
+        let reply = serde_json::json!({
+            "interface": {"exports": [], "shared_state": "S", "layout": []},
+            "shards": archived
+                .iter()
+                .map(|n| serde_json::json!({
+                    "id": n, "responsibility": format!("{n} pieces"), "sections": [],
+                    "provides": [], "writes": []
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string();
+        let after = split_fat_tasks_sized(
+            before.clone(),
+            &r6c_like_opened(),
+            spec,
+            false,
+            Some(1),
+            move |_task, _density| {
+                let r = reply.clone();
+                async move { Ok(r) }
+            },
+            &sink_dyn,
+        )
+        .await;
+        let events = sink.0.lock().unwrap().clone();
+        assert!(events
+            .iter()
+            .any(|e| e["event"] == "plan_flag" && e["task"] == "web-viz"));
+        let scarce = events
+            .iter()
+            .find(|e| e["event"] == "split_hosts_scarce")
+            .expect("scarcity is said, never a decline");
+        assert_eq!(scarce["task"], "web-viz");
+        assert_eq!(scarce["free_hosts"], 1);
+        assert!(!events.iter().any(|e| e["event"] == "split_declined"));
+        // sizing is SAID at any host count (hosts: 1 here); partitioning onto hosts applies only at >= 2
+        assert!(events.iter().any(|e| e["event"] == "split_sized"));
+        assert_ne!(
+            after, before,
+            "the fat task was split despite one free host"
+        );
     }
 
     #[derive(Default)]
@@ -1727,6 +2214,7 @@ mod tests {
                     .unwrap())
                 }
             },
+            0, // free_hosts: a test passes 0 (SPLIT v2 §6; run_linear_plan measures the pool)
             &sink_dyn,
         )
         .await
@@ -1828,11 +2316,12 @@ mod tests {
             ("web-viz", &["web/viz.js"]),
         ])
         .to_string();
-        let after = split_fat_tasks(
+        let after = split_fat_tasks_sized(
             before.clone(),
             &r6c_like_opened(),
             spec,
             false,
+            None,
             |_task, _density| async move { Ok("I would rather not.".to_string()) },
             &sink_dyn,
         )
@@ -1877,10 +2366,10 @@ pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
          from every shard's pieces; a shard that writes it overwrites its siblings. Do not run the \
          app or the test suite (your pieces cannot run alone); CHECK each piece with a parse/lint \
          (`node --check`, `python3 -m py_compile`, the language's equivalent) and record the \
-         command and its result. FINISH by writing `README.md` in your folder with the four \
-         fields — {p}: / {a}: / {u}: / {c}: — one item per line, and end your final message with \
-         the same four fields (they are your handoff to the merger). A turn that ends without the \
-         README FAILS and is retried.\n\n",
+         command and its result. FINISH by writing `README.md` in your folder with the five \
+         fields — {p}: / {a}: / {u}: / {c}: / {w}: — one item per line, and end your final message \
+         with the same five fields (they are your handoff to the merger). A turn that ends without \
+         the README FAILS and is retried.\n\n",
         shard = shard.shard,
         module = shard.module,
         responsibility = shard.responsibility.trim(),
@@ -1888,21 +2377,24 @@ pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     )
 }
 
 /// The deliverable gate's hint for a shard that finished without its README.
 pub(super) fn readme_missing_hint(shard: &ShardOf) -> String {
     format!(
-        "You finished WITHOUT `{folder}/README.md`. Write it NOW with the four fields — {p}: \
+        "You finished WITHOUT `{folder}/README.md`. Write it NOW with the five fields — {p}: \
          (every symbol you defined, with its signature), {a}: (what you assume about siblings' \
          symbols and the shared state), {u}: (what you did not finish, or `none`), {c}: (the \
-         parse/lint command you ran and its result) — then finish. Do not rewrite your pieces.",
+         parse/lint command you ran and its result), {w}: (the shared state you write, with its \
+         shape, or `none`) — then finish. Do not rewrite your pieces.",
         folder = shard.folder,
         p = README_FIELDS[0],
         a = README_FIELDS[1],
         u = README_FIELDS[2],
         c = README_FIELDS[3],
+        w = README_FIELDS[4],
     )
 }
 
@@ -1931,6 +2423,10 @@ pub(super) struct ShardNote {
     pub(super) assumes: Vec<String>,
     pub(super) unfinished: Vec<String>,
     pub(super) checked_with: Vec<String>,
+    /// The shared state this shard WRITES (`WRITES:` lines, split v2 §4) — empty for a pure
+    /// reader, and for a README that carries no WRITES line at all; the dossier only ever compares
+    /// non-empty lists, so an absent line can never manufacture a conflict.
+    pub(super) writes: Vec<String>,
 }
 
 impl ShardNote {
@@ -1940,6 +2436,7 @@ impl ShardNote {
             "assumes": self.assumes,
             "unfinished": self.unfinished,
             "checked_with": self.checked_with,
+            "writes": self.writes,
         })
     }
 }
@@ -1951,13 +2448,82 @@ pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
     let lists = parse_fields(text, &README_FIELDS)?;
     // `parse_fields` returns exactly one list per field — a different length is a programming
     // error, and `?` says so rather than defaulting a field to empty.
-    let [provides, assumes, unfinished, checked_with]: [Vec<String>; 4] = lists.try_into().ok()?;
+    let [provides, assumes, unfinished, checked_with, writes]: [Vec<String>; 5] =
+        lists.try_into().ok()?;
     Some(ShardNote {
         provides,
         assumes,
         unfinished,
         checked_with,
+        writes,
     })
+}
+
+/// The state a WRITES item names: the text before its shape (` — `, `: `, ` (`), trimmed —
+/// `S.brush — Set<id>` and `S.brush: the brushed ids` are one state; `S.brush` and `S.yaw` two;
+/// compared case-insensitively, reported as first written.
+fn state_key(item: &str) -> Option<(String, String)> {
+    let mut name = item.trim();
+    for sep in [" — ", " – ", ": ", " (", " - "] {
+        if let Some((head, _)) = name.split_once(sep) {
+            name = head;
+        }
+    }
+    let name = name.trim().trim_end_matches(':').trim();
+    (!name.is_empty()).then(|| (name.to_string(), name.to_lowercase()))
+}
+
+/// ONE WRITER PER SHARED STATE (split v2 §4): every state more than one shard WRITES, from
+/// `(shard id, its WRITES items)` pairs — the declaration's `writes` at plan time or the READMEs'
+/// lines at the merger's dispatch. Two writers is the `cooperate` edge the research names (SpecDB:
+/// modules that must be co-designed are one unit); said, never refused.
+pub(super) fn shared_state_writers(
+    writers: &[(String, Vec<String>)],
+) -> Vec<(String, Vec<String>)> {
+    let mut by_state: Vec<(String, String, Vec<String>)> = Vec::new();
+    for (shard, writes) in writers {
+        for w in writes {
+            let Some((display, key)) = state_key(w) else {
+                continue;
+            };
+            match by_state.iter_mut().find(|(_, k, _)| *k == key) {
+                Some((_, _, shards)) => {
+                    if !shards.contains(shard) {
+                        shards.push(shard.clone());
+                    }
+                }
+                None => by_state.push((display, key, vec![shard.clone()])),
+            }
+        }
+    }
+    by_state
+        .into_iter()
+        .filter(|(_, _, s)| s.len() > 1)
+        .map(|(display, _, s)| (display, s))
+        .collect()
+}
+
+/// `shard_shared_state_writers{module, task_id, state, shards, source}` per conflicting state;
+/// `source` is `declaration` (plan time, no task) or `readme` (the merger's dispatch).
+pub(super) fn shared_state_writer_events(
+    module: &str,
+    conflicts: &[(String, Vec<String>)],
+    source: &str,
+    task_id: Option<&str>,
+) -> Vec<serde_json::Value> {
+    conflicts
+        .iter()
+        .map(|(state, shards)| {
+            serde_json::json!({
+                "event": "shard_shared_state_writers",
+                "module": module,
+                "task_id": task_id,
+                "state": state,
+                "shards": shards,
+                "source": source,
+            })
+        })
+        .collect()
 }
 
 /// S10(3): the module's FINAL files as they stand when a shard lane is dispatched — the bytes, or
@@ -2060,7 +2626,7 @@ impl GooseAgentDispatcher {
                 let reason = if readme.is_none() {
                     "no README.md in the shard folder and no field in the final message"
                 } else {
-                    "README.md carries none of PROVIDES/ASSUMES/UNFINISHED/CHECKED_WITH"
+                    "README.md carries none of PROVIDES/ASSUMES/UNFINISHED/CHECKED_WITH/WRITES"
                 };
                 self.events
                     .write_value(merge_note_missing_event(shard, &req.task_id, reason));
@@ -2152,6 +2718,82 @@ mod dispatch_tests {
         assert_eq!(ev["module"], "web-viz");
         assert_eq!(ev["shard"], "render");
     }
+
+    /// Split v2 §4: the WRITES line parses (bullets continue it; a README written without the
+    /// field reads as writing nothing — never a manufactured conflict); the state is the text
+    /// before its shape, so `S.brush — Set<id>` and `S.brush: the brushed ids` are ONE state
+    /// written by two shards, `instanceData` and `labelSlots` single-writer; the event carries the
+    /// state as first written, the shards, and the source.
+    #[test]
+    fn writes_lines_parse_and_two_readme_writers_of_one_state_are_said() {
+        let n = parse_shard_note(
+            "PROVIDES: a()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: x\nWRITES: S.brush — Set<id> of brushed ids\n- instanceData: Float32Array stride 8\n",
+        )
+        .unwrap();
+        assert_eq!(
+            n.writes,
+            vec![
+                "S.brush — Set<id> of brushed ids",
+                "instanceData: Float32Array stride 8"
+            ]
+        );
+        assert_eq!(
+            n.to_json()["writes"][1],
+            "instanceData: Float32Array stride 8"
+        );
+        let before_the_field =
+            parse_shard_note("PROVIDES: a()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: x\n")
+                .unwrap();
+        assert!(before_the_field.writes.is_empty());
+        assert!(parse_shard_note("PROVIDES: a()\nWRITES: none\n")
+            .unwrap()
+            .writes
+            .is_empty());
+
+        let conflicts = shared_state_writers(&[
+            (
+                "web-viz-render".to_string(),
+                vec![
+                    "S.brush — Set<id> of brushed ids".to_string(),
+                    "instanceData: Float32Array stride 8".to_string(),
+                ],
+            ),
+            (
+                "web-viz-brush".to_string(),
+                vec!["s.brush: the brushed ids".to_string()],
+            ),
+            (
+                "web-viz-labels".to_string(),
+                vec!["labelSlots (Float32Array)".to_string()],
+            ),
+        ]);
+        assert_eq!(
+            conflicts,
+            vec![(
+                "S.brush".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-brush".to_string()]
+            )]
+        );
+        assert!(shared_state_writers(&[
+            ("a".to_string(), vec!["S.brush".to_string()]),
+            ("b".to_string(), vec!["S.yaw".to_string()]),
+        ])
+        .is_empty());
+        let events = shared_state_writer_events("web-viz", &conflicts, "readme", Some("web-viz"));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], "shard_shared_state_writers");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["task_id"], "web-viz");
+        assert_eq!(events[0]["state"], "S.brush");
+        assert_eq!(
+            events[0]["shards"],
+            serde_json::json!(["web-viz-render", "web-viz-brush"])
+        );
+        assert_eq!(events[0]["source"], "readme");
+        let sh = shard();
+        assert!(shard_owner_body(&sh).contains("/ CHECKED_WITH: / WRITES:"));
+        assert!(readme_missing_hint(&sh).contains("WRITES: (the shared state you write"));
+    }
 }
 
 // ---- S4: THE MERGER — code builds the dossier, a judicious model merges, code checks after -----
@@ -2165,12 +2807,44 @@ pub(super) const MERGE_FIELDS: [&str; 4] = ["KEPT", "DROPPED", "FILLED", "SENT_O
 /// merger back when they land (the merge-gap door, scheduler.rs).
 pub(super) const MERGE_GAP_PREFIX: &str = "MERGE_GAP:";
 
+/// What a definition IS — the one classification the dossier, the assembly, `check_merge` and
+/// `shard_verify` share (VA-097). r6g's labels-brush shard defined `const brushSet = new Set()`,
+/// `let uBrushActive = 0`, `const dimFlags = new Uint8Array(65536)`, `const LABEL_W = 110` and
+/// `window.vs7 = {…}`; the function-only rule read 6 of its 13 PROVIDES as unbacked and told the
+/// merger to write them itself beside "retyping a definition is FORBIDDEN" — a second
+/// `const brushSet` is the SyntaxError r6c shipped as "five names defined twice".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SymbolKind {
+    Function,
+    Class,
+    /// Module-level `const` with a scalar literal, or an UPPER_SNAKE name.
+    Constant,
+    /// Module-level state: `let`/`var`, a `const` holding a container or an instance, a
+    /// top-level dotted assignment (`window.vs7 = {…}`), a Python module-level `NAME = …`.
+    State,
+    /// A shorthand-property mention; never a definition (`shorthand` is true).
+    Reference,
+}
+
+impl SymbolKind {
+    /// The brief's suffix after a name: a function shows its parameters instead.
+    pub(super) fn suffix(self) -> &'static str {
+        match self {
+            SymbolKind::Function | SymbolKind::Reference => "",
+            SymbolKind::Class => " (class)",
+            SymbolKind::Constant => " (constant)",
+            SymbolKind::State => " (state)",
+        }
+    }
+}
+
 /// One definition found in a piece or in the final file — or a shorthand-property MENTION of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Symbol {
     pub(super) name: String,
     pub(super) params: String,
     pub(super) line: usize,
+    pub(super) kind: SymbolKind,
     /// An object-literal shorthand property (`{ pick,\n drawBrush,\n }`) — a REFERENCE to a name
     /// defined elsewhere, never a definition: with nothing defining it the file throws
     /// `ReferenceError` at load (S14-1). `defined()`/`defines()` skip shorthand-only names.
@@ -2243,11 +2917,36 @@ const JS_KEYWORDS: [&str; 16] = [
     "typeof", "await", "yield", "throw", "case",
 ];
 
-/// Definitions in a source text, line-based and deterministic — the merger's dossier and the
-/// after-check read the SAME extractor, so "present in the final file" means what "defined in a
-/// piece" meant. JavaScript: `function name(`, `const/let/var name = function|(…) =>|async`,
-/// `a.b.c = function|(…) =>`, object-literal methods `name(…) {` and `name: function(`/`name: (…) =>`.
-/// Python: `def`/`async def`/`class`. Other languages: `fn`/`func` heads.
+/// The language a PIECE or a FINAL FILE is read as — ITS extension decides, never the run's target
+/// language. r6e's split module was `web/viz.js` in a Python-target run: a `.js` piece read by the
+/// Python extractor (`def`/`class` heads only) yields no definition at all — every export
+/// "missing", every PROVIDES "unbacked", nothing to assemble. The run's language stands only for an
+/// extension that names none.
+pub(super) fn lang_for_path(path: &str, run_lang: super::TargetLang) -> super::TargetLang {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("py") => super::TargetLang::Python,
+        Some("js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx") => super::TargetLang::TypeScript,
+        Some("rs") => super::TargetLang::Rust,
+        Some("go") => super::TargetLang::Go,
+        _ => run_lang,
+    }
+}
+
+/// THE DEFINITION RULE — line-based and deterministic, read by the merger's dossier
+/// (`unbacked_provides`, `declared_missing`, duplicates), the assembly (`segments`), the
+/// after-check (`check_merge`) and the shard scan (`shard_verify`), so "present in the final
+/// file" means what "defined in a piece" meant and a README's PROVIDES is judged by the same
+/// reading everywhere (VA-097: one rule, one place). JavaScript: `function name(`, `class Name`,
+/// `const/let/var name = function|(…) =>|async`, `a.b.c = function|(…) =>`, object-literal
+/// methods `name(…) {` and `name: function(`/`name: (…) =>`; and at the piece's TOP LEVEL only,
+/// `const/let/var name [= …]` holding anything else (state or a constant) and `a.b = …` (an
+/// installed name — `window.vs7 = { toggleBrush, onBrushChange }`). A `const` inside a body is a
+/// local, not what the module provides, so indentation decides: a local read as a definition
+/// would be a "duplicate" across shards and a "dropped" name after every merge. Python:
+/// `def`/`async def`/`class`, and top-level `NAME = …`. Other languages: `fn`/`func` heads.
 pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symbol> {
     let mut out: Vec<Symbol> = Vec::new();
     // JS object-literal depth, so `{ pick, brush }` shorthand PROPERTIES are recorded — flagged
@@ -2256,7 +2955,8 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
     // conforming). A text scan would also count `// TODO drawBrush`; this arm records only
     // property positions.
     let mut object_depth: i32 = 0;
-    let mut push = |name: &str, params: Option<String>, line: usize, shorthand: bool| {
+    let mut push = |name: &str, params: Option<String>, line: usize, kind: SymbolKind| {
+        let shorthand = kind == SymbolKind::Reference;
         let name = name.trim_end_matches('.').to_string();
         if name.is_empty() || JS_KEYWORDS.contains(&name.as_str()) {
             return;
@@ -2266,6 +2966,9 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             // supplies the signature (the property is the export, the function is its signature).
             Some(existing) => {
                 if !shorthand {
+                    if existing.shorthand {
+                        existing.kind = kind;
+                    }
                     existing.shorthand = false;
                     if existing.params.is_empty() {
                         if let Some(p) = params.filter(|p| !p.is_empty()) {
@@ -2276,9 +2979,11 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             }
             None => out.push(Symbol {
                 name,
-                // A class or a property has no parameter list — empty MEANS empty (fallback gate).
+                // A class, a constant, state or a property has no parameter list — empty MEANS
+                // empty (fallback gate).
                 params: params.unwrap_or_default(),
                 line,
+                kind,
                 shorthand,
             }),
         }
@@ -2289,17 +2994,37 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             continue;
         }
         let line = i + 1;
+        let top_level = raw.len() == t.len();
         match lang {
             super::TargetLang::Python => {
                 for head in ["async def ", "def ", "class "] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            let params = if head == "class " {
-                                None
+                            let (params, kind) = if head == "class " {
+                                (None, SymbolKind::Class)
                             } else {
-                                params_after(rest)
+                                (params_after(rest), SymbolKind::Function)
                             };
-                            push(name, params, line, false);
+                            push(name, params, line, kind);
+                        }
+                    }
+                }
+                // Module-level `NAME = …` / `NAME: T = …` — state or a constant the module
+                // provides; an indented assignment is a local or an attribute, not a definition.
+                if top_level {
+                    if let Some(name) = ident_at(t).filter(|n| !n.contains('.')) {
+                        let after = t.split_at(name.len()).1.trim_start();
+                        let after = match after.strip_prefix(':') {
+                            Some(annotated) => match annotated.find('=') {
+                                Some(eq) => annotated.split_at(eq).1,
+                                None => "",
+                            },
+                            None => after,
+                        };
+                        if let Some(rhs) = after.strip_prefix('=') {
+                            if !rhs.starts_with('=') {
+                                push(name, None, line, state_kind(name, "", rhs.trim_start()));
+                            }
                         }
                     }
                 }
@@ -2312,7 +3037,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                 for head in ["fn ", "func "] {
                     if let Some(rest) = core.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            push(name, params_after(rest), line, false);
+                            push(name, params_after(rest), line, SymbolKind::Function);
                         }
                     }
                 }
@@ -2340,7 +3065,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                         })
                     {
                         for prop in props {
-                            push(prop, None, line, true);
+                            push(prop, None, line, SymbolKind::Reference);
                         }
                     }
                 }
@@ -2358,7 +3083,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                                 && after_params(after)
                                     .is_some_and(|r| r.trim_start().starts_with('{'))
                             {
-                                push(name, params_after(after), line, false);
+                                push(name, params_after(after), line, SymbolKind::Function);
                             }
                             rest = cand.split_at(name.len()).1;
                         }
@@ -2378,40 +3103,73 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                 ] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            push(name, params_after(rest), line, false);
+                            push(name, params_after(rest), line, SymbolKind::Function);
                         }
                     }
                 }
-                // const name = function | (…) => | async (…) => | x =>
-                for head in ["const ", "let ", "var ", "export const "] {
+                for head in ["class ", "export class ", "export default class "] {
+                    if let Some(rest) = t.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            push(name, None, line, SymbolKind::Class);
+                        }
+                    }
+                }
+                // const name = function | (…) => | async (…) => | x =>   → a function;
+                // top-level const/let/var holding anything else (or nothing yet) → state/constant.
+                for head in [
+                    "const ",
+                    "let ",
+                    "var ",
+                    "export const ",
+                    "export let ",
+                    "export var ",
+                ] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
                             let after = rest.split_at(name.len()).1.trim_start();
-                            if let Some(rhs) = after.strip_prefix('=') {
-                                let rhs = rhs.trim_start();
-                                let is_fn = rhs.starts_with("function")
-                                    || rhs.starts_with("async")
-                                    || (rhs.contains("=>")
-                                        && (rhs.starts_with('(') || ident_at(rhs).is_some()));
-                                if is_fn {
-                                    push(name, params_after(rhs), line, false);
+                            let rhs = after
+                                .strip_prefix('=')
+                                .filter(|r| !r.starts_with('='))
+                                .map(str::trim_start);
+                            match rhs {
+                                Some(rhs)
+                                    if rhs.starts_with("function")
+                                        || rhs.starts_with("async")
+                                        || (rhs.contains("=>")
+                                            && (rhs.starts_with('(')
+                                                || ident_at(rhs).is_some())) =>
+                                {
+                                    push(name, params_after(rhs), line, SymbolKind::Function);
                                 }
+                                _ if top_level && !name.contains('.') => {
+                                    push(
+                                        name,
+                                        None,
+                                        line,
+                                        state_kind(name, head, rhs.unwrap_or("")),
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                     }
                 }
-                // a.b.c = function | (…) =>   (assignment of a function to a dotted path)
+                // a.b.c = function | (…) =>   (assignment of a function to a dotted path); a
+                // top-level `a.b = <anything else>` installs a name (`window.vs7 = {…}`) → state.
                 if let Some(name) = ident_at(t) {
                     if name.contains('.') {
                         let after = t.split_at(name.len()).1.trim_start();
                         if let Some(rhs) = after.strip_prefix('=') {
                             let rhs = rhs.trim_start();
-                            if !rhs.starts_with('=')
-                                && (rhs.starts_with("function")
+                            if !rhs.starts_with('=') {
+                                if rhs.starts_with("function")
                                     || rhs.starts_with("async")
-                                    || rhs.contains("=>"))
-                            {
-                                push(name, params_after(rhs), line, false);
+                                    || rhs.contains("=>")
+                                {
+                                    push(name, params_after(rhs), line, SymbolKind::Function);
+                                } else if top_level {
+                                    push(name, None, line, SymbolKind::State);
+                                }
                             }
                         }
                     }
@@ -2422,14 +3180,14 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                             && after_params(after)
                                 .is_some_and(|rest| rest.trim_start().starts_with('{'))
                         {
-                            push(name, params_after(after), line, false);
+                            push(name, params_after(after), line, SymbolKind::Function);
                         } else if let Some(rhs) = after.strip_prefix(':') {
                             let rhs = rhs.trim_start();
                             if rhs.starts_with("function")
                                 || rhs.starts_with("async")
                                 || (rhs.starts_with('(') && rhs.contains("=>"))
                             {
-                                push(name, params_after(rhs), line, false);
+                                push(name, params_after(rhs), line, SymbolKind::Function);
                             }
                         }
                     }
@@ -2438,6 +3196,42 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
         }
     }
     out
+}
+
+/// Constant or state, for a non-function module-level binding — a LABEL for the brief, never a
+/// gate. A `const` with a scalar literal (number, string, boolean, null), or an UPPER_SNAKE name
+/// bound to anything but a container, is a constant; a container or an instance (`{…}`, `[…]`,
+/// `new Set()` — r6e's `const S = {yaw, pitch…}` and `VS` are the module's STATE whatever their
+/// case), `let`/`var`, a Python module-level object — is state.
+fn state_kind(name: &str, head: &str, rhs: &str) -> SymbolKind {
+    let rhs_value = rhs.trim_end_matches([';', ',']).trim();
+    let container = rhs_value.starts_with(['{', '['])
+        || rhs_value.starts_with("new ")
+        || rhs_value.starts_with("new(");
+    let upper_snake = !container
+        && !rhs_value.is_empty()
+        && name.chars().any(|c| c.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    let scalar = rhs_value.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.')
+        || rhs_value.starts_with(['"', '\'', '`'])
+        || [
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "True",
+            "False",
+            "None",
+        ]
+        .iter()
+        .any(|lit| rhs_value.split([' ', ';', ',']).next() == Some(lit));
+    if upper_snake || (head.trim_start_matches("export ") == "const " && scalar) {
+        SymbolKind::Constant
+    } else {
+        SymbolKind::State
+    }
 }
 
 fn last_segment(name: &str) -> &str {
@@ -2482,6 +3276,10 @@ pub(super) struct ShardDossier {
     pub(super) pieces: Vec<(String, Option<String>, Vec<Symbol>)>,
     /// Merger files this shard wrote directly (its ledger row's `wrote_final`, S10(3)).
     pub(super) wrote_final: Vec<String>,
+    /// README PROVIDES items (verbatim) no piece in the folder DEFINES — promises, not deliveries
+    /// (DESIGN-SPLIT-V2 §3). Each is `shard_provides_unbacked` at the merger's dispatch and a GAP
+    /// in its brief, never a delivered part. An item naming no symbol at all is unbacked too.
+    pub(super) provides_unbacked: Vec<String>,
 }
 
 /// A shard task's ledger row as `write_task_ledger` left it — None when the row was never written
@@ -2500,13 +3298,28 @@ impl ShardDossier {
             .flat_map(|(_, _, s)| s.iter())
             .filter(|s| !s.shorthand)
     }
-    fn provides_or_defines(&self, name: &str) -> bool {
+    /// A DEFINITION in a piece — `extract_symbols`' rule, the one `check_merge` uses on the final
+    /// file. A README's PROVIDES claim is not this (v1's `provides_or_defines` let a claim stand in
+    /// for the code; r6e's eight README-only shards would have "provided" every export).
+    fn defines_name(&self, name: &str) -> bool {
         self.defines().any(|s| same_symbol(name, &s.name))
-            || self.note.as_ref().is_some_and(|n| {
-                n.provides
-                    .iter()
-                    .any(|p| ident_at(p).is_some_and(|i| same_symbol(name, i)))
-            })
+    }
+
+    /// The README's PROVIDES items no piece backs — by identifier (`ident_at`, the same reading
+    /// the assumptions use); an item with no identifier names nothing a piece could define.
+    fn unbacked_provides(&self) -> Vec<String> {
+        match &self.note {
+            Some(n) => n
+                .provides
+                .iter()
+                .filter(|p| !ident_at(p).is_some_and(|i| self.defines_name(i)))
+                .cloned()
+                .collect(),
+            // No README → no PROVIDES claims → nothing to back; the README's absence itself rode
+            // `merge_note_missing` at the shard's completion and `readmes_missing` here, so empty
+            // MEANS empty (fallback gate).
+            None => Vec::new(),
+        }
     }
 }
 
@@ -2532,6 +3345,13 @@ pub(super) struct MergeDossier {
     /// (final file, bytes, writer shard id — None = not recorded in the ledger): files already on
     /// disk at the merger's dispatch that no merge wrote (S10(3), `shard_wrote_final_file`).
     pub(super) final_on_disk: Vec<(String, u64, Option<String>)>,
+    /// (shared state, shard ids) — states more than one README's WRITES names (split v2 §4).
+    pub(super) shared_state_writers: Vec<(String, Vec<String>)>,
+    /// (shard, ASSUMES item, its candidate names) — assumptions the DECLARED interface does not
+    /// cover: no export they name, no declared shared-state root (split v2 §5). Coordination
+    /// outside the declaration, met by a sibling or not; measured so the declaration can be judged
+    /// before it moves into synthesis's own call.
+    pub(super) interface_leaks: Vec<(String, String, Vec<String>)>,
 }
 
 fn candidate_names(item: &str) -> Vec<String> {
@@ -2620,7 +3440,10 @@ pub(super) async fn build_merge_dossier(
             // An unreadable piece (non-UTF-8, a permission error) is SAID — never rendered as
             // "parses — no definitions found" (fallback gate, S12-D).
             let (verdict, symbols) = match std::fs::read_to_string(&path) {
-                Ok(src) => (parse_piece(&path).await, extract_symbols(&src, lang)),
+                Ok(src) => (
+                    parse_piece(&path).await,
+                    extract_symbols(&src, lang_for_path(&n, lang)),
+                ),
                 Err(e) => (Some(format!("unreadable: {e}")), Vec::new()),
             };
             pieces.push((format!("{folder}/{n}"), verdict, symbols));
@@ -2635,7 +3458,13 @@ pub(super) async fn build_merge_dossier(
                 Some(row) => string_list(&row["wrote_final"]),
                 None => Vec::new(),
             },
+            provides_unbacked: Vec::new(),
         });
+    }
+    // PROVIDES MUST BE BACKED (DESIGN-SPLIT-V2 §3): a README item with no definition behind it
+    // is recorded per shard; the brief lists it under GAPS and the dispatch says it by name.
+    for sh in shards.iter_mut() {
+        sh.provides_unbacked = sh.unbacked_provides();
     }
     // duplicates: a name defined in two shards
     let mut by_name: Vec<(String, Vec<String>)> = Vec::new();
@@ -2679,12 +3508,16 @@ pub(super) async fn build_merge_dossier(
                 }
             }
         }
-        if !found && !shards.iter().any(|sh| sh.provides_or_defines(&e.name)) {
+        // A DEFINITION or nothing: a README's PROVIDES claim with no piece behind it is a promise
+        // (`provides_unbacked`), and a promised export is a GAP the merger must fill — v1 let the
+        // claim stand in for the code (DESIGN-SPLIT-V2 §3).
+        if !found {
             declared_missing.push(e.name.clone());
         }
     }
     let mut assumptions_unmet = Vec::new();
     let mut unfinished = Vec::new();
+    let mut interface_leaks: Vec<(String, String, Vec<String>)> = Vec::new();
     // An assumption about the DECLARED shared state (`S.dirty` when the declaration names `S`)
     // is met by the declaration — the merger reconciles the shape; only a name no sibling
     // provides and no declaration carries is unmet.
@@ -2700,7 +3533,7 @@ pub(super) async fn build_merge_dossier(
             for a in &n.assumes {
                 let names = candidate_names(a);
                 let met = |nm: &String| {
-                    shards.iter().any(|o| o.provides_or_defines(nm))
+                    shards.iter().any(|o| o.defines_name(nm))
                         || nm
                             .split('.')
                             .next()
@@ -2708,6 +3541,29 @@ pub(super) async fn build_merge_dossier(
                 };
                 if !names.is_empty() && !names.iter().any(met) {
                     assumptions_unmet.push((sh.id.clone(), a.clone()));
+                }
+                // INTERFACE LEAK (split v2 §5): does the DECLARATION cover this assumption — an
+                // export it names (any word of it, `same_symbol`) or a declared shared-state root?
+                // If not, the shards coordinated outside the declaration, whether or not a sibling
+                // happens to define the name; a prose assumption naming nothing is a leak with no
+                // names. Measured, never refused.
+                let mentions: Vec<&str> = a
+                    .split(|c: char| c.is_whitespace() || ",;:\"'()[]{}`".contains(c))
+                    .filter(|t| !t.is_empty())
+                    .chain(names.iter().map(String::as_str))
+                    .collect();
+                let covered = mentions.iter().any(|m| {
+                    merger
+                        .interface
+                        .exports
+                        .iter()
+                        .any(|e| same_symbol(&e.name, m))
+                        || m.split('.')
+                            .next()
+                            .is_some_and(|root| declared_roots.iter().any(|r| r == root))
+                });
+                if !covered {
+                    interface_leaks.push((sh.id.clone(), a.clone(), names.clone()));
                 }
             }
             for u in &n.unfinished {
@@ -2725,7 +3581,7 @@ pub(super) async fn build_merge_dossier(
     let mut final_file_symbols = Vec::new();
     for f in module_files {
         if let Ok(src) = std::fs::read_to_string(root.join(f)) {
-            final_file_symbols.extend(extract_symbols(&src, lang));
+            final_file_symbols.extend(extract_symbols(&src, lang_for_path(f, lang)));
         }
     }
     // S10(3): a final file on disk BEFORE any merge was written by someone else — a shard that
@@ -2745,6 +3601,12 @@ pub(super) async fn build_merge_dossier(
             final_on_disk.push((f.clone(), meta.len(), writer));
         }
     }
+    let shared_state_writers = shared_state_writers(
+        &shards
+            .iter()
+            .filter_map(|sh| sh.note.as_ref().map(|n| (sh.id.clone(), n.writes.clone())))
+            .collect::<Vec<_>>(),
+    );
     MergeDossier {
         module: merger.module.clone(),
         files: module_files.to_vec(),
@@ -2758,10 +3620,49 @@ pub(super) async fn build_merge_dossier(
         prior_merge,
         final_file_symbols,
         final_on_disk,
+        shared_state_writers,
+        interface_leaks,
     }
 }
 
 impl MergeDossier {
+    /// One `shard_provides_unbacked{module, task_id, shard, names}` per shard whose README promises
+    /// a symbol no piece defines (DESIGN-SPLIT-V2 §3) — said at the merger's dispatch; the brief
+    /// lists the same names under GAPS.
+    pub(super) fn provides_unbacked_events(&self, task_id: &str) -> Vec<serde_json::Value> {
+        self.shards
+            .iter()
+            .filter(|s| !s.provides_unbacked.is_empty())
+            .map(|s| {
+                serde_json::json!({
+                    "event": "shard_provides_unbacked",
+                    "module": self.module,
+                    "task_id": task_id,
+                    "shard": s.id,
+                    "names": s.provides_unbacked,
+                })
+            })
+            .collect()
+    }
+
+    /// One `interface_leak{module, task_id, shard, assumption, names}` per ASSUMES item the declared
+    /// interface does not cover (split v2 §5) — at the merger's dispatch, an instrument only.
+    pub(super) fn interface_leak_events(&self, task_id: &str) -> Vec<serde_json::Value> {
+        self.interface_leaks
+            .iter()
+            .map(|(shard, assumption, names)| {
+                serde_json::json!({
+                    "event": "interface_leak",
+                    "module": self.module,
+                    "task_id": task_id,
+                    "shard": shard,
+                    "assumption": assumption,
+                    "names": names,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn summary_json(&self) -> serde_json::Value {
         serde_json::json!({
             "module": self.module,
@@ -2774,6 +3675,9 @@ impl MergeDossier {
             "signature_disagreements": self.signature_disagreements.iter().map(|(n, d, f, s)| serde_json::json!({"symbol": n, "declared": d, "found_params": f, "shard": s})).collect::<Vec<_>>(),
             "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
+            "provides_unbacked": self.shards.iter().filter(|s| !s.provides_unbacked.is_empty()).map(|s| serde_json::json!({"shard": s.id, "names": s.provides_unbacked})).collect::<Vec<_>>(),
+            "shared_state_writers": self.shared_state_writers.iter().map(|(st, sh)| serde_json::json!({"state": st, "shards": sh})).collect::<Vec<_>>(),
+            "interface_leaks": self.interface_leaks.iter().map(|(sh, a, names)| serde_json::json!({"shard": sh, "assumes": a, "names": names})).collect::<Vec<_>>(),
             "second_pass": self.prior_merge.is_some(),
             "final_on_disk": self.final_on_disk.iter().map(|(f, n, w)| serde_json::json!({"path": f, "bytes": n, "written_by_shard": w})).collect::<Vec<_>>(),
         })
@@ -2781,8 +3685,11 @@ impl MergeDossier {
 
     /// The MERGER BRIEF: a NUMBERED, SPECIFIC task list from the dossier — never "merge the
     /// module". Mihai 11:4x: "the merge node should actually be judicious in its work not just go
-    /// in and copy… the task of doing the merge needs to be specific".
-    pub(super) fn merger_brief(&self, cwd: &str) -> String {
+    /// in and copy… the task of doing the merge needs to be specific". With an `assembly` (code
+    /// placed the definitions, DESIGN-SPLIT-V2 §1) the job is the GLUE and retyping a definition
+    /// is named a defect; without one (no parser for the module's extension, no piece of its
+    /// language) the v1 shell-assembly item stands.
+    pub(super) fn merger_brief(&self, cwd: &str, assembly: Option<&assembly::Assembly>) -> String {
         let final_files = self
             .files
             .iter()
@@ -2805,15 +3712,41 @@ impl MergeDossier {
                 .collect::<Vec<_>>()
                 .join("; ")
         };
-        let mut s = format!(
-            "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
-             its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
-             from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
-             fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
-            module = self.module,
-            n = self.shards.len(),
-            dir = SHARDS_DIR,
-        );
+        let mut s = match assembly {
+            Some(a) => format!(
+                "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk}. CODE HAS ALREADY ASSEMBLED their \
+                 definitions into `{cwd}/{asm}`: {defs} definition block(s) from {pieces} piece(s) — {by_if} \
+                 placed in the declared interface's order, {unk} appended after it because no export names \
+                 them — with {imports} import line(s) first and {stmts} top-level statement(s) (state, \
+                 wiring, boot) collected at the end, each under its `shard:` line. YOUR JOB IS THE GLUE, NOT \
+                 THE DEFINITIONS: start FROM the assembled file (copy `{cwd}/{asm}` to {final_files} and \
+                 edit there), write what only the merger can — the imports/exports, the shared state's ONE \
+                 initialisation, the wiring and event plumbing, every UNFINISHED item and every GAP numbered \
+                 below — and produce {final_files}. THE PIECES ARE ALREADY IN PLACE: copying or retyping a \
+                 definition is FORBIDDEN and is a defect (a retyped definition is where pieces get dropped \
+                 and signatures drift); change a definition's body only where a numbered task says so.\n\n",
+                module = self.module,
+                n = self.shards.len(),
+                dir = SHARDS_DIR,
+                asm = a.path,
+                defs = a.definitions,
+                pieces = a.pieces,
+                by_if = a.ordered_by_interface,
+                unk = a.appended_unknown.len(),
+                imports = a.imports,
+                stmts = a.statements.iter().map(|(_, n)| n).sum::<usize>(),
+            ),
+            None => format!(
+                "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
+                 from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
+                 fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
+                module = self.module,
+                n = self.shards.len(),
+                dir = SHARDS_DIR,
+            ),
+        };
         if let Some(prior) = &self.prior_merge {
             s.push_str(&format!(
                 "SECOND PASS: you already merged once; the gaps you sent out have landed as new shards \
@@ -2841,7 +3774,7 @@ impl MergeDossier {
                     .iter()
                     .map(|x| {
                         if x.params.is_empty() {
-                            format!("`{}`", x.name)
+                            format!("`{}`{}", x.name, x.kind.suffix())
                         } else {
                             format!("`{}({})`", x.name, x.params)
                         }
@@ -2862,8 +3795,23 @@ impl MergeDossier {
                 ));
             }
             if let Some(n) = &sh.note {
-                if !n.provides.is_empty() {
-                    s.push_str(&format!("  PROVIDES: {}\n", n.provides.join("; ")));
+                let backed: Vec<&str> = n
+                    .provides
+                    .iter()
+                    .filter(|p| !sh.provides_unbacked.contains(*p))
+                    .map(String::as_str)
+                    .collect();
+                if !backed.is_empty() {
+                    s.push_str(&format!(
+                        "  PROVIDES (each backed by a definition above): {}\n",
+                        backed.join("; ")
+                    ));
+                }
+                if !sh.provides_unbacked.is_empty() {
+                    s.push_str(&format!(
+                        "  PROVIDES WITHOUT A DEFINITION (promises — GAPS below, not deliveries): {}\n",
+                        sh.provides_unbacked.join("; ")
+                    ));
                 }
                 if !n.assumes.is_empty() {
                     s.push_str(&format!("  ASSUMES: {}\n", n.assumes.join("; ")));
@@ -2902,14 +3850,35 @@ impl MergeDossier {
             ));
         }
         for (name, owners) in &self.duplicates {
-            item(&mut s, format!(
-                "`{name}` is defined in shards {} — keep ONE definition (or rename if they are different things), name which and why under KEPT/DROPPED.",
-                owners.iter().map(|o| format!("`{o}`")).collect::<Vec<_>>().join(" and ")
-            ));
+            item(
+                &mut s,
+                format!(
+                    "`{name}` is defined in shards {} — {}name which and why under KEPT/DROPPED.",
+                    owners
+                        .iter()
+                        .map(|o| format!("`{o}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    if assembly.is_some() {
+                        format!(
+                        "BOTH definitions are in the assembled file under `{}` markers; keep ONE (delete the other, or rename if they are different things) and ",
+                        assembly::DUPLICATE_MARKER
+                    )
+                    } else {
+                        "keep ONE definition (or rename if they are different things), ".to_string()
+                    }
+                ),
+            );
         }
         for (name, declared, found, shard) in &self.signature_disagreements {
             item(&mut s, format!(
                 "`{name}` is declared `{declared}` but shard `{shard}` defines it with `({found})` — reconcile to the DECLARED signature and fix every caller."
+            ));
+        }
+        for (state, writers) in &self.shared_state_writers {
+            item(&mut s, format!(
+                "shared state `{state}` is WRITTEN by shards {} (their READMEs' WRITES) — the declaration names ONE writer per state; keep one shard's writes and route the other's through it (or the declared API), and say which under KEPT/DROPPED.",
+                writers.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(" and ")
             ));
         }
         for (shard, assumption) in &self.assumptions_unmet {
@@ -2921,6 +3890,16 @@ impl MergeDossier {
             item(&mut s, format!(
                 "`{name}` is DECLARED and defined by no shard — write it yourself if it is small, else send it out (MERGE_GAP below)."
             ));
+        }
+        for sh in &self.shards {
+            if !sh.provides_unbacked.is_empty() {
+                item(&mut s, format!(
+                    "shard `{}`'s README PROVIDES {} but no piece in `{cwd}/{}` DEFINES them — promises, not deliveries: they are GAPS. Write each yourself if it is small, else send it out (MERGE_GAP below); never list one under KEPT.",
+                    sh.id,
+                    sh.provides_unbacked.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", "),
+                    sh.folder
+                ));
+            }
         }
         for (shard, u) in &self.unfinished {
             item(&mut s, format!(
@@ -2947,13 +3926,30 @@ impl MergeDossier {
         } else {
             self.interface.layout.join(" → ")
         };
-        item(&mut s, format!(
-            "ASSEMBLE {final_files} in the declared order — {order}. ASSEMBLE, DON'T RETYPE: build the file by \
-             concatenating the piece files in that order with the shell (e.g. `cat <piece> <piece> … > <file>`), \
-             then EDIT the result for the glue — one shared state object, one definition per name, the exports \
-             wired exactly as declared, no leftover duplicate. Retyping 40 KB from memory is the slowest and least \
-             faithful path and is how pieces get silently dropped."
-        ));
+        match assembly {
+            Some(a) => item(&mut s, format!(
+                "WRITE THE GLUE into {final_files}, starting from `{cwd}/{asm}` — never from memory. The declared \
+                 layout is {order}: move each collected top-level statement to where the layout puts it (state \
+                 before its first use, boot last), initialise the shared state ONCE, wire the exports exactly as \
+                 declared, add the imports/exports the final file needs, and remove every `{marker}` marker by \
+                 keeping ONE definition per name. Glue the engine measured as needed: {glue}. Do not retype a \
+                 definition block; do not `cat` the piece folders again — they are already in the assembled file.",
+                asm = a.path,
+                marker = assembly::DUPLICATE_MARKER,
+                glue = if a.glue_needed.is_empty() {
+                    "none measured beyond the layout".to_string()
+                } else {
+                    a.glue_needed.join(", ")
+                },
+            )),
+            None => item(&mut s, format!(
+                "ASSEMBLE {final_files} in the declared order — {order}. ASSEMBLE, DON'T RETYPE: build the file by \
+                 concatenating the piece files in that order with the shell (e.g. `cat <piece> <piece> … > <file>`), \
+                 then EDIT the result for the glue — one shared state object, one definition per name, the exports \
+                 wired exactly as declared, no leftover duplicate. Retyping 40 KB from memory is the slowest and least \
+                 faithful path and is how pieces get silently dropped."
+            )),
+        }
         item(&mut s, format!(
             "Check the assembled file parses (`node --check` / `python3 -m py_compile` / the language's equivalent) \
              and that EVERY declared export exists in it with the declared signature; then write \
@@ -2980,10 +3976,13 @@ impl MergeDossier {
 pub(super) fn merger_missing_hint(merger: &MergerOf, missing: &[String]) -> String {
     format!(
         "You finished WITHOUT writing module `{module}`'s final file(s): {files}. You are the MERGER: \
-         ASSEMBLE them from the shard pieces your numbered brief names — `cat` the piece files in the \
-         declared order into the final file, then edit the glue — and write `{dir}/{module}/{readme}` \
+         ASSEMBLE them from the shard pieces your numbered brief names — start from the engine's \
+         `{dir}/{module}/{asm}.<ext>` when the brief names one (the definitions are already in place; \
+         copy it over the final file and write the glue), else `cat` the piece files in the declared \
+         order into the final file, then edit the glue — and write `{dir}/{module}/{readme}` \
          ({fields}). Do not retype the module from memory and do not explore beyond the piece folders; \
          the pieces are the source.",
+        asm = assembly::ASSEMBLED_STEM,
         module = merger.module,
         files = missing.join(", "),
         dir = SHARDS_DIR,
@@ -2998,9 +3997,12 @@ pub(super) fn merger_missing_hint(merger: &MergerOf, missing: &[String]) -> Stri
 pub(super) fn merger_owner_body() -> String {
     "YOU ARE THE MERGER. Your task statement below is a NUMBERED list built by the engine from the \
      shards' pieces and READMEs — work it in order. READ every piece folder and README it names \
-     (that reading IS the job, not over-reading); ASSEMBLE the final file(s) by concatenating the \
-     piece files in the declared order with the shell, then EDIT the result for the glue; never \
-     retype the module from memory — the pieces are the source. Check the assembled file parses, \
+     (that reading IS the job, not over-reading). When the list names an ASSEMBLED file the engine \
+     built, START FROM IT: the definitions are already in place, you write the GLUE (imports/exports, \
+     the shared state's one initialisation, wiring, the unfinished items and gaps) and never retype a \
+     definition — a retyped definition is a defect. Otherwise ASSEMBLE the final file(s) by \
+     concatenating the piece files in the declared order with the shell, then EDIT the result for the \
+     glue. Never retype the module from memory — the pieces are the source. Check the assembled file parses, \
      every declared export is DEFINED with its declared signature, write MERGE.md (KEPT / DROPPED \
      / FILLED / SENT_OUT), and put one `MERGE_GAP:` line per gap you send out in your final \
      message.\n\n"
@@ -3065,13 +4067,17 @@ pub(super) fn gap_specs(
                 .filter(|p| !p.is_empty())
                 .unwrap_or_else(|| format!("(no README) pieces in {}", sh.folder)),
             sections: Vec::new(),
-            // No README → no PROVIDES list; the absence itself rode `merge_note_missing` at the
-            // shard's completion, so empty MEANS empty here (fallback gate).
-            provides: sh
-                .note
-                .as_ref()
-                .map(|n| n.provides.clone())
-                .unwrap_or_default(),
+            // No README → no PROVIDES / WRITES lists; the absence itself rode `merge_note_missing`
+            // at the shard's completion, so empty MEANS empty here (fallback gate) — one match, no
+            // silent default.
+            provides: match sh.note.as_ref() {
+                Some(n) => n.provides.clone(),
+                None => Vec::new(),
+            },
+            writes: match sh.note.as_ref() {
+                Some(n) => n.writes.clone(),
+                None => Vec::new(),
+            },
         })
         .collect();
     let base = merger.shards.len();
@@ -3085,6 +4091,8 @@ pub(super) fn gap_specs(
                 merger.module
             ),
             sections: Vec::new(),
+            // a gap shard fills a hole; it writes no shared state of its own (split v2 §4)
+            writes: Vec::new(),
             provides: candidate_names(g),
         })
         .collect();
@@ -3121,6 +4129,59 @@ pub(super) fn gap_specs(
             }
         })
         .collect()
+}
+
+/// Does a merger's `MERGE_GAP:` line name a README's UNFINISHED item — a symbol the item names,
+/// or either text inside the other? The rule `check_merge` reconciles `gaps_open` with;
+/// `predictable_gaps` reads it the other way round.
+pub(super) fn gap_covers_unfinished(gap: &str, unfinished: &str) -> bool {
+    candidate_names(unfinished)
+        .iter()
+        .any(|n| gap.contains(n.as_str()))
+        || gap.contains(unfinished)
+        || unfinished.contains(gap)
+        || shares_identifier(gap, unfinished)
+}
+
+/// Two free-text items name the same thing when they share an identifier-shaped token (a name a
+/// piece could define: alphabetic start, >= 4 chars, case kept) — "drawBrush(ids) — dim
+/// non-members" and "drawBrush the non-members" share `drawBrush` without either being a
+/// substring of the other. Plain English words are excluded by the identifier shape (a camelCase
+/// or snake_case token, or one holding a digit).
+fn shares_identifier(a: &str, b: &str) -> bool {
+    let idents = |t: &str| -> Vec<String> {
+        t.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| w.chars().count() >= 4)
+            .filter(|w| w.chars().next().is_some_and(|c| c.is_alphabetic()))
+            .filter(|w| {
+                w.contains('_')
+                    || w.chars().any(|c| c.is_ascii_digit())
+                    || (w.chars().any(|c| c.is_uppercase()) && w.chars().any(|c| c.is_lowercase()))
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    let la = idents(a);
+    idents(b).iter().any(|w| la.contains(w))
+}
+
+/// Split v2 §5, the other half of the interface-fidelity measure: a gap the merger sent out that
+/// some README had ALREADY listed UNFINISHED was predictable before the merger started — the
+/// shard said it and the engine could have dispatched it beside the merge; a gap no README foresaw
+/// was discovered at the merge. (gap, shard, unfinished item) per predictable gap.
+pub(super) fn predictable_gaps(
+    dossier: &MergeDossier,
+    gaps: &[String],
+) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for g in gaps {
+        for (sh, u) in &dossier.unfinished {
+            if gap_covers_unfinished(g, u) {
+                out.push((g.clone(), sh.clone(), u.clone()));
+            }
+        }
+    }
+    out
 }
 
 /// What CODE found after the merge (MILD — reported, never a refusal).
@@ -3177,7 +4238,7 @@ pub(super) async fn check_merge(
             None => {}
         }
         if let Ok(src) = std::fs::read_to_string(&path) {
-            final_symbols.extend(extract_symbols(&src, lang));
+            final_symbols.extend(extract_symbols(&src, lang_for_path(f, lang)));
             final_text.push_str(&src);
             final_text.push('\n');
         }
@@ -3249,11 +4310,7 @@ pub(super) async fn check_merge(
     }
     let mut gaps_open = Vec::new();
     for (sh, u) in &dossier.unfinished {
-        let sent = gaps_sent.iter().any(|g| {
-            candidate_names(u).iter().any(|n| g.contains(n))
-                || g.contains(u.as_str())
-                || u.contains(g.as_str())
-        });
+        let sent = gaps_sent.iter().any(|g| gap_covers_unfinished(g, u));
         let filled = merge_fields.get(2).is_some_and(|items| {
             items.iter().any(|it| {
                 it.contains(u.as_str()) || candidate_names(u).iter().any(|n| it.contains(n))
@@ -3383,9 +4440,47 @@ impl GooseAgentDispatcher {
             o.insert("task_id".into(), req.task_id.clone().into());
         }
         self.events.write_value(ev);
+        for unbacked in dossier.provides_unbacked_events(&req.task_id) {
+            self.events.write_value(unbacked);
+        }
+        for writers in shared_state_writer_events(
+            &merger.module,
+            &dossier.shared_state_writers,
+            "readme",
+            Some(&req.task_id),
+        ) {
+            self.events.write_value(writers);
+        }
+        for leak in dossier.interface_leak_events(&req.task_id) {
+            self.events.write_value(leak);
+        }
+        // ASSEMBLE, THEN GLUE (DESIGN-SPLIT-V2 §1): code places every piece's definitions in the
+        // declared order before the model runs, and the brief names the glue as the merger's job.
+        // Unavailable — no parser for the module's extension, no piece of its language — is SAID
+        // and the v1 brief stands; nothing is faked.
+        let outcome = assembly::assemble(root, &dossier);
+        let assembled = match &outcome {
+            assembly::AssemblyOutcome::Assembled(a) => {
+                for dup in assembly::duplicate_events(&merger.module, &req.task_id, a) {
+                    self.events.write_value(dup);
+                }
+                self.events
+                    .write_value(assembly::assembled_event(&merger.module, &req.task_id, a));
+                Some(a.as_ref())
+            }
+            assembly::AssemblyOutcome::Unavailable { ext, reason } => {
+                self.events.write_value(assembly::unavailable_event(
+                    &merger.module,
+                    &req.task_id,
+                    ext,
+                    reason,
+                ));
+                None
+            }
+        };
         format!(
             "{}{}",
-            dossier.merger_brief(&root.display().to_string()),
+            dossier.merger_brief(&root.display().to_string(), assembled),
             req.description
         )
     }
@@ -3406,6 +4501,17 @@ impl GooseAgentDispatcher {
         let dossier = build_merge_dossier(root, merger, &req.owned_files, lang).await;
         let gaps = parse_merge_gaps(final_text);
         let follow_ups = gap_specs(merger, &req.owned_files, &req.description, &dossier, &gaps);
+        // Split v2 §5: a gap a README already listed UNFINISHED was predictable before the merge.
+        for (item, shard, unfinished) in predictable_gaps(&dossier, &gaps) {
+            self.events.write_value(serde_json::json!({
+                "event": "merge_gap_predictable",
+                "module": merger.module,
+                "task_id": req.task_id,
+                "item": item,
+                "shard": shard,
+                "unfinished": unfinished,
+            }));
+        }
         // The DOOR emits `merge_gap` once it has validated and spliced the shard; this is the
         // REQUEST as the merger phrased it (S12-F: one event per fact, never two for one).
         for (spec, gap) in follow_ups.iter().zip(gaps.iter()) {
@@ -3563,6 +4669,208 @@ mod merger_tests {
         );
     }
 
+    const R6G_README: &str = include_str!("shards/fixtures/r6g_labels_brush/README.md");
+    const R6G_PIECES: [(&str, &str); 5] = [
+        (
+            "brushApi.js",
+            include_str!("shards/fixtures/r6g_labels_brush/brushApi.js"),
+        ),
+        (
+            "brushState.js",
+            include_str!("shards/fixtures/r6g_labels_brush/brushState.js"),
+        ),
+        (
+            "formatAmount.js",
+            include_str!("shards/fixtures/r6g_labels_brush/formatAmount.js"),
+        ),
+        (
+            "labelCandidates.js",
+            include_str!("shards/fixtures/r6g_labels_brush/labelCandidates.js"),
+        ),
+        (
+            "updateLabels.js",
+            include_str!("shards/fixtures/r6g_labels_brush/updateLabels.js"),
+        ),
+    ];
+
+    fn r6g_dossier(readme: &str) -> ShardDossier {
+        ShardDossier {
+            id: "viz-engine-labels-brush".into(),
+            folder: ".swarm/shards/viz-engine/labels-brush".into(),
+            readme_present: true,
+            note: parse_shard_note(readme),
+            pieces: R6G_PIECES
+                .iter()
+                .map(|(n, src)| {
+                    (
+                        format!(".swarm/shards/viz-engine/labels-brush/{n}"),
+                        None,
+                        extract_symbols(src, super::super::TargetLang::TypeScript),
+                    )
+                })
+                .collect(),
+            wrote_final: Vec::new(),
+            provides_unbacked: Vec::new(),
+        }
+    }
+
+    /// VA-097, on r6g's REAL labels-brush shard (five `.js` pieces + README, verbatim in
+    /// `shards/fixtures/r6g_labels_brush/`): the function-only rule read 6 of its 13 PROVIDES as
+    /// unbacked — `LABEL_W`, `brushSet`, `uBrushActive`, `dimFlags`, `brushCallbacks`,
+    /// `window.vs7` — and the glue brief told the merger to write each itself beside "retyping a
+    /// definition is FORBIDDEN". Module-level state, constants and installed names ARE
+    /// definitions; a local inside a body is not; a name no piece defines stays unbacked.
+    #[test]
+    fn r6g_labels_brush_every_provides_is_backed_and_a_missing_name_stays_unbacked() {
+        let d = r6g_dossier(R6G_README);
+        let note = d.note.as_ref().expect("the README parses");
+        assert_eq!(note.provides.len(), 13, "{:?}", note.provides);
+        let defined: Vec<(&str, SymbolKind)> =
+            d.defines().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            d.unbacked_provides(),
+            Vec::<String>::new(),
+            "defined: {defined:?}"
+        );
+        for (name, kind) in [
+            ("brushSet", SymbolKind::State),
+            ("uBrushActive", SymbolKind::State),
+            ("dimFlags", SymbolKind::State),
+            ("brushCallbacks", SymbolKind::State),
+            ("labelHost", SymbolKind::State),
+            ("labelEls", SymbolKind::State),
+            ("LABEL_W", SymbolKind::Constant),
+            ("LABEL_DY", SymbolKind::Constant),
+            ("window.vs7", SymbolKind::State),
+            ("toggleBrush", SymbolKind::Function),
+            ("formatAmount", SymbolKind::Function),
+        ] {
+            assert!(defined.contains(&(name, kind)), "{name}: {defined:?}");
+        }
+        let toggle = d.defines().find(|s| s.name == "toggleBrush").unwrap();
+        assert_eq!(toggle.params, "id");
+        // A promise no piece keeps is still a promise.
+        let with_gap = format!("{R6G_README}PROVIDES: drawBrush(ids) — dims non-members\n");
+        let unbacked = r6g_dossier(&with_gap).unbacked_provides();
+        assert_eq!(unbacked.len(), 1, "{unbacked:?}");
+        assert!(unbacked[0].starts_with("drawBrush"), "{unbacked:?}");
+        // Locals inside a body are not what the module provides — indentation decides.
+        let local = extract_symbols(
+            "function f() {\n  const local = 1;\n  let acc = [];\n  S.dirty = true;\n}\nS.ready = true;\nclass Store {}\n",
+            super::super::TargetLang::TypeScript,
+        );
+        let names: Vec<(&str, SymbolKind)> =
+            local.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("f", SymbolKind::Function),
+                ("S.ready", SymbolKind::State),
+                ("Store", SymbolKind::Class)
+            ],
+            "{local:?}"
+        );
+        let py = extract_symbols(
+            "PORT = 8000\napp = Flask(__name__)\nDEBUG: bool = False\nif PORT == 8000:\n    x = 1\ndef run():\n    y = 2\n",
+            super::super::TargetLang::Python,
+        );
+        let names: Vec<(&str, SymbolKind)> = py.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("PORT", SymbolKind::Constant),
+                ("app", SymbolKind::State),
+                ("DEBUG", SymbolKind::Constant),
+                ("run", SymbolKind::Function)
+            ],
+            "{py:?}"
+        );
+    }
+
+    /// The same rule through the dossier, the assembly and the after-check on r6g's shard: a
+    /// declaration listing its state and constants has no false `declared_missing` (only the
+    /// truly absent `drawBrush`), the assembly places `brushSet`/`dimFlags` as DEFINITIONS in
+    /// the interface's order, and a final file holding the pieces drops nothing.
+    #[tokio::test]
+    async fn r6g_labels_brush_state_and_constants_are_definitions_through_every_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let folder = ".swarm/shards/viz-engine/labels-brush";
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+        std::fs::write(root.join(folder).join("README.md"), R6G_README).unwrap();
+        let mut final_text = String::new();
+        for (n, src) in R6G_PIECES {
+            std::fs::write(root.join(folder).join(n), src).unwrap();
+            final_text.push_str(src);
+            final_text.push('\n');
+        }
+        let export = |name: &str, kind: &str, signature: &str| DeclaredExport {
+            name: name.into(),
+            kind: kind.into(),
+            signature: signature.into(),
+            purpose: "r6g".into(),
+        };
+        let merger = MergerOf {
+            module: "viz-engine".into(),
+            shards: vec!["viz-engine-labels-brush".into()],
+            folders: vec![folder.into()],
+            interface: ModuleInterface {
+                exports: vec![
+                    export("brushSet", "constant", "brushSet: Set<string>"),
+                    export("dimFlags", "constant", "dimFlags: Uint8Array"),
+                    export("uBrushActive", "state", "uBrushActive: number"),
+                    export("LABEL_W", "constant", "LABEL_W: number"),
+                    export("toggleBrush", "function", "toggleBrush(id) -> void"),
+                    export(
+                        "formatAmount",
+                        "function",
+                        "formatAmount(amountMinor, currency) -> string",
+                    ),
+                    export(
+                        "window.vs7",
+                        "object",
+                        "window.vs7 = {toggleBrush, onBrushChange}",
+                    ),
+                    export("drawBrush", "function", "drawBrush(ids) -> void"),
+                ],
+                shared_state: String::new(),
+                layout: Vec::new(),
+            },
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(d.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(d.shards[0].provides_unbacked, Vec::<String>::new());
+        assert!(d.duplicates.is_empty(), "{:?}", d.duplicates);
+        match assembly::assemble(root, &d) {
+            assembly::AssemblyOutcome::Assembled(a) => {
+                assert_eq!(a.declared_missing, vec!["drawBrush".to_string()]);
+                assert_eq!(a.ordered_by_interface, 7, "{a:?}");
+                let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
+                let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("{needle}"));
+                assert!(at("const brushSet = new Set()") < at("const dimFlags = new Uint8Array"));
+                assert!(at("const dimFlags = new Uint8Array") < at("function toggleBrush(id)"));
+                assert!(text.contains("— brushSet\n"), "{text}");
+            }
+            other => panic!("{other:?}"),
+        }
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(root.join("web/viz.js"), &final_text).unwrap();
+        let check = check_merge(root, &d, super::super::TargetLang::TypeScript, &[]).await;
+        assert_eq!(check.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            check.declared_present.len(),
+            7,
+            "{:?}",
+            check.declared_present
+        );
+        assert!(check.dropped.is_empty(), "{:?}", check.dropped);
+        let brief = d.merger_brief("/run", None);
+        assert!(brief.contains("`brushSet` (state)"), "{brief}");
+        assert!(brief.contains("`LABEL_W` (constant)"), "{brief}");
+    }
+
     /// r6c's web-viz as S1 splits it (render / pick-camera / labels-brush-api), with the pieces the
     /// archived viz.js would have produced: `buildScene` in two shards (the archive's hoisted stub
     /// and its real body), `pick` defined with `(x, y)` against the declared `(sx, sy)`, the
@@ -3643,7 +4951,7 @@ mod merger_tests {
             )]
         );
         assert!(d.prior_merge.is_none());
-        let brief = d.merger_brief("/run");
+        let brief = d.merger_brief("/run", None);
         assert!(brief.contains("1. `buildScene` is defined in shards `web-viz-render` and `web-viz-pick-camera` — keep ONE"), "{brief}");
         assert!(brief.contains("2. `window.vs7dbg.pick` is declared `pick(sx, sy) -> {id, index} | null` but shard `web-viz-pick-camera` defines it with `(x, y)`"), "{brief}");
         assert!(brief.contains("3. shard `web-viz-labels-brush-api` ASSUMES \"scene.points is an array\" and no shard provides it"), "{brief}");
@@ -3728,7 +5036,7 @@ mod merger_tests {
         let d2 =
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert!(d2.prior_merge.is_some());
-        assert!(d2.merger_brief("/run").contains("SECOND PASS"));
+        assert!(d2.merger_brief("/run", None).contains("SECOND PASS"));
         assert!(d2
             .final_file_symbols
             .iter()
@@ -3903,7 +5211,7 @@ mod merger_tests {
                 "the merger frame must not say: {banned}"
             );
         }
-        assert!(body.contains("never retype the module from memory"));
+        assert!(body.contains("retype the module from memory"));
         assert!(MERGER_READING_RULE.contains("READ EVERY PIECE FOLDER AND README"));
         // The frame in run_task_inner takes the merger arms (source tripwire: the prompt is
         // assembled inside the dispatcher and has no seam a unit test can render).
@@ -3918,7 +5226,8 @@ mod merger_tests {
             "the merger's reading rule"
         );
         // extract_symbols: shorthand properties inside an object literal are MENTIONS of the
-        // exported names (S14-1) — recorded, flagged, and outranked by a real definition.
+        // exported names (S14-1) — recorded, flagged, and outranked by a real definition; the
+        // top-level `window.vs7dbg = {…}` and `const x = {…}` that hold them are STATE (VA-097).
         let syms = extract_symbols(
             "window.vs7dbg = {\n  pick,\n  brush, layout\n};\nconst x = { if, y };\nfunction brush(ids) {}\n",
             super::super::TargetLang::TypeScript,
@@ -3929,10 +5238,17 @@ mod merger_tests {
             .collect();
         assert_eq!(
             names,
-            vec![("pick", true), ("brush", false), ("layout", true)],
+            vec![
+                ("window.vs7dbg", false),
+                ("pick", true),
+                ("brush", false),
+                ("layout", true),
+                ("x", false)
+            ],
             "{syms:?}"
         );
-        assert_eq!(syms[1].params, "ids");
+        assert_eq!(syms[0].kind, SymbolKind::State);
+        assert_eq!(syms[2].params, "ids");
     }
 
     /// S14-1/2 (the S12 refuter's residual holes). A multi-line export object `{ pick,\n drawBrush,\n }`
@@ -4094,7 +5410,7 @@ mod merger_tests {
                 Some("web-viz-render".to_string())
             )]
         );
-        let brief = d.merger_brief("/cwd");
+        let brief = d.merger_brief("/cwd", None);
         assert!(
             brief.contains("shard `web-viz-render` wrote `web/viz.js` DIRECTLY (21 bytes)"),
             "{brief}"
@@ -4116,7 +5432,7 @@ mod merger_tests {
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert_eq!(d.final_on_disk, vec![("web/viz.js".to_string(), 21, None)]);
         assert!(d
-            .merger_brief("/cwd")
+            .merger_brief("/cwd", None)
             .contains("no shard's ledger row claims it"));
 
         std::fs::write(
@@ -4127,7 +5443,380 @@ mod merger_tests {
         let d =
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert!(d.final_on_disk.is_empty(), "{:?}", d.final_on_disk);
-        assert!(d.merger_brief("/cwd").contains("SECOND PASS"));
-        assert!(d.merger_brief("/cwd").contains("NOBODY has written"));
+        assert!(d.merger_brief("/cwd", None).contains("SECOND PASS"));
+        assert!(d.merger_brief("/cwd", None).contains("NOBODY has written"));
+    }
+
+    /// DESIGN-SPLIT-V2 §1: with pieces on disk, CODE assembles them first and the brief's job is
+    /// the GLUE — it names the assembled file, forbids retyping a definition, lists the measured glue
+    /// classes and never orders a `cat` of the piece folders; the duplicate item points at the
+    /// `MERGE_DUPLICATE` markers. Without an assembly (`None`) the v1 shell-assembly item stands. The
+    /// dossier is built under a Python-target run (r6e's seam: `web/viz.js` in a Python run) and the
+    /// `.js` pieces still yield their definitions — the piece's extension decides its language.
+    #[tokio::test]
+    async fn an_assembled_module_briefs_the_merger_for_glue_not_retyping() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "const S = { yaw: 0 };\nfunction buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/pick", &[
+            ("pick.js", "function buildScene(data) { /* stub */ }\nwindow.vs7dbg.pick = function (sx, sy) { return null; };\n"),
+            ("README.md", "PROVIDES: window.vs7dbg.pick(sx, sy)\nASSUMES: none\nUNFINISHED: inertia coast stop\nCHECKED_WITH: node --check pick.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-pick".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/pick".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d = build_merge_dossier(root, &merger, &files, super::super::TargetLang::Python).await;
+        assert!(
+            d.shards[0].defines().any(|s| s.name == "buildScene"),
+            "a .js piece under a Python-target run still yields its definitions: {:?}",
+            d.shards[0].pieces
+        );
+        assert_eq!(
+            d.duplicates,
+            vec![(
+                "buildScene".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-pick".to_string()]
+            )]
+        );
+        let assembly::AssemblyOutcome::Assembled(a) = assembly::assemble(root, &d) else {
+            panic!("two js pieces assemble");
+        };
+        assert_eq!(a.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            a.glue_needed,
+            vec![
+                "shared_state_init",
+                "wiring",
+                "duplicates",
+                "gaps",
+                "unfinished"
+            ]
+        );
+        let brief = d.merger_brief("/run", Some(&a));
+        assert!(
+            brief.contains("CODE HAS ALREADY ASSEMBLED their definitions into `/run/.swarm/shards/web-viz/ASSEMBLED.js`: 4 definition block(s) from 2 piece(s) — 3 placed in the declared interface's order, 1 appended after it"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("YOUR JOB IS THE GLUE, NOT THE DEFINITIONS"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("copying or retyping a definition is FORBIDDEN and is a defect"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("1. `buildScene` is defined in shards `web-viz-render` and `web-viz-pick` — BOTH definitions are in the assembled file under `MERGE_DUPLICATE` markers; keep ONE"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("WRITE THE GLUE into `web/viz.js`, starting from `/run/.swarm/shards/web-viz/ASSEMBLED.js` — never from memory."),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("Glue the engine measured as needed: shared_state_init, wiring, duplicates, gaps, unfinished."),
+            "{brief}"
+        );
+        assert!(
+            !brief.contains("ASSEMBLE, DON'T RETYPE") && !brief.contains("`cat <piece>"),
+            "the v1 cat-the-pieces item is gone once code assembled: {brief}"
+        );
+        let v1 = d.merger_brief("/run", None);
+        assert!(v1.contains("ASSEMBLE, DON'T RETYPE"), "{v1}");
+        assert!(!v1.contains("CODE HAS ALREADY ASSEMBLED"), "{v1}");
+        let ev = assembly::assembled_event("web-viz", "web-viz", &a);
+        assert_eq!(ev["path"], ".swarm/shards/web-viz/ASSEMBLED.js");
+        assert_eq!(ev["duplicates"][0]["name"], "buildScene");
+        assert!(merger_missing_hint(&merger, &files).contains("ASSEMBLED.<ext>"));
+        assert!(merger_owner_body().contains("START FROM IT"));
+    }
+
+    /// DESIGN-SPLIT-V2 §3, PROVIDES must be BACKED: `render` defines `buildScene` and promises
+    /// `initGL()` and `drawBrush(ids)` it never wrote (r6e's shape in miniature — its eight shards
+    /// promised in READMEs and delivered no piece). The dossier names the two promises per shard,
+    /// the declared `drawBrush` is MISSING (a claim no longer stands in for the code), a sibling's
+    /// ASSUMES about `initGL` is UNMET (a promise provides nothing), the brief lists the promises
+    /// under GAPS and not under PROVIDES, the dispatch says them by name, and the assembly's glue
+    /// list carries `unbacked_provides`.
+    #[tokio::test]
+    async fn a_readme_provides_without_a_definition_is_unbacked_and_briefed_as_a_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "function buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\n- initGL()\n- drawBrush(ids)\n- the render loop\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/labels", &[
+            ("labels.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: initGL() has run before updateLabels\nUNFINISHED: none\nCHECKED_WITH: node --check labels.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-labels".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/labels".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.shards[0].provides_unbacked,
+            vec!["initGL()", "drawBrush(ids)", "the render loop"],
+            "{:?}",
+            d.shards[0]
+        );
+        assert!(d.shards[1].provides_unbacked.is_empty());
+        assert!(
+            d.declared_missing.contains(&"drawBrush".to_string()),
+            "a promised export is missing, not provided: {:?}",
+            d.declared_missing
+        );
+        assert_eq!(
+            d.assumptions_unmet,
+            vec![(
+                "web-viz-labels".to_string(),
+                "initGL() has run before updateLabels".to_string()
+            )],
+            "a promise meets no assumption"
+        );
+        let events = d.provides_unbacked_events("web-viz");
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "shard_provides_unbacked");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["shard"], "web-viz-render");
+        assert_eq!(
+            events[0]["names"],
+            serde_json::json!(["initGL()", "drawBrush(ids)", "the render loop"])
+        );
+        assert_eq!(
+            d.summary_json()["provides_unbacked"][0]["shard"],
+            "web-viz-render"
+        );
+        let brief = d.merger_brief("/run", None);
+        assert!(
+            brief.contains("  PROVIDES (each backed by a definition above): buildScene(data)\n"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("  PROVIDES WITHOUT A DEFINITION (promises — GAPS below, not deliveries): initGL(); drawBrush(ids); the render loop\n"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("shard `web-viz-render`'s README PROVIDES `initGL()`, `drawBrush(ids)`, `the render loop` but no piece in `/run/.swarm/shards/web-viz/render` DEFINES them — promises, not deliveries: they are GAPS."),
+            "{brief}"
+        );
+        let gap_item = brief.find("'s README PROVIDES").unwrap();
+        let missing_item = brief
+            .find("`drawBrush` is DECLARED and defined by no shard")
+            .unwrap();
+        assert!(missing_item < gap_item, "promises follow the declared gaps");
+        let assembly::AssemblyOutcome::Assembled(a) = assembly::assemble(root, &d) else {
+            panic!("js assembles");
+        };
+        assert!(
+            a.glue_needed.contains(&"unbacked_provides".to_string()),
+            "{:?}",
+            a.glue_needed
+        );
+    }
+
+    /// Split v2 §4 at the merger's dispatch: two READMEs WRITE `S.brush` → the dossier names the
+    /// state and both shards, the brief carries a numbered reconcile item, the summary and the
+    /// `readme`-sourced event say the same; a lone writer says nothing.
+    #[tokio::test]
+    async fn two_readme_writers_of_one_state_reach_the_dossier_and_the_brief() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "function buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\nWRITES: S.brush — Set<id>\n- instanceData: Float32Array stride 8\n"),
+        ]);
+        mk(".swarm/shards/web-viz/brush", &[
+            ("brush.js", "function drawBrush(ids) {}\n"),
+            ("README.md", "PROVIDES: drawBrush(ids)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check brush.js\nWRITES: S.brush: the brushed ids\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-brush".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/brush".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.shared_state_writers,
+            vec![(
+                "S.brush".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-brush".to_string()]
+            )]
+        );
+        assert_eq!(
+            d.summary_json()["shared_state_writers"][0]["state"],
+            "S.brush"
+        );
+        let brief = d.merger_brief("/run", None);
+        assert!(
+            brief.contains("shared state `S.brush` is WRITTEN by shards `web-viz-render` and `web-viz-brush` (their READMEs' WRITES) — the declaration names ONE writer per state"),
+            "{brief}"
+        );
+        let events = shared_state_writer_events(
+            &merger.module,
+            &d.shared_state_writers,
+            "readme",
+            Some("web-viz"),
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["source"], "readme");
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/brush/README.md"),
+            "PROVIDES: drawBrush(ids)\nASSUMES: S.brush is a Set<id>\nUNFINISHED: none\nCHECKED_WITH: node --check brush.js\nWRITES: none\n",
+        )
+        .unwrap();
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert!(
+            d.shared_state_writers.is_empty(),
+            "{:?}",
+            d.shared_state_writers
+        );
+        assert!(!d
+            .merger_brief("/run", None)
+            .contains("is WRITTEN by shards"));
+    }
+
+    /// Split v2 §5, the interface-fidelity instruments. `labels` ASSUMES four things: `S.dirty`
+    /// (the declared shared state's root — covered), "buildScene fills geoCPU" (a declared export
+    /// named in prose — covered), "scene.points is an array" (no export, no declared root — a
+    /// LEAK even though `pick` defines `points`: coordination outside the declaration, which the
+    /// unmet-assumptions check cannot see) and "the canvas is square" (a prose leak with no
+    /// names). The gap the merger sends out for `pick`'s UNFINISHED "inertia coast stop" was
+    /// PREDICTABLE — the README said it; `drawBrush(ids)` was discovered at the merge.
+    #[tokio::test]
+    async fn an_assumption_outside_the_declaration_leaks_and_an_unfinished_gap_is_predictable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/pick", &[
+            ("pick.js", "function readPickAt(sx, sy) {}\nfunction points() {}\n"),
+            ("README.md", "PROVIDES: readPickAt(sx, sy)\n- points()\nASSUMES: none\nUNFINISHED: inertia coast stop\nCHECKED_WITH: node --check pick.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/labels", &[
+            ("labels.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: S.dirty is cleared by the render loop\n- buildScene fills geoCPU before labels run\n- scene.points is an array\n- the canvas is square\nUNFINISHED: none\nCHECKED_WITH: node --check labels.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-pick".into(), "web-viz-labels".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/pick".into(),
+                ".swarm/shards/web-viz/labels".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(
+            d.interface_leaks,
+            vec![
+                (
+                    "web-viz-labels".to_string(),
+                    "scene.points is an array".to_string(),
+                    vec!["scene.points".to_string()]
+                ),
+                (
+                    "web-viz-labels".to_string(),
+                    "the canvas is square".to_string(),
+                    vec![]
+                ),
+            ],
+            "{:?}",
+            d.interface_leaks
+        );
+        assert!(
+            d.assumptions_unmet.is_empty(),
+            "`points` is defined by pick and prose names nothing — unmet sees neither leak: {:?}",
+            d.assumptions_unmet
+        );
+        let events = d.interface_leak_events("web-viz");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event"], "interface_leak");
+        assert_eq!(events[0]["module"], "web-viz");
+        assert_eq!(events[0]["shard"], "web-viz-labels");
+        assert_eq!(events[0]["assumption"], "scene.points is an array");
+        assert_eq!(events[0]["names"], serde_json::json!(["scene.points"]));
+        assert_eq!(events[1]["names"], serde_json::json!([]));
+        assert_eq!(
+            d.summary_json()["interface_leaks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let gaps = parse_merge_gaps(
+            "Merged.\nMERGE_GAP: inertia coast stop — the coast must stop under 2 deg/s\nMERGE_GAP: drawBrush(ids) — dim non-members to 0.30\n",
+        );
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(
+            predictable_gaps(&d, &gaps),
+            vec![(
+                "inertia coast stop — the coast must stop under 2 deg/s".to_string(),
+                "web-viz-pick".to_string(),
+                "inertia coast stop".to_string()
+            )]
+        );
+        assert!(gap_covers_unfinished(
+            "drawBrush(ids) — dim non-members",
+            "drawBrush the non-members"
+        ));
+        assert!(!gap_covers_unfinished(
+            "drawBrush(ids) — dim non-members to 0.30",
+            "inertia coast stop"
+        ));
     }
 }

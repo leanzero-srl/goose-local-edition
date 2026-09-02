@@ -101,7 +101,7 @@ merger's dossier lists the file as one more piece to reconcile (`final_on_disk`)
 signatures, shared state, layout — plan text, never a stub file) and the module brief whole; the module task
 becomes the MERGER (keeps the final file, depends on every shard). At dispatch a shard's YOU OWN is its FOLDER
 (`SHARD_OWNED_HEADER`, `shard_owner_body`: pieces + README, parse-check, never the final file); at completion
-`record_shard_note` reads the README's four fields — `PROVIDES / ASSUMES / UNFINISHED / CHECKED_WITH` — into
+`record_shard_note` reads the README's five fields — `PROVIDES / WRITES / ASSUMES / UNFINISHED / CHECKED_WITH` (WRITES names the shared state this shard is the single writer of; split v2, 27f917b8d) — into
 `shard_note{…, source, pieces}` and the task's ledger row (`shard_note`, `handoffs` via `parse_handoffs`); a
 shard without one is a loud `merge_note_missing{module, shard, reason}` (the deliverable gate's own retry,
 no new count). `TaskSpec`/`DispatchRequest` carry `shard_of` / `merger_of`; the scheduler copies them at claim.

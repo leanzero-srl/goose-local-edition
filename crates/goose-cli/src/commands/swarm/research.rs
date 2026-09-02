@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use super::decisions::{self, DecisionState, PlanDecision, DECISION_SLICE};
 use super::findings::FINDING_PATH_EXTS;
-use super::opener::{OpenOutput, OpenQuestion, QuestionKind};
-use super::orientation::{children_of, heading_key, top_level};
+use super::opener::{OpenOutput, OpenQuestion, QuestionKind, SpecCite};
+use super::orientation::{children_of, heading_key, request_file_label, top_level};
 use super::research_plan::{content_words, decision_ids};
 use super::spec_surface::{
     mount_prefixes, path_token_named, resource_word_named, resource_words, spec_surface_rows,
@@ -25,8 +25,9 @@ use super::{EventSink, SpecSection};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
-/// activity key and the brief partition all share. `kind`/`cite`/`fact` are the opener's own
-/// words about it (the question contract in opener.rs), carried so the row can record them.
+/// activity key and the brief partition all share. `kind`/`cite` are the opener's own words
+/// about it (the question contract in opener.rs), carried so the row can record them; there is
+/// no fact text (VA-095) — a lookup's answer is rendered from its cite (`land_spec_fact`).
 #[derive(Clone, Debug)]
 pub(super) struct ResearchQuestion {
     pub(crate) slice: String,
@@ -34,7 +35,6 @@ pub(super) struct ResearchQuestion {
     pub(crate) question: String,
     pub(crate) kind: QuestionKind,
     pub(crate) cite: String,
-    pub(crate) fact: String,
 }
 
 impl ResearchQuestion {
@@ -45,7 +45,6 @@ impl ResearchQuestion {
             question: q.text.clone(),
             kind: q.kind,
             cite: q.cite.clone(),
-            fact: q.fact.clone(),
         }
     }
 
@@ -58,7 +57,6 @@ impl ResearchQuestion {
             question: line.to_string(),
             kind: QuestionKind::Design,
             cite: String::new(),
-            fact: String::new(),
         }
     }
 }
@@ -120,18 +118,19 @@ pub(crate) struct ResearchRow {
 }
 
 impl ResearchRow {
-    /// A SPEC FACT as a terminal row: the opener answered the question from the request and cited
-    /// where. `status` is answered — the brief, the ledger block and the snowball all read it as
-    /// settled — while `origin` says NO LANE RAN, so `research_answered` is never emitted for it
-    /// (the per-question dispatched/answered accounting stays a lane count). `model` is empty
-    /// and `secs` 0 honestly: nothing was called.
-    pub(super) fn spec_fact(q: &ResearchQuestion) -> Self {
+    /// A SPEC FACT as a terminal row: the opener cited where the request answers the question
+    /// and `rendered` is those lines, rendered by code (`land_spec_fact`, VA-095). `status` is
+    /// answered — the brief, the ledger block and the snowball all read it as settled — while
+    /// `origin` says NO LANE RAN, so `research_answered` is never emitted for it (the
+    /// per-question dispatched/answered accounting stays a lane count). `model` is empty and
+    /// `secs` 0 honestly: nothing was called.
+    pub(super) fn spec_fact(q: &ResearchQuestion, rendered: &str) -> Self {
         Self {
             slice: q.slice.clone(),
             q_index: q.q_index,
             question: q.question.clone(),
             status: RESEARCH_ANSWERED.to_string(),
-            answer: q.fact.clone(),
+            answer: rendered.to_string(),
             reason: None,
             detail: None,
             raised: Vec::new(),
@@ -600,6 +599,9 @@ pub(super) struct ConsumedSections {
     pub(super) called_into: String,
     /// Rule (c): the cross-cutting top-level sections, for every slice that did not claim them.
     pub(super) cross_cutting: String,
+    /// Every section the two blocks above render, as indices into the orientation's sections —
+    /// so the brief can tell which spec lines it already carries in full (VA-096).
+    pub(super) indices: Vec<usize>,
 }
 
 /// SPEC SECTIONS ROUTE TO CONSUMERS, not only to owners — THE ONE helper beside
@@ -846,6 +848,7 @@ pub(super) fn consumed_spec_sections(
     ConsumedSections {
         called_into: render(&called),
         cross_cutting: render(&broadcast),
+        indices: called.iter().chain(broadcast.iter()).copied().collect(),
     }
 }
 
@@ -1427,10 +1430,10 @@ pub(super) fn emit_research_planned(
 
 /// The opener's per-question disposition, one event per question when the fan's queue is built
 /// (the loud channel for the fan cut): `kind` and `cite` as the opener wrote them (`cite` null
-/// when it named none), whether a `fact` came with it, and what the engine did — `fact` (a
-/// cited spec fact, no lane), `dispatch` (rides a lane), or `resumed` (its mini already
-/// existed). A `spec_lookup` dispatched with `cite: null` is the opener saying it searched and
-/// found nothing — visible here, never silently dropped.
+/// when it named none) and what the engine did — `fact` (a cited spec fact rendered from the
+/// request, no lane), `dispatch` (rides a lane), or `resumed` (its mini already existed). A
+/// `spec_lookup` dispatched with a grep in `cite` is the opener saying it searched and found
+/// nothing — visible here, never silently dropped.
 pub(super) fn emit_question_disposition(
     events: &dyn EventSink,
     q: &ResearchQuestion,
@@ -1442,10 +1445,58 @@ pub(super) fn emit_question_disposition(
         "q_index": q.q_index,
         "kind": q.kind.as_str(),
         "cite": (!q.cite.is_empty()).then(|| q.cite.clone()),
-        "fact": !q.fact.is_empty(),
         "disposition": disposition,
         "question": q.question.chars().take(200).collect::<String>(),
     }));
+}
+
+/// VA-095: the SPEC FACT is rendered BY CODE from the cite — the opener writes no answer text.
+/// `q.cite` names a line range of the request file (`SpecCite`, the form `is_cited_fact` tested)
+/// and those lines of `spec` — the same bytes `persist_request_text` wrote, so the cite's line
+/// numbers are this text's — become the row's answer verbatim; the row is persisted as the
+/// `spec_fact` mini and `spec_fact_rendered{slice, q_index, cite, lines, span}` says how much of
+/// the file it is. A cite past the file, across two sections or over blank lines only is NOT a
+/// fact location: `spec_fact_unrenderable{slice, q_index, cite, reason}` names it and `None`
+/// sends the question down a lane (disposition `dispatch`) — loud, never a silent drop and never
+/// an invented answer. r6g's motivating emit: 80 facts written by the model (62 over 200 chars,
+/// max 471) in a 61-minute opener on one node while two idled.
+pub(super) fn land_spec_fact(
+    root: &Path,
+    spec: &str,
+    q: &ResearchQuestion,
+    events: &dyn EventSink,
+) -> Option<ResearchRow> {
+    let rendered = match SpecCite::parse(&q.cite) {
+        None => Err("no_line_range"),
+        Some(cite) => cite.render(spec).map(|text| (cite, text)),
+    };
+    match rendered {
+        Ok((cite, text)) => {
+            emit_question_disposition(events, q, "fact");
+            events.write_value(serde_json::json!({
+                "event": "spec_fact_rendered",
+                "slice": q.slice,
+                "q_index": q.q_index,
+                "cite": q.cite,
+                "lines": text.lines().count(),
+                "span": cite.span(),
+            }));
+            let row = ResearchRow::spec_fact(q, &text);
+            persist_research_row(root, events, &row);
+            Some(row)
+        }
+        Err(reason) => {
+            events.write_value(serde_json::json!({
+                "event": "spec_fact_unrenderable",
+                "slice": q.slice,
+                "q_index": q.q_index,
+                "cite": q.cite,
+                "reason": reason,
+            }));
+            emit_question_disposition(events, q, "dispatch");
+            None
+        }
+    }
 }
 
 /// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
@@ -1696,6 +1747,7 @@ pub(super) fn briefs_from_slices(
 ) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
+    let label = request_file_label();
     let every_claim: Vec<&[String]> = opened
         .slices
         .iter()
@@ -1731,6 +1783,37 @@ pub(super) fn briefs_from_slices(
         .map(|(slice_index, sl)| {
             let mut brief = sl.objective.clone();
             let files = files_from_objective(&sl.objective);
+            // VA-008: the sections this slice CALLS INTO and the rules that bind every slice —
+            // the same helper the research prompt uses, here with the plan-wide view (every
+            // slice's claims, this slice's declared files). Computed before the facts block so
+            // the facts can see every section this brief splices in full (VA-096).
+            let consumed = armed.then(|| {
+                consumed_spec_sections(
+                    &sl.id,
+                    &sl.sections,
+                    &files,
+                    &sl.objective,
+                    &every_claim,
+                    &sections,
+                    events,
+                )
+            });
+            let spliced_sections: Vec<&SpecSection> = if armed {
+                let mut out: Vec<&SpecSection> = sl
+                    .sections
+                    .iter()
+                    .filter_map(|want| {
+                        let key = heading_key(want);
+                        sections.iter().find(|s| heading_key(&s.heading) == key)
+                    })
+                    .collect();
+                if let Some(c) = &consumed {
+                    out.extend(c.indices.iter().map(|i| &sections[*i]));
+                }
+                out
+            } else {
+                Vec::new()
+            };
             // RESEARCH FAN v2: the slice's own questions, partitioned against what the fan
             // settled. A cited SPEC FACT (the opener read the request; no lane ran) renders
             // FIRST, under its own heading, with the cite — the builder can check it against
@@ -1753,12 +1836,39 @@ pub(super) fn briefs_from_slices(
             for (i, q) in sl.questions.iter().enumerate() {
                 match answered.get(&i) {
                     Some(row) if row.origin == ORIGIN_SPEC_FACT => {
-                        facts_block.push_str(&format!(
-                            "\nQ: {}\nFACT: {}\nCITE: {}\n",
-                            q.text,
-                            row.answer.trim_end(),
-                            row.cite
-                        ));
+                        // VA-096: a fact whose cited lines sit INSIDE a section this same brief
+                        // splices in full (claimed, or consumed under VA-008's rules) is a
+                        // POINTER to that section, never a second copy of its lines — r6g's
+                        // opener wrote 80 lookups and each one's lines would land under SPEC
+                        // FACTS and again inside the spliced section (r6c's brief bloat,
+                        // VA-008, in a new coat). A cite outside every spliced section keeps
+                        // its body: that is the cross-slice fact the brief carries nowhere else.
+                        let inside = SpecCite::parse(&row.cite).and_then(|c| {
+                            spliced_sections
+                                .iter()
+                                .find(|s| s.line_start <= c.start && c.end <= s.line_end)
+                        });
+                        match inside {
+                            Some(sec) => {
+                                facts_block.push_str(&format!(
+                                    "\nQ: {}\n→ see the section \"{}\" below ({label}:{}-{})\n",
+                                    q.text, sec.heading, sec.line_start, sec.line_end
+                                ));
+                                events.write_value(serde_json::json!({
+                                    "event": "spec_fact_deduped",
+                                    "slice": sl.id,
+                                    "q_index": i,
+                                    "cite": row.cite,
+                                    "section": sec.heading,
+                                }));
+                            }
+                            None => facts_block.push_str(&format!(
+                                "\nQ: {}\nFACT: {}\nCITE: {}\n",
+                                q.text,
+                                row.answer.trim_end(),
+                                row.cite
+                            )),
+                        }
                     }
                     Some(row) => {
                         // C2(b): a covered row says WHOSE answer this is — the original mini —
@@ -1814,7 +1924,9 @@ pub(super) fn briefs_from_slices(
                 brief.push_str(&format!(
                     "\n\nSPEC FACTS (cited) — the opener read these in the request itself; each \
                      names the line or heading it came from, and the request's own text there \
-                     is the authority if the two ever disagree:{facts_block}"
+                     is the authority if the two ever disagree; a fact whose lines sit inside a \
+                     section spliced below points at that section instead of repeating \
+                     it:{facts_block}"
                 ));
             }
             if !answers_block.is_empty() {
@@ -1866,19 +1978,9 @@ pub(super) fn briefs_from_slices(
                          authority over any paraphrase above:{spliced}"
                     ));
                 }
-                // VA-008: the sections this slice CALLS INTO and the rules that bind every
-                // slice — the same helper the research prompt uses, here with the plan-wide
-                // view (every slice's claims, this slice's declared files).
-                let consumed = consumed_spec_sections(
-                    &sl.id,
-                    &sl.sections,
-                    &files,
-                    &sl.objective,
-                    &every_claim,
-                    &sections,
-                    events,
-                );
-                brief.push_str(&consumed_sections_blocks(&consumed));
+                if let Some(consumed) = &consumed {
+                    brief.push_str(&consumed_sections_blocks(consumed));
+                }
             }
             brief.push_str(&slice_decisions_block(
                 plan_decisions,
@@ -3041,15 +3143,16 @@ mod tests {
     /// states outright): a cited spec fact is a terminal row with `origin: spec_fact`, no model,
     /// no seconds; the brief renders it under SPEC FACTS (cited) with its cite, ABOVE the lane
     /// answers, and the question leaves the QUESTIONS block; `research_question_kind` names the
-    /// disposition with the cite; a lookup WITHOUT a fact is not a fact (it dispatches). The
-    /// event funnel never emits `research_answered` for a fact — that count stays a lane count.
+    /// disposition with the cite; a lookup whose cite is a grep is not a fact (it dispatches).
+    /// The event funnel never emits `research_answered` for a fact — that count stays a lane
+    /// count. (VA-095: the row's answer is the cited line as code rendered it, here line 148.)
     #[test]
     fn a_cited_spec_fact_is_a_row_with_no_lane_and_renders_under_its_own_heading() {
+        let line_148 = "`status` filters to one of `settled`, `pending`, `refunded`, `failed`; `currency` to one of `EUR`, `USD`, `JPY`, `KWD`; `sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT).";
         let fact: OpenQuestion = serde_json::from_value(serde_json::json!({
             "question": "Which sort keys does sort=<k> accept and in what direction(s); which status/currency values do the filters accept?",
             "kind": "spec_lookup",
-            "cite": "request.md:148",
-            "fact": "`status` filters to one of `settled`, `pending`, `refunded`, `failed`; `currency` to one of `EUR`, `USD`, `JPY`, `KWD`; `sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT)."
+            "cite": "request.md:148"
         }))
         .unwrap();
         let searched: OpenQuestion = serde_json::from_value(serde_json::json!({
@@ -3060,7 +3163,8 @@ mod tests {
         .unwrap();
         assert!(fact.is_cited_fact() && !searched.is_cited_fact());
         let q1 = ResearchQuestion::of("ledger-api", 1, &fact);
-        let row = ResearchRow::spec_fact(&q1);
+        let row = ResearchRow::spec_fact(&q1, line_148);
+        assert_eq!(row.answer, line_148);
         assert_eq!(row.status, RESEARCH_ANSWERED);
         assert_eq!(row.origin, ORIGIN_SPEC_FACT);
         assert_eq!(row.cite, "request.md:148");
@@ -3078,10 +3182,12 @@ mod tests {
             assert_eq!(ev[0]["event"], "research_question_kind");
             assert_eq!(ev[0]["disposition"], "fact");
             assert_eq!(ev[0]["cite"], "request.md:148");
-            assert_eq!(ev[0]["fact"], true);
+            assert!(
+                ev[0].get("fact").is_none(),
+                "no fact flag: the cite is the fact"
+            );
             assert_eq!(ev[1]["disposition"], "dispatch");
             assert_eq!(ev[1]["kind"], "spec_lookup");
-            assert_eq!(ev[1]["fact"], false);
             assert!(ev[1]["cite"].as_str().unwrap().starts_with("grep -n"));
         }
         let opened = OpenOutput {
@@ -3127,6 +3233,179 @@ mod tests {
             "the settled digest counts the fact: {}",
             briefs[0].settled
         );
+    }
+
+    /// VA-095 at the fan: the SPEC FACT is rendered BY CODE from the cite. A `spec_lookup`
+    /// citing `request.md:5-7` becomes a terminal `spec_fact` row whose answer is those lines of
+    /// the request verbatim (persisted as the mini), with the `fact` disposition and
+    /// `spec_fact_rendered{slice, q_index, cite, lines, span}`; a cite past the file is NOT a
+    /// fact — `spec_fact_unrenderable{…, reason}` names it, the disposition is `dispatch`, no
+    /// mini is written and `None` sends it down a lane. No answer is invented for either.
+    #[test]
+    fn a_spec_fact_is_rendered_from_its_cite_and_an_unrenderable_cite_is_named_and_dispatched() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = "# Title\nintro\n\n## Endpoints\n| Method | Path |\n|---|---|\n\
+                    | GET | /api/items |\n\n## Rules\nThe server MUST answer within 2 seconds.\n";
+        let cited: OpenQuestion = serde_json::from_value(serde_json::json!({
+            "question": "Which method and path list items?", "kind": "spec_lookup",
+            "cite": "request.md:5-7"
+        }))
+        .unwrap();
+        let past: OpenQuestion = serde_json::from_value(serde_json::json!({
+            "question": "What is the boot deadline?", "kind": "spec_lookup",
+            "cite": "request.md:40"
+        }))
+        .unwrap();
+        assert!(
+            cited.is_cited_fact() && past.is_cited_fact(),
+            "both parse as ranges; the file decides"
+        );
+        let sink = ValueSink::default();
+        let q0 = ResearchQuestion::of("ledger-api", 0, &cited);
+        let row = land_spec_fact(dir.path(), spec, &q0, &sink).expect("the range is in the file");
+        assert_eq!(
+            row.answer,
+            "| Method | Path |\n|---|---|\n| GET | /api/items |"
+        );
+        assert_eq!(row.origin, ORIGIN_SPEC_FACT);
+        assert_eq!(row.cite, "request.md:5-7");
+        assert_eq!(row.status, RESEARCH_ANSWERED);
+        assert!(row.model.is_empty() && row.secs == 0);
+        assert_eq!(
+            load_research_mini(dir.path(), "ledger-api", 0)
+                .expect("the fact is persisted as its mini")
+                .answer,
+            row.answer
+        );
+        let q3 = ResearchQuestion::of("ledger-api", 3, &past);
+        assert!(
+            land_spec_fact(dir.path(), spec, &q3, &sink).is_none(),
+            "past the file is not a fact"
+        );
+        assert!(load_research_mini(dir.path(), "ledger-api", 3).is_none());
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_question_kind",
+                "spec_fact_rendered",
+                "spec_fact_unrenderable",
+                "research_question_kind"
+            ],
+            "{ev:?}"
+        );
+        assert_eq!(ev[0]["disposition"], "fact");
+        assert_eq!(ev[1]["slice"], "ledger-api");
+        assert_eq!(ev[1]["q_index"], 0);
+        assert_eq!(ev[1]["cite"], "request.md:5-7");
+        assert_eq!(ev[1]["lines"], 3);
+        assert_eq!(ev[1]["span"], 3);
+        assert_eq!(ev[2]["q_index"], 3);
+        assert_eq!(ev[2]["cite"], "request.md:40");
+        assert_eq!(ev[2]["reason"], "out_of_range");
+        assert_eq!(ev[3]["disposition"], "dispatch");
+    }
+
+    /// VA-096: a spec fact whose cited lines sit INSIDE a section the same brief splices in
+    /// full renders as a POINTER to that section (no FACT body; `spec_fact_deduped` fires); a
+    /// fact cited outside every spliced section keeps its body — the cross-slice fact the brief
+    /// carries nowhere else. r6g's opener wrote 80 lookups (62 over 200 chars); each one's
+    /// lines would otherwise land twice, under SPEC FACTS and inside the spliced section.
+    #[test]
+    fn a_fact_inside_a_spliced_section_points_at_it_and_an_outside_fact_keeps_its_body() {
+        let mut lines: Vec<String> = vec!["The request, unheaded preamble.".into()];
+        lines.extend((2..100).map(|n| format!("preamble line {n}: {}", "lorem ipsum ".repeat(12))));
+        lines.push("# Claimed section".into());
+        lines.extend((101..=140).map(|n| {
+            if n == 115 {
+                "INSIDE-LINE-115 `sort` is one of `created_at`, `-created_at`.".to_string()
+            } else {
+                format!("claimed body line {n}")
+            }
+        }));
+        lines.push("# Other section".into());
+        lines.extend((142..=320).map(|n| {
+            if n == 302 {
+                "OUTSIDE-LINE-302 the health payload carries status ok and a counter.".to_string()
+            } else {
+                format!("other body line {n}")
+            }
+        }));
+        lines.push("# Third section".into());
+        lines.push("third body".into());
+        let spec = lines.join("\n");
+        let sections = spec_sections(&spec);
+        assert!(
+            orientation_armed(&spec, &sections),
+            "the fixture must arm orientation"
+        );
+        let claimed = sections
+            .iter()
+            .find(|s| s.heading == "Claimed section")
+            .unwrap();
+        assert_eq!((claimed.line_start, claimed.line_end), (100, 140));
+        let q = |text: &str, cite: &str| -> OpenQuestion {
+            serde_json::from_value(serde_json::json!({
+                "question": text,
+                "kind": "spec_lookup",
+                "cite": cite
+            }))
+            .unwrap()
+        };
+        let inside = q("Which sort keys does sort accept?", "request.md:111-120");
+        let outside = q("What does the health payload carry?", "request.md:300-305");
+        let rows: Vec<ResearchRow> = [(&inside, 0usize), (&outside, 1)]
+            .iter()
+            .map(|(oq, i)| {
+                let rq = ResearchQuestion::of("core", *i, oq);
+                let text = SpecCite::parse(&oq.cite).unwrap().render(&spec).unwrap();
+                ResearchRow::spec_fact(&rq, &text)
+            })
+            .collect();
+        let opened = OpenOutput {
+            slices: vec![OpenSlice {
+                id: "core".into(),
+                title: "the core".into(),
+                objective: "build `app/core.py`".into(),
+                questions: vec![inside, outside],
+                weight: 3,
+                sections: vec!["Claimed section".into()],
+            }],
+            open_decisions: Vec::new(),
+        };
+        let sink = ValueSink::default();
+        let briefs = briefs_from_slices(&opened, &spec, &rows, &[], &sink);
+        let b = &briefs[0].brief;
+        assert_eq!(b.matches("FACT:").count(), 1, "{b}");
+        assert!(
+            b.contains(
+                "Q: Which sort keys does sort accept?\n→ see the section \"Claimed section\" \
+                 below (request.md:100-140)"
+            ),
+            "{b}"
+        );
+        assert_eq!(
+            b.matches("INSIDE-LINE-115").count(),
+            1,
+            "the section lands once:\n{b}"
+        );
+        assert!(
+            b.contains("FACT: other body line 300\nother body line 301\nOUTSIDE-LINE-302")
+                && b.contains("CITE: request.md:300-305"),
+            "{b}"
+        );
+        assert!(b.contains("### Claimed section"), "{b}");
+        let ev = sink.0.lock().unwrap();
+        let deduped: Vec<&serde_json::Value> = ev
+            .iter()
+            .filter(|e| e["event"] == "spec_fact_deduped")
+            .collect();
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0]["slice"], "core");
+        assert_eq!(deduped[0]["q_index"], 0);
+        assert_eq!(deduped[0]["cite"], "request.md:111-120");
+        assert_eq!(deduped[0]["section"], "Claimed section");
     }
 
     fn row_answered(slice: &str, q_index: usize, answer: &str) -> ResearchRow {
@@ -3195,12 +3474,14 @@ mod tests {
             1,
             &serde_json::from_value(serde_json::json!({
                 "question": "Which sort keys does sort=<k> accept?",
-                "kind": "spec_lookup", "cite": "request.md:148",
-                "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`."
+                "kind": "spec_lookup", "cite": "request.md:148"
             }))
             .unwrap(),
         );
-        let fact = ResearchRow::spec_fact(&api_q1);
+        let fact = ResearchRow::spec_fact(
+            &api_q1,
+            "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`.",
+        );
         let q3 = rq(
             "web-page",
             3,
