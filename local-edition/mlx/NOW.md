@@ -283,3 +283,27 @@ Next after verdict: LEDGER entry + fork the winner (leanzero GitHub, upstream re
 crates/goose-sidecar (authored+committed, build held during scored runs) + swarm.rs EngineAdapter
 via the swarm-surgeon agent + desktop window. Bench instrument fixed twice (req_tps replaces
 decode_tps; RSS sampler fails loud) — first experiments.jsonl row's decode_tps is void.
+
+## 2026-09-02 — the product is GOOSE FLOCK (rename, 92e2aa4c5 + follow-up)
+
+Community feedback: geese come in a FLOCK, not a swarm. Every string a person READS now says
+Flock; every identifier a machine reads is unchanged, deliberately.
+
+  DISPLAY (renamed)  window title / tray "Goose Flock"; sidebar brand "LeanZero Flock"; nav row
+                     "Goose Flock" carrying icons/Goose (NavItem.icon widened from LucideIcon to
+                     React.ComponentType<{className?}>); hub heading "LeanZero Flock" with the
+                     "Flock Settings" tab; provider display name "LeanZero Flock" in the model
+                     selector; all 16 i18n catalogs; README prose; `goose flock` CLI.
+  IDS (unchanged)    `swarm` config key, `.swarm/` run dir, `swarm` provider id, GOOSE_SWARM_* env,
+                     IPC channels, crate/file/module/route names, i18n message KEYS, test ids, and
+                     every model-facing prompt string (golden-formula surface).
+  COMPAT             `goose swarm` is a clap visible_alias of `goose flock` — bench_dispatch,
+                     run_build, the skills, main.ts's swarm-cloud IPC and the swarm provider's own
+                     `cmd.arg("swarm")` all keep working untouched.
+  PROVEN LIVE        packaged build relaunched on CDP 9897: title "Goose Flock", brand "LeanZero
+                     Flock", nav [Skills, Memories, Benchmark, Goose Flock] with the goose glyph
+                     (clipPath clip0_2096_5193), hub h1 "LeanZero Flock", tabs incl. "Flock
+                     Settings", and ZERO occurrences of /swarm/i in the rendered text of either
+                     screen. `goose flock --help` and `goose swarm --help` resolve to the same
+                     command. 1728/1728 desktop tests, clippy clean, development_gates 8/8.
+  IF IT NEEDS UNDOING  the display/id split is documented at the top of ui/desktop/src/branding.ts.
