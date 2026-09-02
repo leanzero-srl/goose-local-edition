@@ -3664,10 +3664,13 @@ export function deriveFleet(args: {
   //
   // WHICH feeds (useFleetCorroboration — the TRUTH feed, never gated by the showLmStudioFleet display
   // toggle; U-H2): `lms ps` for LM Studio nodes, and the MLX sidecar's engine status for a local
-  // `mlx-sidecar` device, whose `running` answer puts it in reportedNodes. That status carries no
-  // generating/idle fact, so a sidecar device is never in busyNodes: for its lanes the busy check above
-  // always passes and the demotion rests on the digest window alone — the same exposure an LM Studio
-  // lane has mid-tool-call, when lms reports idle too.
+  // `mlx-sidecar` device, whose `running` answer puts it in reportedNodes. Since ed409244f that status
+  // also carries `activeRequests` (Rapid-MLX's /v1/status num_running + num_waiting, read on the same
+  // probe), and useFleetCorroboration puts the sidecar device in busyNodes while it is > 0 — so a
+  // sidecar lane IS busy-corroborated, exactly like an lms lane. An ABSENT count (an older agent, or a
+  // refused /v1/status probe named in `activeRequestsError`) is reported-but-never-busy: for those
+  // lanes the busy check above always passes and the demotion rests on the digest window alone — the
+  // same exposure an LM Studio lane has mid-tool-call, when lms reports idle too.
   // Membership uses the same shortName normalization the fleet cells apply to nodeStatus keys —
   // deriveFleet's devices are canonical node names, nodeStatus keys are deviceFromModelId short
   // names, and a raw compare misclassifies exactly where they differ.
