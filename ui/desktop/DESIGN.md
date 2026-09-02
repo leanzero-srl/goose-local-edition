@@ -134,6 +134,8 @@ Import from `./components/lz` (the barrel). All are function components, typed, 
 | `Toolbar`       | `search?{value,onChange,placeholder?,aria-label}`, `filters?`, `actions?`, `aria-label?`                                                                         | one 36px row; the search is a plain text input with its own clear button (never `type=search`, never a native select in `filters`)                                                                                         |
 | `Panel`         | `title?`, `count?`, `headerRight?`, `header?`, `padded? = true`, children                                                                                        | the surface card; `padded={false}` under a DataTable; a custom `header` wins over `title`                                                                                                                                  |
 
+**Buttons.** A button's own label never truncates or ellipsizes; wrap the row or drop to icon+title at the breakpoint.
+
 `tokens.ts` helpers: `cx(...)` (plain join), `toneClasses(tone, 'fill'|'text'|'dot')`,
 `nodeClasses(node, register)`, and the constant maps `TONE_*`, `NODE_*`, `TYPE`, `SURFACE`,
 `RADIUS`, `ROW`, `SPACE`, `WEIGHT`, `FOCUS`, `MOTION`, `DISABLED`, `TNUM`.
