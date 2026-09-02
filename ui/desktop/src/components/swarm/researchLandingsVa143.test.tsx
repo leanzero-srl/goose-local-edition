@@ -517,3 +517,241 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
     expect(rows()).toHaveLength(12);
   });
 });
+
+// ── VA-031: a covered question, a reclassified kind and a raised-folded line are ROWS on the lane. ──
+//
+// The live r6j run.jsonl (benchmark/runs/build/swarm-3node-r0, read 2026-09-02 15:36 → 20:48) carries
+// 37 `research_question_kind` — every one `source: "model"` — 0 `research_question_covered` (its
+// emitters died with VA-089, e33a2f77f; the r6c–r6h archives carry it and none is on this machine) and
+// 0 `research_raised_folded` (17 `research_raised_for` instead). The three are therefore built from the
+// emit fields VERBATIM: research.rs:988 (kind, `source`/`model_kind`), research.rs:1046 (folded,
+// `raised_by`/`question`), and at e33a2f77f^ swarm.rs:21380 (`by: mini`, `by_mini`, `rule`) and
+// research_plan.rs:184 (`by: decision`, `decision`, `rule`; rules cite | decision_id | stem). Timestamps
+// and the landing's numbers are web-page's own (17:02 dispatch, q0 2,860 chars / raised 1 / 1172s,
+// 17:24 closer with 9 builder_decides).
+const WEB_PAGE_Q0_CITE =
+  'request.md:602-640 (Records page); open because: the request freezes the row layout but not the sort key; alternatives: created_at desc';
+const WEB_PAGE_Q0 = 'Which sort key orders the Records page by default?';
+const WEB_PAGE_Q1 = 'What does window.page.showRecord(id) return when the record is filtered out?';
+const WEB_PAGE_Q2 = 'Is the SSE event named, or the default message channel?';
+const WEB_PAGE_RAISED = 'Does the sort survive a brush from viz.js, or reset to created_at desc?';
+const LANDING_TS = '2026-09-02T17:21:55.379061+00:00';
+const COVERED_TS = '2026-09-02T17:02:23.220900+00:00';
+const va031Landing: Ev[] = [
+  // The engine's order for one landing: kind → funnel → the raised lines → the landing twin.
+  at(LANDING_TS, {
+    event: 'research_question_kind',
+    slice: 'web-page',
+    q_index: 0,
+    kind: 'spec_restated',
+    source: 'classifier',
+    model_kind: 'design',
+    cite: WEB_PAGE_Q0_CITE,
+    question: WEB_PAGE_Q0,
+  }),
+  at(LANDING_TS, {
+    event: 'research_answered',
+    slice: 'web-page',
+    q_index: 0,
+    chars: 2860,
+    raised: 1,
+    secs: 1172,
+    batch: 0,
+    model: HOST['web-page'],
+  }),
+  at(LANDING_TS, {
+    event: 'research_raised_folded',
+    slice: 'web-page',
+    q_index: 0,
+    raised_by: 'research-web-page-q0.json',
+    question: WEB_PAGE_RAISED,
+  }),
+  at(LANDING_TS, {
+    event: 'research_answer_landed',
+    task: 'research-web-page',
+    slice: 'web-page',
+    q_index: 0,
+    kind: 'spec_restated',
+    status: 'answered',
+    chars: 2860,
+    raised: 1,
+    via: 'tool',
+  }),
+];
+const va031CoveredByMini: Ev = at(COVERED_TS, {
+  event: 'research_question_covered',
+  slice: 'web-page',
+  q_index: 1,
+  question: WEB_PAGE_Q1,
+  by: 'mini',
+  by_mini: 'research-web-viz-q0.json',
+  rule: 'cite',
+});
+const va031CoveredByDecision: Ev = at(COVERED_TS, {
+  event: 'research_question_covered',
+  slice: 'web-page',
+  q_index: 2,
+  question: WEB_PAGE_Q2,
+  by: 'decision',
+  decision: 0,
+  rule: 'decision_id',
+});
+const VA031: Ev[] = [
+  ...OPENING,
+  ...dispatch(ORDER[3]),
+  va031CoveredByMini,
+  va031CoveredByDecision,
+  ...va031Landing,
+  ...closer(CLOSERS[1]),
+];
+
+describe('VA-031 — covered, reclassified and raised-folded rows on the lane', () => {
+  it('a covered question stays a row with its provenance, and the lane’s count still includes it', () => {
+    const lane = lanesOf(VA031, 'va031-fold')['research-web-page'];
+    expect(lane.researchQuestions?.map((q) => `${q.qIndex}:${q.status}`)).toEqual([
+      '0:answered',
+      '1:covered',
+      '2:covered',
+    ]);
+    expect(lane.researchQuestions?.[1]).toMatchObject({
+      question: WEB_PAGE_Q1,
+      covered: { by: 'mini', mini: 'research-web-viz-q0.json', rule: 'cite' },
+    });
+    expect(lane.researchQuestions?.[2]).toMatchObject({
+      question: WEB_PAGE_Q2,
+      covered: { by: 'decision', decision: 0, rule: 'decision_id' },
+    });
+    expect(lane.researchQuestions?.[2].covered?.mini).toBeUndefined();
+    // The derived count is the lane's whole batch — the two covered questions included.
+    expect(lane.description).toBe(
+      'Research web-page · 3 questions derived in one read-only session (1 spec_restated)'
+    );
+    // Covered rows are terminal: the lane settles, and they are neither landed nor missed.
+    expect(lane.status).toBe('done');
+    expect(lane.researchClose).toMatchObject({ reason: 'remainder_empty', landed: 1, builderDecides: 9 });
+  });
+
+  it('the classifier’s override keeps what the lane said; the raised line is on the lane that raised it', () => {
+    const lane = lanesOf(VA031, 'va031-kind')['research-web-page'];
+    expect(lane.researchQuestions?.[0]).toMatchObject({
+      status: 'answered',
+      kind: 'spec_restated',
+      kindSource: 'classifier',
+      modelKind: 'design',
+      cite: WEB_PAGE_Q0_CITE,
+      chars: 2860,
+      raised: 1,
+      secs: 1172,
+    });
+    expect(lane.researchRaisedFolded).toEqual([
+      { qIndex: 0, raisedBy: 'research-web-page-q0.json', question: WEB_PAGE_RAISED },
+    ]);
+    // r6j's own shape — `source: model`, `model_kind: null` — names no override and no fold.
+    const viz = lanesOf(R6J, 'va031-r6j')['research-web-viz'];
+    expect(viz.researchQuestions?.[0]).toMatchObject({ kind: 'design', kindSource: 'model' });
+    expect(viz.researchQuestions?.[0].modelKind).toBeUndefined();
+    expect(viz.researchRaisedFolded).toBeUndefined();
+  });
+
+  it('a cover that lands before the lane’s dispatch (the archive order) still joins that lane', () => {
+    const lanes = lanesOf(
+      [...OPENING, va031CoveredByMini, ...dispatch(ORDER[3]), ...va031Landing],
+      'va031-early'
+    );
+    expect(Object.keys(lanes)).toEqual(['research-web-page']);
+    const lane = lanes['research-web-page'];
+    expect(lane.researchQuestions?.map((q) => `${q.qIndex}:${q.status}`)).toEqual(['0:answered', '1:covered']);
+    expect(lane.model).toBe(HOST['web-page']);
+    expect(lane.researchRaisedFolded).toHaveLength(1);
+  });
+});
+
+describe('VA-031 rendered — the web-page lane row', () => {
+  beforeEach(() => {
+    resetFoldCache();
+    resetLiveChannelMemory();
+    const e = electron();
+    e.readSwarmRun = vi.fn(async () => ({
+      runId: 'swarm-3node-r0',
+      dir: '/tmp/build',
+      events: VA031,
+      activity: {
+        'research-web-page': {
+          tool_calls: 1,
+          last_text: 'one answer landed',
+          model: 'workhorse-qwen3.8-27b',
+          attempt: 0,
+          phase: 'done',
+        },
+      },
+      activityMtimes: {},
+      clarify: null,
+      mtime: Date.now(),
+      heartbeat: Date.now(),
+      heartbeatExited: false,
+      pauseRequested: false,
+    }));
+    e.fleetStatus = vi.fn(async () => ({}));
+    e.swarmSetPaused = vi.fn(async () => true);
+    e.swarmAddNote = vi.fn(async () => true);
+    e.revealInFinder = vi.fn(async () => undefined);
+    e.writeFile = vi.fn(async () => true);
+  });
+  afterEach(() => cleanup());
+
+  it('reads "Questions · 3 · 1 answered · 2 covered · 1 raised", a solid covered-by chip per covered row, "was design" on the override, and the raised line', async () => {
+    const { result } = renderHook(() => useSwarmRun('/tmp/build'));
+    await waitFor(() => expect(result.current.present).toBe(true));
+    render(
+      <IntlTestWrapper>
+        <SwarmRunPanel workingDir="/tmp/build" run={result.current} />
+      </IntlTestWrapper>
+    );
+    const phase = await screen.findByTestId('planning-phase-research');
+    // The header counts what the body shows: three question rows, covered ones included.
+    expect(phase.textContent).toContain('Research answers · 1 lane · 3 questions');
+    const lane = [...phase.querySelectorAll('[data-testid="turn-lane"]')].find((el) =>
+      (el.textContent ?? '').includes('Research web-page')
+    ) as HTMLElement;
+    expect(lane).toBeTruthy();
+    fireEvent.click(lane.querySelector('button')!);
+    await waitFor(() => expect(lane.querySelector('[data-testid="research-questions"]')).toBeTruthy());
+    expect(lane.textContent).toContain('Questions · 3 · 1 answered · 2 covered · 1 raised');
+    expect(lane.textContent).not.toContain('unanswered');
+    const rows = [...lane.querySelectorAll('[data-testid="research-question"]')] as HTMLElement[];
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.dataset.status)).toEqual(['answered', 'covered', 'covered']);
+    // The covered rows: q chip, the provenance chip (the mini's slice and index / the decision's
+    // index, as the engine named them), the question, the rule verbatim.
+    const chips = [...lane.querySelectorAll('[data-testid="research-covered-by"]')] as HTMLElement[];
+    expect(chips.map((c) => c.textContent)).toEqual(['covered by web-viz q0', 'covered by decision 0']);
+    expect(chips.map((c) => c.dataset.by)).toEqual(['mini', 'decision']);
+    expect(chips[0].title).toBe('research-web-viz-q0.json');
+    expect(chips[0].style.background).not.toBe('');
+    expect(rows[1].textContent).toBe(`q1covered by web-viz q0${WEB_PAGE_Q1}covered · rule cite`);
+    expect(rows[2].textContent).toBe(`q2covered by decision 0${WEB_PAGE_Q2}covered · rule decision_id`);
+    // The override: the final kind chip, then what the lane had said, with the classifier's evidence.
+    const kind = rows[0].querySelector('[data-testid="research-kind"]') as HTMLElement;
+    expect(kind.dataset.kind).toBe('spec_restated');
+    const was = rows[0].querySelector('[data-testid="research-kind-reclassified"]') as HTMLElement;
+    expect(was.textContent).toBe('was design');
+    expect(was.dataset.modelKind).toBe('design');
+    expect(was.title).toBe(
+      `the lane said design; reclassified spec_restated by the classifier — ${WEB_PAGE_Q0_CITE}`
+    );
+    expect(rows[1].querySelector('[data-testid="research-kind-reclassified"]')).toBeNull();
+    // The raised line, under the list, on the lane that raised it.
+    const folded = [...lane.querySelectorAll('[data-testid="research-raised-folded"]')] as HTMLElement[];
+    expect(folded).toHaveLength(1);
+    expect(folded[0].textContent).toBe(`raised${WEB_PAGE_RAISED}by q0 · folded into this slice’s brief`);
+    expect(folded[0].title).toBe('research-web-page-q0.json');
+    // Folding the header hides the rows and the raised line together; the close line stays.
+    const toggle = lane.querySelector('[data-testid="research-questions-toggle"]') as HTMLElement;
+    fireEvent.click(toggle);
+    expect(lane.querySelectorAll('[data-testid="research-question"]')).toHaveLength(0);
+    expect(lane.querySelectorAll('[data-testid="research-raised-folded"]')).toHaveLength(0);
+    expect(lane.querySelector('[data-testid="research-lane-close"]')?.textContent).toBe(
+      'closedlanded 1 · builder_decides 9 · done 22m'
+    );
+  });
+});
