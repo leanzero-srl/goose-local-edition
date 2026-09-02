@@ -3803,8 +3803,18 @@ export function deriveFleet(args: {
     // which is the misattribution class. The span survives only for streams with no such digest
     // (pre-r6 archives, and the verdict-judge calls the engine has not keyed).
     .filter((s) => args.digests[`judge-${s.taskId}`] == null);
+  // A SIDECAR node is never GUESSED into a span. The local MLX sidecar (`<node>-mlx` — the engine's
+  // canonical_node_name for EngineKind::MlxSidecar, swarm_engine.rs) also serves the desktop's own
+  // chat, so its `activeRequests > 0` is not evidence that the SWARM is running anything there: a busy
+  // sidecar with no lane and no digest would be labelled "Judging · X" while it answered an unrelated
+  // request, and the label would look exactly like swarm work. The sidecar keeps its place in `busy`
+  // above — a lane the engine OPENED there stays alive under its count — and a digest that names it
+  // still renders through the laneless path, which pre-empts this list; only the guess is withheld.
+  // A log whose sidecar carries no `node` reads `workhorse` here and cannot be told apart — the
+  // collision the pool map ends.
+  const isSidecarNode = (n: string): boolean => n.endsWith('-mlx');
   const freeBusy = (args.busyNodes ?? []).filter(
-    (n) => devices.includes(n) && !workingByDevice.has(n)
+    (n) => devices.includes(n) && !workingByDevice.has(n) && !isSidecarNode(n)
   );
   const unattributed: SupervisionSpan[] = [];
   for (const span of liveSpans) {
