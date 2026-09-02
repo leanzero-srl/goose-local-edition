@@ -196,4 +196,5 @@ prompt · design · harness.
 
 
 
-| VA-145 | 09-02 | panel | QUEUED behind: agent cap (panel-surgeon, pnpm only; verify in the RUNNING app on 1.41.110) | VA-143 residues: the compact feed keeps `feed.slice(-30)` so early research landings scroll out (verbose keeps 200) — keep landings pinned per lane rather than in the rolling slice; `buildPhaseTodo`'s research rows do not show builder_decides (VA-138 pins the detail string); and VA-138/143 have not been seen in the running app (the live bundle predates both). |
+| VA-145 | 09-02 | panel | CLAIMED 23:0x panel-surgeon in va145-feed (pnpm only) | VA-143 residues: the compact feed keeps `feed.slice(-30)` so early research landings scroll out (verbose keeps 200) — keep landings pinned per lane rather than in the rolling slice; `buildPhaseTodo`'s research rows do not show builder_decides (VA-138 pins the detail string); and VA-138/143 have not been seen in the running app (the live bundle predates both). |
+
