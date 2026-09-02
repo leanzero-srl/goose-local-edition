@@ -35,6 +35,10 @@ fn build_env_filter(extra_directives: &[&str]) -> EnvFilter {
     let mut filter = EnvFilter::new("")
         .add_directive("mcp_client=info".parse().unwrap())
         .add_directive("goose=info".parse().unwrap())
+        // LeanZero Link's daemon/control receipts ("tailscaled ready", "control service
+        // listening") are INFO in the leanzero_link crate; without this they never reach the
+        // file (measured 2026-09-02: 0 hits after a real connect).
+        .add_directive("leanzero_link=info".parse().unwrap())
         .add_directive(LevelFilter::WARN.into());
 
     for directive in extra_directives {
