@@ -66,7 +66,7 @@ const BrandBlock: React.FC = () => (
       aria-hidden
       data-testid="brand-mark"
       className={cx(
-        'flex size-7 shrink-0 items-center justify-center [&_svg]:size-5',
+        'flex size-8 shrink-0 items-center justify-center [&_svg]:size-6',
         RADIUS.control,
         TONE_FILL.accent
       )}

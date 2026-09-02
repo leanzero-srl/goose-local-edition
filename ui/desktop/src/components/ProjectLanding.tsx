@@ -6,7 +6,7 @@ import { AppEvents } from '../constants/events';
 import { chooseAndAddProject, type ProjectsChangedDetail } from '../utils/addProjectFlow';
 import type { ProjectEntry } from '../utils/projectDirs';
 import { Button, EmptyState, KeyValue, Panel, SPACE, cx } from './lz';
-import { LEANZERO_MARK, LEANZERO_MARK_VIEWBOX } from './icons/leanzeroMark';
+import { LEANZERO_MARK_VIEWBOX, LeanZeroMarkContent } from './icons/leanzeroMark';
 
 const i18n = defineMessages({
   headline: {
@@ -60,9 +60,9 @@ const i18n = defineMessages({
 });
 
 /**
- * The LeanZero mark — the "L" monogram cradling three geese in flight — drawn in currentColor so
- * it takes the ink of whatever accent block holds it (the sidebar brand square, the landing's
- * EmptyState block). ONE geometry for every surface: ../icons/leanzeroMark.
+ * The LeanZero mark — the "L" monogram with two of the original goose flying out of it — drawn in
+ * currentColor so it takes the ink of whatever accent block holds it (the sidebar brand square, the
+ * landing's EmptyState block). ONE geometry for every surface: ./icons/leanzeroMark.
  */
 export function LeanZeroGlyph({ className }: { className?: string }) {
   return (
@@ -73,9 +73,7 @@ export function LeanZeroGlyph({ className }: { className?: string }) {
       data-testid="leanzero-glyph"
       className={className}
     >
-      {LEANZERO_MARK.map((p, i) => (
-        <path key={i} d={p.d} transform={p.transform} />
-      ))}
+      <LeanZeroMarkContent />
     </svg>
   );
 }
