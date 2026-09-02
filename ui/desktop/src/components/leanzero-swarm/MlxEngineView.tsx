@@ -2533,7 +2533,7 @@ const MlxEngineView: React.FC = () => {
     setTab('sampling');
   }, []);
 
-  // The page shell (MainPanelLayout, the LeanZero Swarm header, the top-level tab bar and the
+  // The page shell (MainPanelLayout, the Goose Flock header, the top-level tab bar and the
   // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content:
   // the engine sub-tabs (Engine / Models / Sampling) plus everything under them, unchanged.
   return (
