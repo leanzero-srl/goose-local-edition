@@ -2807,12 +2807,44 @@ pub(super) const MERGE_FIELDS: [&str; 4] = ["KEPT", "DROPPED", "FILLED", "SENT_O
 /// merger back when they land (the merge-gap door, scheduler.rs).
 pub(super) const MERGE_GAP_PREFIX: &str = "MERGE_GAP:";
 
+/// What a definition IS — the one classification the dossier, the assembly, `check_merge` and
+/// `shard_verify` share (VA-097). r6g's labels-brush shard defined `const brushSet = new Set()`,
+/// `let uBrushActive = 0`, `const dimFlags = new Uint8Array(65536)`, `const LABEL_W = 110` and
+/// `window.vs7 = {…}`; the function-only rule read 6 of its 13 PROVIDES as unbacked and told the
+/// merger to write them itself beside "retyping a definition is FORBIDDEN" — a second
+/// `const brushSet` is the SyntaxError r6c shipped as "five names defined twice".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SymbolKind {
+    Function,
+    Class,
+    /// Module-level `const` with a scalar literal, or an UPPER_SNAKE name.
+    Constant,
+    /// Module-level state: `let`/`var`, a `const` holding a container or an instance, a
+    /// top-level dotted assignment (`window.vs7 = {…}`), a Python module-level `NAME = …`.
+    State,
+    /// A shorthand-property mention; never a definition (`shorthand` is true).
+    Reference,
+}
+
+impl SymbolKind {
+    /// The brief's suffix after a name: a function shows its parameters instead.
+    pub(super) fn suffix(self) -> &'static str {
+        match self {
+            SymbolKind::Function | SymbolKind::Reference => "",
+            SymbolKind::Class => " (class)",
+            SymbolKind::Constant => " (constant)",
+            SymbolKind::State => " (state)",
+        }
+    }
+}
+
 /// One definition found in a piece or in the final file — or a shorthand-property MENTION of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Symbol {
     pub(super) name: String,
     pub(super) params: String,
     pub(super) line: usize,
+    pub(super) kind: SymbolKind,
     /// An object-literal shorthand property (`{ pick,\n drawBrush,\n }`) — a REFERENCE to a name
     /// defined elsewhere, never a definition: with nothing defining it the file throws
     /// `ReferenceError` at load (S14-1). `defined()`/`defines()` skip shorthand-only names.
@@ -2903,11 +2935,18 @@ pub(super) fn lang_for_path(path: &str, run_lang: super::TargetLang) -> super::T
     }
 }
 
-/// Definitions in a source text, line-based and deterministic — the merger's dossier and the
-/// after-check read the SAME extractor, so "present in the final file" means what "defined in a
-/// piece" meant. JavaScript: `function name(`, `const/let/var name = function|(…) =>|async`,
-/// `a.b.c = function|(…) =>`, object-literal methods `name(…) {` and `name: function(`/`name: (…) =>`.
-/// Python: `def`/`async def`/`class`. Other languages: `fn`/`func` heads.
+/// THE DEFINITION RULE — line-based and deterministic, read by the merger's dossier
+/// (`unbacked_provides`, `declared_missing`, duplicates), the assembly (`segments`), the
+/// after-check (`check_merge`) and the shard scan (`shard_verify`), so "present in the final
+/// file" means what "defined in a piece" meant and a README's PROVIDES is judged by the same
+/// reading everywhere (VA-097: one rule, one place). JavaScript: `function name(`, `class Name`,
+/// `const/let/var name = function|(…) =>|async`, `a.b.c = function|(…) =>`, object-literal
+/// methods `name(…) {` and `name: function(`/`name: (…) =>`; and at the piece's TOP LEVEL only,
+/// `const/let/var name [= …]` holding anything else (state or a constant) and `a.b = …` (an
+/// installed name — `window.vs7 = { toggleBrush, onBrushChange }`). A `const` inside a body is a
+/// local, not what the module provides, so indentation decides: a local read as a definition
+/// would be a "duplicate" across shards and a "dropped" name after every merge. Python:
+/// `def`/`async def`/`class`, and top-level `NAME = …`. Other languages: `fn`/`func` heads.
 pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symbol> {
     let mut out: Vec<Symbol> = Vec::new();
     // JS object-literal depth, so `{ pick, brush }` shorthand PROPERTIES are recorded — flagged
@@ -2916,7 +2955,8 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
     // conforming). A text scan would also count `// TODO drawBrush`; this arm records only
     // property positions.
     let mut object_depth: i32 = 0;
-    let mut push = |name: &str, params: Option<String>, line: usize, shorthand: bool| {
+    let mut push = |name: &str, params: Option<String>, line: usize, kind: SymbolKind| {
+        let shorthand = kind == SymbolKind::Reference;
         let name = name.trim_end_matches('.').to_string();
         if name.is_empty() || JS_KEYWORDS.contains(&name.as_str()) {
             return;
@@ -2926,6 +2966,9 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             // supplies the signature (the property is the export, the function is its signature).
             Some(existing) => {
                 if !shorthand {
+                    if existing.shorthand {
+                        existing.kind = kind;
+                    }
                     existing.shorthand = false;
                     if existing.params.is_empty() {
                         if let Some(p) = params.filter(|p| !p.is_empty()) {
@@ -2936,9 +2979,11 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             }
             None => out.push(Symbol {
                 name,
-                // A class or a property has no parameter list — empty MEANS empty (fallback gate).
+                // A class, a constant, state or a property has no parameter list — empty MEANS
+                // empty (fallback gate).
                 params: params.unwrap_or_default(),
                 line,
+                kind,
                 shorthand,
             }),
         }
@@ -2949,17 +2994,37 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
             continue;
         }
         let line = i + 1;
+        let top_level = raw.len() == t.len();
         match lang {
             super::TargetLang::Python => {
                 for head in ["async def ", "def ", "class "] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            let params = if head == "class " {
-                                None
+                            let (params, kind) = if head == "class " {
+                                (None, SymbolKind::Class)
                             } else {
-                                params_after(rest)
+                                (params_after(rest), SymbolKind::Function)
                             };
-                            push(name, params, line, false);
+                            push(name, params, line, kind);
+                        }
+                    }
+                }
+                // Module-level `NAME = …` / `NAME: T = …` — state or a constant the module
+                // provides; an indented assignment is a local or an attribute, not a definition.
+                if top_level {
+                    if let Some(name) = ident_at(t).filter(|n| !n.contains('.')) {
+                        let after = t.split_at(name.len()).1.trim_start();
+                        let after = match after.strip_prefix(':') {
+                            Some(annotated) => match annotated.find('=') {
+                                Some(eq) => annotated.split_at(eq).1,
+                                None => "",
+                            },
+                            None => after,
+                        };
+                        if let Some(rhs) = after.strip_prefix('=') {
+                            if !rhs.starts_with('=') {
+                                push(name, None, line, state_kind(name, "", rhs.trim_start()));
+                            }
                         }
                     }
                 }
@@ -2972,7 +3037,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                 for head in ["fn ", "func "] {
                     if let Some(rest) = core.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            push(name, params_after(rest), line, false);
+                            push(name, params_after(rest), line, SymbolKind::Function);
                         }
                     }
                 }
@@ -3000,7 +3065,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                         })
                     {
                         for prop in props {
-                            push(prop, None, line, true);
+                            push(prop, None, line, SymbolKind::Reference);
                         }
                     }
                 }
@@ -3018,7 +3083,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                                 && after_params(after)
                                     .is_some_and(|r| r.trim_start().starts_with('{'))
                             {
-                                push(name, params_after(after), line, false);
+                                push(name, params_after(after), line, SymbolKind::Function);
                             }
                             rest = cand.split_at(name.len()).1;
                         }
@@ -3038,40 +3103,73 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                 ] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
-                            push(name, params_after(rest), line, false);
+                            push(name, params_after(rest), line, SymbolKind::Function);
                         }
                     }
                 }
-                // const name = function | (…) => | async (…) => | x =>
-                for head in ["const ", "let ", "var ", "export const "] {
+                for head in ["class ", "export class ", "export default class "] {
+                    if let Some(rest) = t.strip_prefix(head) {
+                        if let Some(name) = ident_at(rest) {
+                            push(name, None, line, SymbolKind::Class);
+                        }
+                    }
+                }
+                // const name = function | (…) => | async (…) => | x =>   → a function;
+                // top-level const/let/var holding anything else (or nothing yet) → state/constant.
+                for head in [
+                    "const ",
+                    "let ",
+                    "var ",
+                    "export const ",
+                    "export let ",
+                    "export var ",
+                ] {
                     if let Some(rest) = t.strip_prefix(head) {
                         if let Some(name) = ident_at(rest) {
                             let after = rest.split_at(name.len()).1.trim_start();
-                            if let Some(rhs) = after.strip_prefix('=') {
-                                let rhs = rhs.trim_start();
-                                let is_fn = rhs.starts_with("function")
-                                    || rhs.starts_with("async")
-                                    || (rhs.contains("=>")
-                                        && (rhs.starts_with('(') || ident_at(rhs).is_some()));
-                                if is_fn {
-                                    push(name, params_after(rhs), line, false);
+                            let rhs = after
+                                .strip_prefix('=')
+                                .filter(|r| !r.starts_with('='))
+                                .map(str::trim_start);
+                            match rhs {
+                                Some(rhs)
+                                    if rhs.starts_with("function")
+                                        || rhs.starts_with("async")
+                                        || (rhs.contains("=>")
+                                            && (rhs.starts_with('(')
+                                                || ident_at(rhs).is_some())) =>
+                                {
+                                    push(name, params_after(rhs), line, SymbolKind::Function);
                                 }
+                                _ if top_level && !name.contains('.') => {
+                                    push(
+                                        name,
+                                        None,
+                                        line,
+                                        state_kind(name, head, rhs.unwrap_or("")),
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                     }
                 }
-                // a.b.c = function | (…) =>   (assignment of a function to a dotted path)
+                // a.b.c = function | (…) =>   (assignment of a function to a dotted path); a
+                // top-level `a.b = <anything else>` installs a name (`window.vs7 = {…}`) → state.
                 if let Some(name) = ident_at(t) {
                     if name.contains('.') {
                         let after = t.split_at(name.len()).1.trim_start();
                         if let Some(rhs) = after.strip_prefix('=') {
                             let rhs = rhs.trim_start();
-                            if !rhs.starts_with('=')
-                                && (rhs.starts_with("function")
+                            if !rhs.starts_with('=') {
+                                if rhs.starts_with("function")
                                     || rhs.starts_with("async")
-                                    || rhs.contains("=>"))
-                            {
-                                push(name, params_after(rhs), line, false);
+                                    || rhs.contains("=>")
+                                {
+                                    push(name, params_after(rhs), line, SymbolKind::Function);
+                                } else if top_level {
+                                    push(name, None, line, SymbolKind::State);
+                                }
                             }
                         }
                     }
@@ -3082,14 +3180,14 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                             && after_params(after)
                                 .is_some_and(|rest| rest.trim_start().starts_with('{'))
                         {
-                            push(name, params_after(after), line, false);
+                            push(name, params_after(after), line, SymbolKind::Function);
                         } else if let Some(rhs) = after.strip_prefix(':') {
                             let rhs = rhs.trim_start();
                             if rhs.starts_with("function")
                                 || rhs.starts_with("async")
                                 || (rhs.starts_with('(') && rhs.contains("=>"))
                             {
-                                push(name, params_after(rhs), line, false);
+                                push(name, params_after(rhs), line, SymbolKind::Function);
                             }
                         }
                     }
@@ -3098,6 +3196,42 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
         }
     }
     out
+}
+
+/// Constant or state, for a non-function module-level binding — a LABEL for the brief, never a
+/// gate. A `const` with a scalar literal (number, string, boolean, null), or an UPPER_SNAKE name
+/// bound to anything but a container, is a constant; a container or an instance (`{…}`, `[…]`,
+/// `new Set()` — r6e's `const S = {yaw, pitch…}` and `VS` are the module's STATE whatever their
+/// case), `let`/`var`, a Python module-level object — is state.
+fn state_kind(name: &str, head: &str, rhs: &str) -> SymbolKind {
+    let rhs_value = rhs.trim_end_matches([';', ',']).trim();
+    let container = rhs_value.starts_with(['{', '['])
+        || rhs_value.starts_with("new ")
+        || rhs_value.starts_with("new(");
+    let upper_snake = !container
+        && !rhs_value.is_empty()
+        && name.chars().any(|c| c.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    let scalar = rhs_value.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.')
+        || rhs_value.starts_with(['"', '\'', '`'])
+        || [
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "True",
+            "False",
+            "None",
+        ]
+        .iter()
+        .any(|lit| rhs_value.split([' ', ';', ',']).next() == Some(lit));
+    if upper_snake || (head.trim_start_matches("export ") == "const " && scalar) {
+        SymbolKind::Constant
+    } else {
+        SymbolKind::State
+    }
 }
 
 fn last_segment(name: &str) -> &str {
@@ -3640,7 +3774,7 @@ impl MergeDossier {
                     .iter()
                     .map(|x| {
                         if x.params.is_empty() {
-                            format!("`{}`", x.name)
+                            format!("`{}`{}", x.name, x.kind.suffix())
                         } else {
                             format!("`{}({})`", x.name, x.params)
                         }
@@ -4535,6 +4669,208 @@ mod merger_tests {
         );
     }
 
+    const R6G_README: &str = include_str!("shards/fixtures/r6g_labels_brush/README.md");
+    const R6G_PIECES: [(&str, &str); 5] = [
+        (
+            "brushApi.js",
+            include_str!("shards/fixtures/r6g_labels_brush/brushApi.js"),
+        ),
+        (
+            "brushState.js",
+            include_str!("shards/fixtures/r6g_labels_brush/brushState.js"),
+        ),
+        (
+            "formatAmount.js",
+            include_str!("shards/fixtures/r6g_labels_brush/formatAmount.js"),
+        ),
+        (
+            "labelCandidates.js",
+            include_str!("shards/fixtures/r6g_labels_brush/labelCandidates.js"),
+        ),
+        (
+            "updateLabels.js",
+            include_str!("shards/fixtures/r6g_labels_brush/updateLabels.js"),
+        ),
+    ];
+
+    fn r6g_dossier(readme: &str) -> ShardDossier {
+        ShardDossier {
+            id: "viz-engine-labels-brush".into(),
+            folder: ".swarm/shards/viz-engine/labels-brush".into(),
+            readme_present: true,
+            note: parse_shard_note(readme),
+            pieces: R6G_PIECES
+                .iter()
+                .map(|(n, src)| {
+                    (
+                        format!(".swarm/shards/viz-engine/labels-brush/{n}"),
+                        None,
+                        extract_symbols(src, super::super::TargetLang::TypeScript),
+                    )
+                })
+                .collect(),
+            wrote_final: Vec::new(),
+            provides_unbacked: Vec::new(),
+        }
+    }
+
+    /// VA-097, on r6g's REAL labels-brush shard (five `.js` pieces + README, verbatim in
+    /// `shards/fixtures/r6g_labels_brush/`): the function-only rule read 6 of its 13 PROVIDES as
+    /// unbacked — `LABEL_W`, `brushSet`, `uBrushActive`, `dimFlags`, `brushCallbacks`,
+    /// `window.vs7` — and the glue brief told the merger to write each itself beside "retyping a
+    /// definition is FORBIDDEN". Module-level state, constants and installed names ARE
+    /// definitions; a local inside a body is not; a name no piece defines stays unbacked.
+    #[test]
+    fn r6g_labels_brush_every_provides_is_backed_and_a_missing_name_stays_unbacked() {
+        let d = r6g_dossier(R6G_README);
+        let note = d.note.as_ref().expect("the README parses");
+        assert_eq!(note.provides.len(), 13, "{:?}", note.provides);
+        let defined: Vec<(&str, SymbolKind)> =
+            d.defines().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            d.unbacked_provides(),
+            Vec::<String>::new(),
+            "defined: {defined:?}"
+        );
+        for (name, kind) in [
+            ("brushSet", SymbolKind::State),
+            ("uBrushActive", SymbolKind::State),
+            ("dimFlags", SymbolKind::State),
+            ("brushCallbacks", SymbolKind::State),
+            ("labelHost", SymbolKind::State),
+            ("labelEls", SymbolKind::State),
+            ("LABEL_W", SymbolKind::Constant),
+            ("LABEL_DY", SymbolKind::Constant),
+            ("window.vs7", SymbolKind::State),
+            ("toggleBrush", SymbolKind::Function),
+            ("formatAmount", SymbolKind::Function),
+        ] {
+            assert!(defined.contains(&(name, kind)), "{name}: {defined:?}");
+        }
+        let toggle = d.defines().find(|s| s.name == "toggleBrush").unwrap();
+        assert_eq!(toggle.params, "id");
+        // A promise no piece keeps is still a promise.
+        let with_gap = format!("{R6G_README}PROVIDES: drawBrush(ids) — dims non-members\n");
+        let unbacked = r6g_dossier(&with_gap).unbacked_provides();
+        assert_eq!(unbacked.len(), 1, "{unbacked:?}");
+        assert!(unbacked[0].starts_with("drawBrush"), "{unbacked:?}");
+        // Locals inside a body are not what the module provides — indentation decides.
+        let local = extract_symbols(
+            "function f() {\n  const local = 1;\n  let acc = [];\n  S.dirty = true;\n}\nS.ready = true;\nclass Store {}\n",
+            super::super::TargetLang::TypeScript,
+        );
+        let names: Vec<(&str, SymbolKind)> =
+            local.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("f", SymbolKind::Function),
+                ("S.ready", SymbolKind::State),
+                ("Store", SymbolKind::Class)
+            ],
+            "{local:?}"
+        );
+        let py = extract_symbols(
+            "PORT = 8000\napp = Flask(__name__)\nDEBUG: bool = False\nif PORT == 8000:\n    x = 1\ndef run():\n    y = 2\n",
+            super::super::TargetLang::Python,
+        );
+        let names: Vec<(&str, SymbolKind)> = py.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("PORT", SymbolKind::Constant),
+                ("app", SymbolKind::State),
+                ("DEBUG", SymbolKind::Constant),
+                ("run", SymbolKind::Function)
+            ],
+            "{py:?}"
+        );
+    }
+
+    /// The same rule through the dossier, the assembly and the after-check on r6g's shard: a
+    /// declaration listing its state and constants has no false `declared_missing` (only the
+    /// truly absent `drawBrush`), the assembly places `brushSet`/`dimFlags` as DEFINITIONS in
+    /// the interface's order, and a final file holding the pieces drops nothing.
+    #[tokio::test]
+    async fn r6g_labels_brush_state_and_constants_are_definitions_through_every_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let folder = ".swarm/shards/viz-engine/labels-brush";
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+        std::fs::write(root.join(folder).join("README.md"), R6G_README).unwrap();
+        let mut final_text = String::new();
+        for (n, src) in R6G_PIECES {
+            std::fs::write(root.join(folder).join(n), src).unwrap();
+            final_text.push_str(src);
+            final_text.push('\n');
+        }
+        let export = |name: &str, kind: &str, signature: &str| DeclaredExport {
+            name: name.into(),
+            kind: kind.into(),
+            signature: signature.into(),
+            purpose: "r6g".into(),
+        };
+        let merger = MergerOf {
+            module: "viz-engine".into(),
+            shards: vec!["viz-engine-labels-brush".into()],
+            folders: vec![folder.into()],
+            interface: ModuleInterface {
+                exports: vec![
+                    export("brushSet", "constant", "brushSet: Set<string>"),
+                    export("dimFlags", "constant", "dimFlags: Uint8Array"),
+                    export("uBrushActive", "state", "uBrushActive: number"),
+                    export("LABEL_W", "constant", "LABEL_W: number"),
+                    export("toggleBrush", "function", "toggleBrush(id) -> void"),
+                    export(
+                        "formatAmount",
+                        "function",
+                        "formatAmount(amountMinor, currency) -> string",
+                    ),
+                    export(
+                        "window.vs7",
+                        "object",
+                        "window.vs7 = {toggleBrush, onBrushChange}",
+                    ),
+                    export("drawBrush", "function", "drawBrush(ids) -> void"),
+                ],
+                shared_state: String::new(),
+                layout: Vec::new(),
+            },
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        assert_eq!(d.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(d.shards[0].provides_unbacked, Vec::<String>::new());
+        assert!(d.duplicates.is_empty(), "{:?}", d.duplicates);
+        match assembly::assemble(root, &d) {
+            assembly::AssemblyOutcome::Assembled(a) => {
+                assert_eq!(a.declared_missing, vec!["drawBrush".to_string()]);
+                assert_eq!(a.ordered_by_interface, 7, "{a:?}");
+                let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
+                let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("{needle}"));
+                assert!(at("const brushSet = new Set()") < at("const dimFlags = new Uint8Array"));
+                assert!(at("const dimFlags = new Uint8Array") < at("function toggleBrush(id)"));
+                assert!(text.contains("— brushSet\n"), "{text}");
+            }
+            other => panic!("{other:?}"),
+        }
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(root.join("web/viz.js"), &final_text).unwrap();
+        let check = check_merge(root, &d, super::super::TargetLang::TypeScript, &[]).await;
+        assert_eq!(check.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            check.declared_present.len(),
+            7,
+            "{:?}",
+            check.declared_present
+        );
+        assert!(check.dropped.is_empty(), "{:?}", check.dropped);
+        let brief = d.merger_brief("/run", None);
+        assert!(brief.contains("`brushSet` (state)"), "{brief}");
+        assert!(brief.contains("`LABEL_W` (constant)"), "{brief}");
+    }
+
     /// r6c's web-viz as S1 splits it (render / pick-camera / labels-brush-api), with the pieces the
     /// archived viz.js would have produced: `buildScene` in two shards (the archive's hoisted stub
     /// and its real body), `pick` defined with `(x, y)` against the declared `(sx, sy)`, the
@@ -4890,7 +5226,8 @@ mod merger_tests {
             "the merger's reading rule"
         );
         // extract_symbols: shorthand properties inside an object literal are MENTIONS of the
-        // exported names (S14-1) — recorded, flagged, and outranked by a real definition.
+        // exported names (S14-1) — recorded, flagged, and outranked by a real definition; the
+        // top-level `window.vs7dbg = {…}` and `const x = {…}` that hold them are STATE (VA-097).
         let syms = extract_symbols(
             "window.vs7dbg = {\n  pick,\n  brush, layout\n};\nconst x = { if, y };\nfunction brush(ids) {}\n",
             super::super::TargetLang::TypeScript,
@@ -4901,10 +5238,17 @@ mod merger_tests {
             .collect();
         assert_eq!(
             names,
-            vec![("pick", true), ("brush", false), ("layout", true)],
+            vec![
+                ("window.vs7dbg", false),
+                ("pick", true),
+                ("brush", false),
+                ("layout", true),
+                ("x", false)
+            ],
             "{syms:?}"
         );
-        assert_eq!(syms[1].params, "ids");
+        assert_eq!(syms[0].kind, SymbolKind::State);
+        assert_eq!(syms[2].params, "ids");
     }
 
     /// S14-1/2 (the S12 refuter's residual holes). A multi-line export object `{ pick,\n drawBrush,\n }`
@@ -5167,7 +5511,7 @@ mod merger_tests {
         );
         let brief = d.merger_brief("/run", Some(&a));
         assert!(
-            brief.contains("CODE HAS ALREADY ASSEMBLED their definitions into `/run/.swarm/shards/web-viz/ASSEMBLED.js`: 3 definition block(s) from 2 piece(s) — 3 placed in the declared interface's order, 0 appended after it"),
+            brief.contains("CODE HAS ALREADY ASSEMBLED their definitions into `/run/.swarm/shards/web-viz/ASSEMBLED.js`: 4 definition block(s) from 2 piece(s) — 3 placed in the declared interface's order, 1 appended after it"),
             "{brief}"
         );
         assert!(

@@ -949,6 +949,10 @@ fn next_sig(toks: &[Tok], i: usize) -> Option<&Tok> {
 /// comma is declared; a `{…}`/`[…]` pattern declares everything inside it (keys and defaults
 /// included — over-approximation on the defined side). Ends at `;`, `)`, `of`/`in`, another
 /// statement keyword, or a newline that does not follow a comma.
+///
+/// This is the undefined-reference scan's SCOPE set (locals at any depth, destructuring), not
+/// the definition rule: what a piece DEFINES for the module is `shards::extract_symbols` (one
+/// rule — VA-097), which `undefined_references` unions into `defined` below.
 fn js_declaration_list(toks: &[Tok], kw: usize, defined: &mut BTreeSet<String>) {
     let mut k = kw + 1;
     let mut expect_name = true;

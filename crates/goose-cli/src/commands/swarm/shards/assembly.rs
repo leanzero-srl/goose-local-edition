@@ -11,9 +11,10 @@
 //! 1. SEGMENT every piece whose extension is the module's into top-level blocks. A block starts at
 //!    a column-0 line that is not a closer (`}` `)` `]`), not a continuation (`.` `,` `else` …) and
 //!    not inside a multi-line string/comment; leading comments and Python decorators belong to the
-//!    block below them. A block DEFINES the non-shorthand names `extract_symbols` (the dossier's own
-//!    extractor) finds in it; a block defining nothing is an IMPORT or a top-level STATEMENT (state,
-//!    wiring, boot) — the glue the merger owns.
+//!    block below them. A block DEFINES the non-shorthand names `extract_symbols` (THE definition
+//!    rule — functions, classes, and since VA-097 module-level state, constants and installed
+//!    names) finds in it; a block defining nothing is an IMPORT or a top-level STATEMENT (wiring,
+//!    boot) — the glue the merger owns.
 //! 2. ORDER the defining blocks by the declared interface: each export, in `exports` order, pulls
 //!    the block(s) defining it (`same_symbol`, the dossier's MILD rule); blocks no export names are
 //!    appended after in shard order. A name defined by TWO shards is
@@ -51,7 +52,7 @@ pub(super) const DUPLICATE_MARKER: &str = "MERGE_DUPLICATE";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Segment {
     /// The non-shorthand names `extract_symbols` finds in the block — empty for an import or a
-    /// top-level statement (state, wiring, boot).
+    /// top-level statement (wiring, boot; module-level state is a definition since VA-097).
     pub(super) names: Vec<String>,
     pub(super) import: bool,
     pub(super) text: String,
@@ -525,7 +526,7 @@ pub(super) fn assemble(root: &Path, dossier: &MergeDossier) -> AssemblyOutcome {
         .collect();
     if !stmt_blocks.is_empty() {
         out.push_str(&format!(
-            "\n{prefix} ---- TOP-LEVEL STATEMENTS from the pieces (state, wiring, boot), collected here in shard order — the merger places each where the declared layout puts it and removes duplicates ----\n"
+            "\n{prefix} ---- TOP-LEVEL STATEMENTS from the pieces (wiring, boot), collected here in shard order — the merger places each where the declared layout puts it and removes duplicates ----\n"
         ));
         for b in stmt_blocks {
             match statements.iter_mut().find(|(s, _)| *s == b.shard) {
@@ -760,19 +761,26 @@ mod tests {
         assert_eq!(a.path, ".swarm/shards/web-viz/ASSEMBLED.js");
         assert_eq!(a.ext, "js");
         assert_eq!(a.pieces, 2);
-        assert_eq!(a.definitions, 3, "{a:?}");
+        assert_eq!(a.definitions, 5, "{a:?}");
         assert_eq!(a.ordered_by_interface, 2);
+        // The shared state `S` and the installed `window.vs7dbg` object are DEFINITIONS the
+        // interface does not name (VA-097) — appended after it, never buried under statements.
         assert_eq!(
             a.appended_unknown,
-            vec![("web-viz-render".to_string(), "clamp".to_string())]
+            vec![
+                ("web-viz-render".to_string(), "S".to_string()),
+                ("web-viz-render".to_string(), "clamp".to_string()),
+                (
+                    "web-viz-pick-camera".to_string(),
+                    "window.vs7dbg".to_string()
+                ),
+            ]
         );
         assert_eq!(a.imports, 1, "the byte-identical import is written once");
         assert_eq!(
             a.statements,
-            vec![
-                ("web-viz-render".to_string(), 1),
-                ("web-viz-pick-camera".to_string(), 2)
-            ]
+            vec![("web-viz-pick-camera".to_string(), 1)],
+            "only the load listener is a statement"
         );
         assert_eq!(a.declared_missing, vec!["drawBrush".to_string()]);
         assert!(a.duplicates.is_empty());
@@ -782,7 +790,7 @@ mod tests {
             vec!["imports", "shared_state_init", "wiring", "gaps"]
         );
         let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
-        assert!(text.starts_with("// ASSEMBLED BY THE ENGINE — module `web-viz` (web/viz.js): 3 definition block(s) from 2 piece(s), 2 in the declared interface's order, 1 appended after it"), "{text}");
+        assert!(text.starts_with("// ASSEMBLED BY THE ENGINE — module `web-viz` (web/viz.js): 5 definition block(s) from 2 piece(s), 2 in the declared interface's order, 3 appended after it"), "{text}");
         let import = position(&text, "// shard: web-viz-render (.swarm/shards/web-viz/render/render.js:1) — import\nimport { mat4 }");
         let pick_def = position(&text, "// shard: web-viz-pick-camera (.swarm/shards/web-viz/pick-camera/pick.js:3) — window.vs7dbg.pick\nwindow.vs7dbg.pick = function (sx, sy) {");
         let scene_def = position(&text, "// shard: web-viz-render (.swarm/shards/web-viz/render/render.js:5) — buildScene\n/**\n * Fill the instance buffers.\n */\nfunction buildScene(data) {");
@@ -793,7 +801,7 @@ mod tests {
         let statements = position(&text, "// ---- TOP-LEVEL STATEMENTS");
         let state = position(
             &text,
-            "— top-level statement\nconst S = { yaw: 0, brush: new Set() };",
+            "— S — not in the declared interface\nconst S = { yaw: 0, brush: new Set() };",
         );
         let boot = position(
             &text,
@@ -804,13 +812,10 @@ mod tests {
             "interface order: {text}"
         );
         assert!(
-            scene_def < clamp_def,
-            "unknowns after the interface: {text}"
+            scene_def < state && state < clamp_def,
+            "unknowns after the interface, in block order: {text}"
         );
-        assert!(
-            clamp_def < statements && statements < state && state < boot,
-            "{text}"
-        );
+        assert!(clamp_def < statements && statements < boot, "{text}");
         assert!(
             !text.contains(DUPLICATE_MARKER),
             "no duplicate, no marker: {text}"
@@ -824,11 +829,11 @@ mod tests {
         assert_eq!(occurrences, 1, "a block is written once: {text}");
         let ev = assembled_event("web-viz", "web-viz", &a);
         assert_eq!(ev["event"], "merge_assembled");
-        assert_eq!(ev["definitions"], 3);
+        assert_eq!(ev["definitions"], 5);
         assert_eq!(ev["ordered_by_interface"], 2);
         assert_eq!(ev["declared_missing"], serde_json::json!(["drawBrush"]));
         assert_eq!(ev["glue_needed"][0], "imports");
-        assert_eq!(ev["statements"][1]["blocks"], 2);
+        assert_eq!(ev["statements"][0]["blocks"], 1);
         assert_eq!(ev["lines"], text.lines().count());
     }
 
@@ -920,7 +925,7 @@ mod tests {
             (1, false, vec![]),
             (5, true, vec![]),
             (6, true, vec![]),
-            (8, false, vec![]),
+            (8, false, vec!["DB".to_string()]),
             (10, false, vec!["Store".to_string(), "load".to_string()]),
             (19, false, vec!["helper".to_string()]),
             (22, false, vec![]),
@@ -950,9 +955,13 @@ mod tests {
         assert_eq!(a.ordered_by_interface, 1, "the class block, via its method");
         assert_eq!(
             a.appended_unknown,
-            vec![("store-core".to_string(), "helper".to_string())]
+            vec![
+                ("store-core".to_string(), "DB".to_string()),
+                ("store-core".to_string(), "helper".to_string())
+            ],
+            "module-level `DB = …` is a definition (VA-097)"
         );
-        assert_eq!(a.statements, vec![("store-core".to_string(), 3)]);
+        assert_eq!(a.statements, vec![("store-core".to_string(), 2)]);
         let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
         assert!(text.starts_with("# ASSEMBLED BY THE ENGINE"), "{text}");
         assert!(text.contains("# shard: store-core (.swarm/shards/store/core/core.py:10) — Store, load\n# the store\n@dataclass\nclass Store:"), "{text}");
@@ -1020,10 +1029,11 @@ mod tests {
     /// The r6e declaration (run.jsonl seq 522/548: `viz3d-engine`, 8 shards, 23 exports — the
     /// names verbatim from `merge_dossier.declared_missing`, which listed every one because no
     /// piece existed). With the pieces the eight shards were briefed to write, assembly places the
-    /// `vs7dbg` object first (exports[1] `vs7dbg.layout` names a method in it), then the `viz3d`
-    /// object, then the eleven functions in export order; the object itself (`vs7dbg`, kind
-    /// object, no function defines it) is the one declared name left as a GAP; the streaming
-    /// shard's helpers and `boot` are appended after; the load listener is glue at the end.
+    /// `vs7dbg` object first (exports[0] `vs7dbg` IS the boot piece's top-level
+    /// `window.vs7dbg = {…}` — an installed name is a definition since VA-097, so no declared
+    /// name is left as a GAP), then the `viz3d` object, then the eleven functions in export
+    /// order; the shader constant `VS`, the streaming shard's helpers and `boot` are appended
+    /// after; the load listener is glue at the end.
     #[test]
     fn the_r6e_declaration_orders_eight_shards_pieces_by_its_twenty_three_exports() {
         let root = tmp("r6e");
@@ -1079,7 +1089,7 @@ mod tests {
             panic!("eight js shards assemble");
         };
         assert_eq!(a.pieces, 8);
-        assert_eq!(a.definitions, 16, "{a:?}");
+        assert_eq!(a.definitions, 17, "{a:?}");
         assert_eq!(
             a.ordered_by_interface, 13,
             "2 objects + 11 functions: {a:?}"
@@ -1087,6 +1097,7 @@ mod tests {
         assert_eq!(
             a.appended_unknown,
             vec![
+                ("viz3d-engine-rendering-core".to_string(), "VS".to_string()),
                 (
                     "viz3d-engine-streaming-diffs".to_string(),
                     "applyDiff".to_string()
@@ -1098,20 +1109,21 @@ mod tests {
                 ("viz3d-engine-vs7dbg-boot".to_string(), "boot".to_string()),
             ]
         );
-        assert_eq!(a.declared_missing, vec!["vs7dbg".to_string()]);
+        assert_eq!(
+            a.declared_missing,
+            Vec::<String>::new(),
+            "`vs7dbg` is defined by the boot piece's top-level `window.vs7dbg = {{…}}` (VA-097)"
+        );
         assert_eq!(
             a.statements,
-            vec![
-                ("viz3d-engine-rendering-core".to_string(), 1),
-                ("viz3d-engine-vs7dbg-boot".to_string(), 1)
-            ]
+            vec![("viz3d-engine-vs7dbg-boot".to_string(), 1)]
         );
         assert!(a.duplicates.is_empty());
         let text = std::fs::read_to_string(root.join(&a.path)).unwrap();
         let first_def = position(&text, "\n// shard: ");
         assert!(
-            text.split_at(first_def).1.starts_with("\n// shard: viz3d-engine-vs7dbg-boot (.swarm/shards/viz3d-engine/vs7dbg-boot/boot.js:1) — layout, sceneDigest, camera, setCamera, pick, pickPixel, brush, frames\nwindow.vs7dbg = {"),
-            "the vs7dbg object leads, via exports[1]: {text}"
+            text.split_at(first_def).1.starts_with("\n// shard: viz3d-engine-vs7dbg-boot (.swarm/shards/viz3d-engine/vs7dbg-boot/boot.js:1) — window.vs7dbg, layout, sceneDigest, camera, setCamera, pick, pickPixel, brush, frames\nwindow.vs7dbg = {"),
+            "the vs7dbg object leads, via exports[0]: {text}"
         );
         let viz3d = position(&text, "window.viz3d = {");
         let project = position(&text, "function project(x, y, z) {}");
@@ -1121,7 +1133,7 @@ mod tests {
         let boot = position(&text, "function boot() {}");
         let shader = position(
             &text,
-            "— top-level statement\nconst VS = `\nattribute vec3 aPos;",
+            "— VS — not in the declared interface\nconst VS = `\nattribute vec3 aPos;",
         );
         let listener = position(&text, "window.addEventListener('load', boot);");
         assert!(
@@ -1133,8 +1145,8 @@ mod tests {
             "{text}"
         );
         assert!(
-            boot < shader && shader < listener,
-            "statements last, the template literal whole: {text}"
+            update_labels < shader && shader < apply_diff && boot < listener,
+            "the shader constant is the first appended definition, the listener is the one statement, the template literal whole: {text}"
         );
         for sh in &dossier.shards {
             for (path, _, _) in &sh.pieces {
