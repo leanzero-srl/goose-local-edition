@@ -773,10 +773,17 @@ fn the_value_gate_is_carried() {
 /// is set from the counter's replica, never from a doc. The four `budgets.rs` reference values
 /// carry `// measured:` on their lines (r6h on the 262,144 window, r6h-golden-0.4616) and
 /// desk.rs's settled-list keep is coded `6 * ladder::LOOK_TAIL_CHARS` (`// ratio:`): 33 → 28.
-/// The 28 survivors are algorithm constants (evidence floors, the trigger ratio, the shingle
-/// width, row counts) and the sibling modules' reference numerators still unmarked
-/// (dep_sources, judge_context, ledger_block, user_notes, vendor_probe).
-const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
+/// 28 → 21 (VA-141): the seven sibling-module reference numerators `budgets::ShownBudgets::
+/// for_window` scales — `DEP_SOURCES_BUDGET_CHARS`, `DEP_SOURCE_FILE_CHARS`,
+/// `OWNED_EXCERPT_TOTAL`, `OWNED_EXCERPT_PER_FILE`, `REPAIR_HISTORY_CHARS`,
+/// `USER_NOTES_BUDGET_CHARS`, `VENDOR_PROBE_BODY_CHARS` — carry `// measured:` on their lines
+/// (r6h on the 262,144 window, r6h-golden-0.4616); none was dead (every one is read by the
+/// derivation) and every other use of all seven is under `#[cfg(test)]` (swarm.rs's repair-history
+/// tests and `repair_waves.rs`'s pass `REPAIR_HISTORY_CHARS` as the absolute; both are test
+/// modules). Counted by this scan's Python replica: 21. The 21 survivors are algorithm constants
+/// (evidence floors, the trigger ratio, the shingle width, row counts, the specificity and
+/// orientation floors).
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 21;
 
 fn is_numeric_const_literal(line: &str) -> bool {
     let s = line.trim_start();

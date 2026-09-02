@@ -514,7 +514,7 @@ pub(super) fn render_ledger_block_measured(
 /// Reference (262,144-window) budget of the repair shard's history splice — one dep-file's worth.
 /// VA-126: the live value is `budgets::ShownBudgets::repair_history_chars`, passed in by every
 /// caller as `budget_chars`.
-pub(super) const REPAIR_HISTORY_CHARS: usize = 3_500;
+pub(super) const REPAIR_HISTORY_CHARS: usize = 3_500; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// II-4, the repair shard's splice (budget one dep-file, `budget_chars`): this round's gate row,
 /// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'

@@ -50,10 +50,10 @@ use super::{shape_excerpt, TargetLang};
 
 /// Reference (262,144-window) value of the whole "API of" block — the live budget is
 /// `ShownBudgets::dep_sources_chars`.
-pub(super) const DEP_SOURCES_BUDGET_CHARS: usize = 14_000;
+pub(super) const DEP_SOURCES_BUDGET_CHARS: usize = 14_000; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 /// Reference (262,144-window) value of one dependency source inside the block — the live budget
 /// is `ShownBudgets::dep_source_file_chars`.
-pub(super) const DEP_SOURCE_FILE_CHARS: usize = 3_500;
+pub(super) const DEP_SOURCE_FILE_CHARS: usize = 3_500; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 pub(super) const CUT_PER_FILE_CAP: &str = "per_file_cap";
 pub(super) const CUT_BUDGET_EXHAUSTED: &str = "dep_budget_exhausted";
