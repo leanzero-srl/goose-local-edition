@@ -176,3 +176,5 @@ prompt · design · harness.
 | VA-137 | 09-02 | swarm.rs | CLAIMED 22:3x swarm-surgeon in va137-class2 (off r6k-staging 7b03c8659; swarm.rs + desk.rs + budgets.rs; cargo-free) | from VA-126's class-2 trace; also the 20 s subprocess literal inside the moved collect_only body and `findings.rs:522`'s pre-existing unwrap_or_default (prove-empty or event). |
 
 
+
+| VA-138 | 09-02 | panel | CLAIMED 22:3x panel-surgeon in va138-steps (pnpm only; no engine change) | Mihai watching r6j: 'oh man we need to update this UI to reflect the steps better' — the panel showed SYNTHESIS for 35 min while synthesis took 12 and the SPLIT lane ran 23 (the engine emits no split phase event). FIX: a step list DERIVED from events seen — Open → [Ask] → Research (per-lane landed/kinds/rank/host) → Synthesis (routed N) → Split (from plan_flag fat_task + the split-<task> lane + split_sized) → Build → Integrate → Repair — with durations from event timestamps; no fixed phase array. |
