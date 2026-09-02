@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { FaCircle } from 'react-icons/fa';
 import { isEqual } from 'lodash';
 import { cn } from '../../utils';
+import { cx } from '../lz';
 import { Alert, AlertType } from '../alerts';
 import { AlertBox } from '../alerts';
 
@@ -263,7 +264,7 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
         >
           <div className="flex flex-col">
             {alerts.map((alert, index) => (
-              <div key={index} className={cn(index > 0 && 'border-t border-white/20')}>
+              <div key={index} className={cx(index > 0 && 'border-t border-lz-border')}>
                 <AlertBox alert={alert} />
               </div>
             ))}
