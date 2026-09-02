@@ -312,7 +312,7 @@ Ordered by Mihai 2026-09-02, after the inventory he had to ask for: *"I said man
 need to avoid hard coded bits because this is an agent and that makes it useless outside of the scope
 of what we are doing now — the benchmark is the cause not the goal."* NO HARD CODING was already a
 prime directive under gate 1; nothing REFUSED it, so 147 named constants accumulated (28 of them live
-numeric absolutes outside `cfg(test)`) and nobody counted them until he asked.
+numeric absolutes outside `cfg(test)`; 21 after the receipts were marked) and nobody counted them until he asked.
 
 THE LAW: a literal may live in the engine only as (a) a RATIO of something the run itself produces
 (a fraction of the probed context window, a multiple of the app's own median response, a share of
