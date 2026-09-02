@@ -430,7 +430,7 @@ fn swarm_rs_line_count_only_decreases() {
     // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
     // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
     // the baseline is the count AFTER all three, so each intermediate commit sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 34_234; // r6i-staging: VA-103 dep_sources.rs + VA-102 briefs.rs + VA-104 answer_routing.rs/flat_plan_from_briefs extractions — set to what the merged file IS
+    const SWARM_RS_LINE_BASELINE: usize = 33_932; // r6i-staging: VA-103 dep_sources.rs + VA-102 briefs.rs + VA-104 answer_routing.rs + VA-105 vendor_probe.rs extractions — set to what the merged file IS
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -487,7 +487,11 @@ fn do_everything_never_reaches_a_model() {
 // To 96 (VA-080 item 3): shards.rs's `measure_fatness` RECORDS a task no opener slice is named
 // for (`FatMeasure::unclaimed`) instead of defaulting its claim away; a plan whose every row is
 // unclaimed is said (`fatness_unmeasurable`) rather than measured as a flat nothing.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 95; // r6h-staging: shards.rs sibling constructor rewritten as one match (provides + writes), 97 → 95
+// To 94 (VA-105): the vendor probe's reqwest client `.build().unwrap_or_default()` — a default
+// client that panics on first use if the TLS backend failed — is a match: `Err(e)` is a measured
+// `vendor_probe{ok:false, error: "http client: …"}`, the spec's build proceeds exactly as with a
+// dead vendor (vendor_probe.rs).
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 94;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
