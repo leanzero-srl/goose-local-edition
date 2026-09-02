@@ -16,9 +16,10 @@
 //!   READS only. Nothing time-based decides a verdict, bounds a call, or feeds a detector:
 //!   look-eligibility and every detector floor are char/count floors reused from the in-loop
 //!   judge (OMNI_JUDGE_MIN_CHARS, OMNI_JUDGE_GROWTH_CHARS, REPEAT_BREAK_N). The in-loop repeat
-//!   breaker's REPEAT_BREAK_MIN_SECS half is deliberately NOT mirrored — a seconds floor may not
-//!   enter desk eligibility (gate 5; refuter objection 8) — so the shadow can flag a repeat
-//!   earlier than the in-loop detector would.
+//!   breaker's other half — once a 60 s wall-clock floor, since VA-137 the lane's produced-chars
+//!   floor (`repeat_break::ProducedRhythm`) — is deliberately NOT mirrored (the seconds form
+//!   could not enter desk eligibility under gate 5; refuter objection 8), so the shadow can flag
+//!   a repeat earlier than the in-loop detector would.
 //!
 //! - CHAR COUNTS CUT A UTF-8 FILE (refuter objection 5): `judge_restream` carries
 //!   `abandoned_thinking_chars` — a CHAR count — while file reads advance in BYTES. The replay
