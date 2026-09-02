@@ -52,8 +52,9 @@
 //! and `.log` is not cut at restream boundaries; the repeat detector reads `result_tail` clipped
 //! to 2,000 chars where the in-loop compares 4,000-char clips; growth-without-acting measures
 //! chars-since-last-observed-action at poll granularity where the in-loop measures
-//! chars-since-last-look. Each degradation only affects when the SHADOW would summon — nothing
-//! rides these values.
+//! chars-since-last-look; the settled-list meter (VA-124) sees a tool row at poll granularity
+//! too, so a call landing between two lists written inside one poll is joined after both. Each
+//! degradation only affects when the SHADOW would summon — nothing rides these values.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
@@ -232,6 +233,516 @@ impl RecurrenceMeter {
     }
 }
 
+/// VA-124 — THE SETTLED-LIST DETECTOR: the same ordered list, re-listed under new names.
+///
+/// MEASURED (words-reader, primary logs). r6j's opener wrote its slice list ELEVEN times over 52
+/// minutes: six boundary-moving passes up to char 21.9k (15:38–15:42, before it had read the
+/// spec), then — after reading request.md in six `sed` calls, 15:51–15:54 — the SAME territories
+/// re-listed from 15:55 to 16:22 with renamed titles ('consistency core' → 'core (ledgerd data
+/// engine)' → 'ledgerd-core'), each restart opening with "Now, the slices. Let me reconsider to
+/// get good balance", "OK this is getting complicated. Let me step back", "I think I'm
+/// overanalyzing… Let me lock it in:". The 48-char shingle meter maxed at 0.056 — a rename defeats
+/// a verbatim meter — and the judge looked ZERO times. r6h: four lists, #3 (char 76.8k) and #4
+/// (89.9k) opening with the identical sentence "I've finished reading the full request and the
+/// vendor docs", meter 0.0165, zero looks. A marker COUNT (the 2nd or 3rd list) fires too early:
+/// on both runs the boundaries were still moving at lists 2 and 3.
+///
+/// What this reads instead is the TERRITORY. A list occurrence is a run of item lines in the
+/// shapes planners write — `**Slice N`, `N. **title**`, `Slice N:`, `**SN:` — each item carrying
+/// the lines under it until prose resumes. An item's territory is the set of file paths on its
+/// `Owns:`/`Files:` line when it has one, else every file path named under it, else its `§N` /
+/// `section N` references, else its title. Two occurrences whose items carve the same territories
+/// (compared as a multiset — order and titles are free) are the SAME LIST. A re-list is flagged
+/// only when no tool call between the two returned MATERIAL — a result of at least
+/// OMNI_JUDGE_MIN_CHARS, the judge's own "enough text to assess" floor; a headings grep or a `wc`
+/// (r6j 16:09:53 = 92 chars, 16:11:23 = 1,130; r6h 00:59:02 = 1,539) is a lookup, not new ground,
+/// while a spec section read (every `sed -n` on both runs: ≥ 2,000) resets the baseline — and
+/// only for lists of at least SETTLED_LIST_MIN_ITEMS items: the one- and two-item runs on both
+/// archives were enumerations inside prose (r6h's `DECISIONS.md` singletons at 37.6k and 37.9k
+/// matched each other), never a plan.
+///
+/// A SUMMON, never a verdict. The live loop hands the judge BOTH occurrences verbatim
+/// (`ladder::settled_list_block`) and the judge decides; the shadow desk records what it would
+/// have done (`desk_summon{detector: settled_list_relisted}`). Every occurrence's text since the
+/// last material read is kept (bounded per occurrence, the cut stated on the row) so the WORDS
+/// reach the reader, not a count.
+pub(crate) struct SettledListMeter {
+    offset: usize,
+    line_buf: String,
+    line_start: usize,
+    cur: Option<ListOccurrence>,
+    blank_pending: bool,
+    history: Vec<ListOccurrence>,
+    occurrences_seen: usize,
+    lookups_since_material: usize,
+    pending: Option<SettledRelist>,
+}
+
+/// A list is a plan when it has this many items; shorter runs are enumerations inside prose
+/// (measured on r6h and r6j — see the struct doc). A floor on evidence quality, the same class as
+/// OMNI_JUDGE_MIN_CHARS: nothing about the call changes when it is not met.
+pub(crate) const SETTLED_LIST_MIN_ITEMS: usize = 3;
+
+/// How much of one occurrence's text is carried for the judge — a scale on carried text, never
+/// a bound on model work. r6h's list #3 ran 6.5k chars, r6j's drafted-objective pass ~12k; a
+/// longer one is cut at the tail and the cut is stated on the row and in the prompt block.
+const SETTLED_SPAN_KEEP_CHARS: usize = 12_000;
+
+const PATH_EXTENSIONS: &[&str] = &[
+    "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm", "css", "scss", "md", "json",
+    "toml", "yaml", "yml", "txt", "sh", "bash", "rs", "go", "java", "kt", "sql", "db", "sqlite",
+    "sqlite3", "cfg", "ini", "env", "lock", "csv", "xml", "svg", "png", "jpg", "jpeg", "gif",
+    "ico", "wasm", "glsl", "vert", "frag", "c", "h", "cpp", "hpp", "rb", "php", "lua", "swift",
+    "dart", "proto",
+];
+
+/// One re-list the meter measured: which occurrence, where both lists start (chars into the
+/// stream since the meter's last reset — the `thinking_chars` scale), the item territories they
+/// share, and both texts verbatim (head-kept; `*_cut_chars` states what was not carried).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SettledRelist {
+    pub(crate) occurrence: usize,
+    pub(crate) first_settled_occurrence: usize,
+    pub(crate) first_settled_offset: usize,
+    pub(crate) current_offset: usize,
+    pub(crate) items: Vec<String>,
+    pub(crate) first_span: String,
+    pub(crate) first_span_cut_chars: usize,
+    pub(crate) current_span: String,
+    pub(crate) current_span_cut_chars: usize,
+    /// Tool calls between the two lists whose results were below OMNI_JUDGE_MIN_CHARS — lookups,
+    /// carried to the judge as a fact (a material read would have reset the baseline instead).
+    pub(crate) lookups_between: usize,
+}
+
+struct ListItem {
+    index: u32,
+    title: String,
+    own_paths: std::collections::BTreeSet<String>,
+    all_paths: std::collections::BTreeSet<String>,
+    sections: std::collections::BTreeSet<String>,
+    /// The previous line was an ownership line (or a bullet continuing one), so a bullet on this
+    /// line still lists owned files.
+    after_own_line: bool,
+}
+
+impl ListItem {
+    fn new(index: u32, marker_line: &str) -> Self {
+        let mut item = Self {
+            index,
+            title: item_title(marker_line),
+            own_paths: Default::default(),
+            all_paths: Default::default(),
+            sections: Default::default(),
+            after_own_line: false,
+        };
+        item.push_line(marker_line);
+        item
+    }
+
+    fn push_line(&mut self, line: &str) {
+        let body = strip_bullet(line.trim_start());
+        let paths = path_tokens(line);
+        if ownership_label(body) || (self.after_own_line && is_bullet(line.trim_start())) {
+            self.own_paths.extend(paths.iter().cloned());
+            self.after_own_line = true;
+        } else {
+            self.after_own_line = false;
+        }
+        self.all_paths.extend(paths);
+        self.sections.extend(section_refs(line));
+    }
+
+    /// The rendered territory, or None when the item names nothing at all (an empty title, no
+    /// paths, no sections) — such a list is not comparable and never flags.
+    fn territory(&self) -> Option<String> {
+        let join = |s: &std::collections::BTreeSet<String>| {
+            s.iter().cloned().collect::<Vec<_>>().join(", ")
+        };
+        if !self.own_paths.is_empty() {
+            return Some(format!("files: {}", join(&self.own_paths)));
+        }
+        if !self.all_paths.is_empty() {
+            return Some(format!("files: {}", join(&self.all_paths)));
+        }
+        if !self.sections.is_empty() {
+            return Some(format!("sections: {}", join(&self.sections)));
+        }
+        (!self.title.is_empty()).then(|| format!("title: {}", self.title))
+    }
+}
+
+struct ListOccurrence {
+    ordinal: usize,
+    start_offset: usize,
+    items: Vec<ListItem>,
+    text: String,
+    text_chars: usize,
+    text_cut_chars: usize,
+    /// Sorted item territories, computed at close; empty when any item had none.
+    territory: Vec<String>,
+    lookups_before: usize,
+}
+
+impl ListOccurrence {
+    fn new(ordinal: usize, start_offset: usize) -> Self {
+        Self {
+            ordinal,
+            start_offset,
+            items: Vec::new(),
+            text: String::new(),
+            text_chars: 0,
+            text_cut_chars: 0,
+            territory: Vec::new(),
+            lookups_before: 0,
+        }
+    }
+
+    fn append_text(&mut self, line: &str) {
+        let n = line.chars().count() + 1;
+        if self.text_chars + n <= SETTLED_SPAN_KEEP_CHARS {
+            self.text.push_str(line);
+            self.text.push('\n');
+            self.text_chars += n;
+        } else {
+            self.text_cut_chars += n;
+        }
+    }
+}
+
+impl SettledListMeter {
+    pub(crate) fn new() -> Self {
+        Self {
+            offset: 0,
+            line_buf: String::new(),
+            line_start: 0,
+            cur: None,
+            blank_pending: false,
+            history: Vec::new(),
+            occurrences_seen: 0,
+            lookups_since_material: 0,
+            pending: None,
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Feed reasoning text in any chunking; lines are assembled here.
+    pub(crate) fn push(&mut self, chunk: &str) {
+        for c in chunk.chars() {
+            self.offset += 1;
+            if c == '\n' {
+                let line = std::mem::take(&mut self.line_buf);
+                let start = self.line_start;
+                self.line_start = self.offset;
+                self.take_line(&line, start);
+            } else {
+                self.line_buf.push(c);
+            }
+        }
+    }
+
+    /// A tool call landed with a result of `result_chars`. The list being written is done (the
+    /// model acted); a MATERIAL result — at least OMNI_JUDGE_MIN_CHARS — resets the settled
+    /// baseline because the next list may be informed by it; a shorter one is a lookup and is
+    /// counted for the judge.
+    pub(crate) fn note_tool_result(&mut self, result_chars: usize) {
+        self.flush_line();
+        self.close_current();
+        if result_chars >= OMNI_JUDGE_MIN_CHARS {
+            self.history.clear();
+            self.lookups_since_material = 0;
+        } else {
+            self.lookups_since_material += 1;
+        }
+    }
+
+    /// The re-list measured since the last take, if any — an edge, consumed by the pass that
+    /// dispatches the look.
+    pub(crate) fn take_relist(&mut self) -> Option<SettledRelist> {
+        self.pending.take()
+    }
+
+    fn flush_line(&mut self) {
+        if self.line_buf.is_empty() {
+            return;
+        }
+        let line = std::mem::take(&mut self.line_buf);
+        let start = self.line_start;
+        self.line_start = self.offset;
+        self.take_line(&line, start);
+    }
+
+    fn take_line(&mut self, line: &str, start: usize) {
+        if let Some(index) = list_item_index(line) {
+            let restarts = self
+                .cur
+                .as_ref()
+                .is_some_and(|o| o.items.last().is_some_and(|it| index <= it.index));
+            if restarts {
+                self.close_current();
+            }
+            if self.cur.is_none() {
+                self.occurrences_seen += 1;
+                self.cur = Some(ListOccurrence::new(self.occurrences_seen, start));
+            }
+            let occ = self.cur.as_mut().expect("set just above");
+            occ.items.push(ListItem::new(index, line));
+            occ.append_text(line);
+            self.blank_pending = false;
+            return;
+        }
+        let Some(occ) = self.cur.as_mut() else {
+            return;
+        };
+        if line.trim().is_empty() {
+            self.blank_pending = true;
+            occ.append_text(line);
+            return;
+        }
+        if !self.blank_pending || continues_item_after_blank(line) {
+            if let Some(item) = occ.items.last_mut() {
+                item.push_line(line);
+            }
+            occ.append_text(line);
+            self.blank_pending = false;
+            return;
+        }
+        // Prose resumed after a blank line: the list is complete.
+        self.close_current();
+    }
+
+    fn close_current(&mut self) {
+        let Some(mut occ) = self.cur.take() else {
+            return;
+        };
+        self.blank_pending = false;
+        occ.lookups_before = self.lookups_since_material;
+        let territories: Option<Vec<String>> = occ.items.iter().map(ListItem::territory).collect();
+        occ.territory = match territories {
+            Some(mut t) => {
+                t.sort();
+                t
+            }
+            // An item that names nothing makes the list incomparable — it stays in the history
+            // as text but can never equal anything.
+            None => Vec::new(),
+        };
+        let comparable = occ.items.len() >= SETTLED_LIST_MIN_ITEMS && !occ.territory.is_empty();
+        if !comparable {
+            self.history.push(occ);
+            return;
+        }
+        if let Some(first) = self.history.iter().find(|h| h.territory == occ.territory) {
+            self.pending = Some(SettledRelist {
+                occurrence: occ.ordinal,
+                first_settled_occurrence: first.ordinal,
+                first_settled_offset: first.start_offset,
+                current_offset: occ.start_offset,
+                items: occ.territory.clone(),
+                first_span: first.text.clone(),
+                first_span_cut_chars: first.text_cut_chars,
+                current_span: occ.text.clone(),
+                current_span_cut_chars: occ.text_cut_chars,
+                lookups_between: self
+                    .lookups_since_material
+                    .saturating_sub(first.lookups_before),
+            });
+        }
+        self.history.push(occ);
+    }
+}
+
+fn leading_number(s: &str) -> Option<(u32, &str)> {
+    let digits: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .take(3)
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let n = digits.parse().ok()?;
+    Some((n, &s[digits.len()..]))
+}
+
+fn is_bullet(s: &str) -> bool {
+    s.starts_with("- ") || s.starts_with("* ") || s.starts_with("• ") || s.starts_with("+ ")
+}
+
+fn strip_bullet(s: &str) -> &str {
+    if is_bullet(s) {
+        s.split_at(s.chars().next().map_or(0, char::len_utf8))
+            .1
+            .trim_start()
+    } else {
+        s
+    }
+}
+
+/// The item index when `line` opens a list item in one of the shapes planners write:
+/// `**Slice N`, `Slice N:`, `### Slice N`, `**SN:`, `N. **title**`, `**N. title`, each with an
+/// optional leading bullet.
+fn list_item_index(line: &str) -> Option<u32> {
+    let s = strip_bullet(line.trim_start());
+    let s = if s.starts_with('#') {
+        s.trim_start_matches('#').trim_start()
+    } else {
+        s
+    };
+    let bold = s.starts_with("**");
+    let s = s.strip_prefix("**").unwrap_or(s);
+    if let Some(rest) = ["Slice", "slice", "SLICE"]
+        .iter()
+        .find_map(|w| s.strip_prefix(*w))
+    {
+        let (n, after) = leading_number(rest.trim_start())?;
+        let delimited =
+            after.is_empty() || after.starts_with([':', ' ', ')', '—', '–', '-', '.', '*', '(']);
+        return delimited.then_some(n);
+    }
+    if let Some(rest) = s.strip_prefix('S') {
+        let (n, after) = leading_number(rest)?;
+        let delimited = after.starts_with([':', '*', '—', '–', '-'])
+            || after.starts_with(" —")
+            || after.starts_with(" –")
+            || after.starts_with(" -");
+        return delimited.then_some(n);
+    }
+    let (n, after) = leading_number(s)?;
+    let after = after.strip_prefix(['.', ')'])?;
+    (bold || after.trim_start().starts_with("**")).then_some(n)
+}
+
+/// The item's title, normalised to lowercase alphanumerics: the marker line minus its marker,
+/// bold, parentheticals and anything after the first colon. The last-resort territory only.
+fn item_title(line: &str) -> String {
+    let s = strip_bullet(line.trim_start());
+    let s = s.trim_start_matches('#').trim_start();
+    let s = s.strip_prefix("**").unwrap_or(s);
+    let s = ["Slice", "slice", "SLICE", "S"]
+        .iter()
+        .find_map(|w| s.strip_prefix(*w))
+        .unwrap_or(s);
+    let s = s
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit());
+    let s = s.trim_start_matches(['.', ')', ':', ' ', '—', '–', '-', '*']);
+    let s = s.replace("**", "");
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = (depth - 1).max(0),
+            ':' if depth == 0 => break,
+            _ if depth == 0 && c.is_alphanumeric() => out.extend(c.to_lowercase()),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn ownership_label(body: &str) -> bool {
+    let Some((head, _)) = body.split_once(':') else {
+        return false;
+    };
+    let head = head.replace('*', "").trim().to_ascii_lowercase();
+    matches!(
+        head.as_str(),
+        "owns" | "files" | "file" | "owned files" | "owned file" | "owned" | "files owned"
+    )
+}
+
+/// After a blank line, a line still belongs to the open item when it is indented, a bullet, or
+/// a short label (`Objective:`, `Sections:`, `Files:`); anything else is prose resuming.
+fn continues_item_after_blank(line: &str) -> bool {
+    if line.starts_with(char::is_whitespace) || is_bullet(line) || ownership_label(line) {
+        return true;
+    }
+    let s = line.strip_prefix("**").unwrap_or(line);
+    let Some((head, _)) = s.split_once(':') else {
+        return false;
+    };
+    let head = head.trim_end_matches('*');
+    !head.is_empty()
+        && head.chars().count() <= 24
+        && head.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && head
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '/' | '&' | '-' | '_'))
+}
+
+fn is_path_token(t: &str) -> bool {
+    if t.chars().count() < 3 || t.contains("://") {
+        return false;
+    }
+    if !t.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '.' | '/' | '-' | '{' | '}' | ',' | '*' | '@' | '+')
+    }) {
+        return false;
+    }
+    let Some((stem, ext)) = t.rsplit_once('.') else {
+        return false;
+    };
+    if stem.is_empty() || !stem.chars().any(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    PATH_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+/// File paths named on a line: tokens with a source/data extension, backticks and quotes
+/// stripped, a brace expansion (`app/x/{a,b}.py`) kept as one token.
+fn path_tokens(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in line.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '`' | '"' | '\'' | '(' | ')' | '[' | ']' | '<' | '>' | ';' | '|'
+            )
+    }) {
+        let pieces: Vec<&str> = if raw.contains('{') {
+            vec![raw]
+        } else {
+            raw.split(',').collect()
+        };
+        for p in pieces {
+            let t = p.trim_matches(['.', ',', ':', ';', '?', '!', '*']);
+            if is_path_token(t) {
+                out.push(t.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// `§N`, `§ N`, `section N`, `Section N.M` — normalised to `§N`.
+fn section_refs(line: &str) -> Vec<String> {
+    let lower = line.to_lowercase();
+    let mut out = Vec::new();
+    for needle in ["§", "section "] {
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(needle) {
+            let at = from + i + needle.len();
+            let num: String = lower[at..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            let num = num.trim_end_matches('.');
+            if num.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                out.push(format!("§{num}"));
+            }
+            from = at;
+        }
+    }
+    out
+}
+
 /// Mirrors the worker loop's `acted_enough_to_judge` (call_records since stream start >= 6): a
 /// call that ACTS rather than narrates clears the readiness floor on its actions. Same count, one
 /// name, so a change there is findable from here by grep.
@@ -303,6 +814,7 @@ const DET_RECURRENCE: &str = "recurrence";
 const DET_GROWTH: &str = "growth_without_acting";
 const DET_DEGENERATE: &str = "degenerate_answer";
 const DET_REPEAT: &str = "repeat_run";
+const DET_SETTLED: &str = "settled_list_relisted";
 
 /// Everything the desk knows about one lane, reconstructed purely from its durable files plus the
 /// run.jsonl restream record. All counters are chars/counts — no clock state exists here.
@@ -320,6 +832,8 @@ struct LaneWatch {
     /// Rolling tail of the answer transcript (markers stripped), for the degenerate check.
     log_tail: String,
     recur: RecurrenceMeter,
+    /// VA-124: the same list re-listed under new names — fed the same chars as `recur`.
+    settled: SettledListMeter,
     attempt_dispatched_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     /// (restream ts, abandoned_thinking_chars) cuts not yet applied, oldest first.
     pending_cuts: VecDeque<(chrono::DateTime<chrono::FixedOffset>, usize)>,
@@ -364,6 +878,7 @@ impl LaneWatch {
             log_text: String::new(),
             log_tail: String::new(),
             recur: RecurrenceMeter::new(),
+            settled: SettledListMeter::new(),
             attempt_dispatched_at: None,
             pending_cuts: VecDeque::new(),
             attempt_chars: 0,
@@ -541,6 +1056,7 @@ impl LaneWatch {
             return;
         }
         self.recur.push(s);
+        self.settled.push(s);
         let n = s.chars().count();
         self.attempt_chars += n;
         self.segment_chars += n;
@@ -549,6 +1065,7 @@ impl LaneWatch {
 
     fn apply_cut(&mut self) {
         self.recur.reset();
+        self.settled.reset();
         self.segment_chars = 0;
         self.rows_this_stream = 0;
         self.chars_at_last_action = self.attempt_chars;
@@ -573,6 +1090,7 @@ impl LaneWatch {
             }
         }
         self.recur.reset();
+        self.settled.reset();
         self.attempt_dispatched_at = dispatched;
         self.attempt_chars = 0;
         self.segment_chars = 0;
@@ -679,6 +1197,7 @@ impl LaneWatch {
                             .unwrap_or("")
                             .to_string(),
                     );
+                    self.settled.note_tool_result(sig.2.chars().count());
                     self.rows_total += 1;
                     self.rows_this_stream += 1;
                     if self.last_row_sig.as_ref() == Some(&sig) {
@@ -740,7 +1259,8 @@ impl LaneWatch {
         let grew = ready && growth_chars >= OMNI_JUDGE_GROWTH_CHARS;
         let degenerate = self.degenerate_tail();
         let repeat = self.repeat_run >= REPEAT_BREAK_N;
-        let would_summon = recurring || grew || degenerate.is_some() || repeat;
+        let relist = self.settled.take_relist();
+        let would_summon = recurring || grew || degenerate.is_some() || repeat || relist.is_some();
 
         let mut newly_fired = false;
         let mut fire = |lane: &str,
@@ -804,6 +1324,28 @@ impl LaneWatch {
                     .unwrap_or(""),
             ),
         );
+        // VA-124: one row per measured re-list, never latched — each re-list is its own event
+        // with its own offsets, and the r6k measurement counts them.
+        if let Some(r) = &relist {
+            newly_fired = true;
+            sink.write_value(serde_json::json!({
+                "event": "desk_summon",
+                "lane": self.key,
+                "detector": DET_SETTLED,
+                "occurrence": r.occurrence,
+                "first_settled_occurrence": r.first_settled_occurrence,
+                "first_settled_offset": r.first_settled_offset,
+                "current_offset": r.current_offset,
+                "items": r.items,
+                "lookups_between": r.lookups_between,
+                "first_span_cut_chars": r.first_span_cut_chars,
+                "current_span_cut_chars": r.current_span_cut_chars,
+                "evidence_head": tail_chars(&r.current_span, 300),
+                // What the judge WOULD have been shown — both lists verbatim at the judge's own
+                // look-tail scale — so the r6k measurement reads the words, not a count.
+                "judge_block": super::ladder::settled_list_block(r, super::ladder::LOOK_TAIL_CHARS),
+            }));
+        }
 
         let eligible =
             self.fed_total - self.chars_at_last_look >= OMNI_JUDGE_MIN_CHARS || newly_fired;
@@ -1428,6 +1970,344 @@ mod tests {
     /// artifacts — here a judge lane whose think.log has grown past the growth-without-acting
     /// trip with zero tool calls — never become a desk lane, so no desk_look and no desk_summon
     /// can carry its key; the worker lane beside it is discovered and watched as before.
+    /// VA-124 (a), the r6j shape: six boundary-moving passes (the archive's chars 8.9k–21.9k,
+    /// 15:38–15:42), the spec read in six `sed` calls (material — the baseline resets), the first
+    /// clean list (pass 9, char 101,145), two LOOKUP calls (16:09:53 `cat -A` failed at 92 chars,
+    /// 16:11:23 the headings grep at 1,130), then the SAME six territories re-listed with every
+    /// title renamed (pass 10, char 117,791). The flag fires at the re-list and never before.
+    #[test]
+    fn a_settled_list_re_listed_under_new_names_fires_at_the_re_list_not_before() {
+        let mut m = SettledListMeter::new();
+        let passes = [
+            "1. **ledgerd core**: DB schema, event ledger, outbox+relay, sync engine, API endpoints\n\
+             2. **Webhooks + approval workflow**: distinct semantic areas inside ledgerd.\n\
+             3. **notifierd**: idempotent consumer.\n\
+             4. **Frontend structure + styling**: index.html + styles.css.\n\
+             5. **Frontend app.js**: table, filters, sync, notes.\n\
+             6. **Frontend viz.js**: the entire 3D engine + vs7dbg.\n\nHmm, is that balanced?\n",
+            "**Slice 1: ledgerd — data plane (DB, sync, event ledger, outbox)**\n\
+             Owns: `app/ledgerd/db.py`, `app/ledgerd/sync.py`, `app/ledgerd/ledger.py`, `app/ledgerd/outbox.py`\n\n\
+             **Slice 2: ledgerd — API plane (HTTP server, endpoints, SSE, viz/records)**\n\
+             Owns: `app/ledgerd/server.py`, `app/ledgerd/api.py`, `app/ledgerd/stream.py`\n\n\
+             **Slice 3: ledgerd — webhooks + approval workflow**\n\
+             Owns: `app/ledgerd/webhooks.py`, `app/ledgerd/drafts.py`\n\n\
+             **Slice 4: notifierd — idempotent consumer**\nOwns: `app/notifierd.py`\n\n\
+             **Slice 5: web — structure + styling**\nOwns: `web/index.html`, `web/styles.css`\n\n\
+             **Slice 6: web — app.js (page behavior)**\nOwns: `web/app.js`\n\n\
+             Wait — that leaves viz.js unowned.\n",
+            "1. **ledgerd — sync + ledger + outbox** (data/consistency core): db.py, sync.py, ledger.py, outbox.py\n\
+             2. **ledgerd — API + SSE + webhooks**: server.py, api.py, stream.py, webhooks.py\n\
+             3. **ledgerd — approval workflow (drafts)**: drafts.py\n\
+             4. **notifierd**: notifierd.py (+ maybe its own db)\n\
+             5. **web — shell (index.html + styles.css)**\n\
+             6. **web — app.js**\n\nStill no viz slice. Let me reconsider.\n",
+            "1. **ledgerd — consistency core** (sync, ledger, outbox, db): weight 5\n\
+             2. **ledgerd — API + SSE + webhooks**: weight 4-5\n\
+             3. **ledgerd — approval workflow (drafts)**: weight 3\n\
+             4. **notifierd**: weight 2-3\n\
+             5. **web — page shell + behavior** (index.html, styles.css, app.js): weight 4-5\n\
+             6. **web — 3D engine** (viz.js): weight 5\n\nHmm, webhooks with the API or with drafts?\n",
+            "1. **ledgerd — consistency core**: db.py, sync.py, ledger.py, outbox.py (weight 5)\n\
+             2. **ledgerd — HTTP API + webhooks + drafts + SSE**: server.py, api.py, stream.py, webhooks.py, drafts.py (weight 5)\n\
+             3. **notifierd**: notifierd.py (weight 3)\n\
+             4. **web — shell + behavior** (index.html, styles.css, app.js) (weight 4)\n\
+             5. **web — 3D engine** (viz.js) (weight 5)\n\nFive is too few for three nodes. Six:\n",
+            "1. **ledgerd — consistency core** (db, sync, ledger, outbox): weight 5\n\
+             2. **ledgerd — HTTP API + SSE** (server, api, stream): weight 4\n\
+             3. **ledgerd — webhooks + approval workflow** (webhooks, drafts): weight 4\n\
+             4. **notifierd**: weight 3\n\
+             5. **web — page shell + behavior** (index.html, styles.css, app.js): weight 4\n\
+             6. **web — 3D engine** (viz.js): weight 5\n\nNow let me read the spec before locking anything.\n",
+        ];
+        for p in passes {
+            m.push(p);
+            assert!(m.take_relist().is_none(), "a boundary moved in: {p}");
+        }
+        for _ in 0..6 {
+            m.note_tool_result(2_000);
+        }
+        let pass9 = "**Slice 1 — ledgerd-core (data/consistency engine):**\n\
+            - \"2. The collection you are syncing\"\n- \"Sync discipline\"\n\n\
+            Files: app/ledgerd/db.py, app/ledgerd/vendor.py, app/ledgerd/sync.py, app/ledgerd/ledger.py, app/ledgerd/outbox.py\n\n\
+            **Slice 2 — ledgerd-api (HTTP + SSE + runtime/composition):**\n- \"#### Endpoints\"\n\n\
+            Files: app/__init__.py, app/__main__.py, app/ledgerd/__init__.py, app/ledgerd/__main__.py, app/ledgerd/server.py, app/ledgerd/api.py, app/ledgerd/stream.py, README.md\n\n\
+            **Slice 3 — ledgerd-webhooks-drafts (vendor intake + approval workflow):**\n\
+            Files: app/ledgerd/webhooks.py, app/ledgerd/drafts.py\n\n\
+            **Slice 4 — notifierd (idempotent consumer):**\n\
+            Files: app/notifierd/__init__.py, app/notifierd/__main__.py, app/notifierd/server.py, app/notifierd/store.py\n\n\
+            **Slice 5 — web-page (shell + behavior, index.html/styles.css/app.js):**\n\
+            Files: web/index.html, web/styles.css, web/app.js, DECISIONS.md\n\n\
+            **Slice 6 — web-viz (3D engine, viz.js):**\nFiles: web/viz.js\n\n\
+            Now let me write the objectives.\n";
+        m.push(pass9);
+        assert!(
+            m.take_relist().is_none(),
+            "the first clean list after a read is the baseline, not a re-list"
+        );
+        m.note_tool_result(92);
+        m.note_tool_result(1_130);
+        let pass10 = "**Slice 1: ledgerd-core** (weight 5)\n\
+            Owns: app/ledgerd/db.py, app/ledgerd/vendor.py, app/ledgerd/sync.py, app/ledgerd/ledger.py, app/ledgerd/outbox.py\n\
+            Objective: the consistency engine.\n\n\
+            **Slice 2: ledgerd-api** (weight 5)\n\
+            Owns: app/__init__.py, app/__main__.py, app/ledgerd/__init__.py, app/ledgerd/__main__.py, app/ledgerd/server.py, app/ledgerd/api.py, app/ledgerd/stream.py, README.md\n\n\
+            **Slice 3: ledgerd-webhooks-drafts** (weight 4)\n\
+            Owns: app/ledgerd/webhooks.py, app/ledgerd/drafts.py\n\n\
+            **Slice 4: notifierd** (weight 3)\n\
+            Owns: app/notifierd/__init__.py, app/notifierd/__main__.py, app/notifierd/server.py, app/notifierd/store.py\n\n\
+            **Slice 5: web-page** (weight 4)\n\
+            Owns: web/index.html, web/styles.css, web/app.js, DECISIONS.md\n\n\
+            **Slice 6: web-viz** (weight 5)\nOwns: web/viz.js\n\n\
+            OK this is getting complicated. Let me step back.\n";
+        m.push(pass10);
+        let r = m
+            .take_relist()
+            .expect("the same six territories re-listed flags");
+        assert_eq!(r.items.len(), 6);
+        assert_eq!(
+            r.lookups_between, 2,
+            "the two lookups are carried, not a reset"
+        );
+        assert_eq!((r.first_settled_occurrence, r.occurrence), (7, 8));
+        assert!(r.first_settled_offset < r.current_offset);
+        assert!(r.first_span.starts_with("**Slice 1 — ledgerd-core"));
+        assert!(r
+            .current_span
+            .starts_with("**Slice 1: ledgerd-core** (weight 5)"));
+        assert!(r.current_span.contains("Owns: web/viz.js"));
+        assert!(r.items.contains(&"files: web/viz.js".to_string()));
+        assert!(r
+            .items
+            .contains(&"files: app/ledgerd/drafts.py, app/ledgerd/webhooks.py".to_string()));
+        assert!(m.take_relist().is_none(), "an edge: consumed once");
+    }
+
+    /// VA-124 (b): a list whose territory moves every time never fires, however many times it
+    /// is written — this is the boundary-moving deliberation the naive marker count fired on.
+    #[test]
+    fn a_list_whose_territory_moves_each_time_never_fires() {
+        let mut m = SettledListMeter::new();
+        let files = ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py"];
+        for round in 0..4 {
+            let mut text = String::new();
+            for i in 0..3 {
+                let own = files[(i + round) % 6];
+                text.push_str(&format!(
+                    "**Slice {}: part {i}**\nOwns: app/{own}\n\n",
+                    i + 1
+                ));
+            }
+            text.push_str("Hmm, let me reconsider the balance.\n");
+            m.push(&text);
+            assert!(m.take_relist().is_none(), "round {round} moved a boundary");
+        }
+        // And the same list written verbatim once more DOES fire — the negative above is live.
+        m.push("**Slice 1: part 0**\nOwns: app/b.py\n\n**Slice 2: part 1**\nOwns: app/c.py\n\n**Slice 3: part 2**\nOwns: app/d.py\n\nLocking it in.\n");
+        assert!(m.take_relist().is_some());
+    }
+
+    /// VA-124 (c): a same-territory re-list AFTER a material read (a spec section, ≥
+    /// OMNI_JUDGE_MIN_CHARS) does not fire — the list may be informed by what was just read; the
+    /// same re-list with only a lookup between does.
+    #[test]
+    fn a_same_territory_re_list_after_a_spec_read_does_not_fire() {
+        let list = "**S1: core**\nFiles: app/db.py, app/sync.py\n\n**S2: api**\nFiles: app/api.py\n\n**S3: web**\nFiles: web/app.js\n\nLet me verify this against the spec.\n";
+        let mut m = SettledListMeter::new();
+        m.push(list);
+        m.note_tool_result(OMNI_JUDGE_MIN_CHARS);
+        m.push(list);
+        assert!(
+            m.take_relist().is_none(),
+            "a material read between the lists resets the baseline"
+        );
+        m.note_tool_result(OMNI_JUDGE_MIN_CHARS - 1);
+        m.push(list);
+        let r = m.take_relist().expect("a lookup between does not reset");
+        assert_eq!(r.lookups_between, 1);
+        // A restream / attempt reset forgets everything.
+        m.reset();
+        m.push(list);
+        assert!(m.take_relist().is_none());
+    }
+
+    /// One- and two-item runs are enumerations inside prose, never a plan: r6h's `DECISIONS.md`
+    /// singletons at chars 37,663 and 37,881 matched each other and must not summon.
+    #[test]
+    fn short_runs_and_incomparable_lists_never_fire() {
+        let mut m = SettledListMeter::new();
+        let single = "1. **DECISIONS.md**: the three corners.\n\nThen the questions.\n";
+        m.push(single);
+        m.push(single);
+        assert!(m.take_relist().is_none(), "one item is not a list");
+        let pair = "1. **core**: db.py, ledger.py\n2. **api**: api.py\n\nAnd so on.\n";
+        m.push(pair);
+        m.push(pair);
+        assert!(m.take_relist().is_none(), "two items are not a plan");
+        // Three items, one of which names nothing at all: incomparable, never equal.
+        let blank_item = "1. ****\n2. **api**: api.py\n3. **web**: app.js\n\nHmm.\n";
+        m.push(blank_item);
+        m.push(blank_item);
+        assert!(
+            m.take_relist().is_none(),
+            "an empty item makes the list incomparable"
+        );
+    }
+
+    /// The marker shapes planners actually wrote (r6h/r6j archives), and the ones that must NOT
+    /// open an item: a `Sections:` label, an `S3 bucket`, `SSE`, a plain numbered line.
+    #[test]
+    fn list_item_markers_track_the_shapes_planners_write() {
+        assert_eq!(
+            list_item_index("**S1: ledgerd core service** — weight 5"),
+            Some(1)
+        );
+        assert_eq!(
+            list_item_index("1. **ledgerd-core** (weight 5) — boot contract"),
+            Some(1)
+        );
+        assert_eq!(
+            list_item_index("**Slice 2 — api (ledgerd HTTP + SSE + runtime):**"),
+            Some(2)
+        );
+        assert_eq!(
+            list_item_index("**Slice 3: ledgerd — webhooks + approval workflow**"),
+            Some(3)
+        );
+        assert_eq!(list_item_index("  - **Slice 4: notifierd**"), Some(4));
+        assert_eq!(list_item_index("### Slice 5"), Some(5));
+        assert_eq!(list_item_index("**6. web-viz**"), Some(6));
+        assert_eq!(list_item_index("Slice 12: the last one"), Some(12));
+        assert_eq!(list_item_index("Sections: §4, §5"), None);
+        assert_eq!(list_item_index("S3 bucket names are global"), None);
+        assert_eq!(list_item_index("SSE with byte accounting"), None);
+        assert_eq!(list_item_index("1. plain numbered prose"), None);
+        assert_eq!(
+            list_item_index("- \"2. The collection you are syncing\""),
+            None
+        );
+        assert_eq!(
+            path_tokens(
+                "Owns: `app/__init__.py`, `app/api_read.py?`, README.md. Not e.g. v3.9 or app.auth"
+            ),
+            vec!["app/__init__.py", "app/api_read.py", "README.md"]
+        );
+        assert_eq!(
+            path_tokens("4. **notifierd** (weight 3): app/notifierd/{__init__,__main__,server,store}.py — consumer"),
+            vec!["app/notifierd/{__init__,__main__,server,store}.py"]
+        );
+        assert_eq!(
+            section_refs("Sections: §4, section 5, Section 9.2 and sections"),
+            vec!["§4", "§5", "§9.2"]
+        );
+        assert_eq!(
+            item_title("1. **ledgerd — consistency core** (sync, ledger, outbox, db): weight 5"),
+            "ledgerdconsistencycore"
+        );
+        assert_eq!(
+            item_title("**S3: notifierd** — weight 2"),
+            "notifierdweight2"
+        );
+    }
+
+    /// VA-124 at the CONSUMER (the desk row): r6h's list #3 (char 76,768, `Owns:` lines) and #4
+    /// (char 89,878, `Files:` lines under renamed `N. **title**` items) through the lane's real
+    /// ingest path — think bytes with an attempt marker, a lookup call row between them (r6h
+    /// 00:59:02 came after #4; here one at 1,539 chars sits between to prove a lookup does not
+    /// reset) — produce ONE desk_summon carrying both lists verbatim and the char offsets.
+    #[test]
+    fn the_desk_row_carries_the_r6h_re_list_with_both_lists_and_offsets() {
+        let sink = RecordingSink::new();
+        let mut lane = LaneWatch::new("open".into());
+        lane.ingest_think_bytes(marker(0, "2026-09-02T00:30:00+00:00").as_bytes(), &sink);
+        let third = "With this, I've finished reading the full request and the vendor docs. Let me lock in the slice design.\n\n\
+            **Slices (5):**\n\n\
+            **S1: ledgerd-core** — weight 5\n\
+            Owns: `app/__init__.py`, `app/__main__.py`, `app/ledgerd.py`, `app/db.py`, `app/sync.py`, `app/ledger.py`, `app/relay.py`, `app/api.py`, `README.md`\n\
+            Objective: boot contract (3 commands), ledger.db schema + idempotent init, vendor sync walk.\n\
+            Sections: intro, What to build, §1, §2, §3, Sync discipline, Endpoints.\n\n\
+            **S2: webhooks-workflow** — weight 4\n\
+            Owns: `app/webhooks.py`, `app/drafts.py`, `app/auth.py`\n\
+            Sections: Endpoints, Event ledger, Outbox, Error envelope, §4, §5, §9 (DECISIONS.md — for D2 context).\n\n\
+            **S3: notifierd** — weight 3\nOwns: `app/notifierd.py`\n\n\
+            **S4: console-page** — weight 4\nOwns: `web/index.html`, `web/styles.css`, `web/app.js`, `DECISIONS.md`\n\n\
+            **S5: viz-engine** — weight 5\nOwns: `web/viz.js`\n\n\
+            Now the questions. Let me draft them.\n";
+        lane.ingest_think_bytes(third.as_bytes(), &sink);
+        lane.assess(&sink);
+        assert!(
+            sink.events("desk_summon").is_empty(),
+            "list #3 is the baseline"
+        );
+        lane.ingest_calls_bytes(
+            format!(
+                "{{\"name\":\"shell\",\"summary\":\"grep -n 'Δ = 1.2' request.md\",\"ok\":true,\"result_tail\":{:?}}}\n",
+                "x".repeat(1_539)
+            )
+            .as_bytes(),
+            &sink,
+        );
+        let fourth = "I've finished reading the full request and the vendor docs. Now let me finalize the slice design and questions.\n\n\
+            **Final slices (5):**\n\n\
+            1. **ledgerd-core** (weight 5) — boot contract, ledger.db, sync walk, event ledger, outbox+relay, read API + SSE hub + viz/records, error envelope, static hosting, README.md.\n\
+            \x20  Files: app/__init__.py, app/__main__.py, app/ledgerd.py, app/db.py, app/sync.py, app/ledger.py, app/relay.py, app/api.py, README.md\n\n\
+            2. **webhooks-workflow** (weight 4) — webhook endpoint + registration, drafts state machine + auth + SEND with idempotency key.\n\
+            \x20  Files: app/webhooks.py, app/drafts.py, app/auth.py\n\n\
+            3. **notifierd** (weight 3) — standalone idempotent consumer service.\n\
+            \x20  Files: app/notifierd.py\n\n\
+            4. **console-page** (weight 4) — index.html + styles.css + app.js + DECISIONS.md.\n\
+            \x20  Files: web/index.html, web/styles.css, web/app.js, DECISIONS.md\n\n\
+            5. **viz-engine** (weight 5) — viz.js only.\n\
+            \x20  Files: web/viz.js\n\n\
+            Decisions I'm settling in the objectives (not open_decisions):\n";
+        lane.ingest_think_bytes(fourth.as_bytes(), &sink);
+        // The closing prose line completes only when the next chunk lands (its newline is held
+        // back as a possible attempt-marker prefix) — exactly as it would live.
+        lane.ingest_think_bytes(b"- D1: brush survives a streamed mutation.\n", &sink);
+        lane.assess(&sink);
+        let rows = sink.events("desk_summon");
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row["detector"], DET_SETTLED);
+        assert_eq!(row["lane"], "open");
+        assert_eq!(row["items"].as_array().map(Vec::len), Some(5));
+        assert_eq!(
+            row["lookups_between"], 1,
+            "the one lookup between #3 and #4 is carried, not a reset"
+        );
+        // Offsets are chars into the attempt: #3 opens after its two-sentence preamble, #4 after
+        // everything #3 wrote plus its own preamble.
+        let first = row["first_settled_offset"].as_u64().unwrap();
+        let current = row["current_offset"].as_u64().unwrap();
+        assert_eq!(first as usize, third.find("**S1: ledgerd-core**").unwrap());
+        assert_eq!(
+            current as usize,
+            third.chars().count() + fourth.find("1. **ledgerd-core**").unwrap()
+        );
+        let block = row["judge_block"].as_str().unwrap();
+        assert!(
+            block.contains("**S1: ledgerd-core** — weight 5\nOwns: `app/__init__.py`"),
+            "{block}"
+        );
+        assert!(
+            block.contains("1. **ledgerd-core** (weight 5) — boot contract"),
+            "{block}"
+        );
+        assert!(
+            block.contains("'the 5 slices are settled since char"),
+            "{block}"
+        );
+        assert!(
+            block.contains("- files: app/auth.py, app/drafts.py, app/webhooks.py"),
+            "{block}"
+        );
+        // The look that carried it says would_summon.
+        let looks = sink.events("desk_look");
+        assert!(looks.last().is_some_and(|l| l["would_summon"] == true));
+        // A second assess with nothing new does not re-emit: the edge was consumed.
+        lane.assess(&sink);
+        assert_eq!(sink.events("desk_summon").len(), 1);
+    }
+
     #[test]
     fn a_supervision_lanes_artifacts_never_produce_a_desk_summon() {
         let dir = tempfile::tempdir().unwrap();
