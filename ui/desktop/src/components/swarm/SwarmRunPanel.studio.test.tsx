@@ -205,7 +205,7 @@ describe('SwarmRunPanel — every rendered class compiles and nothing banned ren
         <SwarmRunPanel workingDir="/tmp/build" />
       </IntlTestWrapper>
     );
-    await findByText('Swarm run');
+    await findByText('Flock run');
     await findByText('Work');
     await findAllByRole('button');
     const seen = new Set<string>(allClasses(container));

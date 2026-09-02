@@ -13,17 +13,17 @@ const i18n = defineMessages({
   subtitle: {
     id: 'leanzeroSwarm.subtitle',
     defaultMessage:
-      'One place for the whole swarm: the in-house MLX engine, cloud provider credentials, and the node pool the swarm builds with.',
+      'One place for the whole flock: the in-house MLX engine, cloud provider credentials, and the node pool the flock builds with.',
   },
   tabCloud: { id: 'leanzeroSwarm.tabCloud', defaultMessage: 'Cloud Providers' },
-  tabSwarm: { id: 'leanzeroSwarm.tabSwarm', defaultMessage: 'Swarm Settings' },
+  tabSwarm: { id: 'leanzeroSwarm.tabSwarm', defaultMessage: 'Flock Settings' },
   tabLink: { id: 'leanzeroSwarm.tabLink', defaultMessage: 'LeanZero Link' },
 });
 
 type SwarmTab = 'mlx' | 'cloud' | 'swarm' | 'link';
 
 /**
- * The "LeanZero Swarm" primary view — the single swarm/engine management surface:
+ * The "LeanZero Flock" primary view — the single swarm/engine management surface:
  *
  *   LeanZero MLX     — the engine window (Engine / Models / Sampling sub-tabs), unchanged.
  *   Cloud Providers  — provider credentials, relocated from Settings, cloud-only.
@@ -54,11 +54,11 @@ const LeanZeroSwarmView: React.FC = () => {
         <div className={cx('border-b px-lz-page pb-6 pt-16', SURFACE.hairline)}>
           <PageHeader
             className="page-transition"
-            title="LeanZero Swarm"
+            title="LeanZero Flock"
             subtitle={<span className="block max-w-[70ch]">{intl.formatMessage(i18n.subtitle)}</span>}
             actions={
               <Segmented
-                aria-label="LeanZero Swarm sections"
+                aria-label="LeanZero Flock sections"
                 options={tabs}
                 value={tab}
                 onChange={setTab}

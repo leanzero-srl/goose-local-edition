@@ -97,7 +97,7 @@ const i18n = defineMessages({
   },
   shortcutRefusedReload: {
     id: 'shortcutRefused.reload',
-    defaultMessage: 'Reloading would discard the live log and swarm panel state.',
+    defaultMessage: 'Reloading would discard the live log and flock panel state.',
   },
   shortcutRefusedQuit: {
     id: 'shortcutRefused.quit',

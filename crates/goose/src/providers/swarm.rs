@@ -303,10 +303,10 @@ impl goose_providers::base::ProviderDescriptor for SwarmProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             SWARM_PROVIDER_NAME,
-            "Swarm LeanZero",
+            "LeanZero Flock",
             "Runs your local model fleet (LM Studio / LM Link) as a multi-agent build. A message is a build \
-             brief, not a chat turn — the swarm plans, fans out across your nodes, and writes files to this \
-             project. Configure the fleet + tunables in the Swarm settings.",
+             brief, not a chat turn — the flock plans, fans out across your nodes, and writes files to this \
+             project. Configure the fleet + tunables in the Flock settings.",
             SWARM_DEFAULT_MODEL,
             vec![SWARM_DEFAULT_MODEL],
             SWARM_DOC_URL,

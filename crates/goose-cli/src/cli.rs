@@ -73,7 +73,7 @@ pub struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Use Goose Local Edition — the local/swarm-model UX skin. Overrides GOOSE_LOCAL_EDITION and the
+    /// Use Goose Local Edition — the local/flock-model UX skin. Overrides GOOSE_LOCAL_EDITION and the
     /// persisted `edition` config; without it the edition is derived (a local/swarm provider implies Local).
     #[arg(long, global = true)]
     pub local: bool,
@@ -1024,9 +1024,17 @@ enum Command {
         command: SchedulerCommand,
     },
 
-    /// Run a local multi-device swarm (goose-local-edition): plan on the smart model, then
+    /// Run a local multi-device flock (goose-local-edition): plan on the smart model, then
     /// dispatch subtasks across the LM Link device pool with a weighted work-queue scheduler.
-    #[command(about = "Run a local multi-device swarm over LM Studio LM Link")]
+    ///
+    /// The command is `goose flock`; `goose swarm` stays as an alias so existing scripts, the
+    /// bench harness and the desktop app keep working. Internal ids (config key, `.swarm/` run
+    /// dir, GOOSE_SWARM_* env) are unchanged — only the product name moved.
+    #[command(
+        name = "flock",
+        about = "Run a local multi-device flock over LM Studio LM Link",
+        visible_alias = "swarm"
+    )]
     Swarm {
         #[command(subcommand)]
         command: crate::commands::swarm::SwarmCommand,

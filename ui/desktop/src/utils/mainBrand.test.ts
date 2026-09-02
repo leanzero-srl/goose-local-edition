@@ -21,7 +21,7 @@ describe('resolveBrandName', () => {
     expect(resolveBrandName('standard', 'omlx')).toBe(STANDARD_BRAND);
   });
 
-  it('with nothing persisted, a local/swarm provider derives Goose Swarm', () => {
+  it('with nothing persisted, a local/swarm provider derives Goose Flock', () => {
     // this machine's live case: provider omlx, no stored edition
     expect(resolveBrandName(undefined, 'omlx')).toBe(SWARM_BRAND);
     expect(resolveBrandName(undefined, 'lmstudio')).toBe(SWARM_BRAND);
@@ -71,7 +71,7 @@ describe('getBrandName (file-backed)', () => {
     // nothing on disk at all -> Goose
     expect(getBrandName({ settingsFile, configYamlPath: configFile })).toBe(STANDARD_BRAND);
 
-    // provider-derived local edition, no explicit setting -> Goose Swarm
+    // provider-derived local edition, no explicit setting -> Goose Flock
     writeFileSync(configFile, 'GOOSE_PROVIDER: omlx\n');
     expect(getBrandName({ settingsFile, configYamlPath: configFile })).toBe(SWARM_BRAND);
 
@@ -79,7 +79,7 @@ describe('getBrandName (file-backed)', () => {
     writeFileSync(settingsFile, JSON.stringify({ edition: 'standard' }));
     expect(getBrandName({ settingsFile, configYamlPath: configFile })).toBe(STANDARD_BRAND);
 
-    // and an explicit local setting brands Goose Swarm regardless of provider
+    // and an explicit local setting brands Goose Flock regardless of provider
     writeFileSync(settingsFile, JSON.stringify({ edition: 'local' }));
     writeFileSync(configFile, 'GOOSE_PROVIDER: anthropic\n');
     expect(getBrandName({ settingsFile, configYamlPath: configFile })).toBe(SWARM_BRAND);

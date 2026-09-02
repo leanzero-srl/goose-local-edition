@@ -43,14 +43,14 @@ afterEach(() => {
 });
 
 describe('LeanZeroSwarmView shell', () => {
-  it('is titled LeanZero Swarm and renders the base three segments in one radiogroup', () => {
+  it('is titled LeanZero Flock and renders the base three segments in one radiogroup', () => {
     render();
-    expect(screen.getByRole('heading', { name: 'LeanZero Swarm' })).toBeInTheDocument();
-    const group = screen.getByRole('radiogroup', { name: 'LeanZero Swarm sections' });
+    expect(screen.getByRole('heading', { name: 'LeanZero Flock' })).toBeInTheDocument();
+    const group = screen.getByRole('radiogroup', { name: 'LeanZero Flock sections' });
     expect(group).toBeInTheDocument();
     expect(segment('LeanZero MLX')).toBeInTheDocument();
     expect(segment('Cloud Providers')).toBeInTheDocument();
-    expect(segment('Swarm Settings')).toBeInTheDocument();
+    expect(segment('Flock Settings')).toBeInTheDocument();
   });
 
   it('defaults to the LeanZero MLX segment and switches sections per segment', async () => {
@@ -62,12 +62,12 @@ describe('LeanZeroSwarmView shell', () => {
     expect(screen.getByTestId('cloud-panel')).toBeInTheDocument();
     expect(screen.queryByTestId('mlx-panel')).not.toBeInTheDocument();
 
-    await userEvent.click(segment('Swarm Settings'));
+    await userEvent.click(segment('Flock Settings'));
     expect(screen.getByTestId('swarm-panel')).toBeInTheDocument();
     expect(screen.queryByTestId('cloud-panel')).not.toBeInTheDocument();
 
     // aria-checked follows the active segment (the state is visible to more than a sighted mouse user)
-    expect(segment('Swarm Settings').getAttribute('aria-checked')).toBe('true');
+    expect(segment('Flock Settings').getAttribute('aria-checked')).toBe('true');
     expect(segment('LeanZero MLX').getAttribute('aria-checked')).toBe('false');
   });
 

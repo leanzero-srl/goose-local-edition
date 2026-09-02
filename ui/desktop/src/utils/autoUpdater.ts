@@ -760,7 +760,7 @@ function updateTrayIcon(hasUpdate: boolean) {
   }
 
   const isDev = !app.isPackaged;
-  // Edition-aware tray brand (queued fix #10): "Goose Swarm" for the local edition.
+  // Edition-aware tray brand (queued fix #10): "Goose Flock" for the local edition.
   const brand = getBrandName({
     settingsFile: path.join(app.getPath('userData'), 'settings.json'),
   });

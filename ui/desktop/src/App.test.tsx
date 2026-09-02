@@ -434,7 +434,7 @@ describe('App — the close-run question', () => {
 
     const ask = mockElectron.on.mock.calls.find(([channel]) => channel === 'confirm-close-run')?.[1];
     expect(ask).toBeDefined();
-    const title = 'A swarm run is live in this window';
+    const title = 'A flock run is live in this window';
     expect(screen.queryByRole('dialog', { name: title })).toBeNull();
 
     // A malformed payload asks nothing.
@@ -466,6 +466,6 @@ describe('App — the close-run question', () => {
     act(() => ask?.({} as any, { runs: [{ runId: 'r-2', runDir: '/x', workingDir: '/x' }] }));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(confirmCloseRunReply).toHaveBeenCalledWith(false);
-    expect(screen.queryByRole('dialog', { name: 'A swarm run is live in this window' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'A flock run is live in this window' })).toBeNull();
   });
 });

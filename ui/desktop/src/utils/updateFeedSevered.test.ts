@@ -3,7 +3,7 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Goose Swarm owns its update line (owner decision, pass A): the app must NEVER query the parent
+ * Goose Flock owns its update line (owner decision, pass A): the app must NEVER query the parent
  * goose repository for updates again.
  *
  * The defect this pins: vite.main.config.mts `define`s process.env.GITHUB_OWNER/GITHUB_REPO into
@@ -38,7 +38,7 @@ describe('the update feed is severed from the parent goose', () => {
     });
   }
 
-  it('the app version is Goose Swarm own 2.x line, above every parent 1.x release', () => {
+  it('the app version is Goose Flock own 2.x line, above every parent 1.x release', () => {
     const pkg = JSON.parse(read('package.json')) as { version: string };
     const major = Number(pkg.version.split('.')[0]);
     expect(major).toBeGreaterThanOrEqual(2);

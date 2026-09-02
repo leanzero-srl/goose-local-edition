@@ -119,7 +119,7 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     );
 
     // RUN HEADER zone: the register label + the app's identity from the brief's heading.
-    await findByText('Swarm run');
+    await findByText('Flock run');
     await findByText('vendorsync');
 
     // The named zones, each present exactly as a labeled band.
@@ -156,7 +156,7 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     // The hue is the node-ramp token utility (identity only), never an inline colour.
     for (const d of dots) expect(d.className).toMatch(/\bbg-lz-node-[1-6]\b/);
     for (const d of dots) expect(d.getAttribute('style')).toBeNull();
-    const runLabel = await findByText('Swarm run');
+    const runLabel = await findByText('Flock run');
     expect(runLabel.getAttribute('style')).toBeNull();
     expect(runLabel.className).toContain('uppercase');
     expect(runLabel.previousElementSibling).toBeNull();
