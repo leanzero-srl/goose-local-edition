@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   deriveFleet,
+  poolNodeMap,
   resolvePool,
   foldEvents,
   buildActivity,
@@ -78,6 +79,23 @@ describe('resolvePool — the fleet size comes from the engine, not from who hap
   it('a device whose `node` the engine could not name (null) still derives from its model id', () => {
     const devices = [{ ...MIXED_POOL[1], node: null }, MIXED_POOL[2]];
     expect(resolvePool([{ event: 'pool_resolved', devices }])).toEqual(['workhorse', 'workhorse-mlx']);
+  });
+});
+
+describe('poolNodeMap — the same join as the labeler, as a map for feeds keyed by LM Studio model ids', () => {
+  it('names both spellings of every device with the engine\'s `node`', () => {
+    expect(poolNodeMap([{ event: 'run_started', pool: MIXED_POOL }])).toEqual({
+      'gabee-27b': 'gabee',
+      'gabee-qwen3.6-27b': 'gabee',
+      'workhorse-27b': 'workhorse',
+      'workhorse-qwen3.8-27b': 'workhorse',
+      'workhorse-mlx': 'workhorse-mlx',
+      'workhorse-qwen3.5-9b-4bit-mlx': 'workhorse-mlx',
+    });
+  });
+
+  it('is empty with no pool events, so a consumer keeps its own derivation', () => {
+    expect(poolNodeMap([{ event: 'plan_loaded' }])).toEqual({});
   });
 });
 
