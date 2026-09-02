@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { acpReadConfig } from '../../acp/config';
-import { cspSafe } from '../../utils/csp';
+import type { FleetProbeResult } from '../../utils/fleetProbe';
 import { DEFAULTS, type SwarmConfig } from '../settings/swarm/golden';
 import { NodeLane, NodeStatus } from './FanInCard';
+
+export { chatCompletionsUrl, modelsUrl } from '../../utils/fleetProbe';
 
 /**
  * Live fleet discovery for Goose Local Edition — reads the LM Studio / LM Link endpoint so the swarm
@@ -17,39 +19,28 @@ import { NodeLane, NodeStatus } from './FanInCard';
  * configured endpoint, which is a HOST BASE (`http://localhost:1234`, golden.ts DEFAULTS — the engine's
  * baked default_endpoint).
  *
- * LOOPBACK (restored 2026-09-02 after gate 8 refuted 949d3fa6e): the renderer's CSP is the INTERSECTION of
- * index.html's static meta (`connect-src 'self' http://127.0.0.1:* https: ws: wss:`) and main's header, so
- * a `localhost` probe is blocked no matter what the header allows — the default install read "offline"
- * with the right host name. The fetch URL is loopback-normalised to 127.0.0.1 (`cspSafe`), the display
- * text is not.
+ * WHERE THE FETCH HAPPENS (2026-09-02, after gate 8 refuted 949d3fa6e): the renderer's CSP is the
+ * INTERSECTION of index.html's static meta (`connect-src 'self' http://127.0.0.1:* https: ws: wss:`) and
+ * main's header, so no header entry can widen it — a `localhost` probe was blocked on the default install
+ * and a LAN host is blocked always. The probe therefore runs in MAIN (`window.electron.fleetProbe` → IPC
+ * `fleet-probe` → utils/fleetProbe.ts with `net.fetch`), where no CSP applies. The renderer keeps the
+ * shapes: `useFleet(pollMs, endpoint?, enabled)`, `FleetState`, `fetchSwarmContextLimit(endpoint?)`.
+ * `FleetState.endpoint` is the configured base verbatim — what the card prints — and the url main
+ * actually fetched rides back in the probe result.
  */
 
 /** The engine's own default host base — what an absent `swarm.endpoint` means, not a UI fallback. */
 export const DEFAULT_SWARM_ENDPOINT: string = DEFAULTS.endpoint ?? 'http://localhost:1234';
 
-/** The endpoint's http(s) origin. Throws on anything else so a probe against a bad value fails loudly
- *  (offline, naming the configured text) rather than probing some other host — `new URL('localhost:1234')`
- *  parses as scheme `localhost:` with origin `null`, which would otherwise become `null/api/v0/models`. */
-function swarmOriginOf(endpoint: string): string {
-  const url = new URL(endpoint);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`swarm endpoint is not an http(s) host base: ${endpoint}`);
-  }
-  return url.origin;
-}
-
-/** `<origin>/api/v0/models` from a host base — the FETCH url. A `localhost` base fetches 127.0.0.1
- *  (csp.ts `cspSafe`: the static meta CSP in index.html allows `http://127.0.0.1:*` and blocks the
- *  `localhost` origin — measured d28443d90, regressed 949d3fa6e). The DISPLAY text (`FleetState.endpoint`)
- *  stays the configured host base verbatim; loopback is loopback either way. */
-export function modelsUrl(endpoint: string): string {
-  return cspSafe(`${swarmOriginOf(endpoint)}/api/v0/models`);
-}
-
-/** `<origin>/v1/chat/completions` from a host base — LM Studio's OpenAI-compatible chat route; the same
- *  loopback rewrite as `modelsUrl`. */
-export function chatCompletionsUrl(endpoint: string): string {
-  return cspSafe(`${swarmOriginOf(endpoint)}/v1/chat/completions`);
+/** One probe through main. Throws with the NAMED reason when main reports one, so every caller's catch
+ *  is the honest offline state; a renderer without the bridge (tests, a stale preload) reads offline too. */
+async function probeThroughMain(endpoint: string): Promise<Array<Record<string, unknown>>> {
+  const bridge = (window as { electron?: { fleetProbe?: (ep: string) => Promise<FleetProbeResult> } })
+    .electron?.fleetProbe;
+  if (!bridge) throw new Error('fleet-probe bridge unavailable');
+  const r = await bridge(endpoint);
+  if (!r.ok) throw new Error(`${r.error} at ${r.url}: ${r.detail}`);
+  return r.data;
 }
 
 /** The configured `swarm.endpoint`, or the engine's default when the key is absent. An unreadable
@@ -86,9 +77,7 @@ export interface FleetState {
 export async function fetchSwarmContextLimit(endpoint?: string): Promise<number | null> {
   try {
     const base = endpoint ?? (await resolveSwarmEndpoint());
-    const res = await fetchWithTimeout(modelsUrl(base), 3000);
-    const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
-    const loaded = (data.data ?? []).filter(
+    const loaded = (await probeThroughMain(base)).filter(
       (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
     );
     const limits = loaded
@@ -149,16 +138,6 @@ export function useFleetStatus(pollMs = 1500, enabled = true): Record<string, st
   return status;
 }
 
-async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * Poll the LM Link endpoint for resident models and map them to fan-in lanes.
  * `endpoint` is the HOST BASE (`swarm.endpoint`); callers holding the swarm config pass `cfg.endpoint`,
@@ -205,9 +184,7 @@ export function useFleet(pollMs = 5000, endpoint?: string, enabled = true): Flee
 
     const tick = async () => {
       try {
-        const res = await fetchWithTimeout(modelsUrl(base), 3000);
-        const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
-        const loaded = (data.data ?? []).filter(
+        const loaded = (await probeThroughMain(base)).filter(
           (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
         );
         const models: string[] = loaded.map((m) => String(m['id'] ?? '')).filter(Boolean);

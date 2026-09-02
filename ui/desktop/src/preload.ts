@@ -5,6 +5,7 @@ import type { ProjectEntry } from './utils/projectDirs';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
+import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -345,6 +346,11 @@ type ElectronAPI = {
   removeProject: (dir: string) => Promise<ProjectEntry[]>;
   /** LM Studio's live per-node status via `lms ps --json`: { identifier: 'generating'|'processingPrompt'|'idle' }. */
   fleetStatus: () => Promise<Record<string, string>>;
+  /** GET `<endpoint>/api/v0/models` from MAIN (no renderer CSP in the path): LM Studio's `data` array or
+   *  a NAMED error. `endpoint` is the configured `swarm.endpoint` host base. */
+  fleetProbe: (endpoint: string) => Promise<FleetProbeResult>;
+  /** POST `<endpoint>/v1/chat/completions` (non-streaming) from MAIN; the JSON reply or a named error. */
+  fleetChat: (endpoint: string, body: unknown) => Promise<FleetChatResult>;
   /** The swarm's MACHINES from `lms ps --json` (identifier prefixes; deviceIdentifier null = local). */
   fleetMachines: () => Promise<Array<{ machine: string; local: boolean }>>;
 };
@@ -401,6 +407,8 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: { title?: string; model?: string }) =>
     ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
+  fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
+  fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),
   fleetMachines: () => ipcRenderer.invoke('fleet-machines'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),

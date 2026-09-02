@@ -3,7 +3,7 @@ import { X, Send, Loader2, Check, Sparkles, Pencil, ChevronDown } from 'lucide-r
 import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { chatCompletionsUrl, useFleet } from './useFleet';
+import { useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
@@ -15,10 +15,13 @@ import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
  * edits, and saves. This is the "work with the swarm to build it" path, distinct from the by-hand form and
  * from the build orchestrator (which produces apps, not recipes, and cannot hold a conversation).
  *
- * The model is driven directly over LM Studio's OpenAI-compatible chat route on the CONFIGURED swarm
- * endpoint (`chatCompletionsUrl(fleet.endpoint)` — the same host the engine and the fleet probe use; main
- * puts its origin in the CSP). Weak local models don't always follow a protocol, so there is always a
- * "Draft the recipe now" escape hatch that forces the JSON, and the parsed draft is fully editable.
+ * The model is driven over LM Studio's OpenAI-compatible chat route on the CONFIGURED swarm endpoint
+ * (`fleet.endpoint` — the same host the engine and the fleet probe use). The POST is non-streaming and
+ * goes through MAIN (`window.electron.fleetChat` → IPC `fleet-chat`): the renderer's CSP is the
+ * intersection of index.html's static meta and main's header, which blocks `localhost` and any LAN host
+ * from here no matter what the header adds (gate 8, 2026-09-02). Weak local models don't always follow a
+ * protocol, so there is always a "Draft the recipe now" escape hatch that forces the JSON, and the parsed
+ * draft is fully editable.
  */
 
 const AZURE = SWARM_STATUS.action;
@@ -138,30 +141,28 @@ export function RecipeChatWizard({
   // One chat completion. `format` optionally forces structured JSON output (used to draft the recipe).
   const complete = async (system: string, history: ChatMsg[], format?: unknown): Promise<string> => {
     if (!model) throw new Error('no-model');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 120_000);
-    try {
-      const res = await fetch(chatCompletionsUrl(fleet.endpoint), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'system', content: system }, ...history],
-          temperature: format ? 0.3 : 0.5,
-          max_tokens: 1200,
-          stream: false,
-          ...(format ? { response_format: format } : {}),
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`fleet returned ${res.status}`);
-      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const reply = data.choices?.[0]?.message?.content ?? '';
-      if (!reply.trim()) throw new Error('the fleet returned an empty reply');
-      return reply;
-    } finally {
-      clearTimeout(timer);
+    const r = await window.electron.fleetChat(fleet.endpoint, {
+      model,
+      messages: [{ role: 'system', content: system }, ...history],
+      temperature: format ? 0.3 : 0.5,
+      max_tokens: 1200,
+      stream: false,
+      ...(format ? { response_format: format } : {}),
+    });
+    if (!r.ok) {
+      if (r.error === 'timeout') {
+        // Same shape the in-renderer AbortController produced, so fleetError's message holds.
+        const e = new Error('timeout');
+        e.name = 'AbortError';
+        throw e;
+      }
+      if (r.error === 'http') throw new Error(`fleet returned ${r.status}`);
+      throw new Error(`${r.error} at ${r.url}: ${r.detail}`);
     }
+    const data = r.body as { choices?: Array<{ message?: { content?: string } }> };
+    const reply = data?.choices?.[0]?.message?.content ?? '';
+    if (!reply.trim()) throw new Error('the fleet returned an empty reply');
+    return reply;
   };
 
   const fleetError = (e: unknown): string => {

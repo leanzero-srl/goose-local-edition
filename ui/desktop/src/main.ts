@@ -68,6 +68,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
+import { postFleetChat, probeFleetModels } from './utils/fleetProbe';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
   isBenchmarkViewUrl,
@@ -970,34 +971,6 @@ const getActiveExternalBackend = (settings: Settings): ExternalBackend | null =>
   }
 
   return null;
-};
-
-// `swarm.endpoint` from goose's config.yaml, for the renderer CSP (U-M3): the host the engine builds
-// against must be reachable from the fleet probes, so its origin joins connect-src (csp.ts). Read from
-// the same ~/.config/goose tree BENCH_DIR uses; re-parsed only when the file's mtime moves, since the
-// CSP is recomputed per response. Absent file/key → null → the defaults, which already cover loopback.
-const gooseConfigYamlPath = path.join(os.homedir(), '.config', 'goose', 'config.yaml');
-let swarmEndpointForCsp: { mtimeMs: number; endpoint: string | null } | null = null;
-const readSwarmEndpointForCsp = (): string | null => {
-  let mtimeMs: number;
-  try {
-    mtimeMs = fsSync.statSync(gooseConfigYamlPath).mtimeMs;
-  } catch {
-    return null;
-  }
-  if (swarmEndpointForCsp?.mtimeMs === mtimeMs) return swarmEndpointForCsp.endpoint;
-  let endpoint: string | null = null;
-  try {
-    const doc = yaml.parse(fsSync.readFileSync(gooseConfigYamlPath, 'utf8')) as {
-      swarm?: { endpoint?: unknown };
-    } | null;
-    const raw = doc?.swarm?.endpoint;
-    endpoint = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
-  } catch (err) {
-    console.error('[csp] config.yaml unreadable; swarm endpoint not added to connect-src:', err);
-  }
-  swarmEndpointForCsp = { mtimeMs, endpoint };
-  return endpoint;
 };
 
 const getExternalBackendForCsp = (settings: Settings) => {
@@ -1974,6 +1947,20 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
     });
   });
 });
+
+// The fleet PROBES run here, not in the renderer (gate 8 refutation of 949d3fa6e, 2026-09-02): the
+// renderer's CSP is the intersection of index.html's static meta and the header above, and the meta
+// allows loopback only as 127.0.0.1 — a LAN `swarm.endpoint` (the host the engine builds against) is
+// unreachable from a renderer fetch no matter what the header adds. `net.fetch` in main has no CSP.
+// `endpoint` is the configured host base; utils/fleetProbe.ts derives the routes and names every
+// failure (bad-endpoint / timeout / unreachable / http / bad-json) so the offline state is honest.
+const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
+ipcMain.handle('fleet-probe', async (_event, endpoint: unknown) =>
+  probeFleetModels(typeof endpoint === 'string' ? endpoint : '', mainFetch)
+);
+ipcMain.handle('fleet-chat', async (_event, endpoint: unknown, body: unknown) =>
+  postFleetChat(typeof endpoint === 'string' ? endpoint : '', body, mainFetch)
+);
 
 // The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
 // machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own
@@ -4348,10 +4335,7 @@ async function appMain() {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': buildCSP(
-          getExternalBackendForCsp(currentSettings),
-          readSwarmEndpointForCsp()
-        ),
+        'Content-Security-Policy': buildCSP(getExternalBackendForCsp(currentSettings)),
       },
     });
   });
