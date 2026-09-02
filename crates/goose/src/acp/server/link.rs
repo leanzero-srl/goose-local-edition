@@ -1447,6 +1447,43 @@ mod tests {
         );
     }
 
+    /// `goose serve`'s boot wiring (`link_serve::wire_link_for_serve`, called from cli.rs
+    /// `handle_serve_command`) fills all three seams the status DTO and `build_link_manager`
+    /// read — so the shipped desktop reports `remoteExecutionWired`/`mlxControlWired` true
+    /// and its control service's `501` arms are not reached.
+    #[tokio::test]
+    async fn the_serve_boot_wiring_fills_every_seam_the_status_dto_reads() {
+        let temp = tempfile::TempDir::new().unwrap();
+        link_serve::wire_link_for_serve(link_serve::ServeLinkConfig {
+            data_dir: temp.path().to_path_buf(),
+            builtins: vec!["developer".to_string()],
+        });
+        assert!(current_executor().is_some(), "remote executor injected");
+        assert!(current_delta_source().is_some(), "delta source injected");
+        assert!(current_mlx_control().is_some(), "mlx control injected");
+
+        let view = HolderView {
+            allow_remote_execution: true,
+            mesh_binaries: MeshBinaries {
+                tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+                tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+            },
+            connect_refusal: None,
+        };
+        let dto = link_state_to_dto(
+            LinkState {
+                auth: AuthState::LoggedOut,
+                mesh: None,
+                node_count: 0,
+                mesh_poll_failures: 0,
+                last_error: None,
+            },
+            &view,
+        );
+        assert!(dto.remote_execution_wired);
+        assert!(dto.mlx_control_wired);
+    }
+
     /// A binary that appears (installed, chmod-ed) after the manager was built is a
     /// changed verdict: Connect re-discovers and rebuilds instead of re-reading the stale
     /// `missing`. An unchanged verdict — same paths, or the same refusal — is not.

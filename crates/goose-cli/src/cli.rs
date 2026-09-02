@@ -1463,7 +1463,7 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         .collect();
 
     let server = Arc::new(AcpServer::new(AcpServerFactoryConfig {
-        builtins,
+        builtins: builtins.clone(),
         data_dir: Paths::data_dir(),
         config_dir: Paths::config_dir(),
         goose_platform: platform.into(),
@@ -1471,10 +1471,14 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         scheduler: None,
     }));
     // The shipped desktop runs THIS path, not `goosed agent` (which injects the LeanZero
-    // Link seams in crates/goose-server/src/commands/agent.rs). Without this line the
-    // node's control service answers `501` on every `POST /v1/swarm/mlx/*`. The control is
-    // stateless over the one global engine manager, so it needs no AppState.
-    goose::acp::server::set_mlx_control(goose::acp::server::GoosedMlxControl::new());
+    // Link seams from goose-server in crates/goose-server/src/commands/agent.rs). Without
+    // this the node's control service answers `501` on every `POST /v1/swarm/execute` and
+    // `/v1/swarm/mlx/*` and mirrors no per-message deltas. The goose-crate seams run over
+    // this server's own agents (goose::acp::server::link_serve).
+    goose::acp::server::wire_link_for_serve(goose::acp::server::ServeLinkConfig {
+        data_dir: Paths::data_dir(),
+        builtins,
+    });
     let env_secret = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
         .ok()
         .map(|secret| secret.trim().to_string())
@@ -2562,6 +2566,23 @@ mod tests {
             }) => {}
             _ => panic!("expected skills list command"),
         }
+    }
+
+    /// A TRIPWIRE, not the proof (the proof is `goose::acp::server::link`'s wiring test and
+    /// the packaged-app connect): the serve boot path must keep calling the LeanZero Link
+    /// wiring — the shipped app's `/execute` and `/mlx/*` answered 501 for as long as it
+    /// did not.
+    #[test]
+    fn serve_boot_wires_leanzero_link() {
+        let source = include_str!("cli.rs");
+        let serve = source
+            .split("async fn handle_serve_command(")
+            .nth(1)
+            .expect("handle_serve_command exists");
+        assert!(
+            serve.contains("goose::acp::server::wire_link_for_serve("),
+            "handle_serve_command no longer wires the LeanZero Link seams"
+        );
     }
 
     #[test]
