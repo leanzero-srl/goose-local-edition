@@ -29,6 +29,8 @@
 //! shard only when the gate re-run on its merged preview no longer fails that key (and fails no
 //! key it did not fail before). An untagged finding has no check: `finding_unverifiable`.
 
+use super::TestRunVerdict;
+
 /// GOOSE_SWARM_COMPLETE_PARALLEL: a group of verify findings that all name the SAME file, so exactly one
 /// fix agent ever writes that file (same-file failures serialize by construction).
 pub(super) struct FileGroup {
@@ -331,6 +333,32 @@ pub(super) fn missing_deliverable_finding(file: &str) -> String {
          writing it. Create it (the simplest version that satisfies the spec) so the app is \
          complete and runnable."
     )
+}
+
+/// GOOSE_SWARM_REQUIRE_TESTS: an app that ships NO executable tests must not read as GREEN.
+///
+/// `interpret_pytest_run` already distinguishes `NoTests` (exit 5) from `Pass` (exit 0), but only `Failures`
+/// pushed a finding — so "nothing was checked" was indistinguishable from "everything passed". The review-fix
+/// gate already gets this right (it requires `TestRunVerdict::Pass`, never merely-empty findings); this brings
+/// the completion gate to the same standard.
+///
+/// `on == false` returns None on every input => no finding is ever pushed => byte-identical. Pure so the
+/// distinction is unit-testable without a python3 on the box.
+///
+/// PROVENANCE NOTE (VA-134): this finding has no `FindingSource` of its own — it rides the smoke
+/// gate's batch tag (`FindingSource::SmokeGate`, the build/test/entry oracle, class CRITICAL), so
+/// its label reads `critical` while the green partition reads it as a minor (no `engine_critical`
+/// wording, not a render probe). `verdict_severity_mismatches` makes that disagreement loud.
+pub(super) fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Option<String> {
+    if !on {
+        return None;
+    }
+    matches!(verdict, TestRunVerdict::NoTests).then(|| {
+        "the app ships NO executable tests (`pytest -q` collected 0) — an empty suite is not a passing \
+         suite. Write real tests that assert the spec's concrete expected values, and never delete or \
+         skip a failing test to go green."
+            .to_string()
+    })
 }
 
 /// Does a browser console line name an UNCAUGHT JS EXCEPTION — `ReferenceError: x is not
@@ -798,6 +826,34 @@ impl FindingProvenance {
     /// known active bugs.
     pub(super) fn is_render_class(&self, text: &str) -> bool {
         self.source_of(text).is_some_and(|s| s.is_render_probe())
+    }
+
+    /// VA-134: the verdict's two readings of one shipped bug, made LOUD where they disagree.
+    /// `partition_criticals` (green) and `severity_label` (provenance) are different functions
+    /// of the same finding: r6h shipped `passed: true` with ONE known active bug — the
+    /// no-executable-tests finding — whose label read `critical` because it rides the smoke
+    /// gate's batch tag. The label never blocks `passed` (the least-impact law: r6h is the
+    /// golden run and its verdict stands); instead every known bug whose label is `critical`
+    /// or `high` gets ONE `verdict_severity_mismatch{finding, partition, label, source}` row,
+    /// and `complete_result` carries `mismatched: N` (present only when N > 0). `minors` is the
+    /// partition's minor half in ship order; the rows come back in the same order.
+    pub(super) fn verdict_severity_mismatches(&self, minors: &[String]) -> Vec<serde_json::Value> {
+        minors
+            .iter()
+            .filter_map(|m| {
+                let label = self.severity_label(m);
+                if label != "critical" && label != "high" {
+                    return None;
+                }
+                Some(serde_json::json!({
+                    "event": "verdict_severity_mismatch",
+                    "finding": m.chars().take(160).collect::<String>(),
+                    "partition": "minor",
+                    "label": label,
+                    "source": self.source_label(m),
+                }))
+            })
+            .collect()
     }
 
     fn rank(&self, text: &str) -> u8 {
@@ -1959,5 +2015,80 @@ mod tests {
         // wording can make it critical.
         assert!(!prov.is_render_class("never tagged"));
         assert!(prov.is_critical("the entry exited non-zero"));
+    }
+
+    #[test]
+    fn require_tests_separates_an_empty_suite_from_a_passing_one() {
+        // OFF: no input can produce a finding => byte-identical to the pre-lever gate.
+        for v in [
+            TestRunVerdict::NoTests,
+            TestRunVerdict::Pass,
+            TestRunVerdict::PytestMissing,
+            TestRunVerdict::Failures("boom".to_string()),
+        ] {
+            assert_eq!(require_tests_finding(&v, false), None);
+        }
+        // ON: ONLY the "nothing was checked" verdict becomes a finding.
+        assert!(require_tests_finding(&TestRunVerdict::NoTests, true).is_some());
+        // A real pass stays green, and a real failure keeps its OWN existing finding (never double-reported).
+        assert_eq!(require_tests_finding(&TestRunVerdict::Pass, true), None);
+        assert_eq!(
+            require_tests_finding(&TestRunVerdict::Failures("boom".to_string()), true),
+            None
+        );
+        // A MISSING pytest is inconclusive, never a defect — the gate must not invent one.
+        assert_eq!(
+            require_tests_finding(&TestRunVerdict::PytestMissing, true),
+            None
+        );
+    }
+
+    /// VA-134, r6h's exact shape: the no-executable-tests finding, tagged by the smoke gate's
+    /// batch tag, is a MINOR to the green partition (`passed` stays true) and `critical` to the
+    /// label. One mismatch row names the finding, both readings and the authoring check; a
+    /// medium-labelled minor produces none; `passed` is unchanged by either.
+    #[test]
+    fn a_critical_labelled_minor_is_one_mismatch_row_and_never_blocks_passed() {
+        let no_tests = require_tests_finding(&TestRunVerdict::NoTests, true).unwrap();
+        let shape = "POST /api/drafts's response does not carry the documented field(s) \
+                     `amount_minor`"
+            .to_string();
+        let mut prov = FindingProvenance::default();
+        prov.tag(FindingSource::SmokeGate, std::slice::from_ref(&no_tests));
+        prov.tag(
+            FindingSource::EndpointContractProbe,
+            std::slice::from_ref(&shape),
+        );
+        let findings = vec![no_tests.clone(), shape.clone()];
+        let (criticals, minors) = prov.partition_criticals(&findings);
+        assert!(
+            criticals.is_empty(),
+            "r6h: the partition reads both as minors"
+        );
+        assert_eq!(minors, findings);
+        let passed = criticals.is_empty() && !minors.iter().any(|m| prov.is_render_class(m));
+        assert!(
+            passed,
+            "r6h's verdict stands — the label never blocks green"
+        );
+
+        let rows = prov.verdict_severity_mismatches(&minors);
+        assert_eq!(
+            rows.len(),
+            1,
+            "one row per critical/high-labelled minor: {rows:?}"
+        );
+        assert_eq!(rows[0]["event"], "verdict_severity_mismatch");
+        assert_eq!(rows[0]["partition"], "minor");
+        assert_eq!(rows[0]["label"], "critical");
+        assert_eq!(rows[0]["source"], "smoke gate (build/test/entry oracle)");
+        assert_eq!(
+            rows[0]["finding"],
+            no_tests.chars().take(160).collect::<String>()
+        );
+        // The count `complete_result` carries is the rows' length; a medium-only list has none.
+        assert!(prov
+            .verdict_severity_mismatches(std::slice::from_ref(&shape))
+            .is_empty());
     }
 }

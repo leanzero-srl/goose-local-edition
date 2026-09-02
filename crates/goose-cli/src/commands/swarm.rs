@@ -157,7 +157,8 @@ mod findings;
 use findings::engine_critical;
 use findings::{
     console_error_is_exception, dedupe_findings_exact, elide_middle, missing_deliverable_finding,
-    parse_finding_verdicts, parse_numbered_findings, FindingProvenance, FindingSource,
+    parse_finding_verdicts, parse_numbered_findings, require_tests_finding, FindingProvenance,
+    FindingSource,
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
@@ -9371,32 +9372,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn require_tests_separates_an_empty_suite_from_a_passing_one() {
-        // OFF: no input can produce a finding => byte-identical to the pre-lever gate.
-        for v in [
-            TestRunVerdict::NoTests,
-            TestRunVerdict::Pass,
-            TestRunVerdict::PytestMissing,
-            TestRunVerdict::Failures("boom".to_string()),
-        ] {
-            assert_eq!(require_tests_finding(&v, false), None);
-        }
-        // ON: ONLY the "nothing was checked" verdict becomes a finding.
-        assert!(require_tests_finding(&TestRunVerdict::NoTests, true).is_some());
-        // A real pass stays green, and a real failure keeps its OWN existing finding (never double-reported).
-        assert_eq!(require_tests_finding(&TestRunVerdict::Pass, true), None);
-        assert_eq!(
-            require_tests_finding(&TestRunVerdict::Failures("boom".to_string()), true),
-            None
-        );
-        // A MISSING pytest is inconclusive, never a defect — the gate must not invent one.
-        assert_eq!(
-            require_tests_finding(&TestRunVerdict::PytestMissing, true),
-            None
-        );
-    }
-
-    #[test]
     fn smoke_pytest_collect_interpretation() {
         use CollectVerdict::*;
         assert_eq!(interpret_pytest_collect(Some(0), "collected 12 items"), Ok);
@@ -15327,27 +15302,6 @@ fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
             })
         }
     }
-}
-
-/// GOOSE_SWARM_REQUIRE_TESTS: an app that ships NO executable tests must not read as GREEN.
-///
-/// `interpret_pytest_run` already distinguishes `NoTests` (exit 5) from `Pass` (exit 0), but only `Failures`
-/// pushed a finding — so "nothing was checked" was indistinguishable from "everything passed". The review-fix
-/// gate already gets this right (it requires `TestRunVerdict::Pass`, never merely-empty findings); this brings
-/// the completion gate to the same standard.
-///
-/// `on == false` returns None on every input => no finding is ever pushed => byte-identical. Pure so the
-/// distinction is unit-testable without a python3 on the box.
-fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Option<String> {
-    if !on {
-        return None;
-    }
-    matches!(verdict, TestRunVerdict::NoTests).then(|| {
-        "the app ships NO executable tests (`pytest -q` collected 0) — an empty suite is not a passing \
-         suite. Write real tests that assert the spec's concrete expected values, and never delete or \
-         skip a failing test to go green."
-            .to_string()
-    })
 }
 
 /// Does invoking a command produce a RUNTIME failure — as opposed to an honest usage error?
@@ -28671,6 +28625,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut known_active_bugs: Vec<String> = Vec::new();
         // Parallel severity labels (provenance-derived) for the same list, in the same order.
         let mut known_active_bugs_severities: Vec<String> = Vec::new();
+        // VA-134: one `verdict_severity_mismatch` row per shipped known bug whose LABEL reads
+        // critical/high while the PARTITION shipped it as a minor — latched with the list it
+        // describes, emitted once at the verdict, never a `passed` input.
+        let mut verdict_severity_mismatches: Vec<serde_json::Value> = Vec::new();
         // VA-006: how many of the known active bugs the browser probe authored — `passed` is
         // false while any stands, whatever the API answered.
         let mut render_class_known_bugs: usize = 0;
@@ -29288,6 +29246,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .iter()
                     .map(|m| prov.severity_label(m).to_string())
                     .collect();
+                verdict_severity_mismatches = prov.verdict_severity_mismatches(&minors);
                 if criticals.is_empty() {
                     eprintln!(
                         "  {} every critical defect is closed — {} known active bug(s) remain",
@@ -29351,6 +29310,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 last_findings.clear();
                 known_active_bugs.clear();
                 known_active_bugs_severities.clear();
+                verdict_severity_mismatches.clear();
                 render_class_known_bugs = 0;
                 if verdict.ran {
                     eprintln!(
@@ -29719,7 +29679,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
         complete_failed = !final_passed;
         ov_verified = final_verified;
-        sink.write_value(serde_json::json!({
+        // VA-134: the label/partition disagreements on the shipped bugs, one row each, ahead of
+        // the verdict they annotate; `mismatched` rides `complete_result` only when > 0 so an
+        // archived event replays byte-identical when none exist.
+        let mismatched = verdict_severity_mismatches.len();
+        for row in verdict_severity_mismatches.drain(..) {
+            sink.write_value(row);
+        }
+        let mut complete_result = serde_json::json!({
             "event": "complete_result",
             // P1-9 + VA-006: `passed` means THE GATE'S CRITICALS CLOSED — the deterministic
             // partition over the final verify (engine_critical wording + the browser probe's
@@ -29740,7 +29707,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Parallel to known_active_bugs (same most-severe-first order): the severity the
             // authoring check derives for each shipped bug.
             "known_active_bugs_severities": known_active_bugs_severities,
-        }));
+        });
+        if mismatched > 0 {
+            complete_result["mismatched"] = serde_json::json!(mismatched);
+        }
+        sink.write_value(complete_result);
         if !final_passed {
             eprintln!(
                 "{}",
