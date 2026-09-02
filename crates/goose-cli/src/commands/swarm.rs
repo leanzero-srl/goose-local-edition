@@ -84,6 +84,7 @@ mod plan_store;
 use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state_from_dir};
 mod prose;
 use prose::rewrite_path_token;
+mod first_turn;
 mod skeleton;
 mod spec_boot;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
@@ -101,7 +102,10 @@ mod dom_contract;
 mod plan_repairs;
 use answer_routing::flat_plan_from_briefs;
 mod shards;
-use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
+use ledger_writers::{
+    rebuild_ledger_rollup, write_gate_ledger, write_ledger_mini, write_ledger_mini_checked,
+    write_task_ledger, TaskLedgerWrite, LEDGER_DIR,
+};
 use plan_repairs::{
     plan_flags, repair_brief_file_mentions, repair_module_package_collisions,
     repair_owning_nothing, repair_shared_files, repair_sink_deps, repair_sink_files,
@@ -11384,6 +11388,9 @@ pub struct GooseAgentDispatcher {
     /// VA-118: activity key -> a research lane's per-answer landing between dispatch and its rows
     /// (`research_tool`); the `research_answer` tool is registered only for a key present here.
     research_landing: Mutex<HashMap<String, ResearchLanding>>,
+    /// VA-144: `first_turn::rest_key` -> the rest of a build lane's brief, parked at dispatch and
+    /// delivered by that lane's own loop after its first write lands (`first_turn.rs`).
+    brief_rest: Mutex<HashMap<String, String>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
@@ -11540,6 +11547,7 @@ impl GooseAgentDispatcher {
             research_running: Mutex::new(HashMap::new()),
             research_relay: Mutex::new(HashMap::new()),
             research_landing: Mutex::new(HashMap::new()),
+            brief_rest: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             cross_task_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
@@ -12165,6 +12173,8 @@ impl GooseAgentDispatcher {
         let mut pending_relist: Option<SettledRelist> = None;
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, InflightCall> = HashMap::new();
+        // VA-144: set by the first landed `write`; `drain_brief_rest!` delivers the parked rest.
+        let mut first_write_landed = false;
         // E7: the sibling minis relayed to THIS research lane so far (question -> mini), so the
         // judge's look can point at them.
         let mut relayed_minis: Vec<String> = Vec::new();
@@ -12617,6 +12627,7 @@ impl GooseAgentDispatcher {
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
                                     let result = tool_result_text(&resp.tool_result);
+                                    first_write_landed |= ok && first_turn::is_write_call(&name, &summary);
                                     // #136: track consecutive identical (call, result) outcomes. Computed
                                     // BEFORE the move into call_records. A repeat with a DIFFERENT result is
                                     // progress, so it resets the run; an EMPTY result is not counted at all
@@ -12773,6 +12784,22 @@ impl GooseAgentDispatcher {
         // unreachable for the whole duration of a look (r6d web-page-q3's relay could never have
         // landed while its judge was reading it), and a research lane under back-to-back looks
         // lives in that branch.
+        // VA-144 — THE REST OF THE BRIEF lands the same way, at the same two sites, once the
+        // lane's first `write` has landed (`first_write_landed`): a landed tool call closes the
+        // round-trip, so the steer is the very next user message (first_turn.rs).
+        macro_rules! drain_brief_rest {
+            () => {{
+                if first_write_landed && pending.is_empty() {
+                    if let Some(rest) = activity_key
+                        .and_then(|k| self.deliver_brief_rest(&work_dir, k, tool_calls.len()))
+                    {
+                        agent
+                            .steer(&session_config.id, Message::user().with_text(rest))
+                            .await;
+                    }
+                }
+            }};
+        }
         macro_rules! drain_research_relay {
             () => {{
                 if let Some(key) = activity_key.filter(|k| k.starts_with("research-")) {
@@ -12807,6 +12834,7 @@ impl GooseAgentDispatcher {
         }
         loop {
             drain_research_relay!();
+            drain_brief_rest!();
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
             // successful ToolResponse, so `message_content_is_productive` keeps resetting the progress
@@ -13640,6 +13668,7 @@ impl GooseAgentDispatcher {
                                     // E7's second drain site — a relay must land DURING a look
                                     // too (see the macro's doc).
                                     drain_research_relay!();
+                                    drain_brief_rest!();
                                     if let Some(p) = &activity_file {
                                         let due = flush_digest_now
                                             || last_digest_at
@@ -23621,229 +23650,6 @@ fn render_pillars_block(p: &Pillars) -> String {
     )
 }
 
-// ─────────────────────────────── THE PER-RUN LEDGER (§II.2) ───────────────────────────────
-//
-// capture → LEDGER → message. Models are stateless; the harness is the state. Everything a run
-// measures about a task — what it wrote, what it ran, what failed, what the gate found, what a
-// repair round already tried — is captured today (digests, `<task>.calls.jsonl`,
-// delivery_defects events, gate verdicts) and was thrown away before the next dispatch could
-// read it: on r2, `delivery_defects` named the sink's whole problem 0.24 ms before the sink was
-// dispatched without it, and the sink then re-derived everything with 3 whole-suite runs and 17
-// discovery calls. These writers persist those facts as `.swarm/ledger/<key>.json` minis plus a
-// `.swarm/ledger.json` roll-up rebuilt WHOLE from the minis on every write — the
-// `.swarm/prereview/` file mechanics, the injection channel this engine has measured to work.
-//
-// THE LEDGER INFORMS, NEVER GATES. Every write is best-effort (a failed write must never
-// disturb a run), nothing here stops, caps, retries or refuses model work, and no time value is
-// an input to what is written or how it renders — timestamps are provenance only.
-
-const LEDGER_DIR: &str = ".swarm/ledger";
-
-/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
-/// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
-/// failure — the caller emits `ledger_written` only for a write that actually happened.
-fn write_ledger_mini(
-    root: &Path,
-    file_name: &str,
-    row: &serde_json::Value,
-) -> Option<std::path::PathBuf> {
-    write_ledger_mini_checked(root, file_name, row).ok()
-}
-
-/// The same funnel with the failure NAMED (VA-030 D10-5, gate 1): the research fan's four writers
-/// emit `research_mini_write_failed` from this error instead of discarding an Option — a fact mini
-/// that failed to write was counted in `research_planned.facts` and rendered from memory while
-/// resume, cover and the snowball never saw it, with no event.
-fn write_ledger_mini_checked(
-    root: &Path,
-    file_name: &str,
-    row: &serde_json::Value,
-) -> Result<std::path::PathBuf, String> {
-    let dir = root.join(LEDGER_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let path = dir.join(file_name);
-    let bytes = serde_json::to_string_pretty(row).map_err(|e| format!("serialize: {e}"))?;
-    // Finding 9: an unchanged row is a byte-AND-mtime no-op, so a gate replay over an archived
-    // tree leaves its ledger looking exactly as archived ("freshest 0s ago" was a replay
-    // artifact, not run activity). The roll-up write below makes the same comparison.
-    if std::fs::read_to_string(&path).is_ok_and(|old| old == bytes) {
-        rebuild_ledger_rollup(root);
-        return Ok(path);
-    }
-    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
-    rebuild_ledger_rollup(root);
-    Ok(path)
-}
-
-/// Rebuild `.swarm/ledger.json` WHOLE from the minis. Rewriting the roll-up in full on every
-/// write is what makes the writers order-independent and idempotent — the prereview mechanics,
-/// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
-/// (verify_tree_imports + each task's owned-file stat), so a defect fixed since its task
-/// completed vanishes instead of haunting every later prompt.
-fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
-    let dir = root.join(LEDGER_DIR);
-    let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
-    let mut gates: Vec<serde_json::Value> = Vec::new();
-    let mut repairs: Vec<serde_json::Value> = Vec::new();
-    let mut research: Vec<serde_json::Value> = Vec::new();
-    // GEN-6a #3 (fallback rule): a mini that fails to read or parse used to `continue` silently,
-    // so a dependent read a TRUNCATED roll-up as the whole history. The dropped rows are named
-    // in the roll-up itself; render_ledger_block states them and the writers emit
-    // `ledger_row_unreadable`. Sorted for the roll-up's idempotence (read_dir order is not).
-    let mut rows_dropped: Vec<serde_json::Value> = Vec::new();
-    for e in std::fs::read_dir(&dir).ok()?.flatten() {
-        if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
-            continue;
-        }
-        let fname = e.file_name().to_string_lossy().into_owned();
-        let v = match std::fs::read_to_string(e.path()) {
-            Ok(t) => match serde_json::from_str::<serde_json::Value>(&t) {
-                Ok(v) => v,
-                Err(err) => {
-                    rows_dropped.push(serde_json::json!({"file": fname, "error": err.to_string()}));
-                    continue;
-                }
-            },
-            Err(err) => {
-                rows_dropped.push(serde_json::json!({"file": fname, "error": err.to_string()}));
-                continue;
-            }
-        };
-        match v.get("kind").and_then(|k| k.as_str()) {
-            Some("task") => {
-                if let Some(id) = v.get("task_id").and_then(|t| t.as_str()) {
-                    tasks.insert(id.to_string(), v);
-                }
-            }
-            Some("gate") => gates.push(v),
-            Some("repair") => repairs.push(v),
-            // RESEARCH FAN v2: without this arm a research mini would fall into `_ => {}` and
-            // be silently invisible to every rollup reader — captured vs invisible is this line.
-            Some("research") => research.push(v),
-            _ => {}
-        }
-    }
-    gates.sort_by_key(|g| g.get("round").and_then(|r| r.as_u64()).unwrap_or(0));
-    repairs.sort_by_key(|r| {
-        (
-            r.get("round").and_then(|x| x.as_u64()).unwrap_or(0),
-            r.get("shard")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string(),
-        )
-    });
-    research.sort_by_key(|r| {
-        (
-            r.get("slice")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string(),
-            r.get("q_index").and_then(|x| x.as_u64()).unwrap_or(0),
-        )
-    });
-    let tests_run_total: u64 = tasks
-        .values()
-        .filter_map(|t| t.pointer("/commands/test/count").and_then(|c| c.as_u64()))
-        .sum();
-    let last_full_suite = tasks
-        .values()
-        .filter_map(|t| t.get("last_full_suite").filter(|v| !v.is_null()))
-        .max_by_key(|s| {
-            s.get("ts")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string()
-        })
-        .cloned();
-    let mut open_defects: Vec<String> = verify_tree_imports(root);
-    for t in tasks.values() {
-        let entries: Vec<(String, u64)> = t
-            .get("owned_files")
-            .and_then(|o| o.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|f| {
-                        Some((
-                            f.get("path").and_then(|p| p.as_str())?.to_string(),
-                            f.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        // Re-verify a row's files ONLY when they changed since its write. verify_owned_files
-        // spawns py_compile per .py file; running the full detector set for every row on every
-        // rebuild would put a growing, blocking cost on every task completion. The row already
-        // stores each file's bytes-on-disk at write time, so an unchanged file keeps the row's
-        // stored verdict and a changed one (any fix changes size in practice; a same-size edit
-        // keeps a stale advisory line at worst) is re-measured — which is what makes a FIXED
-        // defect vanish from the roll-up.
-        let changed = entries.iter().any(|(p, b)| {
-            std::fs::metadata(root.join(p))
-                .map(|m| m.len())
-                .unwrap_or(0)
-                != *b
-        });
-        let defects: Vec<String> = if changed {
-            let paths: Vec<String> = entries.into_iter().map(|(p, _)| p).collect();
-            verify_owned_files(root, &paths)
-        } else {
-            t.get("delivery_defects")
-                .and_then(|d| d.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        for d in defects {
-            if !open_defects.contains(&d) {
-                open_defects.push(d);
-            }
-        }
-    }
-    rows_dropped.sort_by_key(|r| {
-        r.get("file")
-            .and_then(|f| f.as_str())
-            .unwrap_or("")
-            .to_string()
-    });
-    let mut rollup = serde_json::json!({
-        "tasks": tasks,
-        "gate": gates,
-        "repair": { "rounds": repairs },
-        "tests_run_total": tests_run_total,
-        "last_full_suite": last_full_suite,
-        "open_defects": open_defects,
-    });
-    // Absent when clean, so an intact ledger's roll-up bytes are unchanged.
-    if !rows_dropped.is_empty() {
-        rollup["rows_dropped"] = serde_json::Value::from(rows_dropped);
-    }
-    // Absent when no research ran, for the same byte-stability reason.
-    if !research.is_empty() {
-        rollup["research"] = serde_json::Value::from(research);
-    }
-    // SPEC-ENUMERATED FILE SETS (r5 item 3): the excess is re-derived from the tree NOW, the
-    // same rule as open_defects, so a removed/merged extra vanishes. Absent when clean (and
-    // when the run froze no enumeration — the sidecar simply does not exist).
-    let spec_set_exceeded = spec_sets::exceeded_facts(root);
-    if !spec_set_exceeded.is_empty() {
-        rollup["spec_set_exceeded"] = serde_json::Value::from(spec_set_exceeded);
-    }
-    let out_path = root.join(".swarm").join("ledger.json");
-    let bytes = serde_json::to_string_pretty(&rollup).ok()?;
-    // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
-    if !std::fs::read_to_string(&out_path).is_ok_and(|old| old == bytes) {
-        // tmp+rename (the forming capture's own atomic writer): the roll-up is read on a poll
-        // by every dispatch's render and by the desktop, so a torn read must be impossible.
-        write_forming_atomic(&out_path, &bytes).ok()?;
-    }
-    Some(rollup)
-}
-
 /// II-3, the SINK's semantic description — the replacement for the 3,668-char zero-fact
 /// template (desc_sha e33fa63f) the r2 sink was dispatched with, after which it re-derived the
 /// tree's state with 3 whole-suite runs and 17 discovery calls and wrote 6 phantom shim modules
@@ -24566,8 +24372,10 @@ impl GooseAgentDispatcher {
         // byte-identical for every other task.
         let shard = req.shard_of.as_ref();
         let shard_final_before = shards::snapshot_final_files(&root, shard);
-        let layout_block = if req.all_files.is_empty() {
-            String::new()
+        // VA-144: the layout (manifest + YOU OWN) and the dependency sources are two blocks —
+        // the first turn keeps the layout, the deps may ride the second turn (first_turn.rs).
+        let (layout_block, deps_block) = if req.all_files.is_empty() {
+            (String::new(), String::new())
         } else {
             let cwd = root.display().to_string();
             let manifest = req
@@ -24902,10 +24710,13 @@ impl GooseAgentDispatcher {
                 }
                 None => String::new(),
             };
-            format!(
-                "## PROJECT FILE LAYOUT — the agreed plan\n\
-                 Every module lives at EXACTLY these paths; import from here, NEVER invent another \
-                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}{siblings_block}"
+            (
+                format!(
+                    "## PROJECT FILE LAYOUT — the agreed plan\n\
+                     Every module lives at EXACTLY these paths; import from here, NEVER invent another \
+                     location or write a second copy at the project root:\n{manifest}\n{owned_part}"
+                ),
+                format!("{existing_block}{dep_block}{siblings_block}"),
             )
         };
         // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
@@ -25397,6 +25208,24 @@ impl GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // VA-144: ONE arm (first_turn.rs). ON, a first-attempt file author's first turn is the
+        // WRITE ALONE and the fact blocks ride the second turn, delivered by its own loop after
+        // the first write lands (`drain_brief_rest!`); OFF, every block sits here as before.
+        let first_file = briefs::first_write_target(&req.owned_files, &req.description);
+        let write_alone =
+            first_turn::write_alone(&req, repairing, sink_brief.is_some()) && first_file.is_some();
+        let first_turn::Placed {
+            pre_layout,
+            post_layout,
+            rest: rest_blocks,
+        } = first_turn::place(
+            write_alone,
+            &pitfalls_block,
+            &notes_block,
+            &pillars_block,
+            &deps_block,
+            &context_block,
+        );
         let system_prompt = format!(
             "{role_opener}{worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
@@ -25446,7 +25275,7 @@ impl GooseAgentDispatcher {
              them tells you nothing and wastes turns (workers have looped 10+ times on `plan.json`). \
              Ignore them completely and also do NOT create a `plan.json`.\n\
              {reading_rules}{stopping_rules}{HANDOFF_RULE}{supervisor_rules}\
-             \n{write_first_block}{request_file_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{context_block}"
+             \n{write_first_block}{request_file_block}{decisions_block}{doc_facts_block}{pre_layout}{layout_block}{post_layout}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -25529,7 +25358,11 @@ impl GooseAgentDispatcher {
             },
             self.events.as_ref(),
         );
-        let with_memory = memory::with_learned(effective_description, &learned);
+        // VA-144: under the write-alone arm the LEARNED block rides the second turn instead.
+        let with_memory = memory::with_learned(
+            effective_description,
+            if write_alone { "" } else { learned.as_str() },
+        );
         let effective_description: &str = &with_memory;
         // II-8: a re-dispatch must not start blind. The generic transient hint GUESSES ("any file
         // you had written is still on disk") and on r2 that guess was false — ledger-core-tests'
@@ -25641,6 +25474,13 @@ impl GooseAgentDispatcher {
             "lever_on": force_write_tool(),
             "owns_files": req.owned_files.len(),
         }));
+        // VA-144: park the rest of the brief for this lane's loop; `brief_first_turn` says what
+        // the first turn holds (system + user chars) and how much waits on the first write.
+        if let Some(file) = first_file.filter(|_| write_alone) {
+            let rest = first_turn::rest_text(&req.task_id, file, &rest_blocks, &learned);
+            let first_chars = system_prompt.chars().count() + worker_user_text.chars().count();
+            self.stash_brief_rest(&root, &req.task_id, file, first_chars, rest);
+        }
         // II-11c: the forming observer (`<key>.forming.json`) is armed INSIDE run_agent_in for
         // every keyed call — this site passes Some(task_id) below and owns nothing else. The
         // wiring used to live here, which is exactly why r5's OPEN call had no forming file.
@@ -25711,6 +25551,8 @@ impl GooseAgentDispatcher {
             false,
         );
         let outcome = worker_call.await;
+        // VA-144: a rest the lane never earned (no write landed) is said, never dropped.
+        self.settle_brief_rest(&root, &req.task_id);
         let secs = started.elapsed().as_secs_f64();
         // A SINK THAT WAS CUT OFF DID NOT VERIFY ANYTHING — SAY SO, LOUDLY.
         //
