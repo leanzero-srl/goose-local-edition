@@ -218,4 +218,5 @@ prompt · design · harness.
 
 
 
-| VA-150 | 09-02 | panel | QUEUED behind: agent cap (panel-surgeon, pnpm only) | VA-031 residue: `research_raised_for{…}` (17 on r6j — the 'for <slice>' hand-offs a lane raises) has no panel consumer, so the cross-slice hand-offs the snowball relies on are invisible; render each under the raising lane (`→ <slice>` chip) and under the receiving lane when relayed (`research_mini_relayed`). Also buildPhaseTodo's Research step ignores covered questions on archives. |
+| VA-150 | 09-02 | panel | CLAIMED 00:0x panel-surgeon in va150-raised (pnpm only) | VA-031 residue: `research_raised_for{…}` (17 on r6j — the 'for <slice>' hand-offs a lane raises) has no panel consumer, so the cross-slice hand-offs the snowball relies on are invisible; render each under the raising lane (`→ <slice>` chip) and under the receiving lane when relayed (`research_mini_relayed`). Also buildPhaseTodo's Research step ignores covered questions on archives. |
+
