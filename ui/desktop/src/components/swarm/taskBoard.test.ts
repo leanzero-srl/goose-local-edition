@@ -56,6 +56,27 @@ describe('nodeLabeler — node NAMES, never truncated model-id fragments (the "f
     const bare = nodeLabeler([]);
     expect(bare('gabee-qwen3.6-27b')).toBe('gabee');
   });
+
+  it('prefers the engine\'s `node` (748084b97): the sidecar model on the LM Studio host labels `workhorse-mlx`, not `workhorse`', () => {
+    const mixed = nodeLabeler([
+      {
+        event: 'pool_resolved',
+        devices: [
+          { id: 'workhorse-27b', model_id: 'workhorse-qwen3.8-27b', engine: 'lmstudio', node: 'workhorse' },
+          {
+            id: 'workhorse-mlx',
+            model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+            engine: 'mlx-sidecar',
+            node: 'workhorse-mlx',
+          },
+        ],
+      },
+    ]);
+    expect(mixed('workhorse-qwen3.8-27b')).toBe('workhorse');
+    expect(mixed('workhorse-27b')).toBe('workhorse');
+    expect(mixed('workhorse-qwen3.5-9b-4bit-mlx')).toBe('workhorse-mlx');
+    expect(mixed('workhorse-mlx')).toBe('workhorse-mlx');
+  });
 });
 
 // A compact but complete run mid-build, in measured event shapes: one task done, one running, one queued

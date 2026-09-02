@@ -915,7 +915,10 @@ function absorbNodeCanon(canon: NodeCanon, e: Record<string, unknown>): void {
     const rec = p as Record<string, unknown>;
     const id = str(rec['id']);
     const modelId = str(rec['model_id']);
-    const label = shortNode(modelId) || shortNode(id);
+    // Since engine 748084b97 each device carries `node` — the canonical name the engine itself uses
+    // (`workhorse` for LM Studio, `workhorse-mlx` for the sidecar on the same host). Read it verbatim;
+    // the prefix derivation is only for a log that predates it, where both feeds collapse to one name.
+    const label = str(rec['node']) || shortNode(modelId) || shortNode(id);
     if (id) into[id] = label;
     if (modelId) into[modelId] = label;
   }
@@ -937,14 +940,16 @@ export function nodeLabeler(events: Array<Record<string, unknown>>): (device: st
  * post-push truth), falling back to `run_started.pool` for logs that predate it. This is the honest
  * fleet SIZE: a node that never got a task is still in the pool, and the fleet strip must render it
  * as explicitly idle rather than omit it (measured: a 3-device pool read "FLEET · 2 NODES" because
- * the third was idle at that moment and only lane devices were counted).
+ * the third was idle at that moment and only lane devices were counted). Names are the engine's own
+ * `node` per device (748084b97) — an LM Studio model and a sidecar model on one host are TWO nodes
+ * (`workhorse`, `workhorse-mlx`); a log without `node` falls back to the model-id prefix.
  */
 export function resolvePool(events: Array<Record<string, unknown>>): string[] {
   const fromList = (list: unknown): string[] =>
     (Array.isArray(list) ? list : [])
       .map((d) => {
         const rec = d as Record<string, unknown>;
-        return shortNode(str(rec['model_id'])) || shortNode(str(rec['id']));
+        return str(rec['node']) || shortNode(str(rec['model_id'])) || shortNode(str(rec['id']));
       })
       .filter(Boolean);
   const resolved = events.find((e) => e['event'] === 'pool_resolved');

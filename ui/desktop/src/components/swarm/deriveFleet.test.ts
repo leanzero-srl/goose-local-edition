@@ -27,6 +27,21 @@ const POOL = [
 const RUN_STARTED = { event: 'run_started', pool: POOL };
 const POOL_RESOLVED = { event: 'pool_resolved', devices: POOL, worker_count: 3 };
 
+// The MIXED pool measured 2026-09-02 (engine 748084b97): an LM Studio model and a LeanZero MLX sidecar
+// model on ONE host. Both model ids start `workhorse-`, so the prefix derivation read ONE node for two
+// devices; the engine now names each device's canonical `node` (`<node>-mlx` for the sidecar).
+const MIXED_POOL = [
+  { id: 'gabee-27b', model_id: 'gabee-qwen3.6-27b', weight: 2, engine: 'lmstudio', node: 'gabee' },
+  { id: 'workhorse-27b', model_id: 'workhorse-qwen3.8-27b', weight: 2, engine: 'lmstudio', node: 'workhorse' },
+  {
+    id: 'workhorse-mlx',
+    model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+    weight: 1,
+    engine: 'mlx-sidecar',
+    node: 'workhorse-mlx',
+  },
+];
+
 const lane = (device: string, status: TurnLane['status'], taskId = `t-${device}`): TurnLane => ({
   taskId,
   device,
@@ -45,6 +60,24 @@ describe('resolvePool — the fleet size comes from the engine, not from who hap
 
   it('is empty when neither event exists (older log) — the strip then degrades to lane devices', () => {
     expect(resolvePool([{ event: 'plan_loaded' }])).toEqual([]);
+  });
+
+  it('reads the engine\'s own `node` per device: the sidecar on the LM Studio host is a SECOND node, not the same row', () => {
+    expect(resolvePool([{ event: 'pool_resolved', devices: MIXED_POOL, worker_count: 3 }])).toEqual([
+      'gabee',
+      'workhorse',
+      'workhorse-mlx',
+    ]);
+    expect(resolvePool([{ event: 'run_started', pool: MIXED_POOL }])).toEqual([
+      'gabee',
+      'workhorse',
+      'workhorse-mlx',
+    ]);
+  });
+
+  it('a device whose `node` the engine could not name (null) still derives from its model id', () => {
+    const devices = [{ ...MIXED_POOL[1], node: null }, MIXED_POOL[2]];
+    expect(resolvePool([{ event: 'pool_resolved', devices }])).toEqual(['workhorse', 'workhorse-mlx']);
   });
 });
 
