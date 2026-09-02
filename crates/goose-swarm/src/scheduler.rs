@@ -742,6 +742,36 @@ const SPECULATION_CAP: u32 = 8;
 /// 3-5 functions is the design's own ask, and a cap keeps a long idle tail from burning
 /// unbounded generations on one app.
 const TESTGEN_CAP: u32 = 3;
+
+fn difficulty_name(d: Difficulty) -> &'static str {
+    match d {
+        Difficulty::Hard => "hard",
+        Difficulty::Easy => "easy",
+    }
+}
+
+/// SAY every task in `ids` whose weight the plan never measured (VA-120), in plan order — one
+/// `plan_weight_derived` each, carrying the exact number the order ranks by. Called at DAG build
+/// for every task and at the merger's gap door for each spliced shard: the two places a task enters
+/// the DAG, so a derived weight is loud wherever it arises. Reports only; ranks nothing.
+fn emit_derived_weights(dag: &Dag, sink: &dyn EventSink, ids: &[TaskId]) {
+    let mut ordered: Vec<&TaskId> = ids.iter().collect();
+    ordered.sort_by_key(|id| dag.tasks[*id].plan_index);
+    for id in ordered {
+        let n = &dag.tasks[id];
+        let Some(reason) = n.derived_weight_reason() else {
+            continue;
+        };
+        sink.emit(&SwarmEvent::PlanWeightDerived {
+            task_id: id.clone(),
+            weight: n.weight,
+            reason: reason.to_string(),
+            files: n.spec.owned_files.len(),
+            difficulty: difficulty_name(n.spec.difficulty).to_string(),
+        });
+    }
+}
+
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -1193,6 +1223,17 @@ impl State {
         })
     }
 
+    /// (declared, derived) over every task in the DAG — `dispatch_order`'s weight split (VA-120).
+    fn weight_split(&self) -> (usize, usize) {
+        let derived = self
+            .dag
+            .tasks
+            .values()
+            .filter(|n| n.derived_weight_reason().is_some())
+            .count();
+        (self.dag.tasks.len() - derived, derived)
+    }
+
     /// REMAINING CHAIN WEIGHT of every task: its own plan weight plus the heaviest chain among its
     /// dependents, down to the join — the critical-path term of the dispatch order (VA-113). A
     /// Done or Failed node contributes nothing of its own but its downstream still counts (the join
@@ -1287,6 +1328,7 @@ impl State {
                             chain_weight: chains[t],
                         })
                         .collect();
+                    let (weights_declared, weights_derived) = self.weight_split();
                     self.sink.emit(&SwarmEvent::DispatchOrder {
                         task_id: tid.clone(),
                         weight: self.dag.tasks[&tid].weight,
@@ -1298,6 +1340,8 @@ impl State {
                             .device_speed
                             .get(&dev)
                             .map(|(t, c)| t / (*c).max(1) as u64),
+                        weights_declared,
+                        weights_derived,
                     });
                     self.do_claim(tid, dev, &mut out)
                 }
@@ -1359,10 +1403,7 @@ impl State {
             owned_files: files.clone(),
             context_slice_len: slice.len(),
             description_chars: description.len(),
-            difficulty: match self.dag.tasks[&tid].spec.difficulty {
-                Difficulty::Hard => "hard".to_string(),
-                _ => "easy".to_string(),
-            },
+            difficulty: difficulty_name(self.dag.tasks[&tid].spec.difficulty).to_string(),
         });
         // A-3: the retry landed back on the device it was avoiding — pick_device only allows that
         // when it is the sole free one, and the reuse must be readable in the jsonl rather than
@@ -2263,6 +2304,7 @@ impl State {
                 .or_default()
                 .push(tid.to_string());
         }
+        emit_derived_weights(&self.dag, self.sink.as_ref(), &ids);
         self.attempt_log
             .entry(tid.to_string())
             .or_default()
@@ -2739,6 +2781,8 @@ impl Scheduler {
                 });
             }
         }
+        let every_task: Vec<TaskId> = dag.tasks.keys().cloned().collect();
+        emit_derived_weights(&dag, self.sink.as_ref(), &every_task);
         let state = Arc::new(Mutex::new(State {
             dag,
             ready,
