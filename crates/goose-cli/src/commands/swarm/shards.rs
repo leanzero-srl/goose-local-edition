@@ -2122,7 +2122,6 @@ mod tests {
             id: id.into(),
             title: id.into(),
             objective: objective.into(),
-            questions: Vec::new(),
             weight: 3,
             sections: sections.iter().map(|s| s.to_string()).collect(),
         };

@@ -68,15 +68,12 @@ use orientation::{
 };
 mod research;
 use research::{
-    announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
-    emit_research_planned, files_from_objective, fold_research_panic, land_spec_fact,
-    load_research_mini, persist_request_text, persist_research_row, relay_note, relay_targets,
-    research_dispatch_text, research_fan_lanes, research_prompt_head, research_request_block,
-    research_schema, research_sources_block, research_system_text, ResearchQuestion, ResearchRow,
-    REQUEST_FILE,
+    announce_research_phase, briefs_from_slices, emit_research_outcome, emit_research_planned,
+    files_from_objective, fold_research_panic, load_research_mini, persist_request_text,
+    persist_research_row, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
+    research_prompt_head, research_request_block, research_schema, research_sources_block,
+    research_system_text, ResearchLane, ResearchQuestion, ResearchRow, REQUEST_FILE,
 };
-mod research_plan;
-use research_plan::{covering_mini, route_questions_to_decisions};
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod plan_store;
@@ -117,7 +114,7 @@ use briefs::thin_brief_missing;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
 mod opener;
-use opener::{open_schema, opener_questions_rule, OpenOutput, OpenOutputRaw, OpenSlice};
+use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
 mod spec_surface;
 use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
@@ -11858,13 +11855,14 @@ pub struct GooseAgentDispatcher {
     /// already trying; sending it ONCE is new information. Nothing here can end a task, burn an attempt
     /// or bound anything — a defect that is never fixed simply stops being mentioned.
     defects_told: Mutex<HashMap<String, std::collections::HashSet<String>>>,
-    /// r6e E7 — the research fan's LATE snowball. `research_running`: activity key -> question
-    /// for every research lane between its dispatch and its row (the relay's target set,
-    /// `research::relay_targets`); `research_relay`: target key -> notes queued for it, drained
+    /// r6e E7 — the research fan's LATE snowball. `research_running`: activity key -> relay
+    /// target (the lane's slice and the route paths its material names; VA-089 — a lane has
+    /// no questions before it runs) for every research lane between its dispatch and its rows
+    /// (`research::relay_targets`); `research_relay`: target key -> notes queued for it, drained
     /// by that lane's OWN loop at a boundary where `pending` is empty (the gate the judge's
     /// steers respect) and delivered through `Agent::steer` — one more user message in the
     /// running session, never a restream. Nothing here bounds or ends anything.
-    research_running: Mutex<HashMap<String, Vec<ResearchQuestion>>>,
+    research_running: Mutex<HashMap<String, research::RelayTarget>>,
     research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
@@ -11953,12 +11951,12 @@ impl GooseAgentDispatcher {
     /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
     /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
     fn queue_research_relay(&self, row: &ResearchRow) {
-        let running: Vec<(String, Vec<ResearchQuestion>)> = self
+        let running: Vec<(String, research::RelayTarget)> = self
             .research_running
             .lock()
             .unwrap()
             .iter()
-            .map(|(k, q)| (k.clone(), q.clone()))
+            .map(|(k, t)| (k.clone(), t.clone()))
             .collect();
         let targets = relay_targets(row, &running);
         if targets.is_empty() {
@@ -20076,8 +20074,9 @@ fn skeleton_schema() -> serde_json::Value {
 // output shape here; a hard limit would just produce a brief that stops mid-signature.
 
 impl GooseAgentDispatcher {
-    /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices, the
-    /// questions each needs answered, and the decisions the spec genuinely leaves open.
+    /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices
+    /// (each with the spec sections it owns) and the decisions the spec genuinely leaves open.
+    /// It writes NO questions (VA-089): each slice's research lane derives its own, in parallel.
     pub(crate) async fn open_slices(
         &self,
         planner_model: &str,
@@ -20108,9 +20107,11 @@ impl GooseAgentDispatcher {
         let sections_block = if armed {
             "\n\nTHE REQUEST ARRIVES AS AN ORIENTATION INDEX — every section of the document \
              with its heading, measured size and opening lines. The FULL text is the request \
-             file named under SOURCES: never print the whole file; grep it for every question \
-             (the QUESTIONS rule below). The engine splices each section's FULL text into the \
-             owning slice's brief after you answer. For each slice, list in `sections` the \
+             file named under SOURCES: never print the whole file; open a section (`sed -n \
+             'A,Bp'` on the range the index gives) only when its opening lines do not tell you \
+             which slice owns it. The engine splices each section's FULL text into the owning \
+             slice's brief after you answer, and that slice's research lane reads the same text \
+             to derive its questions — you write none. For each slice, list in `sections` the \
              EXACT headings (verbatim from the index) of every section that slice owns; every \
              section must appear in at least one slice's `sections`."
         } else {
@@ -20120,10 +20121,12 @@ impl GooseAgentDispatcher {
             "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
              work, divided by MEANING and by interface, never by document order or by equal-sized \
              buckets.\n\n\
-             Each slice gets: an id (kebab-case), a title, an objective, its QUESTIONS (the \
-             QUESTIONS rule follows the SOURCES block in the request message — every question is \
-             an object with a kind, a cite and, for a lookup, the fact), and a weight from 1 to 5 \
-             estimating how much work it is.\n\n\
+             Each slice gets: an id (kebab-case), a title, an objective, and a weight from 1 to 5 \
+             estimating how much work it is. You write NO questions: each slice's research lane \
+             derives its own from the sections you assign it — in parallel, after you answer — \
+             so your whole job is the split, its file ownership and its section assignment. \
+             MEASURED: openers that also wrote per-slice questions ran 46 to 71 minutes on one \
+             node while two idled (four runs); the questions are what the parallel lanes do.\n\n\
              SLICES MUST BE COMPARABLE IN SIZE, AND THERE ARE THREE TO SIX OF THEM. A slice more than \
              roughly twice the work of another means one machine grinds while the others idle — split \
              that one, and if splitting would push you past six, the overweight slice is hiding layers \
@@ -20185,15 +20188,8 @@ impl GooseAgentDispatcher {
         // full sb-7 spec). The detail is not lost: briefs_from_slices splices each claimed
         // section's full text into the owning slice verbatim. Below the floor everything here
         // is byte-identical.
-        // D10-8 (VA-034's mechanism): the QUESTIONS rule sits RIGHT AFTER the SOURCES block, where
-        // the request file's path is, not at the end of a 9-paragraph system prompt. r6c's and r6d's
-        // openers both HAD a shell and made ZERO shell calls (`open.json tool_calls 1
-        // ['recipe__final_output']`); r6d at 0.3k "First let me check the working directory", then
-        // 74k chars and one call; at 62.4k it wrote "Health response shape ('shape below' — in full
-        // text) — which fields?" while request.md:134-136 held the shape. The rule says RUN the
-        // grep, shows the three shapes with real sb-7 examples, and the schema below refuses a
-        // question without a cite — no cap, no retry count: the validator is the refuser.
-        let questions_rule = opener_questions_rule(request_path.as_deref());
+        // VA-089: no QUESTIONS rule follows the SOURCES block any more — the opener slices; each
+        // slice's research lane derives and answers its questions in parallel (research.rs).
         let user_text = if armed {
             let orientation = spec_orientation(&sections);
             self.events.write_value(serde_json::json!({
@@ -20204,11 +20200,10 @@ impl GooseAgentDispatcher {
             }));
             format!(
                 "The request, as its ORIENTATION INDEX (the engine splices each section's full \
-                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}\
-                 {questions_rule}"
+                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}"
             )
         } else {
-            format!("The request:\n\n{user_prompt}{sources_block}{questions_rule}")
+            format!("The request:\n\n{user_prompt}{sources_block}")
         };
         let out = self
             .run_agent_timed_at(
@@ -20872,7 +20867,7 @@ async fn run_linear_plan(
     // single-slice fallback: the whole request as one slice. That always parses, always validates, and
     // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
     // is a worse plan and still a plan.
-    let mut opened = match dispatcher
+    let opened = match dispatcher
         .open_slices(&cfg.planner_model, &opts.prompt)
         .await
     {
@@ -20904,7 +20899,6 @@ async fn run_linear_plan(
                             id: "app".to_string(),
                             title: "the whole request".to_string(),
                             objective: opts.prompt.clone(),
-                            questions: Vec::new(),
                             weight: 5,
                             sections: Vec::new(),
                         }],
@@ -20993,9 +20987,10 @@ async fn run_linear_plan(
     // ---- RESEARCH FAN v2 (v1 stays dead) ------------------------------------------------------
     // v1 — prose briefs REPLACING dependency sources — is deleted (P1-5) and stays deleted: r2
     // paid 48 minutes with 2 of 3 nodes idle and its paraphrases did not prevent the five
-    // wrong-key defects. v2 is a different mechanism: the opener's OWN questions, one structured
-    // read-only call each across one lane per host, answers spliced as FACTS beside the sources
-    // (never instead of them — dep_block is untouched). See the dead-form notes on the fan block.
+    // wrong-key defects. v2 is a different mechanism: ONE structured read-only lane per slice
+    // (VA-089) that derives the slice's own design/external questions from its sections and
+    // answers them, answers spliced as ANSWERS beside the sources (never instead of them —
+    // dep_block is untouched). See the dead-form notes on the fan block.
     // Spawned AFTER the ASK handshake so whatever the user DID answer informs research (on the
     // benchmark the window expires unanswered — r5's low_confidence_ask_timeout: "no answers
     // arrived"), awaited before the DAG exists. MILD: a panicked fan is zero answers plus a loud
@@ -21005,14 +21000,6 @@ async fn run_linear_plan(
     // per-decision answer-absence is the ONLY trigger, so an attended run where the human
     // answers everything dispatches none of these.
     let still_open = decisions::still_open_after_user(&decision_lines, user_decisions);
-    // THE FAN CUT (C2a): a slice question that IS one of the opener's open decisions is routed
-    // to it — decided ONCE, on the decisions lane (or by the user), never again on a slice
-    // lane. r6d decided D1 three times (`__open_decisions__-q2`, web-page-q1, inside
-    // web-page-q3) and re-asked the token-entry decision as web-page-q0 (7.9 min). Runs
-    // AFTER ASK so the routed question's settlement — whichever channel settles it — reaches
-    // the brief through the decisions partition; the fan below skips routed questions and
-    // `briefs_from_slices` points each at its decision.
-    route_questions_to_decisions(&mut opened, sink.as_ref());
     let fan_rows: Vec<ResearchRow> = {
         let fan = tokio::spawn({
             let dispatcher = dispatcher.clone();
@@ -21168,7 +21155,7 @@ async fn run_linear_plan(
 // questions with real read tools, and its answers ride NEXT TO dep_block, never instead of it.
 // The other dead forms cannot recur here either: SCOUT lens arrays are test-fixture only, dead in
 // the run path (`SCOUT_LENSES` lives under `#[cfg(test)]`), and the fan's ONLY inputs are the
-// opener's own output — its per-slice questions and its open decisions — no const array exists to
+// opener's own output — its slices and its open decisions — no const array exists to
 // generify; no multi-draft vote (every lane answers a DIFFERENT question, nothing scores a
 // winner); no coverage barrier (per-answer minis + events land as each finishes; the only join
 // feeds the one serial SYNTHESIS call); no resplit.
@@ -21186,7 +21173,9 @@ async fn run_linear_plan(
 // ================================================================================================
 
 impl GooseAgentDispatcher {
-    /// RESEARCH FAN v2 — one uncapped structured call per opener question, one lane per host,
+    /// RESEARCH FAN v2 — one uncapped structured call per SLICE (the lane derives its own
+    /// questions from the slice's sections and answers them; VA-089) plus one for the open
+    /// decisions, one lane per host,
     /// spawned AFTER the ASK handshake resolves (A6: whatever the user DID answer informs
     /// research — on the benchmark the ask window expires unanswered, r5's
     /// low_confidence_ask_timeout: "no answers arrived") and awaited before
@@ -21205,7 +21194,7 @@ impl GooseAgentDispatcher {
     /// NAMED LIMITATION (A2, pre-existing transport class, deliberately not widened into here):
     /// a stream that CONNECTS and then emits zero characters forever is non-terminal today — the
     /// judge's look predicate needs ~2,000 thinking chars before it reads a lane — and this fan
-    /// multiplies that exposure by the question count. Carried as a named risk, not fixed here.
+    /// multiplies that exposure by the lane count. Carried as a named risk, not fixed here.
     pub(crate) async fn research_fan(
         self: &Arc<Self>,
         worker_models: Vec<String>,
@@ -21215,19 +21204,24 @@ impl GooseAgentDispatcher {
         tree_at_start: &[String],
         still_open_decisions: &[(usize, String)],
     ) -> Vec<ResearchRow> {
-        // ONE pass over the opener's own slices builds each question WITH its prompt HEAD —
-        // no later lookup exists that could miss and silently substitute an empty prompt. The
-        // one dispatch-time addition is the snowball block (`research_dispatch_text`): the minis
-        // answered before THIS lane left, whose emptiness on a first dispatch is honest.
+        // VA-089: ONE lane per slice, ALWAYS — the lane derives its own questions from its
+        // sections. The opener emits slices only: r6h's opener reasoned ~66 minutes on one node
+        // over dozens of "What do request.md:A-B fix for …" lookups while two nodes idled, and
+        // r6g's fan dispatched lanes for only the 4 of 6 slices that had dispatch-kind
+        // questions (7 answers on 4 lanes in 15 minutes — the parallel phase starved by the
+        // serial one). Each lane's prompt HEAD is built here from the slice's own facts; the one
+        // dispatch-time addition is the snowball block (`research_dispatch_text`).
         let sections = spec_sections(spec);
         let armed = orientation_armed(spec, &sections);
         let index_sections = if armed { sections.len() } else { 0 };
         let request_path = persist_request_text(&self.working_dir, spec, self.events.as_ref());
         let sources = research_sources_block(request_path.as_deref(), spec, tree_at_start);
-        let mut total_questions = 0usize;
+        let landed_before = research::load_research_minis(&self.working_dir);
         let mut rows: Vec<ResearchRow> = Vec::new();
-        let mut fact_rows: Vec<ResearchRow> = Vec::new();
-        let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
+        let mut lanes_to_run: Vec<ResearchLane> = Vec::new();
+        let mut resumed_slices: Vec<String> = Vec::new();
+        let mut per_slice_sections: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         // The plan-wide view `consumed_spec_sections` needs (VA-030): every slice's claims, so
         // rule (c) counts claimants across the plan instead of seeing one, and this slice's
         // declared files, so rule (a) can match an advertised route against `web/app.js`'s
@@ -21238,7 +21232,24 @@ impl GooseAgentDispatcher {
             .map(|sl| sl.sections.as_slice())
             .collect();
         for sl in &opened.slices {
-            if sl.questions.is_empty() {
+            per_slice_sections.insert(sl.id.clone(), sl.sections.len());
+            // The resume watermark: a slice whose lane already landed rows — its own questions,
+            // answered or not, or its lane-outcome row — is settled history and never re-runs
+            // (an unanswered row stays unanswered on resume; revival would be an explicit engine
+            // decision, never a silent retry). The rows ride into the briefs as they landed.
+            let resumed: Vec<ResearchRow> = landed_before
+                .iter()
+                .filter(|r| r.slice == sl.id)
+                .cloned()
+                .collect();
+            if !resumed.is_empty() {
+                self.events.write_value(serde_json::json!({
+                    "event": "research_slice_resumed",
+                    "slice": sl.id,
+                    "rows": resumed.len(),
+                }));
+                resumed_slices.push(sl.id.clone());
+                rows.extend(resumed);
                 continue;
             }
             let head = research_prompt_head(
@@ -21259,175 +21270,115 @@ impl GooseAgentDispatcher {
                 tree_at_start,
                 &sources,
             );
-            for (i, q) in sl.questions.iter().enumerate() {
-                total_questions += 1;
-                let rq = ResearchQuestion::of(&sl.id, i, q);
-                match load_research_mini(&self.working_dir, &sl.id, i) {
-                    Some(row) => {
-                        emit_question_disposition(self.events.as_ref(), &rq, "resumed");
-                        rows.push(row);
-                    }
-                    // THE FAN CUT (C1, VA-095): a lookup whose cite is a line range of the request
-                    // is not a question — `land_spec_fact` renders those lines of `spec` as the
-                    // terminal row (SPEC FACTS block, ledger block, snowball), persists the mini,
-                    // NO lane runs; the opener wrote no fact text (r6g: 80 facts, 61 opener-min on
-                    // one node). A cite past the file or across sections is named, and rides a lane.
-                    None if q.is_cited_fact() => {
-                        let events = self.events.as_ref();
-                        match land_spec_fact(&self.working_dir, spec, &rq, events) {
-                            Some(row) => fact_rows.push(row),
-                            None => to_dispatch.push((rq, head.clone())),
-                        }
-                    }
-                    // C2(a): routed to an open decision — no row of its own; the decision's
-                    // settlement rides every brief and this slice's brief points at it.
-                    None if q.decision.is_some() => {
-                        emit_question_disposition(self.events.as_ref(), &rq, "decision");
-                    }
-                    None => {
-                        emit_question_disposition(self.events.as_ref(), &rq, "dispatch");
-                        to_dispatch.push((rq, head.clone()));
-                    }
-                }
-            }
+            // The sibling slices' objectives: what the OTHER builders own, so a lane does not
+            // derive a question another slice's lane derives — this run's facts, never a template.
+            let siblings = opened
+                .slices
+                .iter()
+                .filter(|other| other.id != sl.id)
+                .map(|other| format!("- `{}` — {}: {}", other.id, other.title, other.objective))
+                .collect::<Vec<_>>()
+                .join("\n");
+            lanes_to_run.push(ResearchLane {
+                slice: sl.id.clone(),
+                head,
+                siblings,
+                material: research::slice_material(sl, &sections),
+            });
         }
-        // THE UNANSWERED DECISION REMAINDER (item 0): each rides as one structured call under
-        // the reserved DECISION_SLICE id, indexed by its stable position in the opener's own
-        // list (the resume identity of its ledger mini). The prompt carries the WHOLE request —
-        // a decision is global, no claimed-section subset exists — plus whatever the user DID
-        // answer, and the fan appends the decision text exactly as it appends a slice question.
+        // THE UNANSWERED DECISION REMAINDER (item 0): the decisions the user left unanswered ride
+        // ONE lane under the reserved DECISION_SLICE id, each indexed by its stable position in
+        // the opener's own list (the resume identity of its ledger mini). The prompt carries the
+        // WHOLE request — a decision is global, no claimed-section subset exists — plus whatever
+        // the user DID answer, and the decision text is tagged exactly as before (`[qN]`).
+        let mut decision_questions: Vec<ResearchQuestion> = Vec::new();
         for (i, d) in still_open_decisions {
-            total_questions += 1;
             match load_research_mini(&self.working_dir, decisions::DECISION_SLICE, *i) {
                 Some(row) => rows.push(row),
-                None => to_dispatch.push((
-                    ResearchQuestion::decision(*i, d),
-                    decisions::decision_user_text(spec, user_decisions, tree_at_start, &sources),
-                )),
+                None => decision_questions.push(ResearchQuestion::decision(*i, d)),
             }
         }
-        if total_questions == 0 {
-            // Measured absence, honest empty (the fallback gate): the opener emitted no
-            // questions and left no unanswered decisions — including the double-failure
-            // one-slice fallback — so there is nothing to research and the event says so.
-            self.events.write_value(serde_json::json!({
-                "event": "research_no_questions",
-                "slices": opened.slices.len(),
-            }));
-            return Vec::new();
+        let decisions_n = decision_questions.len();
+        if !decision_questions.is_empty() {
+            let material = decision_questions
+                .iter()
+                .map(|q| q.question.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            lanes_to_run.push(ResearchLane {
+                slice: decisions::DECISION_SLICE.to_string(),
+                head: decisions::decision_user_text(spec, user_decisions, tree_at_start, &sources),
+                siblings: String::new(),
+                questions: decision_questions,
+                material,
+            });
         }
-        // Every question that reaches a lane, in dispatch order (the `research_planned`
-        // denominator), then the lanes themselves: C3 — ONE lane per slice, carrying every
-        // remaining question of that slice, plus one for the open decisions (`batch_by_slice`;
-        // the plan's own design, "1 slice per node, queued"). r6d ran 38 lanes for 38
-        // questions, ~5 minutes of read/orientation tail on each; a slice's questions share
-        // one reading of its sections. A panicked lane's Err arrives positionally, so
-        // `batches[i]` folds into terminal rows below.
-        let dispatched: Vec<ResearchQuestion> =
-            to_dispatch.iter().map(|(q, _)| q.clone()).collect();
-        let lane_batches = research::batch_by_slice(to_dispatch);
-        let batches: Vec<Vec<ResearchQuestion>> =
-            lane_batches.iter().map(|(b, _)| b.clone()).collect();
         emit_research_planned(
             self.events.as_ref(),
-            &dispatched,
-            &rows,
-            fact_rows.len(),
-            lane_batches.len(),
+            lanes_to_run.len(),
+            &per_slice_sections,
+            &resumed_slices,
+            decisions_n,
         );
-        // The facts join the rows AFTER the queue event: they are settled, not lane work, and
-        // the event's `questions` denominator is what tick.py subtracts dispatched from.
-        rows.extend(fact_rows);
-        if lane_batches.is_empty() {
+        if lanes_to_run.is_empty() {
             return rows;
         }
         announce_research_phase(self.events.as_ref());
         let lanes = research_fan_lanes(worker_models);
+        // A panicked lane's Err arrives positionally; its slice and (for the decisions lane) its
+        // questions fold into terminal rows below.
+        let lane_specs: Vec<(String, Vec<ResearchQuestion>)> = lanes_to_run
+            .iter()
+            .map(|l| (l.slice.clone(), l.questions.clone()))
+            .collect();
         let me = self.clone();
         let fan_rows = fanout_over_fleet(
             "research",
             self.events.as_ref(),
             lanes,
-            lane_batches,
-            move |(batch, head): (Vec<ResearchQuestion>, String), model: String| {
+            lanes_to_run,
+            move |lane: ResearchLane, model: String| {
                 let me = me.clone();
                 async move {
-                    // `batch_by_slice` never yields an empty batch; the key is the slice's —
-                    // one activity digest, one transcript, one judge lane per slice.
-                    let slice = batch
-                        .first()
-                        .map(|q| q.slice.clone())
-                        .unwrap_or_else(|| decisions::DECISION_SLICE.to_string());
-                    let key = format!("research-{slice}");
-                    let mut out_rows: Vec<ResearchRow> = Vec::new();
-                    // THE FAN CUT (C2b): read the minis on disk RIGHT NOW — resumed, or landed
-                    // by lanes of any slice that finished before this one got a node — and
-                    // every question of the batch one already answers (same cite, same
-                    // decision id, or a stem past both floors; `research_plan::same_question`)
-                    // gets that answer copied into its row with the original mini as
-                    // provenance, and leaves the batch. r6d: drafts-workflow-q4 asked what
-                    // ledger-api-q5 had settled from request.md:218 (8.1 min). MILD: the three
-                    // rules are strict; anything else stays in the batch and is asked.
-                    let landed = research::load_research_minis(&me.working_dir);
-                    let mut remaining: Vec<ResearchQuestion> = Vec::new();
-                    for q in batch {
-                        let Some((cover, rule)) = covering_mini(&q, &landed, me.events.as_ref()) else {
-                            remaining.push(q);
-                            continue;
-                        };
-                        let row = ResearchRow::covered_by(&q, cover, rule);
-                        persist_research_row(&me.working_dir, me.events.as_ref(), &row);
-                        me.events.write_value(serde_json::json!({
-                            "event": "research_question_covered",
-                            "slice": q.slice,
-                            "q_index": q.q_index,
-                            "question": q.question.chars().take(200).collect::<String>(),
-                            "by": "mini",
-                            "by_mini": row.origin.trim_start_matches(research::ORIGIN_COVERED_PREFIX),
-                            "rule": rule,
-                        }));
-                        out_rows.push(row);
-                    }
-                    if remaining.is_empty() {
-                        // Every question was covered: no model is called for this slice.
-                        return out_rows;
-                    }
+                    // One activity digest, one transcript, one judge lane per slice.
+                    let key = format!("research-{}", lane.slice);
                     // E7: enrolled as a relay target for the life of the call (removed at its rows).
                     me.research_running
                         .lock()
                         .unwrap()
-                        .insert(key.clone(), remaining.clone());
-                    for q in &remaining {
-                        me.events.write_value(serde_json::json!({
-                            "event": "research_dispatched",
-                            "slice": q.slice,
-                            "q_index": q.q_index,
-                            // A hard head cut: this feeds an event, not a model (the
-                            // head_to_sentence_end rule's own exemption), at final_text's 200.
-                            "question": q.question.chars().take(200).collect::<String>(),
-                            "model": model,
-                            "activity_key": key,
-                            "batch": remaining.len(),
-                        }));
-                    }
+                        .insert(key.clone(), lane.relay_target());
+                    me.events.write_value(serde_json::json!({
+                        "event": "research_dispatched",
+                        "slice": lane.slice,
+                        // VA-089: a slice lane's questions are its own — none exist at dispatch;
+                        // the decisions lane's tags ride here as before.
+                        "derives": lane.derives(),
+                        "q_indexes": lane.questions.iter().map(|q| q.q_index).collect::<Vec<_>>(),
+                        "model": model,
+                        "activity_key": key,
+                    }));
                     let user_text = research_dispatch_text(
                         &me.working_dir,
                         me.events.as_ref(),
-                        &head,
-                        &remaining,
+                        &lane,
                         &key,
                         index_sections,
                     );
+                    let schema = if lane.derives() {
+                        research::research_derived_schema()
+                    } else {
+                        research_schema()
+                    };
                     let t = std::time::Instant::now();
                     let out = me
                         .run_agent_timed_at(
                             &model,
-                            research_system_text(),
+                            research_system_text(&lane),
                             user_text,
                             // A1: the structured deliverable arms wants_structured_reply and,
                             // with may_terminate below, the judge_out_of_moves ending.
                             Some(Response {
-                                json_schema: Some(research_schema()),
+                                json_schema: Some(schema),
                             }),
                             planner_side_turns(),
                             // A4: the REAL toolset under the read-only quarantine — the
@@ -21438,7 +21389,7 @@ impl GooseAgentDispatcher {
                             None,
                             Some(&key),
                             true, // read_only: the II-12 research-write quarantine
-                            true, // may_terminate: a lost lane costs one answer, never a phase
+                            true, // may_terminate: a lost lane costs one slice's answers, never a phase
                         )
                         .await;
                     let secs = t.elapsed().as_secs();
@@ -21446,29 +21397,33 @@ impl GooseAgentDispatcher {
                         Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
                         Err(e) => Err(e.to_string()),
                     };
-                    // ONE row per question of the batch, every one terminal (answered, or
-                    // unanswered with the reason — including "no entry for [qN]" when the
-                    // lane's reply skipped a tag); an entry with a tag the batch never carried
-                    // is named, never silently dropped.
-                    let (lane_rows, strays) =
-                        research::fold_research_batch(&remaining, &model, secs, folded);
+                    // Terminal rows: a slice lane's OWN questions (`fold_research_lane` — at least
+                    // one row, the lane's outcome, when none landed); the decisions lane's tagged
+                    // batch (`fold_research_batch`, one row per decision). An entry the fold
+                    // cannot attribute is named, never silently dropped.
+                    let (lane_rows, strays) = if lane.derives() {
+                        research::fold_research_lane(&lane.slice, &model, secs, folded)
+                    } else {
+                        research::fold_research_batch(&lane.questions, &model, secs, folded)
+                    };
                     for s in strays {
                         me.events.write_value(serde_json::json!({
                             "event": "research_batch_stray_answer",
                             "task": key,
-                            "slice": slice,
+                            "slice": lane.slice,
                             "question_index": s.question_index,
                             "answer_head": s.answer_head,
                         }));
                     }
                     me.research_running.lock().unwrap().remove(&key);
+                    let mut out_rows: Vec<ResearchRow> = Vec::new();
                     for row in lane_rows {
                         // The mini is written for BOTH outcomes — the absence is a fact the
                         // ledger holds — and the events (one funnel, `emit_research_outcome`:
-                        // the answered/unanswered row plus one `research_raised_folded` per
-                        // raised question) are the loud channel tick.py counts. Each landed
-                        // row is relayed to the still-running lanes whose questions name a
-                        // path it names (E7, re-aimed by C3).
+                        // the row's kind, the answered/unanswered row, one
+                        // `research_raised_folded` per raised question) are the loud channel
+                        // tick.py counts. Each landed row is relayed to the still-running lanes
+                        // whose material names a path it names (E7, re-aimed by VA-089).
                         persist_research_row(&me.working_dir, me.events.as_ref(), &row);
                         emit_research_outcome(me.events.as_ref(), &row);
                         me.queue_research_relay(&row);
@@ -21487,11 +21442,26 @@ impl GooseAgentDispatcher {
             match folded {
                 Ok(lane_rows) => rows.extend(lane_rows),
                 Err(error) => {
-                    // A panicked lane is a TERMINAL unanswered outcome for EVERY question it
-                    // carried (`fold_research_panic`): each mini is written, each event rides
-                    // the same funnel as every other row, and the brief keeps the raw question.
-                    for q in &batches[i] {
-                        let row = fold_research_panic(q, &error);
+                    // A panicked lane is a TERMINAL unanswered outcome: one lane-outcome row for a
+                    // slice lane (its questions died with it), one row per decision for the
+                    // decisions lane (`fold_research_panic`); each mini is written, each event
+                    // rides the same funnel as every other row.
+                    let (slice, questions) = &lane_specs[i];
+                    let panicked: Vec<ResearchRow> = if questions.is_empty() {
+                        vec![research::lane_outcome_row(
+                            slice,
+                            "lane_panicked",
+                            &error,
+                            "",
+                            0,
+                        )]
+                    } else {
+                        questions
+                            .iter()
+                            .map(|q| fold_research_panic(q, &error))
+                            .collect()
+                    };
+                    for row in panicked {
                         persist_research_row(&self.working_dir, self.events.as_ref(), &row);
                         emit_research_outcome(self.events.as_ref(), &row);
                         rows.push(row);
@@ -33743,7 +33713,6 @@ mod audit_regressions {
             secs: 41,
             kind: "design".into(),
             cite: String::new(),
-            origin: String::new(),
             batch: 0,
         };
         research::write_research_ledger(root, &row).expect("the mini writes through the funnel");
@@ -33796,7 +33765,6 @@ mod audit_regressions {
             secs: 5,
             kind: "design".into(),
             cite: String::new(),
-            origin: String::new(),
             batch: 0,
         };
         research::write_research_ledger(
@@ -33861,7 +33829,6 @@ mod audit_regressions {
                     id: "api".into(),
                     title: "the api".into(),
                     objective: "serve GET /health".into(),
-                    questions: vec!["which port".into()],
                     weight: 3,
                     sections: Vec::new(),
                 },
@@ -33869,7 +33836,6 @@ mod audit_regressions {
                     id: "web".into(),
                     title: "the web".into(),
                     objective: "draw the dashboard".into(),
-                    questions: Vec::new(),
                     weight: 2,
                     sections: Vec::new(),
                 },

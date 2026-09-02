@@ -544,13 +544,13 @@ pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
         }
         Some("open") | Some("open-resplit") => {
             "split the request into balanced semantic slices, naming each slice's owned files in its \
-             objective as OWNERSHIP DECLARATIONS, and write each slice's questions as OBJECTS with a \
-             cite — which means SHELL READS OF THE REQUEST FILE (`grep -n`, `sed -n 'A,Bp'` on \
-             .swarm/request.md) ARE THE TASK, not a detour: a lookup it greps and answers with a cited \
-             fact costs no research lane. Drift here is drafting objectives and questions in \
-             REASONING without reading the file — r6d's opener made zero shell calls and asked for a \
-             shape that stood on request.md:134-136. Never tell it to stop reading and emit; tell it \
-             which term to grep. It must NOT write code, plan tasks, or dependencies."
+             objective as OWNERSHIP DECLARATIONS and assigning every section of the orientation \
+             index to the slice that owns it. It writes NO questions (VA-089): each slice's \
+             research lane derives and answers its own, in parallel, after this call — an opener \
+             that verifies request lines one by one (\"What do request.md:A-B fix for …\") is \
+             doing the lanes' work serially on one node; tell it the split is the deliverable and \
+             the sections' opening lines in the index are enough to assign them. It must NOT \
+             write code, plan tasks, or dependencies."
         }
         Some("synthesis") => {
             "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
@@ -571,12 +571,14 @@ pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
              the implementation."
         }
         Some(k) if k.starts_with("research-") => {
-            "answer its slice's TAGGED questions — all of them, in this one session — about the \
-             request as HANDOFFS: exact files, exact key/field literals, conventions stated as \
-             conventions, one entry per [qN] tag in its final_output. It must NOT write code and \
-             has no file-writing tools; its structured reply IS its deliverable. The questions \
-             of one slice legitimately cover similar ground and it may settle a shared fact once \
-             and refer back to it — it is stuck only if its OWN answers stop advancing."
+            "DERIVE its slice's own design and external questions from the slice's sections (a fact \
+             the sections state is not a question) and answer them — all in this one session — as \
+             HANDOFFS: exact files, exact key/field literals, conventions stated as conventions, \
+             one {question, kind, cite, answer} entry per question in its final_output (the \
+             decisions lane answers tagged [qN] decisions instead). It must NOT write code and has \
+             no file-writing tools; its structured reply IS its deliverable. Its questions \
+             legitimately cover similar ground and it may settle a shared fact once and refer \
+             back to it — it is stuck only if its OWN answers stop advancing."
         }
         Some(k) if k.starts_with("apptest-") => {
             "exercise the BUILT app from one angle and report the defects it observes, with the files \
