@@ -15,6 +15,7 @@ import { ExtensionInstallModal } from './components/ExtensionInstallModal';
 import RecipeParamsModalContainer from './components/RecipeParamsModalContainer';
 import { isRecipeParamsCancelled } from './acp/errors';
 import { toast, ToastContainer } from 'react-toastify';
+import { renderStudioCloseButton } from './toasts';
 import AnnouncementModal from './components/AnnouncementModal';
 import TelemetryConsentPrompt from './components/TelemetryConsentPrompt';
 import OnboardingGuard from './components/onboarding/OnboardingGuard';
@@ -754,6 +755,11 @@ export function AppInner() {
         autoClose={3000}
         closeOnClick
         pauseOnHover
+        // The toast content renders Studio StatusDots for its tone; the library icon is off.
+        icon={false}
+        // Every close is the Studio ghost icon Button — a per-toast `closeButton: true` resolves
+        // to this container renderer (react-toastify substitutes it for `true`).
+        closeButton={renderStudioCloseButton}
       />
       <ExtensionInstallModal addExtension={addExtension} setView={setView} />
       <RecipeParamsModalContainer />

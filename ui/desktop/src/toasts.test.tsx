@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CloseButtonProps, ToastOptions } from 'react-toastify';
 import { assertStudioClean } from './components/lz/assertStudioClean';
@@ -19,16 +19,20 @@ vi.mock('./components/GroupedExtensionLoadingToast', () => ({
   GroupedExtensionLoadingToast: () => null,
 }));
 
-import { toastError, toastService, toastSuccess } from './toasts';
+import {
+  renderStudioCloseButton,
+  toastError,
+  toastLoading,
+  toastService,
+  toastSuccess,
+} from './toasts';
 
 type CloseRender = (props: CloseButtonProps) => ReactNode;
 
 function renderClose(options: ToastOptions) {
   const closeToast = vi.fn();
   const render_ = options.closeButton as CloseRender;
-  const { container } = render(
-    <>{render_({ closeToast, type: 'default', theme: 'light' })}</>
-  );
+  const { container } = render(<>{render_({ closeToast, type: 'default', theme: 'light' })}</>);
   return { closeToast, container };
 }
 
@@ -81,5 +85,27 @@ describe('toasts (Studio)', () => {
     expect(copy.className).not.toMatch(/bg-background-inverse|opacity/);
     expect(screen.getByText('Boom').className).toContain('font-lz-semibold');
     assertStudioClean(container);
+  });
+
+  it('success, loading and error content carry a StatusDot for the tone — the container renders no library icon', () => {
+    toastSuccess({ title: 'Saved', msg: 'ok' });
+    toastLoading({ title: 'Working', msg: 'on it' });
+    toastError({ title: 'Boom', msg: 'It broke' });
+    const success = render(mocks.toast.success.mock.calls[0][0] as ReactElement).container;
+    const loading = render(mocks.toast.loading.mock.calls[0][0] as ReactElement).container;
+    const error = render(mocks.toast.error.mock.calls[0][0] as ReactElement).container;
+    expect(within(success).getByRole('img', { name: 'Success' }).className).toContain('bg-lz-ok');
+    expect(within(success).getByText('Saved').className).toContain('font-lz-semibold');
+    const live = within(loading).getByRole('img', { name: 'In progress' });
+    expect(live.getAttribute('data-live')).toBe('true');
+    expect(live.className).toContain('bg-lz-accent');
+    expect(within(error).getByRole('img', { name: 'Error' }).className).toContain('bg-lz-err');
+    for (const c of [success, loading, error]) assertStudioClean(c);
+  });
+
+  it('the Studio close renderer App mounts on the ToastContainer is the one every toast option names', () => {
+    toastSuccess({ title: 'Saved', msg: 'ok' });
+    const success = mocks.toast.success.mock.calls[0][1] as ToastOptions;
+    expect(success.closeButton).toBe(renderStudioCloseButton);
   });
 });
