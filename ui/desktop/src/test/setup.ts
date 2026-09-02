@@ -89,6 +89,9 @@ Object.defineProperty(window, 'electron', {
     getIsFullScreen: vi.fn(() => Promise.resolve(false)),
     on: vi.fn(),
     off: vi.fn(),
+    // The theme bridge: main owns nativeTheme; a fixed choice answers itself, 'system' answers light.
+    setThemeSource: vi.fn(async (preference: string) => ({ dark: preference === 'dark' })),
+    onNativeThemeUpdated: vi.fn(() => () => {}),
     onSwarmDelta: vi.fn(() => () => {}),
     // The fleet probes run in main (utils/fleetProbe.ts); with no LM Studio in a test the honest answer
     // is a NAMED unreachable — the same offline state a real install without a fleet shows.

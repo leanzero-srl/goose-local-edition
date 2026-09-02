@@ -15,9 +15,9 @@ const i18n = defineMessages({
 /**
  * The sidebar's theme control: an lz Segmented radiogroup — System | Light | Dark as icons with
  * titles and screen-reader labels — over the ONE theme store (ThemeContext: persisted through the
- * `useSystemTheme` / `theme` settings, System follows the OS through the existing
- * prefers-color-scheme listener). Settings › App's ThemeSelector sets the same value, so the two
- * never disagree. Its own 36px row above Settings, spanning the sidebar as three EQUAL segments.
+ * `useSystemTheme` / `theme` settings; every choice is pushed to main's nativeTheme.themeSource and
+ * System paints main's shouldUseDarkColors, re-resolved on its 'updated' event). Settings › App's
+ * ThemeSelector sets the same value, so the two never disagree. Its own 36px row above Settings, spanning the sidebar as three EQUAL segments.
  *
  * Icons, not words, on the segments — measured, not chosen: at the sidebar's 240px (NAV_WIDTH)
  * the row has 206px of content width, and three icon+label segments need 3 × (20 padding +
