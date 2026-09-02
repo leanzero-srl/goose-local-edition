@@ -87,6 +87,7 @@ use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod lang;
+mod lang_arms;
 mod ledger_writers;
 mod parse_checks;
 use lang::detect_language;
@@ -99,8 +100,9 @@ use answer_routing::flat_plan_from_briefs;
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
-    plan_flags, repair_brief_file_mentions, repair_owning_nothing, repair_sink_deps,
-    repair_sink_files, repair_unassigned_endpoints, unassigned_endpoints,
+    plan_flags, repair_brief_file_mentions, repair_module_package_collisions,
+    repair_owning_nothing, repair_shared_files, repair_sink_deps, repair_sink_files,
+    repair_unassigned_endpoints, unassigned_endpoints,
 };
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
@@ -11469,6 +11471,9 @@ pub struct GooseAgentDispatcher {
     /// Research findings routinely contain "either is defensible", which is literally one of the markers.
     /// Delegation is a property of what the USER wrote, so it is only ever read from this.
     spec_frozen: Mutex<String>,
+    /// VA-060 (gate 10): the run's language and the Python-only arms already said not to apply
+    /// (`lang_unsupported`), set once by `run_linear_plan` before the first lane runs.
+    lang_arms: lang_arms::LangArms,
     /// OWNED-FILE FENCE (GOOSE_SWARM_OWNED_FILE_FENCE, #131): file -> (owner_task_id, authoritative bytes)
     /// captured when a file-owning task completes. Before the integrate-verify sink runs, any owned file whose
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
@@ -11670,6 +11675,7 @@ impl GooseAgentDispatcher {
             shard_bases: Mutex::new(HashMap::new()),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             spec_frozen: Mutex::new(String::new()),
+            lang_arms: lang_arms::LangArms::default(),
             owner_snapshots: Mutex::new(HashMap::new()),
             transcript_failures: Mutex::new(std::collections::HashSet::new()),
             stream_decode_retry,
@@ -12093,6 +12099,14 @@ impl GooseAgentDispatcher {
         // only the `Err` is withheld.
         may_terminate: bool,
     ) -> Result<RunAgentOut> {
+        // VA-060 (gate 10): the pytest-tail parse of this lane's shell tails is a Python arm — on
+        // any other run the calls.jsonl rows carry no `pytest` field and the run says so once.
+        let parse_pytest = self.lang_arms.python_only(
+            "pytest_tail",
+            "pytest summary parse of shell tails into calls.jsonl `pytest` rows (the ledger's \
+             last_pytest / last_failure_tail)",
+            self.events.as_ref(),
+        );
         // The ONE door every dispatcher call passes — count this call against its model so
         // `aux_model_for_call` weighs LIVE load. The guard decrements on every way out: Ok, Err,
         // and a dropped future (the omni-judge probe is cancelled when its supervised stream
@@ -13772,6 +13786,7 @@ impl GooseAgentDispatcher {
                                                 said.attempt,
                                                 &call_records,
                                                 &mut calls_jsonl_at,
+                                                parse_pytest,
                                             ));
                                             for (kind, e) in werrs {
                                                 self.note_transcript_write_failure(p, kind, &e);
@@ -14896,6 +14911,7 @@ impl GooseAgentDispatcher {
                         said.attempt,
                         &call_records,
                         &mut calls_jsonl_at,
+                        parse_pytest,
                     ));
                     for (kind, e) in werrs {
                         self.note_transcript_write_failure(p, kind, &e);
@@ -14953,6 +14969,7 @@ impl GooseAgentDispatcher {
                 said.attempt,
                 &call_records,
                 &mut calls_jsonl_at,
+                parse_pytest,
             ));
             let mut snapshot = digest.clone();
             if let Some(obj) = snapshot.as_object_mut() {
@@ -20238,13 +20255,16 @@ impl PlanRepairs {
 ///
 /// Pure. The flags it reads are the ones `decomposition_of` reports — one rule in one place — so what
 /// it repairs is exactly what `plan_synthesized` measures, and applying it twice is a no-op.
-fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
+fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str, lang: TargetLang) -> PlanRepairs {
     let before = plan_flags(plan, spec);
     let mut actions = Vec::new();
     let mut mentions = Vec::new();
+    // VA-060: rule (c)'s `lang_unsupported` row on a non-Python run — fanned out with (e)/(f)'s
+    // rows below; empty on Python.
+    let mut lang_skips = Vec::new();
     if plan.get("subtasks").and_then(|s| s.as_array()).is_some() {
         repair_shared_files(plan, &mut actions);
-        repair_module_package_collisions(plan, &mut actions);
+        repair_module_package_collisions(plan, &mut actions, lang, &mut lang_skips);
         repair_sink_files(plan, &mut actions);
         repair_owning_nothing(plan, &mut actions);
         // The skeleton's brief describes the plan the four repairs above just changed — rebuild
@@ -20258,164 +20278,13 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
             mentions.push(row);
         }
     }
+    mentions.extend(lang_skips);
     let after = plan_flags(plan, spec);
     PlanRepairs {
         before,
         after,
         actions,
         mentions,
-    }
-}
-
-fn repair_shared_files(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
-    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return;
-    };
-    let mut claimed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for t in subtasks.iter_mut() {
-        let id = t
-            .get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let Some(files) = t.get_mut("files").and_then(|f| f.as_array_mut()) else {
-            continue;
-        };
-        files.retain(|f| {
-            let Some(path) = f.as_str() else {
-                return true;
-            };
-            match claimed.get(path) {
-                Some(first) => {
-                    actions.push(format!(
-                        "shared file `{path}`: kept by `{first}` (first claimant), dropped from `{id}`"
-                    ));
-                    false
-                }
-                None => {
-                    claimed.insert(path.to_string(), id.clone());
-                    true
-                }
-            }
-        });
-    }
-}
-
-fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
-    let collisions = string_list(&decomposition_of(&plan.to_string())["module_package_collisions"]);
-    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return;
-    };
-    let owns = |st: &serde_json::Value, path: &str| {
-        st.get("files")
-            .and_then(|f| f.as_array())
-            .is_some_and(|a| a.iter().any(|f| f.as_str() == Some(path)))
-    };
-    let id_at = |subtasks: &[serde_json::Value], i: usize| {
-        subtasks[i]
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
-    for module in collisions {
-        let dir = module.trim_end_matches(".py").to_string();
-        let prefix = format!("{dir}/");
-        let init = format!("{dir}/__init__.py");
-        let Some(module_owner) = subtasks.iter().position(|st| owns(st, &module)) else {
-            continue;
-        };
-        // Ties go to the earliest task, so the outcome depends on plan order and nothing else.
-        let mut package_owner: Option<(usize, usize)> = None;
-        for (i, st) in subtasks.iter().enumerate() {
-            let n = st.get("files").and_then(|f| f.as_array()).map_or(0, |a| {
-                a.iter()
-                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(&prefix)))
-                    .count()
-            });
-            if n > 0 && package_owner.is_none_or(|(_, best)| n > best) {
-                package_owner = Some((i, n));
-            }
-        }
-        let Some((package_owner, _)) = package_owner else {
-            continue;
-        };
-        let module_owner_id = id_at(subtasks, module_owner);
-        let package_owner_id = id_at(subtasks, package_owner);
-        // REWRITE, don't drop (r4 kill, 2026-08-30): dropping the shadowed module file left the
-        // service task owning NOTHING, rule (c) removed it, its brief died with it, and the live
-        // replanner re-added the task four minutes into BUILD with the shadow back. The work the
-        // planner assigned survives at an unshadowed path inside the package; only a path some
-        // other task already claims falls back to the old drop.
-        let rewritten = format!("{prefix}{}", plan_repairs::PACKAGE_IMPL_FILE);
-        let rewrite_free = !subtasks.iter().any(|st| owns(st, &rewritten));
-        if let Some(files) = subtasks[module_owner]
-            .get_mut("files")
-            .and_then(|f| f.as_array_mut())
-        {
-            if rewrite_free {
-                for f in files.iter_mut() {
-                    if f.as_str() == Some(module.as_str()) {
-                        *f = serde_json::Value::String(rewritten.clone());
-                    }
-                }
-            } else {
-                files.retain(|f| f.as_str() != Some(module.as_str()));
-            }
-        }
-        if rewrite_free {
-            // The package marker must still exist, and it belongs to the PACKAGE owner (the task
-            // holding most of the package's files) — the same home the drop-arm below gives it.
-            if !subtasks.iter().any(|st| owns(st, &init)) {
-                if let Some(files) = subtasks[package_owner]
-                    .get_mut("files")
-                    .and_then(|f| f.as_array_mut())
-                {
-                    files.push(serde_json::Value::String(init.clone()));
-                }
-            }
-            // THE WORDS FOLLOW THE METADATA (r6c): the model reads the DESCRIPTION, not files[].
-            // Rewriting the path only in files[] shipped ledgerd-core a brief still opening
-            // "Own ... app/ledgerd.py (ledgerd entrypoint ...)" and the live skeleton lane
-            // tripped on the contradiction. Same rewrite, same task only, boundary-aware
-            // (see prose::rewrite_path_token). MILD: text repair, never a refusal.
-            let prose_rewrites = match subtasks[module_owner]
-                .get("description")
-                .and_then(|d| d.as_str())
-                .map(|d| rewrite_path_token(d, &module, &rewritten))
-            {
-                Some((desc, n)) if n > 0 => {
-                    subtasks[module_owner]["description"] = serde_json::Value::String(desc);
-                    n
-                }
-                _ => 0,
-            };
-            actions.push(format!(
-                "module `{module}` shadowed by package `{prefix}`: rewritten to `{rewritten}` \
-                 (kept by `{module_owner_id}` — the task keeps its work at an unshadowed path; \
-                 prose_rewrites: {prose_rewrites})"
-            ));
-            continue;
-        }
-        match subtasks.iter().position(|st| owns(st, &init)) {
-            Some(init_owner) => actions.push(format!(
-                "module `{module}` shadowed by package `{prefix}`: dropped from `{module_owner_id}` \
-                 (`{init}` is already owned by `{}`)",
-                id_at(subtasks, init_owner)
-            )),
-            None => {
-                if let Some(files) = subtasks[package_owner]
-                    .get_mut("files")
-                    .and_then(|f| f.as_array_mut())
-                {
-                    files.push(serde_json::Value::String(init.clone()));
-                }
-                actions.push(format!(
-                    "module `{module}` shadowed by package `{prefix}`: became `{init}` under \
-                     `{package_owner_id}` (was `{module_owner_id}`)"
-                ));
-            }
-        }
     }
 }
 
@@ -20459,6 +20328,11 @@ async fn run_linear_plan(
     // research left three files behind and a greenfield build would have read them as an existing
     // codebase to fit around.
     let tree_at_start: Vec<String> = existing_files_manifest(&dispatcher.working_dir);
+    // VA-060: the run's language on the dispatcher for every lane's Python-only arm — the same
+    // pure derivation `lang` below makes for the plan door, made before the first lane runs.
+    dispatcher
+        .lang_arms
+        .set(detect_language(&opts.prompt, &tree_at_start));
     sink.write_value(serde_json::json!({"event": "phase", "phase": "open"}));
     let t_open = std::time::Instant::now();
     // OPEN PROCEEDS REGARDLESS. Section 8.1 says so and the code did not: this was a single `?`, so a
@@ -21321,6 +21195,7 @@ where
     let door = dom_contract::PlanDoor {
         spec: user_prompt,
         every_decision_settled,
+        lang,
         briefs: &briefs,
         research,
         opened: &opened,
@@ -21338,6 +21213,7 @@ where
         &opened,
         user_prompt,
         every_decision_settled,
+        lang,
         // SPLIT v2 (b7f4fdbcb + e7c83fb4d, merged 09-02): the fleet's free hosts at split time size the
         // shard count — a derivation from the pool, never a literal (DESIGN-SPLIT-V2 §6).
         Some(free_hosts),
@@ -21395,6 +21271,8 @@ fn finalize_plan_before_dag(
     // Amendment (e): true only when open decisions existed and EVERY one settled at plan time —
     // the arming bit for the decision-doc-gate strip. False keeps the repair chain byte-identical.
     every_decision_settled: bool,
+    // VA-060: the run's language — rule (c) is Python-only and says so on any other run.
+    lang: TargetLang,
     sink: &Arc<dyn EventSink>,
     source: &str,
 ) -> String {
@@ -21433,7 +21311,7 @@ fn finalize_plan_before_dag(
             }
         }
     }
-    let mut repairs = repair_plan_flags(&mut v, spec);
+    let mut repairs = repair_plan_flags(&mut v, spec, lang);
     // Amendment (e), gate-6 class: the decision-doc-gate strip runs INSIDE the one door, and its
     // actions ride the same `plan_repaired` event as every other repair — loud, MILD, never a
     // refusal. With the bit false (any open decision, or none at all) it touches nothing.
@@ -30142,6 +30020,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }));
         if !review.ran {
             eprintln!("AST review: skipped (no python in the produced tree)");
+            // VA-060 (gate 10): off-Python that silence is the arm not applying — said once, by
+            // name, on the run's event stream (the `review` event above carries only `ran: false`).
+            dispatcher.lang_arms.python_only(
+                "ast_review",
+                "AST wiring review over the produced tree (Python-only scanner: python3 `ast` over \
+                 the plan's .py files)",
+                sink.as_ref(),
+            );
         } else if new_findings.is_empty() {
             let extra = if pre_existing > 0 {
                 format!(" ({pre_existing} pre-existing skipped)")
@@ -30630,7 +30516,7 @@ mod live_fleet_tests {
         );
 
         let mut v: serde_json::Value = serde_json::from_str(R1_SHAPED_PLAN).unwrap();
-        let r = repair_plan_flags(&mut v, "");
+        let r = repair_plan_flags(&mut v, "", TargetLang::Python);
         assert_eq!(
             r.before["tasks_owning_nothing"],
             measured["tasks_owning_nothing"]
@@ -30698,7 +30584,7 @@ mod live_fleet_tests {
     fn plan_repair_r0_plan_assigns_the_root_to_the_ledgerd_entry_task() {
         let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         let mut v: serde_json::Value = serde_json::from_str(R0_PLAN_PRE_REVIEW).unwrap();
-        let r = repair_plan_flags(&mut v, spec);
+        let r = repair_plan_flags(&mut v, spec, TargetLang::Python);
         // `approve` and `reject` are real: r0's ledgerd brief wrote the three draft actions as
         // `POST /api/drafts/<id>/submit|approve|reject`, a shorthand the rule does not read, and the
         // cost of that is one redundant line in the brief rather than a route nobody was told to serve.
@@ -30751,10 +30637,10 @@ mod live_fleet_tests {
         let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         for (plan, spec) in [(R1_SHAPED_PLAN, ""), (R0_PLAN_PRE_REVIEW, spec)] {
             let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
-            let first = repair_plan_flags(&mut v, spec);
+            let first = repair_plan_flags(&mut v, spec, TargetLang::Python);
             assert!(!first.is_noop());
             let once = v.to_string();
-            let second = repair_plan_flags(&mut v, spec);
+            let second = repair_plan_flags(&mut v, spec, TargetLang::Python);
             assert!(second.is_noop(), "{:?}", second.actions);
             assert_eq!(v.to_string(), once);
             assert_eq!(second.before, second.after);
@@ -30765,7 +30651,7 @@ mod live_fleet_tests {
             {"id":"integrate-verify","files":[],"depends_on":["a"],"description":"verify"}
         ]}"#;
         let mut v: serde_json::Value = serde_json::from_str(clean).unwrap();
-        let r = repair_plan_flags(&mut v, "build a CLI tool");
+        let r = repair_plan_flags(&mut v, "build a CLI tool", TargetLang::Python);
         assert!(r.is_noop());
         assert_eq!(r.before, r.after);
         assert_eq!(
@@ -30791,7 +30677,7 @@ mod live_fleet_tests {
             {"id":"integrate-verify","files":[],"depends_on":["a","b","c","d","e","f","g","h"],"description":"v"}
         ]}"#;
         let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
-        let r = repair_plan_flags(&mut v, "");
+        let r = repair_plan_flags(&mut v, "", TargetLang::Python);
         assert_eq!(strings(&task(&v, "a")["files"]), ["x.py"]);
         assert_eq!(strings(&task(&v, "b")["files"]), ["y.py"]);
         assert_eq!(strings(&task(&v, "e")["depends_on"]), ["a", "b"]);
@@ -30826,7 +30712,7 @@ mod live_fleet_tests {
             {"id":"integrate-verify","files":[],"depends_on":["boot","core"],"description":"v"}
         ]}"#;
         let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
-        let r = repair_plan_flags(&mut v, "");
+        let r = repair_plan_flags(&mut v, "", TargetLang::Python);
         assert_eq!(
             strings(&task(&v, "boot")["files"]),
             [
@@ -33503,7 +33389,7 @@ mod audit_regressions {
             "the append owns the slice's declarations minus paths an existing task already claims"
         );
         assert_eq!(files(&plan, "ghost").unwrap(), Vec::<String>::new());
-        let r = repair_plan_flags(&mut plan, spec);
+        let r = repair_plan_flags(&mut plan, spec, TargetLang::Python);
         assert!(
             files(&plan, "xsvc").is_some(),
             "a file-owning append survives the owns-nothing repair"

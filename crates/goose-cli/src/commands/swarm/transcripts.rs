@@ -135,6 +135,10 @@ pub(super) fn append_calls_jsonl(
     attempt: u32,
     call_records: &[(String, String, Option<bool>, String)],
     already: &mut usize,
+    // VA-060 (gate 10): true only on a Python run (`LangArms::python_only("pytest_tail")`); off
+    // Python no tail is read as a pytest result — a vitest/jest/cargo tail parsed as pytest was the
+    // hard-coded bit, and the dispatcher said `lang_unsupported{arm: pytest_tail}` once instead.
+    parse_pytest: bool,
 ) -> AppendErrs {
     if call_records.len() <= *already {
         return Vec::new();
@@ -150,7 +154,12 @@ pub(super) fn append_calls_jsonl(
             "ok": ok,
             "result_tail": super::tail_chars(result, 2000),
         });
-        if let Some(py) = super::parse_pytest_summary(result) {
+        let py = if parse_pytest {
+            super::parse_pytest_summary(result)
+        } else {
+            None
+        };
+        if let Some(py) = py {
             row["pytest"] = serde_json::to_value(py).unwrap_or(serde_json::Value::Null);
         }
         rows.push_str(&format!("{row}\n"));
@@ -702,6 +711,44 @@ mod tests {
         std::fs::read_to_string(p.with_extension(ext)).unwrap()
     }
 
+    /// VA-060 (gate 10), asserted at the CONSUMER (the calls.jsonl row the ledger reads): on a
+    /// non-Python run a pytest-shaped tail ("no tests ran") is NOT read as a test result — the row
+    /// carries no `pytest` field — while the same tail on a Python run still is.
+    #[test]
+    fn a_non_python_run_writes_no_pytest_field_for_a_pytest_shaped_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let records = vec![(
+            "shell".to_string(),
+            "npm test".to_string(),
+            Some(true),
+            "no tests ran in 0.01s".to_string(),
+        )];
+        let first_row = |p: &Path| -> serde_json::Value {
+            serde_json::from_str(read(p, "calls.jsonl").lines().next().unwrap()).unwrap()
+        };
+
+        let ts = dir.path().join("web-viz.json");
+        let mut at = 0usize;
+        assert!(append_calls_jsonl(&ts, None, 0, &records, &mut at, false).is_empty());
+        assert_eq!(at, 1, "the row itself still lands");
+        let row = first_row(&ts);
+        assert!(row.get("pytest").is_none(), "{row}");
+        assert_eq!(row["summary"], "npm test");
+
+        let py = dir.path().join("ledgerd.json");
+        let mut at = 0usize;
+        assert!(append_calls_jsonl(&py, None, 0, &records, &mut at, true).is_empty());
+        let row = first_row(&py);
+        assert_eq!(
+            (
+                row["pytest"]["passed"].as_u64(),
+                row["pytest"]["failed"].as_u64()
+            ),
+            (Some(0), Some(0)),
+            "{row}"
+        );
+    }
+
     /// The r5 shape inverted: one append per channel lands IDENTICAL bytes in the primary (the
     /// shard's shadow) and the mirror (the real tree), while the stateful side — the thinking
     /// buffer, the reasoning watermark, the calls watermark — is consumed exactly once, so a
@@ -736,9 +783,9 @@ mod tests {
             "=== 2 passed in 0.11s ===".to_string(),
         )];
         let mut calls_at = 0usize;
-        assert!(append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at).is_empty());
+        assert!(append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at, true).is_empty());
         assert_eq!(calls_at, 1);
-        assert!(append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at).is_empty());
+        assert!(append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at, true).is_empty());
         assert!(append_calls_row(&p, Some(&m), "{\"kind\":\"attempt_end\"}").is_empty());
 
         for ext in ["log", "think.log", "calls.jsonl"] {
@@ -795,7 +842,7 @@ mod tests {
             "ok".to_string(),
         )];
         let mut calls_at = 0usize;
-        let errs = append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at);
+        let errs = append_calls_jsonl(&p, Some(&m), 0, &records, &mut calls_at, true);
         assert_eq!(calls_at, 1, "primary accepted every row");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].0, "calls.jsonl.mirror");
@@ -846,7 +893,7 @@ mod tests {
             "ok".to_string(),
         )];
         let mut at = 0usize;
-        let errs = append_calls_jsonl(&p, Some(&m), 0, &records, &mut at);
+        let errs = append_calls_jsonl(&p, Some(&m), 0, &records, &mut at, true);
         assert_eq!(at, 0, "watermark must not advance past a failed primary");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].0, "calls.jsonl");
@@ -875,9 +922,9 @@ mod tests {
             "=== 7 failed, 19 passed in 0.29s ===".into(),
         )];
         let mut at = 0usize;
-        append_calls_jsonl(&p, None, 0, &records, &mut at);
+        append_calls_jsonl(&p, None, 0, &records, &mut at, true);
         // The same records again (a second digest flush) must append nothing.
-        append_calls_jsonl(&p, None, 0, &records, &mut at);
+        append_calls_jsonl(&p, None, 0, &records, &mut at, true);
         // The RE-DISPATCH: the seed overwrites the digest file itself — the erase II-1 outlives.
         let said = SaidProvenance::at_dispatch(1);
         std::fs::write(&p, seed_worker_digest("m", &said, None).to_string()).unwrap();
@@ -888,7 +935,7 @@ mod tests {
             "ok".into(),
         ));
         let mut at1 = 1usize; // fresh attempt's watermark starts past nothing of its own
-        append_calls_jsonl(&p, None, 1, &records, &mut at1);
+        append_calls_jsonl(&p, None, 1, &records, &mut at1, true);
         let lines: Vec<serde_json::Value> =
             std::fs::read_to_string(p.with_extension("calls.jsonl"))
                 .unwrap()

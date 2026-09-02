@@ -101,7 +101,7 @@ mod tests {
              "depends_on": [],
              "description": "walking skeleton"},
         ]});
-        let r = super::super::repair_plan_flags(&mut plan, "");
+        let r = super::super::repair_plan_flags(&mut plan, "", super::super::TargetLang::Python);
         let files: Vec<&str> = plan["subtasks"][0]["files"]
             .as_array()
             .unwrap()
