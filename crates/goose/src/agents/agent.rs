@@ -284,6 +284,12 @@ pub struct Agent {
     /// so the turn is not wasted on a "missing field path" error. `None` (default) = no repair; every non-swarm
     /// and planner-side agent leaves this None → byte-identical behavior.
     swarm_single_owned_file: std::sync::RwLock<Option<String>>,
+    /// VA-107 (opt-in, set per lane by the swarm): the per-turn `<turn-context>` block carries the
+    /// measured `context: N of M tokens used (P%)` line — the two numbers the compaction guard
+    /// compares — in place of MOIM's threshold-relative "~Nk tokens remaining" figure, and a call
+    /// that reported no usage is announced to the caller. Default false → every non-swarm agent is
+    /// byte-identical.
+    swarm_measured_context: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Debug)]
@@ -418,6 +424,7 @@ impl Agent {
             pending_steers: Mutex::new(HashMap::new()),
             steer_arrived: Notify::new(),
             swarm_single_owned_file: std::sync::RwLock::new(None),
+            swarm_measured_context: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -427,6 +434,12 @@ impl Agent {
         if let Ok(mut g) = self.swarm_single_owned_file.write() {
             *g = path;
         }
+    }
+
+    /// SWARM: turn the measured per-turn context line on for this agent (see the field doc).
+    pub fn set_swarm_measured_context(&self, on: bool) {
+        self.swarm_measured_context
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// If `tool_call` is a developer `write`/`edit` that OMITS a non-empty `path` and a single owned file is
@@ -1979,6 +1992,9 @@ impl Agent {
         );
         let inner = Box::pin(async_stream::try_stream! {
             let mut turns_taken = 0u32;
+            // VA-107: what the LAST provider call said about its usage — picks the arm the measured
+            // context line renders (the session figure is stale when a call reported none).
+            let mut last_call_usage = crate::context_mgmt::context_line::LastCallUsage::NoCallYet;
             let max_turns = session_config.max_turns.unwrap_or_else(|| {
                 Config::global()
                     .get_param::<u32>("GOOSE_MAX_TURNS")
@@ -2074,13 +2090,31 @@ impl Agent {
                     break;
                 }
 
+                let measured_context = self
+                    .swarm_measured_context
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .then_some(last_call_usage);
                 let conversation_with_moim = super::moim::inject_moim(
                     &session_config.id,
                     conversation.clone(),
                     &self.extension_manager,
                     turns_taken,
                     max_turns,
+                    measured_context,
                 ).await;
+                // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
+                // into one `usage_unavailable{task, attempt, turn}` event per lane.
+                if measured_context
+                    == Some(crate::context_mgmt::context_line::LastCallUsage::NotReported)
+                {
+                    yield AgentEvent::Message(Message::assistant().with_system_notification(
+                        SystemNotificationType::InlineMessage,
+                        format!(
+                            "{} (turn {turns_taken})",
+                            crate::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE
+                        ),
+                    ));
+                }
 
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
@@ -2163,6 +2197,14 @@ impl Agent {
                     match next {
                         Ok((response, usage)) => {
                             compaction_attempts = 0;
+                            last_call_usage = if usage
+                                .as_ref()
+                                .is_some_and(|u| u.usage.total_tokens.is_some())
+                            {
+                                crate::context_mgmt::context_line::LastCallUsage::Reported
+                            } else {
+                                crate::context_mgmt::context_line::LastCallUsage::NotReported
+                            };
 
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
