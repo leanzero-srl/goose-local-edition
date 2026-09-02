@@ -21,7 +21,15 @@ import { IntlTestWrapper } from '../../i18n/test-utils';
  *   2. From run_finished on, the terminal banner states PASSED/FAILED unmistakably, with the
  *      engine's own passed_means honesty line, the known-bugs count (same array the Known active
  *      bugs section renders), and the engine-stamped run command.
+ *
+ * `passed_means` is NOT r5's archived line: it is the engine's LIVE wording (swarm.rs `complete_result`,
+ * VA-087 — the render-class clause). The surface ships whatever the engine says, verbatim, so the fixture
+ * pins the current string and the test fails the moment the engine's honesty line moves again. Under
+ * that gate r5's bug #7 (a ReferenceError in the page) would flip `passed` to false — the fixture keeps
+ * r5's shape because the claims under test are about the SURFACE, not the engine's partition.
  */
+const LIVE_PASSED_MEANS =
+  "the gate's criticals closed (engine_critical wording + render-probe criticals: no rows in a browser, an uncaught exception in the page's boot path) AND zero render-class findings among known_active_bugs; other minors ship as known_active_bugs";
 
 const POOL = [
   { id: 'mac-gabee-qwen3.8-27b', model_id: 'gabee-qwen3.8-27b', weight: 2 },
@@ -43,8 +51,7 @@ const R5_BUGS = [
 const COMPLETE_RESULT = {
   event: 'complete_result',
   passed: true,
-  passed_means:
-    "the gate's criticals closed (engine_critical partition; minors ship as known_active_bugs)",
+  passed_means: LIVE_PASSED_MEANS,
   verified: true,
   remaining_findings: 7,
   shipped: 'final tree',
@@ -146,8 +153,7 @@ describe('buildActivity — the verdict is run-level state through the one reduc
     expect(verdict).toEqual({
       passed: true,
       verified: true,
-      passedMeans:
-        "the gate's criticals closed (engine_critical partition; minors ship as known_active_bugs)",
+      passedMeans: LIVE_PASSED_MEANS,
       remainingFindings: 7,
       shipped: 'final tree',
     });
@@ -249,9 +255,7 @@ describe('SwarmRunPanel — the r5 terminal sequence renders the verdict, not de
     const banner = await findByTestId('terminal-banner');
     expect(banner.textContent).toContain('PASSED — verified end-to-end');
     // The honesty line, verbatim from the engine.
-    expect(banner.textContent).toContain(
-      "Passed means: the gate's criticals closed (engine_critical partition; minors ship as known_active_bugs)"
-    );
+    expect(banner.textContent).toContain(`Passed means: ${LIVE_PASSED_MEANS}`);
     // The bug chip counts the SAME array the Known active bugs section renders.
     const chip = await findByTestId('verdict-bug-chip');
     expect(chip.textContent).toBe('7 known bugs shipped');

@@ -32,6 +32,7 @@ components before editing.
 (realfs push tests skipped only under vitest.integration.config.ts — plain `pnpm test` may show 0 skipped, and that is not a miss are expected — this machine's FSEvents is degraded). Every new feed
 line/state gets a fixture test (askTimeout.test.tsx is the template). Report = handoff: shas,
 components touched, tests added, unbriefed observations reported not fixed.
+- `cd ui/desktop && pnpm lint` at ZERO errors (VA-070: the build never runs eslint, so two errors shipped silently at HEAD; it carries `--fix`, so `git diff --stat` afterwards must name only your files).
 
 ## Sources & upkeep
 Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
