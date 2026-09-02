@@ -142,6 +142,8 @@ mod desk;
 use desk::{
     spawn_shadow_desk, RecurrenceMeter, SettledListMeter, SettledRelist, RECURRENCE_MIN_SPAN,
 };
+mod repeat_break;
+use repeat_break::{repeat_call_hash, ProducedRhythm, REPEAT_BREAK_N};
 mod attribution;
 use attribution::{
     attribute_findings, console_error_source, criticals_left_unassigned, handoffs_from_rollup,
@@ -528,7 +530,8 @@ pub struct SwarmConfig {
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #136 REPEAT BREAKER: stop a WORKER that issues the SAME tool call returning the SAME result
-    /// REPEAT_BREAK_N times CONSECUTIVELY over at least REPEAT_BREAK_MIN_SECS. MEASURED live
+    /// REPEAT_BREAK_N times CONSECUTIVELY once it has produced, since the first repeat, at least its own
+    /// median chars between calls (VA-137, `repeat_break::ProducedRhythm`; the 60 s clock is gone). MEASURED live
     /// (val-lean-02/verify::cli-module): 31 identical `cat deals/__main__.py` calls, errors:0, malformed:0 —
     /// invisible to EVERY existing guard, because message_content_is_productive() counts any ToolResponse as
     /// productive (so each repeat reset the progress watchdog), the idle watchdog is reset by every token, and
@@ -3154,46 +3157,6 @@ fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
     n >= 3 && valid >= 2 && valid >= n - 1
 }
 
-/// #136: consecutive identical tool calls that trip the repeat breaker. MEASURED across 268 shell-bearing
-/// tasks in 44 real runs: the longest legitimate consecutive identical run was 4 (`swift build` re-runs); the
-/// one pathology hit 31. 6 leaves a 2-call margin above every observed legitimate run.
-const REPEAT_BREAK_N: usize = 6;
-/// #136: the run must ALSO have burned this many seconds. A deliberate poll loop (re-curl a booting server,
-/// byte-identical "connection refused") can legitimately hit 6 quick repeats in a few seconds; the measured
-/// pathology spent ~18s per call. A pure count would kill the poll loop, so the time floor is the real
-/// false-positive defence and there is deliberately NO count-only escape hatch that bypasses it.
-const REPEAT_BREAK_MIN_SECS: u64 = 60;
-
-// Compile-time guards on both thresholds. MEASURED over 268 shell-bearing tasks in 44 real runs: the longest
-// LEGITIMATE consecutive identical run was 4 (a repeated `swift build`); the one pathology was 31. A runtime
-// assert on a const proves nothing (clippy::assertions_on_constants rightly rejects it) — these fail the
-// BUILD if the thresholds are ever retuned into a range that would cut legitimate work.
-const _: () = assert!(REPEAT_BREAK_N > 4);
-const _: () = assert!(REPEAT_BREAK_N < 31);
-const _: () = assert!(REPEAT_BREAK_MIN_SECS >= 30);
-
-/// #136: identity of one tool call's OUTCOME, for the repeat breaker. A repeat with a DIFFERENT result is
-/// progress (a re-run `pytest` after an edit returns different output) and must not count, so the result is
-/// part of the key — as is `ok`, so a call that flips success/failure breaks the run.
-///
-/// HONESTY about precision: neither term is byte-exact. `summary` is `summarize_tool_call`'s ~200-char
-/// display string and `result` is a 4000-char tail clip, so two genuinely different calls CAN collide. That is
-/// acceptable only because a collision alone is harmless: tripping additionally requires REPEAT_BREAK_N
-/// consecutive collisions AND REPEAT_BREAK_MIN_SECS of wall-clock. Never describe this key as exact.
-fn repeat_call_hash(name: &str, summary: &str, ok: bool, result: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    name.hash(&mut h);
-    0u8.hash(&mut h);
-    summary.hash(&mut h);
-    0u8.hash(&mut h);
-    ok.hash(&mut h);
-    0u8.hash(&mut h);
-    result.hash(&mut h);
-    h.finish()
-}
-
 /// A short content digest for OBSERVABILITY, never for a cache key. Lets an event say "this text is the
 /// same one I saw before" without carrying the text. Deliberately not `detail_memo_key`: that hashes the
 /// detailer's INPUT to decide reuse; this hashes an OUTPUT to decide whether reuse would have been safe.
@@ -4436,74 +4399,6 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
-    }
-
-    #[test]
-    fn repeat_call_hash_keys_on_result_and_ok_not_just_the_command() {
-        let base = repeat_call_hash(
-            "shell",
-            "cat deals/__main__.py",
-            true,
-            "from .cli import cli",
-        );
-        // The measured pathology: identical command, identical result -> identical key (counts as a repeat).
-        assert_eq!(
-            base,
-            repeat_call_hash(
-                "shell",
-                "cat deals/__main__.py",
-                true,
-                "from .cli import cli"
-            )
-        );
-        // THE false-positive defence: same command, DIFFERENT result = progress (a re-run pytest after an
-        // edit). Must NOT be counted as a repeat.
-        assert_ne!(
-            base,
-            repeat_call_hash(
-                "shell",
-                "cat deals/__main__.py",
-                true,
-                "from .cli import main"
-            )
-        );
-        // A call that flips success/failure breaks the run even with identical text.
-        assert_ne!(
-            base,
-            repeat_call_hash(
-                "shell",
-                "cat deals/__main__.py",
-                false,
-                "from .cli import cli"
-            )
-        );
-        // Different command, different tool -> different key.
-        assert_ne!(
-            base,
-            repeat_call_hash("shell", "cat deals/cli.py", true, "from .cli import cli")
-        );
-        assert_ne!(
-            base,
-            repeat_call_hash(
-                "text_editor",
-                "cat deals/__main__.py",
-                true,
-                "from .cli import cli"
-            )
-        );
-        // TRUNCATION COLLISION (documented, deliberately accepted): `summary` is a ~200-char display string
-        // and `result` a 4000-char tail clip, so two genuinely different calls whose visible prefixes match
-        // DO collide. This is safe only because a collision alone cannot trip anything — REPEAT_BREAK_N
-        // consecutive collisions AND REPEAT_BREAK_MIN_SECS of wall-clock are both required. Asserting the
-        // collision keeps the key honest: it is an equality of the OBSERVABLE summary+result, not of the call.
-        let a = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
-        let b = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
-        assert_eq!(a, b, "identical observables must hash equal — collisions are bounded by N + time, not by key precision");
-        // Separator guard: ("ab","c") must not equal ("a","bc").
-        assert_ne!(
-            repeat_call_hash("shell", "ab", true, "c"),
-            repeat_call_hash("shell", "a", true, "bc")
-        );
     }
 
     #[test]
@@ -9123,7 +9018,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the period ({period_len}) must exceed the old 2,400-char tail window"
         );
 
-        let mut looping = RecurrenceMeter::new();
+        let mut looping = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         for _ in 0..8 {
             looping.push(&period);
         }
@@ -9155,7 +9050,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         // And an ADVANCING call of the same length must NOT trip it, or the fix trades one
         // failure mode for a worse one: killing healthy deep reasoning.
-        let mut advancing = RecurrenceMeter::new();
+        let mut advancing =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         for i in 0..900 {
             advancing.push(&format!(
                 "Step {i}: considering constraint {i} against invariant {} and recording the \
@@ -9181,7 +9077,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn the_r2_straggler_replays_as_a_loop() {
         let captured = include_str!("../../tests/fixtures/f924-looping-detail-call.txt");
-        let mut m = RecurrenceMeter::new();
+        let mut m = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         // Dribbled the way the stream actually arrives, a few characters at a time.
         let chars: Vec<char> = captured.chars().collect();
         for c in chars.chunks(5) {
@@ -9206,7 +9102,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // And the judge's actual view of the same stream — the last 2,000 characters — is clean,
         // which is precisely why it kept answering OK.
         let tail: String = chars[chars.len() - 2_000..].iter().collect();
-        let mut window_only = RecurrenceMeter::new();
+        let mut window_only =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         window_only.push(&tail);
         assert!(
             window_only.rate() < 0.10,
@@ -9220,10 +9117,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn the_meter_is_indifferent_to_how_the_stream_is_chunked() {
         let text = "the same sentence recurs here and again and again in this stream ".repeat(300);
-        let mut whole = RecurrenceMeter::new();
+        let mut whole = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         whole.push(&text);
 
-        let mut dribbled = RecurrenceMeter::new();
+        let mut dribbled =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         let chars: Vec<char> = text.chars().collect();
         for c in chars.chunks(3) {
             dribbled.push(&c.iter().collect::<String>());
@@ -11671,7 +11569,7 @@ impl GooseAgentDispatcher {
             node_by_model: std::sync::OnceLock::new(),
             // Overwritten below before `me` leaves this constructor; the `?` on the resolve means a
             // dispatcher never exists with the reference set standing in for a probed one.
-            budgets: budgets::ShownBudgets::for_window(budgets::REFERENCE_WINDOW_TOKENS),
+            budgets: budgets::ShownBudgets::reference(),
         };
         me.budgets = me.resolve_fleet_budgets(&fleet_models).await?;
         Ok(me)
@@ -12279,7 +12177,7 @@ impl GooseAgentDispatcher {
         let mut last_thinking: String = String::new();
         // #F924: `last_thinking` is a 2,400-char rolling tail, so it cannot hold a long-period
         // loop. This carries the fingerprints the tail throws away.
-        let mut recur = RecurrenceMeter::new();
+        let mut recur = RecurrenceMeter::new(self.budgets.recurrence_reach);
         // VA-124: the settled-list meter beside the shingle meter. A rename defeats a verbatim
         // meter (r6j's opener re-listed six settled slices five times at rate 0.056, never looked
         // at); this one compares the TERRITORY each list item claims. Its re-list is an edge,
@@ -12397,6 +12295,9 @@ impl GooseAgentDispatcher {
         // the CALL, not about one stream of it — a call that has reasoned 20,000 characters and then gone
         // silent is the most assessable state there is, and the one most worth looking at.
         let mut thinking_total = 0usize;
+        // VA-137: answer-channel chars, the other half of what the lane PRODUCES (the repeat
+        // breaker's floor reads both; `texts` is never truncated, so this is its running sum).
+        let mut produced_answer_chars = 0usize;
         // Coalesce the activity-digest write: it used to fire once per stream event (≈ per token) — thousands of
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
@@ -12589,7 +12490,10 @@ impl GooseAgentDispatcher {
         let mut durable_think_at_last_nudge: Option<u64> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
-        let mut repeat_run_started = tokio::time::Instant::now();
+        // VA-137: the produced-chars floor's bookkeeping (`repeat_break::ProducedRhythm`), fed
+        // `thinking_total + produced_answer_chars` at every tool result — the lane's own rhythm
+        // is what a run of identical results is measured against, never a clock (gate 5).
+        let mut produced_rhythm = ProducedRhythm::default();
         let mut repeat_what = String::new();
         let mut repeat_result = String::new();
         // Set when the repeat detector trips. It no longer ABORTS the call — it summons the judge and
@@ -12628,7 +12532,10 @@ impl GooseAgentDispatcher {
                             productive = true;
                         }
                         match content {
-                            MessageContent::Text(t) => texts.push(t.text.clone()),
+                            MessageContent::Text(t) => {
+                                produced_answer_chars += t.text.chars().count();
+                                texts.push(t.text.clone());
+                            }
                             MessageContent::Thinking(t) => {
                                 thinking_chars += t.thinking.chars().count();
                                 thinking_total += t.thinking.chars().count();
@@ -12737,6 +12644,8 @@ impl GooseAgentDispatcher {
                                     // (it carries no state, so counting it would silently degrade the key to
                                     // name+args and could fire on a legitimately repeated no-output call).
                                     if repeat_break_on {
+                                        let produced_now = thinking_total + produced_answer_chars;
+                                        produced_rhythm.note_call(produced_now);
                                         if result.trim().is_empty() {
                                             repeat_hash = None;
                                             repeat_run = 0;
@@ -12747,7 +12656,7 @@ impl GooseAgentDispatcher {
                                             } else {
                                                 repeat_hash = Some(h);
                                                 repeat_run = 1;
-                                                repeat_run_started = tokio::time::Instant::now();
+                                                produced_rhythm.note_run_start(produced_now);
                                                 repeat_what = summary.chars().take(80).collect();
                                                 // The RESULT, not just the command. The judge cannot work
                                                 // out WHY a call keeps returning the same thing without
@@ -14794,26 +14703,30 @@ impl GooseAgentDispatcher {
             // event — which a spiral defeats by making an occasional real tool call). The measured scout made
             // 6 DISTINCT calls while emitting 30,403 chars, so only cumulative volume separates it.
 
-            if repeat_break_on
-                && repeat_evidence.is_none()
-                && repeat_run >= REPEAT_BREAK_N
-                && repeat_run_started.elapsed()
-                    >= std::time::Duration::from_secs(REPEAT_BREAK_MIN_SECS)
-            {
-                // THE REPEAT BREAKER NO LONGER BREAKS ANYTHING. It used to return a stall error and throw
-                // the attempt away. Now it SUMMONS THE JUDGE and hands over what it measured, because the
-                // useful move here is a diagnosis, not a stop — and certainly not "do it again", which is
-                // what a bare retry amounts to. The judge is asked to work out WHY the command keeps
-                // returning the same thing and to name something DIFFERENT IN KIND.
-                repeat_evidence = Some(format!(
-                    "It has run the identical command {repeat_run} times over {}s and got the identical \
-                     result every time.\nCommand: {}\nResult it keeps getting:\n{}",
-                    repeat_run_started.elapsed().as_secs(),
-                    repeat_what,
-                    repeat_result
-                ));
-                repeat_run = 0;
-                repeat_hash = None;
+            if repeat_break_on && repeat_evidence.is_none() && repeat_run >= REPEAT_BREAK_N {
+                // VA-137 (gate 5): the floor is what the lane PRODUCED since its first repeat
+                // against its own median between calls — the 60 s wall-clock floor is gone. Inert
+                // until three calls preceded the run; a poll loop producing nothing between its
+                // identical results never meets it (`repeat_break::ProducedRhythm`).
+                let floor = produced_rhythm.floor(thinking_total + produced_answer_chars);
+                if let Some(median) = floor.met() {
+                    // THE REPEAT BREAKER NO LONGER BREAKS ANYTHING. It used to return a stall error and
+                    // throw the attempt away. Now it SUMMONS THE JUDGE and hands over what it measured,
+                    // because the useful move here is a diagnosis, not a stop — and certainly not "do it
+                    // again", which is what a bare retry amounts to. The judge is asked to work out WHY
+                    // the command keeps returning the same thing and to name something DIFFERENT IN KIND.
+                    repeat_evidence = Some(format!(
+                        "It has run the identical command {repeat_run} times and got the identical \
+                         result every time, producing {} chars of reasoning and answer text across \
+                         those repeats — its own median between calls is {median} chars.\n\
+                         Command: {}\nResult it keeps getting:\n{}",
+                        floor.produced_since_first_repeat,
+                        repeat_what,
+                        repeat_result
+                    ));
+                    repeat_run = 0;
+                    repeat_hash = None;
+                }
             }
             // Cut a THINKING-ONLY spiral: no productive event for the whole budget while the stream stays alive
             // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
@@ -27099,14 +27012,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     });
 
-    // SHADOW JUDGE DESK (r6 qualifying measurement; DESIGN-JUDGE-DESK.md). A reader of the
-    // durable lane files that records what an out-of-phase judge WOULD have done — desk_*
-    // events only, no model calls, no worker-visible effect. Same guard pattern as the
-    // heartbeat above: aborted on every run_swarm exit path by Drop.
-    let _desk = log_path
-        .as_ref()
-        .map(|p| spawn_shadow_desk(working_dir.clone(), p.clone(), sink.clone()));
-
     // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
     eprintln!(
         "{} working dir: {}",
@@ -27341,6 +27246,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
     dispatcher.set_fleet_nodes(&devices);
+
+    // SHADOW JUDGE DESK (r6 qualifying measurement; DESIGN-JUDGE-DESK.md). A reader of the
+    // durable lane files that records what an out-of-phase judge WOULD have done — desk_*
+    // events only, no model calls, no worker-visible effect. Same guard pattern as the
+    // heartbeat above: aborted on every run_swarm exit path by Drop. Spawned once the
+    // dispatcher exists because its replayed recurrence meter takes the reach the dispatcher
+    // resolved from the fleet's window (VA-137) — no lane file exists before the first
+    // dispatch, so the later start misses nothing.
+    let _desk = log_path.as_ref().map(|p| {
+        spawn_shadow_desk(
+            working_dir.clone(),
+            p.clone(),
+            sink.clone(),
+            dispatcher.budgets.recurrence_reach,
+        )
+    });
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
