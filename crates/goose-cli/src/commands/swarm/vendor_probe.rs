@@ -42,22 +42,74 @@ pub(super) fn spec_vendor(spec: &str) -> (Option<String>, Option<String>, Option
 }
 
 /// P1-8: every GET path a vendor's DOCS BODY advertises, deduped, made probeable (templated
-/// query values filled, param'd paths excluded — `probeable_get_path`'s rules). The docs page is
+/// COUNT values filled, param'd paths excluded — `probeable_get_path`'s rules). The docs page is
 /// the vendor's own text, not the spec, so this is the plain `GET /path` idiom rather than the
 /// spec's markdown-table surface.
-fn vendor_docs_get_paths(docs_text: &str) -> Vec<String> {
+///
+/// VA-126: a templated query value that is not a count (`?cursor=<next>` — an opaque token only
+/// the vendor can mint) is NOT filled and the path is not requested: the literal 1
+/// `probeable_get_path` fills is valid for every count/offset/page parameter and a guess for
+/// anything else, and r6h's blind `/v3/payments?cursor=1` 400'd `bad_cursor` on every run. The
+/// path rides back as `PaginationSkipped` so the caller SAYS the absence
+/// (`vendor_probe_pagination_skipped`). Reading the parameter's first-page form off the docs is a
+/// later, measured step — the golden run never saw a page-2 body, so none is added now.
+fn vendor_docs_get_paths(docs_text: &str) -> (Vec<String>, Vec<PaginationSkipped>) {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
+    let mut skipped: Vec<PaginationSkipped> = Vec::new();
     if let Ok(re) = regex::Regex::new(r"GET\s+(/[A-Za-z0-9_./{}<>:?&=-]*)") {
         for c in re.captures_iter(docs_text) {
-            if let Some(p) = probeable_get_path(&c[1]) {
+            let raw = &c[1];
+            if let Some(param) = opaque_query_template(raw) {
+                if !skipped.iter().any(|s| s.url == raw) {
+                    skipped.push(PaginationSkipped {
+                        url: raw.to_string(),
+                        param,
+                    });
+                }
+                continue;
+            }
+            if let Some(p) = probeable_get_path(raw) {
                 if seen.insert(p.clone()) {
                     out.push(p);
                 }
             }
         }
     }
-    out
+    (out, skipped)
+}
+
+/// The first query parameter of `path` whose templated value is not a COUNT. A placeholder names
+/// its own kind: `<int>`, `{n}`, `<number>`, `<count>` are counts (the literal 1 is valid for
+/// them); `<next>`, `<cursor>`, `<opaque>`, `<string>` are tokens no literal can stand in for.
+/// `None` when every templated value is a count or the path has no query.
+fn opaque_query_template(path: &str) -> Option<String> {
+    let (_, query) = path.split_once('?')?;
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        if !v.contains(['{', '<', ':']) {
+            return None;
+        }
+        let kind = v
+            .trim_matches(|c| matches!(c, '{' | '}' | '<' | '>' | ':'))
+            .to_ascii_lowercase();
+        if matches!(
+            kind.as_str(),
+            "int" | "integer" | "n" | "num" | "number" | "count"
+        ) {
+            None
+        } else {
+            Some(k.to_string())
+        }
+    })
+}
+
+/// An advertised GET the probe did not request because its query template is an opaque token
+/// (VA-126). `url` is the path as the docs wrote it, `param` the parameter that stopped it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PaginationSkipped {
+    pub(super) url: String,
+    pub(super) param: String,
 }
 
 /// What the vendor probe measured. `ok` is the DOCS fetch outcome — the probe's one load-bearing
@@ -90,6 +142,9 @@ pub(super) struct VendorProbeOutcome {
     /// `vendor_probe_fetch_failed` event each, and a "(not fetched: …)" line in the block where
     /// the page would have been.
     pub(super) fetch_failures: Vec<ProbeFetchFailure>,
+    /// VA-126: every advertised GET whose query template is an opaque token — never requested,
+    /// one `vendor_probe_pagination_skipped` event each, no line in the block.
+    pub(super) pagination_skipped: Vec<PaginationSkipped>,
     /// When the pages were fetched (RFC 3339, seconds) — the header names it so a worker knows
     /// the block is a snapshot, not the live vendor.
     pub(super) fetched_at: String,
@@ -186,26 +241,25 @@ pub(super) fn read_vendor_probe_rows(root: &Path) -> Option<i64> {
 /// SAYS the cut. This bounds prompt text, never model work. The docs page is the contract the
 /// run is built against and is never cut: r6h lost §7–§9 (Reversals, Webhooks, Operational
 /// notes) to this very constant, and the planner and every worker built against a fragment
-/// their header called complete.
+/// their header called complete. VA-126: this is the REFERENCE value on the 262,144 window; the
+/// live budget is `budgets::ShownBudgets::vendor_body_chars` (scaled from the fleet's probed
+/// window) and every caller passes it as `body_chars`.
 pub(super) const VENDOR_PROBE_BODY_CHARS: usize = 6_000;
 
-/// VA-105, pure: an endpoint body's excerpt — the whole body when it fits the budget, else the
+/// VA-105, pure: an endpoint body's excerpt — the whole body when it fits `body_chars`, else the
 /// longest prefix under the budget that ends after a whole JSON object (`},` / `}]` / `}` — a row
 /// close, never mid-key; a body with no such boundary under the budget is cut raw and the marker
 /// says so). The kept text is a SAMPLE and is not valid JSON on its own; the marker names that.
 // string_slice: `budget_end` is a `char_indices` offset or `t.len()`; `cut_at` is an `rfind` hit
 // moved past its ASCII `}` — char boundaries by construction.
 #[allow(clippy::string_slice)]
-pub(super) fn excerpt_body(url: &str, body: &str) -> (String, Option<ProbeCut>) {
+pub(super) fn excerpt_body(url: &str, body: &str, body_chars: usize) -> (String, Option<ProbeCut>) {
     let t = body.trim();
     let chars = t.chars().count();
-    if chars <= VENDOR_PROBE_BODY_CHARS {
+    if chars <= body_chars {
         return (t.to_string(), None);
     }
-    let budget_end = t
-        .char_indices()
-        .nth(VENDOR_PROBE_BODY_CHARS)
-        .map_or(t.len(), |(i, _)| i);
+    let budget_end = t.char_indices().nth(body_chars).map_or(t.len(), |(i, _)| i);
     let head = &t[..budget_end];
     // Priority, not position: a row separator (`}, {`) beats a close-bracket beats a nested
     // object's `},` beats any `}` — so a page of rows is cut between ROWS, never after a row's
@@ -285,6 +339,7 @@ pub(super) async fn probe_vendor(
     docs_url: &str,
     base_url: &str,
     api_key: Option<&str>,
+    body_chars: usize,
 ) -> VendorProbeOutcome {
     let fetched_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let dead = |error: String, fetched_at: String| VendorProbeOutcome {
@@ -300,6 +355,7 @@ pub(super) async fn probe_vendor(
         docs_kept: 0,
         cuts: Vec::new(),
         fetch_failures: Vec::new(),
+        pagination_skipped: Vec::new(),
         fetched_at,
     };
     // A client that cannot be built (a TLS backend that fails to initialise) is a measured
@@ -347,7 +403,7 @@ pub(super) async fn probe_vendor(
     // As served, untrimmed: `docs_chars` is the page's own size (r6h: 9,098), and the block
     // carries exactly those chars — kept == chars is the wholeness a reader can check.
     let docs_chars = docs_text.chars().count();
-    let endpoints = vendor_docs_get_paths(&docs_text);
+    let (endpoints, pagination_skipped) = vendor_docs_get_paths(&docs_text);
     let mut pages: Vec<String> = vec![format!("### GET {docs_url}\n{docs_text}")];
     let mut fetched = 0usize;
     let mut vendor_total: Option<i64> = None;
@@ -366,7 +422,7 @@ pub(super) async fn probe_vendor(
                 if let Some(k) = json_row_array_key(&body) {
                     row_keys.insert(k);
                 }
-                let (kept, cut) = excerpt_body(&url, &body);
+                let (kept, cut) = excerpt_body(&url, &body, body_chars);
                 match cut {
                     Some(cut) => {
                         let marker = body_cut_marker(&cut, api_key, &body);
@@ -441,6 +497,7 @@ pub(super) async fn probe_vendor(
         docs_kept: docs_chars,
         cuts,
         fetch_failures,
+        pagination_skipped,
         fetched_at,
     }
 }
@@ -546,7 +603,13 @@ mod tests {
                 )
             }
         });
-        let probe = probe_vendor(&format!("{base}/v3/docs"), &base, Some("sk_test")).await;
+        let probe = probe_vendor(
+            &format!("{base}/v3/docs"),
+            &base,
+            Some("sk_test"),
+            VENDOR_PROBE_BODY_CHARS,
+        )
+        .await;
         server.join().unwrap();
         assert!(probe.ok, "a live vendor probes ok: {}", probe.error);
         assert_eq!(probe.endpoints, vec!["/v3/payments".to_string()]);
@@ -580,6 +643,7 @@ mod tests {
             &format!("http://{dead_addr}/v3/docs"),
             &format!("http://{dead_addr}"),
             None,
+            VENDOR_PROBE_BODY_CHARS,
         )
         .await;
         assert!(!probe.ok);
@@ -592,12 +656,15 @@ mod tests {
         );
     }
 
-    /// VA-105, the r6h case end to end: the vendor serves r6h's real docs page and the three
-    /// GETs it advertises answer as the live vendor did — a payments page over the body budget,
-    /// a 400 on the blind `?cursor=` probe, a small reversals page. The block must carry every
-    /// section the old cut lost (§7, §8 Registration/Deliveries, §9), say the docs page is
-    /// complete, list the 400 with the vendor's words, and stand a CUT marker where the payments
-    /// page was cut — with the full body's facts and the recovery curl.
+    /// VA-105, the r6h case end to end: the vendor serves r6h's real docs page and the GETs it
+    /// advertises answer as the live vendor did — a payments page over the body budget, a small
+    /// reversals page. The block must carry every section the old cut lost (§7, §8
+    /// Registration/Deliveries, §9), say the docs page is complete, and stand a CUT marker where
+    /// the payments page was cut — with the full body's facts and the recovery curl. VA-126: the
+    /// third advertised GET, `/v3/payments?cursor=<next>`, is NOT requested — r6h's blind
+    /// `?cursor=1` 400'd `bad_cursor` — and rides back as `pagination_skipped`; the fixture's 400
+    /// arm stays as the tripwire that would fire if the probe ever guessed again (the server
+    /// answers exactly three requests, so a fourth would also hang the join).
     #[tokio::test]
     async fn r6h_docs_page_rides_whole_and_every_cut_and_failed_fetch_is_said() {
         assert_eq!(
@@ -611,7 +678,7 @@ mod tests {
             "the measured defect: the P1-8 cut lost §7 onward"
         );
 
-        let (base, server) = serve(4, |req| {
+        let (base, server) = serve(3, |req| {
             if req.starts_with("GET /v3/docs") {
                 (200, R6H_V3_DOCS.to_string())
             } else if req.starts_with("GET /v3/payments?") {
@@ -626,7 +693,13 @@ mod tests {
                 )
             }
         });
-        let probe = probe_vendor(&format!("{base}/v3/docs"), &base, Some("sk_test")).await;
+        let probe = probe_vendor(
+            &format!("{base}/v3/docs"),
+            &base,
+            Some("sk_test"),
+            VENDOR_PROBE_BODY_CHARS,
+        )
+        .await;
         server.join().unwrap();
         assert!(probe.ok, "{}", probe.error);
 
@@ -656,36 +729,42 @@ mod tests {
             "the overclaiming header is gone"
         );
 
-        // The three advertised GETs, as r6h's event listed them.
-        assert_eq!(probe.endpoints.len(), 3, "{:?}", probe.endpoints);
-        assert_eq!(probe.endpoints[0], "/v3/payments");
-        assert!(
-            probe.endpoints[1].starts_with("/v3/payments?cursor="),
+        // VA-126: r6h's event listed three GETs and fetched two; the opaque `?cursor=<next>` is
+        // now never requested — two advertised, two fetched, the skip said by name.
+        assert_eq!(
+            probe.endpoints,
+            vec!["/v3/payments".to_string(), "/v3/reversals".to_string()],
             "{:?}",
             probe.endpoints
         );
-        assert_eq!(probe.endpoints[2], "/v3/reversals");
-        assert_eq!(probe.fetched, 2, "two of three fetched, exactly as r6h");
-
-        // The 400 is NAMED — event payload and a block line carrying the vendor's own words.
-        assert_eq!(probe.fetch_failures.len(), 1);
-        assert!(probe.fetch_failures[0].url.contains("/v3/payments?cursor="));
-        assert!(
-            probe.fetch_failures[0].error.contains("status 400")
-                && probe.fetch_failures[0].error.contains("bad_cursor"),
-            "{}",
-            probe.fetch_failures[0].error
+        assert_eq!(probe.fetched, 2, "both probeable GETs fetched");
+        assert_eq!(
+            probe.pagination_skipped,
+            vec![PaginationSkipped {
+                url: "/v3/payments?cursor=<next>".to_string(),
+                param: "cursor".to_string(),
+            }]
         );
         assert!(
+            probe.fetch_failures.is_empty(),
+            "no blind cursor request, so no 400: {:?}",
             probe
-                .block
-                .contains(r#"(not fetched: status 400: {"error": "bad_cursor"}"#),
-            "{}",
+                .fetch_failures
+                .iter()
+                .map(|f| &f.url)
+                .collect::<Vec<_>>()
+        );
+        // The docs page itself still names `?cursor=<next>` and `400 bad_cursor` (it rides
+        // whole); what must be absent is any PAGE or failure line for the un-requested GET.
+        assert!(
+            !probe.block.contains("(not fetched:")
+                && !probe
+                    .block
+                    .contains(&format!("### GET {base}/v3/payments?cursor")),
+            "nothing about the un-requested page reaches the brief: {}",
             probe.block
         );
-        assert!(probe
-            .block
-            .contains("1 advertised GET(s) came back without a body"));
+        assert!(!probe.block.contains("came back without a body"));
 
         // The payments page is over budget: cut after a whole row, marked with the full body's
         // facts and the exact recovery command; the reversals page is whole.
@@ -739,6 +818,56 @@ mod tests {
         );
     }
 
+    /// VA-126: a count template is filled with the literal 1 (the Q2 measured fix — sb-6's
+    /// payments row was being dropped for the `<` in `limit=<int>`); an opaque template is not
+    /// requested and is returned as skipped, once per path; a bare path advertised beside its
+    /// templated form is probed once. The r6h docs page yields exactly r6h's two probeable GETs
+    /// and the one skip.
+    #[test]
+    fn opaque_query_templates_are_skipped_and_count_templates_are_filled() {
+        let (paths, skipped) = vendor_docs_get_paths(
+            "GET /api/payments?limit=<int>&offset=<int>\nGET /api/items?cursor=<next>\n\
+             GET /api/items?cursor=<next>\nGET /api/items/{id}\nGET /api/health\n\
+             GET /api/after?since={n}\nGET /api/walk?page=<opaque>",
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "/api/payments?limit=1&offset=1".to_string(),
+                "/api/health".to_string(),
+                "/api/after?since=1".to_string(),
+            ]
+        );
+        assert_eq!(
+            skipped,
+            vec![
+                PaginationSkipped {
+                    url: "/api/items?cursor=<next>".to_string(),
+                    param: "cursor".to_string(),
+                },
+                PaginationSkipped {
+                    url: "/api/walk?page=<opaque>".to_string(),
+                    param: "page".to_string(),
+                },
+            ]
+        );
+        assert_eq!(opaque_query_template("/x?limit=25"), None);
+        assert_eq!(opaque_query_template("/x"), None);
+        assert_eq!(
+            opaque_query_template("/x?after=:token").as_deref(),
+            Some("after")
+        );
+
+        let (paths, skipped) = vendor_docs_get_paths(R6H_V3_DOCS);
+        assert_eq!(
+            paths,
+            vec!["/v3/payments".to_string(), "/v3/reversals".to_string()]
+        );
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].url, "/v3/payments?cursor=<next>");
+        assert_eq!(skipped[0].param, "cursor");
+    }
+
     /// VA-105, the excerpt alone: a body under the budget is untouched; one over it is cut after
     /// the last whole row under the budget (the kept text ends on a row's `}`, never inside a
     /// nested object or a key); a non-JSON body over the budget is cut raw and the marker says
@@ -746,12 +875,12 @@ mod tests {
     #[test]
     fn a_body_over_budget_is_cut_after_a_whole_object_and_the_marker_carries_its_facts() {
         let small = r#"{"data": [{"id": 1}], "total": 1}"#;
-        let (kept, cut) = excerpt_body("http://v/x", small);
+        let (kept, cut) = excerpt_body("http://v/x", small, VENDOR_PROBE_BODY_CHARS);
         assert_eq!(kept, small);
         assert!(cut.is_none());
 
         let page = payments_page();
-        let (kept, cut) = excerpt_body("http://v/v3/payments", &page);
+        let (kept, cut) = excerpt_body("http://v/v3/payments", &page, VENDOR_PROBE_BODY_CHARS);
         let cut = cut.expect("over budget");
         assert!(
             kept.ends_with('}'),
@@ -788,7 +917,7 @@ mod tests {
         );
 
         let html = format!("<html>{}</html>", "x".repeat(VENDOR_PROBE_BODY_CHARS + 50));
-        let (kept, cut) = excerpt_body("http://v/docs", &html);
+        let (kept, cut) = excerpt_body("http://v/docs", &html, VENDOR_PROBE_BODY_CHARS);
         let cut = cut.expect("over budget");
         assert_eq!(kept.chars().count(), VENDOR_PROBE_BODY_CHARS);
         assert!(!cut.at_object_boundary);
@@ -804,7 +933,11 @@ mod tests {
         let docs = "GET /v3/payments returns a page. GET /v3/payments?limit=<int>&offset=<int> \
                     pages it. GET /v3/payments/{id} returns one. GET /v3/reversals lists reversals. \
                     GET /v3/payments is idempotent.";
-        let got = vendor_docs_get_paths(docs);
+        let (got, skipped) = vendor_docs_get_paths(docs);
+        assert!(
+            skipped.is_empty(),
+            "count templates are never skipped: {skipped:?}"
+        );
         assert!(got.contains(&"/v3/payments".to_string()), "{got:?}");
         assert!(
             got.contains(&"/v3/payments?limit=1&offset=1".to_string()),

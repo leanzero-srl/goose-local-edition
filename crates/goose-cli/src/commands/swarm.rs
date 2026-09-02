@@ -119,6 +119,7 @@ mod plan_shape;
 use plan_shape::decomposition_of;
 mod briefs;
 use briefs::thin_brief_missing;
+mod budgets;
 mod dep_sources;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
@@ -126,6 +127,7 @@ mod opener;
 use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
 mod spec_surface;
+mod user_notes;
 use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
 mod transcripts;
 use transcripts::{
@@ -3947,6 +3949,7 @@ mod tests {
             spec,
             TargetLang::Python,
             Some("ImportError: cannot import name 'approve' from 'app.approval_workflow'"),
+            budgets::LEDGER_BLOCK_CHARS,
         );
         assert!(
             !brief.ledger_empty && !brief.spec_surface_empty,
@@ -3997,6 +4000,7 @@ mod tests {
             spec,
             TargetLang::Python,
             None,
+            budgets::LEDGER_BLOCK_CHARS,
         );
         assert!(
             empty_ledger.ledger_empty && !empty_ledger.spec_surface_empty,
@@ -4033,6 +4037,7 @@ mod tests {
             "",
             TargetLang::Python,
             None,
+            budgets::LEDGER_BLOCK_CHARS,
         );
         assert!(
             brief.ledger_empty && brief.spec_surface_empty,
@@ -4284,6 +4289,7 @@ mod tests {
             &["app/stream.py".to_string()],
             &findings,
             1,
+            ledger_block::REPAIR_HISTORY_CHARS,
         );
         assert!(history.chars().count() <= 3_500, "one dep-file budget");
         assert!(
@@ -4313,6 +4319,7 @@ mod tests {
             &["tests/test_ledger_core.py".to_string()],
             &[],
             1,
+            ledger_block::REPAIR_HISTORY_CHARS,
         );
         assert!(
             owner_history.contains("`ledger-core-tests` built these files"),
@@ -4324,10 +4331,14 @@ mod tests {
             &["app/stream.py".to_string()],
             &findings,
             0,
+            ledger_block::REPAIR_HISTORY_CHARS,
         );
         assert!(!same_round.contains("NOT FIXED"));
         // No ledger, no history — and an empty history keeps the description byte-identical.
-        assert_eq!(render_repair_history(None, &[], &findings, 1), "");
+        assert_eq!(
+            render_repair_history(None, &[], &findings, 1, ledger_block::REPAIR_HISTORY_CHARS),
+            ""
+        );
         assert_eq!(
             smoke_fix_description(&findings, TargetLang::Python, "", ""),
             smoke_fix_description(&findings, TargetLang::Python, "", " \n "),
@@ -4843,86 +4854,6 @@ mod tests {
         assert_eq!(no_sink, before, "no sink -> plan left byte-identical");
     }
 
-    // ---- QUEUED USER NOTES ------------------------------------------------------------------
-    #[test]
-    fn user_notes_are_read_in_order_and_never_block_or_vanish() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let inbox = dir.path().join(".swarm").join("inbox");
-        std::fs::create_dir_all(&inbox).unwrap();
-        // Filenames are epoch-ms prefixed => sorting them is chronological order.
-        std::fs::write(
-            inbox.join("1700000002-b.json"),
-            r#"{"text":"second: the DB is already seeded"}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            inbox.join("1700000001-a.json"),
-            r#"{"text":"first: prefer stdlib over new deps"}"#,
-        )
-        .unwrap();
-        // Junk must not break the read — a torn/foreign file is skipped, never fatal.
-        std::fs::write(inbox.join("1700000003-c.json"), "{not json").unwrap();
-        std::fs::write(inbox.join("ignore.txt"), "not a note").unwrap();
-        std::fs::write(inbox.join("1700000004-d.json"), r#"{"text":"   "}"#).unwrap();
-
-        let out = read_user_notes(dir.path(), 0).block;
-        let first = out.find("prefer stdlib").expect("first note present");
-        let second = out.find("already seeded").expect("second note present");
-        assert!(
-            first < second,
-            "notes must read in the order they were written"
-        );
-        assert!(out.contains("NOTES FROM THE USER"));
-        // It must never be able to outrank the spec.
-        assert!(out.contains("does NOT override the spec"));
-        // The notes are still on disk — a crash must never lose one, so reading does not consume.
-        assert!(inbox.join("1700000001-a.json").exists());
-    }
-
-    #[test]
-    fn a_seconds_prefixed_note_is_reported_skipped_not_silently_dropped() {
-        // The exact operator error: a note named with SECONDS instead of milliseconds parses as
-        // 1970, scopes out, and used to vanish without a word — no delivery, no warning, nothing
-        // in the run log to distinguish it from a note that was never written.
-        let dir = tempfile::tempdir().unwrap();
-        let inbox = dir.path().join(".swarm").join("inbox");
-        std::fs::create_dir_all(&inbox).unwrap();
-        std::fs::write(
-            inbox.join("1787347648-ledger-server-spec.json"), // seconds, not ms
-            r#"{"text":"use the brief and contracts as authoritative"}"#,
-        )
-        .unwrap();
-        let since_ms = 1_787_300_000_000i64; // this run started (ms)
-        let d = read_user_notes(dir.path(), since_ms);
-        assert!(
-            d.ids.is_empty(),
-            "a stale-scoped note must not be delivered"
-        );
-        assert_eq!(
-            d.skipped_stale,
-            vec!["1787347648-ledger-server-spec.json".to_string()],
-            "and it must be REPORTED as skipped"
-        );
-        // A correctly-stamped note in the same inbox still lands.
-        std::fs::write(
-            inbox.join(format!("{}-good.json", since_ms + 1000)),
-            r#"{"text":"bind before syncing"}"#,
-        )
-        .unwrap();
-        let d2 = read_user_notes(dir.path(), since_ms);
-        assert_eq!(d2.ids.len(), 1);
-        assert_eq!(d2.skipped_stale.len(), 1);
-    }
-
-    #[test]
-    fn no_inbox_means_no_notes_and_a_byte_identical_prompt() {
-        let dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(read_user_notes(dir.path(), 0).block, "");
-        // An empty inbox is the same as none.
-        std::fs::create_dir_all(dir.path().join(".swarm").join("inbox")).unwrap();
-        assert_eq!(read_user_notes(dir.path(), 0).block, "");
-    }
-
     // ---- TURN-CONTEXT STRIP -----------------------------------------------------------------
     /// The desktop prepends a per-turn `<turn-context>` block to the goal. MEASURED (loop-06): it is 171
     /// chars, and the retarget's research question uses `opts.prompt.chars().take(200)` — so the "task" the
@@ -4968,94 +4899,6 @@ mod tests {
     /// so before the cutoff every note ever written to a project dir was injected into every worker of every
     /// FUTURE run there — under a header claiming it was "added while this build was running". Yesterday's
     /// "the DB is already seeded" silently steered today's fresh build.
-    #[test]
-    fn a_note_from_a_previous_run_is_not_delivered_to_this_one() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let inbox = dir.path().join(".swarm").join("inbox");
-        std::fs::create_dir_all(&inbox).unwrap();
-        std::fs::write(
-            inbox.join("1700000000000.json"),
-            r#"{"text":"STALE: the DB is already seeded"}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            inbox.join("1800000000000.json"),
-            r#"{"text":"FRESH: prefer stdlib over new deps"}"#,
-        )
-        .unwrap();
-
-        let d = read_user_notes(dir.path(), 1_750_000_000_000);
-        assert!(
-            d.block.contains("FRESH"),
-            "this run's note must be delivered"
-        );
-        assert!(
-            !d.block.contains("STALE"),
-            "a previous run's note must NEVER ride this run: {}",
-            d.block
-        );
-        assert_eq!(d.ids, vec!["1800000000000.json".to_string()]);
-
-        // The note is SCOPED OUT, never destroyed — a crash must not lose one, and an older cutoff sees it.
-        assert!(read_user_notes(dir.path(), 0).block.contains("STALE"));
-        assert!(inbox.join("1700000000000.json").is_file());
-    }
-
-    /// A hand-placed file with no epoch prefix is the deliberate escape hatch for a standing instruction:
-    /// it has no run to belong to, so it is always in scope.
-    #[test]
-    fn a_standing_note_without_a_timestamp_is_always_delivered() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let inbox = dir.path().join(".swarm").join("inbox");
-        std::fs::create_dir_all(&inbox).unwrap();
-        std::fs::write(
-            inbox.join("standing-orders.json"),
-            r#"{"text":"always write tests first"}"#,
-        )
-        .unwrap();
-        let d = read_user_notes(dir.path(), i64::MAX);
-        assert!(d.block.contains("always write tests first"));
-    }
-
-    /// The block rides EVERY dispatch for the rest of the run, so an unbounded inbox taxes every prompt on a
-    /// fleet whose own worker prompt warns that large context degrades quality. Keep the NEWEST, report the
-    /// rest — a silently-trimmed block would make the user think a note landed when it did not.
-    #[test]
-    fn the_notes_block_is_bounded_and_reports_what_it_dropped() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let inbox = dir.path().join(".swarm").join("inbox");
-        std::fs::create_dir_all(&inbox).unwrap();
-        for i in 0..40 {
-            std::fs::write(
-                inbox.join(format!("18000000000{i:02}.json")),
-                serde_json::json!({ "text": format!("note {i} {}", "x".repeat(100)) }).to_string(),
-            )
-            .unwrap();
-        }
-        let d = read_user_notes(dir.path(), 0);
-        assert!(
-            d.block.chars().count() < 2500,
-            "block must stay bounded, got {}",
-            d.block.chars().count()
-        );
-        assert!(d.dropped > 0, "dropped notes must be COUNTED, never silent");
-        assert_eq!(
-            d.ids.len() + d.dropped,
-            40,
-            "every in-scope note is either delivered or reported dropped — none may vanish"
-        );
-        // The NEWEST guidance is what survives.
-        assert!(d.block.contains("note 39"));
-    }
-
-    #[test]
-    fn note_epoch_ms_reads_the_desktops_filename_shape() {
-        assert_eq!(note_epoch_ms("1785213270712.json"), Some(1_785_213_270_712));
-        assert_eq!(note_epoch_ms("1700000002-b.json"), Some(1_700_000_002));
-        assert_eq!(note_epoch_ms("standing-orders.json"), None);
-        assert_eq!(note_epoch_ms(".json"), None);
-    }
-
     // ---- APP SCOPE: a static scan may only ever see the app THIS run built ------------------
     /// The manifest branch, the planned-directory sweep, and everything each must EXCLUDE. Reproduces the
     /// $HOME shape in miniature: unrelated trees beside the app, which the old os.walk(root) happily scanned
@@ -11723,6 +11566,11 @@ pub struct GooseAgentDispatcher {
     /// Notes older than this belong to a PREVIOUS run in the same directory (nothing ever cleared the inbox).
     /// Epoch-ms of this run's start.
     notes_since_ms: i64,
+    /// VA-126: the run's SHOWN budgets — every char ceiling on text a model is shown, scaled from
+    /// the fleet's probed context window (`budgets::ShownBudgets`, resolved ONCE in `new` from the
+    /// fleet MAXIMUM; `budgets_resolved` carries the numbers). A plain field, so no consumer can
+    /// read an unresolved set.
+    budgets: budgets::ShownBudgets,
 }
 
 impl GooseAgentDispatcher {
@@ -11793,6 +11641,7 @@ impl GooseAgentDispatcher {
         sampling: SamplingParams,
         stream_decode_retry: bool,
         repeat_break: bool,
+        fleet_models: Vec<String>,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -11801,7 +11650,7 @@ impl GooseAgentDispatcher {
         // session_id (Hidden type keeps them out of normal listings).
         let session_manager = Arc::new(SessionManager::instance());
         let permission_manager = Arc::new(PermissionManager::new(session_root));
-        Ok(Self {
+        let mut me = Self {
             provider,
             cloud_models,
             cloud_providers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
@@ -11837,7 +11686,12 @@ impl GooseAgentDispatcher {
             aux_models,
             inflight_by_model: Mutex::new(HashMap::new()),
             node_by_model: std::sync::OnceLock::new(),
-        })
+            // Overwritten below before `me` leaves this constructor; the `?` on the resolve means a
+            // dispatcher never exists with the reference set standing in for a probed one.
+            budgets: budgets::ShownBudgets::for_window(budgets::REFERENCE_WINDOW_TOKENS),
+        };
+        me.budgets = me.resolve_fleet_budgets(&fleet_models).await?;
+        Ok(me)
     }
 
     /// VA-019: the resolved pool's device ids by model id, for `judge_look.node`. First call wins.
@@ -13188,7 +13042,7 @@ impl GooseAgentDispatcher {
                 // when the next piece of evidence does, never when an interval elapses.
                 let tail: String = {
                     let c: Vec<char> = last_thinking.chars().collect();
-                    c[c.len().saturating_sub(LOOK_TAIL_CHARS)..]
+                    c[c.len().saturating_sub(self.budgets.look_tail_chars)..]
                         .iter()
                         .collect()
                 };
@@ -13597,6 +13451,8 @@ impl GooseAgentDispatcher {
                     &owned_defects,
                     &unowned_writes,
                     shard_pieces.as_ref(),
+                    self.budgets.owned_excerpt_total_chars,
+                    self.budgets.owned_excerpt_per_file_chars,
                 );
                 // THE SAME BLINDNESS, FOR A CALL WHOSE DELIVERABLE IS A STRUCTURED REPLY RATHER THAN A
                 // FILE. `owned_block` above covers build tasks; a planning lane owns nothing, so it stays
@@ -14744,7 +14600,8 @@ impl GooseAgentDispatcher {
                             let abandoned_thinking_chars = thinking_chars;
                             let abandoned_tool_calls =
                                 call_records.len().saturating_sub(calls_at_stream_start);
-                            let carried_tail = tail_chars(&last_thinking, LOOK_TAIL_CHARS);
+                            let carried_tail =
+                                tail_chars(&last_thinking, self.budgets.look_tail_chars);
                             // VA-058: EVERY look's ESTABLISHED rides the seed, not the last look's
                             // alone — r6e viz3d's seed carried 238 chars of a 22,621-char stream and
                             // dropped look 4's tie-case record, which the fresh attempt re-derived
@@ -23285,134 +23142,6 @@ fn parse_cross_module_drift(stdout: &str) -> DriftResult {
     }
 }
 
-/// Ceiling on the user-notes block. It rides EVERY dispatch for the rest of the run, so an unbounded inbox
-/// silently taxes every worker prompt. Mirrors `dep_budget`, which caps injected dependency APIs.
-const USER_NOTES_BUDGET_CHARS: usize = 1500;
-
-/// What the user's queued notes actually contributed to ONE dispatch.
-#[derive(Debug, Default, Clone)]
-struct DeliveredNotes {
-    /// The prompt block. Empty = nothing was injected.
-    block: String,
-    /// Inbox filenames actually delivered — the join key between what the user typed and what a worker saw.
-    ids: Vec<String>,
-    /// Notes in scope but cut by the char budget. Reported, never silent.
-    dropped: usize,
-    /// Notes SCOPED OUT as older than this run (filename epoch-ms < run start). A note the user
-    /// wrote for THIS run and never saw delivered is indistinguishable from one that vanished —
-    /// MEASURED: an operator wrote a note with a SECONDS prefix, it parsed as 1970, was silently
-    /// skipped as stale, and nothing anywhere said so (zero user_notes_delivered, no warning).
-    /// Carried so the caller can say it out loud.
-    skipped_stale: Vec<String>,
-}
-
-/// The epoch-ms prefix of an inbox filename (the desktop writes `${Date.now()}.json`). `None` when there is
-/// no leading digit run — a hand-placed `standing-orders.json` is deliberately never scoped out.
-fn note_epoch_ms(file_name: &str) -> Option<i64> {
-    let digits: String = file_name
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse::<i64>().ok()
-}
-
-/// QUEUED USER NOTES (GOOSE_SWARM_USER_NOTES, baked ON in the struct default).
-///
-/// A swarm run is 2+ hours. Today the ONLY user input channel is the one-shot clarify ask at planning time —
-/// after that the user watches the whole build with no way to help, even while SEEING it go wrong. Mihai:
-/// "I see that the progress is stalled and I want to help and I want to add more background information …
-/// allow the user to continuously write messages and for goose to queue them up and from time to time pick
-/// them up and use them."
-///
-/// SHAPE IS FORCED, not chosen: the desktop's write-file IPC has no append mode — it TRUNCATES — so a shared
-/// messages.jsonl would destroy every prior note on each send. One file per note is the only shape that works
-/// through the channel that already exists. It also makes each write atomic and gives a natural id.
-///
-/// Notes are never deleted (a crash must not lose one) and never block. Re-reading is idempotent: a note is
-/// CONTEXT that rides every SUBSEQUENT DISPATCH OF THIS RUN, exactly as the pillars do — it is not handed to
-/// one arbitrary worker. (The config field's doc used to claim "the NEXT dispatched worker"; that was wrong
-/// and is now corrected there. One-shot would be the WORSE semantics: with N nodes dispatching concurrently,
-/// "the next worker" is a lottery among unrelated tasks, so the user would silently steer one of them while
-/// believing they had steered the build.)
-///
-/// SCOPED TO THIS RUN by `since_ms`. Nothing ever cleared `.swarm/inbox` — run_swarm clears only
-/// `.swarm/prereview` — so before this, every note ever written to a project dir was injected into every
-/// worker of every FUTURE run there, forever, under a header claiming it was "added while this build was
-/// running". Yesterday's "the DB is already seeded" silently steered today's fresh build. A timestamp cutoff
-/// fixes that as a pure predicate: no rename, no move, no torn state if the process dies mid-dispatch, and a
-/// note is never lost — only out of scope. A filename with no parseable epoch prefix is ALWAYS delivered,
-/// which is the deliberate escape hatch for a hand-placed standing note.
-fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
-    let dir = root.join(".swarm").join("inbox");
-    let Ok(rd) = std::fs::read_dir(&dir) else {
-        return DeliveredNotes::default(); // no inbox => no notes => byte-identical prompt
-    };
-    let mut skipped_stale: Vec<String> = Vec::new();
-    let mut notes: Vec<(String, String)> = rd
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            // Out of scope for THIS run: an older run's note left in a reused project dir.
-            if note_epoch_ms(&name).is_some_and(|ms| ms < since_ms) {
-                skipped_stale.push(name);
-                return None;
-            }
-            let raw = std::fs::read_to_string(e.path()).ok()?;
-            let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-            let text = v.get("text")?.as_str()?.trim().to_string();
-            if text.is_empty() {
-                return None;
-            }
-            Some((name, text))
-        })
-        .collect();
-    if notes.is_empty() {
-        return DeliveredNotes {
-            skipped_stale,
-            ..DeliveredNotes::default()
-        };
-    }
-    notes.sort(); // filename is epoch-ms-prefixed => chronological
-
-    // BOUND THE PROMPT TAX. This block rides EVERY dispatch for the rest of the run, on a fleet whose own
-    // worker prompt warns that a large context is slow and degrades quality on local models. Keep the NEWEST
-    // notes (the freshest guidance is the relevant guidance), then restore chronological order.
-    let mut kept: Vec<(String, String)> = Vec::new();
-    let mut used = 0usize;
-    let mut dropped = 0usize;
-    for n in notes.iter().rev() {
-        let cost = n.1.chars().count() + 3;
-        if used + cost > USER_NOTES_BUDGET_CHARS && !kept.is_empty() {
-            dropped += 1;
-            continue;
-        }
-        used += cost;
-        kept.push(n.clone());
-    }
-    kept.reverse();
-
-    let body = kept
-        .iter()
-        .map(|(_, t)| format!("- {t}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    DeliveredNotes {
-        block: format!(
-            "\n\n## NOTES FROM THE USER (added while this build was running)\n\
-             The user is watching this build and added the following as BACKGROUND. Take it into account for the \
-             work you are doing now. It does NOT override the spec or any decision already made — where they \
-             disagree, the spec wins. If a note does not concern your task, ignore it.\n\n{body}\n"
-        ),
-        ids: kept.into_iter().map(|(id, _)| id).collect(),
-        dropped,
-        skipped_stale,
-    }
-}
-
 /// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
 /// twin gets the source to read but the copy stays cheap. Best-effort — an unreadable entry is skipped, never
 /// fatal. Used only on the speculative path (GOOSE_SWARM_SPECULATE); never touches the real tree.
@@ -23728,6 +23457,9 @@ struct DispatcherRecipe {
     sampling: SamplingParams,
     stream_decode_retry: bool,
     repeat_break: bool,
+    /// VA-126: every model this run can brief — the resolved pool, the supervision pool and the
+    /// planner — whose probed windows the shown budgets are derived from (the fleet MAXIMUM).
+    fleet_models: Vec<String>,
 }
 
 async fn build_swarm_dispatcher(
@@ -23748,6 +23480,7 @@ async fn build_swarm_dispatcher(
             r.sampling,
             r.stream_decode_retry,
             r.repeat_break,
+            r.fleet_models,
         )
         .await?,
     ))
@@ -24725,8 +24458,16 @@ fn sink_semantic_description(
     spec: &str,
     lang: TargetLang,
     collect_only: Option<&str>,
+    ledger_block_chars: usize,
 ) -> SinkBrief {
-    let block = render_ledger_block_measured(root, task_id, deps, all_files, 7_000, collect_only);
+    let block = render_ledger_block_measured(
+        root,
+        task_id,
+        deps,
+        all_files,
+        ledger_block_chars,
+        collect_only,
+    );
     let (description, spec_surface_empty) =
         render_sink_description(spec, lang, root, all_files, &block.text);
     SinkBrief {
@@ -25099,6 +24840,7 @@ impl GooseAgentDispatcher {
                 &spec,
                 lang,
                 collect_only.as_deref(),
+                self.budgets.ledger_block_chars,
             );
             if brief.ledger_empty {
                 // NEAR-UNREACHABLE BY CONSTRUCTION, kept deliberately: the gate-round-0 write
@@ -25533,6 +25275,8 @@ impl GooseAgentDispatcher {
                 &req.all_files,
                 lang,
                 dep_signatures_on(),
+                self.budgets.dep_sources_chars,
+                self.budgets.dep_source_file_chars,
             );
             for ev in dep_sources.cut_events(&req.task_id) {
                 self.events.write_value(ev);
@@ -25614,7 +25358,11 @@ impl GooseAgentDispatcher {
         // prove a note the user typed ever reached a worker. Everything else (the file on disk, the lever
         // being on) only shows it was *possible*.
         let notes_block = if swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes) {
-            let d = read_user_notes(&self.working_dir, self.notes_since_ms);
+            let d = user_notes::read_user_notes(
+                &self.working_dir,
+                self.notes_since_ms,
+                self.budgets.user_notes_chars,
+            );
             if !d.skipped_stale.is_empty() {
                 // A note the user wrote and never saw delivered is worse than no channel at all.
                 self.events.write_value(serde_json::json!({
@@ -27832,6 +27580,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
+        fleet_models: devices
+            .iter()
+            .chain(supervision_pool_devices.iter())
+            .map(|d| d.model_id.clone())
+            .chain(std::iter::once(cfg.planner_model.clone()))
+            .collect(),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
     dispatcher.set_fleet_nodes(&devices);
@@ -27878,7 +27632,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // spec that names a document names it whether or not a research phase was configured.
     if swarm_gate_cfg("GOOSE_SWARM_DOC_FETCH", cfg.doc_fetch) {
         const DOC_MAX_URLS: usize = 3;
-        const DOC_MAX_BYTES: usize = 24_000;
+        // VA-126: chars (the old `DOC_MAX_BYTES` name lied), scaled from the fleet's window.
+        let doc_max_chars = dispatcher.budgets.doc_fetch_chars;
         let urls = spec_doc_urls(&opts.prompt);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
@@ -27905,9 +27660,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             } else {
                 body
             };
-            let truncated = body.len() > DOC_MAX_BYTES;
+            let truncated = body.len() > doc_max_chars;
             let text = if truncated {
-                body.chars().take(DOC_MAX_BYTES).collect::<String>()
+                body.chars().take(doc_max_chars).collect::<String>()
             } else {
                 body.clone()
             };
@@ -27970,7 +27725,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     {
         let (docs_url, base_url, vendor_key) = spec_vendor(&opts.prompt);
         if let (Some(docs_url), Some(base_url)) = (docs_url, base_url) {
-            let probe = probe_vendor(&docs_url, &base_url, vendor_key.as_deref()).await;
+            let probe = probe_vendor(
+                &docs_url,
+                &base_url,
+                vendor_key.as_deref(),
+                dispatcher.budgets.vendor_body_chars,
+            )
+            .await;
             sink.write_value(serde_json::json!({
                 "event": "vendor_probe",
                 "ok": probe.ok,
@@ -27987,7 +27748,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "error": probe.error,
                 "vendor_total": probe.vendor_total,
                 "page1_rows": probe.page1_rows,
+                "pagination_skipped": probe
+                    .pagination_skipped
+                    .iter()
+                    .map(|p| p.url.clone())
+                    .collect::<Vec<_>>(),
             }));
+            // VA-126: an advertised GET whose query template is an opaque token (`?cursor=<next>`)
+            // is not requested at all — r6h's blind `?cursor=1` 400'd `bad_cursor` on every run —
+            // and the absence is SAID once per path. Reading the parameter's first-page form off
+            // the docs is a later, measured step (the golden run never saw a page-2 body).
+            for skipped in &probe.pagination_skipped {
+                sink.write_value(serde_json::json!({
+                    "event": "vendor_probe_pagination_skipped",
+                    "url": skipped.url,
+                    "param": skipped.param,
+                    "detail": "query template is an opaque token, not a count — no literal is a \
+                               valid guess; the endpoint's first page rides under its bare path \
+                               when the docs advertise one",
+                }));
+            }
             for cut in &probe.cuts {
                 sink.write_value(serde_json::json!({
                     "event": "vendor_probe_truncated",
@@ -30189,6 +29969,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             &smoke_all_files,
                             &smoke.findings,
                             0,
+                            smoke_fix_dispatcher.budgets.repair_history_chars,
                         ),
                     ),
                     device_id: dev_id,

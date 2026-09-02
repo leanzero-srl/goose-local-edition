@@ -511,7 +511,12 @@ pub(super) fn render_ledger_block_measured(
     }
 }
 
-/// II-4, the repair shard's splice (budget one dep-file, 3,500 chars): this round's gate row,
+/// Reference (262,144-window) budget of the repair shard's history splice — one dep-file's worth.
+/// VA-126: the live value is `budgets::ShownBudgets::repair_history_chars`, passed in by every
+/// caller as `budget_chars`.
+pub(super) const REPAIR_HISTORY_CHARS: usize = 3_500;
+
+/// II-4, the repair shard's splice (budget one dep-file, `budget_chars`): this round's gate row,
 /// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'
 /// ledger rows — pure over the roll-up so a round-1 shard is testable against a round-0 fixture.
 /// Round N+1 shards measurably re-tried what round N tried (prompt comment above
@@ -524,8 +529,8 @@ pub(super) fn render_repair_history(
     shard_files: &[String],
     findings: &[String],
     round: usize,
+    budget_chars: usize,
 ) -> String {
-    const BUDGET: usize = 3_500;
     let Some(rollup) = rollup else {
         return String::new();
     };
@@ -652,17 +657,17 @@ pub(super) fn render_repair_history(
         format!("WHO BUILT THE FILES you are repairing:\n{owners}")
     };
     let full = format!("{gate_block}{verdicts_block}{owners_block}");
-    if full.chars().count() <= BUDGET {
+    if full.chars().count() <= budget_chars {
         return full;
     }
     let without_owners = format!("{gate_block}{verdicts_block}");
-    if without_owners.chars().count() <= BUDGET {
+    if without_owners.chars().count() <= budget_chars {
         return without_owners;
     }
-    if verdicts_block.chars().count() <= BUDGET {
+    if verdicts_block.chars().count() <= budget_chars {
         return verdicts_block;
     }
-    truncate_block_at_line(&verdicts_block, BUDGET)
+    truncate_block_at_line(&verdicts_block, budget_chars)
 }
 
 #[cfg(test)]

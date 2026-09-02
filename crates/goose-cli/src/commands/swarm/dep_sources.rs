@@ -38,13 +38,20 @@
 //!    point that carries the exact `sed -n 'A,Bp' <file>` recovering what is missing — a handoff, not
 //!    a hint. The old loop `break`-ed silently once the budget was spent, so every later file was
 //!    ABSENT from the block with no trace; now it is named with `kept: 0`.
+//! 3. VA-126: the two ceilings below are REFERENCE values on the 262,144 window; the live pair
+//!    arrives as `budget_chars` / `file_chars` from `budgets::ShownBudgets`, scaled from the
+//!    fleet's probed window (byte-identical on this fleet, proportional on a 1M-window model).
 
 use std::borrow::Cow;
 use std::path::Path;
 
 use super::{shape_excerpt, TargetLang};
 
+/// Reference (262,144-window) value of the whole "API of" block — the live budget is
+/// `ShownBudgets::dep_sources_chars`.
 pub(super) const DEP_SOURCES_BUDGET_CHARS: usize = 14_000;
+/// Reference (262,144-window) value of one dependency source inside the block — the live budget
+/// is `ShownBudgets::dep_source_file_chars`.
 pub(super) const DEP_SOURCE_FILE_CHARS: usize = 3_500;
 
 pub(super) const CUT_PER_FILE_CAP: &str = "per_file_cap";
@@ -260,11 +267,13 @@ pub(super) fn dependency_sources_block(
     all_files: &[String],
     lang: TargetLang,
     signatures_on: bool,
+    budget_chars: usize,
+    file_chars: usize,
 ) -> DepSourcesBlock {
     let owned_set: std::collections::HashSet<&String> = owned_files.iter().collect();
     let leader = comment_leader(lang);
     let mut out = DepSourcesBlock::default();
-    let mut budget = DEP_SOURCES_BUDGET_CHARS;
+    let mut budget = budget_chars;
     for f in all_files {
         if owned_set.contains(f) || !lang.is_source_file(f) {
             continue;
@@ -314,13 +323,13 @@ pub(super) fn dependency_sources_block(
                 reason: CUT_BUDGET_EXHAUSTED,
             });
             out.text.push_str(&format!(
-                "## API of {f} — NOT SHOWN ({bytes} bytes): the {DEP_SOURCES_BUDGET_CHARS}-char \
+                "## API of {f} — NOT SHOWN ({bytes} bytes): the {budget_chars}-char \
                  dependency-source budget was spent on the files above. Read it TARGETED before \
                  calling into it: {hint}.\n\n"
             ));
             continue;
         }
-        let cap = budget.min(DEP_SOURCE_FILE_CHARS);
+        let cap = budget.min(file_chars);
         if total_chars <= cap {
             budget -= total_chars;
             out.text.push_str(&format!(
@@ -334,7 +343,7 @@ pub(super) fn dependency_sources_block(
         // formatted exactly like a complete one (F196: 3 of 4 blocks ended mid-token, `meridian.py`
         // at `    def _up`, and none said so). The marker now carries the exact recovery command.
         let head: String = api_source.chars().take(cap).collect();
-        let reason = if cap < DEP_SOURCE_FILE_CHARS {
+        let reason = if cap < file_chars {
             CUT_BUDGET_EXHAUSTED
         } else {
             CUT_PER_FILE_CAP
@@ -492,7 +501,15 @@ mod tests {
             .map(|s| s.to_string()),
         );
 
-        let block = dependency_sources_block(&root, &owned, &all, TargetLang::Python, false);
+        let block = dependency_sources_block(
+            &root,
+            &owned,
+            &all,
+            TargetLang::Python,
+            false,
+            DEP_SOURCES_BUDGET_CHARS,
+            DEP_SOURCE_FILE_CHARS,
+        );
 
         // The contract, whole: the signature the task must implement is IN the brief.
         assert!(
@@ -583,7 +600,15 @@ mod tests {
             std::fs::write(root.join(&f), &big).unwrap();
             all.push(f);
         }
-        let block = dependency_sources_block(&root, &owned, &all, TargetLang::Python, false);
+        let block = dependency_sources_block(
+            &root,
+            &owned,
+            &all,
+            TargetLang::Python,
+            false,
+            DEP_SOURCES_BUDGET_CHARS,
+            DEP_SOURCE_FILE_CHARS,
+        );
         let first = block.cuts.iter().find(|c| c.file == "app/dep0.py").unwrap();
         assert_eq!(first.reason, CUT_PER_FILE_CAP);
         assert_eq!(
@@ -616,7 +641,15 @@ mod tests {
         std::fs::write(root.join("app/util.py"), "def helper():\n    return 1\n").unwrap();
         let owned = vec!["app/ledgerd/impl.py".to_string()];
         let all = vec![owned[0].clone(), "app/util.py".to_string()];
-        let block = dependency_sources_block(&root, &owned, &all, TargetLang::Python, false);
+        let block = dependency_sources_block(
+            &root,
+            &owned,
+            &all,
+            TargetLang::Python,
+            false,
+            DEP_SOURCES_BUDGET_CHARS,
+            DEP_SOURCE_FILE_CHARS,
+        );
         assert!(block.cuts.is_empty());
         assert!(block
             .text

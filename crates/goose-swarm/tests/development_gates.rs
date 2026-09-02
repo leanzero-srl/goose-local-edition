@@ -433,7 +433,14 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 33,802 (r6j, VA-118 wiring): the per-answer research tool lives in
     // commands/swarm/research_tool.rs with `queue_research_relay` moved beside it; the
     // wiring here is the frontend-tool arm, the extension add and the fan's landing open/close.
-    const SWARM_RS_LINE_BASELINE: usize = 33_802;
+    // Tightened to 33,583 (VA-126): the queued-user-notes cluster (`USER_NOTES_BUDGET_CHARS`,
+    // `DeliveredNotes`, `note_epoch_ms`, `read_user_notes` and their seven tests) moved to
+    // commands/swarm/user_notes.rs, paying for the shown-budget wiring (`budgets::ShownBudgets`
+    // on the dispatcher, resolved from the fleet's probed windows in `new`, and its consumers —
+    // dep sources, user notes, the sink's ledger block, the doc fetch, the vendor probe, the
+    // judge's excerpts and both model-facing look tails) and the vendor probe's
+    // `vendor_probe_pagination_skipped` events.
+    const SWARM_RS_LINE_BASELINE: usize = 33_583;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

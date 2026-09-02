@@ -68,6 +68,12 @@ pub(super) const DIGEST_IO_CADENCE: std::time::Duration = std::time::Duration::f
 /// the three are the SAME window by design — the judge reads what the digest carries, and the
 /// re-stream seed hands back exactly what was read. A message-formation scale on carried text,
 /// never a cap on model work (the transcripts are append-only and complete).
+///
+/// VA-126: this is the REFERENCE value on the 262,144 window. The two MODEL-facing tails (the
+/// judge's look tail, the re-stream seed's carried tail) read the live
+/// `budgets::ShownBudgets::look_tail_chars` — scaled from the fleet's probed window, identical
+/// here — so the seed still hands back exactly what the judge read; the digest's `last_thinking`
+/// is a VIEW the panel and tick.py read, not a model, and keeps this scale.
 pub(super) const LOOK_TAIL_CHARS: usize = 2_000;
 
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
