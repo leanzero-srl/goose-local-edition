@@ -89,6 +89,7 @@ import {
   usePageVisible,
 } from './formationVisualState';
 import { engineLiveness, isEngineSilent } from './swarmRunLiveness';
+import { Clipped, RevealGlyph, type RevealFact } from './Clipped';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -2686,7 +2687,7 @@ const FleetStrip: React.FC<{
   // largest lane, open-coverage-1 at 23,975 reasoning chars, sat under gabee's cell and could not be opened).
   const [inspect, setInspect] = useState<{ device: string; taskId: string } | null>(null);
   if (deviceOrder.length === 0) return null;
-  const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
+  const shortName = nodeShortName;
   return (
     <div className="bg-lz-surface">
       <div className="w-full overflow-x-auto">
@@ -3714,6 +3715,27 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
   );
 };
 
+/** A device id's leading segment — the node name the fleet table and the reveal chips share. */
+const nodeShortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
+
+/** The reveal's provenance chips for a planning row: the task behind the `b-`/`v-` prefix, its state, its node. */
+function todoContext(item: PhaseTodoItem, interrupted: boolean): RevealFact[] {
+  return [
+    { label: 'task', value: item.id.replace(/^[bv]-/, '') },
+    { label: 'state', value: interrupted ? 'interrupted' : item.state.replace(/_/g, ' ') },
+    ...(item.device ? [{ label: 'node', value: nodeShortName(item.device) }] : []),
+  ];
+}
+
+/** The reveal's provenance chips for a WORK-board row. */
+function boardContext(row: BoardRow, interrupted: boolean): RevealFact[] {
+  return [
+    { label: 'task', value: row.id },
+    { label: 'state', value: interrupted ? 'interrupted' : row.state.replace(/_/g, ' ') },
+    ...(row.device ? [{ label: 'node', value: nodeShortName(row.device) }] : []),
+  ];
+}
+
 // One task row: TITLE + short summary collapsed; the full spec, owned files, the judge's reasoning AND the live
 // generation are tucked under an expand. A 'running' item on a STALE run is relabeled 'interrupted' (dead proc).
 const PhaseTodoRow: React.FC<{
@@ -3781,12 +3803,31 @@ const PhaseTodoRow: React.FC<{
         >
           {item.label}
         </span>
-        {item.summary ? <span className="truncate text-lz-ink-3">· {item.summary}</span> : null}
+        {item.summary ? (
+          <Clipped
+            text={item.summary}
+            full={item.description?.trim() || item.summary}
+            prefix="· "
+            label="Task brief"
+            context={todoContext(item, interrupted)}
+            className="text-lz-ink-3"
+            testId="todo-row-summary"
+          />
+        ) : null}
         {interrupted ? <TodoPill text="interrupted" /> : null}
         {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" /> : null}
         {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" /> : null}
         {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" /> : null}
-        {item.detail ? <span className="truncate text-lz-ink-3">· {item.detail}</span> : null}
+        {item.detail ? (
+          <Clipped
+            text={item.detail}
+            prefix="· "
+            label="Detail"
+            context={todoContext(item, interrupted)}
+            className="text-lz-ink-3"
+            testId="todo-row-detail"
+          />
+        ) : null}
         {hasDetail ? (
           <span className="ml-auto shrink-0 text-lz-ink-3">
             {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -3943,7 +3984,17 @@ const BoardTaskRow: React.FC<{
         </span>
         {row.kind === 'repair' ? <TodoPill text="repair" /> : null}
         {!interrupted && row.state === 'skipped' ? <TodoPill text="skipped" /> : null}
-        {row.summary ? <span className="truncate text-lz-ink-3">· {row.summary}</span> : null}
+        {row.summary ? (
+          <Clipped
+            text={row.summary}
+            full={row.description?.trim() || row.summary}
+            prefix="· "
+            label="Task brief"
+            context={boardContext(row, interrupted)}
+            className="text-lz-ink-3"
+            testId="board-row-summary"
+          />
+        ) : null}
         {interrupted ? <TodoPill text="interrupted" /> : null}
         {!interrupted && row.state === 'unverified' ? <TodoPill text="unverified" /> : null}
         {!interrupted && row.state === 'judge_failed' ? <TodoPill text="judge" /> : null}
@@ -3951,7 +4002,19 @@ const BoardTaskRow: React.FC<{
         {judgeFlag ? (
           <Tip label={`The judge intervened: ${judgeFlag}${row.judge?.hint ? ` — ${row.judge.hint.slice(0, 140)}` : ''}`}>
             <span className={cx('flex shrink-0 items-center gap-0.5', TONE_TEXT.warn)}>
-              <Gavel className="size-3" /> {judgeFlag}
+              <Gavel className="size-3" />{' '}
+              {/* The tip clips the hint at 140 chars; the reveal holds the judge's whole note. */}
+              <Clipped
+                text={judgeFlag}
+                full={`${judgeFlag} → ${(row.judge?.action ?? '').replace(/_/g, ' ')}${
+                  row.judge?.hint ? `\n\n${row.judge.hint}` : ''
+                }`}
+                label="Judge"
+                context={boardContext(row, interrupted)}
+                hoverTitle={false}
+                className={TONE_TEXT.warn}
+                testId="board-row-judge"
+              />
             </span>
           </Tip>
         ) : null}
@@ -3967,7 +4030,16 @@ const BoardTaskRow: React.FC<{
             </span>
           </Tip>
         ) : null}
-        {row.detail ? <span className="truncate text-lz-ink-3">· {row.detail}</span> : null}
+        {row.detail ? (
+          <Clipped
+            text={row.detail}
+            prefix="· "
+            label="Detail"
+            context={boardContext(row, interrupted)}
+            className="text-lz-ink-3"
+            testId="board-row-detail"
+          />
+        ) : null}
         <span className={cx('ml-auto flex shrink-0 items-center gap-2 text-lz-meta text-lz-ink-3', TNUM)}>
           {row.state === 'running' && lane?.toolCalls ? (
             <span className="flex items-center gap-0.5">
@@ -3981,7 +4053,14 @@ const BoardTaskRow: React.FC<{
           {row.state !== 'running' && secs != null ? <span>{secs}s</span> : null}
           {typeof row.attempts === 'number' && row.attempts > 1 ? <span>×{row.attempts}</span> : null}
           {row.state === 'pending' && row.deps.length ? (
-            <span className="font-mono truncate max-w-[12rem]">after {row.deps.join(', ')}</span>
+            <Clipped
+              text={`after ${row.deps.join(', ')}`}
+              mono
+              label="Waits on"
+              context={boardContext(row, interrupted)}
+              className="max-w-[12rem] font-mono"
+              testId="board-row-deps"
+            />
           ) : null}
           {row.state === 'pending' && row.difficulty ? <span>{row.difficulty}</span> : null}
           {hasDetail ? (
@@ -3995,16 +4074,26 @@ const BoardTaskRow: React.FC<{
           {formingLiveLine(lane?.forming) ? (
             <>
               <Loader2 size={10} className={cx('shrink-0 animate-spin', TONE_TEXT.warn)} />
-              <span className={cx('truncate font-mono text-lz-mono', TONE_TEXT.warn)}>
-                {formingLiveLine(lane?.forming)}
-              </span>
+              <Clipped
+                text={formingLiveLine(lane?.forming)}
+                mono
+                label="Call forming"
+                context={boardContext(row, interrupted)}
+                className={cx('font-mono text-lz-mono', TONE_TEXT.warn)}
+                testId="board-row-live"
+              />
             </>
           ) : running.length > 0 ? (
             <>
               <Loader2 size={10} className={cx('shrink-0 animate-spin', TONE_TEXT.warn)} />
-              <span className={cx('truncate font-mono text-lz-mono', TONE_TEXT.warn)}>
-                {inflightLiveLine(running)}
-              </span>
+              <Clipped
+                text={inflightLiveLine(running)}
+                mono
+                label="Call in flight"
+                context={boardContext(row, interrupted)}
+                className={cx('font-mono text-lz-mono', TONE_TEXT.warn)}
+                testId="board-row-live"
+              />
             </>
           ) : lastCall ? (
             (() => {
@@ -4012,15 +4101,29 @@ const BoardTaskRow: React.FC<{
               return (
                 <>
                   <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
-                  <span className="truncate text-lz-ink-3">
-                    {cm.action}
-                    {lastCall.summary ? <span className="font-mono text-lz-mono"> · {lastCall.summary}</span> : null}
-                  </span>
+                  <span className="shrink-0 text-lz-ink-3">{cm.action}</span>
+                  {lastCall.summary ? (
+                    <Clipped
+                      text={lastCall.summary}
+                      prefix="· "
+                      mono
+                      label="Latest call"
+                      context={boardContext(row, interrupted)}
+                      className="font-mono text-lz-mono text-lz-ink-3"
+                      testId="board-row-live"
+                    />
+                  ) : null}
                 </>
               );
             })()
           ) : liveGen ? (
-            <span className="truncate text-lz-ink-3">{liveGen}</span>
+            <Clipped
+              text={liveGen}
+              label="Working on"
+              context={boardContext(row, interrupted)}
+              className="text-lz-ink-3"
+              testId="board-row-live"
+            />
           ) : (
             <span className="text-lz-ink-3">generating…</span>
           )}
