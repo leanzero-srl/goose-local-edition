@@ -57,6 +57,37 @@ fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error
     Ok(settings)
 }
 
+/// `goose serve`'s exit path for the engine: stop the sidecar THIS goosed supervises (the
+/// sidecar's own SIGTERM, grace window, proven group kill, then the port is released) and
+/// nothing else — a listener on the port the manager does not supervise is somebody else's
+/// at exit and is left alone; the explicit Unmount is the reclaim for that case. Gated on
+/// the manager's reported state rather than on the port, so a foreign engine on the port
+/// is never killed by goosed quitting.
+pub(super) async fn shutdown_supervised_engine() -> String {
+    let manager = global_manager();
+    let status = manager.status().await;
+    match status.state.as_str() {
+        state @ ("running" | "mounting") => {
+            let port = manager.settings().port;
+            let model = status
+                .model_id
+                .as_deref()
+                .unwrap_or("<model id not reported>");
+            let pid = status
+                .pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "not yet spawned".to_string());
+            manager.unmount().await;
+            format!(
+                "engine '{model}' ({state}, pid {pid}) on port {port}: SIGTERM, grace, proven group kill, port released"
+            )
+        }
+        state => format!(
+            "nothing supervised (state '{state}'); any listener on the engine port is not this goosed's and is left alone"
+        ),
+    }
+}
+
 fn synced_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
     let manager = global_manager();
     manager.set_settings(load_engine_settings()?);

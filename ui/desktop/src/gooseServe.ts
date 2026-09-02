@@ -32,6 +32,29 @@ type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Resp
 // (`detached`), so a negative-pid signal reaches its child `goose swarm run` too — the process that holds the
 // LM Studio fleet sockets. Without this, the SIGKILL fallback kills goosed but orphans that child, which keeps
 // a fleet node GENERATING from the dead run. Falls back to a direct signal if the group signal fails (ESRCH).
+// On SIGTERM goosed (`goose serve`) tears down what it supervises BEFORE it exits — the mesh
+// daemon and the engine sidecar, both spawned into process groups of their own that the group
+// signal above never reaches. The SIGKILL fallback must not cut that teardown short, so its
+// delay is the sum of the supervisors' own worst-case grace windows (each a per-pid
+// SIGTERM → 50 × 100 ms → SIGKILL leg; the sources are the constants named here):
+//   mesh   crates/leanzero-link/src/mesh.rs   terminate_per_pid                 50 × 100 ms
+//   engine crates/goose-sidecar/src/lib.rs    terminate  (GRACE_TICKS × GRACE_TICK) 50 × 100 ms
+//                                             release_port / wait_port_clear      50 × 100 ms
+//   engine crates/goose-sidecar/src/engine.rs status() probe before the unmount   reqwest 5 s
+// plus a margin for signal delivery and the final log flush. This is a CEILING: the stop
+// resolves on goosed's 'close' the moment its teardown finishes, which on the happy path is
+// well under a second.
+const PER_PID_GRACE_MS = 50 * 100;
+const MESH_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
+const ENGINE_TEARDOWN_CEILING_MS = 2 * PER_PID_GRACE_MS;
+const ENGINE_STATUS_PROBE_CEILING_MS = 5000;
+const TEARDOWN_MARGIN_MS = 1000;
+export const GOOSED_SIGKILL_AFTER_MS =
+  MESH_TEARDOWN_CEILING_MS +
+  ENGINE_TEARDOWN_CEILING_MS +
+  ENGINE_STATUS_PROBE_CEILING_MS +
+  TEARDOWN_MARGIN_MS;
+
 function killGroupOrProcess(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
   const pid = proc.pid;
   if (!pid) {
@@ -612,7 +635,7 @@ export const startGooseServe = async ({
           killGroupOrProcess(gooseProcess, 'SIGKILL');
         }
         finish();
-      }, 5000);
+      }, GOOSED_SIGKILL_AFTER_MS);
     });
   };
 

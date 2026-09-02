@@ -112,6 +112,8 @@ mod providers;
 mod recipe;
 mod resources;
 mod schedule;
+mod shutdown;
+pub use shutdown::{teardown_supervised, TeardownReport};
 mod slash_commands;
 mod sources;
 mod tool_notifications;
