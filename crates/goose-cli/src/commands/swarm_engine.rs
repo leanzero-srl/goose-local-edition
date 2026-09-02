@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
-use goose_swarm::DeviceCfg;
+use goose_swarm::{DeviceCfg, EventSink};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Command as ProcCommand;
@@ -380,6 +380,43 @@ pub(super) fn planner_fallback(
     Some((engine.http_host(), alt))
 }
 
+/// One entry per SLOT the fleet can actually run, not one per device.
+///
+/// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
+/// device to a single `model_id` silently caps every planning-phase fan at the DEVICE count. On this
+/// fleet that is 3 where EXECUTE runs 6: `pick_device` admits a task while `d.in_flight < d.weight`
+/// (baked default 2), so the plan phase was the only phase forbidden from using half the machine.
+///
+/// MEASURED from `detail_completed` spans in baseline-n3-r0: the detail fan spends its time at
+/// concurrency {1: 34.3s, 2: 95.7s, 3: 112.4s} with a makespan of 244s, and never sustains 4 — the
+/// same ceiling in every 3-node cell. On the 1-node arm it is worse: `swarm-1node-r0` detailed 17
+/// items strictly serially, 1743.1s of a 5842.9s run, on a device whose weight is 2.
+///
+/// This is the same node-vs-slot substitution `00563c6ea` fixed for the planner's width prompt, which
+/// the fan-outs were not fixed with.
+///
+/// ⚠ TAKES `DeviceCfg`, NOT `SwarmDevice`. Both carry a `weight` field and they are DIFFERENT
+/// TYPES: `SwarmDevice` (swarm.rs) is the config-file shape, `DeviceCfg` (scheduler.rs) is what the
+/// resolved runtime pool is built into and what every fan-out site actually holds. Writing this
+/// against the config type compiled fine in isolation and failed at all five call sites.
+///
+/// ⚠ THE SKELETON DRAFT VOTE IS DELIBERATELY NOT AFFECTED, and must stay that way. `draft_models`
+/// (see the dedup at the best-of-N site) folds this list through `HashSet::insert`, so duplicates
+/// collapse back to distinct models and the number of drafts is unchanged. That dedup exists because
+/// duplicate draft slots were MEASURED dying — 6 requested, exactly 3 survived, the duplicates
+/// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
+/// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
+/// concurrency change.
+///
+/// The LIVE-fleet variant every fan actually calls is `swarm_engine::live_fleet_slots` (per-engine
+/// residency, this snapshot as its fallback).
+pub(super) fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
+    devices
+        .iter()
+        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
+        .collect()
+}
+
 /// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot — PER ENGINE.
 ///
 /// `fleet_slot_models(devices)` is computed once from the pool resolved at run start, and every fanned
@@ -408,8 +445,9 @@ pub(super) fn live_fleet_slots(
     devices: &[DeviceCfg],
     engines: &Engines,
     engine_models: &HashMap<String, EngineKind>,
+    sink: &dyn EventSink,
 ) -> Vec<String> {
-    let snapshot = super::swarm::fleet_slot_models(devices);
+    let snapshot = fleet_slot_models(devices);
     let kind_of = |d: &DeviceCfg| {
         engine_models
             .get(&d.model_id)
@@ -419,6 +457,10 @@ pub(super) fn live_fleet_slots(
     // One residency probe per engine KIND in the pool. `None` = that engine proved nothing: its
     // probe errored, answered nothing, or no engine is registered for the kind (an unregistered
     // kind never reaches engine_models, so that arm is the honest spelling of "nobody to ask").
+    // An `Err` is NOT folded quietly with the other two: it is the probe saying WHY it could not
+    // answer (curl missing, the server refusing or unreachable), and that reason reaches
+    // run.jsonl as `fleet-probe-failed{engine, error}` — once per fan, since each fan probes each
+    // kind once. The slot arithmetic is unchanged: an errored kind keeps its snapshot entries.
     let mut proven: HashMap<EngineKind, Option<HashSet<String>>> = HashMap::new();
     for d in devices.iter().filter(|d| !d.is_cloud) {
         let kind = kind_of(d);
@@ -427,9 +469,22 @@ pub(super) fn live_fleet_slots(
                 Some(Ok(procs)) if !procs.is_empty() => {
                     Some(procs.into_iter().map(|p| p.identifier).collect())
                 }
+                Some(Err(e)) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "fleet-probe-failed",
+                        "engine": kind.name(),
+                        "error": format!("{e:#}"),
+                    }));
+                    None
+                }
                 _ => None,
             }
         });
+    }
+    // The probes' own named absences (`lm-probe-unauthorized`, first seen HERE when `lms ps`
+    // answered nothing and the HTTP fallback was refused) ride to run.jsonl the same way.
+    for ev in engines.take_probe_absences() {
+        sink.write_value(ev);
     }
     let live: Vec<String> = devices
         .iter()
@@ -2083,7 +2138,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let slots = live_fleet_slots(&devices, &engines, &engine_models);
+        let slots = live_fleet_slots(&devices, &engines, &engine_models, &goose_swarm::NullSink);
         assert_eq!(
             slots,
             vec![
@@ -2124,7 +2179,7 @@ mod tests {
         ));
         engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
         assert_eq!(
-            live_fleet_slots(&devices, &engines, &engine_models),
+            live_fleet_slots(&devices, &engines, &engine_models, &goose_swarm::NullSink),
             vec![
                 "gabee-qwen3.8-27b",
                 "gabee-qwen3.8-27b",
@@ -2137,8 +2192,8 @@ mod tests {
         let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
         engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
         assert_eq!(
-            live_fleet_slots(&devices, &engines, &engine_models),
-            super::super::swarm::fleet_slot_models(&devices)
+            live_fleet_slots(&devices, &engines, &engine_models, &goose_swarm::NullSink),
+            fleet_slot_models(&devices)
         );
         // All-LM pool (empty engine_models), LM answering: the single-engine filter, verbatim.
         let lm_only = &devices[..2];
@@ -2148,7 +2203,7 @@ mod tests {
             &["mihai-qwen3.8-27b"],
         ));
         assert_eq!(
-            live_fleet_slots(lm_only, &engines, &HashMap::new()),
+            live_fleet_slots(lm_only, &engines, &HashMap::new(), &goose_swarm::NullSink),
             vec!["mihai-qwen3.8-27b"]
         );
         // A proven probe that would strand the fan with zero slots still falls back to the snapshot.
@@ -2158,14 +2213,104 @@ mod tests {
             &["something-else-entirely"],
         ));
         assert_eq!(
-            live_fleet_slots(lm_only, &engines, &HashMap::new()),
-            super::super::swarm::fleet_slot_models(lm_only)
+            live_fleet_slots(lm_only, &engines, &HashMap::new(), &goose_swarm::NullSink),
+            fleet_slot_models(lm_only)
         );
     }
 
     /// The 2026-08-30 micro-run defect, pinned: a config-complete sidecar device (tagged, engine
     /// registered) MUST be pre-warmed through ITS OWN engine — and a planner carried by that
     /// device warms there too, never through a doomed `lms load` of the alias.
+    /// An engine whose residency probe ERRS — the shape `probe_lms_processes` now produces when
+    /// `lms` is missing/failing and the HTTP fallback is refused or unreachable.
+    struct FailingProbeEngine;
+    impl SwarmEngine for FailingProbeEngine {
+        fn provider_name(&self) -> &'static str {
+            "lmstudio"
+        }
+        fn http_host(&self) -> String {
+            "http://lm.local:1234".to_string()
+        }
+        fn catalog_probe(&self) -> Result<Vec<LmsProcess>> {
+            bail!("http://lm.local:1234/api/v0/models: HTTP 401 — LM Studio wants an API token")
+        }
+        fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
+            None
+        }
+        fn loaded_instance_count(&self, _model_id: &str) -> usize {
+            0
+        }
+        fn ensure_loaded(&self, _model_id: &str, _instances: u32) {}
+        fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
+            self.catalog_probe()
+        }
+        fn probe_report(&self) {}
+    }
+
+    /// A sink that keeps every caller-side value it is handed, so a test can read run.jsonl.
+    #[derive(Default)]
+    struct RecordingSink(std::sync::Mutex<Vec<serde_json::Value>>);
+    impl EventSink for RecordingSink {
+        fn emit(&self, _event: &goose_swarm::SwarmEvent) {}
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().expect("sink lock").push(value);
+        }
+    }
+
+    /// A residency probe that ERRS is a NAMED absence in run.jsonl (`fleet-probe-failed{engine,
+    /// error}`), once per fan for that engine kind — never folded quietly into "unproven". The
+    /// slot arithmetic is untouched: the errored kind keeps its snapshot slots, and a kind that
+    /// answered still filters its own devices.
+    #[test]
+    fn a_failed_residency_probe_is_a_named_absence_in_the_run_log() {
+        let mut engines = Engines::with_lmstudio_for_tests(Arc::new(FailingProbeEngine));
+        engines.register_sidecar(
+            "mlx-sidecar",
+            RecordingEngine::serving("omlx", "http://127.0.0.1:8899", &["workhorse-mlx-9b"]),
+        );
+        let devices = vec![
+            dev_cfg("mac-gabee", "gabee-qwen3.8-27b", 2, false),
+            dev_cfg("works-workhorse", "workhorse-qwen3.8-27b", 2, false),
+            dev_cfg("workhorse-mlx", "workhorse-mlx-9b", 1, false),
+            dev_cfg("workhorse-mlx-stale", "workhorse-mlx-old", 1, false),
+        ];
+        let mut engine_models = HashMap::new();
+        engine_models.insert("workhorse-mlx-9b".to_string(), EngineKind::MlxSidecar);
+        engine_models.insert("workhorse-mlx-old".to_string(), EngineKind::MlxSidecar);
+        let sink = RecordingSink::default();
+        let slots = live_fleet_slots(&devices, &engines, &engine_models, &sink);
+        assert_eq!(
+            slots,
+            vec![
+                "gabee-qwen3.8-27b",
+                "gabee-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                "workhorse-mlx-9b",
+            ],
+            "the errored LM kind keeps its snapshot; the sidecar filtered its own stale device"
+        );
+        let events = sink.0.lock().expect("sink lock").clone();
+        assert_eq!(
+            events.len(),
+            1,
+            "one probe per kind per fan → one event: {events:?}"
+        );
+        assert_eq!(events[0]["event"], "fleet-probe-failed");
+        assert_eq!(events[0]["engine"], "lmstudio");
+        assert!(
+            events[0]["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("401")),
+            "the probe's own reason is carried: {events:?}"
+        );
+        // A kind that answered empty or a kind nobody registered stays a quiet None, as before.
+        let quiet = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        let sink = RecordingSink::default();
+        let _ = live_fleet_slots(&devices, &quiet, &engine_models, &sink);
+        assert!(sink.0.lock().expect("sink lock").is_empty());
+    }
+
     #[test]
     fn prewarm_mounts_a_sidecar_device_through_its_own_engine() {
         let lm = RecordingEngine::new("lmstudio");
