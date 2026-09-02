@@ -99,7 +99,10 @@ fn ident_start(c: Option<char>) -> bool {
 /// character satisfying `after` following it (`None` = end of text).
 fn occurs(text: &str, needle: &str, after: impl Fn(Option<char>) -> bool) -> bool {
     text.match_indices(needle).any(|(i, _)| {
-        text[..i].chars().next_back().is_none_or(|c| !is_ident_char(c))
+        text[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c))
             && after(text[i + needle.len()..].chars().next())
     })
 }
@@ -209,7 +212,9 @@ fn reference_form(content: &str, m: &OwnedModule<'_>, same_dir: bool) -> Option<
         return Some(from_bare);
     }
     let mod_decl = format!("mod {stem}");
-    if occurs(content, &mod_decl, |c| matches!(c, Some(';') | Some(' ') | Some('{'))) {
+    if occurs(content, &mod_decl, |c| {
+        matches!(c, Some(';') | Some(' ') | Some('{'))
+    }) {
         return Some(mod_decl);
     }
     let ts_relative = format!("./{stem}");
@@ -493,18 +498,28 @@ mod tests {
              `app/ledgerd/impl.py` (`ledgerd/impl`)"
         ));
         assert!(
-            !block.cuts.iter().any(|c| c.file == "app/ledgerd/__init__.py"),
+            !block
+                .cuts
+                .iter()
+                .any(|c| c.file == "app/ledgerd/__init__.py"),
             "the contract is never cut: {:?}",
             block.cuts
         );
 
         // `--db-dir` in usage prose is not a reference to app/db.py: plain, whole, unlabelled.
-        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &owned), None);
-        assert!(block.text.contains(
-            "## API of app/__main__.py (a dependency you import — build against THIS"
-        ));
-        assert!(!block.text.contains("## API of app/__main__.py — CARRIED WHOLE"));
-        assert!(block.text.contains("from .ledgerd import run as ledgerd_run"));
+        assert_eq!(
+            names_owned_module("app/__main__.py", R6H_APP_MAIN, &owned),
+            None
+        );
+        assert!(block
+            .text
+            .contains("## API of app/__main__.py (a dependency you import — build against THIS"));
+        assert!(!block
+            .text
+            .contains("## API of app/__main__.py — CARRIED WHOLE"));
+        assert!(block
+            .text
+            .contains("from .ledgerd import run as ledgerd_run"));
 
         // The non-contract sibling: cut on a line boundary, named, with the recovery command.
         let cut = block
@@ -532,7 +547,10 @@ mod tests {
         let kept_text = &block.text[fence..at - 1];
         assert_eq!(kept_text.len(), 3470);
         let trimmed = R6H_NOTIFIERD_INIT.trim();
-        assert!(trimmed.starts_with(kept_text), "the kept text is a prefix of the source");
+        assert!(
+            trimmed.starts_with(kept_text),
+            "the kept text is a prefix of the source"
+        );
         assert!(
             trimmed[kept_text.len()..].starts_with('\n'),
             "the kept prefix ends on a line boundary"
@@ -558,7 +576,10 @@ mod tests {
         let block = dependency_sources_block(&root, &owned, &all, TargetLang::Python, false);
         let first = block.cuts.iter().find(|c| c.file == "app/dep0.py").unwrap();
         assert_eq!(first.reason, CUT_PER_FILE_CAP);
-        assert_eq!(first.kept, 3_499, "70 whole lines of 50 bytes, minus the final newline");
+        assert_eq!(
+            first.kept, 3_499,
+            "70 whole lines of 50 bytes, minus the final newline"
+        );
         // 4 × 3,499 kept leaves 4 chars: dep4 gets no line boundary in that room and dep5 finds the
         // same 4 — both are NAMED with nothing shown, never silently absent.
         for f in ["app/dep4.py", "app/dep5.py"] {
@@ -568,7 +589,9 @@ mod tests {
                 (0, CUT_BUDGET_EXHAUSTED, big.trim().len()),
                 "{f}"
             );
-            assert!(block.text.contains(&format!("## API of {f} — NOT SHOWN (3599 bytes)")));
+            assert!(block
+                .text
+                .contains(&format!("## API of {f} — NOT SHOWN (3599 bytes)")));
             assert!(block.text.contains(&format!("`sed -n 'A,Bp' {f}`")));
         }
         assert_eq!(block.cuts.len(), 6, "{:?}", block.cuts);
@@ -585,7 +608,9 @@ mod tests {
         let all = vec![owned[0].clone(), "app/util.py".to_string()];
         let block = dependency_sources_block(&root, &owned, &all, TargetLang::Python, false);
         assert!(block.cuts.is_empty());
-        assert!(block.text.contains("## API of app/util.py (a dependency you import"));
+        assert!(block
+            .text
+            .contains("## API of app/util.py (a dependency you import"));
         assert!(block.text.contains("def helper():\n    return 1\n```"));
         assert!(!block.text.contains("TRUNCATED"));
         let _ = std::fs::remove_dir_all(&root);
@@ -597,7 +622,10 @@ mod tests {
     fn a_bare_word_in_prose_is_not_a_reference_but_an_import_of_the_same_name_is() {
         let db = vec!["app/db.py".to_string()];
         assert!(R6H_APP_MAIN.contains("--db-dir"));
-        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &db), None);
+        assert_eq!(
+            names_owned_module("app/__main__.py", R6H_APP_MAIN, &db),
+            None
+        );
         // Positive control: the same file with one relative import of the module IS its caller.
         let with_import = format!("{R6H_APP_MAIN}\nfrom . import db\n");
         assert_eq!(
@@ -607,7 +635,10 @@ mod tests {
         // `ledger.db` (a filename in a help string) is not a reference to app/ledger.py either.
         let ledger = vec!["app/ledger.py".to_string()];
         assert!(R6H_APP_MAIN.contains("ledger.db"));
-        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &ledger), None);
+        assert_eq!(
+            names_owned_module("app/__main__.py", R6H_APP_MAIN, &ledger),
+            None
+        );
         // Nor is `from .ledgerd import` a reference to `app/ledger.py`.
         assert!(R6H_APP_MAIN.contains("from .ledgerd import run"));
     }
@@ -615,37 +646,57 @@ mod tests {
     #[test]
     fn names_owned_module_matches_reference_syntax_only() {
         let owned = vec!["app/ledgerd/impl.py".to_string()];
-        let form = |dep: &str, text: &str| {
-            names_owned_module(dep, text, &owned).map(|(_, form)| form)
-        };
+        let form =
+            |dep: &str, text: &str| names_owned_module(dep, text, &owned).map(|(_, form)| form);
         // Same directory, bare import forms.
         assert_eq!(
             form("app/ledgerd/__init__.py", "from . import impl\n"),
             Some("from . import impl".into())
         );
         assert_eq!(
-            form("app/ledgerd/__init__.py", "from . import run, impl  # comment\n"),
+            form(
+                "app/ledgerd/__init__.py",
+                "from . import run, impl  # comment\n"
+            ),
             Some("from . import impl".into())
         );
         assert_eq!(
             form("app/ledgerd/__main__.py", "from .impl import run\n"),
             Some("from .impl".into())
         );
-        assert_eq!(form("app/ledgerd/__main__.py", "import impl\n"), Some("import impl".into()));
+        assert_eq!(
+            form("app/ledgerd/__main__.py", "import impl\n"),
+            Some("import impl".into())
+        );
         // A bare call with no import is not enough — and prose never is.
         assert_eq!(form("app/ledgerd/__main__.py", "impl.run(1)\n"), None);
         assert_eq!(form("app/ledgerd/__main__.py", "the impl is late\n"), None);
-        assert_eq!(form("app/ledgerd/__init__.py", "from . import impl_helpers\n"), None);
-        assert_eq!(form("app/ledgerd/__init__.py", "from .impl_helpers import x\n"), None);
+        assert_eq!(
+            form("app/ledgerd/__init__.py", "from . import impl_helpers\n"),
+            None
+        );
+        assert_eq!(
+            form("app/ledgerd/__init__.py", "from .impl_helpers import x\n"),
+            None
+        );
         // Another directory naming ITS OWN impl: not this task's contract.
-        assert_eq!(form("app/notifierd/__init__.py", "from . import impl\nimpl.run()\n"), None);
+        assert_eq!(
+            form(
+                "app/notifierd/__init__.py",
+                "from . import impl\nimpl.run()\n"
+            ),
+            None
+        );
         // Another directory, qualified.
         assert_eq!(
             form("app/__main__.py", "from app.ledgerd import impl\n"),
             Some("from app.ledgerd import impl".into())
         );
         assert_eq!(
-            form("app/__main__.py", "import app.ledgerd.impl as ledger_impl\n"),
+            form(
+                "app/__main__.py",
+                "import app.ledgerd.impl as ledger_impl\n"
+            ),
             Some("import app.ledgerd.impl".into())
         );
         assert_eq!(
@@ -660,7 +711,10 @@ mod tests {
             form("tools/x.py", "open('app/ledgerd/impl.py')\n"),
             Some("ledgerd/impl".into())
         );
-        assert_eq!(form("app/__main__.py", "from app.ledgerd import impl_helpers\n"), None);
+        assert_eq!(
+            form("app/__main__.py", "from app.ledgerd import impl_helpers\n"),
+            None
+        );
         assert_eq!(form("app/__main__.py", "import app.ledgerd.implx\n"), None);
         // A root-level owned file has no parent to qualify with: imports only, from the root.
         let root_db = vec!["db.py".to_string()];
@@ -682,11 +736,19 @@ mod tests {
         // TypeScript: a relative path literal from the same directory.
         let ts = vec!["src/ledger/impl.ts".to_string()];
         assert_eq!(
-            names_owned_module("src/ledger/index.ts", "import { run } from './impl';\n", &ts),
+            names_owned_module(
+                "src/ledger/index.ts",
+                "import { run } from './impl';\n",
+                &ts
+            ),
             Some((&ts[0], "./impl".to_string()))
         );
         assert_eq!(
-            names_owned_module("src/main.ts", "import { run } from '../ledger/impl';\n", &ts),
+            names_owned_module(
+                "src/main.ts",
+                "import { run } from '../ledger/impl';\n",
+                &ts
+            ),
             Some((&ts[0], "ledger/impl".to_string()))
         );
     }
