@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import { Navigation } from './NavigationPanel';
@@ -33,6 +33,20 @@ vi.mock('../../contexts/FeaturesContext', () => ({
 
 vi.mock('./ProjectsSection', () => ({
   ProjectsSection: () => <div data-testid="projects-section" />,
+}));
+
+const themeMock = vi.hoisted(() => ({
+  preference: { current: 'system' as 'system' | 'light' | 'dark' },
+  set: vi.fn(),
+}));
+
+vi.mock('../../contexts/ThemeContext', () => ({
+  useTheme: () => ({
+    userThemePreference: themeMock.preference.current,
+    setUserThemePreference: themeMock.set,
+    resolvedTheme: 'light',
+    mcpHostStyles: {},
+  }),
 }));
 
 const renderNav = (path = '/benchmark') =>
@@ -83,9 +97,32 @@ describe('NavigationPanel (Studio shell)', () => {
     const last = rows[rows.length - 1];
     expect(last.textContent).toContain('Settings');
     expect(last.getAttribute('aria-current')).toBe('page');
-    expect(last.parentElement?.className).toContain('border-t');
-    expect(last.parentElement?.className).toContain('border-lz-border');
+    const bottom = screen.getByTestId('nav-bottom-row');
+    expect(bottom.contains(last)).toBe(true);
+    expect(bottom.className).toContain('border-t');
+    expect(bottom.className).toContain('border-lz-border');
     expect(screen.getByTestId('projects-section')).toBeInTheDocument();
+  });
+
+  it('the theme switch sits in the bottom row beside Settings: System | Light | Dark as an icon radiogroup, 36px, System checked by default', () => {
+    renderNav('/settings');
+    const bottom = screen.getByTestId('nav-bottom-row');
+    const group = within(bottom).getByRole('radiogroup', { name: 'Theme' });
+    expect(group.className).toContain('h-lz-row');
+    const radios = within(group).getAllByRole('radio');
+    expect(radios.map((r) => r.getAttribute('title'))).toEqual(['System', 'Light', 'Dark']);
+    expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
+    for (const r of radios) {
+      expect(r.querySelector('svg')).not.toBeNull();
+      expect(r.querySelector('.sr-only')?.textContent).toBe(r.getAttribute('title'));
+    }
+    // The checked segment is the accent fill; the others are ink on the surface.
+    for (const c of SURFACE.selected.split(' ')) expect(radios[0].className).toContain(c);
+    expect(radios[1].className).not.toContain('bg-lz-accent');
+    fireEvent.click(radios[2]);
+    expect(themeMock.set).toHaveBeenCalledWith('dark');
+    // The bottom row's own button is still Settings — the segments are radios, not buttons.
+    expect(within(bottom).getAllByRole('button')).toHaveLength(1);
   });
 
   it('carries no banned pattern below the fade root, and every class compiles against main.css', async () => {

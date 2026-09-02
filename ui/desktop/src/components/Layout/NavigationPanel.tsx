@@ -4,6 +4,7 @@ import { useEdition } from '../../contexts/EditionContext';
 import { motion } from 'framer-motion';
 import { useNavigationContext } from './NavigationContext';
 import { ProjectsSection } from './ProjectsSection';
+import { ThemeSwitch } from './ThemeSwitch';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
   NAV_ITEMS,
@@ -140,13 +141,20 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
       {/* Projects tree — the pass-B replacement for the removed CHATS section. */}
       <ProjectsSection className="mt-2 flex-1" />
 
-      {/* Settings pinned to bottom, as one more nav row above a hairline. */}
-      <div className={cx('border-t px-2 py-2', SURFACE.hairline)}>
-        <NavRow
-          item={SETTINGS_NAV_ITEM}
-          active={isActive(SETTINGS_NAV_ITEM.path)}
-          onClick={() => navigate(SETTINGS_NAV_ITEM.path)}
-        />
+      {/* Settings pinned to bottom, as one more nav row above a hairline, with the theme switch
+          (System | Light | Dark) beside it — the one control the owner reached for and missed. */}
+      <div
+        data-testid="nav-bottom-row"
+        className={cx('flex items-center gap-1 border-t px-2 py-2', SURFACE.hairline)}
+      >
+        <div className="min-w-0 flex-1">
+          <NavRow
+            item={SETTINGS_NAV_ITEM}
+            active={isActive(SETTINGS_NAV_ITEM.path)}
+            onClick={() => navigate(SETTINGS_NAV_ITEM.path)}
+          />
+        </div>
+        <ThemeSwitch />
       </div>
     </motion.div>
   );
