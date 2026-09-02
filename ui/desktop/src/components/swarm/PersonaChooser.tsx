@@ -7,8 +7,8 @@ import { FOCUS, MOTION, RADIUS, SURFACE, WEIGHT, cx } from '../lz';
  *  - 'agent':  the autonomous implementation — runs a loop with a recipe + skills, iterating on its own.
  * Presentational only (value + onChange). The Studio segmented register by hand: the active option is
  * the accent fill with white ink, the others the quiet ink with a solid hover step; segments are divided
- * by the container's divide-x hairline, never a border-l on a button (no left rail, no faded tints, no
- * native <select>). Kept a pressed-button group so the aria-pressed contract stays as it was.
+ * by the container's divide-x hairline, never a left border on a button (no left rail, no faded tints,
+ * no native dropdown). Kept a pressed-button group so the aria-pressed contract stays as it was.
  */
 
 export type Persona = 'coding' | 'agent';
