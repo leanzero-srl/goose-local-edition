@@ -292,6 +292,10 @@ type ElectronAPI = {
     theme: string;
     tokensUpdated?: boolean;
   }) => void;
+  /** Pushes the preference to main's nativeTheme.themeSource; answers with shouldUseDarkColors. */
+  setThemeSource: (preference: 'system' | 'light' | 'dark') => Promise<{ dark: boolean }>;
+  /** nativeTheme 'updated' → the new shouldUseDarkColors; returns the unsubscribe. */
+  onNativeThemeUpdated: (callback: (dark: boolean) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   // Update-related functions
   getVersion: () => string;
@@ -501,6 +505,14 @@ const electronAPI: ElectronAPI = {
     tokensUpdated?: boolean;
   }) => {
     ipcRenderer.send('broadcast-theme-change', themeData);
+  },
+  setThemeSource: (preference: 'system' | 'light' | 'dark'): Promise<{ dark: boolean }> =>
+    ipcRenderer.invoke('theme-set', preference),
+  onNativeThemeUpdated: (callback: (dark: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { dark: boolean }) =>
+      callback(payload.dark);
+    ipcRenderer.on('native-theme-updated', handler);
+    return () => ipcRenderer.removeListener('native-theme-updated', handler);
   },
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('open-external', url);

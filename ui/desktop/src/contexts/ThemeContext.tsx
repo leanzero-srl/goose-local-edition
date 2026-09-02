@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { applyThemeTokens, buildMcpHostStyles } from '../theme/theme-tokens';
 import type { McpUiHostStyles } from '@modelcontextprotocol/ext-apps/app-bridge';
 
@@ -18,6 +18,10 @@ function getSystemTheme(): ResolvedTheme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+// The synchronous guess. The renderer's prefers-color-scheme mirrors Chromium's NativeTheme but was
+// measured STALE in a running window (2026-09-02: OS Dark, System chosen, matchMedia false → the app
+// went light). Main's nativeTheme.shouldUseDarkColors is the truth and overrides this guess as soon
+// as `theme-set` answers (applyPreference below).
 function resolveTheme(preference: ThemePreference): ResolvedTheme {
   if (preference === 'system') {
     return getSystemTheme();
@@ -43,6 +47,27 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   // Start with light theme to avoid flash, will update once settings load
   const [userThemePreference, setUserThemePreferenceState] = useState<ThemePreference>('light');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('light');
+  const preferenceRef = useRef<ThemePreference>('light');
+
+  // One motion for every way a preference arrives (settings load, a click, another window): paint
+  // it, push it to main (nativeTheme.themeSource = preference), and under 'system' paint main's
+  // answer — nativeTheme.shouldUseDarkColors — over the renderer's guess. A fixed Light/Dark is
+  // final on the spot, exactly as before.
+  const applyPreference = useCallback((preference: ThemePreference) => {
+    preferenceRef.current = preference;
+    setUserThemePreferenceState(preference);
+    setResolvedTheme(resolveTheme(preference));
+    void (async () => {
+      try {
+        const { dark } = await window.electron.setThemeSource(preference);
+        if (preference === 'system' && preferenceRef.current === 'system') {
+          setResolvedTheme(dark ? 'dark' : 'light');
+        }
+      } catch (error) {
+        console.warn('[ThemeContext] theme-set failed:', error);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     async function loadThemeFromSettings() {
@@ -51,51 +76,54 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
           window.electron.getSetting('useSystemTheme'),
           window.electron.getSetting('theme'),
         ]);
-
-        let preference: ThemePreference;
-        if (useSystemTheme) {
-          preference = 'system';
-        } else {
-          preference = savedTheme;
-        }
-
-        setUserThemePreferenceState(preference);
-        setResolvedTheme(resolveTheme(preference));
+        applyPreference(useSystemTheme ? 'system' : savedTheme);
       } catch (error) {
         console.warn('[ThemeContext] Failed to load theme settings:', error);
       }
     }
 
     loadThemeFromSettings();
-  }, []);
+  }, [applyPreference]);
 
-  const setUserThemePreference = useCallback(async (preference: ThemePreference) => {
-    setUserThemePreferenceState(preference);
+  const setUserThemePreference = useCallback(
+    async (preference: ThemePreference) => {
+      applyPreference(preference);
+      const resolved = resolveTheme(preference);
 
-    const resolved = resolveTheme(preference);
-    setResolvedTheme(resolved);
-
-    // Save to settings
-    try {
-      if (preference === 'system') {
-        await window.electron.setSetting('useSystemTheme', true);
-      } else {
-        await window.electron.setSetting('useSystemTheme', false);
-        await window.electron.setSetting('theme', preference);
+      // Save to settings
+      try {
+        if (preference === 'system') {
+          await window.electron.setSetting('useSystemTheme', true);
+        } else {
+          await window.electron.setSetting('useSystemTheme', false);
+          await window.electron.setSetting('theme', preference);
+        }
+      } catch (error) {
+        console.warn('[ThemeContext] Failed to save theme settings:', error);
       }
-    } catch (error) {
-      console.warn('[ThemeContext] Failed to save theme settings:', error);
-    }
 
-    // Broadcast to other windows via Electron
-    window.electron?.broadcastThemeChange({
-      mode: resolved,
-      useSystemTheme: preference === 'system',
-      theme: resolved,
+      // Broadcast to other windows via Electron
+      window.electron?.broadcastThemeChange({
+        mode: resolved,
+        useSystemTheme: preference === 'system',
+        theme: resolved,
+      });
+    },
+    [applyPreference]
+  );
+
+  // Main's nativeTheme 'updated' event: the OS flipped (or another window set the source). Under
+  // 'system' it is the theme; under a fixed choice the choice stands.
+  useEffect(() => {
+    if (!window.electron) return;
+    return window.electron.onNativeThemeUpdated((dark) => {
+      if (preferenceRef.current !== 'system') return;
+      setResolvedTheme(dark ? 'dark' : 'light');
     });
   }, []);
 
-  // Listen for system theme changes when preference is 'system'
+  // The renderer's own prefers-color-scheme change, kept beside main's event — when it fires it
+  // carries a fresh value, and it is the only signal in a window whose bridge is gone.
   useEffect(() => {
     if (userThemePreference !== 'system') return;
 
@@ -121,8 +149,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
           ? 'dark'
           : 'light';
 
-      setUserThemePreferenceState(newPreference);
-      setResolvedTheme(resolveTheme(newPreference));
+      applyPreference(newPreference);
 
       // Save to settings (don't await, fire and forget)
       if (newPreference === 'system') {
@@ -137,7 +164,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     return () => {
       window.electron.off('theme-changed', handleThemeChanged);
     };
-  }, []);
+  }, [applyPreference]);
 
   // Apply theme class and CSS tokens whenever resolvedTheme changes
   useEffect(() => {

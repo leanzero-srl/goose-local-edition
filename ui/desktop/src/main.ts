@@ -8,6 +8,7 @@ import {
   ipcMain,
   Menu,
   MenuItem,
+  nativeTheme,
   net,
   Notification,
   powerSaveBlocker,
@@ -2069,6 +2070,34 @@ ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {
   if (key === 'disableAutoDownload') {
     setAutoDownloadDisabled(value as boolean);
   }
+});
+
+type ThemePreference = 'system' | 'light' | 'dark';
+const THEME_PREFERENCES: ReadonlySet<string> = new Set<ThemePreference>([
+  'system',
+  'light',
+  'dark',
+]);
+
+function themePreferenceOf(settings: Settings): ThemePreference {
+  if (settings.useSystemTheme) return 'system';
+  return settings.theme === 'dark' ? 'dark' : 'light';
+}
+
+// Main is the only process that can set Chromium's NativeTheme; the renderer's prefers-color-scheme
+// merely mirrors it, and was measured stale (2026-09-02: OS Dark, System chosen, matchMedia false).
+// The preference lands here at startup and on every change, and the answer is the truth the
+// renderer paints under 'system'.
+function applyThemeSource(preference: ThemePreference): boolean {
+  nativeTheme.themeSource = preference;
+  return nativeTheme.shouldUseDarkColors;
+}
+
+ipcMain.handle('theme-set', (_event, preference: unknown) => {
+  if (typeof preference !== 'string' || !THEME_PREFERENCES.has(preference)) {
+    throw new Error(`theme-set: unknown preference ${String(preference)}`);
+  }
+  return { dark: applyThemeSource(preference as ThemePreference) };
 });
 
 ipcMain.handle('get-secret-key', (event) => {
@@ -4364,6 +4393,17 @@ async function appMain() {
       delete s.globalShortcut;
     });
   }
+
+  // The persisted theme preference reaches NativeTheme before any window exists, so the first
+  // prefers-color-scheme a renderer reads is already the user's choice; every later OS or
+  // preference change fans out to the windows as one event.
+  applyThemeSource(themePreferenceOf(settings));
+  nativeTheme.on('updated', () => {
+    const payload = { dark: nativeTheme.shouldUseDarkColors };
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('native-theme-updated', payload);
+    }
+  });
 
   // Register global shortcuts based on settings
   registerGlobalShortcuts();
