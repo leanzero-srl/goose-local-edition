@@ -430,7 +430,10 @@ fn swarm_rs_line_count_only_decreases() {
     // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
     // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
     // the baseline is the count AFTER all three, so each intermediate commit sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 33_901; // r6i-staging: extractions VA-103..110 — set to what the merged file IS
+    // Tightened to 33,802 (r6j, VA-118 wiring): the per-answer research tool lives in
+    // commands/swarm/research_tool.rs with `queue_research_relay` moved beside it; the
+    // wiring here is the frontend-tool arm, the extension add and the fan's landing open/close.
+    const SWARM_RS_LINE_BASELINE: usize = 33_802;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
