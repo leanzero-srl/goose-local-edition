@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Button } from './button';
@@ -29,7 +31,9 @@ describe('ui/button (the app-wide base)', () => {
       ]) {
         expect(b.className, v).toContain(c);
       }
-      expect(b.className, v).not.toMatch(/opacity|ring-ring|\/20|\/40|\/50|\/60|\/80|shadow-xs/);
+      expect(b.className, v).not.toMatch(
+        /opacity|ring-ring|\/20|\/40|\/50|\/60|\/80|\/90|shadow-xs/
+      );
     }
     assertStudioClean(container);
     expect(
@@ -42,7 +46,33 @@ describe('ui/button (the app-wide base)', () => {
         'focus-visible:outline-offset-1',
         'focus-visible:outline-ring',
         'hover:bg-background-tertiary',
+        'hover:bg-lz-inverse-hover',
+        'hover:bg-lz-danger-hover',
       ])
     ).toEqual([]);
   }, 30_000);
+
+  // The default and destructive hovers were `/90` alpha blends — a faded fill (DESIGN.md ban 2).
+  // They are solid host-wide tokens now, one step toward the page in each theme.
+  it('default and destructive hover on SOLID host-wide tokens, never a /90 alpha', () => {
+    render(
+      <>
+        <Button variant="default">default</Button>
+        <Button variant="destructive">destructive</Button>
+      </>
+    );
+    expect(screen.getByText('default').className).toContain('hover:bg-lz-inverse-hover');
+    expect(screen.getByText('destructive').className).toContain('hover:bg-lz-danger-hover');
+
+    const css = readFileSync(resolve(__dirname, '../../styles/main.css'), 'utf8');
+    for (const token of ['--color-lz-inverse-hover', '--color-lz-danger-hover']) {
+      const values = [...css.matchAll(new RegExp(`${token}:\\s*(#[0-9a-f]{6});`, 'g'))].map(
+        (m) => m[1]
+      );
+      // one light (:root) and one dark (.dark) value, both solid 6-digit hex, and they differ
+      expect(values, token).toHaveLength(2);
+      expect(new Set(values).size, token).toBe(2);
+    }
+    expect(css).not.toMatch(/background-(inverse|danger)\/90/);
+  });
 });
