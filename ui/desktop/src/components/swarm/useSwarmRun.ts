@@ -335,11 +335,25 @@ export interface ResearchQuestionRow {
   /** Empty until the lane names it (a derived question lands with its outcome) or when the outcome is
    *  a lane-level row with no question (`lane_panicked`). */
   question: string;
-  /** `dispatched` until its terminal event lands; `unanswered` is the loud absence twin, never hidden. */
-  status: 'dispatched' | 'answered' | 'unanswered';
+  /** `dispatched` until its terminal event lands; `unanswered` is the loud absence twin, never hidden;
+   *  `covered` (VA-031) is the LEGACY-LOG terminal of a question that LEFT the lane's batch because an
+   *  earlier mini or an open decision already answered it — still one of the lane's questions. */
+  status: 'dispatched' | 'answered' | 'unanswered' | 'covered';
   /** The lane's own word about its question (`research_question_kind.kind`): design | external |
-   *  unkinded. Absent on archived logs that predate the event — never defaulted. */
+   *  unkinded — or the classifier's `spec_restated`. Absent on archived logs that predate the event —
+   *  never defaulted. */
   kind?: string;
+  /** VA-118: who decided the kind (`research_question_kind.source`): `model` (the lane's word) or
+   *  `classifier` (`classify_design_entry` re-kinded a design entry showing fewer than two alternatives
+   *  to `spec_restated`; `modelKind` keeps what the lane had said, `cite` the evidence it read). Absent
+   *  on archives that predate the field. */
+  kindSource?: string;
+  modelKind?: string;
+  /** LEGACY-LOG (fab90e91b → e33a2f77f, the r6c–r6h archives): `research_question_covered` — `by: mini`
+   *  names the durable mini (`by_mini`, `research-<slice>-q<n>.json`) whose answer was copied onto this
+   *  row; `by: decision` names the open decision (0-based `decision`) the question was routed to.
+   *  `rule` is the match the engine applied: cite | decision_id | stem. */
+  covered?: { by: string; mini?: string; decision?: number; rule: string };
   cite?: string;
   chars?: number;
   raised?: number;
@@ -366,6 +380,20 @@ export interface ResearchLaneClose {
   detail?: string;
   /** The engine's own lane clock at the close (`secs`). */
   secs?: number;
+}
+
+/**
+ * VA-031: `research_raised_folded{slice, q_index, raised_by, question}` (research.rs
+ * emit_research_outcome) — a question the lane RAISED and could not settle, never dispatched (r6b: 48
+ * raised, 0 chased), folded verbatim into THIS slice's brief for its builder
+ * (`raised_questions_brief_block`). The count rode `research_answered.raised` all along; these are the
+ * words, one per event, on the lane that raised them.
+ */
+export interface ResearchRaisedFold {
+  /** The row that raised it (`q_index`) and its durable mini (`raised_by`). */
+  qIndex: number;
+  raisedBy: string;
+  question: string;
 }
 
 export interface TurnLane {
@@ -475,6 +503,9 @@ export interface TurnLane {
   /** VA-143: the lane's closer, when the engine emitted one — event truth on the carry, like the
    *  questions. Absent while the lane runs and on a lane that ended without one. */
   researchClose?: ResearchLaneClose;
+  /** VA-031: what the lane raised and folded into its slice's brief — event truth on the carry, like
+   *  the questions. Absent when the lane raised nothing. */
+  researchRaisedFolded?: ResearchRaisedFold[];
   seq: number;
 }
 
@@ -3260,8 +3291,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       case 'run_finished': {
         const report = (e['report'] ?? {}) as Record<string, unknown>;
         const done = arr(report['done']).length;
-        // Only CORE failures decide the verdict: a failed BONUS task (optional extra work) must not make the
-        // whole run read as "failed".
+        // LEGACY-LOG: `report.bonus` has no emitter — 83e8089a5 deleted the dynamic replanner, the ONLY
+        // thing that ever populated the scheduler's bonus ids, and a0bff8f9f removed `RunReport.bonus`
+        // itself. Archived r5/r6c reports still carry it, so the read stays for their replay: a failed
+        // BONUS task (the replanner's optional extras) must not make an archived run read as "failed"
+        // on its core work.
         const bonus = new Set(arr(report['bonus']).map(String));
         const coreFailed = arr(report['failed'])
           .map(String)
@@ -3703,6 +3737,8 @@ interface ResearchBatchCarry {
   close?: { reason: string; detail?: string; secs?: number };
   /** VA-143: `research_builder_decides` events for this slice, counted as they arrive. */
   builderDecides: number;
+  /** VA-031: `research_raised_folded` events for this slice — the words, in event order. */
+  raisedFolded: ResearchRaisedFold[];
   seq: number;
 }
 
@@ -3802,10 +3838,15 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         derives: e['derives'] === true,
         questions: new Map(),
         builderDecides: 0,
+        raisedFolded: [],
         seq: c.seq++,
       };
       c.research.set(key, batch);
     }
+    // A carry the cover event created before this dispatch (LEGACY-LOG order: the cover fires at the
+    // lane's dispatch, ahead of the per-question dispatch lines) learns the dispatch's own facts.
+    if (e['derives'] === true) batch.derives = true;
+    if (!batch.model && str(e['model'])) batch.model = str(e['model']);
     if (batch.derives) c.researchBySlice.set(slice, key);
     const seeded =
       qIndex != null
@@ -3836,8 +3877,70 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       question: str(e['question']) || prior?.question || '',
       kind: str(e['kind']) || undefined,
       cite: str(e['cite']) || undefined,
+      // VA-118 / VA-031: `source` says who decided the kind; `model_kind` is what the lane said when
+      // the classifier overrode it (the engine's own null otherwise — left absent here, never defaulted).
+      kindSource: str(e['source']) || prior?.kindSource,
+      modelKind: str(e['model_kind']) || prior?.modelKind,
     });
     c.researchByQuestion.set(qk, key);
+    return;
+  }
+  // LEGACY-LOG (fab90e91b → e33a2f77f, the r6c–r6h archives): `research_question_covered{slice, q_index,
+  // question, by: "mini", by_mini, rule}` / `{…, by: "decision", decision, rule}`. The fan cut C2 read
+  // the minis on disk at a lane's dispatch and every batch question one already answered (rule: cite |
+  // decision_id | stem) LEFT the batch with that mini copied onto its row; a slice question that was an
+  // open decision was routed to it before any dispatch. VA-089 deleted both doors (the lanes derive
+  // their own questions) and no emitter remains — the archives carry it, and a covered question is
+  // still one the lane held: it stays a ROW in the lane's numbering, never a silent gap (a reader saw
+  // fewer questions than the lane derived and could not tell why). The cover fires before the
+  // dispatch that would have named the question, so the carry is created here on the slice's own
+  // documented key when the log has not yet — the same derivation the dispatch arm makes.
+  if (type === 'research_question_covered') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const qk = researchQuestionKey(slice, qIndex);
+    const key = c.researchByQuestion.get(qk) ?? c.researchBySlice.get(slice) ?? `research-${slice}`;
+    let batch = c.research.get(key);
+    if (!batch) {
+      batch = {
+        slice,
+        derives: false,
+        questions: new Map(),
+        builderDecides: 0,
+        raisedFolded: [],
+        seq: c.seq++,
+      };
+      c.research.set(key, batch);
+    }
+    const prior = batch.questions.get(qk);
+    batch.questions.set(qk, {
+      ...(prior ?? { slice, qIndex, question: '' }),
+      question: str(e['question']) || prior?.question || '',
+      status: 'covered',
+      covered: {
+        by: str(e['by']),
+        mini: str(e['by_mini']) || undefined,
+        decision: num(e['decision']) ?? undefined,
+        rule: str(e['rule']),
+      },
+    });
+    c.researchByQuestion.set(qk, key);
+    return;
+  }
+  // VA-031: `research_raised_folded{slice, q_index, raised_by, question}` (research.rs
+  // emit_research_outcome, one per raised line of a landed row) — a question the lane raised and could
+  // not settle, folded verbatim into THIS slice's brief for its builder. The words, on the lane that
+  // raised them; a slice with no lane on this log (a resumed ledger row) has nowhere to show them, as
+  // with its builder_decides.
+  if (type === 'research_raised_folded') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const key = c.researchBySlice.get(slice) ?? c.researchByQuestion.get(researchQuestionKey(slice, qIndex));
+    const batch = key ? c.research.get(key) : undefined;
+    if (!batch) return;
+    batch.raisedFolded.push({ qIndex, raisedBy: str(e['raised_by']), question: str(e['question']) });
     return;
   }
   // VA-143: the lane's closer and its builder_decides are LANE facts, never question rows. A
@@ -4207,6 +4310,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         model: d.model ?? batch?.model,
         status,
         researchQuestions: questions,
+        ...(batch?.raisedFolded.length ? { researchRaisedFolded: batch.raisedFolded } : {}),
         // The closer's secs is the engine's own lane clock — the one duration anyone has for a
         // research lane (its digest carries no elapsed).
         ...(close ? { researchClose: close, elapsedMs: close.secs != null ? close.secs * 1000 : undefined } : {}),

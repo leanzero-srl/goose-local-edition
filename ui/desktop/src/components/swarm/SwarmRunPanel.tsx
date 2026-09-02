@@ -27,6 +27,7 @@ import {
   type TurnLane,
   type ResearchLaneClose,
   type ResearchQuestionRow,
+  type ResearchRaisedFold,
   type LiveChannel,
   type SwarmCall,
   type InflightCall,
@@ -389,14 +390,31 @@ const ReasoningBlock: React.FC<{
 };
 
 /** Solid fill per research question KIND (`research_question_kind.kind`, the lane's own word): the
- *  engine's vocabulary is design | external | unkinded; any other word the engine may name gets the
+ *  engine's vocabulary is design | external | unkinded, plus the classifier's spec_restated (VA-118: a
+ *  design entry showing fewer than two alternatives); any other word the engine may name gets the
  *  neutral slate rather than no chip. White ink on every fill — no tints. */
 const RESEARCH_KIND_COLOR: Record<string, string> = {
   design: '#7c3aed',
   external: '#0e7490',
+  spec_restated: '#c2410c',
   unkinded: SWARM_STATUS.stopped,
 };
 const researchKindColor = (kind: string) => RESEARCH_KIND_COLOR[kind] ?? SWARM_STATUS.stopped;
+/** VA-031: the solid fills for a question another mini or a decision already COVERED (the q chip and
+ *  its provenance chip) and for a question the lane RAISED and folded into its builder's brief. */
+const RESEARCH_COVERED = '#0369a1';
+const RESEARCH_RAISED = '#be185d';
+
+/** `covered by <slice> q<n>` from the mini the engine named (`research_question_covered.by_mini`, the
+ *  file name research.rs research_mini_name wrote: `research-<slice>-q<n>.json`), or `covered by
+ *  decision <i>` for a question routed to an open decision (`by: decision`, the engine's own index into
+ *  the opener's list). A mini name outside the pattern is shown as it came — never blank. */
+const coveredByLabel = (c: NonNullable<ResearchQuestionRow['covered']>): string => {
+  if (c.by === 'decision' && c.decision != null) return `covered by decision ${c.decision}`;
+  const mini = c.mini?.match(/^research-(.+)-q(\d+)\.json$/);
+  if (mini) return `covered by ${mini[1]} q${mini[2]}`;
+  return `covered by ${c.mini || c.by || 'an earlier answer'}`;
+};
 
 /**
  * THE QUESTIONS A RESEARCH LANE CARRIES (VA-029), numbered by the engine's own q_index, each with the
@@ -417,20 +435,28 @@ const ResearchQuestionRows: React.FC<{
   questions: ResearchQuestionRow[];
   /** VA-143: the lane's closer — rendered as the lane's close line, never as a question row. */
   close?: ResearchLaneClose;
+  /** VA-031: what the lane raised and folded into its builder's brief — its own rows under the list. */
+  raisedFolded?: ResearchRaisedFold[];
   live: boolean;
-}> = ({ questions, close, live }) => {
+}> = ({ questions, close, raisedFolded, live }) => {
   const [expanded, setExpanded] = useState(true);
   const answered = questions.filter((q) => q.status === 'answered').length;
   const missed = questions.filter((q) => q.status === 'unanswered').length;
-  const open = questions.length - answered - missed;
+  // VA-031: a question another mini or a decision already covered (LEGACY-LOG, r6c–r6h) is one the
+  // lane held — counted in the header, shown as its own row, never a silent gap in the numbering.
+  const covered = questions.filter((q) => q.status === 'covered').length;
+  const open = questions.length - answered - missed - covered;
+  const raised = raisedFolded?.length ?? 0;
   const chipColor = (q: ResearchQuestionRow) =>
     q.status === 'answered'
       ? STATUS_COLOR.done
       : q.status === 'unanswered'
         ? STATUS_COLOR.error
-        : live
-          ? STATUS_COLOR.running
-          : CALL_PENDING;
+        : q.status === 'covered'
+          ? RESEARCH_COVERED
+          : live
+            ? STATUS_COLOR.running
+            : CALL_PENDING;
   const caption = (q: ResearchQuestionRow) => {
     // A landing's line: the answer's size, what it raised, and the engine's lane clock at the landing
     // (`research_answered.secs`) — absent on a landing-only archive, and then unsaid.
@@ -444,6 +470,8 @@ const ResearchQuestionRows: React.FC<{
         .join(' · ');
     if (q.status === 'unanswered')
       return `unanswered${q.reason ? ` · ${q.reason.replace(/_/g, ' ')}` : ''}`;
+    // The engine's match rule, verbatim (cite | decision_id | stem) — the WHY the vigil reads.
+    if (q.status === 'covered') return `covered${q.covered?.rule ? ` · rule ${q.covered.rule}` : ''}`;
     // Dispatched, no terminal event: answering while the lane runs; on a lane that is over, the
     // honest words are that no outcome was recorded — never "answered".
     return live ? 'answering…' : 'no outcome recorded';
@@ -462,8 +490,10 @@ const ResearchQuestionRows: React.FC<{
         <span>
           Questions · {questions.length}
           {answered > 0 ? ` · ${answered} answered` : ''}
+          {covered > 0 ? ` · ${covered} covered` : ''}
           {missed > 0 ? ` · ${missed} unanswered` : ''}
           {open > 0 && live ? ` · ${open} open` : ''}
+          {raised > 0 ? ` · ${raised} raised` : ''}
         </span>
       </button>
       {expanded ? (
@@ -495,8 +525,68 @@ const ResearchQuestionRows: React.FC<{
                   {q.kind}
                 </span>
               ) : null}
+              {/* VA-031: the kind CHANGED — the classifier overrode the lane's word
+                  (`research_question_kind{source: classifier, model_kind}`); the chip says what the lane
+                  had said, and the evidence the classifier read (`cite`) is the title. The event carries
+                  no separate reason field — the cite IS the classifier's reading. */}
+              {q.kindSource === 'classifier' && q.modelKind ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: researchKindColor(q.modelKind), borderRadius: 3 }}
+                  data-testid="research-kind-reclassified"
+                  data-model-kind={q.modelKind}
+                  title={`the lane said ${q.modelKind}; reclassified ${q.kind ?? ''} by the classifier${q.cite ? ` — ${q.cite}` : ''}`}
+                >
+                  was {q.modelKind}
+                </span>
+              ) : null}
+              {/* VA-031: the provenance of a covered question — the mini or decision that already held
+                  its answer, as the engine named it. A solid chip: this is a fact, not a dimmed row. */}
+              {q.status === 'covered' && q.covered ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: RESEARCH_COVERED, borderRadius: 3 }}
+                  data-testid="research-covered-by"
+                  data-by={q.covered.by}
+                  title={q.covered.mini || undefined}
+                >
+                  {coveredByLabel(q.covered)}
+                </span>
+              ) : null}
               <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
               <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {/* VA-031: what the lane RAISED and could not settle (`research_raised_folded`, one per line of a
+          landed row) — folded verbatim into this slice's brief for its builder; the words, pinned here
+          beside the question that raised them. The list is append-only in event order (never a sliding
+          window), so the ordinal is a stable identity. */}
+      {expanded && raisedFolded && raisedFolded.length > 0 ? (
+        <ol
+          className="mt-1.5 bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
+          style={{ borderRadius: CHIP_RADIUS }}
+          data-testid="research-raised-folded-list"
+        >
+          {raisedFolded.map((r, i) => (
+            <li
+              key={`${r.qIndex}::${i}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-raised-folded"
+              data-q-index={r.qIndex}
+              title={r.raisedBy || undefined}
+            >
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
+                style={{ background: RESEARCH_RAISED, borderRadius: 3 }}
+              >
+                raised
+              </span>
+              <span className="flex-1 min-w-0 break-words text-text-primary">{r.question}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">
+                by q{r.qIndex} · folded into this slice’s brief
+              </span>
             </li>
           ))}
         </ol>
@@ -738,6 +828,7 @@ const LaneRow: React.FC<{
             <ResearchQuestionRows
               questions={lane.researchQuestions}
               close={lane.researchClose}
+              raisedFolded={lane.researchRaisedFolded}
               live={live}
             />
           ) : null}
