@@ -2322,6 +2322,14 @@ pub struct MlxEngineStatusDto {
     pub served_model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_error: Option<String>,
+    /// Requests the engine has accepted and not finished (`/v1/status` `num_running +
+    /// num_waiting`), read on the same probe as `served_model_id`. Absent when the engine did
+    /// not report it — never a fabricated 0; `active_requests_error` says why. `> 0` is the
+    /// node's BUSY fact for the fleet corroboration; an explicit `0` is idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_requests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_requests_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_message: Option<String>,
     /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
@@ -3023,6 +3031,72 @@ pub struct LeanzeroLinkRemoteExecuteRequest {
 pub struct LeanzeroLinkRemoteExecuteResponse {
     /// The session id created on the target node — mirror it over the swarm stream.
     pub session_id: String,
+}
+
+#[cfg(test)]
+mod mlx_engine_status_dto_tests {
+    use super::*;
+
+    // Q1: `activeRequests` is the engine's own in-flight count. Absent must stay absent on
+    // the wire (no `null`), an explicit 0 is a FACT (idle) distinct from absent, and a body
+    // from an older agent that never sends the field deserializes to None — never 0.
+    #[test]
+    fn active_requests_absent_stays_absent_and_zero_is_a_fact() {
+        let silent = MlxEngineStatusDto {
+            state: "running".to_string(),
+            active_requests_error: Some(
+                "GET http://127.0.0.1:8090/v1/status returned HTTP 401".to_string(),
+            ),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&silent).unwrap();
+        assert!(
+            value.get("activeRequests").is_none(),
+            "absent must not serialize as null"
+        );
+        assert_eq!(
+            value["activeRequestsError"],
+            "GET http://127.0.0.1:8090/v1/status returned HTTP 401"
+        );
+
+        let idle = MlxEngineStatusDto {
+            state: "running".to_string(),
+            active_requests: Some(0),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&idle).unwrap();
+        assert_eq!(value["activeRequests"], 0);
+        let back: MlxEngineStatusDto = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            back.active_requests,
+            Some(0),
+            "an explicit idle zero survives the trip"
+        );
+        assert!(back.active_requests_error.is_none());
+
+        let busy = MlxEngineStatusDto {
+            state: "running".to_string(),
+            active_requests: Some(3),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&busy).unwrap();
+        assert_eq!(value["activeRequests"], 3);
+        let back: MlxEngineStatusDto = serde_json::from_value(value).unwrap();
+        assert_eq!(back.active_requests, Some(3));
+
+        let legacy: MlxEngineStatusDto = serde_json::from_value(serde_json::json!({
+            "state": "running",
+            "availableMemoryGb": 1.0,
+            "totalMemoryGb": 2.0,
+            "restartRequired": false
+        }))
+        .unwrap();
+        assert_eq!(
+            legacy.active_requests, None,
+            "an older agent's body is an absence, not 0"
+        );
+        assert_eq!(legacy.active_requests_error, None);
+    }
 }
 
 #[cfg(test)]
