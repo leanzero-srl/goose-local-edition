@@ -126,8 +126,13 @@ pub(crate) struct ResearchRow {
     pub(crate) model: String,
     pub(crate) secs: u64,
     /// The lane's kind for its question (`QuestionKind::as_str`: design | external | unkinded);
-    /// "" on a pre-VA-089 mini and on a lane-outcome row (`question` empty).
-    #[serde(default)]
+    /// "" on a lane-outcome row (`question` empty) and on a mini written before this field
+    /// reached disk. On disk it is `question_kind`: the mini's `kind` is the ledger rollup's
+    /// DISCRIMINATOR (`Some("research")` beside `task`/`gate`/`repair` in swarm.rs's rollup
+    /// match), and `write_research_ledger` used to write that literal INTO this field — r6h's 8
+    /// `research_question_kind{external}` tags reached no mini and every resumed row read
+    /// `kind: research` (fallback-hunter, 2026-09-02).
+    #[serde(default, rename = "question_kind")]
     pub(crate) kind: String,
     /// The evidence the lane cited — the request line and the grep that found no match for a
     /// design question, the vendor doc section for an external one; "" when it named none.
@@ -1580,6 +1585,8 @@ pub(super) fn relay_note(landed: &ResearchRow) -> RelayNote {
 pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Result<PathBuf, String> {
     let mut v = serde_json::to_value(row).map_err(|e| format!("serialize: {e}"))?;
     if let Some(o) = v.as_object_mut() {
+        // The MINI's kind — the rollup's discriminator for what this file is, never the
+        // question's kind, which serde writes as `question_kind` from the row itself.
         o.insert("kind".to_string(), serde_json::json!("research"));
         o.insert(
             "ts".to_string(),
@@ -3244,6 +3251,61 @@ mod tests {
         let mut r = row(slice, q_index, RESEARCH_ANSWERED, &[]);
         r.answer = answer.to_string();
         r
+    }
+
+    /// The mini's `kind` is the ledger rollup's DISCRIMINATOR (`Some("research")` beside
+    /// `task`/`gate`/`repair`), and `write_research_ledger` wrote that literal INTO the row's
+    /// question kind: r6h's 8 `research_question_kind{external}` tags reached no mini and every
+    /// resumed row read `kind: research`. The question's kind rides as `question_kind` and
+    /// round-trips; the discriminator stays; a lane-outcome row (no question) carries "" — the
+    /// honest absence, never a fabricated kind; a pre-VA-104 mini loads with the kind absent.
+    #[test]
+    fn a_lanes_question_kind_survives_the_mini_write_and_the_resume_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut external = row_answered(
+            "webhooks",
+            5,
+            "From v3 docs §8: registration is idempotent by URL.",
+        );
+        external.question =
+            "What do the v3 docs prescribe for POST /v3/webhooks registration?".into();
+        external.kind = "external".into();
+        write_research_ledger(root, &external).unwrap();
+        let mini = root
+            .join(LEDGER_DIR)
+            .join(research_mini_name("webhooks", 5));
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mini).unwrap()).unwrap();
+        assert_eq!(
+            on_disk["kind"], "research",
+            "the rollup's discriminator stays"
+        );
+        assert_eq!(
+            on_disk["question_kind"], "external",
+            "the lane's own word reaches disk"
+        );
+        assert_eq!(
+            load_research_mini(root, "webhooks", 5).unwrap().kind,
+            "external"
+        );
+        let outcome = lane_outcome_row("web", "no_questions", "derived none", "m", 40);
+        write_research_ledger(root, &outcome).unwrap();
+        assert_eq!(
+            load_research_mini(root, "web", outcome.q_index)
+                .unwrap()
+                .kind,
+            "",
+            "no question, no kind — stated, not invented"
+        );
+        let legacy = serde_json::json!({"slice": "api", "q_index": 0, "question": "q",
+            "status": "answered", "answer": "a", "model": "m", "secs": 1, "kind": "research"});
+        std::fs::write(
+            root.join(LEDGER_DIR).join(research_mini_name("api", 0)),
+            legacy.to_string(),
+        )
+        .unwrap();
+        assert_eq!(load_research_mini(root, "api", 0).unwrap().kind, "");
     }
 
     /// The brief partition (VA-089: the rows are the LANE's own questions): an answered row
