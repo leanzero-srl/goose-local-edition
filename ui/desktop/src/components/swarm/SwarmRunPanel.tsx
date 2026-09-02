@@ -28,6 +28,9 @@ import {
   type ResearchLaneClose,
   type ResearchQuestionRow,
   type ResearchRaisedFold,
+  type ResearchRaisedFor,
+  type ResearchRelay,
+  researchMiniRef,
   type LiveChannel,
   type SwarmCall,
   type InflightCall,
@@ -404,6 +407,10 @@ const researchKindColor = (kind: string) => RESEARCH_KIND_COLOR[kind] ?? SWARM_S
  *  its provenance chip) and for a question the lane RAISED and folded into its builder's brief. */
 const RESEARCH_COVERED = '#0369a1';
 const RESEARCH_RAISED = '#be185d';
+/** VA-150: the solid fills for a hand-off the lane raised for ANOTHER slice (`→ <slice>`) and for a
+ *  mini relayed INTO the lane (`from <slice> q<n>`); a relay the lane never got is the error fill. */
+const RESEARCH_HANDOFF = '#a16207';
+const RESEARCH_RELAY = '#4d7c0f';
 
 /** `covered by <slice> q<n>` from the mini the engine named (`research_question_covered.by_mini`, the
  *  file name research.rs research_mini_name wrote: `research-<slice>-q<n>.json`), or `covered by
@@ -411,10 +418,15 @@ const RESEARCH_RAISED = '#be185d';
  *  the opener's list). A mini name outside the pattern is shown as it came — never blank. */
 const coveredByLabel = (c: NonNullable<ResearchQuestionRow['covered']>): string => {
   if (c.by === 'decision' && c.decision != null) return `covered by decision ${c.decision}`;
-  const mini = c.mini?.match(/^research-(.+)-q(\d+)\.json$/);
-  if (mini) return `covered by ${mini[1]} q${mini[2]}`;
+  const mini = c.mini ? researchMiniRef(c.mini) : undefined;
+  if (mini) return `covered by ${mini.slice} q${mini.qIndex}`;
   return `covered by ${c.mini || c.by || 'an earlier answer'}`;
 };
+
+/** VA-150: `from <slice> q<n>` for a relayed mini, from the fields the event carried or the mini's own
+ *  name; a mini outside the pattern is shown as it came — never blank. */
+const relayFromLabel = (r: ResearchRelay): string =>
+  r.fromSlice && r.fromQIndex != null ? `from ${r.fromSlice} q${r.fromQIndex}` : `from ${r.fromMini || 'a mini'}`;
 
 /**
  * THE QUESTIONS A RESEARCH LANE CARRIES (VA-029), numbered by the engine's own q_index, each with the
@@ -430,6 +442,11 @@ const coveredByLabel = (c: NonNullable<ResearchQuestionRow['covered']>): string 
  * lane named as a solid chip, the answer's chars, what it raised, the lane clock it landed at (the
  * same facts the feed's `<slice> · q<n> landed · <kind> · <chars> · raised <n>` line carries, read off
  * the one carry rather than copied from the feed). The header folds the rows; the close line stays.
+ *
+ * VA-150: the cross-slice snowball is rows here too — what this lane raised FOR another slice
+ * (`research_raised_for`, a `→ <slice>` chip: r6j 17, none shown) and what was relayed INTO it while
+ * it ran (`research_mini_relayed`, a `from <slice> q<n>` chip; the r6k-staging `research_relay_skipped`
+ * twin as a loud row, never a silent gap). Both fold with the header and count in it.
  */
 const ResearchQuestionRows: React.FC<{
   questions: ResearchQuestionRow[];
@@ -437,8 +454,12 @@ const ResearchQuestionRows: React.FC<{
   close?: ResearchLaneClose;
   /** VA-031: what the lane raised and folded into its builder's brief — its own rows under the list. */
   raisedFolded?: ResearchRaisedFold[];
+  /** VA-150: what the lane raised for OTHER slices — its own rows under the list. */
+  raisedFor?: ResearchRaisedFor[];
+  /** VA-150: the minis relayed into this lane, and the relays it missed. */
+  relays?: ResearchRelay[];
   live: boolean;
-}> = ({ questions, close, raisedFolded, live }) => {
+}> = ({ questions, close, raisedFolded, raisedFor, relays, live }) => {
   const [expanded, setExpanded] = useState(true);
   const answered = questions.filter((q) => q.status === 'answered').length;
   const missed = questions.filter((q) => q.status === 'unanswered').length;
@@ -447,6 +468,9 @@ const ResearchQuestionRows: React.FC<{
   const covered = questions.filter((q) => q.status === 'covered').length;
   const open = questions.length - answered - missed - covered;
   const raised = raisedFolded?.length ?? 0;
+  const handedOff = raisedFor?.length ?? 0;
+  const relayedIn = relays?.filter((r) => r.outcome === 'delivered').length ?? 0;
+  const relaysSkipped = (relays?.length ?? 0) - relayedIn;
   const chipColor = (q: ResearchQuestionRow) =>
     q.status === 'answered'
       ? STATUS_COLOR.done
@@ -494,9 +518,12 @@ const ResearchQuestionRows: React.FC<{
           {missed > 0 ? ` · ${missed} unanswered` : ''}
           {open > 0 && live ? ` · ${open} open` : ''}
           {raised > 0 ? ` · ${raised} raised` : ''}
+          {handedOff > 0 ? ` · ${handedOff} handed off` : ''}
+          {relayedIn > 0 ? ` · ${relayedIn} relayed in` : ''}
+          {relaysSkipped > 0 ? ` · ${relaysSkipped} relay${relaysSkipped === 1 ? '' : 's'} skipped` : ''}
         </span>
       </button>
-      {expanded ? (
+      {expanded && questions.length > 0 ? (
         <ol
           className="bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
           style={{ borderRadius: CHIP_RADIUS }}
@@ -591,6 +618,78 @@ const ResearchQuestionRows: React.FC<{
           ))}
         </ol>
       ) : null}
+      {/* VA-150: what the lane raised FOR ANOTHER SLICE (`research_raised_for`, one per `[for <slice>]`
+          line of a landed row) — the destination as a solid chip, the words verbatim. It reaches that
+          slice's builder at plan time (answer_routing), so this is the only place the hand-off is read
+          while research runs. Append-only in event order; the ordinal is a stable identity. */}
+      {expanded && raisedFor && raisedFor.length > 0 ? (
+        <ol
+          className="mt-1.5 bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
+          style={{ borderRadius: CHIP_RADIUS }}
+          data-testid="research-raised-for-list"
+        >
+          {raisedFor.map((r, i) => (
+            <li
+              key={`${r.qIndex}::${r.to}::${i}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-raised-for"
+              data-to={r.to}
+              data-q-index={r.qIndex}
+              title={r.raisedBy || undefined}
+            >
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                style={{ background: RESEARCH_HANDOFF, borderRadius: 3 }}
+              >
+                → {r.to || 'a slice'}
+              </span>
+              <span className="flex-1 min-w-0 break-words text-text-primary">{r.text}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">by q{r.qIndex}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {/* VA-150: what was relayed INTO this lane while it ran (`research_mini_relayed`: the mini's
+          question rode the lane's next message) and the relay it never got (`research_relay_skipped`,
+          r6k-staging: its landing had closed) — the absence twin renders as loudly as the delivery. */}
+      {expanded && relays && relays.length > 0 ? (
+        <ol
+          className="mt-1.5 bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
+          style={{ borderRadius: CHIP_RADIUS }}
+          data-testid="research-relay-list"
+        >
+          {relays.map((r, i) => (
+            <li
+              key={`${r.fromMini}::${r.outcome}::${i}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-relay"
+              data-outcome={r.outcome}
+              data-from={r.fromMini}
+              title={r.fromMini || undefined}
+            >
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                style={{
+                  background: r.outcome === 'delivered' ? RESEARCH_RELAY : STATUS_COLOR.error,
+                  borderRadius: 3,
+                }}
+              >
+                {relayFromLabel(r)}
+              </span>
+              <span className="flex-1 min-w-0 break-words text-text-primary">
+                {r.outcome === 'delivered'
+                  ? r.question || 'the mini landed on this lane'
+                  : `relay skipped: ${(r.reason || 'reason unsaid').replace(/_/g, ' ')}`}
+              </span>
+              {r.outcome === 'delivered' && r.chars != null ? (
+                <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">
+                  {r.chars.toLocaleString()} chars
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
       {/* VA-143: the lane's close — what it landed and the choices it left to its builder — from the
           `remainder_empty` closer and the `research_builder_decides` events, clocked by the engine's
           own lane secs. r6j web-viz: "landed 4 · builder_decides 11 · done 34m", where the closer
@@ -658,6 +757,12 @@ const LaneRow: React.FC<{
   // attempt's text off as current. Chips only — the expandable superseded bodies live in the inspector.
   const said = laneSaidState(lane);
   const saidChips = said.superseded.length > 0 || said.live.kind === 'error';
+  // A research lane's rows exist from its first question — or, VA-150, from the first mini relayed into
+  // it (r6j: web-viz q1 reached research-ledgerd-api 1h49m before that lane named a question).
+  const researchRows =
+    (lane.researchQuestions?.length ?? 0) > 0 ||
+    (lane.researchRaisedFor?.length ?? 0) > 0 ||
+    (lane.researchRelays?.length ?? 0) > 0;
   const hasBody =
     reasoning.length > 0 ||
     calls.length > 0 ||
@@ -665,7 +770,7 @@ const LaneRow: React.FC<{
     (lane.recent?.length ?? 0) > 0 ||
     laneError.length > 0 ||
     saidChips ||
-    (lane.researchQuestions?.length ?? 0) > 0;
+    researchRows;
   // The first call NEEDING ATTENTION auto-expands so the reason is zero clicks away. One definition —
   // this site used `c.ok === false`, which opens on productive app-errors (the worker testing), while the
   // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
@@ -824,11 +929,13 @@ const LaneRow: React.FC<{
           ) : null}
           {/* A research lane's questions (VA-029) — the lane's identity, not a reasoning dump, so every
               mode shows them: numbered, each with its own outcome from the per-question events. */}
-          {lane.researchQuestions && lane.researchQuestions.length > 0 ? (
+          {researchRows ? (
             <ResearchQuestionRows
-              questions={lane.researchQuestions}
+              questions={lane.researchQuestions ?? []}
               close={lane.researchClose}
               raisedFolded={lane.researchRaisedFolded}
+              raisedFor={lane.researchRaisedFor}
+              relays={lane.researchRelays}
               live={live}
             />
           ) : null}

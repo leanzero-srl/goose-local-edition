@@ -396,6 +396,52 @@ export interface ResearchRaisedFold {
   question: string;
 }
 
+/**
+ * VA-150: `research_raised_for{from, to, q_index, raised_by, text}` (research.rs emit_research_outcome,
+ * the same funnel, for a `[for <slice>] …` line of a landed row) — a hand-off the lane raised for
+ * ANOTHER slice's builder. It reaches that builder at plan time through answer_routing (VA-104), never
+ * through a research lane's brief; r6j emitted 17 and the panel consumed none, so the cross-slice
+ * snowball the engine relies on was invisible. The words, on the lane that raised them, with the
+ * slice they are for.
+ */
+export interface ResearchRaisedFor {
+  qIndex: number;
+  raisedBy: string;
+  /** The destination slice (`to`). */
+  to: string;
+  text: string;
+}
+
+/**
+ * VA-150: a mini handed INTO a lane while it ran. `research_mini_relayed{to_lane, from_question,
+ * from_mini, chars}` (swarm.rs drain_research_relay — the note rode the target's next message; the
+ * targets are research.rs `relay_targets`: every still-running lane of another slice whose material
+ * names a path the landed question names) is the delivery. `research_relay_skipped{from, from_mini,
+ * to, q_index, reason}` (research_tool.rs research_relay_skipped_event, r6k-staging) is its absence
+ * twin: the target's landing had closed and nothing would have drained the note. Both name the
+ * target by its activity key.
+ */
+export interface ResearchRelay {
+  outcome: 'delivered' | 'skipped';
+  /** The mini that was relayed (`from_mini`, `research-<slice>-q<n>.json`) and the slice and index read
+   *  off its name (the skipped twin also names `from` and `q_index` outright). */
+  fromMini: string;
+  fromSlice: string;
+  fromQIndex?: number;
+  /** The relayed question (`from_question`) and the note's size — on the delivery only. */
+  question?: string;
+  chars?: number;
+  /** The skip's reason, verbatim (`lane_closed`) — on the skipped twin only. */
+  reason?: string;
+}
+
+/** The slice and index a durable mini's name carries (research.rs research_mini_name writes
+ *  `research-<slice>-q<n>.json`); undefined for a name outside the pattern, which is shown as it came. */
+export const researchMiniRef = (mini: string): { slice: string; qIndex: number } | undefined => {
+  const m = mini.match(/^research-(.+)-q(\d+)\.json$/);
+  return m ? { slice: m[1], qIndex: Number(m[2]) } : undefined;
+};
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -506,6 +552,12 @@ export interface TurnLane {
   /** VA-031: what the lane raised and folded into its slice's brief — event truth on the carry, like
    *  the questions. Absent when the lane raised nothing. */
   researchRaisedFolded?: ResearchRaisedFold[];
+  /** VA-150: the hand-offs this lane raised for OTHER slices (`research_raised_for`) — event truth on
+   *  the carry, like the questions. Absent when it raised none for another slice. */
+  researchRaisedFor?: ResearchRaisedFor[];
+  /** VA-150: the minis relayed INTO this lane while it ran, and the relays it missed — event truth on
+   *  the carry. Absent when nothing was relayed to it. */
+  researchRelays?: ResearchRelay[];
   seq: number;
 }
 
@@ -3739,6 +3791,10 @@ interface ResearchBatchCarry {
   builderDecides: number;
   /** VA-031: `research_raised_folded` events for this slice — the words, in event order. */
   raisedFolded: ResearchRaisedFold[];
+  /** VA-150: `research_raised_for` events this slice raised — the words and their destination. */
+  raisedFor: ResearchRaisedFor[];
+  /** VA-150: `research_mini_relayed` / `research_relay_skipped` events naming this lane as the target. */
+  relays: ResearchRelay[];
   seq: number;
 }
 
@@ -3839,6 +3895,8 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         questions: new Map(),
         builderDecides: 0,
         raisedFolded: [],
+        raisedFor: [],
+        relays: [],
         seq: c.seq++,
       };
       c.research.set(key, batch);
@@ -3909,6 +3967,8 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         questions: new Map(),
         builderDecides: 0,
         raisedFolded: [],
+        raisedFor: [],
+        relays: [],
         seq: c.seq++,
       };
       c.research.set(key, batch);
@@ -3941,6 +4001,42 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
     const batch = key ? c.research.get(key) : undefined;
     if (!batch) return;
     batch.raisedFolded.push({ qIndex, raisedBy: str(e['raised_by']), question: str(e['question']) });
+    return;
+  }
+  // VA-150: `research_raised_for{from, to, q_index, raised_by, text}` — the same funnel, for a line the
+  // lane raised for ANOTHER slice's builder (`[for <slice>] …`). On the lane that raised it, with its
+  // destination; the destination's lane is not touched — the point reaches that builder at plan time
+  // through answer_routing, never through a research lane. r6j: 17, none consumed here until now.
+  if (type === 'research_raised_for') {
+    const from = str(e['from']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const key = c.researchBySlice.get(from) ?? c.researchByQuestion.get(researchQuestionKey(from, qIndex));
+    const batch = key ? c.research.get(key) : undefined;
+    if (!batch) return;
+    batch.raisedFor.push({ qIndex, raisedBy: str(e['raised_by']), to: str(e['to']), text: str(e['text']) });
+    return;
+  }
+  // VA-150: a mini handed INTO a lane. `research_mini_relayed{to_lane, from_question, from_mini, chars}`
+  // names its target by activity key (the note rode that lane's next message); `research_relay_skipped
+  // {from, from_mini, to, q_index, reason}` (r6k-staging) is the absence twin — the target's landing had
+  // closed, so the note would never have been drained. Either way the target had a running entry, so
+  // its dispatch is on this log and its carry exists; a target with none is not a lane of this log.
+  if (type === 'research_mini_relayed' || type === 'research_relay_skipped') {
+    const delivered = type === 'research_mini_relayed';
+    const batch = c.research.get(str(delivered ? e['to_lane'] : e['to']));
+    if (!batch) return;
+    const fromMini = str(e['from_mini']);
+    const ref = researchMiniRef(fromMini);
+    batch.relays.push({
+      outcome: delivered ? 'delivered' : 'skipped',
+      fromMini,
+      fromSlice: str(e['from']) || ref?.slice || '',
+      fromQIndex: num(e['q_index']) ?? ref?.qIndex,
+      ...(delivered
+        ? { question: str(e['from_question']) || undefined, chars: num(e['chars']) ?? undefined }
+        : { reason: str(e['reason']) || undefined }),
+    });
     return;
   }
   // VA-143: the lane's closer and its builder_decides are LANE facts, never question rows. A
@@ -4311,6 +4407,8 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         status,
         researchQuestions: questions,
         ...(batch?.raisedFolded.length ? { researchRaisedFolded: batch.raisedFolded } : {}),
+        ...(batch?.raisedFor.length ? { researchRaisedFor: batch.raisedFor } : {}),
+        ...(batch?.relays.length ? { researchRelays: batch.relays } : {}),
         // The closer's secs is the engine's own lane clock — the one duration anyone has for a
         // research lane (its digest carries no elapsed).
         ...(close ? { researchClose: close, elapsedMs: close.secs != null ? close.secs * 1000 : undefined } : {}),
