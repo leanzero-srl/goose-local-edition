@@ -334,6 +334,117 @@ pub(super) fn drift_streak_step(
     }
 }
 
+/// VA-146: THE ENGINE IS A WITNESS TOO. `repeated_next` (VA-056) corroborates a DRIFTING with
+/// the judge's OWN prior undelivered NEXT — a named action, nothing delivered, no action since —
+/// but it requires a prior judge look and an output-tool lane, so a BUILD lane's FIRST drifting
+/// look could never be corroborated by it. The engine's `delivery_defect_steer` framed
+/// `none_written_yet` is the same kind of witness: it named the first write, it landed on the
+/// lane (at dispatch of this very look, in the measured case), and the disk says nothing answered
+/// it. All four inputs are facts: zero actions since the previous look, a files-owing lane, no
+/// owned-byte growth since the look, and the steer standing (`NudgeHistory::defect_steer_standing`,
+/// cleared only by an owned file existing on disk — never by a delivered nudge, which is words).
+///
+/// MEASURED (r6j web-viz-scene-stream, live): 20:00:49Z `judge_look_dispatched{trigger:
+/// recurrence, look 1}` and at the same instant `delivery_defect_steer{framing: none_written_yet,
+/// defects: [".swarm/shards/web-viz/scene-stream/README.md does not exist — this task owns it and
+/// nothing has written it"]}`; 20:07:19Z `judge_look{verdict: drifting, confidence HIGH, NEXT: "a
+/// single tool call writing …/README.md as a minimal 10-line stub"}` → `judge_drift_held{actions:
+/// 0, produced: ~22k, drift_streak: 1}`. The model wrote that README by itself at 20:22:27Z, 15
+/// minutes after the correct, held nudge; look 2 never came.
+pub(super) fn engine_witness(
+    actions_since_last_look: usize,
+    owns_files: bool,
+    owned_grew_since_look: bool,
+    defect_steer_standing: bool,
+) -> bool {
+    actions_since_last_look == 0 && owns_files && !owned_grew_since_look && defect_steer_standing
+}
+
+/// DRIFTING needs no corroboration, and LOOPING still does. The asymmetry is the
+/// point: the measured misread class is "the FIRST look says LOOPING and it is wrong"
+/// (four fires at 1,200 / 1,201 / 3,759 / 4,003 reasoning chars, every kill wrong, the
+/// tasks completed fine on retry), and the defence against it is the content-gated
+/// streak below. DRIFTING is a different claim — the call is WORKING, on the wrong
+/// thing — which tail recurrence structurally cannot corroborate, and whose cost is now
+/// one in-session message rather than a dead worker. So it acts on the first look.
+/// DRIFTING ON A CALL THAT IS PRODUCING IS AN OPINION, AND IT COSTS 66 MINUTES.
+///
+/// MEASURED across run 4: of 34 nudges with a follow-up look, **ONE** was followed by
+/// an action and 33 were not -- 43,842 characters of reasoning and 66 minutes of WORKER
+/// time burned reading supervisor notes and doing nothing. The no-action nudges are
+/// overwhelmingly DRIFTING fired at `produced` of 4,000-4,005: a call generating four
+/// thousand fresh characters between looks, told it is working on the wrong thing.
+///
+/// The justification for acting on the first look was that a steer costs "one
+/// in-session message rather than a dead worker". At a 3% action rate that message is
+/// not free -- it is a turn boundary, a re-read and a re-plan on the working node.
+///
+/// So DRIFTING now acts only on a call that is NOT producing. A call that is steadily
+/// generating gets left alone unless something factual is wrong with what it has
+/// written, which is the verifier's job and not a matter of opinion. LOOPING and a
+/// MEASURED repeat are unchanged: those are claims about a stuck call, not about taste.
+///
+/// AND A CALL THAT IS ACTING IS PRODUCING. The hold was keyed on reasoning characters
+/// alone, so it protected narrating planner lanes and left a tool-using worker nudged
+/// on the FIRST DRIFTING look with no corroboration — the same inversion the rate block
+/// already warns the judge about ("It is WORKING... do not read a low reasoning count
+/// as a stall") while the engine went on doing it.
+///
+/// BUT A HOLD WITH NO WAY BACK IS NOT CAUTION, IT IS BLINDNESS. Measured on this very
+/// run: open-coverage-2 reached 21,749 reasoning characters with ZERO tool calls, was
+/// diagnosed DRIFTING, and was held -- and nothing in the old rule could ever deliver
+/// it, however far it went, because "producing" was true forever. Its sibling
+/// open-coverage-1 sat at 17,710 in the same state. Five DRIFTING verdicts across the
+/// run produced one nudge.
+///
+/// LOOPING already has the right shape and DRIFTING did not: LOOPING acts on the
+/// SECOND look that agrees, never the first. So drift corroborates the same way. One
+/// DRIFTING on a producing call is the noise the 33-of-34 measurement describes; a
+/// second DRIFTING with STILL no progress on the deliverable in between is the judge
+/// saying the same thing twice about a call that has done nothing about it, and that
+/// is evidence, not taste.
+///
+/// AND "DID SOMETHING ABOUT IT" IS MEASURED ON THE DELIVERABLE, NOT ON TOOL CALLS
+/// (r6c web-viz, BUILD+294m): five DRIFTING verdicts (15:51/16:21/17:13/17:39/18:37)
+/// were ALL held because the lane logged 1-2 READ-ONLY sed/grep calls per look window
+/// (act=1/2/1/2/1), each one resetting the old action-count streak — while it wrote
+/// ZERO files and its formed channel moved 772->924 bytes across five hours. A
+/// reads-but-never-writes lane was structurally shielded from ever receiving a steer.
+/// And the reset-on-any-non-drift-verdict was the second shield: an interleaved ok
+/// (18:01, established="" next="") disarmed the case the 17:39 hold had just armed.
+/// `ladder::drift_streak_step` carries the rule: WRITE progress (owned bytes grew)
+/// resets; a read-only call does not; on a files-owing lane an interleaved ok leaves
+/// the armed case standing — only progress on the files it owes disarms it.
+///
+/// WHICH WITNESS CORROBORATES THIS DRIFTING, if any — `None` on a non-drift verdict and on a
+/// first DRIFTING nobody corroborates (the hold). The name rides `judge_delivery_decided` and
+/// `judge_nudge` as `witness`, so which corroboration produces useful nudges is answerable from
+/// the artefact. Ordered most-factual first: the streak is the judge saying it twice with no
+/// write progress between; the meter's recurrence is an engine measurement; `repeated_next` is
+/// the judge's own undelivered direction standing (VA-056); `engine_defect_steer` is the engine's
+/// own undelivered direction standing (VA-146, `engine_witness`).
+pub(super) fn drift_witness(
+    drift_verdict: bool,
+    drift_streak: u32,
+    recurring: bool,
+    repeated_next: bool,
+    engine_witnessed: bool,
+) -> Option<&'static str> {
+    if !drift_verdict {
+        None
+    } else if drift_streak >= 2 {
+        Some("drift_streak")
+    } else if recurring {
+        Some("meter_recurring")
+    } else if repeated_next {
+        Some("repeated_next")
+    } else if engine_witnessed {
+        Some("engine_defect_steer")
+    } else {
+        None
+    }
+}
+
 /// IS THE DRIFT HOLD'S PROMISE DUE? (r6c web-viz, tick 26 — the full walk is on
 /// `nudge_delivery`'s promise paragraph.) All four inputs are progress facts; none is a new
 /// counter or a clock:
@@ -870,6 +981,11 @@ pub(super) struct NudgeHistory {
     /// `None` once a direction is delivered (the delivered text is `last_direction`) or when the
     /// previous look named no NEXT.
     pub(super) undelivered_next: Option<String>,
+    /// VA-146: the engine's own `delivery_defect_steer` framed `none_written_yet` stands on this
+    /// lane — it named the first write and nothing has delivered it. Cleared the moment an owned
+    /// file exists on disk (`owned_file_landed`), never by a delivered nudge: the witness is about
+    /// the DISK, and a steer is words. Read by `engine_witness` at the verdict site.
+    pub(super) defect_steer_standing: bool,
 }
 
 impl NudgeHistory {
@@ -892,6 +1008,16 @@ impl NudgeHistory {
     pub(super) fn direction_delivered(&mut self, direction: &str) {
         self.last_direction = direction.to_string();
         self.undelivered_next = None;
+    }
+
+    /// The engine steered this lane with a none-written-yet defect note: its witness stands.
+    pub(super) fn note_defect_steer(&mut self) {
+        self.defect_steer_standing = true;
+    }
+
+    /// An owned file exists on disk: the engine's witness is answered.
+    pub(super) fn owned_file_landed(&mut self) {
+        self.defect_steer_standing = false;
     }
 
     /// The whole settled record for a restream seed — every look's ESTABLISHED, oldest first,
@@ -1536,6 +1662,95 @@ mod tests {
             s, 0,
             "a non-drift look breaks a reasoning lane's streak as before"
         );
+    }
+
+    /// VA-146, r6j web-viz-scene-stream look 1 walked at the CONSUMER (the delivery decision):
+    /// 20:00:49Z the recurrence look dispatched and the engine's `delivery_defect_steer{framing:
+    /// none_written_yet}` landed at the same instant; 20:07:19Z DRIFTING (HIGH) at streak 1,
+    /// meter 0.014 (not recurring), ~22k produced, 0 actions, the README absent, a BUILD lane (no
+    /// output tool, so `repeated_next` can never fire). The engine's own steer is the witness:
+    /// the nudge DELIVERS as the attempt's first steer instead of `judge_drift_held`. The same
+    /// facts with no steer standing keep the hold the 33/34 measurement bought.
+    #[test]
+    fn the_engines_own_defect_steer_corroborates_a_build_lanes_first_drifting() {
+        let mut h = NudgeHistory::default();
+        h.note_defect_steer();
+        let streak = drift_streak_step(0, true, false, true);
+        assert_eq!(streak, 1, "look 1: the streak alone cannot corroborate");
+        let repeated_next = false;
+        let witnessed = engine_witness(0, true, false, h.defect_steer_standing);
+        let witness = drift_witness(true, streak, false, repeated_next, witnessed);
+        assert_eq!(witness, Some("engine_defect_steer"));
+        let produced_anything = true;
+        let drifting_now = witness.is_some() || !produced_anything;
+        assert!(drifting_now, "corroborated: not held");
+        let delivery = nudge_delivery(
+            true,
+            None,
+            &goose_swarm::Verdict::Drifting,
+            None,
+            false,
+            false,
+        );
+        assert!(
+            matches!(
+                delivery,
+                NudgeDelivery::Steer("first nudge of this attempt")
+            ),
+            "the README stub is asked for at 20:07, not written unprompted at 20:22: {delivery:?}"
+        );
+
+        // The same look with no engine steer standing: the existing hold.
+        let unwitnessed = engine_witness(0, true, false, false);
+        assert_eq!(
+            drift_witness(true, streak, false, repeated_next, unwitnessed),
+            None,
+            "a first DRIFTING on a producing call with no witness is still held"
+        );
+        // A call that ACTED since the look is not this witness (it has turn boundaries and may
+        // be writing): the streak, not the steer, decides on the next look.
+        assert!(!engine_witness(1, true, false, true));
+        // Owned bytes grew since the look: the lane is delivering.
+        assert!(!engine_witness(0, true, true, true));
+        // A reasoning lane owns nothing the engine could have named.
+        assert!(!engine_witness(0, false, false, true));
+        // Not a drift verdict: no witness at all.
+        assert_eq!(drift_witness(false, 3, true, true, true), None);
+        // Most-factual first when several stand.
+        assert_eq!(
+            drift_witness(true, 2, false, false, true),
+            Some("drift_streak")
+        );
+        assert_eq!(
+            drift_witness(true, 1, true, false, true),
+            Some("meter_recurring")
+        );
+        assert_eq!(
+            drift_witness(true, 1, false, true, true),
+            Some("repeated_next")
+        );
+    }
+
+    /// The witness is about the DISK: a delivered nudge (words) leaves it standing; an owned file
+    /// existing clears it — the 0-byte README case included, which `owned_grew_since_look` alone
+    /// would miss.
+    #[test]
+    fn the_defect_steer_witness_stands_until_an_owned_file_lands() {
+        let mut h = NudgeHistory::default();
+        assert!(!h.defect_steer_standing, "nothing steered yet");
+        h.note_defect_steer();
+        assert!(h.defect_steer_standing);
+        h.direction_delivered("write the README stub now");
+        assert!(
+            h.defect_steer_standing,
+            "a delivered nudge is not a file on disk"
+        );
+        h.owned_file_landed();
+        assert!(
+            !h.defect_steer_standing,
+            "an owned file on disk answers the engine"
+        );
+        assert!(!engine_witness(0, true, false, h.defect_steer_standing));
     }
 
     /// THE PROMISE-EVASION SEQUENCE (r6c web-viz, tick 26, run swarm-20260831-072930517):
