@@ -68,7 +68,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
-import { FLEET_PROBE_TIMEOUT_MS, lmStudioApiToken, postFleetChat, probeFleetModels } from './utils/fleetProbe';
+import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
@@ -1969,22 +1969,14 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
 // unreachable from a renderer fetch no matter what the header adds. `net.fetch` in main has no CSP.
 // `endpoint` is the configured host base; utils/fleetProbe.ts derives the routes and names every
 // failure (bad-endpoint / timeout / unreachable / http / bad-json) so the offline state is honest.
-// The probe carries LM Studio's API token when main's environment has LMSTUDIO_API_KEY — the key the
-// engine reads — so a server with "require API token" on answers instead of 401ing a bare probe; a
-// 401 still surfaces as the typed `http` error naming the key, never as unreachable. Env only: main has
-// no reader for goose's secret store, and the value is never logged.
+// Both calls carry LM Studio's API token when main's environment has LMSTUDIO_API_KEY — the key the
+// engine reads — so a server with "require API token" on answers instead of 401ing a bare call; a 401
+// still surfaces as the typed `http` error naming the key, never as unreachable. The bodies live in
+// utils/fleetIpc.ts (tested under a fake fetch); the env is the only token source a desktop process can
+// reach — goose's secret store masks every renderer read — and the value is never logged.
 const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
-ipcMain.handle('fleet-probe', async (_event, endpoint: unknown) =>
-  probeFleetModels(
-    typeof endpoint === 'string' ? endpoint : '',
-    mainFetch,
-    FLEET_PROBE_TIMEOUT_MS,
-    lmStudioApiToken()
-  )
-);
-ipcMain.handle('fleet-chat', async (_event, endpoint: unknown, body: unknown) =>
-  postFleetChat(typeof endpoint === 'string' ? endpoint : '', body, mainFetch)
-);
+ipcMain.handle('fleet-probe', fleetProbeHandler(mainFetch));
+ipcMain.handle('fleet-chat', fleetChatHandler(mainFetch));
 
 // The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
 // machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own
