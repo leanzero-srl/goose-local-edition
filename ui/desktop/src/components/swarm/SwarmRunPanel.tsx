@@ -46,6 +46,7 @@ import {
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
   type RunVerdict,
+  type KnownBug,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -2296,7 +2297,7 @@ const NodeInspector: React.FC<{
   // exact input measured at 354ms per scan. Length is identity on an append-only channel; the lane key
   // rides the deps so another lane's equal length can never serve a stale collapse.
   const thinkSource = inspectorThinkingText(lane ?? {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   const rawThink = useMemo(
     () => collapseRepeats(tailOf(thinkSource, REPEAT_SCAN_CHARS)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4759,44 +4760,84 @@ const PlanningZone: React.FC<{
  * These are deliberately NOT rendered as failures. Amber, its own heading, and a sentence that says the run
  * passed — a red list here would be a false red, which this panel exists to prevent as much as a false green.
  */
-const KnownActiveBugs: React.FC<{ bugs: string[]; verdict: RunVerdict | null }> = ({ bugs, verdict }) => {
+/** The solid fill for a known bug's class chip — one saturated hue per severity the engine derives
+ *  (`FindingSeverity::label`): critical red, high amber, medium blue, low/unsourced slate. White text on
+ *  every one; never a tint. */
+const knownBugClassColor = (severity: string): string =>
+  severity === 'critical'
+    ? SWARM_STATUS.solidError
+    : severity === 'high'
+      ? SWARM_STATUS.solidRunning
+      : severity === 'medium'
+        ? SWARM_STATUS.action
+        : SWARM_STATUS.solidStopped;
+
+const KnownActiveBugs: React.FC<{ bugs: KnownBug[]; verdict: RunVerdict | null }> = ({ bugs, verdict }) => {
   const [open, setOpen] = useState(true);
   if (bugs.length === 0) return null;
+  // VA-129: the engine's own count of render-class findings among the shipped bugs. 0 on every green by
+  // construction; on a red with zero criticals it is the reason for the red, so it is said beside the count.
+  const renderClass = verdict?.renderClassKnownBugs ?? 0;
+  const explain =
+    verdict && !verdict.passed
+      ? renderClass > 0
+        ? `still active when the run ended — ${renderClass} render-class finding${renderClass === 1 ? '' : 's'} blocked the green`
+        : 'still active when the run ended'
+      : 'the run passed — these are what it passed WITH';
   return (
-    <div className="border-t border-border-primary">
+    <div className="border-t border-border-primary" data-testid="known-active-bugs">
       <ZoneHeader
         hue={SWARM_STATUS.running}
         label="Known active bugs"
         // "the run passed" may only be claimed when the engine's verdict says so — on a FAILED gate the
         // same list is simply what was still broken at the end, and the old caption asserted a pass from
         // bug presence alone (the truth-layer sin: a claim driven by nothing that could invalidate it).
-        explain={
-          verdict && !verdict.passed
-            ? 'still active when the run ended'
-            : 'the run passed — these are what it passed WITH'
-        }
+        explain={explain}
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
         right={
-          <span
-            className="text-xs px-2 py-0.5 text-white font-semibold tabular-nums"
-            style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS }}
-          >
-            {bugs.length}
-          </span>
+          <>
+            {renderClass > 0 ? (
+              <span
+                className="text-[10px] px-2 py-0.5 text-white font-semibold uppercase tracking-wide tabular-nums"
+                style={{ backgroundColor: SWARM_STATUS.solidError, borderRadius: CHIP_RADIUS }}
+                data-testid="known-bugs-render-class-chip"
+              >
+                {renderClass} render-class
+              </span>
+            ) : null}
+            <span
+              className="text-xs px-2 py-0.5 text-white font-semibold tabular-nums"
+              style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS }}
+              data-testid="known-bugs-count-chip"
+            >
+              {bugs.length}
+            </span>
+          </>
         }
       />
       {open ? (
         <ol className="px-3 pb-3 space-y-1.5">
-          {bugs.map((bug, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs" style={{ color: GEN_TEXT }}>
+          {bugs.map((bug) => (
+            <li key={bug.text} className="flex items-start gap-2 text-xs" style={{ color: GEN_TEXT }}>
               <Bug
                 className="h-3.5 w-3.5 shrink-0 mt-0.5"
                 style={{ color: SWARM_STATUS.running }}
                 aria-hidden
               />
+              {bug.severity ? (
+                // The class the engine's authoring check derived, verbatim — r6h shipped a `critical`
+                // known bug green; without this chip it read as a cosmetic minor.
+                <span
+                  className="shrink-0 mt-px text-[10px] px-1.5 py-px text-white font-semibold uppercase tracking-wide"
+                  style={{ backgroundColor: knownBugClassColor(bug.severity), borderRadius: CHIP_RADIUS }}
+                  data-testid="known-bug-class"
+                >
+                  {bug.severity}
+                </span>
+              ) : null}
               <span className="min-w-0 break-words">
-                <InlineMarkdown content={bug} />
+                <InlineMarkdown content={bug.text} />
               </span>
             </li>
           ))}
@@ -4992,6 +5033,14 @@ const RunOverview: React.FC<{
   );
 };
 
+/** " · N render-class finding(s) blocked the green" on a FAILED verdict whose red is the render-class
+ *  clause (VA-006/VA-129): zero criticals, but a browser-probe finding the gate refuses to ship as a known
+ *  bug. Empty on a pass (always 0 there) and on engines that never emitted the field. */
+const renderClassSuffix = (v: RunVerdict): string => {
+  const n = v.renderClassKnownBugs ?? 0;
+  return n > 0 ? ` · ${n} render-class finding${n === 1 ? '' : 's'} blocked the green` : '';
+};
+
 // The clear ENDING a run was missing: a solid terminal banner so a finished/stopped run never sits in limbo
 // (tasks green, no "running", no "done"). Done = green, finished-with-failures = red, stopped-without-a-
 // completion-signal (killed/crashed) = solid slate. Carries the tally + total time + the output directory.
@@ -5021,7 +5070,7 @@ const WrapUpBanner: React.FC<{
     : SWARM_STATUS.solidError;
   const headline = verdict.passed
     ? `Verdict is in — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugCount > 0 ? ` · ${bugCount} known bug${bugCount === 1 ? '' : 's'} ship` : ''}`
-    : `Verdict is in — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}`;
+    : `Verdict is in — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}${renderClassSuffix(verdict)}`;
   return (
     <div className="border-b border-border-primary" data-testid="wrapup-banner">
       <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
@@ -5088,7 +5137,7 @@ const TerminalBanner: React.FC<{
       ? v.verified
         ? 'PASSED — verified end-to-end'
         : 'PASSED — but the engine retracted its verification'
-      : `FAILED${v.remainingFindings != null ? ` — ${v.remainingFindings} finding${v.remainingFindings === 1 ? '' : 's'} remain` : ''}`
+      : `FAILED${v.remainingFindings != null ? ` — ${v.remainingFindings} finding${v.remainingFindings === 1 ? '' : 's'} remain` : ''}${renderClassSuffix(v)}`
     : cfg.title;
   const parts = [
     `${done}/${tasks} task${tasks === 1 ? '' : 's'} done`,

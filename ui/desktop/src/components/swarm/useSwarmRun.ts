@@ -660,6 +660,21 @@ export interface RunVerdict {
   passedMeans: string | null;
   remainingFindings: number | null;
   shipped: string | null;
+  /** `complete_result.render_class_known_bugs` — how many of the shipped known bugs are render-class
+   *  (a browser-probe finding). By the engine's own partition this is 0 on every PASSED verdict, and on a
+   *  FAILED one with zero criticals it is the whole reason for the red: the gate refuses to ship a
+   *  render-class finding as a known bug (VA-006). null on engines that never emitted the field. */
+  renderClassKnownBugs: number | null;
+}
+
+/** One shipped known bug: the engine's finding text VERBATIM and the severity its authoring check derived
+ *  for it (`complete_result.known_active_bugs_severities[i]` / `known_bugs.severities[i]` — critical, high,
+ *  medium, low, or unsourced). null on legacy events with no severities array. MEASURED on r6h (VA-129):
+ *  the one known bug shipped green was "the app ships NO executable tests" at severity `critical` — with
+ *  no class on screen it read as a cosmetic minor. */
+export interface KnownBug {
+  text: string;
+  severity: string | null;
 }
 
 /** The OPEN phase's cut of the request, plus what RESEARCH produced from it. `weights` are the opener's own
@@ -800,9 +815,10 @@ export interface SwarmRunState {
    *  every module still specified and owned. */
   synthesisFallback: { error: string; tasks: number } | null;
   /** KNOWN ACTIVE BUGS — the MINOR defects the engine shipped green with (complete_result.known_active_bugs,
-   *  and defects_rated.minors while the run is still going). These are NOT failures: the run passed, and
-   *  these are what is imperfect about what it passed with. Rendered as their own list, never as errors. */
-  knownActiveBugs: string[];
+   *  and defects_rated.minors while the run is still going), each with the class the engine derived for it.
+   *  These are NOT failures: the run passed, and these are what is imperfect about what it passed with.
+   *  Rendered as their own list, never as errors. */
+  knownActiveBugs: KnownBug[];
   /** The engine's own end-to-end verdict (complete_result, revised by complete_result_revised) — null until
    *  the gate has run. Non-null with finished=false is the POST-VERDICT TAIL (persona reflection, overview,
    *  final report): the verdict is in but the engine is still wrapping up, and the panel must say so — r5's
@@ -1320,7 +1336,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   qa: SwarmAnswer[];
   sinkRenamedFrom: string | null;
   synthesisFallback: { error: string; tasks: number } | null;
-  knownActiveBugs: string[];
+  knownActiveBugs: KnownBug[];
   verdict: RunVerdict | null;
 } {
   const feed: ActivityItem[] = [];
@@ -1379,7 +1395,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let resumed: RunMeta['resumed'];
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
-  let knownActiveBugs: string[] = [];
+  let knownActiveBugs: KnownBug[] = [];
   let verdict: RunVerdict | null = null;
   let finished = false;
   let cseq = 0;
@@ -1996,7 +2012,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const critical = num(e['critical']) ?? 0;
         const minor = num(e['minor']) ?? 0;
         const forced = num(e['engine_forced']) ?? 0;
-        knownActiveBugs = arr(e['minors']).map(String);
+        knownActiveBugs = arr(e['minors']).map((m) => ({ text: String(m), severity: null }));
         const t =
           critical === 0
             ? `Every critical defect closed — shipping with ${minor} known active bug${minor === 1 ? '' : 's'}`
@@ -2013,7 +2029,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           sub:
             [
               forced > 0 ? `${forced} forced critical by the engine, not the rater` : '',
-              knownActiveBugs.map((m, i) => `${i + 1}. ${m}`).join('\n'),
+              knownActiveBugs.map((m, i) => `${i + 1}. ${m.text}`).join('\n'),
             ]
               .filter(Boolean)
               .join('\n') || undefined,
@@ -2023,7 +2039,18 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'complete_result': {
         const bugs = arr(e['known_active_bugs']).map(String);
-        if (bugs.length > 0) knownActiveBugs = bugs;
+        // Parallel to known_active_bugs in the engine's emit (same most-severe-first order); a length
+        // mismatch means the pairing cannot be trusted, so no class is claimed rather than a wrong one.
+        const sevs = arr(e['known_active_bugs_severities']).map(String);
+        const paired = sevs.length === bugs.length;
+        // THE SNAPSHOT OUTRANKS THE MERGE whenever the engine wrote one — an EMPTY one included. The
+        // engine clears known_active_bugs on a green finish after red-with-minors rounds (those bugs were
+        // FIXED), so an empty list here means nothing ships, and the known_bugs union from earlier rounds
+        // must not survive it as a stale "known active" list over a clean tree. Only an event with no
+        // field at all (legacy logs) keeps the union.
+        if (Array.isArray(e['known_active_bugs']))
+          knownActiveBugs = bugs.map((text, i) => ({ text, severity: paired ? sevs[i] : null }));
+        const shipping = knownActiveBugs.length;
         // THE VERDICT, verbatim from the engine's own gate — r5 shipped {passed, verified, 7 remaining}
         // and the only screen mention was the known-bugs caption. From here until run_finished the run is
         // in its post-verdict tail (persona reflection, overview, final report), so the phase label says
@@ -2034,10 +2061,12 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           passedMeans: str(e['passed_means']) || null,
           remainingFindings: num(e['remaining_findings']),
           shipped: str(e['shipped']) || null,
+          renderClassKnownBugs: num(e['render_class_known_bugs']),
         };
+        const rc = verdict.renderClassKnownBugs ?? 0;
         const vt = verdict.passed
-          ? `Verdict — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugs.length > 0 ? ` · ${bugs.length} known bug${bugs.length === 1 ? '' : 's'} ship` : ''}`
-          : `Verdict — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}`;
+          ? `Verdict — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${shipping > 0 ? ` · ${shipping} known bug${shipping === 1 ? '' : 's'} ship` : ''}`
+          : `Verdict — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}${rc > 0 ? ` · ${rc} render-class finding${rc === 1 ? '' : 's'} blocked the green` : ''}`;
         const tone = verdict.passed ? ('good' as const) : ('bad' as const);
         compact({ kind: verdict.passed ? 'done' : 'fail', text: vt, tone });
         verbose({
@@ -2940,13 +2969,19 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         // whole-list snapshots (complete_result, and defects_rated on legacy logs) still ASSIGN and
         // supersede this accumulation, which is the honest precedence: a snapshot outranks a merge.
         const findings = arr(e['findings']).map(String);
-        for (const f of findings) if (!knownActiveBugs.includes(f)) knownActiveBugs.push(f);
+        // `severities` is parallel to `findings` (HEAD engines); absent on older logs → no class claimed.
+        const sevs = arr(e['severities']).map(String);
+        const paired = sevs.length === findings.length;
+        findings.forEach((f, i) => {
+          if (!knownActiveBugs.some((b) => b.text === f))
+            knownActiveBugs.push({ text: f, severity: paired ? sevs[i] : null });
+        });
         const round = num(e['round']);
         verbose({
           kind: 'review',
           tone: 'warn',
           text: `${findings.length} unattributed finding${findings.length === 1 ? '' : 's'} ship${findings.length === 1 ? 's' : ''} as known bug${findings.length === 1 ? '' : 's'}${round != null ? ` (round ${round})` : ''}`,
-          sub: findings.join('\n') || undefined,
+          sub: findings.map((f, i) => (paired ? `${sevs[i]}: ${f}` : f)).join('\n') || undefined,
         });
         break;
       }
