@@ -24,7 +24,7 @@ These you should open yourself:
 - **`VIGIL-ACTIONS.md`** — the queue the surgeons are dispatched from: every OPEN row is triaged at your next
   turn (IMPLEMENT → dispatch + CLAIMED · known design but no slot → `QUEUED behind: <branch|agent cap>`, dispatched
   the tick the slot frees · DROP with reason · `SCHEDULED waits on: <event/number>` ONLY when the design needs a
-  measurement that does not exist yet); no OPEN row survives two ticks, and "after the run" is never a status —
+  measurement that does not exist yet); no OPEN row survives two ticks, "after the run" is never a status, and "by design" is not one either — a row parked on the ORCHESTRATOR's own decision is claimed and decided in the same tick —
   gate 11: a surgeon edits in a worktree cargo-free while a run holds the local node.
 - **`.claude/rules/development-gates.md`** — the five refusing gates in full detail (fallbacks,
   generic text, benchmark launch, reaping, time inputs) with the rebukes that paid for each.
