@@ -454,7 +454,11 @@ fn swarm_rs_line_count_only_decreases() {
     // `memory` cell and its doors (the key at OPEN, the opener's turn, the dispatch brief, the
     // vendor shape, `close_run` after run_finished) and VA-136's `tag_require_tests` line at the
     // smoke gate; the baseline is the count AFTER both commits, so the first sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 33_280;
+    // Tightened to 33,232 (VA-142): the spec's boot-invocation parsers (`spec_python_entry`,
+    // `spec_python_invocations`, `spec_boot_line`, their test) moved to commands/swarm/spec_boot.rs
+    // beside the new `spec_boot_flags`, paying for `mod spec_boot;`, rule (e)'s `spec` argument
+    // (the ownership seam) and the `skeleton_flags_absent` key in the skeleton fan-out.
+    const SWARM_RS_LINE_BASELINE: usize = 33_232;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
