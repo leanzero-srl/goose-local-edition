@@ -157,8 +157,11 @@ export class SwarmWatchRegistry {
   /**
    * The targets of every subscription whose key `match` accepts — how main asks "which run directories
    * is THIS renderer live on" (its keys are `${webContentsId}::${workingDir}`, a format the registry does
-   * not know and does not need to). A subscription exists exactly while a useSwarmRun hook polls, so this
-   * is also the honest answer to "is anyone still watching that run".
+   * not know and does not need to). A subscription lives as long as the RENDERER that opened it: main
+   * calls `ensure` on every read and releases the key only on that webContents' `destroyed` — a hook
+   * that stopped polling in a still-open window is still counted. So this answers "which live windows
+   * have read that run", which is the guard's question (a window that could still show it), not "is a
+   * hook polling it right now".
    */
   targetsWhere(match: (subscriber: string) => boolean): SwarmWatchTarget[] {
     const out: SwarmWatchTarget[] = [];
