@@ -88,7 +88,9 @@ mod parse_checks;
 use lang::detect_language;
 mod repair_waves;
 use parse_checks::{rust_compile_error, syntax_error, RustCheck};
+mod answer_routing;
 mod plan_repairs;
+use answer_routing::{flat_plan_from_briefs, route_cross_slice_answers};
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
@@ -21633,6 +21635,12 @@ where
     // The event above carries COUNTS; the full text — the briefs the workers will actually
     // receive — goes to the `.swarm/plan.json` sidecar so the vigil can read it between now and
     // plan_loaded (r6c: 133k chars of briefs, persisted nowhere for the whole planning window).
+    // VA-104: an answer that names another task's file, or the asker's own file where another
+    // task's objective names it, rides into THAT task's description with the plan's owner stated —
+    // r6h's ledgerd-core re-derived and drafted webhook registration beside webhooks-workflow
+    // because the per-slice filter kept q5/q6/q14 in one brief. Every plan the door sees passes
+    // here (the DAG-invalid flat plan below too). `answer_routing.rs`.
+    let plan_json = route_cross_slice_answers(plan_json, &briefs, research, sink.as_ref());
     persist_plan_sidecar(working_dir, "plan.json", &plan_json, sink.as_ref());
 
     // (The LLM REVIEW round that ran here is deleted — VA-014; see this function's doc. The
@@ -21680,7 +21688,12 @@ where
                 style("!").yellow().bold()
             );
             plan_json = finalize_plan_before_dag(
-                flat_plan_from_briefs(&briefs, lang, user_prompt),
+                route_cross_slice_answers(
+                    flat_plan_from_briefs(&briefs, lang, user_prompt),
+                    &briefs,
+                    research,
+                    sink.as_ref(),
+                ),
                 user_prompt,
                 every_decision_settled,
                 sink,
@@ -21784,70 +21797,6 @@ fn finalize_plan_before_dag(
     } else {
         plan_json
     }
-}
-
-/// One task per slice, deps stripped, plus the sink. Always validates.
-///
-/// EACH TASK OWNS THE FILES ITS OWN BRIEF DECLARES. This hardcoded `"files": []`, so on either fallback
-/// path — synthesis failed, or the synthesised plan will not load as a DAG — every task owned nothing:
-/// the scheduler had no file ownership to serialise on, `smoke_all_files` was empty, the decomposition
-/// counters reported the whole plan as `tasks_owning_nothing`, and `require_advertised_entry_files`
-/// degenerated (its last-resort pick is the first task owning anything, and none did), so the
-/// package-entry guarantee added after two runs shipped packages with no `__main__.py` did not run at all.
-/// `SliceBrief.files` is populated by `files_from_objective` precisely so ownership is not invented.
-///
-/// FIRST CLAIMANT WINS, so ownership stays disjoint: two objectives declaring the same path is the
-/// expected case (the synthesised path measures the same collision as `shared_files` in the
-/// decomposition flags), and a plan where two tasks own one file is a plan the scheduler must
-/// serialise rather than parallelise.
-fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang, spec: &str) -> String {
-    // A slice whose objective declared no files (the `slice_files_unnamed` case) would make an
-    // owns-nothing task, and an owns-nothing task is REMOVED by the plan repair's rule (a) — the
-    // fallback once shed every task that way in its own test. A conventional one-module-per-slice
-    // path keeps every fallback task buildable.
-    let ext = match lang {
-        TargetLang::Python => "py",
-        TargetLang::TypeScript => "ts",
-        TargetLang::Rust => "rs",
-        TargetLang::Go => "go",
-        TargetLang::Other => "py",
-    };
-    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut tasks: Vec<serde_json::Value> = briefs
-        .iter()
-        .map(|b| {
-            let mut files: Vec<String> = b
-                .files
-                .iter()
-                .filter(|f| claimed.insert((*f).clone()))
-                .cloned()
-                .collect();
-            if files.is_empty() {
-                let conventional = format!("{}.{ext}", b.id.replace('-', "_"));
-                if claimed.insert(conventional.clone()) {
-                    files.push(conventional);
-                }
-            }
-            serde_json::json!({
-                "id": b.id,
-                "slice": b.id,
-                "difficulty": "hard",
-                "files": files,
-                "depends_on": [],
-                "description": b.brief,
-            })
-        })
-        .collect();
-    tasks.push(serde_json::json!({
-        "id": goose_swarm::SINK_ID,
-        "difficulty": "hard",
-        "files": [],
-        "depends_on": briefs.iter().map(|b| b.id.clone()).collect::<Vec<_>>(),
-        // Finding 1: the fallback plan's sink row reaches the judge and the review — built
-        // from the spec's advertised surface, never the banned template.
-        "description": plan_sink_description(spec, lang),
-    }));
-    serde_json::json!({ "subtasks": tasks }).to_string()
 }
 
 #[cfg(test)]
