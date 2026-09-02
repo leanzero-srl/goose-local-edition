@@ -125,6 +125,15 @@ function Gallery() {
         dense
         empty={<EmptyState title="Empty" />}
       />
+      <DataTable
+        columns={[{ key: 'n', header: 'Name', cell: (r: { id: string }) => r.id }]}
+        rows={[{ id: 'sub' }]}
+        rowKey={(r) => r.id}
+        selectedKey="sub"
+        rowTestId={(r) => `fleet-${r.id}`}
+        rowProps={(r) => ({ 'data-node': r.id, className: 'cursor-default' })}
+        renderSubRow={() => <span>sub row</span>}
+      />
       <EmptyState
         icon={<svg />}
         title="Nothing yet"
