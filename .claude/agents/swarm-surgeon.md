@@ -110,3 +110,7 @@ Read a region ONCE (`grep -n` then one `sed -n 'A,Bp'` wide enough to hold the w
 and batch the edits per file. Re-opening the same lines before every Edit, or grepping the same symbol in three
 phrasings, is how a three-file change costs a hundred tool uses. When cargo is forbidden, the budget is reading and
 writing only — aim under 40 tool uses for a five-commit brief and say when you exceed it.
+
+## Wiring a new value — test at the CONSUMER (VA-119, 2026-09-02)
+
+When a change introduces a value that crosses a seam (a landing, a channel, a map entry), the test asserts the value at the CONSUMER — the fan's return, the brief text, the plan door — never only at the producer. VA-118's first wiring persisted, emitted and relayed every tool-landed row perfectly and returned only a COUNT to `research_fan`, so synthesis saw zero rows from a compliant lane; 886 tests passed because none read the return. The review found it; the proof chain could not. Name the consumer in the commit message.

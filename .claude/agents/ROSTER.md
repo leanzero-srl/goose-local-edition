@@ -115,6 +115,7 @@ sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appea
 research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- `swarm-surgeon` r6j-wire follow-up, VA-119 (18:2x; 6 tool uses, 180k tokens, 15 min, cargo): on charter — the exact seam named in the brief (`ResearchLanding::close -> (next_q_index, landed)`, the closure seeds `out_rows` before the remainder), no re-persist/emit, ratchet held at 33,802, a test that pins the seam the model-bound closure calls, all five result lines pasted, TRACE YES with r6i's nine landed rows. Charter gap: none — but the DEFECT it fixed was the surgeon's own from the first pass (rows kept as a count), and the proof chain could not see it because no test asserted a tool-landed row in the fan's RETURN; the review did. Amend: a wiring brief must name the CONSUMER of every new value and ask for a test at the consumer, not at the producer (added to swarm-surgeon's brief checklist).
 - 2026-08-30 swarm-surgeon (cluster A, 6abd934c3..8a68a9c59): CLEAN PASS — six items with honest
   per-item traces including two labeled NETs (item 4's look-1 case was already covered and it said
   so; judge amendment (d)); the web_refs scan proven EMPIRICALLY against the real r5 viz.js (one
