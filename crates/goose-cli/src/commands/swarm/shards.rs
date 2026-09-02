@@ -911,6 +911,15 @@ pub(super) fn apply_module_split(
         .and_then(|d| d.as_str())
         .unwrap_or("");
     let module_deps = string_list(&module["depends_on"]);
+    // VA-113: a shard's weight is its share of the module's — `max(1, weight / shards)` — so the
+    // scheduler ranks it by its real size; the merger keeps the module's whole weight (its chain
+    // is what the shards' remaining-chain weight counts). A module without a weight (a caller
+    // that never weighed, or a zero-section task) leaves its shards without one — the absence
+    // stays absent for the scheduler's own derivation.
+    let shard_weight: Option<u64> = module
+        .get("weight")
+        .and_then(|w| w.as_u64())
+        .map(|w| (w / split.shards.len().max(1) as u64).max(1));
     // A shard is a piece of its module and as hard as the module: its difficulty is the module
     // task's own, verbatim ("medium" stays "medium"). A module with none leaves its shards with
     // none — `specs_from_plan_json` reads the absence the same way for the merger and its shards,
@@ -1002,6 +1011,9 @@ pub(super) fn apply_module_split(
                 .map_err(|e| e.to_string())?;
             } else if let Some((_, shard_of)) = annotations.iter().find(|(sid, _)| *sid == id) {
                 t["shard_of"] = serde_json::to_value(shard_of).map_err(|e| e.to_string())?;
+                if let Some(w) = shard_weight {
+                    t["weight"] = serde_json::json!(w);
+                }
             }
         }
     }
@@ -1262,10 +1274,38 @@ pub(super) fn sized_event(module: &str, sizing: &Sizing) -> serde_json::Value {
     })
 }
 
-/// The split step of `plan_slices_to_dag`: measure, flag, request one patch per fat task, apply,
-/// and walk the patched plan through the one door again. `split` is injected (the real one calls
-/// `request_module_split`; a test hands back a canned reply) so the whole sequence runs without a
-/// model. A plan with no fat task returns byte-identical and emits nothing.
+/// THE TASK'S WEIGHT IS ITS CLAIMED SECTION COUNT (VA-113, the CLI half of the scheduler's
+/// 859a2b419): `Dag::from_planner_json` reads an optional per-task `"weight"` (u32 > 0) and
+/// orders READY tasks by remaining chain weight; absent, it derives files × difficulty. The
+/// number the engine already measured here — `TaskDensity.sections`, the same unit
+/// `plan_flag{sections}` and `research_planned.per_slice_sections` report — is written onto every
+/// section-claiming task, so the heaviest module is dispatched first instead of wherever plan
+/// order put it (r6i: ledgerd's 17 sections dispatched last, to the slowest node). A task with
+/// zero claimed sections gets NO weight — the scheduler's derivation stands and the absence is
+/// honest (`unclaimed` names the rows the opener routed nothing to). Returns what was weighed.
+pub(super) fn weigh_tasks_by_sections(
+    plan: &mut serde_json::Value,
+    measure: &FatMeasure,
+) -> Vec<(String, usize)> {
+    let mut weighed = Vec::new();
+    let Some(tasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return weighed;
+    };
+    for r in measure.rows.iter().filter(|r| r.sections > 0) {
+        if let Some(t) = tasks.iter_mut().find(|t| t["id"] == r.id) {
+            t["weight"] = serde_json::json!(r.sections);
+            weighed.push((r.id.clone(), r.sections));
+        }
+    }
+    weighed
+}
+
+/// The split step of `plan_slices_to_dag`: measure, weigh, flag, request one patch per fat task,
+/// apply, and walk the patched plan through the one door again. `split` is injected (the real
+/// one calls `request_module_split`; a test hands back a canned reply) so the whole sequence
+/// runs without a model. A plan with no fat task returns with only the section weights added
+/// (`plan_weighted`, VA-113) and no other event; a plan with no weighable task returns
+/// byte-identical.
 ///
 /// SIZE BY THE FLEET (split v2 §6): `free_hosts` is the pool free at split time — the pool
 /// `run_swarm` resolved (`pool_resolved.worker_count`; r6e: 3), all free during planning by
@@ -1289,11 +1329,29 @@ where
     P: Fn(serde_json::Value, serde_json::Value) -> PFut,
     PFut: std::future::Future<Output = Result<String>>,
 {
-    let Ok(plan) = serde_json::from_str::<serde_json::Value>(&plan_json) else {
+    let Ok(mut plan) = serde_json::from_str::<serde_json::Value>(&plan_json) else {
         return plan_json;
     };
     let claims = section_claims(opened, spec);
     let measure = measure_fatness(&plan, &claims);
+    // VA-113: the weights ride EVERY return path below — a declined split, a flat plan and an
+    // unmeasurable one all carry them — because they are a fact about the measured plan, not
+    // about the split. Re-serialized only when something was weighed, so a plan with nothing to
+    // weigh stays byte-identical.
+    let weighed = weigh_tasks_by_sections(&mut plan, &measure);
+    let plan_json = if weighed.is_empty() {
+        plan_json
+    } else {
+        sink.write_value(serde_json::json!({
+            "event": "plan_weighted",
+            "unit": "claimed spec sections",
+            "weights": weighed
+                .iter()
+                .map(|(id, n)| (id.clone(), *n))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        }));
+        plan.to_string()
+    };
     // NOTHING is measurable when no row carries a section: the opener's slice names matched no
     // plan slice (every row unclaimed) or the opener claimed no sections at all. `plan_flag`
     // fires only for FAT rows, so this plan would otherwise pass the split in silence looking
@@ -2749,6 +2807,55 @@ mod tests {
             "window.vs7dbg.pick"
         );
         assert!(plan_json.contains("\"merger_of\""));
+        // VA-113: every section-claiming task carries `weight == sections` (the unit `plan_flag`
+        // reports), the merger keeps the module's 7, and each of its three shards carries
+        // max(1, 7 / 3) = 2 — its real share.
+        let weighted: serde_json::Value = serde_json::from_str(&plan_json).unwrap();
+        let weight_of = |id: &str| -> Option<u64> {
+            weighted["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .and_then(|t| t.get("weight"))
+                .and_then(|w| w.as_u64())
+        };
+        let claims = section_claims(&r6c_like_opened(), spec);
+        for id in ["ledgerd-core", "notifierd", "web-console"] {
+            assert_eq!(
+                weight_of(id),
+                Some(claims[id].sections as u64),
+                "{id}: weight is the claimed section count"
+            );
+            assert!(weight_of(id).unwrap() > 0, "{id} claims sections in sb7");
+        }
+        assert_eq!(
+            weight_of("web-viz"),
+            Some(7),
+            "the merger keeps the module's weight"
+        );
+        for shard in [
+            "web-viz-render",
+            "web-viz-pick-camera",
+            "web-viz-labels-brush-api",
+        ] {
+            assert_eq!(weight_of(shard), Some(2), "{shard}: max(1, 7 / 3)");
+        }
+        assert_eq!(
+            weight_of("integrate-verify"),
+            None,
+            "the join owns nothing and claims nothing: no weight, the scheduler derives"
+        );
+        assert!(
+            sink.0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e["event"] == "plan_weighted"
+                    && e["weights"]["web-viz"] == 7
+                    && e["unit"] == "claimed spec sections"),
+            "the weighing is said"
+        );
         let events = sink.0.lock().unwrap().clone();
         let names: Vec<(String, String)> = events
             .iter()
@@ -2818,7 +2925,24 @@ mod tests {
             &sink_dyn,
         )
         .await;
-        assert_eq!(after, before);
+        // VA-113: the ONE change a declined split leaves is the section weights, which are a fact
+        // about the measured plan, not about the split — strip them and the plan is `before`.
+        let mut stripped: serde_json::Value = serde_json::from_str(&after).unwrap();
+        let mut weights = std::collections::BTreeMap::new();
+        for t in stripped["subtasks"].as_array_mut().unwrap() {
+            if let Some(w) = t.as_object_mut().unwrap().remove("weight") {
+                weights.insert(t["id"].as_str().unwrap().to_string(), w.as_u64().unwrap());
+            }
+        }
+        assert_eq!(
+            stripped,
+            serde_json::from_str::<serde_json::Value>(&before).unwrap()
+        );
+        assert_eq!(weights["web-viz"], 7, "{weights:?}");
+        assert!(
+            !weights.contains_key("integrate-verify"),
+            "the join is never weighed: {weights:?}"
+        );
         let events = sink.0.lock().unwrap().clone();
         assert!(events
             .iter()
