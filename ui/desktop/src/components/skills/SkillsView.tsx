@@ -14,6 +14,7 @@ import { listSkillSources } from '../../acp/sources';
 import type { SourceEntry } from '@aaif/goose-sdk';
 import { SkillDetail } from './SkillDetail';
 import { skillOrigin, type SkillOrigin } from './skillKinds';
+import { FOCUS, MOTION, RADIUS, SURFACE, cx } from '../lz';
 
 const i18n = defineMessages({
   errorLoadingSkills: {
@@ -79,6 +80,18 @@ const ORIGIN_DOT: Record<SkillOrigin, string> = {
   project: 'bg-[#b45309]',
 };
 
+// Same recipe as MemoriesView's row: selected = the accent fill + accent ink with the accent-hover
+// step; idle = ink on the page with the neutral hover step. The old `bg-background-accent` compiled
+// to no rule, so a selected skill was `text-white` over nothing — invisible on the light theme.
+const rowClass = (selected: boolean) =>
+  cx(
+    'mb-1 flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left',
+    RADIUS.control,
+    FOCUS,
+    MOTION,
+    selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
+  );
+
 function SkillItem({
   skill,
   selected,
@@ -89,24 +102,26 @@ function SkillItem({
   onSelect: () => void;
 }) {
   return (
-    <Card
+    <button
+      type="button"
       onClick={onSelect}
-      className={`py-2 px-3 mb-1 border-none cursor-pointer transition-all duration-150 ${
-        selected ? 'bg-background-accent text-white' : 'bg-background-primary hover:bg-background-secondary'
-      }`}
+      aria-current={selected ? 'true' : undefined}
+      data-testid="skill-row"
+      className={rowClass(selected)}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm truncate">{skill.name}</h3>
-          <p
-            className={`text-xs line-clamp-1 ${selected ? 'text-white/80' : 'text-text-secondary'}`}
-          >
-            {skill.description}
-          </p>
-        </div>
-      </div>
-    </Card>
+      <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-lz-body">{skill.name}</span>
+        <span
+          className={cx(
+            'block line-clamp-1 text-lz-meta',
+            selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
+          )}
+        >
+          {skill.description}
+        </span>
+      </span>
+    </button>
   );
 }
 

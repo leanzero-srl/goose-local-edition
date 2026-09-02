@@ -10,6 +10,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import { SearchView } from '../conversation/SearchView';
 import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
+import { FOCUS, MOTION, RADIUS, SURFACE, cx } from '../lz';
 
 /** One stored memory — mirrors the shape returned by the `list-memories` IPC in main.ts. */
 export interface MemoryEntry {
@@ -55,6 +56,21 @@ const SCOPE_DOT: Record<MemoryEntry['scope'], string> = {
   local: 'bg-[#b45309]',
 };
 
+// The selected row is the Studio accent fill with accent ink, and its hover is the accent-hover
+// step — never the neutral surface-2 step, which would leave white ink on a light fill. MEASURED
+// (resolvedPaint, light): the previous `bg-background-accent` compiled to NO rule (the token is
+// registered nowhere in main.css) while twMerge dropped the Card's own fill for it, so a selected
+// memory painted `text-white` over a transparent row: white on the white page — invisible.
+// Studio classes join through cx; cn/twMerge deletes text-lz-* steps.
+const rowClass = (selected: boolean) =>
+  cx(
+    'mb-1 flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left',
+    RADIUS.control,
+    FOCUS,
+    MOTION,
+    selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
+  );
+
 function MemoryCardItem({
   memory,
   selected,
@@ -65,22 +81,26 @@ function MemoryCardItem({
   onSelect: () => void;
 }) {
   return (
-    <Card
+    <button
+      type="button"
       onClick={onSelect}
-      className={`py-2 px-3 mb-1 border-none cursor-pointer transition-all duration-150 ${
-        selected ? 'bg-background-accent text-white' : 'bg-background-primary hover:bg-background-secondary'
-      }`}
+      aria-current={selected ? 'true' : undefined}
+      data-testid="memory-row"
+      className={rowClass(selected)}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className={`w-2 h-2 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm truncate">{prettyTitle(memory.category)}</h3>
-          <p className={`text-xs line-clamp-1 ${selected ? 'text-white/80' : 'text-text-secondary'}`}>
-            {firstLine(memory.content)}
-          </p>
-        </div>
-      </div>
-    </Card>
+      <span className={`w-2 h-2 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-lz-body">{prettyTitle(memory.category)}</span>
+        <span
+          className={cx(
+            'block line-clamp-1 text-lz-meta',
+            selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
+          )}
+        >
+          {firstLine(memory.content)}
+        </span>
+      </span>
+    </button>
   );
 }
 
