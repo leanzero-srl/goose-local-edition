@@ -62,8 +62,8 @@ use goose_swarm::{DispatchRequest, EventSink, TaskDispatcher};
 use super::attribution::parse_handoffs;
 use super::decisions::BriefDecisions;
 use super::findings::{
-    dedupe_findings_exact, missing_deliverable_finding, parse_finding_verdicts, FileGroup,
-    FindingCheck, FindingProvenance, FindingSource,
+    dedupe_findings_exact, missing_deliverable_finding, parse_finding_verdicts, tag_require_tests,
+    FileGroup, FindingCheck, FindingProvenance, FindingSource,
 };
 use super::fleet_order::{order_fleet_by_speed, resolved_fleet_speed_weights};
 use super::ledger_block::read_ledger_rollup;
@@ -1290,6 +1290,16 @@ impl TreeGrade {
 /// a count. None when the smoke gate could not run there: nothing is known, and nothing promotes
 /// on unknown. Moved here from swarm.rs under the incremental-split law — the wave is its only
 /// consumer.
+/// THE ONE tag order for a smoke gate's batch (VA-136, both rulers): the no-executable-tests
+/// finding names its OWN check first — `FindingProvenance::tag` keeps the first writer — so the
+/// gate's batch tag cannot relabel it `critical` (r6h's mismatch row). The round loop in swarm.rs
+/// had this since VA-136; `one_ruler_grade` still batch-tagged `SmokeGate` alone, so a preview
+/// graded here read the same minor as a critical the round loop read as medium.
+pub(super) fn tag_gate_findings(prov: &mut FindingProvenance, findings: &[String]) {
+    tag_require_tests(prov, findings);
+    prov.tag(FindingSource::SmokeGate, findings);
+}
+
 pub(super) async fn one_ruler_grade(
     root: &Path,
     prompt: &str,
@@ -1304,7 +1314,7 @@ pub(super) async fn one_ruler_grade(
     }
     let mut prov = FindingProvenance::default();
     let mut findings: Vec<String> = Vec::new();
-    prov.tag(FindingSource::SmokeGate, &g.findings);
+    tag_gate_findings(&mut prov, &g.findings);
     findings.extend(g.findings);
     if composite {
         let sc = run_spec_contract(root, prompt, lang).await;
@@ -2680,5 +2690,22 @@ mod tests {
         assert_eq!(out.promoted, 0);
         assert_eq!(out.findings_left, 0, "retired, not left open: {out:?}");
         assert_eq!(runner.dispatched.lock().unwrap().len(), 1);
+    }
+
+    /// VA-136's residue (VA-142 brief item 3): the ONE ruler tags the no-executable-tests
+    /// finding with its own source FIRST, then the batch — the same order the round loop uses —
+    /// so a preview graded here reads it `medium` from `RequireTests`, never `critical` from
+    /// `SmokeGate`; every other gate finding keeps the batch tag.
+    #[test]
+    fn the_one_ruler_tags_the_require_tests_finding_with_its_own_source_first() {
+        use super::super::findings::require_tests_finding;
+        use super::super::TestRunVerdict;
+        let no_tests = require_tests_finding(&TestRunVerdict::NoTests, true).unwrap();
+        let boot = "python3 -m app --db-dir D --ledger-port P exited before binding".to_string();
+        let mut prov = FindingProvenance::default();
+        tag_gate_findings(&mut prov, &[no_tests.clone(), boot.clone()]);
+        assert_eq!(prov.source_of(&no_tests), Some(FindingSource::RequireTests));
+        assert_eq!(prov.severity_label(&no_tests), "medium");
+        assert_eq!(prov.source_of(&boot), Some(FindingSource::SmokeGate));
     }
 }
