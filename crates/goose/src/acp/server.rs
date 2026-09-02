@@ -98,7 +98,7 @@ pub use link::{
     SessionDeltaKind,
 };
 mod link_serve;
-pub use link_serve::{ServeDeltaSource, ServeRemoteExecutor};
+pub use link_serve::{wire_link_for_serve, ServeDeltaSource, ServeLinkConfig, ServeRemoteExecutor};
 mod list_sessions;
 mod load_session;
 mod local_inference;

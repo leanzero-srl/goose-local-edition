@@ -465,6 +465,32 @@ fn acp_error_text(error: &agent_client_protocol::Error) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// The serve boot wiring: the one call handle_serve_command makes.
+// ---------------------------------------------------------------------------
+
+/// What `handle_serve_command` hands over after `AcpServer::new`: the store the delta
+/// source reads token counters from, and the builtin extensions every session gets.
+pub struct ServeLinkConfig {
+    pub data_dir: PathBuf,
+    pub builtins: Vec<String>,
+}
+
+/// Inject the three LeanZero Link seams for `goose serve` — the same three `goosed agent`
+/// injects from goose-server (`commands/agent.rs`): the per-message delta source, the
+/// remote executor, and goose's own MLX control. Once set, every `LinkManager` built
+/// afterwards carries them (`link.rs` `build_link_manager`), the status DTO reads
+/// `remoteExecutionWired`/`mlxControlWired` as true, and the control service's `501`
+/// arms on `/execute` and `/mlx/*` are not reached.
+pub fn wire_link_for_serve(config: ServeLinkConfig) {
+    super::set_delta_source(ServeDeltaSource::new(Arc::new(SessionManager::new(
+        config.data_dir,
+    ))));
+    super::set_executor(ServeRemoteExecutor::new(Config::global(), config.builtins));
+    super::set_mlx_control(GoosedMlxControl::new());
+    info!("leanzeroLink: remote executor, delta source and mlx control wired for `goose serve`");
+}
+
+// ---------------------------------------------------------------------------
 // The per-message mirror: one process-wide tap that every reply door feeds.
 // ---------------------------------------------------------------------------
 
