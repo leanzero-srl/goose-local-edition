@@ -38,8 +38,25 @@
 //! both doors of `plan_slices_to_dag` call it, so a third routing joins in one place and the two
 //! doors cannot drift (gate 6). It lives here because VA-109 is the routing whose arrival made
 //! two hand-copied door tails one too many.
+//!
+//! VA-114 — THE SCAN, the gate's half of the same contract (`dom_id_scan`, moved here from
+//! swarm.rs's Python `DOM_ID_SCRIPT` and rewritten over the same literal patterns): every literal
+//! id a script looks up (`getElementById('x')`, `querySelector('#x')`) must be DEFINED — by an
+//! `id="x"` in an html file, or by the app's own scripts: `.id = 'x'`, `setAttribute('id', 'x')`,
+//! `id="x"` on a tag inside a string the script builds markup from. r6h round 0 filed
+//! "web/viz.js:388 references DOM id `viz-unavailable` which NO html file in the app defines" as
+//! a HIGH finding and dispatched an 18-minute fix lane (`complete-fix::web/viz.js#0`, 1,103 s)
+//! whose words were "The minimal fix for the named finding is adding viz-unavailable to the HTML"
+//! — a dead element added to satisfy the scan, because `setPanelState` CREATES that element
+//! (`unav.id = 'viz-unavailable'`, line 392) and the scan read only html. A script-created id
+//! stays a finding only where the lookup can still run against null, and says so: a lookup
+//! ABOVE the creation site in the same file whose result is not null-tested (the find-or-create
+//! idiom — `let unav = getElementById(..); if (!unav) { … unav.id = .. }` — is exactly a
+//! null-tested early lookup), or a lookup in a file that never creates it while another file
+//! creates it lazily. `viz3d` (in the html) and `viz-labels` (defined nowhere) classify exactly
+//! as before — the pinned test holds all three of r6h's ids.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::answer_routing::{insert_above_decisions, route_cross_slice_answers};
@@ -472,6 +489,236 @@ pub(super) fn route_dom_contract(
     plan.to_string()
 }
 
+fn is_html_file(rel: &str) -> bool {
+    let lower = rel.to_ascii_lowercase();
+    lower.ends_with(".html") || lower.ends_with(".htm")
+}
+
+fn is_js_file(rel: &str) -> bool {
+    let lower = rel.to_ascii_lowercase();
+    lower.ends_with(".js") || lower.ends_with(".mjs")
+}
+
+/// The literal-id patterns the scan reads (module doc, VA-114). Group 1 of every `create_*`
+/// pattern is the assignment as written, group 2 the id. A static pattern that fails to compile
+/// is a programming error the tests catch; the wrapper reads `None` as "did not run".
+struct ScanPatterns {
+    html_id: regex::Regex,
+    lookup_by_id: regex::Regex,
+    lookup_selector: regex::Regex,
+    /// The variable a lookup lands in: `unav = document.getElementById(` → `unav`.
+    lookup_receiver: regex::Regex,
+    create_member: regex::Regex,
+    create_attribute: regex::Regex,
+    create_markup: regex::Regex,
+}
+
+impl ScanPatterns {
+    fn compile() -> Option<ScanPatterns> {
+        Some(ScanPatterns {
+            html_id: regex::Regex::new(r#"\bid\s*=\s*["']([\w-]+)["']"#).ok()?,
+            lookup_by_id: regex::Regex::new(r#"getElementById\(\s*["']([\w-]+)["']\s*\)"#).ok()?,
+            lookup_selector: regex::Regex::new(r#"querySelector(?:All)?\(\s*["']#([\w-]+)["']\s*\)"#)
+                .ok()?,
+            lookup_receiver: regex::Regex::new(
+                r"([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)*(?:getElementById|querySelector(?:All)?)\s*\(",
+            )
+            .ok()?,
+            create_member: regex::Regex::new(r#"(\.id\s*=\s*["']([\w-]+)["'])"#).ok()?,
+            create_attribute: regex::Regex::new(
+                r#"(setAttribute\(\s*["']id["']\s*,\s*["']([\w-]+)["']\s*\))"#,
+            )
+            .ok()?,
+            create_markup: regex::Regex::new(r#"<[A-Za-z][^<>]*?(\bid\s*=\s*\\?["']([\w-]+)\\?["'])"#)
+                .ok()?,
+        })
+    }
+}
+
+/// One literal lookup a script makes.
+struct IdLookup {
+    file: usize,
+    line_no: usize,
+    id: String,
+    receiver: Option<String>,
+    /// `getElementById('x')?.focus()` — null-tolerant where it stands.
+    chained_optional: bool,
+}
+
+/// One id a script assigns.
+struct IdCreate {
+    file: usize,
+    line_no: usize,
+    id: String,
+    written: String,
+}
+
+/// Is the lookup's result null-tested anywhere in `lines` (the lookup line onward)? `receiver`
+/// is the variable it landed in — `!unav`, `unav &&`, `unav ? :`, `unav?.`, `unav == null`,
+/// `if (unav)`; a lookup nobody stored is dereferenced where it stands.
+fn null_tested(receiver: Option<&str>, lines: &[&str]) -> bool {
+    let Some(name) = receiver else {
+        return false;
+    };
+    let n = regex::escape(name);
+    let Ok(guard) = regex::Regex::new(&format!(
+        r"!{n}(?:[^\w$]|$)|(?:^|[^\w$.]){n}\s*(?:\?|\|\||&&|===?|!==?)|\(\s*{n}\s*\)"
+    )) else {
+        return false;
+    };
+    lines.iter().any(|l| guard.is_match(l))
+}
+
+/// THE DOM-ID CONTRACT SCAN over (relative path, text) pairs — pure, so r6h's shapes pin it
+/// without python or a tree: `(files checked, findings)`. An html scope that defines no id at
+/// all is silence, as before: the html side is what the contract is read against.
+// string_slice: `end` is a regex match end — a char boundary by construction.
+#[allow(clippy::string_slice)]
+pub(super) fn dom_id_scan_sources(files: &[(String, String)]) -> (usize, Vec<String>) {
+    let Some(re) = ScanPatterns::compile() else {
+        return (0, Vec::new());
+    };
+    let mut html_ids: BTreeSet<String> = BTreeSet::new();
+    let mut lookups: Vec<IdLookup> = Vec::new();
+    let mut creates: Vec<IdCreate> = Vec::new();
+    let mut checked = 0usize;
+    for (file, (rel, text)) in files.iter().enumerate() {
+        if is_html_file(rel) {
+            checked += 1;
+            for c in re.html_id.captures_iter(text) {
+                html_ids.insert(c[1].to_string());
+            }
+        } else if is_js_file(rel) {
+            checked += 1;
+            for (k, line) in text.lines().enumerate() {
+                let line_no = k + 1;
+                let receiver = re.lookup_receiver.captures(line).map(|c| c[1].to_string());
+                for pat in [&re.lookup_by_id, &re.lookup_selector] {
+                    for c in pat.captures_iter(line) {
+                        let end = c.get(0).map_or(line.len(), |m| m.end());
+                        lookups.push(IdLookup {
+                            file,
+                            line_no,
+                            id: c[1].to_string(),
+                            receiver: receiver.clone(),
+                            chained_optional: line[end..].trim_start().starts_with("?."),
+                        });
+                    }
+                }
+                for pat in [&re.create_member, &re.create_attribute, &re.create_markup] {
+                    for c in pat.captures_iter(line) {
+                        creates.push(IdCreate {
+                            file,
+                            line_no,
+                            id: c[2].to_string(),
+                            written: c[1].to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if html_ids.is_empty() {
+        return (checked, Vec::new());
+    }
+    let mut findings: Vec<String> = Vec::new();
+    for l in &lookups {
+        if html_ids.contains(&l.id) {
+            continue;
+        }
+        let (rel, text) = &files[l.file];
+        let created: Vec<&IdCreate> = creates.iter().filter(|c| c.id == l.id).collect();
+        if created.is_empty() {
+            findings.push(format!(
+                "{rel}:{} references DOM id `{}` which NO html file in the app defines — \
+                 getElementById returns null there and the page throws at runtime (the \
+                 rendered-nothing class). Either add the id to the HTML or fix the reference to \
+                 an id that exists.",
+                l.line_no, l.id
+            ));
+            continue;
+        }
+        if l.chained_optional {
+            continue;
+        }
+        let lines: Vec<&str> = text.lines().collect();
+        match created
+            .iter()
+            .filter(|c| c.file == l.file)
+            .min_by_key(|c| c.line_no)
+        {
+            Some(site) => {
+                if l.line_no >= site.line_no
+                    || null_tested(l.receiver.as_deref(), &lines[l.line_no - 1..site.line_no])
+                {
+                    continue;
+                }
+                findings.push(format!(
+                    "{rel}:{} references DOM id `{}` which NO html file in the app defines and \
+                     the app's own script creates only later ({rel}:{}, `{}`) — this lookup runs \
+                     before that creation and dereferences null. Look the element up after it is \
+                     created, null-test the result, or put the element in the HTML.",
+                    l.line_no, l.id, site.line_no, site.written
+                ));
+            }
+            None => {
+                if null_tested(l.receiver.as_deref(), &lines[l.line_no - 1..]) {
+                    continue;
+                }
+                let site = created[0];
+                let (other, _) = &files[site.file];
+                findings.push(format!(
+                    "{rel}:{} references DOM id `{}` which NO html file in the app defines — \
+                     only {other}:{} creates it (`{}`), lazily, and nothing orders that script \
+                     before this lookup. Put the element in the HTML or null-test the result.",
+                    l.line_no, l.id, site.line_no, site.written
+                ));
+            }
+        }
+    }
+    (checked, findings)
+}
+
+/// The gate's DOM-id contract scan over the tree (F864 → VA-114, module doc). Runs on any tree
+/// whose scope carries BOTH html and js — language-blind by design (the web/ files of a Python
+/// app are exactly the case that motivated it). Env `GOOSE_SWARM_DOM_ID_SCAN` opts out. An
+/// in-scope file the scan could not read marks the result `partial`, so "0 findings" and "did
+/// not look at everything" can never be confused.
+// dead_code: the two call sites (swarm.rs `complete_verify`'s DOM-ID CONTRACT block and
+// repair_waves.rs's preview re-run) still call swarm.rs's Python twin — another surgeon's files
+// at the time of VA-114; the allow goes when they call this one and the twin is deleted.
+#[allow(dead_code)]
+pub(super) fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> super::DriftResult {
+    if !super::swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true) {
+        return super::DriftResult::default();
+    }
+    let scope: Vec<&String> = all_files
+        .iter()
+        .filter(|f| is_html_file(f) || is_js_file(f))
+        .filter(|f| root.join(f.as_str()).is_file())
+        .collect();
+    let has_html = scope.iter().any(|f| is_html_file(f));
+    let has_js = scope.iter().any(|f| is_js_file(f));
+    if !(has_html && has_js) {
+        return super::DriftResult::default();
+    }
+    let mut partial = false;
+    let mut sources: Vec<(String, String)> = Vec::new();
+    for f in scope {
+        match std::fs::read(root.join(f.as_str())) {
+            Ok(bytes) => sources.push((f.clone(), String::from_utf8_lossy(&bytes).into_owned())),
+            Err(_) => partial = true,
+        }
+    }
+    let (checked, findings) = dom_id_scan_sources(&sources);
+    super::DriftResult {
+        ran: true,
+        checked,
+        findings,
+        partial,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::decisions::SETTLED_DECISIONS_HEADER;
@@ -723,5 +970,142 @@ mod tests {
             Vec::<IdToken>::new(),
             "request.md:416's four status colours"
         );
+    }
+
+    /// r6h's `web/index.html` as it stood when round 0 scanned it (`.swarm/prefix-tree`, 129
+    /// lines): `<canvas id="viz3d">` at line 26, no `viz-labels`, no `viz-unavailable`.
+    const R6H_PREFIX_INDEX: &str = include_str!("testdata/va114/prefix-index.html");
+
+    /// `setPanelState`, verbatim from the same tree's `web/viz.js` lines 383–403 — the
+    /// find-or-create idiom that round 0 filed as a HIGH finding at line 388.
+    const SET_PANEL_STATE: &str = r#"function setPanelState(state) {
+  const show = function (id, on) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  };
+  let unav = document.getElementById('viz-unavailable');
+  if (state === 'unavailable' && !unav) {
+    const host = vizCanvas ? vizCanvas.parentElement : document.body;
+    unav = document.createElement('div');
+    unav.id = 'viz-unavailable';
+    unav.className = 'viz-unavailable';
+    unav.setAttribute('role', 'status');
+    unav.textContent = '3D unavailable — this browser does not support WebGL.';
+    host.appendChild(unav);
+  }
+  if (unav) unav.style.display = state === 'unavailable' ? '' : 'none';
+  show('viz-empty', state === 'empty');
+  show('viz-error', state === 'error');
+  if (vizCanvas) vizCanvas.style.display = state === 'unavailable' ? 'none' : '';
+}"#;
+
+    /// r6h's `web/viz.js` at the two lines the scan read: `setPanelState` at 383–403 and
+    /// `updateLabels`' container lookup at 573, on the archive's own line numbers.
+    fn r6h_viz_js() -> String {
+        let mut lines: Vec<String> = vec![String::new(); 573];
+        for (k, l) in SET_PANEL_STATE.lines().enumerate() {
+            lines[382 + k] = l.to_string();
+        }
+        lines[572] = "  if (!lblHost) lblHost = document.getElementById('viz-labels');".to_string();
+        lines.join("\n")
+    }
+
+    fn sources(files: &[(&str, &str)]) -> Vec<(String, String)> {
+        files
+            .iter()
+            .map(|(r, t)| (r.to_string(), t.to_string()))
+            .collect()
+    }
+
+    /// THE r6h CASE (VA-114), all three ids: `viz3d` is in the html → nothing; `viz-labels` is
+    /// defined nowhere → the finding exactly as round 0 filed it at line 573; `viz-unavailable`
+    /// is CREATED by `setPanelState` (`unav.id = 'viz-unavailable'`, line 392) and its early
+    /// lookup at 388 is null-tested (`!unav`, `if (unav)`) → no finding, no 18-minute lane.
+    #[test]
+    fn r6h_a_created_id_is_defined_while_viz3d_and_viz_labels_classify_as_before() {
+        let viz = r6h_viz_js();
+        let (checked, findings) = dom_id_scan_sources(&sources(&[
+            ("web/index.html", R6H_PREFIX_INDEX),
+            ("web/viz.js", viz.as_str()),
+        ]));
+        assert_eq!(checked, 2);
+        assert_eq!(
+            findings,
+            vec![
+                "web/viz.js:573 references DOM id `viz-labels` which NO html file in the app \
+                 defines — getElementById returns null there and the page throws at runtime (the \
+                 rendered-nothing class). Either add the id to the HTML or fix the reference to \
+                 an id that exists."
+                    .to_string()
+            ],
+            "viz-unavailable is created by the script; viz3d is in the html"
+        );
+        assert!(R6H_PREFIX_INDEX.contains("<canvas id=\"viz3d\">"));
+        assert!(
+            !R6H_PREFIX_INDEX.contains("viz-labels")
+                && !R6H_PREFIX_INDEX.contains("viz-unavailable")
+        );
+    }
+
+    /// A created id stays a finding only where the lookup can still run against null, with
+    /// that reason in its text: an unguarded lookup ABOVE the creation site in the same file;
+    /// an unguarded lookup in a file that never creates it while another file creates it
+    /// lazily. Guarded (`!el`, `el &&`, `?.`) or after-creation lookups are defined.
+    #[test]
+    fn an_early_or_cross_file_lookup_of_a_created_id_is_a_finding_with_its_reason() {
+        let html = "<body><main id=\"app\"></main></body>";
+        let early = "document.getElementById('late').textContent = 'x';\n\
+                     const d = document.createElement('div');\n\
+                     d.id = 'late';\n";
+        let (_, f) =
+            dom_id_scan_sources(&sources(&[("web/index.html", html), ("web/app.js", early)]));
+        assert_eq!(
+            f,
+            vec![
+                "web/app.js:1 references DOM id `late` which NO html file in the app defines and \
+                 the app's own script creates only later (web/app.js:3, `.id = 'late'`) — this \
+                 lookup runs before that creation and dereferences null. Look the element up \
+                 after it is created, null-test the result, or put the element in the HTML."
+                    .to_string()
+            ]
+        );
+        for defined in [
+            "const el = document.getElementById('late');\nif (!el) { const d = document.createElement('div'); d.id = 'late'; }\n",
+            "let el = document.getElementById('late');\nel && el.remove();\nel = mk(); el.setAttribute('id', 'late');\n",
+            "document.getElementById('late')?.focus();\nroot.innerHTML = '<section id=\"late\"></section>';\n",
+            "root.innerHTML = \"<div class='x' id=\\\"late\\\"></div>\";\ndocument.getElementById('late').textContent = 'y';\n",
+        ] {
+            let (_, f) = dom_id_scan_sources(&sources(&[("web/index.html", html), ("web/app.js", defined)]));
+            assert!(f.is_empty(), "{defined}\n{f:?}");
+        }
+        let ui = "export function mount() { root.innerHTML = '<div id=\"panel\"></div>'; }\n";
+        let unguarded = "document.getElementById('panel').hidden = false;\n";
+        let (_, f) = dom_id_scan_sources(&sources(&[
+            ("web/index.html", html),
+            ("web/ui.js", ui),
+            ("web/app.js", unguarded),
+        ]));
+        assert_eq!(
+            f,
+            vec![
+                "web/app.js:1 references DOM id `panel` which NO html file in the app defines — \
+                 only web/ui.js:1 creates it (`id=\"panel\"`), lazily, and nothing orders that \
+                 script before this lookup. Put the element in the HTML or null-test the result."
+                    .to_string()
+            ]
+        );
+        let guarded = "const p = document.querySelector('#panel');\nif (p) p.hidden = false;\n";
+        let (_, f) = dom_id_scan_sources(&sources(&[
+            ("web/index.html", html),
+            ("web/ui.js", ui),
+            ("web/app.js", guarded),
+        ]));
+        assert!(f.is_empty(), "{f:?}");
+        // The html side defines nothing → silence, as the shipped scan behaved.
+        let (checked, f) = dom_id_scan_sources(&sources(&[
+            ("web/index.html", "<body></body>"),
+            ("web/app.js", unguarded),
+        ]));
+        assert_eq!((checked, f.len()), (2, 0));
     }
 }

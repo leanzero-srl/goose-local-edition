@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian Payments Console</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app-root">
+
+  <header id="app-header">
+    <h1 id="app-title">Meridian Payments Console</h1>
+    <button id="sync-now" class="sync-button" type="button" data-state="idle">Sync now</button>
+  </header>
+
+  <section id="summary" aria-label="Portfolio summary">
+    <span id="summary-total">&mdash;</span>
+    <div class="cur-totals"></div>
+    <div class="rev-totals"></div>
+    <div id="last-sync" role="status">Never synced</div>
+  </section>
+
+  <!-- 3D field panel: container only. viz.js owns its contents and states. -->
+  <section id="viz-panel" class="card" aria-label="3D field">
+    <canvas id="viz3d"></canvas>
+  </section>
+
+  <section id="table-card" class="card" aria-label="Payments">
+    <div class="table-toolbar">
+      <div id="status-filter" class="dd" data-value="" aria-label="Status filter"></div>
+      <div id="currency-filter" class="dd" data-value="" aria-label="Currency filter"></div>
+      <span class="brush-readout">Brushed&nbsp;<span id="brush-count">0</span></span>
+    </div>
+
+    <div id="loading-state" class="state-box" hidden>
+      <span class="spinner" aria-hidden="true"></span><span>Loading payments&hellip;</span>
+    </div>
+    <div id="empty-state" class="state-box" hidden>
+      <p>No payments yet &mdash; run Sync to pull the vendor collection.</p>
+      <button type="button" data-action="sync">Run Sync now</button>
+    </div>
+    <div id="error-state" class="state-box" hidden>
+      <p>The backend is unreachable or erroring. Check that ledgerd is running on this host, then retry.</p>
+      <button type="button" data-action="retry">Retry</button>
+    </div>
+
+    <table id="payments-table">
+      <thead>
+        <tr>
+          <th id="th-date" scope="col" class="sortable" aria-sort="ascending">Date</th>
+          <th id="th-amount" scope="col" class="num sortable" aria-sort="none">Amount</th>
+          <th scope="col">Status</th>
+          <th scope="col">Counterparty</th>
+          <th scope="col">Note</th>
+        </tr>
+      </thead>
+      <tbody id="payments-body"></tbody>
+    </table>
+
+    <div id="pagination" class="pager">
+      <button id="prev" class="prev-page" type="button" disabled>Prev</button>
+      <span id="page-info" aria-live="polite"></span>
+      <button id="next" class="next-page" type="button" disabled>Next</button>
+    </div>
+  </section>
+
+  <div class="panels">
+    <section id="notifications" class="card feed" data-state="live" aria-label="Notifications">
+      <div class="panel-head">
+        <h2>Notifications</h2>
+        <span class="feed-dot" aria-hidden="true"></span>
+      </div>
+      <div id="notifications-degraded" class="degraded-banner" hidden>
+        Notifier unreachable &mdash; showing the last known feed. Retrying automatically&hellip;
+      </div>
+      <ul id="notifications-list"></ul>
+    </section>
+
+    <aside id="drafts-panel" class="card" aria-label="Drafts">
+      <div class="panel-head"><h2>Drafts</h2></div>
+
+      <label class="field-label" for="role-token">Role token (bearer)</label>
+      <input id="role-token" type="password" autocomplete="off" spellcheck="false"
+             placeholder="paste the maker / checker / admin token">
+
+      <form id="draft-form" novalidate>
+        <div class="form-grid">
+          <div>
+            <label class="field-label" for="draft-amount">Amount (minor units)</label>
+            <input id="draft-amount" type="text" inputmode="numeric" placeholder="129900">
+          </div>
+          <div>
+            <span class="field-label">Currency</span>
+            <div id="draft-currency" class="dd" data-value="EUR" aria-label="Draft currency"></div>
+          </div>
+          <div>
+            <label class="field-label" for="draft-name">Counterparty name</label>
+            <input id="draft-name" type="text" maxlength="80" placeholder="Aurora Freight">
+          </div>
+          <div>
+            <label class="field-label" for="draft-country">Country</label>
+            <input id="draft-country" type="text" maxlength="2" placeholder="DE">
+          </div>
+          <div class="wide">
+            <label class="field-label" for="draft-note">Note</label>
+            <input id="draft-note" type="text" maxlength="280" placeholder="optional note">
+          </div>
+        </div>
+        <button type="submit" class="primary wide-btn">Create draft</button>
+      </form>
+
+      <ul id="draft-list"></ul>
+
+      <div class="draft-actions">
+        <button id="submit-btn" type="button" disabled>Submit</button>
+        <button id="approve-btn" type="button" disabled>Approve</button>
+        <button id="reject-btn" type="button" disabled>Reject</button>
+      </div>
+    </aside>
+  </div>
+
+  <div id="notice" role="status" aria-live="polite"></div>
+</div>
+
+<script src="viz.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
