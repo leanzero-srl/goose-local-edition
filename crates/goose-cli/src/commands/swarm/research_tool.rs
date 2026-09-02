@@ -9,6 +9,13 @@
 //! `Agent::handle_tool_result` answers, so every arm here REPLIES — a request left unanswered
 //! would park the lane forever. Nothing here bounds or ends anything: a call that cannot be
 //! folded is a named stray and an error reply the lane can act on, never a stop.
+//!
+//! VA-128 (r6j, read from the words): the landing also holds the lane's HAND — its claimed
+//! sections, dealt ONE per turn. The dispatch text carries section 1; every `research_answer`
+//! call with `section_done: true` closes the section in hand (`research_section_settled`) and
+//! its RESULT carries the next section's full text (`research_section_handed`), so a stateless
+//! model never holds nine sections and re-sorts them across turns (r6j's api lane: 182k
+//! reasoning chars, 79 minutes, nothing landed). The final reply folds only the remainder.
 
 use std::path::Path;
 
@@ -17,9 +24,9 @@ use goose::conversation::message::FrontendToolRequest;
 use rmcp::model::{CallToolResult, Content, ErrorCode, ErrorData, Tool};
 
 use super::research::{
-    emit_research_outcome, fold_research_entry, persist_research_row, relay_note, relay_targets,
-    research_answer_tool_schema, research_mini_name, RelayTarget, ResearchRow, StrayAnswer,
-    RESEARCH_ANSWER_TOOL,
+    emit_research_outcome, emit_section_handed, persist_research_row, relay_note, relay_targets,
+    research_answer_tool_schema, research_mini_name, section_in_hand_block, HandedSection,
+    RelayTarget, ResearchLane, ResearchRow, ResearchToolCall, StrayAnswer, RESEARCH_ANSWER_TOOL,
 };
 use super::{EventSink, GooseAgentDispatcher};
 
@@ -39,55 +46,157 @@ pub(super) struct ResearchLanding {
     started: std::time::Instant,
     next_q_index: usize,
     landed: Vec<ResearchRow>,
+    /// VA-128: the lane's claimed sections and the cursor of the one in hand — `in_hand ==
+    /// hand.len()` once every section has been dealt; `landed_in_section` counts the question
+    /// rows landed since the section in hand was dealt (the `research_section_settled` fact).
+    hand: Vec<HandedSection>,
+    in_hand: usize,
+    landed_in_section: usize,
+}
+
+/// What one `research_answer` call did to the hand (VA-128) — the reply the lane reads next is
+/// rendered from it (`hand_reply_text`), and the tests read it as data.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HandReply {
+    /// No `section_done` on the call: the section at `index` (1-based) stays in hand.
+    InHand {
+        index: usize,
+        of: usize,
+        heading: String,
+    },
+    /// The call closed the section in hand and the next one is dealt — `block` is its text.
+    Handed {
+        closed: String,
+        closed_landed: usize,
+        index: usize,
+        of: usize,
+        block: String,
+    },
+    /// The call closed the LAST section: nothing remains to hand.
+    LastClosed {
+        closed: String,
+        closed_landed: usize,
+        of: usize,
+    },
+    /// Nothing is in hand — every section was dealt already, or (`of` 0) the slice has none.
+    Exhausted { of: usize },
+}
+
+pub(super) struct Landed {
+    pub(super) row: Option<ResearchRow>,
+    pub(super) hand: HandReply,
 }
 
 impl ResearchLanding {
-    pub(super) fn open(slice: &str, model: &str) -> Self {
+    pub(super) fn open(lane: &ResearchLane, model: &str) -> Self {
         Self {
-            slice: slice.to_string(),
+            slice: lane.slice.clone(),
             model: model.to_string(),
             started: std::time::Instant::now(),
             next_q_index: 0,
             landed: Vec::new(),
+            hand: lane.hand.clone(),
+            in_hand: 0,
+            landed_in_section: 0,
         }
     }
 
-    /// ONE tool call → one row landed NOW: folded at the next q_index (`fold_research_entry`),
-    /// persisted (`persist_research_row`), emitted through the one outcome funnel
-    /// (`emit_research_outcome`) plus `research_answer_landed{task, slice, q_index, kind, status,
-    /// chars, raised, via: tool}` so the vigil sees answers arrive mid-lane, and kept for
-    /// `close`. A stray (no question text, nothing parseable) lands NO row and is the caller's to
-    /// name.
+    /// ONE tool call → the row it lands NOW, if it lands one (`ResearchToolCall::into_row`):
+    /// folded at the next q_index, persisted (`persist_research_row`), emitted through the one
+    /// outcome funnel (`emit_research_outcome`) plus `research_answer_landed{task, slice,
+    /// q_index, kind, status, chars, raised, via: tool}` so the vigil sees answers arrive
+    /// mid-lane, and kept for `close`. Then the HAND (VA-128): a `section_done` call closes the
+    /// section in hand — `research_section_settled{heading, index, of, landed, remaining}`, the
+    /// loud record of a section with nothing to settle — and deals the next
+    /// (`research_section_handed`, `section_in_hand_block`), or says nothing remains; a
+    /// section_done past the end is `research_section_done_past_end`. A stray (an answer with
+    /// no question) lands NO row and is the caller's to name; the index advances only on a row.
     fn land(
         &mut self,
         root: &Path,
         events: &dyn EventSink,
         key: &str,
-        arguments: &str,
-    ) -> Result<ResearchRow, StrayAnswer> {
-        let row = fold_research_entry(
+        call: ResearchToolCall,
+    ) -> Result<Landed, StrayAnswer> {
+        let section_done = call.section_done();
+        let row = call.into_row(
             &self.slice,
             self.next_q_index,
             &self.model,
             self.started.elapsed().as_secs(),
-            arguments,
+            self.hand.get(self.in_hand),
         )?;
-        self.next_q_index += 1;
-        persist_research_row(root, events, &row);
-        emit_research_outcome(events, &row);
-        events.write_value(serde_json::json!({
-            "event": "research_answer_landed",
-            "task": key,
-            "slice": row.slice,
-            "q_index": row.q_index,
-            "kind": row.kind,
-            "status": row.status,
-            "chars": row.answer.chars().count(),
-            "raised": row.raised.len(),
-            "via": "tool",
-        }));
-        self.landed.push(row.clone());
-        Ok(row)
+        if let Some(row) = &row {
+            self.next_q_index += 1;
+            if !row.question.is_empty() {
+                self.landed_in_section += 1;
+            }
+            persist_research_row(root, events, row);
+            emit_research_outcome(events, row);
+            events.write_value(serde_json::json!({
+                "event": "research_answer_landed",
+                "task": key,
+                "slice": row.slice,
+                "q_index": row.q_index,
+                "kind": row.kind,
+                "status": row.status,
+                "chars": row.answer.chars().count(),
+                "raised": row.raised.len(),
+                "via": "tool",
+            }));
+            self.landed.push(row.clone());
+        }
+        let of = self.hand.len();
+        let hand = if !section_done {
+            match self.hand.get(self.in_hand) {
+                Some(sec) => HandReply::InHand {
+                    index: self.in_hand + 1,
+                    of,
+                    heading: sec.heading.clone(),
+                },
+                None => HandReply::Exhausted { of },
+            }
+        } else if let Some(closed) = self.hand.get(self.in_hand) {
+            let closed_landed = self.landed_in_section;
+            events.write_value(serde_json::json!({
+                "event": "research_section_settled",
+                "task": key,
+                "slice": self.slice,
+                "heading": closed.heading,
+                "index": self.in_hand + 1,
+                "of": of,
+                "landed": closed_landed,
+                "remaining": of - self.in_hand - 1,
+            }));
+            let closed = closed.heading.clone();
+            self.in_hand += 1;
+            self.landed_in_section = 0;
+            if self.in_hand < of {
+                emit_section_handed(events, key, &self.slice, &self.hand, self.in_hand);
+                HandReply::Handed {
+                    closed,
+                    closed_landed,
+                    index: self.in_hand + 1,
+                    of,
+                    block: section_in_hand_block(&self.hand, self.in_hand),
+                }
+            } else {
+                HandReply::LastClosed {
+                    closed,
+                    closed_landed,
+                    of,
+                }
+            }
+        } else {
+            events.write_value(serde_json::json!({
+                "event": "research_section_done_past_end",
+                "task": key,
+                "slice": self.slice,
+                "of": of,
+            }));
+            HandReply::Exhausted { of }
+        };
+        Ok(Landed { row, hand })
     }
 
     /// What the fan takes back after the call: the next q_index (the remainder's first) and the
@@ -108,7 +217,11 @@ const RESEARCH_ANSWER_DESCRIPTION: &str = "Land ONE settled research question fo
      alternatives and open_because of a design question, the answer, and any raised / \
      raised_for points. The entry is written the moment this returns and the other slices' \
      lanes can read it; the reply names the file it landed in. Call it once per question, as \
-     you settle each one; your final_output then carries only the entries you did not land here.";
+     you settle each one. When the section in hand has nothing (more) to settle, call it with \
+     {\"section_done\": true} — and \"builder_decides\": [...] for the choices only this \
+     slice's builder makes — and the reply carries the NEXT section's text; an entry may carry \
+     section_done itself when it is the section's last. Your final_output then carries only \
+     the entries you did not land here.";
 
 /// The tool's extension — one tool, its argument exactly one derived entry
 /// (`research_answer_tool_schema`, the same item schema the final reply's `answers` uses, so
@@ -128,10 +241,54 @@ pub(super) fn research_answer_extension() -> ExtensionConfig {
         )],
         instructions: Some(format!(
             "`{RESEARCH_ANSWER_TOOL}` lands one settled question in the ledger the moment you \
-             call it; final_output carries only what you did not land through it."
+             call it; `{RESEARCH_ANSWER_TOOL}` with {{\"section_done\": true}} closes the \
+             section in hand and its reply deals the next; final_output carries only what you \
+             did not land through it."
         )),
         bundled: Some(true),
         available_tools: Vec::new(),
+    }
+}
+
+/// The hand's part of the tool's reply (VA-128): the section that stays in hand and how to close
+/// it; the closed section's count and the NEXT section's full text; or that nothing remains and
+/// final_output follows. The lane's next turn is formed from THIS text — the harness forms the
+/// message, the model lands one section at a time.
+pub(super) fn hand_reply_text(hand: &HandReply) -> String {
+    match hand {
+        HandReply::InHand { index, of, heading } => format!(
+            "; §{index} of {of} `{heading}` stays in hand — land its next question, or call \
+             {RESEARCH_ANSWER_TOOL} with {{\"section_done\": true}} (\"builder_decides\": [...] \
+             for the choices only this slice's builder makes) when nothing in it remains"
+        ),
+        HandReply::Handed {
+            closed,
+            closed_landed,
+            index,
+            of: _,
+            block,
+        } => format!(
+            ".\n\n§{} `{closed}` closed ({closed_landed} landed). {block}",
+            index - 1
+        ),
+        HandReply::LastClosed {
+            closed,
+            closed_landed,
+            of,
+        } => format!(
+            ".\n\n§{of} `{closed}` closed ({closed_landed} landed). Every section ({of} of {of}) \
+             has been handed and closed: call final_output now with {{\"answers\": [<only the \
+             entries you did NOT land here>], \"builder_decides\": [...]}} — an empty answers \
+             list is a complete reply."
+        ),
+        HandReply::Exhausted { of: 0 } => "; no section of the request is in hand for this \
+             slice (it claimed none) — the request file under SOURCES holds every section; \
+             final_output carries only the entries you did not land here"
+            .to_string(),
+        HandReply::Exhausted { of } => format!(
+            "; every section ({of} of {of}) was already handed and closed — nothing more to \
+             hand; call final_output with only the entries you did not land here"
+        ),
     }
 }
 
@@ -206,20 +363,43 @@ impl GooseAgentDispatcher {
                 ))]);
             };
             let slice = open.slice.clone();
-            open.land(&self.working_dir, self.events.as_ref(), key, &text)
-                .map_err(|stray| (slice, stray))
+            match ResearchToolCall::parse(&text) {
+                Some(call) => open
+                    .land(&self.working_dir, self.events.as_ref(), key, call)
+                    .map_err(|stray| (slice, stray)),
+                // Nothing parseable: the stray it always was, at the index it would have taken.
+                None => Err((
+                    slice,
+                    StrayAnswer {
+                        question_index: Some(open.next_q_index),
+                        answer_head: text.chars().take(200).collect(),
+                    },
+                )),
+            }
         };
         match landed {
-            Ok(row) => {
-                self.queue_research_relay(&row);
-                CallToolResult::success(vec![Content::text(format!(
-                    "landed {} ({}, kind {}); q{} is the next question you settle; final_output \
-                     carries only the entries you have not landed here",
-                    research_mini_name(&row.slice, row.q_index),
-                    row.status,
-                    row.kind,
-                    row.q_index + 1,
-                ))])
+            Ok(Landed { row, hand }) => {
+                let mut reply = match &row {
+                    Some(row) if row.question.is_empty() => format!(
+                        "landed {}: {} builder_decides on an outcome row; q{} is the next index",
+                        research_mini_name(&row.slice, row.q_index),
+                        row.raised.len(),
+                        row.q_index + 1,
+                    ),
+                    Some(row) => format!(
+                        "landed {} ({}, kind {}); q{} is the next question you settle",
+                        research_mini_name(&row.slice, row.q_index),
+                        row.status,
+                        row.kind,
+                        row.q_index + 1,
+                    ),
+                    None => "nothing landed (no entry on this call)".to_string(),
+                };
+                if let Some(row) = &row {
+                    self.queue_research_relay(row);
+                }
+                reply.push_str(&hand_reply_text(&hand));
+                CallToolResult::success(vec![Content::text(reply)])
             }
             Err((slice, stray)) => {
                 self.events.write_value(serde_json::json!({
@@ -232,8 +412,9 @@ impl GooseAgentDispatcher {
                 }));
                 CallToolResult::error(vec![Content::text(format!(
                     "nothing landed: {RESEARCH_ANSWER_TOOL} takes ONE JSON object with \
-                     `question` (the question text), `kind` (design | external) and `answer`; \
-                     this call carried: {}",
+                     `question` (the question text), `kind` (design | external) and `answer` — \
+                     or {{\"section_done\": true}} to close the section in hand; this call \
+                     carried: {}",
                     stray.answer_head
                 ))])
             }
@@ -268,12 +449,40 @@ impl GooseAgentDispatcher {
 #[cfg(test)]
 mod tests {
     use super::super::research::{
-        briefs_from_slices, fold_research_lane_from, load_research_mini, RESEARCH_ANSWERED,
-        RESEARCH_UNANSWERED,
+        briefs_from_slices, fold_research_lane_from, load_research_mini, section_hand,
+        RESEARCH_ANSWERED, RESEARCH_UNANSWERED,
     };
-    use super::super::{NullSink, OpenOutput, OpenSlice, SwarmEvent};
+    use super::super::{spec_sections, NullSink, OpenOutput, OpenSlice, SwarmEvent};
     use super::*;
     use std::sync::Mutex;
+
+    /// The three-section request every hand test deals from: §1 Boot [1-3], §2 Endpoints [4-6],
+    /// §3 Rules [7-8] — each body carries a marker word so a test can prove whose text rode.
+    const THREE_SECTIONS: &str = "# Boot\nBOOT_WORDS on port 8850.\n\n# Endpoints\n\
+                                  ENDPOINT_WORDS GET /api/health.\n\n# Rules\nRULE_WORDS bump \
+                                  the version.\n";
+
+    /// A slice lane as the fan builds it, its hand dealt from `THREE_SECTIONS` by the claimed
+    /// headings (empty `claimed` = a slice with nothing in hand).
+    fn lane_with_hand(slice: &str, claimed: &[&str]) -> ResearchLane {
+        let claimed: Vec<String> = claimed.iter().map(|c| c.to_string()).collect();
+        ResearchLane {
+            slice: slice.to_string(),
+            head: "HEAD".to_string(),
+            siblings: String::new(),
+            questions: Vec::new(),
+            material: format!("Own `app/{slice}.py`."),
+            hand: section_hand(slice, &claimed, &spec_sections(THREE_SECTIONS), &NullSink),
+        }
+    }
+
+    fn call(v: serde_json::Value) -> ResearchToolCall {
+        ResearchToolCall::parse(&v.to_string()).expect("a JSON object parses")
+    }
+
+    fn section_done() -> ResearchToolCall {
+        call(serde_json::json!({"section_done": true}))
+    }
 
     #[derive(Default)]
     struct ValueSink(Mutex<Vec<serde_json::Value>>);
@@ -309,7 +518,7 @@ mod tests {
     fn a_tool_landed_row_reaches_the_lane_rows_and_the_brief() {
         let dir = tempfile::tempdir().unwrap();
         let sink = ValueSink::default();
-        let mut landing = ResearchLanding::open("api", "m");
+        let mut landing = ResearchLanding::open(&lane_with_hand("api", &[]), "m");
         let entry = serde_json::json!({
             "question": "which port",
             "kind": "design",
@@ -318,14 +527,29 @@ mod tests {
             "open_because": "L12 names the vendor's port, not the app's",
             "answer": "Port 8850, from the spec's own boot table."
         });
-        let row = landing
-            .land(dir.path(), &sink, "research-api", &entry.to_string())
+        let landed = landing
+            .land(dir.path(), &sink, "research-api", call(entry))
             .unwrap();
+        let row = landed.row.unwrap();
         assert_eq!((row.q_index, row.status.as_str()), (0, RESEARCH_ANSWERED));
+        assert_eq!(
+            landed.hand,
+            HandReply::Exhausted { of: 0 },
+            "a lane with no claimed section has nothing in hand"
+        );
         assert!(load_research_mini(dir.path(), "api", 0).is_some());
         assert!(
+            ResearchToolCall::parse("not json").is_none(),
+            "nothing parseable is the caller's stray"
+        );
+        assert!(
             landing
-                .land(dir.path(), &sink, "research-api", "not json")
+                .land(
+                    dir.path(),
+                    &sink,
+                    "research-api",
+                    call(serde_json::json!({"answer": "an answer with no question"}))
+                )
                 .is_err(),
             "a stray lands no row"
         );
@@ -388,5 +612,212 @@ mod tests {
         assert!(
             settled_at < questions_at && b.split_at(questions_at).1.contains("- which storage")
         );
+    }
+
+    /// VA-128 (b): an entry landed for §1 leaves §1 in hand (the reply says how to close it);
+    /// the `section_done` call closes §1 — `research_section_settled{index: 1, landed: 1}` — and
+    /// the tool's RESULT carries §2's full text with the index of §3, never §3's words, beside
+    /// `research_section_handed{index: 2, of: 3}`.
+    #[test]
+    fn landing_an_entry_keeps_the_section_in_hand_and_section_done_deals_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let lane = lane_with_hand("api", &["Boot", "Endpoints", "Rules"]);
+        let mut landing = ResearchLanding::open(&lane, "m");
+        let entry = serde_json::json!({
+            "question": "which port does the app bind",
+            "kind": "external",
+            "cite": "request.md:2",
+            "answer": "8850"
+        });
+        let landed = landing
+            .land(dir.path(), &sink, "research-api", call(entry))
+            .unwrap();
+        assert_eq!(landed.row.as_ref().map(|r| r.q_index), Some(0));
+        assert_eq!(
+            landed.hand,
+            HandReply::InHand {
+                index: 1,
+                of: 3,
+                heading: "Boot".into()
+            }
+        );
+        let reply = hand_reply_text(&landed.hand);
+        assert!(
+            reply.contains("§1 of 3 `Boot` stays in hand")
+                && reply.contains("{\"section_done\": true}"),
+            "{reply}"
+        );
+        let landed = landing
+            .land(dir.path(), &sink, "research-api", section_done())
+            .unwrap();
+        assert!(landed.row.is_none(), "a bare section_done lands no row");
+        let HandReply::Handed {
+            closed,
+            closed_landed,
+            index,
+            of,
+            block,
+        } = &landed.hand
+        else {
+            panic!("§2 is dealt: {:?}", landed.hand);
+        };
+        assert_eq!(
+            (closed.as_str(), *closed_landed, *index, *of),
+            ("Boot", 1, 2, 3)
+        );
+        assert!(
+            block.contains("SECTION 2 of 3, in hand now")
+                && block
+                    .contains("### Endpoints\n[request.md:4-6]\nENDPOINT_WORDS GET /api/health.")
+                && block.contains("§3 Rules [request.md:7-8]")
+                && !block.contains("RULE_WORDS"),
+            "{block}"
+        );
+        let reply = hand_reply_text(&landed.hand);
+        assert!(
+            reply.contains("§1 `Boot` closed (1 landed).") && reply.contains("ENDPOINT_WORDS"),
+            "the tool's result carries the next section's text:\n{reply}"
+        );
+        let ev = sink.0.lock().unwrap();
+        let settled = ev
+            .iter()
+            .find(|e| e["event"] == "research_section_settled")
+            .expect("the closed section is a loud fact");
+        assert_eq!(settled["task"], "research-api");
+        assert_eq!(settled["heading"], "Boot");
+        assert_eq!(settled["index"], 1);
+        assert_eq!(settled["landed"], 1);
+        assert_eq!(settled["remaining"], 2);
+        let handed = ev
+            .iter()
+            .find(|e| e["event"] == "research_section_handed")
+            .expect("the landing hands section 2");
+        assert_eq!(handed["task"], "research-api");
+        assert_eq!(handed["slice"], "api");
+        assert_eq!(handed["heading"], "Endpoints");
+        assert_eq!(handed["index"], 2);
+        assert_eq!(handed["of"], 3);
+        assert_eq!(handed["lines"], "request.md:4-6");
+    }
+
+    /// VA-128 (c): after §3 the result says no section remains and points at final_output; a
+    /// section_done past the end is `research_section_done_past_end`, never a silent no-op; an
+    /// entry may carry `section_done` itself and lands before the section closes.
+    #[test]
+    fn closing_the_last_section_says_nothing_remains_and_a_call_past_the_end_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let lane = lane_with_hand("api", &["Boot", "Endpoints", "Rules"]);
+        let mut landing = ResearchLanding::open(&lane, "m");
+        for _ in 0..2 {
+            landing
+                .land(dir.path(), &sink, "research-api", section_done())
+                .unwrap();
+        }
+        let last = serde_json::json!({
+            "question": "which sort values are accepted",
+            "kind": "design",
+            "alternatives": ["created_at", "date_desc"],
+            "open_because": "L8 names the bump, not the sort",
+            "answer": "created_at",
+            "section_done": true
+        });
+        let landed = landing
+            .land(dir.path(), &sink, "research-api", call(last))
+            .unwrap();
+        assert_eq!(landed.row.as_ref().map(|r| r.q_index), Some(0));
+        assert_eq!(
+            landed.hand,
+            HandReply::LastClosed {
+                closed: "Rules".into(),
+                closed_landed: 1,
+                of: 3
+            }
+        );
+        let reply = hand_reply_text(&landed.hand);
+        assert!(
+            reply.contains("Every section (3 of 3) has been handed and closed")
+                && reply.contains("call final_output now"),
+            "{reply}"
+        );
+        let landed = landing
+            .land(dir.path(), &sink, "research-api", section_done())
+            .unwrap();
+        assert_eq!(landed.hand, HandReply::Exhausted { of: 3 });
+        assert!(hand_reply_text(&landed.hand).contains("nothing more to hand"));
+        let past_end = sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["event"] == "research_section_done_past_end")
+            .count();
+        assert_eq!(past_end, 1);
+        let (next, rows) = landing.close();
+        assert_eq!(
+            (next, rows.len()),
+            (1, 1),
+            "three closes, one row, one index burned"
+        );
+    }
+
+    /// VA-128 (d): a section with nothing to settle is ONE call — `section_done` with the
+    /// choices only the builder makes — which advances the hand and keeps the choices on a
+    /// `builder_decides` outcome row (persisted, `research_builder_decides` per line), so a
+    /// stateless lane's per-section choices survive to the brief without a later row to ride.
+    #[test]
+    fn a_builder_decides_section_done_call_advances_and_keeps_the_choices() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let lane = lane_with_hand("api", &["Boot", "Endpoints", "Rules"]);
+        let mut landing = ResearchLanding::open(&lane, "m");
+        let landed = landing
+            .land(
+                dir.path(),
+                &sink,
+                "research-api",
+                call(serde_json::json!({
+                    "section_done": true,
+                    "builder_decides": ["debounce interval", " ", "debounce interval"]
+                })),
+            )
+            .unwrap();
+        let row = landed.row.expect("the choices ride an outcome row");
+        assert_eq!(
+            (row.q_index, row.question.as_str(), row.reason.as_deref()),
+            (0, "", Some("builder_decides"))
+        );
+        assert_eq!(
+            row.raised,
+            vec!["[builder decides] debounce interval".to_string()]
+        );
+        assert!(
+            row.detail
+                .as_deref()
+                .unwrap()
+                .contains("section `Boot` (request.md:1-3): no question; 1 choice(s)"),
+            "{:?}",
+            row.detail
+        );
+        assert!(load_research_mini(dir.path(), "api", 0).is_some());
+        assert!(matches!(landed.hand, HandReply::Handed { index: 2, .. }));
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_unanswered",
+                "research_builder_decides",
+                "research_answer_landed",
+                "research_section_settled",
+                "research_section_handed",
+            ],
+            "{names:?}"
+        );
+        assert_eq!(ev[0]["reason"], "builder_decides");
+        assert_eq!(ev[1]["text"], "debounce interval");
+        assert_eq!(ev[3]["landed"], 0, "a choice is not a question row");
+        assert_eq!(ev[4]["index"], 2);
     }
 }

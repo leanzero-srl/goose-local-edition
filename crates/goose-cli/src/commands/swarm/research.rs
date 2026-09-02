@@ -8,7 +8,7 @@
 //! other dispatcher methods; what lives here is everything about it that is pure.
 //!
 //! THE LANES RESEARCH (VA-089): a research lane runs for EVERY slice and carries NO questions —
-//! it reads its slice's sections (spliced into its prompt), the sources and the sibling slices'
+//! it is dealt its slice's sections one per turn (VA-128), the sources and the sibling slices'
 //! objectives, DERIVES its own design/external questions and answers them in the same session
 //! (`ResearchLane`, `fold_research_lane`). Spec lookups are not questions any more: the brief
 //! and the lane both hold the section text. MEASURED: r6h's opener reasoned ~66 minutes on one
@@ -267,15 +267,25 @@ pub(super) fn research_answer_entry_schema() -> serde_json::Value {
 /// question lands as one mini the moment the lane calls it, so the lane's frame never sits at
 /// 0 bytes for an hour (r6i's structure lane: 113,720 reasoning chars, output frame empty until
 /// minute 63, nine answers in one final_output). The tool's argument is exactly one entry
-/// (`research_answer_entry_schema`) and `fold_research_entry` turns it into the same row
+/// (`research_answer_entry_schema`) and `ResearchToolCall::into_row` turns it into the same row
 /// `fold_research_lane_from` would have built at that position; the lane's final_output then
 /// folds only the REMAINDER (`fold_research_lane_from(.., next_q_index)`), so the numbering
 /// never collides with a landed mini. Registered as a frontend extension on the research call
 /// (`GooseAgentDispatcher::research_answer_extension_for`) and answered in the lane's own stream
 /// loop (`frontend_tool_result`) — the agent parks the lane on the result channel until the
-/// swarm replies.
+/// swarm replies. VA-128: the argument is the entry widened by the SECTION signal —
+/// `section_done` closes the section in hand (the next one's text rides the result),
+/// `builder_decides` names the choices only this slice's builder makes — and nothing is
+/// `required` at the tool level, so a bare `{"section_done": true}` is a valid call under
+/// schema-constrained decoding; an entry without a question is still the stray it always was
+/// (`ResearchToolCall::into_row`).
 pub(super) fn research_answer_tool_schema() -> serde_json::Value {
-    research_answer_entry_schema()
+    let mut schema = research_answer_entry_schema();
+    schema["required"] = serde_json::json!([]);
+    schema["properties"]["section_done"] = serde_json::json!({"type": "boolean"});
+    schema["properties"]["builder_decides"] =
+        serde_json::json!({"type": "array", "items": {"type": "string"}});
+    schema
 }
 
 pub(super) const RESEARCH_ANSWER_TOOL: &str = "research_answer";
@@ -338,6 +348,11 @@ pub(super) struct ResearchLane {
     pub(super) siblings: String,
     pub(super) questions: Vec<ResearchQuestion>,
     pub(super) material: String,
+    /// VA-128: the slice's claimed sections in claim order, handed to the lane ONE AT A TIME
+    /// (`section_in_hand_block`) — the first rides the dispatch text, each next one rides the
+    /// result of the `research_answer` call that closes the current one (`section_done`).
+    /// Empty for the decisions lane and for a slice whose claims matched no heading.
+    pub(super) hand: Vec<HandedSection>,
 }
 
 impl ResearchLane {
@@ -679,7 +694,7 @@ pub(super) fn classify_design_entry(
 }
 
 /// ONE derived entry → ONE row at `q_index` — the shared body of `fold_research_lane` (every
-/// entry of the final reply) and `fold_research_entry` (the per-answer tool), so a question lands
+/// entry of the final reply) and `ResearchToolCall::into_row` (the per-answer tool), so a question lands
 /// identically whichever door it came through. `None` when the entry has no question text: a
 /// `StrayAnswer` for the caller to name, never a row. A non-empty answer is answered, a blank one
 /// unanswered/empty_answer with its raised lines kept; `raised_for` lines are labelled for their
@@ -751,23 +766,97 @@ fn row_from_entry(
     })
 }
 
-/// The per-answer tool's fold (VA-118 item 4; `research_tool::land_research_answer` is its
-/// caller): the tool call's arguments are one entry, landed at the `q_index` the caller assigns
-/// (the count of entries landed so far for this lane). Nothing parseable is a stray with the raw
-/// head, never a row. `secs` is the lane's elapsed at the call.
-pub(super) fn fold_research_entry(
-    slice: &str,
-    q_index: usize,
-    model: &str,
-    secs: u64,
-    arguments: &str,
-) -> Result<ResearchRow, StrayAnswer> {
-    match parse_json_lenient::<DerivedAnswer>(arguments) {
-        Some(entry) => row_from_entry(slice, q_index, entry, model, secs),
-        None => Err(StrayAnswer {
-            question_index: Some(q_index),
-            answer_head: arguments.chars().take(200).collect(),
-        }),
+/// The per-answer tool's ARGUMENT (VA-128): one entry (`DerivedAnswer`, the same fields the final
+/// reply's `answers` items carry) and/or the section signal — `section_done` closes the section
+/// in hand, `builder_decides` names the choices only this slice's builder makes. All three may
+/// ride one call: the entry lands, the choices ride its raised lines, the section closes.
+#[derive(serde::Deserialize, Default)]
+pub(super) struct ResearchToolCall {
+    #[serde(flatten)]
+    entry: DerivedAnswer,
+    #[serde(default)]
+    section_done: bool,
+    #[serde(default)]
+    builder_decides: Vec<String>,
+}
+
+impl ResearchToolCall {
+    pub(super) fn parse(arguments: &str) -> Option<Self> {
+        parse_json_lenient::<ResearchToolCall>(arguments)
+    }
+
+    pub(super) fn section_done(&self) -> bool {
+        self.section_done
+    }
+
+    fn carries_question(&self) -> bool {
+        !one_line(&self.entry.question).is_empty()
+    }
+
+    /// The choices, one line each, blanks and repeats dropped — the final reply's own rule
+    /// (`fold_research_lane_from`).
+    fn decides(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for d in &self.builder_decides {
+            let d = one_line(d);
+            if !d.is_empty() && !out.contains(&d) {
+                out.push(d);
+            }
+        }
+        out
+    }
+
+    /// The row this call lands at `q_index`, if any: the entry, its `builder_decides` labelled
+    /// (`BUILDER_DECIDES_PREFIX`) behind its raised lines; with NO question, the choices alone
+    /// ride one `builder_decides` outcome row (the final reply's `remainder_empty` convention —
+    /// the row cannot grow, and a choice held back for a later row would be lost at the
+    /// landing's close, which persists nothing); a call carrying neither lands nothing
+    /// (`Ok(None)`: a bare section_done). An answer with no question is the stray it always was.
+    pub(super) fn into_row(
+        self,
+        slice: &str,
+        q_index: usize,
+        model: &str,
+        secs: u64,
+        section: Option<&HandedSection>,
+    ) -> Result<Option<ResearchRow>, StrayAnswer> {
+        let decides = self.decides();
+        let labelled = || -> Vec<String> {
+            decides
+                .iter()
+                .map(|d| format!("{BUILDER_DECIDES_PREFIX}{d}"))
+                .collect()
+        };
+        if self.carries_question() {
+            let mut row = row_from_entry(slice, q_index, self.entry, model, secs)?;
+            row.raised.extend(labelled());
+            return Ok(Some(row));
+        }
+        if !self.entry.answer.trim().is_empty() {
+            return Err(StrayAnswer {
+                question_index: Some(q_index),
+                answer_head: self.entry.answer.chars().take(200).collect(),
+            });
+        }
+        if decides.is_empty() {
+            return Ok(None);
+        }
+        let detail = match section {
+            Some(sec) => format!(
+                "section `{}` ({}): no question; {} choice(s) only this slice's builder makes",
+                sec.heading,
+                sec.span(),
+                decides.len()
+            ),
+            None => format!(
+                "no section in hand; {} choice(s) only this slice's builder makes",
+                decides.len()
+            ),
+        };
+        let mut outcome = lane_outcome_row(slice, "builder_decides", &detail, model, secs);
+        outcome.q_index = q_index;
+        outcome.raised = labelled();
+        Ok(Some(outcome))
     }
 }
 
@@ -826,7 +915,7 @@ pub(super) fn fold_research_lane(
 
 /// `fold_research_lane` with the numbering started at `first_q_index` — the remainder of a lane
 /// whose earlier answers already landed one by one through the per-answer tool
-/// (`fold_research_entry`), so the final reply's entries never collide with landed minis. An
+/// (`ResearchToolCall::into_row`), so the final reply's entries never collide with landed minis. An
 /// OUTCOME row (the Err, unparseable and all-stray arms) sits at `first_q_index` for the same
 /// reason — at 0 it would overwrite the first landed mini — and an empty remainder behind landed
 /// rows is no row at all (the minis are the record) unless a `builder_decides` list needs a
@@ -1112,11 +1201,11 @@ pub(super) fn research_tree_block(tree_at_start: &[String]) -> String {
     }
 }
 
-/// The ONE find+splice loop for a slice's claimed sections. Both consumers — the brief a
-/// builder reads (`briefs_from_slices`) and the research prompt (`research_request_block`) —
-/// call THIS, so the heading-match rule cannot diverge between them (the digestStreamFields
-/// law: one shared join, never a hand-copied loop; the loop had already been duplicated
-/// verbatim at both sites).
+/// The brief's rendering of a slice's claimed sections, all at once (`briefs_from_slices`).
+/// The research lane reads the SAME sections through `section_hand` — the one matcher both
+/// call, so the heading-match rule cannot diverge between them (the digestStreamFields law:
+/// one shared join, never a hand-copied loop; the loop had already been duplicated verbatim
+/// at both sites once).
 ///
 /// A claimed heading that matches NO spec section is a MEASURED absence, never a silent drop:
 /// r5's boot slice claimed a typo'd heading and lost 3,501 chars from BOTH its research
@@ -1125,28 +1214,70 @@ pub(super) fn research_tree_block(tree_at_start: &[String]) -> String {
 /// MILD, never blocks; the matching sections still splice. Both sides are compared on
 /// `heading_key` — decoration folds (r6d: "vs7dbg — REQUIRED and graded" claimed against
 /// "#### `vs7dbg` — REQUIRED and graded" missed twice), letters do not.
+///
+/// VA-128: the matcher is `section_hand`; this renders every matched section at once — the
+/// brief's shape. The research lane no longer receives this: it is handed the same sections one
+/// at a time (`section_in_hand_block`).
 pub(super) fn splice_claimed_sections(
     slice_id: &str,
     claimed: &[String],
     sections: &[SpecSection],
     events: &dyn EventSink,
 ) -> String {
-    let mut spliced = String::new();
+    section_hand(slice_id, claimed, sections, events)
+        .iter()
+        .map(|sec| format!("\n{}", sec.render()))
+        .collect()
+}
+
+/// One claimed section as the research lane receives it (VA-128): heading, request.md span and
+/// body — the same three facts `splice_claimed_sections` renders for the brief, kept apart so
+/// the lane's hand can be dealt one section per turn. VA-118: the span rides under the heading
+/// so a lane's `cite` is the handed lines — r6i's structure lane ran 14 sed/grep calls over
+/// ranges it already held to learn the line numbers it wanted to cite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct HandedSection {
+    pub(super) heading: String,
+    pub(super) line_start: usize,
+    pub(super) line_end: usize,
+    pub(super) body: String,
+}
+
+impl HandedSection {
+    pub(super) fn render(&self) -> String {
+        format!(
+            "### {}\n[request.md:{}-{}]\n{}",
+            self.heading,
+            self.line_start,
+            self.line_end,
+            self.body.trim()
+        )
+    }
+
+    fn span(&self) -> String {
+        format!("request.md:{}-{}", self.line_start, self.line_end)
+    }
+}
+
+/// THE ONE matcher for a slice's claimed headings (VA-128; the loop `splice_claimed_sections`
+/// carried): the matched sections in claim order, each miss a loud
+/// `slice_claimed_section_unmatched{slice, claimed}`.
+pub(super) fn section_hand(
+    slice_id: &str,
+    claimed: &[String],
+    sections: &[SpecSection],
+    events: &dyn EventSink,
+) -> Vec<HandedSection> {
+    let mut hand: Vec<HandedSection> = Vec::new();
     for want in claimed {
         let key = heading_key(want);
         match sections.iter().find(|s| heading_key(&s.heading) == key) {
-            Some(sec) => {
-                // VA-118: the section's request.md span rides under its heading so a lane's
-                // `cite` is the handed lines — r6i's structure lane ran 14 sed/grep calls over
-                // ranges it already held to learn the line numbers it wanted to cite.
-                spliced.push_str(&format!(
-                    "\n### {}\n[request.md:{}-{}]\n{}",
-                    sec.heading,
-                    sec.line_start,
-                    sec.line_end,
-                    sec.body.trim()
-                ));
-            }
+            Some(sec) => hand.push(HandedSection {
+                heading: sec.heading.clone(),
+                line_start: sec.line_start,
+                line_end: sec.line_end,
+                body: sec.body.clone(),
+            }),
             None => {
                 events.write_value(serde_json::json!({
                     "event": "slice_claimed_section_unmatched",
@@ -1156,7 +1287,94 @@ pub(super) fn splice_claimed_sections(
             }
         }
     }
-    spliced
+    hand
+}
+
+/// The section a research lane holds RIGHT NOW (VA-128, `index` 0-based into `hand`): its full
+/// text, then a one-line index of what follows — headings and spans only, never their text —
+/// so the lane knows the order without holding the words. THE MEASURED WASTE (r6j, read from
+/// the lanes' words): handed all nine of its sections at once, the api lane reasoned 182k
+/// chars over 79 minutes and landed NOTHING, re-drafting its entry list four times across
+/// tool-call turns ("Entry A-G" → "1-8" → "A…") because a turn's reasoning is not carried into
+/// the next and each turn restarted the sort; core held 57 minutes then landed 12 in 10;
+/// web-viz (10 sections) held 21 minutes then landed 4 in 2. The shape of the message, not the
+/// model: a stateless model is handed ONE section's frozen lines per turn and lands (or closes
+/// the section) before the next appears. Rendered at dispatch (section 1) and in the tool's
+/// result at every `section_done` — one writer, so the two turns read the same words.
+pub(super) fn section_in_hand_block(hand: &[HandedSection], index: usize) -> String {
+    let of = hand.len();
+    let sec = &hand[index];
+    let mut block = format!(
+        "SECTION {} of {of}, in hand now — settle it, then call {RESEARCH_ANSWER_TOOL} with \
+         {{\"section_done\": true}}:\n{}",
+        index + 1,
+        sec.render()
+    );
+    let after: Vec<String> = hand[index + 1..]
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("§{} {} [{}]", index + 2 + i, s.heading, s.span()))
+        .collect();
+    if after.is_empty() {
+        block.push_str(
+            "\n\nTHIS IS THE LAST SECTION: when it is settled, {\"section_done\": true} closes \
+             it and final_output follows.",
+        );
+    } else {
+        block.push_str(&format!(
+            "\n\nAFTER THIS SECTION (handed in this order, one per section_done — their text \
+             arrives then, not now): {}",
+            after.join("; ")
+        ));
+    }
+    block
+}
+
+/// The hand as the dispatch text opens it: the framing, then section 1 (`section_in_hand_block`);
+/// an EMPTY hand is stated as the measured absence it is — the slice claimed no heading, or
+/// none matched (`slice_claimed_section_unmatched` named each) — never filled from the index.
+pub(super) fn hand_block_at_dispatch(hand: &[HandedSection]) -> String {
+    if hand.is_empty() {
+        return "\n\nNO SECTION OF THE REQUEST IS IN HAND for this slice — it claimed no heading, \
+                or none it claimed matched one (`slice_claimed_section_unmatched` names each \
+                miss): every section's full text is in the request file named under SOURCES; \
+                open the ones your question needs."
+            .to_string();
+    }
+    format!(
+        "\n\nTHE SPEC'S OWN SECTIONS FOR THIS SLICE — the sections this slice OWNS, verbatim, the \
+         authority over any paraphrase — are handed to you ONE AT A TIME ({} in all). Settle the \
+         section in hand: one {RESEARCH_ANSWER_TOOL} call per question you derive from it, then \
+         one call with {{\"section_done\": true}} (add \"builder_decides\": [...] for the choices \
+         only this slice's builder makes) — the next section's text arrives in THAT call's result. \
+         A section with nothing to settle is that one section_done call, never a silent skip. Do \
+         not open a later section from the request file ahead of its turn.\n\n{}",
+        hand.len(),
+        section_in_hand_block(hand, 0)
+    )
+}
+
+/// The progress event both hand-off sites write (VA-128): the dispatch text for section 1
+/// (`research_dispatch_text`) and the tool result for every next one
+/// (`ResearchLanding::land`) — one writer, so tick.py reads one shape per section.
+pub(super) fn emit_section_handed(
+    events: &dyn EventSink,
+    task: &str,
+    slice: &str,
+    hand: &[HandedSection],
+    index: usize,
+) {
+    let sec = &hand[index];
+    events.write_value(serde_json::json!({
+        "event": "research_section_handed",
+        "task": task,
+        "slice": slice,
+        "heading": sec.heading,
+        "index": index + 1,
+        "of": hand.len(),
+        "lines": sec.span(),
+        "chars": sec.body.chars().count(),
+    }));
 }
 
 /// The routes a section's endpoint table ADVERTISES, as base paths: `spec_surface_rows` (the one
@@ -1440,9 +1658,11 @@ pub(super) fn consumed_spec_sections(
 }
 
 /// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
-/// spec when orientation is armed — it carries the orientation index plus the slice's claimed
-/// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
-/// the whole spec is the better input, exactly as OPEN's own message formation decides it.
+/// spec when orientation is armed — it carries the orientation index and the sections the slice
+/// CALLS INTO; the slice's own claimed sections are its HAND (VA-128: `section_hand`, dealt one
+/// per turn by `hand_block_at_dispatch` and the tool's result — no longer spliced whole here).
+/// Below the arming floor the whole spec is the better input, exactly as OPEN's own message
+/// formation decides it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn research_request_block(
     spec: &str,
@@ -1457,7 +1677,6 @@ pub(super) fn research_request_block(
     if !armed {
         return format!("THE REQUEST:\n{spec}");
     }
-    let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
     // The same helper, the same plan-wide inputs the brief builder hands it (VA-030): every
     // slice's claims so rule (c) counts claimants across the plan, and this slice's declared
     // files so rule (a) reads the routes its files name. Before, the research prompt passed
@@ -1474,28 +1693,20 @@ pub(super) fn research_request_block(
     let consumed =
         consumed_spec_sections(slice_id, claimed, files, "", every_claim, sections, events);
     let orientation = spec_orientation(sections);
-    let mut block = if spliced.is_empty() {
-        format!(
-            "THE REQUEST, AS ITS ORIENTATION INDEX (this slice claimed no sections — every \
-             section's full text is in the request file named under SOURCES; open the ones your \
-             question needs):\n\n{orientation}"
-        )
-    } else {
-        // r6c, research-ledgerd-core-q2: the Health shape lived in a section this slice did not
-        // claim; the lane saw only the index's excerpt ("shape below"), called the shape "not
-        // pinned in the provided spec text" and invented one. The index is a MAP, not a wall:
-        // the owned sections are the lane's area, and any other section it needs is one read
-        // away in the request file. Stated here, where the sections are.
-        format!(
-            "THE REQUEST, AS ITS ORIENTATION INDEX (every section: heading, size, opening \
-             sentences):\n\n{orientation}\n\nTHE SPEC'S OWN SECTIONS FOR THIS SLICE — the \
-             sections this slice OWNS, verbatim, and the authority over any paraphrase. A \
-             question may reach into a section that is only INDEXED above (an endpoint's \
-             response shape, a counter's lifetime, a boot flag): open that section in the \
-             request file named under SOURCES and answer from its words — never from the \
-             index's excerpt alone:{spliced}"
-        )
-    };
+    // r6c, research-ledgerd-core-q2: the Health shape lived in a section this slice did not
+    // claim; the lane saw only the index's excerpt ("shape below"), called the shape "not
+    // pinned in the provided spec text" and invented one. The index is a MAP, not a wall:
+    // the owned sections are the lane's area — its HAND, dealt one section per turn (VA-128,
+    // `hand_block_at_dispatch`; the head no longer carries them) — and any other section it
+    // needs is one read away in the request file. Stated here, where the index is.
+    let mut block = format!(
+        "THE REQUEST, AS ITS ORIENTATION INDEX (every section: heading, size, opening \
+         sentences). The sections this slice OWNS are handed to you further down, one at a \
+         time; a question may reach into a section that is only INDEXED here (an endpoint's \
+         response shape, a counter's lifetime, a boot flag): open that section in the request \
+         file named under SOURCES and answer from its words — never from the index's excerpt \
+         alone:\n\n{orientation}"
+    );
     block.push_str(&consumed_sections_blocks(&consumed));
     block
 }
@@ -1557,10 +1768,12 @@ pub(super) fn research_prompt_head(
 /// (empty on a first dispatch — no heading, no filler), then EVERY open decision VERBATIM, each
 /// tagged `[qN]` with its q_index — the tag the reply's `question_index` repeats, so no
 /// translation table exists between the prompt and the ledger. A SLICE lane (VA-089): its head
-/// (the slice's sections verbatim, objective, sources), the snowball block, the sibling slices'
-/// objectives, then the DERIVE instruction — the two question kinds, the evidence each carries,
-/// what is NOT a question (a fact the sections state; an open decision), and that every question
-/// is answered in this same session. No question text rides in: the lane writes its own.
+/// (the orientation index, objective, sources), the HAND's first section (VA-128 —
+/// `hand_block_at_dispatch`; the rest arrive one per `section_done` in the tool's result), the
+/// snowball block, the sibling slices' objectives, then the DERIVE instruction — the two
+/// question kinds, the evidence each carries, what is NOT a question (a fact the section
+/// states; an open decision), and that every question is answered in this same session. No
+/// question text rides in: the lane writes its own.
 pub(super) fn research_user_text(prior_block: &str, lane: &ResearchLane) -> String {
     if !lane.derives() {
         let tagged: Vec<String> = lane
@@ -1591,12 +1804,13 @@ pub(super) fn research_user_text(prior_block: &str, lane: &ResearchLane) -> Stri
         )
     };
     format!(
-        "{}{prior_block}{siblings}\n\nYOUR WORK, slice `{}`: DERIVE this slice's questions, then \
-         ANSWER them, in this one session. THE SPEC'S OWN SECTIONS above ARE the request for this \
-         slice: every fact they state you already hold, verbatim, with each section's request.md \
-         lines under its heading — do not re-read them from the request file and do not search the \
-         request to prove a silence; a silence is stated by naming the handed section that would \
-         have carried the fact and does not. Sort every candidate three ways before you write: a \
+        "{}{}{prior_block}{siblings}\n\nYOUR WORK, slice `{}`: DERIVE this slice's questions, \
+         then ANSWER them, in this one session, ONE SECTION AT A TIME. THE SECTION IN HAND above \
+         IS the request for this slice right now: every fact it states you already hold, verbatim, \
+         with its request.md lines under its heading — do not re-read it from the request file and \
+         do not search the request to prove a silence; a silence is stated by naming the handed \
+         section that would have carried the fact and does not. Sort every candidate three ways \
+         before you write: a \
          pasted line answers it → it is NOT a question, write nothing (the builder holds the same \
          text); the vendor's documentation answers it → kind external; the request leaves it OPEN → \
          kind design, only when another slice's builder or the vendor must AGREE to the answer, or \
@@ -1612,9 +1826,12 @@ pub(super) fn research_user_text(prior_block: &str, lane: &ResearchLane) -> Stri
          Not a question: a fact a pasted line states; one of the open decisions (USER DECISIONS \
          above, or one the request assigns to the builder as a decision); a choice only this \
          slice's builder feels at the keyboard — a buffer layout, a debounce, a helper's name, an \
-         internal state shape — list those under `builder_decides`, one line each, no answer. \
-         Answer every question you write; the reply shape is in the system message.",
-        lane.head, lane.slice
+         internal state shape — list those under `builder_decides` on the section_done call that \
+         closes the section, one line each, no answer. Answer every question you write; the reply \
+         shape is in the system message.",
+        lane.head,
+        hand_block_at_dispatch(&lane.hand),
+        lane.slice
     )
 }
 
@@ -1988,7 +2205,12 @@ pub(super) fn research_dispatch_text(
             })
             .collect::<Vec<_>>(),
         "index_sections": index_sections,
+        "sections_in_hand": lane.hand.len(),
     }));
+    // VA-128: section 1 is handed with the dispatch text; the landing hands every next one.
+    if !lane.hand.is_empty() {
+        emit_section_handed(events, activity_key, &lane.slice, &lane.hand, 0);
+    }
     research_user_text(&prior_minis_block(&lane.slice, &prior), lane)
 }
 
@@ -2685,11 +2907,14 @@ pub(super) fn research_system_text(lane: &ResearchLane) -> String {
      have one."
             .to_string();
     }
-    "You are the RESEARCHER of ONE slice of this request. The sections in your message ARE the \
-     request for this slice — verbatim, each with its request.md lines under its heading — so you \
-     already hold every fact they state; re-reading them from disk or searching the request for \
-     what they say is not research. You derive this slice's questions yourself and answer them, \
-     all in this one session. Ground every answer in the sections you were given, the existing \
+    "You are the RESEARCHER of ONE slice of this request. The request's sections for this slice \
+     are handed to you ONE AT A TIME: the section in your message IS the request for this slice \
+     right now — verbatim, with its request.md lines under its heading — so you already hold \
+     every fact it states; re-reading it from disk or searching the request for what it says is \
+     not research. The next section arrives in the result of the research_answer call that \
+     closes the current one ({\"section_done\": true}); do not read ahead. You derive this \
+     slice's questions yourself and answer them, section by section, all in this one session. \
+     Ground every answer in the section you were given, the existing \
      tree's files (your shell and tree tools) and, when the request names a documentation URL, \
      the vendor's documentation — fetch it; an answer copied from the real source beats any \
      paraphrase. Do NOT create or edit files: you have no write or edit tool, and your structured \
@@ -2717,8 +2942,13 @@ pub(super) fn research_system_text(lane: &ResearchLane) -> String {
      COMPOSE EACH ENTRY INSIDE THAT CALL'S ARGUMENTS: a question or an answer drafted in your \
      reasoning first is written twice and read by no one until the call lands — once you have a \
      question and its evidence, the next thing you write is the research_answer call that \
-     carries it. Then the next question, one call each, in the order you settle them. When you \
-     are done, call the final_output tool ONCE with {\"answers\": [<only the entries you did NOT \
+     carries it. Then the next question, one call each, in the order you settle them. When the \
+     section in hand has nothing more to settle — or nothing at all — call research_answer with \
+     {\"section_done\": true, \"builder_decides\": [\"...\"]} (the choices only this slice's \
+     builder makes, one line each, no answer; the list may be empty): that ONE call closes the \
+     section, never a silent skip, and its result carries the next section's text. An entry may \
+     carry \"section_done\": true itself when it is the section's last. When every section is \
+     closed, call the final_output tool ONCE with {\"answers\": [<only the entries you did NOT \
      land through research_answer, same shape>], \"builder_decides\": [\"...\"]} — an EMPTY \
      answers list when every question already landed, and also when the sections settle \
      everything and no design or external question remains (builder_decides may still be \
@@ -2789,6 +3019,7 @@ mod tests {
             siblings: String::new(),
             questions: Vec::new(),
             material: material.to_string(),
+            hand: Vec::new(),
         }
     }
 
@@ -2804,6 +3035,7 @@ mod tests {
             siblings: String::new(),
             questions: qs,
             material,
+            hand: Vec::new(),
         }
     }
 
@@ -3010,13 +3242,16 @@ mod tests {
             &tree,
             &sources,
         );
-        let text = research_user_text(
-            "",
-            &lane("payments", &head, "sync payments from the vendor"),
+        let mut payments = lane("payments", &head, "sync payments from the vendor");
+        payments.hand = section_hand("s1", &["Alpha".to_string()], &sections, &NullSink);
+        let text = research_user_text("", &payments);
+        assert!(
+            text.contains("CLAIMED_DEEP_MARKER") && text.contains("SECTION 1 of 1, in hand now"),
+            "the claimed section's FULL text rides in, as the section in hand (VA-128):\n{text}"
         );
         assert!(
-            text.contains("CLAIMED_DEEP_MARKER"),
-            "the claimed section's FULL text rides in"
+            !block.contains("CLAIMED_DEEP_MARKER"),
+            "the head no longer carries the claimed sections — the hand does"
         );
         assert!(
             !text.contains("UNCLAIMED_DEEP_MARKER"),
@@ -3066,6 +3301,76 @@ mod tests {
         assert_eq!(small_block, format!("THE REQUEST:\n{small}"));
     }
 
+    /// VA-128 (a): a three-section slice is dispatched with section 1's text and the INDEX of
+    /// §2 and §3 — their headings and spans, never their words — and `research_section_handed`
+    /// {index: 1, of: 3} rides the dispatch. r6j's api lane was handed nine sections at once and
+    /// landed nothing in 79 minutes; the hand deals one.
+    #[test]
+    fn a_three_section_slice_is_dispatched_with_section_one_and_only_the_index_of_the_rest() {
+        let spec = "# Boot\nBOOT_WORDS on port 8850.\n\n# Endpoints\nENDPOINT_WORDS GET \
+                    /api/health.\n\n# Rules\nRULE_WORDS bump the version.\n";
+        let sections = spec_sections(spec);
+        let sink = ValueSink::default();
+        let mut api = lane("api", "HEAD", "Own `app/api.py`.");
+        api.hand = section_hand(
+            "api",
+            &[
+                "Boot".to_string(),
+                "Endpoints".to_string(),
+                "Rules".to_string(),
+            ],
+            &sections,
+            &sink,
+        );
+        assert_eq!(api.hand.len(), 3);
+        let dir = tempfile::tempdir().unwrap();
+        let text = research_dispatch_text(dir.path(), &sink, &api, "research-api", 3);
+        assert!(
+            text.contains("handed to you ONE AT A TIME (3 in all)")
+                && text.contains("SECTION 1 of 3, in hand now")
+                && text.contains("### Boot\n[request.md:1-3]\nBOOT_WORDS on port 8850."),
+            "section 1 rides whole:\n{text}"
+        );
+        assert!(
+            text.contains(
+                "AFTER THIS SECTION (handed in this order, one per section_done — their text \
+                 arrives then, not now): §2 Endpoints [request.md:4-6]; §3 Rules [request.md:7-8]"
+            ),
+            "the rest is an index of headings and spans:\n{text}"
+        );
+        assert!(
+            !text.contains("ENDPOINT_WORDS") && !text.contains("RULE_WORDS"),
+            "no later section's words ride the dispatch:\n{text}"
+        );
+        assert!(
+            text.contains("THE SECTION IN HAND above IS the request for this slice right now"),
+            "the instruction binds the lane to the section in hand:\n{text}"
+        );
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["research_context", "research_section_handed"]);
+        assert_eq!(ev[0]["sections_in_hand"], 3);
+        assert_eq!(ev[1]["task"], "research-api");
+        assert_eq!(ev[1]["slice"], "api");
+        assert_eq!(ev[1]["heading"], "Boot");
+        assert_eq!(ev[1]["index"], 1);
+        assert_eq!(ev[1]["of"], 3);
+        assert_eq!(ev[1]["lines"], "request.md:1-3");
+        drop(ev);
+        // A lane with nothing in hand states the absence — never the index's excerpts as text.
+        let bare = lane("web", "HEAD", "Own `web/app.js`.");
+        let text = research_dispatch_text(dir.path(), &sink, &bare, "research-web", 3);
+        assert!(
+            text.contains("NO SECTION OF THE REQUEST IS IN HAND for this slice")
+                && !text.contains("SECTION 1 of"),
+            "{text}"
+        );
+        assert!(
+            section_in_hand_block(&api.hand, 2).contains("THIS IS THE LAST SECTION"),
+            "the last section says so instead of indexing nothing"
+        );
+    }
+
     /// VA-089's snowball: a lane carries no questions, so the cross-slice link reads its
     /// MATERIAL (objective + claimed sections). A first dispatch carries no prior block (no
     /// heading, no filler) and `research_context` says 0; once other lanes land, an answered
@@ -3084,10 +3389,12 @@ mod tests {
         );
         let first = research_dispatch_text(root, &sink, &core, "research-ledgerd-core", 28);
         assert!(
-            first.starts_with("HEAD\n\nYOUR WORK, slice `ledgerd-core`")
+            first.starts_with("HEAD\n\nNO SECTION OF THE REQUEST IS IN HAND for this slice")
+                && first.contains("\n\nYOUR WORK, slice `ledgerd-core`")
                 && !first.contains("ALREADY ANSWERED")
                 && !first.contains("[q0]"),
-            "a first dispatch: head, the derive instruction, nothing invented between them:\n{first}"
+            "a first dispatch: head, the hand's measured absence (this fixture claims no \
+             section), the derive instruction, nothing invented between them:\n{first}"
         );
         {
             let ev = sink.0.lock().unwrap();
@@ -4342,11 +4649,14 @@ mod tests {
                 assert!(text.contains(needle), "{name} names `{needle}`:\n{text}");
             }
         }
-        assert!(system.contains("The sections in your message ARE the request for this slice"));
+        assert!(system.contains("the section in your message IS the request for this slice"));
+        assert!(instruction.contains("THE SECTION IN HAND above IS the request for this slice"));
+        assert!(instruction.contains("do not re-read it from the request file"));
         assert!(
-            instruction.contains("THE SPEC'S OWN SECTIONS above ARE the request for this slice")
+            system.contains("{\"section_done\": true, \"builder_decides\": [\"...\"]}")
+                && system.contains("never a silent skip"),
+            "VA-128: the system text carries the section_done contract:\n{system}"
         );
-        assert!(instruction.contains("do not re-read them from the request file"));
         assert!(
             user.contains("goes in `raised_for` with that slice's id"),
             "the siblings block gives a cross-slice point its destination:\n{user}"
@@ -4362,11 +4672,25 @@ mod tests {
             serde_json::json!(["slice", "text"])
         );
         assert!(schema["properties"]["builder_decides"].is_object());
+        // VA-128: the tool takes one entry — every item field, the same shape — widened by the
+        // section signal, and nothing required at the tool level so a bare section_done call
+        // is valid under schema-constrained decoding.
+        let tool = research_answer_tool_schema();
+        for (field, shape) in schema["properties"]["answers"]["items"]["properties"]
+            .as_object()
+            .unwrap()
+        {
+            assert_eq!(
+                &tool["properties"][field], shape,
+                "the tool's `{field}` is the final reply's item field"
+            );
+        }
         assert_eq!(
-            research_answer_tool_schema(),
-            schema["properties"]["answers"]["items"],
-            "the per-answer tool takes exactly one entry"
+            tool["properties"]["section_done"],
+            serde_json::json!({"type": "boolean"})
         );
+        assert!(tool["properties"]["builder_decides"].is_object());
+        assert_eq!(tool["required"], serde_json::json!([]));
         assert_eq!(RESEARCH_ANSWER_TOOL, "research_answer");
         assert!(
             system.contains(RESEARCH_ANSWER_TOOL),
@@ -4387,7 +4711,7 @@ mod tests {
     }
 
     /// VA-118 items 3, 4 and 5 at the fold: one entry landed through the per-answer door
-    /// (`fold_research_entry`) is byte-for-byte the row the final-reply fold builds at that
+    /// (`ResearchToolCall::into_row`) is byte-for-byte the row the final-reply fold builds at that
     /// position (`fold_research_lane_from`), it round-trips its mini (a `raised_for` point keeps
     /// its destination label), and the outcome funnel names each raised line by destination —
     /// `research_raised_for{from, to, text}`, `research_builder_decides{text}`,
@@ -4409,8 +4733,11 @@ mod tests {
                 {"slice": "viz-engine", "text": "   "}
             ]
         });
-        let row =
-            fold_research_entry("web-console-structure", 3, "m", 120, &entry.to_string()).unwrap();
+        let row = ResearchToolCall::parse(&entry.to_string())
+            .unwrap()
+            .into_row("web-console-structure", 3, "m", 120, None)
+            .unwrap()
+            .expect("an entry with a question lands a row");
         let (mut rows, strays) = fold_research_lane_from(
             "web-console-structure",
             "m",
@@ -4463,7 +4790,14 @@ mod tests {
             "a point with no destination stays with this builder"
         );
         drop(ev);
-        assert!(fold_research_entry("s", 0, "m", 1, "not json").is_err());
+        assert!(ResearchToolCall::parse("not json").is_none());
+        assert!(
+            ResearchToolCall::parse(r#"{"answer": "an answer with no question"}"#)
+                .unwrap()
+                .into_row("s", 0, "m", 1, None)
+                .is_err(),
+            "an answer without a question is a stray, never a row"
+        );
         // builder_decides with no questions: still no_questions, the list carried and counted.
         let (rows, strays) = fold_research_lane(
             "viz-engine",
