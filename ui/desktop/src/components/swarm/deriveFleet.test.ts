@@ -435,6 +435,59 @@ describe('supervision — judge generations count as WORKING (the "idle while LM
     expect(unattributed[0].label).toBe('Judging · verify::meridian');
   });
 
+  // The local sidecar serves the desktop's OWN chat too, so its busy count says nothing about the swarm:
+  // guessing a judge span onto it labels an unrelated request as swarm work, and a genuinely dead sidecar
+  // lane would be shielded by any request in flight. It is excluded from the GUESS only.
+  describe('a busy SIDECAR (`<node>-mlx`) is never guessed into a span', () => {
+    const MIXED = ['gabee', 'workhorse', 'workhorse-mlx'];
+    const spans = () => foldSupervision([RUN_STARTED, POOL_RESOLVED, ...SUPERVISION_TAIL]);
+
+    it('busy sidecar, no lane → the span stays unattributed, the sidecar row stays idle', () => {
+      const { workingByDevice, unattributed } = deriveFleet({
+        pool: MIXED,
+        laneSources: [],
+        digests: {},
+        digestMtimes: {},
+        now: NOW,
+        supervision: spans(),
+        busyNodes: ['workhorse-mlx'],
+        reportedNodes: MIXED,
+      });
+      expect(workingByDevice.has('workhorse-mlx')).toBe(false);
+      expect(unattributed.map((s) => s.label)).toEqual(['Judging · verify::meridian']);
+    });
+
+    it('with an LM Studio node busy beside it, the span goes to the LM Studio node', () => {
+      const { workingByDevice } = deriveFleet({
+        pool: MIXED,
+        laneSources: [],
+        digests: {},
+        digestMtimes: {},
+        now: NOW,
+        supervision: spans(),
+        busyNodes: ['workhorse-mlx', 'workhorse'],
+        reportedNodes: MIXED,
+      });
+      expect(workingByDevice.get('workhorse')?.phase).toBe('supervision');
+      expect(workingByDevice.has('workhorse-mlx')).toBe(false);
+    });
+
+    it('busy sidecar WITH an open lane past the digest window → the lane is kept (the count still corroborates)', () => {
+      const { workingByDevice, unattributed } = deriveFleet({
+        pool: MIXED,
+        laneSources: [lane('workhorse-mlx', 'running', 't-mlx')],
+        digests: { 't-mlx': { calls: [{ ok: true }] } },
+        digestMtimes: { 't-mlx': 0 },
+        now: NOW,
+        supervision: spans(),
+        busyNodes: ['workhorse-mlx'],
+        reportedNodes: MIXED,
+      });
+      expect(workingByDevice.get('workhorse-mlx')?.taskId).toBe('t-mlx');
+      expect(unattributed).toHaveLength(1);
+    });
+  });
+
   it('a span older than JUDGE_SPAN_MAX_MS is a crashed run leftover, not live work', () => {
     const supervision = foldSupervision([...SUPERVISION_TAIL]);
     const { workingByDevice, unattributed } = deriveFleet({
