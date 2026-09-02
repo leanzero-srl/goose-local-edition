@@ -13,6 +13,7 @@
 //!
 //! r6k measures minutes-to-first-write per lane against r6j's ≥ 16 / 17 / 17.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::{swarm_gate_cfg, write_first_on, DispatchRequest, EventSink, GooseAgentDispatcher};
@@ -116,8 +117,154 @@ pub(super) fn rest_key(work_dir: &Path, task: &str) -> String {
     format!("{}\n{task}", work_dir.display())
 }
 
+/// One lane's rest: parked text until it lands, then the turn it landed on.
+#[derive(Debug)]
+enum Rest {
+    Parked(String),
+    Delivered { turn: usize },
+}
+
+/// A parked rest and the dispatch-seam events that describe its blocks (VA-148:
+/// `pitfalls_delivered`, `user_notes_delivered`, `shard_siblings_delivered` / `_none`) — facts
+/// that are true only once the rest has reached the model, so they wait for it.
+#[derive(Debug)]
+struct BriefRest {
+    rest: Rest,
+    events: Vec<serde_json::Value>,
+}
+
+/// What a judge look may assert about the lane's brief (GEN-4): nothing parked (the arm is off,
+/// or the lane is not a write-alone author), the rest still parked, or the rest landed at a turn.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RestState {
+    NotParked,
+    Parked { chars: usize },
+    Delivered { turn: usize },
+}
+
+/// The dispatcher's stash, pure so the delivery order and the judge's reading of it are pinned
+/// without a session: every method returns the events to write, the dispatcher writes them.
+#[derive(Debug, Default)]
+pub(super) struct BriefRestStash {
+    lanes: HashMap<String, BriefRest>,
+}
+
+impl BriefRestStash {
+    pub(super) fn park(&mut self, key: String, text: String, events: Vec<serde_json::Value>) {
+        self.lanes.insert(
+            key,
+            BriefRest {
+                rest: Rest::Parked(text),
+                events,
+            },
+        );
+    }
+
+    /// The rest, once: `brief_rest_delivered{task, chars, turn}` first, then every parked event
+    /// stamped with the same `turn` — a block is said to be delivered at the moment it is.
+    pub(super) fn deliver(
+        &mut self,
+        key: &str,
+        task: &str,
+        turn: usize,
+    ) -> Option<(String, Vec<serde_json::Value>)> {
+        let lane = self.lanes.get_mut(key)?;
+        let text = match std::mem::replace(&mut lane.rest, Rest::Delivered { turn }) {
+            Rest::Parked(text) => text,
+            already @ Rest::Delivered { .. } => {
+                lane.rest = already;
+                return None;
+            }
+        };
+        let mut events = vec![serde_json::json!({
+            "event": "brief_rest_delivered",
+            "task": task,
+            "chars": text.chars().count(),
+            "turn": turn,
+        })];
+        for mut ev in std::mem::take(&mut lane.events) {
+            ev["turn"] = serde_json::json!(turn);
+            events.push(ev);
+        }
+        Some((text, events))
+    }
+
+    pub(super) fn state(&self, key: &str) -> RestState {
+        match self.lanes.get(key) {
+            None => RestState::NotParked,
+            Some(BriefRest {
+                rest: Rest::Parked(text),
+                ..
+            }) => RestState::Parked {
+                chars: text.chars().count(),
+            },
+            Some(BriefRest {
+                rest: Rest::Delivered { turn },
+                ..
+            }) => RestState::Delivered { turn: *turn },
+        }
+    }
+
+    /// After the call the lane's entry goes. A rest that never landed is
+    /// `brief_rest_undelivered{task, chars, withheld}`: `withheld` carries the parked events
+    /// verbatim, so the facts they held (pitfall chars, note ids, sibling names) stay on the log
+    /// under the one name that says they never reached the model — never as delivered.
+    pub(super) fn settle(&mut self, key: &str, task: &str) -> Option<serde_json::Value> {
+        let lane = self.lanes.remove(key)?;
+        match lane.rest {
+            Rest::Delivered { .. } => None,
+            Rest::Parked(text) => Some(serde_json::json!({
+                "event": "brief_rest_undelivered",
+                "task": task,
+                "chars": text.chars().count(),
+                "withheld": lane.events,
+            })),
+        }
+    }
+}
+
+/// The judge's fact block about the lane's brief (GEN-4: assert only what was delivered): empty
+/// when nothing is parked, so the prompt reads exactly as before the arm; during the first turn
+/// the blocks are named as NOT YET DELIVERED; afterwards the turn they landed on.
+pub(super) fn rest_state_block(state: &RestState) -> String {
+    match state {
+        RestState::NotParked => String::new(),
+        RestState::Parked { chars } => format!(
+            "\n\nWHAT THIS CALL HAS BEEN HANDED SO FAR: its first message is the write alone — the \
+             task, the file manifest and the reading rules. The rest of its brief ({chars} chars: \
+             the dependency sources under 'API of …', the context from completed dependencies, \
+             the pitfalls, the notes, the pillars) is NOT YET DELIVERED; it lands as its next user \
+             message the moment its first `write` lands. Do not tell it to use an API excerpt, a \
+             pitfall or a note it has not received, and do not read a first write made without \
+             them as a defect — if it is stalled before that write, NEXT is the write."
+        ),
+        RestState::Delivered { turn } => format!(
+            "\n\nWHAT THIS CALL HAS BEEN HANDED: its first message was the write alone; the rest \
+             of its brief (the dependency sources under 'API of …', the context from completed \
+             dependencies, the pitfalls, the notes, the pillars) was delivered as a user message \
+             at turn {turn}, after its first write landed."
+        ),
+    }
+}
+
 impl GooseAgentDispatcher {
-    /// Dispatch side: say what the first turn holds and park the rest for the lane's loop.
+    /// Dispatch side: an event about a block that rides the rest waits with it under the
+    /// write-alone arm and fires at delivery; with the arm off it fires here, as it always did.
+    pub(super) fn say_at_delivery(
+        &self,
+        write_alone: bool,
+        rest_events: &mut Vec<serde_json::Value>,
+        ev: serde_json::Value,
+    ) {
+        if write_alone {
+            rest_events.push(ev);
+        } else {
+            self.events.write_value(ev);
+        }
+    }
+
+    /// Dispatch side: say what the first turn holds and park the rest, with the events that
+    /// describe it, for the lane's loop.
     pub(super) fn stash_brief_rest(
         &self,
         work_dir: &Path,
@@ -125,6 +272,7 @@ impl GooseAgentDispatcher {
         file: &str,
         first_chars: usize,
         rest: String,
+        rest_events: Vec<serde_json::Value>,
     ) {
         self.events.write_value(first_turn_event(
             task,
@@ -135,44 +283,46 @@ impl GooseAgentDispatcher {
         self.brief_rest
             .lock()
             .unwrap()
-            .insert(rest_key(work_dir, task), rest);
+            .park(rest_key(work_dir, task), rest, rest_events);
     }
 
     /// Loop side, at the boundary after the first write landed: the rest, once, with its event
-    /// (`turn` = the tool calls landed so far — 1 when the write was the lane's first action).
+    /// (`turn` = the tool calls landed so far — 1 when the write was the lane's first action)
+    /// and the parked block events behind it.
     pub(super) fn deliver_brief_rest(
         &self,
         work_dir: &Path,
         task: &str,
         calls: usize,
     ) -> Option<String> {
-        let rest = self
-            .brief_rest
+        let (rest, events) =
+            self.brief_rest
+                .lock()
+                .unwrap()
+                .deliver(&rest_key(work_dir, task), task, calls)?;
+        for ev in events {
+            self.events.write_value(ev);
+        }
+        Some(rest)
+    }
+
+    /// Look side: what the judge may assert about this lane's brief.
+    pub(super) fn brief_rest_state(&self, work_dir: &Path, task: &str) -> RestState {
+        self.brief_rest
             .lock()
             .unwrap()
-            .remove(&rest_key(work_dir, task))?;
-        self.events.write_value(serde_json::json!({
-            "event": "brief_rest_delivered",
-            "task": task,
-            "chars": rest.chars().count(),
-            "turn": calls,
-        }));
-        Some(rest)
+            .state(&rest_key(work_dir, task))
     }
 
     /// After the call: a rest the lane never earned (no write landed) is SAID, never dropped.
     pub(super) fn settle_brief_rest(&self, work_dir: &Path, task: &str) {
-        let left = self
+        let undelivered = self
             .brief_rest
             .lock()
             .unwrap()
-            .remove(&rest_key(work_dir, task));
-        if let Some(rest) = left {
-            self.events.write_value(serde_json::json!({
-                "event": "brief_rest_undelivered",
-                "task": task,
-                "chars": rest.chars().count(),
-            }));
+            .settle(&rest_key(work_dir, task), task);
+        if let Some(ev) = undelivered {
+            self.events.write_value(ev);
         }
     }
 }
@@ -180,6 +330,7 @@ impl GooseAgentDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// OFF: the five blocks sit where they always did — pitfalls, notes, pillars before the
     /// layout, deps and context after it — and nothing waits. ON: the system prompt carries none
@@ -234,5 +385,85 @@ mod tests {
         assert_eq!(ev["file"], "app/__main__.py");
         assert_eq!(ev["chars"], 12_000);
         assert_eq!(ev["rest_chars"], 30_000);
+    }
+
+    /// THE CONSUMER (VA-148, GEN-4): the judge's block reads the rest as NOT YET DELIVERED while it
+    /// is parked and as delivered at its turn afterwards, and the parked dispatch-seam events
+    /// (`pitfalls_delivered`, `shard_siblings_none`) fire only behind `brief_rest_delivered`,
+    /// stamped with the same turn — never at dispatch.
+    #[test]
+    fn the_judge_reads_the_rest_as_undelivered_until_it_lands_and_the_parked_events_fire_then() {
+        let mut stash = BriefRestStash::default();
+        let key = rest_key(Path::new("/w/real"), "web-page");
+        assert_eq!(stash.state(&key), RestState::NotParked);
+        assert_eq!(rest_state_block(&stash.state(&key)), "");
+        stash.park(
+            key.clone(),
+            "## API of app/db.py\n…".to_string(),
+            vec![
+                json!({"event": "pitfalls_delivered", "task_id": "web-page", "delivered": true, "chars": 812}),
+                json!({"event": "shard_siblings_none", "task_id": "web-page", "module": "web/viz.js", "shard": "camera", "pending": ["labels"]}),
+            ],
+        );
+        assert_eq!(stash.state(&key), RestState::Parked { chars: 21 });
+        let parked = rest_state_block(&stash.state(&key));
+        assert!(parked.contains("NOT YET DELIVERED"), "{parked}");
+        assert!(parked.contains("(21 chars:"), "{parked}");
+        assert!(parked.contains(
+            "Do not tell it to use an API excerpt, a pitfall or a note it has not received"
+        ));
+        assert!(!parked.contains("was delivered"));
+        let (text, events) = stash.deliver(&key, "web-page", 1).unwrap();
+        assert_eq!(text, "## API of app/db.py\n…");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["event"], "brief_rest_delivered");
+        assert_eq!(events[0]["task"], "web-page");
+        assert_eq!(events[0]["chars"], 21);
+        assert_eq!(events[0]["turn"], 1);
+        assert_eq!(events[1]["event"], "pitfalls_delivered");
+        assert_eq!(events[1]["delivered"], true);
+        assert_eq!(events[1]["chars"], 812);
+        assert_eq!(events[1]["turn"], 1);
+        assert_eq!(events[2]["event"], "shard_siblings_none");
+        assert_eq!(events[2]["pending"][0], "labels");
+        assert_eq!(events[2]["turn"], 1);
+        assert_eq!(stash.state(&key), RestState::Delivered { turn: 1 });
+        let landed = rest_state_block(&stash.state(&key));
+        assert!(
+            landed.contains("was delivered as a user message at turn 1"),
+            "{landed}"
+        );
+        assert!(!landed.contains("NOT YET DELIVERED"));
+        assert!(
+            stash.deliver(&key, "web-page", 2).is_none(),
+            "the rest lands once"
+        );
+        assert!(
+            stash.settle(&key, "web-page").is_none(),
+            "a landed rest withholds nothing"
+        );
+        assert_eq!(stash.state(&key), RestState::NotParked);
+    }
+
+    /// A rest that never lands (no write) is said with the parked events it withheld, verbatim,
+    /// under `brief_rest_undelivered` — the facts stay on the log, never as delivered.
+    #[test]
+    fn a_rest_that_never_lands_is_said_with_the_events_it_withheld() {
+        let mut stash = BriefRestStash::default();
+        let key = rest_key(Path::new("/w/real"), "skeleton");
+        stash.park(
+            key.clone(),
+            "P|N|L|D|C|".to_string(),
+            vec![json!({"event": "user_notes_delivered", "task_id": "skeleton", "notes": ["1756771200000-note.md"], "count": 1})],
+        );
+        let ev = stash.settle(&key, "skeleton").unwrap();
+        assert_eq!(ev["event"], "brief_rest_undelivered");
+        assert_eq!(ev["task"], "skeleton");
+        assert_eq!(ev["chars"], 10);
+        assert_eq!(ev["withheld"][0]["event"], "user_notes_delivered");
+        assert_eq!(ev["withheld"][0]["count"], 1);
+        assert_eq!(ev["withheld"][0].get("turn"), None);
+        assert_eq!(stash.state(&key), RestState::NotParked);
+        assert!(stash.settle(&key, "skeleton").is_none());
     }
 }
