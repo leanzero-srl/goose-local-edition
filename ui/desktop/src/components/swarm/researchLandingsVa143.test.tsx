@@ -4,6 +4,7 @@ import SwarmRunPanel from './SwarmRunPanel';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import {
   buildActivity,
+  buildPhaseTodo,
   foldEvents,
   resetFoldCache,
   resetLiveChannelMemory,
@@ -379,6 +380,25 @@ describe('VA-143 (2) — research_answer_landed is consumed: one row and one fee
   });
 });
 
+describe('VA-145 (2) — the Research step’s lane rows count the builder_decides', () => {
+  it('reads `landed N · builder_decides M` on a lane that listed any, and only `landed N` on one that did not', () => {
+    const research = buildPhaseTodo(R6J, {}, { clarifyPending: false }).find((p) => p.key === 'research')!;
+    const detail = (slice: string) => research.items.find((i) => i.id === `r2-lane-${slice}`)!.detail;
+    expect(detail('ledgerd-core')).toBe(
+      'landed 12 · builder_decides 4 · 5 design, 7 external · rank 2 · 7 sections · closed — the final reply added nothing behind the landed answers'
+    );
+    expect(detail('web-viz')).toBe(
+      'landed 4 · builder_decides 11 · 4 design · rank 0 · 10 sections · closed — the final reply added nothing behind the landed answers'
+    );
+    // Before its closer no decides exist, and the row says nothing about them.
+    const cut = R6J.findIndex((e) => e['event'] === 'research_unanswered' && e['slice'] === 'web-viz');
+    const early = buildPhaseTodo(R6J.slice(0, cut), {}, { clarifyPending: false }).find((p) => p.key === 'research')!;
+    expect(early.items.find((i) => i.id === 'r2-lane-web-viz')!.detail).toBe(
+      'landed 4 · 4 design · rank 0 · 10 sections · running'
+    );
+  });
+});
+
 // ── Rendered: r6j's web-viz lane row. ──
 
 const electron = () => (window as unknown as { electron: Record<string, unknown> }).electron;
@@ -447,5 +467,53 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
     );
     // The lane's clock is the closer's own secs.
     expect(viz.textContent).toContain('2049s');
+  });
+
+  it('VA-145 (1): ledgerd-core’s 12 landings stay pinned under its row after the compact feed rolled past them', async () => {
+    // At the end of the stream the compact window (30 rows) reaches back exactly to ledgerd-core's
+    // q7: its first seven landings (17:25–17:30, 80+ minutes before the stream's end) have rolled out
+    // of the feed, and only the lane row can still show them.
+    const { activity } = buildActivity(R6J);
+    expect(
+      activity
+        .map((r) => r.text.match(/^ledgerd-core · q(\d+) landed/)?.[1])
+        .filter(Boolean)
+        .map(Number)
+    ).toEqual([7, 8, 9, 10, 11]);
+    const { result } = renderHook(() => useSwarmRun('/tmp/build'));
+    await waitFor(() => expect(result.current.present).toBe(true));
+    render(
+      <IntlTestWrapper>
+        <SwarmRunPanel workingDir="/tmp/build" run={result.current} />
+      </IntlTestWrapper>
+    );
+    const phase = await screen.findByTestId('planning-phase-research');
+    const core = [...phase.querySelectorAll('[data-testid="turn-lane"]')].find((el) =>
+      (el.textContent ?? '').includes('Research ledgerd-core')
+    ) as HTMLElement;
+    expect(core).toBeTruthy();
+    fireEvent.click(core.querySelector('button')!);
+    await waitFor(() => expect(core.querySelector('[data-testid="research-questions"]')).toBeTruthy());
+    expect(core.textContent).toContain('Questions · 12 · 12 answered');
+    const rows = () => core.querySelectorAll('[data-testid="research-question"]');
+    expect(rows()).toHaveLength(12);
+    // Every landing carries the kind the lane named as a chip: q0–q6 external, q7–q11 design.
+    const kinds = [...core.querySelectorAll('[data-testid="research-kind"]')].map(
+      (el) => (el as HTMLElement).dataset.kind
+    );
+    expect(kinds).toEqual([...Array(7).fill('external'), ...Array(5).fill('design')]);
+    // The row is the landing line: chars, raised, and the engine's lane clock at the landing.
+    const q5 = [...rows()].find((el) => el.textContent?.startsWith('q5external'))!;
+    expect(q5.textContent).toBe('q5external[ledgerd-core] q5956 chars · 1 raised · 3724s');
+    const close = core.querySelector('[data-testid="research-lane-close"]') as HTMLElement;
+    expect(close.textContent).toBe('closedlanded 12 · builder_decides 4 · done 1h 8m');
+    // The header folds the rows and keeps the close line; a second click brings all twelve back.
+    const toggle = core.querySelector('[data-testid="research-questions-toggle"]') as HTMLElement;
+    fireEvent.click(toggle);
+    expect(rows()).toHaveLength(0);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(core.querySelector('[data-testid="research-lane-close"]')).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(rows()).toHaveLength(12);
   });
 });

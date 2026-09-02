@@ -101,16 +101,22 @@ const landed = (ts: string, slice: string, q: number, kind: string, chars: numbe
     via: 'tool',
   }),
 ];
-const closed = (ts: string, slice: string, next: number, n: number): Ev =>
+/** The lane's closer, then its `research_builder_decides` events (VA-145: one per choice the lane
+ *  left to its builder — r6j's web-viz listed 11, ledgerd-core 4). */
+const closed = (ts: string, slice: string, next: number, n: number, decides = 0): Ev[] => [
   at(ts, {
     event: 'research_unanswered',
     slice,
     q_index: next,
     reason: 'remainder_empty',
-    detail: `${n} question(s) landed through research_answer; the final reply added none and listed builder_decides`,
+    detail: `${n} question(s) landed through research_answer; the final reply added none and listed ${decides} builder_decides`,
     secs: 2049,
     model: 'x',
-  });
+  }),
+  ...Array.from({ length: decides }, (_, i) =>
+    at(ts, { event: 'research_builder_decides', slice, q_index: next, text: `choice ${i} for ${slice}` })
+  ),
+];
 
 const OPENING: Ev[] = [
   at('2026-09-02T15:36:03.606000+00:00', {
@@ -146,24 +152,24 @@ const RESEARCH: Ev[] = [
   ...landed('2026-09-02T16:50:08.544460+00:00', 'web-viz', 1, 'design', 569),
   ...landed('2026-09-02T16:51:15.639067+00:00', 'web-viz', 2, 'design', 890),
   ...landed('2026-09-02T16:59:21.532020+00:00', 'web-viz', 3, 'design', 1181),
-  closed('2026-09-02T17:02:23.220532+00:00', 'web-viz', 4, 4),
+  ...closed('2026-09-02T17:02:23.220532+00:00', 'web-viz', 4, 4, 11),
   ...dispatch('2026-09-02T17:02:23.220768+00:00', 'web-page', 3, 'workhorse-qwen3.8-27b'),
   ...landed('2026-09-02T17:21:55.379099+00:00', 'web-page', 0, 'design', 2860),
-  closed('2026-09-02T17:24:46.898000+00:00', 'web-page', 1, 1),
+  ...closed('2026-09-02T17:24:46.898000+00:00', 'web-page', 1, 1),
   ...dispatch('2026-09-02T17:24:46.898779+00:00', 'ledgerd-webhooks-drafts', 4, 'workhorse-qwen3.8-27b'),
   ...landed('2026-09-02T17:25:49.456313+00:00', 'ledgerd-core', 0, 'external', 636),
   ...landed('2026-09-02T17:28:59.742524+00:00', 'ledgerd-core', 1, 'external', 674),
   ...landed('2026-09-02T17:33:21.718386+00:00', 'ledgerd-core', 2, 'design', 3187),
-  closed('2026-09-02T17:36:35.638000+00:00', 'ledgerd-core', 3, 3),
+  ...closed('2026-09-02T17:36:35.638000+00:00', 'ledgerd-core', 3, 3, 4),
   ...dispatch('2026-09-02T17:36:35.638859+00:00', 'notifierd', 5, 'gabee-qwen3.8-27b'),
   ...landed('2026-09-02T18:03:42.050842+00:00', 'notifierd', 0, 'design', 1172),
-  closed('2026-09-02T18:05:00.000000+00:00', 'notifierd', 1, 1),
+  ...closed('2026-09-02T18:05:00.000000+00:00', 'notifierd', 1, 1),
   ...landed('2026-09-02T18:10:33.301730+00:00', 'ledgerd-webhooks-drafts', 0, 'external', 908),
   ...landed('2026-09-02T18:11:54.395088+00:00', 'ledgerd-webhooks-drafts', 1, 'external', 821),
-  closed('2026-09-02T18:14:12.000000+00:00', 'ledgerd-webhooks-drafts', 2, 2),
+  ...closed('2026-09-02T18:14:12.000000+00:00', 'ledgerd-webhooks-drafts', 2, 2),
   ...landed('2026-09-02T18:39:31.183889+00:00', 'ledgerd-api', 0, 'design', 1723),
   ...landed('2026-09-02T18:43:17.642071+00:00', 'ledgerd-api', 1, 'design', 1005),
-  closed('2026-09-02T18:51:06.411020+00:00', 'ledgerd-api', 2, 2),
+  ...closed('2026-09-02T18:51:06.411020+00:00', 'ledgerd-api', 2, 2),
 ];
 const SYNTHESIS: Ev[] = [
   at('2026-09-02T18:52:32.534479+00:00', { event: 'phase', phase: 'synthesis' }),
@@ -427,7 +433,7 @@ describe('VA-138 — the steps the engine actually walks, clocked from its own t
       ]);
     });
 
-    it('RESEARCH: six lane rows in dispatch order — landed, kinds, rank, host — closed by remainder_empty, never a miss', () => {
+    it('RESEARCH: six lane rows in dispatch order — landed, builder_decides, kinds, rank, host — closed by remainder_empty, never a miss', () => {
       const r = phase(MID_SPLIT, 'research');
       const lanes = r.items.filter((i) => i.id.startsWith('r2-lane-'));
       expect(lanes.map((i) => i.label)).toEqual([
@@ -438,14 +444,19 @@ describe('VA-138 — the steps the engine actually walks, clocked from its own t
         'ledgerd-webhooks-drafts lane',
         'notifierd lane',
       ]);
+      // VA-145: the expectation moved deliberately — `builder_decides M` follows `landed N` when the
+      // lane listed any (web-viz 11, ledgerd-core 4 on r6j); a lane that listed none says nothing.
       expect(lanes[0]).toMatchObject({
         state: 'done',
         device: 'workhorse',
         detail:
-          'landed 4 · 4 design · rank 0 · 10 sections · closed — the final reply added nothing behind the landed answers',
+          'landed 4 · builder_decides 11 · 4 design · rank 0 · 10 sections · closed — the final reply added nothing behind the landed answers',
       });
       expect(lanes[2]).toMatchObject({ device: 'gabee', state: 'done' });
-      expect(lanes[2].detail).toContain('landed 3 · 1 design, 2 external · rank 2 · 7 sections');
+      expect(lanes[2].detail).toContain('landed 3 · builder_decides 4 · 1 design, 2 external · rank 2 · 7 sections');
+      expect(lanes[1].detail).toBe(
+        'landed 2 · 2 design · rank 1 · 9 sections · closed — the final reply added nothing behind the landed answers'
+      );
       // The lane closers are outcome rows for builder_decides (research.rs), not questions kept raw
       // in a brief: the summary counts 13 of 13, and no miss row appears.
       expect(r.items[0].label).toBe(
