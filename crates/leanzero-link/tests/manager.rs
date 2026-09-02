@@ -9,6 +9,8 @@
 //! - verify failure → stays LoggedOut with `last_error`.
 //! - connect failure (mesh join) → back to LoggedIn, mesh torn down per-pid.
 //! - logout while merely LoggedIn → LoggedOut, identity cleared.
+//! - a wedged daemon (alive, every status look failing) → dropped per-pid at exactly
+//!   `MESH_POLL_FAILURE_LOOKS` looks, LoggedIn, identity kept; N-1 looks stay Connected.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -22,6 +24,7 @@ use leanzero_link::control::{ControlConfig, ControlService};
 use leanzero_link::identity::{Identity, IdentityStore};
 use leanzero_link::manager::{
     AuthState, LinkError, LinkManager, LinkManagerConfig, Mesh, MeshFactory,
+    MESH_POLL_FAILURE_LOOKS,
 };
 use leanzero_link::mesh::{
     BackendState, MeshConfig, MeshError, MeshPeer, MeshStatus, DEFAULT_LOGIN_SERVER,
@@ -55,8 +58,16 @@ struct MeshCalls {
 struct MeshScript {
     /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
     daemon_dead: AtomicBool,
-    /// `status()` answers `StatusFailed` — the daemon lives but the read errored.
-    status_fails: AtomicBool,
+    /// `status()` answers `StatusFailed` this many more times (one per call, any
+    /// caller), then succeeds again — the daemon lives but its status read errors.
+    status_fail_looks: AtomicU32,
+    /// When set, the FIRST `status()` call after `status_fail_looks` runs out parks
+    /// (yielding, `parked` raised) until `release_parked` — so a test can inspect the
+    /// manager at exactly that many failed looks, before the loop's next look succeeds.
+    /// The flag is consumed by that call, so the test's own reads are never parked.
+    park_after_fail_looks: AtomicBool,
+    parked: AtomicBool,
+    release_parked: AtomicBool,
     /// `logout()` answers `LogoutFailed`.
     logout_fails: AtomicBool,
     /// The peers `status()` reports (default none).
@@ -101,10 +112,25 @@ impl Mesh for FakeMesh {
                 stderr_tail: "fake tailscaled crashed".to_string(),
             });
         }
-        if self.script.status_fails.load(Ordering::SeqCst) {
+        let failing = self
+            .script
+            .status_fail_looks
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok();
+        if failing {
             return Err(MeshError::StatusFailed {
                 stderr: "fake: status read errored".to_string(),
             });
+        }
+        if self
+            .script
+            .park_after_fail_looks
+            .swap(false, Ordering::SeqCst)
+        {
+            self.script.parked.store(true, Ordering::SeqCst);
+            while !self.script.release_parked.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
         }
         let mut status = self.status.clone();
         status.peers = self.script.peers.lock().unwrap().clone();
@@ -654,25 +680,33 @@ async fn node_count_excludes_offline_peers_and_poll_failures_are_counted() {
     );
     assert_eq!(state.mesh_poll_failures, 0);
 
-    // The daemon lives but `tailscale status` errors: counted, auth untouched.
-    h.script.status_fails.store(true, Ordering::SeqCst);
-    wait_until("consecutive poll failures to be counted", || {
-        let manager = &manager;
-        async move { manager.status().await.mesh_poll_failures >= 2 }
+    // The daemon lives but `tailscale status` errors on the loop's next two looks
+    // (under MESH_POLL_FAILURE_LOOKS): counted, auth untouched. The look after parks,
+    // so the count is read at its peak before the loop's success resets it.
+    h.script.park_after_fail_looks.store(true, Ordering::SeqCst);
+    h.script.status_fail_looks.store(2, Ordering::SeqCst);
+    wait_until("the loop to deliver two failed looks and park", || async {
+        h.script.parked.load(Ordering::SeqCst)
     })
     .await;
     let state = manager.status().await;
+    assert_eq!(state.mesh_poll_failures, 2);
     assert!(
         matches!(state.auth, AuthState::Connected { .. }),
         "a failed read is not a dead daemon: {:?}",
         state.auth
     );
+    // A UI read that itself fails carries the failure and stays Connected.
+    h.script.status_fail_looks.store(1, Ordering::SeqCst);
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::Connected { .. }));
+    assert!(state.mesh.is_none());
     assert!(state
         .last_error
         .as_deref()
         .is_some_and(|e| e.contains("mesh status read failed")));
 
-    h.script.status_fails.store(false, Ordering::SeqCst);
+    h.script.release_parked.store(true, Ordering::SeqCst);
     wait_until("the counter to reset on the next success", || {
         let manager = &manager;
         async move { manager.status().await.mesh_poll_failures == 0 }
@@ -1066,6 +1100,119 @@ async fn status_read_that_finds_the_daemon_dead_demotes_in_place() {
         .is_some_and(|e| e.contains("tailscaled exited")));
     assert!(h.identity_present());
     assert!(manager.active_registry().await.is_none());
+}
+
+/// 11e242e5e's first uncovered sequence: the daemon is ALIVE but wedged — `tailscale
+/// status` fails on every look. Progress-based, never timed: at N-1 consecutive failed
+/// looks the connection is still Connected (and one success resets the count); at
+/// N = `MESH_POLL_FAILURE_LOOKS` it is dropped per-pid, auth returns to `LoggedIn`,
+/// `last_error` names the count and the last failure, the identity stays on disk, and
+/// `connect()` re-arms.
+#[tokio::test]
+async fn wedged_daemon_is_dropped_at_the_look_count_and_the_identity_is_kept() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    // N-1 failed looks, then the loop's next look parks: read the state at the peak.
+    h.script.park_after_fail_looks.store(true, Ordering::SeqCst);
+    h.script
+        .status_fail_looks
+        .store(MESH_POLL_FAILURE_LOOKS - 1, Ordering::SeqCst);
+    wait_until("the loop to deliver N-1 failed looks and park", || async {
+        h.script.parked.load(Ordering::SeqCst)
+    })
+    .await;
+    let state = manager.status().await;
+    assert_eq!(state.mesh_poll_failures, MESH_POLL_FAILURE_LOOKS - 1);
+    assert!(
+        matches!(state.auth, AuthState::Connected { .. }),
+        "at N-1 failed looks the connection stands: {:?}",
+        state.auth
+    );
+    assert!(manager.active_registry().await.is_some());
+    assert_eq!(
+        h.calls.lock().unwrap().shutdown_count,
+        0,
+        "nothing torn down"
+    );
+
+    // One successful look resets the count; still Connected.
+    h.script.release_parked.store(true, Ordering::SeqCst);
+    wait_until("the counter to reset on the next success", || {
+        let manager = &manager;
+        async move { manager.status().await.mesh_poll_failures == 0 }
+    })
+    .await;
+    assert!(matches!(
+        manager.status().await.auth,
+        AuthState::Connected { .. }
+    ));
+
+    // N failed looks in a row: the Nth drops the connection. Observed through
+    // `active_registry()` only (it never polls the mesh), so the loop is the actor.
+    h.script
+        .status_fail_looks
+        .store(MESH_POLL_FAILURE_LOOKS, Ordering::SeqCst);
+    wait_until("the poll loop to drop the wedged connection", || {
+        let manager = &manager;
+        async move { manager.active_registry().await.is_none() }
+    })
+    .await;
+
+    let state = manager.status().await;
+    match &state.auth {
+        AuthState::LoggedIn { email } => assert_eq!(email, "a@example.com"),
+        other => panic!("expected LoggedIn after the wedged daemon was dropped, got {other:?}"),
+    }
+    let err = state.last_error.expect("the drop is recorded, not erased");
+    assert!(
+        err.contains(&format!(
+            "mesh daemon unresponsive: {MESH_POLL_FAILURE_LOOKS} consecutive status failures; last: "
+        )) && err.contains("fake: status read errored"),
+        "last_error names the look count and the last failure: {err}"
+    );
+    assert_eq!(state.mesh_poll_failures, MESH_POLL_FAILURE_LOOKS);
+    assert!(state.mesh.is_none());
+    assert_eq!(state.node_count, 0);
+    assert!(
+        h.identity_present(),
+        "an unresponsive daemon never clears the credential"
+    );
+    assert!(manager.node_token().await.is_none());
+    {
+        let calls = h.calls.lock().unwrap();
+        assert_eq!(calls.shutdown_count, 1, "our child shut down per-pid");
+        assert_eq!(
+            calls.logout_count, 0,
+            "no `tailscale logout` against a daemon that cannot answer, and no account logout"
+        );
+    }
+
+    // Re-arm: the kept identity connects again; a fresh daemon, counter back to 0.
+    manager
+        .connect()
+        .await
+        .expect("re-connects with the kept identity");
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::Connected { .. }));
+    assert_eq!(state.mesh_poll_failures, 0);
+    assert_eq!(
+        h.start_count.load(Ordering::SeqCst),
+        2,
+        "a fresh daemon was started"
+    );
+    manager.logout(false).await.unwrap();
 }
 
 #[tokio::test]
