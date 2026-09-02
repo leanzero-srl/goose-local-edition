@@ -47,7 +47,9 @@ export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
       aria-current={active ? 'page' : undefined}
     >
       <Icon className={cx('size-4 shrink-0', !active && 'text-lz-ink-3')} />
-      <span className="flex-1 truncate">{getNavItemLabel(item, intl)}</span>
+      {/* A nav row's own label never truncates (DESIGN.md › Buttons): the row is laid out with room
+          for it — "Settings" was clipped when the theme switch shared its row. */}
+      <span className="flex-1 whitespace-nowrap">{getNavItemLabel(item, intl)}</span>
       {item.getTag && (
         <span className={cx('text-lz-meta', TNUM, active ? 'text-lz-accent-ink' : 'text-lz-ink-3')}>
           {item.getTag()}
@@ -141,20 +143,20 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
       {/* Projects tree — the pass-B replacement for the removed CHATS section. */}
       <ProjectsSection className="mt-2 flex-1" />
 
-      {/* Settings pinned to bottom, as one more nav row above a hairline, with the theme switch
-          (System | Light | Dark) beside it — the one control the owner reached for and missed. */}
+      {/* The bottom block under a hairline: the theme switch (System | Light | Dark) on its OWN
+          36px row, then Settings as one more full-width nav row. Side by side, the switch left the
+          Settings row ~38px for its label at the sidebar's 240px and the word was clipped; stacked,
+          every row keeps its whole label. */}
       <div
-        data-testid="nav-bottom-row"
-        className={cx('flex items-center gap-1 border-t px-2 py-2', SURFACE.hairline)}
+        data-testid="nav-bottom"
+        className={cx('flex flex-col gap-px border-t px-2 py-2', SURFACE.hairline)}
       >
-        <div className="min-w-0 flex-1">
-          <NavRow
-            item={SETTINGS_NAV_ITEM}
-            active={isActive(SETTINGS_NAV_ITEM.path)}
-            onClick={() => navigate(SETTINGS_NAV_ITEM.path)}
-          />
-        </div>
         <ThemeSwitch />
+        <NavRow
+          item={SETTINGS_NAV_ITEM}
+          active={isActive(SETTINGS_NAV_ITEM.path)}
+          onClick={() => navigate(SETTINGS_NAV_ITEM.path)}
+        />
       </div>
     </motion.div>
   );

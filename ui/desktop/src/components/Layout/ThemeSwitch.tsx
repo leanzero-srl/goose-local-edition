@@ -17,7 +17,13 @@ const i18n = defineMessages({
  * titles and screen-reader labels — over the ONE theme store (ThemeContext: persisted through the
  * `useSystemTheme` / `theme` settings, System follows the OS through the existing
  * prefers-color-scheme listener). Settings › App's ThemeSelector sets the same value, so the two
- * never disagree. 36px tall like the nav rows it sits beside.
+ * never disagree. Its own 36px row above Settings, spanning the sidebar as three EQUAL segments.
+ *
+ * Icons, not words, on the segments — measured, not chosen: at the sidebar's 240px (NAV_WIDTH)
+ * the row has 206px of content width, and three icon+label segments need 3 × (20 padding +
+ * 14 icon + 6 gap + 43 "System" in Inter Medium 12px) + 10 strip chrome = 259px even before
+ * equalising them. The title and the screen-reader label carry each word instead — the
+ * icon+title form DESIGN.md › Buttons prescribes where a label would clip.
  */
 export const ThemeSwitch: React.FC<{ className?: string }> = ({ className }) => {
   const intl = useIntl();
@@ -56,7 +62,10 @@ export const ThemeSwitch: React.FC<{ className?: string }> = ({ className }) => 
       options={options}
       value={userThemePreference}
       onChange={setUserThemePreference}
-      className={cx('no-drag h-lz-row shrink-0', className)}
+      className={cx(
+        'no-drag h-lz-row w-full [&>button]:flex-1 [&>button]:justify-center',
+        className
+      )}
     />
   );
 };

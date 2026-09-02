@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
@@ -14,9 +14,15 @@ import { missingUtilities } from '../lz/compileStudioCss';
  * silent no-op in the app.
  */
 
+const navMock = vi.hoisted(() => ({ expanded: true }));
+
 vi.mock('./NavigationContext', () => ({
-  useNavigationContext: () => ({ isNavExpanded: true, setIsNavExpanded: vi.fn() }),
+  useNavigationContext: () => ({ isNavExpanded: navMock.expanded, setIsNavExpanded: vi.fn() }),
 }));
+
+afterEach(() => {
+  navMock.expanded = true;
+});
 
 vi.mock('../../contexts/EditionContext', () => ({
   useEdition: () => ({ edition: 'local', isLocal: true, setEdition: vi.fn() }),
@@ -97,18 +103,32 @@ describe('NavigationPanel (Studio shell)', () => {
     const last = rows[rows.length - 1];
     expect(last.textContent).toContain('Settings');
     expect(last.getAttribute('aria-current')).toBe('page');
-    const bottom = screen.getByTestId('nav-bottom-row');
+    const bottom = screen.getByTestId('nav-bottom');
     expect(bottom.contains(last)).toBe(true);
     expect(bottom.className).toContain('border-t');
     expect(bottom.className).toContain('border-lz-border');
     expect(screen.getByTestId('projects-section')).toBeInTheDocument();
   });
 
-  it('the theme switch sits in the bottom row beside Settings: System | Light | Dark as an icon radiogroup, 36px, System checked by default', () => {
+  it('the theme switch is its own full-width 36px row of three equal segments directly ABOVE Settings, so the Settings label keeps its room', () => {
+    // Owner, 2026-09-02: side by side at the sidebar's 240px the switch (~112px) left the Settings
+    // row ~38px for a ~52px word and it was clipped. Stacked, each row owns the whole width.
     renderNav('/settings');
-    const bottom = screen.getByTestId('nav-bottom-row');
+    const bottom = screen.getByTestId('nav-bottom');
+    expect(bottom.className).toContain('flex-col');
     const group = within(bottom).getByRole('radiogroup', { name: 'Theme' });
+    const settings = within(bottom).getByRole('button', { name: /Settings/ });
+    // Two rows of one block — never two cells of one row — and the switch comes first.
+    expect(group.parentElement).toBe(bottom);
+    expect(settings.parentElement).toBe(bottom);
+    expect(group.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(group.className).toContain('h-lz-row');
+    expect(group.className).toContain('w-full');
+    expect(group.className).toContain('[&>button]:flex-1');
+    expect(group.className).toContain('[&>button]:justify-center');
+    const label = within(settings).getByText('Settings');
+    expect(label.className).toContain('whitespace-nowrap');
+    expect(label.className).not.toMatch(/truncate|overflow-hidden|max-w-/);
     const radios = within(group).getAllByRole('radio');
     expect(radios.map((r) => r.getAttribute('title'))).toEqual(['System', 'Light', 'Dark']);
     expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
@@ -121,8 +141,29 @@ describe('NavigationPanel (Studio shell)', () => {
     expect(radios[1].className).not.toContain('bg-lz-accent');
     fireEvent.click(radios[2]);
     expect(themeMock.set).toHaveBeenCalledWith('dark');
-    // The bottom row's own button is still Settings — the segments are radios, not buttons.
+    // The bottom block's own button is still Settings — the segments are radios, not buttons.
     expect(within(bottom).getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('no nav row label truncates, ellipsizes or is width-capped — every row is laid out with room for its word', () => {
+    renderNav('/settings');
+    const rows = screen.getAllByRole('button');
+    expect(rows.length).toBeGreaterThan(3);
+    for (const row of rows) {
+      const label = row.querySelector('span.flex-1') as HTMLElement | null;
+      expect(label, row.textContent ?? '').not.toBeNull();
+      expect(label?.className).toContain('whitespace-nowrap');
+      expect(label?.className).not.toMatch(/truncate|overflow-hidden|max-w-|text-ellipsis|line-clamp/);
+    }
+  });
+
+  it('a collapsed sidebar renders neither rows nor the theme switch — nothing to clip', () => {
+    navMock.expanded = false;
+    const { container } = renderNav('/settings');
+    expect(container.innerHTML).toBe('');
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
   });
 
   it('carries no banned pattern below the fade root, and every class compiles against main.css', async () => {
