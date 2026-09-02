@@ -263,22 +263,21 @@ pub(super) fn research_answer_entry_schema() -> serde_json::Value {
     })
 }
 
-/// The per-answer landing tool (VA-118 item 4): one settled question lands as one mini the
-/// moment the lane calls it, so the lane's frame never sits at 0 bytes for an hour (r6i's
-/// structure lane: 113,720 reasoning chars, output frame empty until minute 63, nine answers
-/// in one final_output). The tool's argument is exactly one entry (`research_answer_entry_schema`)
-/// and `fold_research_entry` turns it into the same row `fold_research_lane` would have built at
-/// that position. UNWIRED in this commit: registering the tool on the research call and handing
-/// its arguments to `fold_research_entry` (then `persist_research_row` + `emit_research_outcome`,
-/// and `fold_research_lane_from(.., first_q_index)` for the remainder in the final call) is one
-/// edit in swarm.rs's `research_fan` lane closure, which this commit's boundary does not include —
-/// the prompt therefore still asks for ONE final_output and does not name this tool.
-#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: consumed by swarm.rs's research_fan next
+/// The per-answer landing tool (VA-118 item 4, wired r6j in `research_tool.rs`): one settled
+/// question lands as one mini the moment the lane calls it, so the lane's frame never sits at
+/// 0 bytes for an hour (r6i's structure lane: 113,720 reasoning chars, output frame empty until
+/// minute 63, nine answers in one final_output). The tool's argument is exactly one entry
+/// (`research_answer_entry_schema`) and `fold_research_entry` turns it into the same row
+/// `fold_research_lane_from` would have built at that position; the lane's final_output then
+/// folds only the REMAINDER (`fold_research_lane_from(.., next_q_index)`), so the numbering
+/// never collides with a landed mini. Registered as a frontend extension on the research call
+/// (`GooseAgentDispatcher::research_answer_extension_for`) and answered in the lane's own stream
+/// loop (`frontend_tool_result`) — the agent parks the lane on the result channel until the
+/// swarm replies.
 pub(super) fn research_answer_tool_schema() -> serde_json::Value {
     research_answer_entry_schema()
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: the tool's name for the swarm.rs registration
 pub(super) const RESEARCH_ANSWER_TOOL: &str = "research_answer";
 
 pub(super) fn research_mini_name(slice: &str, q_index: usize) -> String {
@@ -746,11 +745,10 @@ fn row_from_entry(
     })
 }
 
-/// The per-answer tool's fold (VA-118 item 4; see `research_answer_tool_schema` for the wiring
-/// this commit leaves to swarm.rs): the tool call's arguments are one entry, landed at the
-/// `q_index` the caller assigns (the count of entries landed so far for this lane). Nothing
-/// parseable is a stray with the raw head, never a row. `secs` is the lane's elapsed at the call.
-#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: the per-answer door's fold, see the schema's doc
+/// The per-answer tool's fold (VA-118 item 4; `research_tool::land_research_answer` is its
+/// caller): the tool call's arguments are one entry, landed at the `q_index` the caller assigns
+/// (the count of entries landed so far for this lane). Nothing parseable is a stray with the raw
+/// head, never a row. `secs` is the lane's elapsed at the call.
 pub(super) fn fold_research_entry(
     slice: &str,
     q_index: usize,
@@ -808,6 +806,9 @@ pub(super) fn lane_outcome_row(
 /// judge_ended / provider_error. Every path leaves the slice at least one row, so "every slice
 /// lane terminal" is a property of the type, never of a clock. `secs` is the session's wall time
 /// on every row and `batch` the number of question rows (the row doc says why it is not split).
+/// The run path calls `fold_research_lane_from` directly (the lane's `research_answer` calls may
+/// have landed rows first); this zero-offset form is the tests' shorthand.
+#[cfg(test)]
 pub(super) fn fold_research_lane(
     slice: &str,
     model: &str,
@@ -819,7 +820,11 @@ pub(super) fn fold_research_lane(
 
 /// `fold_research_lane` with the numbering started at `first_q_index` — the remainder of a lane
 /// whose earlier answers already landed one by one through the per-answer tool
-/// (`fold_research_entry`), so the final reply's entries never collide with landed minis.
+/// (`fold_research_entry`), so the final reply's entries never collide with landed minis. An
+/// OUTCOME row (the Err, unparseable and all-stray arms) sits at `first_q_index` for the same
+/// reason — at 0 it would overwrite the first landed mini — and an empty remainder behind landed
+/// rows is no row at all (the minis are the record) unless a `builder_decides` list needs a
+/// home, which then rides one `remainder_empty` outcome row at that index.
 /// The lane-level `builder_decides` list (VA-118 item 3) rides labelled
 /// (`BUILDER_DECIDES_PREFIX`) in the FIRST row's `raised` — or in the lane-outcome row when no
 /// question landed — because the row cannot grow in this commit (see the prefix consts); a lane
@@ -847,20 +852,18 @@ pub(super) fn fold_research_lane_from(
             } else {
                 "provider_error"
             };
-            return (
-                vec![lane_outcome_row(slice, reason, &e, model, secs)],
-                Vec::new(),
-            );
+            let mut outcome = lane_outcome_row(slice, reason, &e, model, secs);
+            outcome.q_index = first_q_index;
+            return (vec![outcome], Vec::new());
         }
     };
     let (entries, builder_decides): (Vec<DerivedAnswer>, Vec<String>) =
         match parse_json_lenient::<DerivedReply>(&raw) {
             Some(reply) => (reply.answers, reply.builder_decides),
             None => {
-                return (
-                    vec![lane_outcome_row(slice, "empty_answer", &raw, model, secs)],
-                    Vec::new(),
-                );
+                let mut outcome = lane_outcome_row(slice, "empty_answer", &raw, model, secs);
+                outcome.q_index = first_q_index;
+                return (vec![outcome], Vec::new());
             }
         };
     let mut decides: Vec<String> = Vec::new();
@@ -877,6 +880,25 @@ pub(super) fn fold_research_lane_from(
             .collect()
     };
     if entries.is_empty() {
+        if first_q_index > 0 {
+            if decides.is_empty() {
+                return (Vec::new(), Vec::new());
+            }
+            let mut outcome = lane_outcome_row(
+                slice,
+                "remainder_empty",
+                &format!(
+                    "{first_q_index} question(s) landed through {RESEARCH_ANSWER_TOOL}; the \
+                     final reply added none and listed {} builder_decides",
+                    decides.len()
+                ),
+                model,
+                secs,
+            );
+            outcome.q_index = first_q_index;
+            outcome.raised = labelled_decides();
+            return (vec![outcome], Vec::new());
+        }
         let detail = if decides.is_empty() {
             "the lane read its sections and derived no design or external question".to_string()
         } else {
@@ -908,6 +930,7 @@ pub(super) fn fold_research_lane_from(
             model,
             secs,
         );
+        outcome.q_index = first_q_index;
         outcome.raised = labelled_decides();
         return (vec![outcome], strays);
     }
@@ -2550,18 +2573,23 @@ pub(super) fn research_system_text(lane: &ResearchLane) -> String {
      where the request implies them; a convention is stated as a convention. Settle a shared fact \
      ONCE and let later answers refer back to it, never contradict it. Keep each answer under a \
      page.\n\n\
-     When you are done, call the final_output tool ONCE with {\"answers\": [{\"question\": \
-     \"...\", \"kind\": \"design\" | \"external\", \"cite\": \"request.md:<lines> or <doc \
-     section>\", \"alternatives\": [\"...\", \"...\"], \"open_because\": \"...\", \"answer\": \
-     \"...\", \"raised\": [...], \"raised_for\": [{\"slice\": \"<other slice id>\", \"text\": \
-     \"...\"}]}, ...], \"builder_decides\": [\"...\"]} — one entry per question you derived, in \
-     the order you settled them. COMPOSE EACH ENTRY INSIDE THAT CALL'S ARGUMENTS: a question or \
-     an answer drafted in your reasoning first is written twice and read by no one until the call \
-     lands — once you have a question and its evidence, the next thing you write is the tool call \
-     that carries it. If the sections settle everything and no design or external question \
-     remains, call final_output with an EMPTY answers list (builder_decides may still be filled) — \
-     that is a complete, honest reply. A question you could not answer still gets its entry with \
-     an empty answer and the reason in `raised`. `raised` lists points for THIS slice's builder \
+     THE MOMENT ONE QUESTION IS SETTLED, call the research_answer tool with that ONE entry: \
+     {\"question\": \"...\", \"kind\": \"design\" | \"external\", \"cite\": \"request.md:<lines> \
+     or <doc section>\", \"alternatives\": [\"...\", \"...\"], \"open_because\": \"...\", \
+     \"answer\": \"...\", \"raised\": [...], \"raised_for\": [{\"slice\": \"<other slice id>\", \
+     \"text\": \"...\"}]} — it lands in the ledger at once, the other slices' lanes can read it \
+     while you settle the next question, and the tool's reply names the file it landed in. \
+     COMPOSE EACH ENTRY INSIDE THAT CALL'S ARGUMENTS: a question or an answer drafted in your \
+     reasoning first is written twice and read by no one until the call lands — once you have a \
+     question and its evidence, the next thing you write is the research_answer call that \
+     carries it. Then the next question, one call each, in the order you settle them. When you \
+     are done, call the final_output tool ONCE with {\"answers\": [<only the entries you did NOT \
+     land through research_answer, same shape>], \"builder_decides\": [\"...\"]} — an EMPTY \
+     answers list when every question already landed, and also when the sections settle \
+     everything and no design or external question remains (builder_decides may still be \
+     filled): that is a complete, honest reply. Never repeat a landed entry in final_output — it \
+     would land again under a new index. A question you could not answer still gets its entry \
+     with an empty answer and the reason in `raised`. `raised` lists points for THIS slice's builder \
      you could not settle: do not answer them, and nothing will dispatch them; they are handed \
      VERBATIM to that builder as open points, so phrase each as a decision the builder can make in \
      one line, naming the conventional choice when you have one. `raised_for` lists points that \
@@ -3970,9 +3998,13 @@ mod tests {
         );
         assert_eq!(RESEARCH_ANSWER_TOOL, "research_answer");
         assert!(
-            !system.contains(RESEARCH_ANSWER_TOOL),
-            "the prompt names no tool that is not registered yet (unwired in this commit)"
+            system.contains(RESEARCH_ANSWER_TOOL),
+            "the prompt names the per-answer tool the lane is registered with (wired r6j)"
         );
+        assert!(
+            system.contains("THE MOMENT ONE QUESTION IS SETTLED, call the research_answer tool")
+        );
+        assert!(system.contains("only the entries you did NOT land through research_answer"));
         let spec = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
         let spliced = splice_claimed_sections(
             "boot",
@@ -5145,6 +5177,75 @@ Exact attribute names (`table-progress`, `table-empty`, `data-state` values) and
         assert!(
             !briefs[4].brief.contains("THE USER CHOSE: json"),
             "the user's decision names notifierd's file, so it is notifierd's alone"
+        );
+    }
+
+    /// r6j wiring: a lane that landed rows through `research_answer` folds only its REMAINDER —
+    /// an empty final reply behind landed rows is no row (q0's mini stays what the tool wrote),
+    /// a builder_decides list rides one `remainder_empty` row at the next index, and an outcome
+    /// row (Err / unparseable / all-stray) sits at the next index instead of overwriting q0.
+    #[test]
+    fn the_remainder_fold_never_overwrites_a_landed_mini() {
+        let (rows, strays) = fold_research_lane_from(
+            "web-console-structure",
+            "m",
+            3_780,
+            Ok(serde_json::json!({"answers": []}).to_string()),
+            9,
+        );
+        assert!(rows.is_empty() && strays.is_empty());
+        let (rows, _) = fold_research_lane_from(
+            "web-console-structure",
+            "m",
+            3_780,
+            Ok(serde_json::json!({"answers": [], "builder_decides": ["row height"]}).to_string()),
+            9,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].q_index, rows[0].reason.as_deref()),
+            (9, Some("remainder_empty"))
+        );
+        assert!(rows[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .starts_with("9 question(s) landed through research_answer"));
+        assert_eq!(
+            rows[0].raised,
+            vec![format!("{BUILDER_DECIDES_PREFIX}row height")]
+        );
+        let (rows, _) = fold_research_lane_from("s", "m", 10, Err("provider down".to_string()), 2);
+        assert_eq!(
+            (rows[0].q_index, rows[0].reason.as_deref()),
+            (2, Some("provider_error"))
+        );
+        let (rows, _) = fold_research_lane_from("s", "m", 10, Ok("not json".to_string()), 2);
+        assert_eq!(
+            (rows[0].q_index, rows[0].reason.as_deref()),
+            (2, Some("empty_answer"))
+        );
+        let (rows, strays) = fold_research_lane_from(
+            "s",
+            "m",
+            10,
+            Ok(
+                serde_json::json!({"answers": [{"question": "", "kind": "design", "answer": "x"}]})
+                    .to_string(),
+            ),
+            2,
+        );
+        assert_eq!(strays.len(), 1);
+        assert_eq!(
+            (rows[0].q_index, rows[0].reason.as_deref()),
+            (2, Some("empty_answer"))
+        );
+        // Unchanged at offset 0: the no_questions outcome row is q0, as before the wiring.
+        let (rows, _) =
+            fold_research_lane_from("s", "m", 10, Ok(r#"{"answers": []}"#.to_string()), 0);
+        assert_eq!(
+            (rows[0].q_index, rows[0].reason.as_deref()),
+            (0, Some("no_questions"))
         );
     }
 }
