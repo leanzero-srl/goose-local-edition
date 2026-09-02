@@ -89,8 +89,9 @@ use lang::detect_language;
 mod repair_waves;
 use parse_checks::{rust_compile_error, syntax_error, RustCheck};
 mod answer_routing;
+mod dom_contract;
 mod plan_repairs;
-use answer_routing::{flat_plan_from_briefs, route_cross_slice_answers};
+use answer_routing::flat_plan_from_briefs;
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
@@ -21519,14 +21520,18 @@ where
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
     // exact-equality consumers read it), prepends the skeleton, repairs the measured flags,
     // injects advertised entry files, and emits `plan_repaired` every time — actions or none.
-    let plan_json =
-        finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
-    // VA-104: an answer naming another task's file, or the asker's own file where another task's
-    // objective names it, rides into THAT task's description with the plan's owner stated (r6h's
-    // ledgerd-core drafted webhook registration beside webhooks-workflow). AFTER the repairs, so
-    // the owner map holds FINAL paths — the module/package rename rewrites only the renamed
-    // task's own brief; the DAG-invalid flat plan below walks the same order. `answer_routing.rs`.
-    let plan_json = route_cross_slice_answers(plan_json, &briefs, research, sink.as_ref());
+    // Then, AFTER the repairs so the owner map holds FINAL paths: VA-104's cross-slice answers
+    // (`answer_routing.rs`) and VA-109's DOM contract (`dom_contract.rs`) — ONE tail, walked by
+    // this door and by the DAG-invalid flat plan below, so the two cannot drift.
+    let door = dom_contract::PlanDoor {
+        spec: user_prompt,
+        every_decision_settled,
+        briefs: &briefs,
+        research,
+        opened: &opened,
+        sink,
+    };
+    let plan_json = dom_contract::finalize_and_route(plan_json, "plan", &door);
 
     // THE SPLIT (VA-021 / VA-024): on the finalized plan, spec sections per owned file are
     // measured against the plan's own distribution; a fat task (r6c web-viz: 7 sections → 1 file →
@@ -21562,19 +21567,12 @@ where
                 "  {} the synthesised plan will not load ({e}) — one task per slice instead",
                 style("!").yellow().bold()
             );
-            plan_json = route_cross_slice_answers(
-                finalize_plan_before_dag(
-                    flat_plan_from_briefs(&briefs, lang, user_prompt),
-                    user_prompt,
-                    every_decision_settled,
-                    sink,
-                    // Finding 6: the second finalize of one planning pass — tagged so the tick's
-                    // fired-twice defect line can except it instead of paging on a legitimate arm.
-                    "dag_fallback",
-                ),
-                &briefs,
-                research,
-                sink.as_ref(),
+            plan_json = dom_contract::finalize_and_route(
+                flat_plan_from_briefs(&briefs, lang, user_prompt),
+                // Finding 6: the second finalize of one planning pass — tagged so the tick's
+                // fired-twice defect line can except it instead of paging on a legitimate arm.
+                "dag_fallback",
+                &door,
             );
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
