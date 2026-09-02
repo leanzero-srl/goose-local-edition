@@ -74,7 +74,7 @@ describe('NavigationPanel (Studio shell)', () => {
     expect(mark.className).toContain('rounded-lz-control');
     expect(mark.className).not.toMatch(/gradient/);
     expect(within(mark).getByTestId('leanzero-glyph')).toBeInTheDocument();
-    const wordmark = within(brand).getByText('LeanZero Swarm');
+    const wordmark = within(brand).getByText('LeanZero Flock');
     for (const c of TYPE.h2.split(' ')) expect(wordmark.className).toContain(c);
   });
 

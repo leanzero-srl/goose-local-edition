@@ -79,15 +79,15 @@ const i18n = defineMessages({
     id: 'settings.lmStudioFleet.hidden',
     defaultMessage: 'LM Studio fleet hidden (legacy) — enable it above to see live nodes here',
   },
-  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Goose Swarm' },
+  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Goose Flock' },
   editionDesc: {
     id: 'settings.edition.description',
     defaultMessage:
-      'The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting.',
+      'The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting.',
   },
   editionPreview: {
     id: 'settings.edition.preview',
-    defaultMessage: 'Swarm LeanZero — the fan-in view',
+    defaultMessage: 'LeanZero Flock — the fan-in view',
   },
   themeTitle: { id: 'settings.theme.title', defaultMessage: 'Theme' },
   themeDesc: {
@@ -206,8 +206,8 @@ interface AppSettingsSectionProps {
   scrollToSection?: string;
 }
 
-// Pass E follow-up (owner): the legacy "Goose Swarm" card — the Standard/Swarm edition switcher and
-// the LM Studio fan-in preview — leaves Settings > App. This fork IS Goose Swarm, so the switcher is
+// Pass E follow-up (owner): the legacy "Goose Flock" card — the Standard/Flock edition switcher and
+// the LM Studio fan-in preview — leaves Settings > App. This fork IS Goose Flock, so the switcher is
 // noise; edition derivation and any stored 'edition' setting keep working in code. Hidden, not
 // deleted: flip to bring the card back.
 const SHOW_EDITION_CARD = false;

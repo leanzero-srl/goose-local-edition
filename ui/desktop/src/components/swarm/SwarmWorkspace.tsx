@@ -102,7 +102,7 @@ export function SwarmWorkspace({
       {active && !isWide && (
         <div
           role="tablist"
-          aria-label="Active swarm workspace"
+          aria-label="Active flock workspace"
           className={cx(
             'mx-3 mb-2 grid h-10 shrink-0 grid-cols-2 overflow-hidden border border-lz-border-strong bg-lz-surface',
             RADIUS.control

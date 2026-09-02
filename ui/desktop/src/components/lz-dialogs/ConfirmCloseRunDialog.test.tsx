@@ -34,7 +34,7 @@ afterEach(() => {
 describe('ConfirmCloseRunDialog', () => {
   it('is a modal Studio overlay: warn dot, the title, a body that says closing stops the run, the run named', () => {
     const { container } = mount();
-    const dialog = screen.getByRole('dialog', { name: 'A swarm run is live in this window' });
+    const dialog = screen.getByRole('dialog', { name: 'A flock run is live in this window' });
     expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(dialog).toHaveAccessibleDescription(/Closing this window stops the run/);
     expect(screen.getByText('Run 20260901-2302 in /proj')).toBeInTheDocument();

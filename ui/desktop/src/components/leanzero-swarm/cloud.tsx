@@ -316,7 +316,7 @@ export function CloudPane({
       {error && <ToneBanner tone="err" label={def.label} text={error} />}
 
       {devices.length > 0 && (
-        <Panel title="Cloud nodes in your swarm pool" count={devices.length} padded={false}>
+        <Panel title="Cloud nodes in your flock pool" count={devices.length} padded={false}>
           <DataTable
             dense
             aria-label={`${def.label} nodes in the pool`}

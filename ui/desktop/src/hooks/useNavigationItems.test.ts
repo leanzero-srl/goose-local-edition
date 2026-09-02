@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { NAV_ITEMS, SETTINGS_NAV_ITEM } from './useNavigationItems';
 
 /**
- * Goose Swarm nav fixture (pass A declutter + pass C rename + pass D removal). The sidebar is a
+ * Goose Flock nav fixture (pass A declutter + pass C rename + pass D removal). The sidebar is a
  * deliberate, minimal set — Recipes, Apps, Scheduler, Loop, Extensions and Session History were
  * REMOVED from the nav (their routes stay reachable by URL). Pass C: the "Leanzero MLX" entry
- * became "LeanZero Swarm" (/leanzero-swarm — the three-tab management view; /mlx-engine
+ * became "Goose Flock" (/leanzero-swarm — the three-tab management view; /mlx-engine
  * redirects). Pass D (owner): "New Chat" is GONE — sessions start from a project, and the only
  * session-creating affordance is the Projects tree's "+ New session here".
  *
@@ -30,7 +30,7 @@ describe('NAV_ITEMS fixture', () => {
       'Skills',
       'Memories',
       'Benchmark',
-      'LeanZero Swarm',
+      'Goose Flock',
     ]);
   });
 

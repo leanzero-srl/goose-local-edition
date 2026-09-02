@@ -56,7 +56,7 @@ const i18nMsg = defineMessages({
   removeMessage: {
     id: 'swarmSettings.removeMessage',
     defaultMessage:
-      '{id} leaves the swarm pool. No model files are touched; you can add it again any time.',
+      '{id} leaves the flock pool. No model files are touched; you can add it again any time.',
   },
   removeConfirm: { id: 'swarmSettings.removeConfirm', defaultMessage: 'Remove' },
   reassignTitle: { id: 'swarmSettings.reassignTitle', defaultMessage: 'Reassign provider' },

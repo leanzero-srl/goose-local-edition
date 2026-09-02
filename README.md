@@ -4,8 +4,8 @@ goose Local Edition is a fork of [goose](https://github.com/aaif-goose/goose) (o
 
 The fork adds three things to upstream goose:
 
-1. **A swarm engine** (`crates/goose-swarm` and the `goose swarm` CLI command) that plans, dispatches, supervises, verifies and repairs a software build across a pool of LM Studio devices — one model, several machines.
-2. **A benchmark product** — a Benchmark page in the desktop app that runs the swarm against a frozen specification, scores the resulting application with an execution-based scorer (sb-5.3, 60 checks across seven tiers; older eras stay published under the board's scorer selector), and publishes the result to the public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks).
+1. **A flock engine** (`crates/goose-swarm` and the `goose flock` CLI command, with `goose swarm` kept as an alias) that plans, dispatches, supervises, verifies and repairs a software build across a pool of LM Studio devices — one model, several machines.
+2. **A benchmark product** — a Benchmark page in the desktop app that runs the flock against a frozen specification, scores the resulting application with an execution-based scorer (sb-5.3, 60 checks across seven tiers; older eras stay published under the board's scorer selector), and publishes the result to the public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks).
 3. **A measurement harness** (`evals/swarm-bench/`) — the scorer, its determinism and isolation controls, the run supervisor, and the findings ledger that recorded the entire campaign (873 numbered findings over roughly two and a half weeks).
 
 Everything upstream goose does — the desktop app, the CLI, providers, MCP extensions — continues to work. The fork point is upstream commit `a0aed81f3` (2026-07-03); the `local-edition` branch carries approximately 2,257 commits on top of it.
@@ -45,7 +45,7 @@ goose Local Edition is the sum of those mechanisms, built into goose's agent fra
 
 ## Architecture
 
-The swarm engine lives in two places: `crates/goose-swarm` (the scheduler, DAG, judge, pre-reviewer, replanner, event model, and the deterministic coherence primitives) and `crates/goose-cli/src/commands/swarm.rs` (the orchestration loop, the pool configuration, the phase pipeline, the completion gate, and the repair machinery). The desktop app drives the same engine through `ui/desktop/src/components/swarm` and exposes the benchmark through `ui/desktop/src/components/benchmark`.
+The flock engine lives in two places: `crates/goose-swarm` (the scheduler, DAG, judge, pre-reviewer, replanner, event model, and the deterministic coherence primitives) and `crates/goose-cli/src/commands/swarm.rs` (the orchestration loop, the pool configuration, the phase pipeline, the completion gate, and the repair machinery). The desktop app drives the same engine through `ui/desktop/src/components/swarm` and exposes the benchmark through `ui/desktop/src/components/benchmark`.
 
 A run proceeds through named phases: RESEARCH → PLAN (drafting and agreement) → CONTRACTS → DETAIL → EXECUTE (the dispatch DAG) → COMPLETE (the verify/repair tail). Every phase emits structured events to a JSONL log; every claim in this document about what the engine does is checkable against those events.
 
@@ -86,7 +86,7 @@ Redundant capacity is spent on judgment. This is the design's founding principle
 - **The judge** observes every phase of the run. When a worker loops, the judge redirects it *in-session* with a directional hint instead of killing it, and its verdicts cite deterministic instrument readings (failed tool calls, import health) rather than impressions. Its cost is controlled: an earlier defect had the judge hot-spinning 36,000 observe/skip cycles on a long single-node task; the fix took the same phase to 55 cycles and the trace from 38 MB to 0.16 MB.
 - **Pre-review** is the mechanism that actually scales with the fleet. Measured across the corpus, pre-review runs 2.0× per run at one node and 10.2× at three — a 5.1× scaling carried entirely by spare nodes. (The judge, by contrast, does not scale with node count at all — ~88 verdicts per run at one node against ~78 at three — and is treated as fixed overhead.)
 - **The tail is an orchestrator.** When the run narrows to a final long-running sink task, idle nodes are given real work: reviewing the tree, generating tests, and racing repair attempts, all scheduled rather than improvised.
-- **A running swarm answers questions.** Dropping a text file into a run's `.swarm/questions/` directory causes an idle node to answer it from the run's own state; measured end-to-end at 57 seconds from question to answer.
+- **A running flock answers questions.** Dropping a text file into a run's `.swarm/questions/` directory causes an idle node to answer it from the run's own state; measured end-to-end at 57 seconds from question to answer.
 
 ### The check → block → repair chain
 
@@ -112,7 +112,7 @@ Each detector below exists because a specific measured failure class shipped pas
 
 Three rules, learned the expensive way, govern how the engine converts machinery into score:
 
-**Findings block green and drive fix rounds.** The campaign's oldest law is that only checks wired into the check → block → repair chain ever convert into score. A scorer-side check with no engine-side counterpart measures a gap the swarm cannot close; every scorer family therefore has a completion-gate sibling.
+**Findings block green and drive fix rounds.** The campaign's oldest law is that only checks wired into the check → block → repair chain ever convert into score. A scorer-side check with no engine-side counterpart measures a gap the flock cannot close; every scorer family therefore has a completion-gate sibling.
 
 **One ruler.** The engine's internal shadow grade counts every category the scoring round counts. An earlier split — where the in-run grade sampled a subset — made final scores a lottery: a run could optimize what its shadow measured and lose on what it didn't. The one-ruler change (F862) removed that class.
 
@@ -120,18 +120,18 @@ Three rules, learned the expensive way, govern how the engine converts machinery
 
 ## The benchmark product
 
-The desktop app carries a Benchmark page (`ui/desktop/src/components/benchmark/BenchmarkView.tsx`) that packages the whole measurement loop into a product: **Run → Swarm build → Scoring → Publish.**
+The desktop app carries a Benchmark page (`ui/desktop/src/components/benchmark/BenchmarkView.tsx`) that packages the whole measurement loop into a product: **Run → Flock build → Scoring → Publish.**
 
 - **The task.** Every run builds the same frozen application — *vendorsync*, a service that syncs payments from a vendor API into a local SQLite store and serves them on a web page, backend restricted to the Python 3 standard library. The specification (`evals/swarm-bench/spec-build-v2.md`) demands a *product*, not a demo: human-readable dates in the user's locale, visually distinct statuses, pagination wired to the documented API, responsiveness at 375 px, stated performance budgets, intentional design. Each sentence of the spec exists to be checked.
 - **The scorer.** sb-5.2 emits 60 checks across seven tiers: **A** structure, **B** behaviour (HTTP against the running app), **C** vendor contract, **D** finesse, **J** journey (a headless browser drives the full user flow), **V** visual (rendered-page checks, mobile layout), **P** performance (response-time budgets measured on the live app). The overall score weights core A–D at 60% (internal weights A 25 / B 30 / C 25 / D 20), journey 15%, visual 10%, performance 5%, and a set of hard blocks (server binds, data rows render) at 10% so that hard failures always move the overall score. The scorer is frozen: only sb-5.2 rows share the leaderboard, because scorer versions are incomparable by construction.
-- **Screenshots during repair.** The render probe captures a PNG per scenario (loaded, synced, error, empty, mobile) on every repair epoch, so the published record shows the page *as the swarm repaired it* — first epoch before, final epoch after.
+- **Screenshots during repair.** The render probe captures a PNG per scenario (loaded, synced, error, empty, mobile) on every repair epoch, so the published record shows the page *as the flock repaired it* — first epoch before, final epoch after.
 - **Scoring detail.** The app renders the full check-by-check story of a score: the composition table, per-tier check rows with evidence and the consequence of each loss, the findings that held, and the repair-round progression. The same detail travels with a published run (`checksSummary` in the payload) so a score on the public board is auditable, not just a number.
 - **Publishing.** Publishing POSTs a strict-allowlisted payload to `leanzero.net/api/benchmark-runs`. Identity is a generated pseudonym (`<adjective>-<animal>-<4hex>`) plus a never-displayed install id; the model identifier is **prefilled from engine truth** — the run's own `pool_resolved` event — and user-editable; per-node detail (device name and model, verbatim from the same event) rides along. A submission goes live immediately — there is no review queue and no editorial gate — and the board page revalidates on post so the new row appears at once. There is no browser submission form; posting happens only from the desktop app.
 - **Baselines in-app.** The page shows the frozen Anthropic cloud baselines alongside your fleet's runs, on the same scorer, so a local result is always read against a meaningful scale.
 
 ## The fleet
 
-The reference fleet is three Apple-silicon machines running [LM Studio](https://lmstudio.ai/), all serving the same model (the campaign ran a qwen3.6-27B derivative; the default planner is `qwen/qwen3.6-27b`). The engine's fleet model, configured via `goose swarm pool` and persisted in the goose config:
+The reference fleet is three Apple-silicon machines running [LM Studio](https://lmstudio.ai/), all serving the same model (the campaign ran a qwen3.6-27B derivative; the default planner is `qwen/qwen3.6-27b`). The engine's fleet model, configured via `goose flock pool` and persisted in the goose config:
 
 - **Per-node identity is three distinct identifiers**, all load-bearing: the LM Studio *device id*, the *model identifier* the device serves, and the physical *host*. Routing is by model identifier; display and speed weighting key off device and host. `fleet_reload.sh` in the harness documents the reference fleet's device ids, identifiers, quantizations and context sizes.
 - **Speed weights** (`speed_weights`, a host-substring → weight map) rank hosts by measured throughput. The scheduler seeds heavy tasks onto the fastest host and normalizes load by weight, so slower machines do proportionally less work.
@@ -173,7 +173,7 @@ The hard tier does what it was built to do: it separates the field the soft tier
 
 Two findings frame these numbers honestly:
 
-- **The swarm's advantage is its machinery, not its parallelism.** Measured mechanisms that make three nodes faster exist (parallel research, parallel planning, execute-phase parallelism); measured mechanisms that make three nodes *better* are exactly the verification set — pre-review scaling 5.1× with spare nodes, the repair scheduler converting findings, the gates blocking green. When those mechanisms are off or broken, the node-count advantage disappears into a sync-bug lottery.
+- **The flock's advantage is its machinery, not its parallelism.** Measured mechanisms that make three nodes faster exist (parallel research, parallel planning, execute-phase parallelism); measured mechanisms that make three nodes *better* are exactly the verification set — pre-review scaling 5.1× with spare nodes, the repair scheduler converting findings, the gates blocking green. When those mechanisms are off or broken, the node-count advantage disappears into a sync-bug lottery.
 - **The gap to the cloud baselines is real and stated.** Nothing on the board suggests a local fleet currently matches a frontier model on this benchmark. What the board shows is the measured distance, on a frozen ruler, with the machinery that closes it from below shipping in this repository.
 
 ## Install and usage
@@ -196,25 +196,25 @@ just run-ui                   # development
 cd ui/desktop && pnpm install && pnpm run package
 ```
 
-The packaged app lands in `ui/desktop/out/`. The Benchmark page is in the app's navigation; the swarm run panel shows planning, fleet, work and event-log zones live during a run.
+The packaged app lands in `ui/desktop/out/`. The Benchmark page is in the app's navigation; the flock run panel shows planning, fleet, work and event-log zones live during a run.
 
 ### Configure the fleet
 
 ```bash
-goose swarm pool              # interactive: devices, weights, enable/disable
+goose flock pool              # interactive: devices, weights, enable/disable
 ```
 
 Each device needs LM Studio reachable at its endpoint with the model loaded. Pool state persists under the `swarm` key in `~/.config/goose/config.yaml`.
 
-### Run the swarm from the CLI
+### Run the flock from the CLI
 
 ```bash
-goose swarm run "build a CLI tool that ..."
+goose flock run "build a CLI tool that ..."
 ```
 
 ### Run a benchmark
 
-Open the Benchmark page in the desktop app, choose the node count, and press Run. The app boots the vendor fixture, runs the swarm build against the frozen spec, scores the result with sb-5.2, and offers Publish with the identity, model identifier and screenshots described above. Publishing is opt-in per run.
+Open the Benchmark page in the desktop app, choose the node count, and press Run. The app boots the vendor fixture, runs the flock build against the frozen spec, scores the result with sb-5.2, and offers Publish with the identity, model identifier and screenshots described above. Publishing is opt-in per run.
 
 ### Environment levers
 

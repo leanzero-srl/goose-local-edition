@@ -81,7 +81,7 @@ const i18n = defineMessages({
 
 /**
  * The session's brand mark, top right. ONE quiet chip: the wordmark beside a solid accent mark
- * (the LeanZero monogram on the accent fill) in the Swarm edition; the goose wordmark otherwise.
+ * (the LeanZero monogram on the accent fill) in the Flock edition; the goose wordmark otherwise.
  * The links are the ones the old cluster carried.
  */
 export function SessionBrand({ isLocal }: { isLocal: boolean }) {
@@ -94,7 +94,7 @@ export function SessionBrand({ isLocal }: { isLocal: boolean }) {
         target="_blank"
         rel="noopener noreferrer"
         className={anchor}
-        title="Goose Swarm — powered by LeanZero"
+        title="Goose Flock — powered by LeanZero"
         data-testid="local-edition-badge"
       >
         <Chip
@@ -111,7 +111,7 @@ export function SessionBrand({ isLocal }: { isLocal: boolean }) {
             </span>
           }
         >
-          LeanZero Swarm
+          LeanZero Flock
         </Chip>
       </a>
     );
@@ -608,7 +608,7 @@ export default function BaseChat({
               // A HELD swarm run outranks whatever the chat layer believes: the provider call is still
               // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
               swarmRun.held
-                ? 'swarm paused — nothing is running until you resume'
+                ? 'flock paused — nothing is running until you resume'
                 : messages.length > 0
                   ? getThinkingMessage(messages[messages.length - 1])
                   : undefined

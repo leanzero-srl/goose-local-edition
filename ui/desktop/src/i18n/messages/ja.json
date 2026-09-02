@@ -81,7 +81,7 @@
     "defaultMessage": "プロバイダーを選択…"
   },
   "addNode.providersCaption": {
-    "defaultMessage": "ノードのプロバイダーは swarm エンジンが対応しているものです。エンジンの対応に合わせて、さらに多くのクラウド系列が加わります。"
+    "defaultMessage": "ノードのプロバイダーは flock エンジンが対応しているものです。エンジンの対応に合わせて、さらに多くのクラウド系列が加わります。"
   },
   "addNode.reassignButton": {
     "defaultMessage": "削除して再追加"
@@ -423,7 +423,7 @@
     "defaultMessage": "承認モードを設定"
   },
   "confirmCloseRun.body": {
-    "defaultMessage": "このウィンドウを閉じるとランは停止します。ウィンドウのバックエンドが解放され、その下で動く swarm エンジンに終了が通知されます。"
+    "defaultMessage": "このウィンドウを閉じるとランは停止します。ウィンドウのバックエンドが解放され、その下で動く flock エンジンに終了が通知されます。"
   },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "実行を続ける"
@@ -438,7 +438,7 @@
     "defaultMessage": "ランを停止しています…"
   },
   "confirmCloseRun.title": {
-    "defaultMessage": "このウィンドウで swarm のランが実行中です"
+    "defaultMessage": "このウィンドウで flock のランが実行中です"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "警告"
@@ -1068,7 +1068,7 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Goose Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "editionSelector.standard": {
     "defaultMessage": "goose"
@@ -2493,7 +2493,7 @@
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
-    "defaultMessage": "LeanZero Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
@@ -4146,13 +4146,13 @@
     "defaultMessage": "Dockアイコン"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
-    "defaultMessage": "Swarm LeanZero — the fan-in view"
+    "defaultMessage": "LeanZero Flock — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "settings.help.description": {
     "defaultMessage": "問題の報告や新機能のリクエストでgooseの改善にご協力ください"
@@ -4362,7 +4362,7 @@
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
   },
   "shortcutRefused.reload": {
-    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+    "defaultMessage": "Reloading would discard the live log and flock panel state."
   },
   "shortcutRefused.spawn": {
     "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."

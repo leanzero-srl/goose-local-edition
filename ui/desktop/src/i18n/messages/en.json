@@ -27,10 +27,10 @@
     "defaultMessage": "fleet offline"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Every discovered swarm machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited)."
+    "defaultMessage": "Every discovered flock machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited)."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# swarm machine without an MLX node yet — each machine can carry exactly one.} other{# swarm machines without an MLX node yet — each machine can carry exactly one.}}"
+    "defaultMessage": "{count,plural,one{# flock machine without an MLX node yet — each machine can carry exactly one.} other{# flock machines without an MLX node yet — each machine can carry exactly one.}}"
   },
   "addNode.machineLabel": {
     "defaultMessage": "Machine — one MLX node each"
@@ -39,7 +39,7 @@
     "defaultMessage": "this machine"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "No swarm machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below."
+    "defaultMessage": "No flock machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Pick a machine…"
@@ -81,7 +81,7 @@
     "defaultMessage": "Pick a provider…"
   },
   "addNode.providersCaption": {
-    "defaultMessage": "Node providers are the ones the swarm engine supports — more cloud families arrive with engine support."
+    "defaultMessage": "Node providers are the ones the flock engine supports — more cloud families arrive with engine support."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Remove & re-add"
@@ -423,7 +423,7 @@
     "defaultMessage": "Configure approve mode"
   },
   "confirmCloseRun.body": {
-    "defaultMessage": "Closing this window stops the run: the window's backend is released and the swarm engine under it is signalled to exit."
+    "defaultMessage": "Closing this window stops the run: the window's backend is released and the flock engine under it is signalled to exit."
   },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Keep running"
@@ -438,7 +438,7 @@
     "defaultMessage": "Stopping the run…"
   },
   "confirmCloseRun.title": {
-    "defaultMessage": "A swarm run is live in this window"
+    "defaultMessage": "A flock run is live in this window"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "Warning"
@@ -1068,7 +1068,7 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Goose Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "editionSelector.standard": {
     "defaultMessage": "goose"
@@ -1809,7 +1809,7 @@
     "defaultMessage": "Sign in to link your devices into a private mesh — no password, just a code by email."
   },
   "leanzeroSwarm.subtitle": {
-    "defaultMessage": "One place for the whole swarm: the in-house MLX engine, cloud provider credentials, and the node pool the swarm builds with."
+    "defaultMessage": "One place for the whole flock: the in-house MLX engine, cloud provider credentials, and the node pool the flock builds with."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Cloud Providers"
@@ -1818,7 +1818,7 @@
     "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Swarm Settings"
+    "defaultMessage": "Flock Settings"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose is compacting the conversation..."
@@ -2493,7 +2493,7 @@
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
-    "defaultMessage": "LeanZero Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
@@ -4146,13 +4146,13 @@
     "defaultMessage": "Dock icon"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
-    "defaultMessage": "Swarm LeanZero — the fan-in view"
+    "defaultMessage": "LeanZero Flock — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Swarm"
+    "defaultMessage": "Goose Flock"
   },
   "settings.help.description": {
     "defaultMessage": "Help us improve goose by reporting issues or requesting new features"
@@ -4362,7 +4362,7 @@
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
   },
   "shortcutRefused.reload": {
-    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+    "defaultMessage": "Reloading would discard the live log and flock panel state."
   },
   "shortcutRefused.spawn": {
     "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Window if you really mean it."
@@ -4566,7 +4566,7 @@
     "defaultMessage": "Remove"
   },
   "swarmSettings.removeMessage": {
-    "defaultMessage": "{id} leaves the swarm pool. No model files are touched; you can add it again any time."
+    "defaultMessage": "{id} leaves the flock pool. No model files are touched; you can add it again any time."
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Remove node"

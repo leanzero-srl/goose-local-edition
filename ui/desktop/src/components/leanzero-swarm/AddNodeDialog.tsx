@@ -49,7 +49,7 @@ const i18n = defineMessages({
   providersCaption: {
     id: 'addNode.providersCaption',
     defaultMessage:
-      'Node providers are the ones the swarm engine supports — more cloud families arrive with engine support.',
+      'Node providers are the ones the flock engine supports — more cloud families arrive with engine support.',
   },
   noKeyBadge: { id: 'addNode.noKeyBadge', defaultMessage: 'no key' },
   noKeyPane: {
@@ -71,19 +71,19 @@ const i18n = defineMessages({
   machineCap: {
     id: 'addNode.machineCap',
     defaultMessage:
-      '{count, plural, one {# swarm machine} other {# swarm machines}} without an MLX node yet — each machine can carry exactly one.',
+      '{count, plural, one {# flock machine} other {# flock machines}} without an MLX node yet — each machine can carry exactly one.',
   },
   machineLocalTag: { id: 'addNode.machineLocalTag', defaultMessage: 'this machine' },
   machineRemoteTag: { id: 'addNode.machineRemoteTag', defaultMessage: 'remote' },
   machineNoneDiscovered: {
     id: 'addNode.machineNoneDiscovered',
     defaultMessage:
-      'No swarm machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below.',
+      'No flock machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below.',
   },
   machineAllTaken: {
     id: 'addNode.machineAllTaken',
     defaultMessage:
-      'Every discovered swarm machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited).',
+      'Every discovered flock machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited).',
   },
   remoteAwaiting: {
     id: 'addNode.remoteAwaiting',

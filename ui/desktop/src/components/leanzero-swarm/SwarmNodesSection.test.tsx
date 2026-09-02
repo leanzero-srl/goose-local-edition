@@ -10,7 +10,7 @@ import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 
 // ---------------------------------------------------------------------------
-// The Swarm Settings tab, post-amendment: NODES ONLY. These tests pin
+// The Flock Settings tab, post-amendment: NODES ONLY. These tests pin
 //  - the simplification itself (no tunable beyond weight renders),
 //  - the WRITE PATHS (config upsert for local rows, engine CLI for cloud — the invariant),
 //  - the MLX machine cap (discovered machines minus already-added),
