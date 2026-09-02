@@ -348,6 +348,26 @@ export interface ResearchQuestionRow {
   detail?: string;
 }
 
+/**
+ * VA-143: the event that CLOSED a research lane. `research_unanswered{reason: remainder_empty}` is the
+ * engine's outcome row for a lane whose final reply added nothing behind the answers the tool already
+ * landed (research.rs fold_research_lane_from: its q_index is the remainder's first, its detail names
+ * the builder_decides it listed) — a closer, never a question kept raw in a brief. r6j's web-viz lane
+ * landed 4 and read "1 unanswered" for the whole run because the closer was folded as a question row.
+ */
+export interface ResearchLaneClose {
+  reason: string;
+  /** Answers the lane landed — its rows with status answered (`research_answer_landed` and its
+   *  outcome-funnel twin `research_answered` fold onto ONE row, so the count holds on either shape). */
+  landed: number;
+  /** Choices only this slice's builder makes — one `research_builder_decides` event each, emitted
+   *  after the closer. */
+  builderDecides: number;
+  detail?: string;
+  /** The engine's own lane clock at the close (`secs`). */
+  secs?: number;
+}
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -452,6 +472,9 @@ export interface TurnLane {
    *  deliberately NOT a digestStreamFields key: no digest names its questions. One lane per batch
    *  lists every question it carries; the lane is done when each has a terminal event. */
   researchQuestions?: ResearchQuestionRow[];
+  /** VA-143: the lane's closer, when the engine emitted one — event truth on the carry, like the
+   *  questions. Absent while the lane runs and on a lane that ended without one. */
+  researchClose?: ResearchLaneClose;
   seq: number;
 }
 
@@ -1430,6 +1453,76 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         : [node, ...questionLines].filter(Boolean).join('\n') || undefined,
     };
   };
+  // VA-143: ONE LINE PER LANDING, on both feeds. `research_answer_landed` (the mid-lane landing,
+  // research_tool.rs `land` — r6j: 37 of them, unconsumed here until now) and `research_answered`
+  // (the same row through the outcome funnel) are twins: whichever arrives first owns the line and
+  // the other updates it in place — never a second line. An archived log with only the funnel event
+  // keeps its one verbose line; the landing twin rewrites it with the kind the lane named and
+  // promotes it to the compact feed. A lane's CLOSER (`research_unanswered{reason: remainder_empty}`)
+  // is a done-line naming what the lane landed and the builder_decides it listed, re-rendered as
+  // each `research_builder_decides` arrives (the engine emits them after the closer).
+  const researchLandingLines = new Map<
+    string,
+    { compactIdx: number | null; verboseIdx: number; node: string; secs?: number }
+  >();
+  const researchLandedBySlice = new Map<string, Set<number>>();
+  const researchDecidesBySlice = new Map<string, number>();
+  const researchCloseLines = new Map<string, { compactIdx: number; verboseIdx: number; detail?: string }>();
+  const renderResearchLanding = (
+    slice: string,
+    qi: number,
+    a: { kind?: string; chars: number; raised: number; node: string; secs?: number }
+  ) => {
+    const key = `${slice}::${qi}`;
+    let set = researchLandedBySlice.get(slice);
+    if (!set) researchLandedBySlice.set(slice, (set = new Set()));
+    set.add(qi);
+    const t = [
+      `${researchSliceLabel(slice) || 'a slice'} · q${qi} landed`,
+      a.kind,
+      `${a.chars.toLocaleString()} chars`,
+      a.raised > 0 ? `raised ${a.raised}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const sub =
+      [a.node && `by ${a.node}`, a.secs != null ? `${a.secs}s` : ''].filter(Boolean).join(' · ') ||
+      undefined;
+    const row = { kind: 'done' as const, tone: 'good' as const, text: t, sub };
+    const line = researchLandingLines.get(key);
+    if (line) {
+      vfeed[line.verboseIdx] = { ...vfeed[line.verboseIdx], ...row };
+      if (line.compactIdx == null) {
+        compact(row);
+        line.compactIdx = feed.length - 1;
+      } else feed[line.compactIdx] = { ...feed[line.compactIdx], ...row };
+      line.node = a.node || line.node;
+      line.secs = a.secs ?? line.secs;
+    } else {
+      compact(row);
+      verbose(row);
+      researchLandingLines.set(key, {
+        compactIdx: feed.length - 1,
+        verboseIdx: vfeed.length - 1,
+        node: a.node,
+        secs: a.secs,
+      });
+    }
+  };
+  const renderResearchClose = (slice: string) => {
+    const line = researchCloseLines.get(slice);
+    if (!line) return;
+    const landed = researchLandedBySlice.get(slice)?.size ?? 0;
+    const decides = researchDecidesBySlice.get(slice) ?? 0;
+    const row = {
+      kind: 'done' as const,
+      tone: 'good' as const,
+      text: `Research ${researchSliceLabel(slice) || 'a slice'} lane closed — landed ${landed} · builder_decides ${decides}`,
+      sub: line.detail,
+    };
+    feed[line.compactIdx] = { ...feed[line.compactIdx], ...row };
+    vfeed[line.verboseIdx] = { ...vfeed[line.verboseIdx], ...row };
+  };
   // Set by pillars_write_failed so the positive 'pillars' line can carry its honest caveat: the engine
   // still injects pillars into workers after a failed write (set_pillars runs regardless), but the
   // file-driven pillar CHECKS will not run.
@@ -1639,6 +1732,20 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           qi != null
             ? researchDispatchLines.get(researchLineBySlice.get(slice) ?? '')?.qs.get(qi)?.kind
             : undefined;
+        // VA-143: the landing twin (`research_answer_landed`) may already own this landing's line —
+        // then this event only adds what it alone carries (secs, node); otherwise this is the one
+        // verbose line an archived funnel-only log keeps.
+        const landing = qi != null ? researchLandingLines.get(`${slice}::${qi}`) : undefined;
+        if (landing && qi != null) {
+          renderResearchLanding(slice, qi, {
+            kind,
+            chars,
+            raised,
+            node: node || landing.node,
+            secs: secs ?? landing.secs,
+          });
+          break;
+        }
         verbose({
           kind: 'done',
           tone: 'good',
@@ -1647,17 +1754,67 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
             [kind, node && `by ${node}`, secs != null ? `${secs}s` : ''].filter(Boolean).join(' · ') ||
             undefined,
         });
+        if (qi != null) {
+          researchLandingLines.set(`${slice}::${qi}`, {
+            compactIdx: null,
+            verboseIdx: vfeed.length - 1,
+            node,
+            secs: secs ?? undefined,
+          });
+          let set = researchLandedBySlice.get(slice);
+          if (!set) researchLandedBySlice.set(slice, (set = new Set()));
+          set.add(qi);
+        }
+        break;
+      }
+      case 'research_answer_landed': {
+        // VA-143: the mid-lane landing — the kind the lane named rides on it. A landing whose status
+        // is not answered has its miss rendered by the `research_unanswered` twin, which carries the
+        // reason; nothing here claims an answer that did not land.
+        const slice = str(e['slice']);
+        const qi = num(e['q_index']);
+        if (qi == null || (e['status'] && str(e['status']) !== 'answered')) break;
+        const prior = researchLandingLines.get(`${slice}::${qi}`);
+        const laneLine = researchDispatchLines.get(researchLineBySlice.get(slice) ?? '');
+        renderResearchLanding(slice, qi, {
+          kind: str(e['kind']) || laneLine?.qs.get(qi)?.kind,
+          chars: num(e['chars']) ?? 0,
+          raised: num(e['raised']) ?? 0,
+          node: prior?.node || laneLine?.node || '',
+          secs: prior?.secs,
+        });
+        break;
+      }
+      case 'research_builder_decides': {
+        // VA-143: one per choice the lane left to its builder, after the closer — counted onto the
+        // lane's close line, never a line each (r6j: 49 across six lanes).
+        const slice = str(e['slice']);
+        researchDecidesBySlice.set(slice, (researchDecidesBySlice.get(slice) ?? 0) + 1);
+        renderResearchClose(slice);
         break;
       }
       case 'research_unanswered': {
-        // The fallback-gate absence twin: the brief keeps the raw question, never a fabricated answer,
-        // and this line is the loud channel. reason: empty_answer | provider_error | judge_ended |
-        // lane_panicked (model honestly empty on that one — the lane died before any attribution).
         const slice = str(e['slice']);
         const qi = num(e['q_index']);
         const reason = str(e['reason']);
-        const t = `Research unanswered — ${slice || 'a slice'} q${qi ?? '?'}${reason ? ` (${reason.replace(/_/g, ' ')})` : ''}`;
         const sub = str(e['detail']) || undefined;
+        // VA-143: `remainder_empty` is the lane's CLOSER — the final reply added nothing behind the
+        // answers the tool landed — not a miss; it reads as the lane's close, with what it landed.
+        if (reason === 'remainder_empty') {
+          compact({ kind: 'done', text: '' });
+          verbose({ kind: 'done', text: '' });
+          researchCloseLines.set(slice, {
+            compactIdx: feed.length - 1,
+            verboseIdx: vfeed.length - 1,
+            detail: sub,
+          });
+          renderResearchClose(slice);
+          break;
+        }
+        // The fallback-gate absence twin: the brief keeps the raw question, never a fabricated answer,
+        // and this line is the loud channel. reason: empty_answer | provider_error | judge_ended |
+        // lane_panicked (model honestly empty on that one — the lane died before any attribution).
+        const t = `Research unanswered — ${slice || 'a slice'} q${qi ?? '?'}${reason ? ` (${reason.replace(/_/g, ' ')})` : ''}`;
         compact({ kind: 'fail', text: t, tone: 'warn', sub });
         verbose({ kind: 'fail', text: t, tone: 'warn', sub });
         break;
@@ -3542,6 +3699,10 @@ interface ResearchBatchCarry {
   /** VA-089: `research_dispatched.derives` — the lane names its own questions in-session. */
   derives: boolean;
   questions: Map<string, ResearchQuestionRow>;
+  /** VA-143: `research_unanswered{reason: remainder_empty}` — the lane's close, not a question. */
+  close?: { reason: string; detail?: string; secs?: number };
+  /** VA-143: `research_builder_decides` events for this slice, counted as they arrive. */
+  builderDecides: number;
   seq: number;
 }
 
@@ -3640,6 +3801,7 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         model: str(e['model']) || undefined,
         derives: e['derives'] === true,
         questions: new Map(),
+        builderDecides: 0,
         seq: c.seq++,
       };
       c.research.set(key, batch);
@@ -3678,7 +3840,37 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
     c.researchByQuestion.set(qk, key);
     return;
   }
-  if (type === 'research_answered' || type === 'research_unanswered') {
+  // VA-143: the lane's closer and its builder_decides are LANE facts, never question rows. A
+  // `research_unanswered{reason: remainder_empty}` closes a lane whose final reply added nothing
+  // behind the answers the tool landed (its q_index is the remainder's first — no question was ever
+  // named there); every other reason stays the loud miss it is. The `research_builder_decides` events
+  // (one per choice the lane left to its builder) follow the closer and count onto the same lane.
+  if (type === 'research_builder_decides') {
+    const key = c.researchBySlice.get(str(e['slice']));
+    const batch = key ? c.research.get(key) : undefined;
+    if (batch) batch.builderDecides += 1;
+    return;
+  }
+  if (type === 'research_unanswered' && str(e['reason']) === 'remainder_empty') {
+    const key = c.researchBySlice.get(str(e['slice']));
+    const batch = key ? c.research.get(key) : undefined;
+    if (batch)
+      batch.close = {
+        reason: 'remainder_empty',
+        detail: str(e['detail']) || undefined,
+        secs: num(e['secs']) ?? undefined,
+      };
+    return;
+  }
+  // `research_answer_landed` (the mid-lane landing, research_tool.rs `land` — one per tool call, r6j:
+  // 37) and `research_answered` (the same row through the outcome funnel) are TWINS of one landing:
+  // both fold onto ONE question row, each keeping what the other carried (the landing names the kind,
+  // the funnel names secs), so the lane's landed count is right on either shape and never doubled.
+  if (
+    type === 'research_answered' ||
+    type === 'research_answer_landed' ||
+    type === 'research_unanswered'
+  ) {
     const slice = str(e['slice']);
     const qIndex = num(e['q_index']);
     if (qIndex == null) return;
@@ -3695,14 +3887,16 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       question: '',
       status: 'dispatched' as const,
     };
+    const landed = type !== 'research_unanswered' && str(e['status']) !== 'unanswered';
     batch.questions.set(qk, {
       ...row,
-      status: type === 'research_answered' ? 'answered' : 'unanswered',
-      chars: num(e['chars']) ?? undefined,
-      raised: num(e['raised']) ?? undefined,
-      secs: num(e['secs']) ?? undefined,
-      reason: str(e['reason']) || undefined,
-      detail: str(e['detail']) || undefined,
+      status: landed ? 'answered' : 'unanswered',
+      kind: str(e['kind']) || row.kind,
+      chars: num(e['chars']) ?? row.chars,
+      raised: num(e['raised']) ?? row.raised,
+      secs: num(e['secs']) ?? row.secs,
+      reason: str(e['reason']) || row.reason,
+      detail: str(e['detail']) || row.detail,
     });
     c.researchByQuestion.set(qk, key);
     return;
@@ -3986,9 +4180,18 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         : undefined;
       const settled = !!questions?.length && questions.every((q) => q.status !== 'dispatched');
       const allMissed = settled && questions!.every((q) => q.status === 'unanswered');
+      // VA-143: the closer ends the lane's 'running' claim — the event, not the digest's phase stamp.
+      // r6j web-viz: landed 4 · builder_decides 11 · closed at 2049s.
+      const close: ResearchLaneClose | undefined = batch?.close
+        ? {
+            ...batch.close,
+            landed: questions?.filter((q) => q.status === 'answered').length ?? 0,
+            builderDecides: batch.builderDecides,
+          }
+        : undefined;
       const status: TurnStatus = allMissed
         ? 'error'
-        : d.phase === 'done' || settled || researchOver
+        : close || d.phase === 'done' || settled || researchOver
           ? 'done'
           : 'running';
       const kinds = questions ? tallyKinds(questions.map((q) => q.kind)) : '';
@@ -4004,6 +4207,9 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         model: d.model ?? batch?.model,
         status,
         researchQuestions: questions,
+        // The closer's secs is the engine's own lane clock — the one duration anyone has for a
+        // research lane (its digest carries no elapsed).
+        ...(close ? { researchClose: close, elapsedMs: close.secs != null ? close.secs * 1000 : undefined } : {}),
         ...join(k, d),
         seq: i,
       };
