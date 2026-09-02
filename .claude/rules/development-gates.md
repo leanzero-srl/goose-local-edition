@@ -327,6 +327,22 @@ the count may only DECREASE. A new one lands only with the marker `// ratio: <of
 `// measured: <how>` on its line, which the ratchet exempts and a reviewer reads. The inventory
 command that found the 28 is in the campaign skill. The classes and their derivations: VA-126.
 
+### The least-impact rule for gate 10 (Mihai 2026-09-02 20:4x: "ensure that our work here does not affect or has least affects on impairing or making our solution lesser. we finally got to a point where this is amazing now.")
+
+The golden engine is `r6h-golden-0.4616` (393a99351) and its behaviour is the thing being protected. Every
+derivation lands in one of two forms, and the commit says which:
+- **BYTE-IDENTICAL on this fleet** — the derived value equals today's typed value for every host we run
+  (so the budgets derive from the fleet's MAXIMUM probed window, 262,144, not per host — per-host precision
+  is a later measured step), proven by a unit test that feeds this fleet's windows and asserts the exact
+  current numbers. A new probe path that would ADD content the golden run never saw (a vendor cursor page
+  that now succeeds) is not "removing a hard-coded bit", it is a behaviour change — remove the guess, state
+  the absence, add the feature later with its measurement.
+- **BEHAVIOUR-CHANGING** (a self-relative detector floor, an app-timing ratio, a lang.rs route) — ships only
+  with gate 8's trace showing the golden run's looks, verdicts and probes would have produced the SAME
+  outcomes, or it ships behind a measurement on the next run and is reverted on regression.
+Every VA-126 batch gets one full sb-7 run compared against 0.4616 with the revert path ready (the tag, the
+kept `Goose-prev-393a99351.app`); a score drop with no named cause reverts the batch, never argues with it.
+
 ## 11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW; only cargo waits for the run
 
 Ordered by Mihai 2026-09-02 20:2x: *"just asking but are you not doing anything about the hard coded
