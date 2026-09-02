@@ -16697,6 +16697,10 @@ struct SpecContractResult {
     /// entire fleet run's browser-truth blindness could not be attributed between "probe env
     /// missing" and "gate ran quietly". One string per verify: armed+result, or why not.
     render_gate: String,
+    /// VA-088: the general render check's measurement, or exactly why it could not run, carried
+    /// to the COMPLETE gate's sink as `render_check` / `render_check_unavailable`; None when the
+    /// gate exits before the app is up.
+    render_check: Option<post_probe::RenderCheck>,
     /// WHO authored each finding (provenance → severity, findings.rs): populated at the push
     /// site that writes each finding, so the caller can order the wave and label events
     /// without ever matching finding text.
@@ -17849,6 +17853,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     }
@@ -17859,6 +17864,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     };
@@ -17870,6 +17876,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     }
@@ -17951,6 +17958,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     };
@@ -17994,6 +18002,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     }
@@ -18037,6 +18046,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            render_check: None,
             provenance: prov,
         };
     }
@@ -18763,6 +18773,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 .push("sync_rows: the spec advertises no sync POST — nothing to drive".to_string()),
         }
     }
+    let mut render_check: Option<post_probe::RenderCheck> = None;
     let mut render_gate_status = if !up {
         "not-run (app never came up)".to_string()
     } else {
@@ -18859,7 +18870,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                     format!(
                                         "the served page renders NO data rows in a real browser — \
                                      the API works but the frontend shows a user nothing. \
-                                     {exemplar}. Open web/index.html end to end: \
+                                     {exemplar}. Open the page the server serves at `/` end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
                                      not a blank page. GATE COMMAND (boot exactly as the gate did \
@@ -18984,9 +18995,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                      ZERO rows — the backend acquired the data (the \
                                                      API returns it) but the frontend never displays \
                                                      it, so the user sees an empty table forever. \
-                                                     After the sync completes, re-fetch the payments \
-                                                     endpoint and RENDER the returned rows into the \
-                                                     table, and update the last-synced/count readouts \
+                                                     After the sync completes, re-fetch the documented \
+                                                     list endpoint and RENDER the returned rows into the \
+                                                     table, and update the readouts the spec names \
                                                      from that same response. GATE COMMAND (boot \
                                                      exactly as the gate did — `{boot_line}` — then run \
                                                      it yourself; it prints found/completed/rowCountAfter): \
@@ -19057,6 +19068,33 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 }
             }
         }
+        // VA-088: THE GENERAL RENDER CHECK (post_probe.rs, DESIGN-REPAIR-V2 §3). The surface is
+        // the SPEC's own identifiers — the element ids it names by element syntax and the members
+        // of the globals it advertises — never a tier probe's shape: each id present, each member
+        // a function, pageerror 0, every canvas with a context and a >1-colour clipped screenshot.
+        // Runs whenever the app is up, with or without a tier probe (playwright resolves from the
+        // probe's directory first); no browser is the loud `render_check_unavailable{reason}`,
+        // never a silent pass — the event rides `render_check` to the COMPLETE gate's sink. The
+        // findings enter `findings` with their own provenance (all four render-class), `verified`
+        // counts what the browser affirmed, and the status line folds into the gate's
+        // self-declaration. The budget is the same transport number the load scenario above
+        // hands its probe.
+        let node = std::env::var("GOOSE_SWARM_RENDER_NODE").unwrap_or_else(|_| "node".to_string());
+        let rc = post_probe::render_check(
+            spec,
+            &format!("http://127.0.0.1:{port}"),
+            &node,
+            std::env::var("GOOSE_SWARM_RENDER_PROBE").ok().as_deref(),
+            100,
+            &boot_line,
+        )
+        .await;
+        for (source, text) in &rc.findings {
+            prov.push(&mut findings, *source, text.clone());
+        }
+        verified += rc.verified;
+        render_gate_status = format!("{render_gate_status}; render check {}", rc.status());
+        render_check = Some(rc);
     }
     // The WHOLE tree dies here, not just the wrapper. Until it did, the services the wrapper
     // forked kept the same ports bound, the respawn below could never bind, and the durability
@@ -19219,6 +19257,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         verified,
         probed_post: post_probed,
         render_gate: render_gate_status,
+        render_check,
         provenance: prov,
     }
 }
@@ -22399,112 +22438,6 @@ except Exception:
     pass
 print(json.dumps(out))
 "#;
-
-const DOM_ID_SCRIPT: &str = r#"
-import json, re, sys, pathlib
-root = pathlib.Path(sys.argv[1])
-files = [f for f in sys.stdin.read().splitlines() if f.strip()]
-html_ids, findings, checked = set(), [], 0
-js_refs = []
-for rel in files:
-    p = root / rel
-    try:
-        src = p.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        continue
-    if rel.endswith(".html") or rel.endswith(".htm"):
-        checked += 1
-        for m in re.finditer(r"""\bid\s*=\s*["']([\w-]+)["']""", src):
-            html_ids.add(m.group(1))
-    elif rel.endswith(".js") or rel.endswith(".mjs"):
-        checked += 1
-        for i, line in enumerate(src.splitlines(), 1):
-            for m in re.finditer(r"""getElementById\(\s*["']([\w-]+)["']\s*\)""", line):
-                js_refs.append((rel, i, m.group(1)))
-            for m in re.finditer(r"""querySelector(?:All)?\(\s*["']#([\w-]+)["']\s*\)""", line):
-                js_refs.append((rel, i, m.group(1)))
-if html_ids:
-    for rel, line, ref in js_refs:
-        if ref not in html_ids:
-            findings.append({"file": rel, "line": line, "id": ref})
-print(json.dumps({"checked": checked, "findings": findings}))
-"#;
-
-/// Pure parser for the DOM-id script's JSON (testable without python, like its siblings).
-fn parse_dom_id_scan(stdout: &str) -> DriftResult {
-    let Some(v) = serde_json::from_str::<serde_json::Value>(stdout.trim())
-        .ok()
-        .or_else(|| {
-            stdout
-                .lines()
-                .rev()
-                .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
-        })
-    else {
-        return DriftResult::default();
-    };
-    let checked = v.get("checked").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-    let findings = v
-        .get("findings")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|f| {
-                    let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
-                    let line = f.get("line").and_then(|x| x.as_u64()).unwrap_or(0);
-                    format!(
-                        "{}:{} references DOM id `{}` which NO html file in the app defines — \
-                         getElementById returns null there and the page throws at runtime (the \
-                         rendered-nothing class). Either add the id to the HTML or fix the \
-                         reference to an id that exists.",
-                        g("file"),
-                        line,
-                        g("id")
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    DriftResult {
-        ran: true,
-        checked,
-        findings,
-        partial: false,
-    }
-}
-
-/// Runs on any tree whose scope carries BOTH html and js — language-blind by design (the web/
-/// files of a Python app are exactly the case that motivated it). Env `GOOSE_SWARM_DOM_ID_SCAN`
-/// opts out.
-async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResult {
-    // F870 review: swarm_gate(_, true) is assured-bundle membership, and no real environment
-    // sets GOOSE_SWARM_ASSURED — this scan had ZERO events in the entire run archive despite
-    // shipping as "default ON" in F864. swarm_gate_cfg is the real default-ON.
-    if !swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true) {
-        return DriftResult::default();
-    }
-    let scope: Vec<String> = all_files
-        .iter()
-        .filter(|f| {
-            f.ends_with(".html") || f.ends_with(".htm") || f.ends_with(".js") || f.ends_with(".mjs")
-        })
-        .filter(|f| root.join(f.as_str()).is_file())
-        .cloned()
-        .collect();
-    let has_html = scope
-        .iter()
-        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
-    let has_js = scope
-        .iter()
-        .any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
-    if !(has_html && has_js) {
-        return DriftResult::default();
-    }
-    let Some(out) = run_scoped_py_check(DOM_ID_SCRIPT, root, &scope).await else {
-        return DriftResult::default();
-    };
-    parse_dom_id_scan(&out)
-}
 
 /// CSS-CLASS COHERENCE SCAN (F871). swarm-3node-r0 shipped a page that rendered as bare
 /// browser-default HTML: styles.css defined 36 class rules (.app-header, .btn-primary,
@@ -28622,10 +28555,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
             prov.tag(FindingSource::HttpTimeoutScan, &no_timeout.findings);
             verdict.findings.extend(no_timeout.findings.iter().cloned());
-            // DOM-ID CONTRACT (F864): app.js referencing an id no HTML defines is the
-            // rendered-nothing class (guaranteed null at runtime), invisible to every other
-            // checker. Enters the round ruler and one_ruler_grade TOGETHER — the F862 law.
-            let dom = dom_id_scan(&cwd, &smoke_all_files).await;
+            // DOM-ID CONTRACT (F864 → VA-114, dom_contract.rs): a script looking up an id no
+            // HTML defines and no script creates before the lookup is the rendered-nothing class
+            // (guaranteed null at runtime), invisible to every other checker. Enters the round
+            // ruler and one_ruler_grade TOGETHER — the F862 law.
+            let dom = dom_contract::dom_id_scan(&cwd, &smoke_all_files);
             if dom.ran {
                 sink.write_value(serde_json::json!({
                     "event": "dom_id_scan",
@@ -28633,9 +28567,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "checked": dom.checked,
                     "findings": dom.findings.len(),
                     "detail": if dom.findings.is_empty() {
-                        "every literal DOM id the js references exists in the html"
+                        "every DOM id the js looks up is defined — in the html, or created by the app's own script before the lookup"
                     } else {
-                        "js references a DOM id no html defines — driving the fix loop"
+                        "js references a DOM id no html defines (and no script creates before the lookup) — driving the fix loop"
                     },
                 }));
             }
@@ -28736,6 +28670,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // is silence, whatever else is or is not recorded alongside it.
                     "detail": spec_contract_detail(sc_verified, sc_found),
                 }));
+                // VA-088: the general render check says what it measured — or exactly why it
+                // could not — beside the gate's self-declaration; never a silent pass.
+                if let Some(rc) = &sc.render_check {
+                    sink.write_value(rc.event(round));
+                }
                 prov.absorb(sc.provenance);
                 verdict.findings.extend(sc.findings);
                 verdict.inconclusive.extend(sc.inconclusive);

@@ -398,9 +398,6 @@ pub(super) struct RenderCheck {
     pub(super) canvases_blank: Vec<String>,
 }
 
-// dead_code: `status`/`event` are read by the gate's wiring in swarm.rs (`run_spec_contract`'s
-// render block), another surgeon's file at the time of VA-088; the allow goes with that wiring.
-#[allow(dead_code)]
 impl RenderCheck {
     fn unavailable(reason: String) -> RenderCheck {
         RenderCheck {
@@ -633,10 +630,8 @@ pub(super) fn render_check_verdict(
 /// (GOOSE_SWARM_RENDER_NODE / GOOSE_SWARM_RENDER_PROBE): the probe's directory is where the
 /// scorer's playwright resolves. `budget_secs` is the gate's transport budget for the browser
 /// process — the same number the gate hands its other probes, quoted as data. The script is
-/// written beside the system temp dir under one fixed name so the GATE COMMAND replays.
-// dead_code: called from swarm.rs's render gate (`run_spec_contract`, after the probe's `load`
-// scenario) — another surgeon's file at the time of VA-088; the allow goes with that wiring.
-#[allow(dead_code)]
+/// written beside the system temp dir under one fixed name so the GATE COMMAND replays. Called
+/// from swarm.rs's render gate (`run_spec_contract`, after the tier probe's scenarios, VA-149).
 pub(super) async fn render_check(
     spec: &str,
     url: &str,
