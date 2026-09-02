@@ -23757,44 +23757,6 @@ fn render_pillars_block(p: &Pillars) -> String {
     )
 }
 
-/// F790-2: import health via `pytest --collect-only -q` on the probe root. A collect failure
-/// means the tree cannot even be imported — the strongest cheap "broken" fact a supervisor can
-/// cite, and invisible to per-file syntax checks (it catches cross-file import breakage). 20s
-/// cap; None = healthy, not installed, or timed out (a missing instrument is never evidence).
-async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        tokio::process::Command::new("python3")
-            .args(["-m", "pytest", "--collect-only", "-q"])
-            .current_dir(root)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if out.status.success() {
-        return None;
-    }
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let tail: String = text
-        .chars()
-        .rev()
-        .take(500)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    if tail.trim().is_empty() {
-        None
-    } else {
-        Some(tail)
-    }
-}
-
 // ─────────────────────────────── THE PER-RUN LEDGER (§II.2) ───────────────────────────────
 //
 // capture → LEDGER → message. Models are stateless; the harness is the state. Everything a run
@@ -24610,7 +24572,11 @@ impl GooseAgentDispatcher {
                 "verified": gate0.verified,
                 "path": ledger_path.as_ref().map(|p| p.display().to_string()),
             }));
-            let collect_only = collect_only_import_health(&root).await;
+            // VA-060 (gate 10): a Python-only arm — routed through `LangArms` like the AST
+            // review and the pytest tail; off-Python it is said once and the fact is absent.
+            let collect_only =
+                lang_arms::collect_only_import_health(&self.lang_arms, &root, self.events.as_ref())
+                    .await;
             let brief = sink_semantic_description(
                 &root,
                 &req.task_id,

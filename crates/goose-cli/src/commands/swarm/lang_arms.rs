@@ -68,6 +68,62 @@ impl LangArms {
     }
 }
 
+/// F790-2: import health via `pytest --collect-only -q` on the probe root. A collect failure
+/// means the tree cannot even be imported — the strongest cheap "broken" fact a supervisor can
+/// cite, and invisible to per-file syntax checks (it catches cross-file import breakage). 20s
+/// cap; None = healthy, not installed, or timed out (a missing instrument is never evidence).
+///
+/// VA-060 (gate 10): the sink's collect-only probe is a Python-only arm — `python3 -m pytest`
+/// over a Node/Rust/Go tree is a spawn that can only fail, and its failure text would ride the
+/// sink's brief as an import-health fact. Off-Python the arm is said once
+/// (`lang_unsupported{arm: "collect_only_import_health"}`) and returns None BEFORE any spawn;
+/// on Python the body is the swarm.rs original, moved verbatim.
+pub(super) async fn collect_only_import_health(
+    arms: &LangArms,
+    root: &std::path::Path,
+    events: &dyn EventSink,
+) -> Option<String> {
+    if !arms.python_only(
+        "collect_only_import_health",
+        "pytest --collect-only import-health probe of the sink's tree (the collect-only fact in \
+         the sink's brief)",
+        events,
+    ) {
+        return None;
+    }
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new("python3")
+            .args(["-m", "pytest", "--collect-only", "-q"])
+            .current_dir(root)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if out.status.success() {
+        return None;
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(500)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    if tail.trim().is_empty() {
+        None
+    } else {
+        Some(tail)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +177,24 @@ mod tests {
             lang_unsupported_event("x", TargetLang::Go, "y")["lang"],
             "Go"
         );
+    }
+
+    /// The sink's collect-only probe is a Python-only arm, tested at its CONSUMER's value: off
+    /// Python the fact the sink's brief reads is None and the arm is said exactly once by name;
+    /// a second call adds nothing. (On Python the body is the moved original — a real
+    /// `python3 -m pytest` spawn, not exercised here.)
+    #[tokio::test]
+    async fn the_collect_only_probe_is_a_python_only_arm_said_once_off_python() {
+        let sink = ValueSink::default();
+        let ts = LangArms::default();
+        ts.set(TargetLang::TypeScript);
+        let root = std::env::temp_dir();
+        assert_eq!(collect_only_import_health(&ts, &root, &sink).await, None);
+        assert_eq!(collect_only_import_health(&ts, &root, &sink).await, None);
+        let rows = sink.0.lock().unwrap();
+        assert_eq!(rows.len(), 1, "said once per run, not per call: {rows:?}");
+        assert_eq!(rows[0]["event"], "lang_unsupported");
+        assert_eq!(rows[0]["arm"], "collect_only_import_health");
+        assert_eq!(rows[0]["lang"], "TypeScript");
     }
 }
