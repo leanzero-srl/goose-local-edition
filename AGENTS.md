@@ -299,6 +299,23 @@ zero score value both runs. HOW IT REFUSES: `development_gates.rs` pins this gat
 PHASE VALUE step, `VIGIL-ACTIONS.md` and tick.py's cost row; in review, a new phase or step lands only
 with the measurement that says what it buys and which step consumes it.
 
+**10. THE NO-ABSOLUTES GATE — a number lives in the engine only as a RATIO or a MEASUREMENT.** Mihai,
+2026-09-02: *"we need to avoid hard coded bits because this is an agent and that makes it useless
+outside of the scope of what we are doing now — the benchmark is the cause not the goal."* A typed
+absolute sized for this model / language / API (24,000 chars, 200 s, `impl.py`, `?cursor=1`) is a
+defect; a fraction of the probed window, a multiple of the app's own median, a share of the lane's own
+output, an algorithm constant or a named policy ratio with its receipt may stay. HOW IT REFUSES:
+`development_gates.rs` ratchets the count of live numeric `const` literals outside `cfg(test)` (28 on
+2026-09-02) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
+
+**11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW, in a worktree; only cargo waits for
+a run.** Mihai, 2026-09-02, after VA-126 was parked "until after r6j": *"are you not doing anything
+about the hard coded bits I asked about?"* An edit in a worktree touches nothing the running bundle
+executes; the sole in-run constraint is no cargo on the machine whose node the run holds. Action rows
+are `OPEN` / `CLAIMED` / `QUEUED behind: <slot>` / `SCHEDULED waits on: <measurement>` / `LANDED` /
+`DROPPED` — "after the run" is never a status. HOW IT REFUSES: `development_gates.rs` fails on a
+SCHEDULED row without `waits on:` or a QUEUED row without `behind:`.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`

@@ -743,3 +743,140 @@ fn the_value_gate_is_carried() {
         "tick.py lost the PHASE VALUE cost rows"
     );
 }
+
+/// GATE 10 — THE NO-ABSOLUTES GATE (Mihai 2026-09-02: "we need to avoid hard coded bits because this
+/// is an agent … the benchmark is the cause not the goal"). Every `const NAME: <int|float> = <literal>;`
+/// outside a `#[cfg(test)]` block in the run path is a typed absolute; the count may only DECREASE.
+/// A literal that is a RATIO of something the run produces or a MEASUREMENT carries `// ratio:` or
+/// `// measured:` on its line and is exempt — a reviewer reads the marker, the ratchet only counts.
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
+
+fn is_numeric_const_literal(line: &str) -> bool {
+    let s = line.trim_start();
+    let s = s.strip_prefix("pub(crate) ").or_else(|| s.strip_prefix("pub(super) ")).or_else(|| s.strip_prefix("pub ")).unwrap_or(s);
+    let Some(rest) = s.strip_prefix("const ") else { return false };
+    let Some((_, after_colon)) = rest.split_once(':') else { return false };
+    let ty_and_val = after_colon.trim_start();
+    let Some((ty, val)) = ty_and_val.split_once('=') else { return false };
+    let ty = ty.trim();
+    if !matches!(ty, "usize" | "u64" | "u32" | "i64" | "f64" | "f32") { return false; }
+    let val = val.trim();
+    let Some(val) = val.strip_suffix(';') else { return false };
+    let val = val.trim();
+    !val.is_empty() && val.chars().all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+}
+
+/// Counts live numeric const literals in one file, skipping every `#[cfg(test)]`-attributed block by
+/// brace depth (swarm.rs interleaves several test modules with live code, so "cut at the first
+/// cfg(test)" would hide live constants).
+fn live_numeric_literals(text: &str) -> Vec<String> {
+    let mut hits = Vec::new();
+    let mut depth: Option<i64> = None;
+    let mut pending = false;
+    for line in text.lines() {
+        let opens = line.matches('{').count() as i64;
+        let closes = line.matches('}').count() as i64;
+        match depth {
+            Some(d) => {
+                let nd = d + opens - closes;
+                depth = if nd <= 0 { None } else { Some(nd) };
+            }
+            None => {
+                if line.trim_start().starts_with("#[cfg(test)]") {
+                    pending = true;
+                    continue;
+                }
+                if pending {
+                    if opens > 0 {
+                        let nd = opens - closes;
+                        depth = if nd <= 0 { None } else { Some(nd) };
+                        pending = false;
+                    }
+                    continue;
+                }
+                let lower = line.to_ascii_lowercase();
+                let exempt = lower.contains("// ratio:") || lower.contains("// measured:");
+                if is_numeric_const_literal(line) && !exempt {
+                    hits.push(line.trim().to_string());
+                }
+            }
+        }
+    }
+    hits
+}
+
+#[test]
+fn live_numeric_literals_only_shrink() {
+    let mut total = 0usize;
+    let mut per_file = String::new();
+    for (rel, text) in run_path_files() {
+        let hits = live_numeric_literals(&text);
+        if !hits.is_empty() {
+            per_file.push_str(&format!("  {:4}  {rel}\n", hits.len()));
+            for h in &hits {
+                per_file.push_str(&format!("          {h}\n"));
+            }
+        }
+        total += hits.len();
+    }
+    assert!(
+        total <= LIVE_NUMERIC_LITERAL_BASELINE,
+        "the run path carries {total} live numeric const literals (baseline \
+         {LIVE_NUMERIC_LITERAL_BASELINE}):\n{per_file}A number lives in the engine only as a RATIO \
+         of what the run produces or a MEASUREMENT it takes (gate 10, AGENTS.md GATES). Derive it, \
+         or mark the line `// ratio: <of what>` / `// measured: <how>` so a reviewer reads the \
+         receipt, and lower the baseline in the same commit."
+    );
+    if total < LIVE_NUMERIC_LITERAL_BASELINE {
+        eprintln!(
+            "live numeric literal count is {total} < baseline {LIVE_NUMERIC_LITERAL_BASELINE}: \
+             tighten LIVE_NUMERIC_LITERAL_BASELINE in the same commit so the ratchet holds the gain"
+        );
+    }
+    for (doc, needle) in [
+        ("AGENTS.md", "THE NO-ABSOLUTES GATE"),
+        (".claude/rules/development-gates.md", "THE NO-ABSOLUTES GATE"),
+    ] {
+        assert!(read(doc).contains(needle), "{doc} lost gate 10 ({needle})");
+    }
+}
+
+/// GATE 11 — THE KNOWN-FIX GATE (Mihai 2026-09-02: "are you not doing anything about the hard coded
+/// bits I asked about?"). A `SCHEDULED` action must name the measurement its design waits on; a
+/// `QUEUED` action must name the slot it waits behind. "After the run" is never a status — a surgeon
+/// edits in a worktree cargo-free while a run holds the local node.
+#[test]
+fn a_scheduled_action_names_what_it_waits_on() {
+    let text = read("VIGIL-ACTIONS.md");
+    let mut bad = String::new();
+    for line in text.lines() {
+        if !line.starts_with("| VA-") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split(" | ").collect();
+        let Some(status) = cells.get(3) else { continue };
+        let status = status.trim();
+        if status.starts_with("SCHEDULED") && !status.contains("waits on:") {
+            bad.push_str(&format!("  {} — SCHEDULED without `waits on:`\n", cells[0].trim_start_matches("| ")));
+        }
+        if status.starts_with("QUEUED") && !status.contains("behind:") {
+            bad.push_str(&format!("  {} — QUEUED without `behind:`\n", cells[0].trim_start_matches("| ")));
+        }
+        if status.to_ascii_lowercase().contains("after the run") {
+            bad.push_str(&format!("  {} — \"after the run\" is never a status\n", cells[0].trim_start_matches("| ")));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "VIGIL-ACTIONS.md rows parked without a named measurement or slot (gate 11):\n{bad}A fix \
+         whose design is known is CLAIMED now or `QUEUED behind: <branch|agent cap>`; `SCHEDULED \
+         waits on: <event/number>` only when the design needs a measurement that does not exist yet."
+    );
+    for (doc, needle) in [
+        ("AGENTS.md", "THE KNOWN-FIX GATE"),
+        (".claude/rules/development-gates.md", "THE KNOWN-FIX GATE"),
+        ("CLAUDE.md", "QUEUED behind:"),
+    ] {
+        assert!(read(doc).contains(needle), "{doc} lost gate 11 ({needle})");
+    }
+}
