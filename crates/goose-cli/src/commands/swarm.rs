@@ -147,6 +147,8 @@ use findings::{
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
+mod vendor_probe;
+use vendor_probe::{json_rows_evidence, probe_vendor, read_vendor_probe_rows, spec_vendor};
 mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
@@ -17455,194 +17457,6 @@ fn spec_python_entry(spec: &str) -> Option<String> {
     })
 }
 
-/// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
-/// Parsed from the spec's own idiom — "documentation is at `URL`", "Base URL `URL`",
-/// "API key `KEY`" — so this is spec-derived, never benchmark-specific; a spec that names no
-/// vendor yields Nones and every consumer stays inert. Pure/testable.
-fn spec_vendor(spec: &str) -> (Option<String>, Option<String>, Option<String>) {
-    let grab = |pat: &str| {
-        regex::Regex::new(pat)
-            .ok()
-            .and_then(|re| re.captures(spec))
-            .map(|c| c[1].to_string())
-    };
-    (
-        grab(r"documentation is at\s+`(https?://[^`]+)`"),
-        grab(r"[Bb]ase URL\s+`(https?://[^`]+)`"),
-        grab(r"API key\s+`([^`]+)`"),
-    )
-}
-
-/// P1-8: every GET path a vendor's DOCS BODY advertises, deduped, made probeable (templated
-/// query values filled, param'd paths excluded — `probeable_get_path`'s rules). The docs page is
-/// the vendor's own text, not the spec, so this is the plain `GET /path` idiom rather than the
-/// spec's markdown-table surface.
-fn vendor_docs_get_paths(docs_text: &str) -> Vec<String> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    if let Ok(re) = regex::Regex::new(r"GET\s+(/[A-Za-z0-9_./{}<>:?&=-]*)") {
-        for c in re.captures_iter(docs_text) {
-            if let Some(p) = probeable_get_path(&c[1]) {
-                if seen.insert(p.clone()) {
-                    out.push(p);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// What the vendor probe measured. `ok` is the DOCS fetch outcome — the probe's one load-bearing
-/// page; `block` is empty exactly when nothing usable came back, and an empty block injected into
-/// `doc_facts` is a no-op, never a failure.
-struct VendorProbeOutcome {
-    ok: bool,
-    block: String,
-    endpoints: Vec<String>,
-    fetched: usize,
-    bytes: usize,
-    error: String,
-    /// P1-12: the vendor's OWN row truth, read off page 1 of its advertised GETs — the `total`
-    /// field when the body documents one, and the first collection array's length. The GATE's
-    /// `sync_rows` row compares the app's own row count against these; they are persisted to
-    /// `.swarm/vendor-probe.json` because a number that lives only in an event cannot be read
-    /// by a later gate.
-    vendor_total: Option<i64>,
-    page1_rows: Option<i64>,
-}
-
-/// P1-12, pure: the two row-evidence numbers one JSON body can carry — (`total` field, first
-/// collection array's length over the names this bench family uses). Both None for a body that
-/// is not JSON or carries neither: the caller then abstains rather than inventing a zero.
-fn json_rows_and_total(body: &str) -> (Option<i64>, Option<i64>) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
-        return (None, None);
-    };
-    let total = v.get("total").and_then(|t| t.as_i64());
-    let rows = [
-        "data",
-        "items",
-        "rows",
-        "events",
-        "processed",
-        "notifications",
-    ]
-    .iter()
-    .find_map(|k| v.get(*k).and_then(|a| a.as_array()).map(|a| a.len() as i64));
-    (total, rows)
-}
-
-/// P1-12, pure: one number for "how many rows does this body prove" — the documented `total`
-/// outranks a page length (a page is bounded by `limit`; the total is the collection).
-fn json_rows_evidence(body: &str) -> Option<i64> {
-    let (total, rows) = json_rows_and_total(body);
-    total.or(rows)
-}
-
-/// P1-12: the vendor row truth the RUN persisted at BUILD start (`.swarm/vendor-probe.json`,
-/// written beside the vendor_probe event). None when the file is absent or carries no number —
-/// an offline replay of an older tree, or a spec with no vendor.
-fn read_vendor_probe_rows(root: &Path) -> Option<i64> {
-    let text = std::fs::read_to_string(root.join(".swarm").join("vendor-probe.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("vendor_total")
-        .and_then(|t| t.as_i64())
-        .or_else(|| v.get("page1_rows").and_then(|t| t.as_i64()))
-}
-
-/// P1-8: fetch the vendor's docs page and ONE page of each GET it advertises, so every worker's
-/// `doc_facts` carries the vendor's REAL key names before a line of sync code is written.
-///
-/// The r2 root critical: vendor_sync.py issued ZERO list requests in sync #1 → 0/12288 payments,
-/// with 31 vacuous legs under it — the builder guessed the vendor's shape (`items`) instead of
-/// reading it (`data`, `amount_minor`). One real response body in the prompt is the cheapest
-/// possible correction.
-///
-/// Transport bounds only: a CONNECT timeout (a refused or silent-to-connect vendor answers
-/// promptly) and NO read window — II-7 deleted the read cut class, and this fetch inherits that
-/// rule. The body is truncated to `VENDOR_PROBE_PAGE_CHARS` per page AFTER it arrives, which
-/// bounds the prompt, not the transport. Every failure is an outcome (`ok:false`, empty block),
-/// never an error path: a spec whose vendor is down still builds exactly as it would have.
-const VENDOR_PROBE_PAGE_CHARS: usize = 6_000;
-
-async fn probe_vendor(docs_url: &str, base_url: &str, api_key: Option<&str>) -> VendorProbeOutcome {
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
-    let fetch = |url: String| {
-        let client = client.clone();
-        let auth = api_key.map(|k| format!("Bearer {k}"));
-        async move {
-            let mut req = client.get(&url);
-            if let Some(a) = auth {
-                req = req.header("Authorization", a);
-            }
-            match req.send().await {
-                Ok(r) => {
-                    let status = r.status().as_u16();
-                    match r.text().await {
-                        Ok(t) if (200..300).contains(&status) && !t.trim().is_empty() => Ok(t),
-                        Ok(_) => Err(format!("status {status}")),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        }
-    };
-    let docs_text = match fetch(docs_url.to_string()).await {
-        Ok(t) => t,
-        Err(e) => {
-            return VendorProbeOutcome {
-                ok: false,
-                block: String::new(),
-                endpoints: Vec::new(),
-                fetched: 0,
-                bytes: 0,
-                error: e,
-                vendor_total: None,
-                page1_rows: None,
-            };
-        }
-    };
-    let excerpt = |t: &str| -> String { t.trim().chars().take(VENDOR_PROBE_PAGE_CHARS).collect() };
-    let endpoints = vendor_docs_get_paths(&docs_text);
-    let mut pages: Vec<String> = vec![format!("### GET {docs_url}\n{}", excerpt(&docs_text))];
-    let mut fetched = 0usize;
-    let mut vendor_total: Option<i64> = None;
-    let mut page1_rows: Option<i64> = None;
-    for path in &endpoints {
-        let url = format!("{}{path}", base_url.trim_end_matches('/'));
-        if let Ok(body) = fetch(url.clone()).await {
-            // P1-12: read the row truth off the FULL body before it is excerpted for the prompt.
-            let (t, r) = json_rows_and_total(&body);
-            vendor_total = vendor_total.max(t);
-            page1_rows = page1_rows.max(r);
-            pages.push(format!("### GET {url}\n{}", excerpt(&body)));
-            fetched += 1;
-        }
-    }
-    let block = format!(
-        "## Vendor probe — the vendor's REAL responses, fetched by the engine just now\n\
-         These are the vendor's actual key names and body shapes, read from its live endpoints. \
-         Use these literals EXACTLY — never a guessed name (`items` for `data` is how a sync \
-         acquires nothing).\n\n{}",
-        pages.join("\n\n")
-    );
-    let bytes = block.len();
-    VendorProbeOutcome {
-        ok: true,
-        block,
-        endpoints,
-        fetched,
-        bytes,
-        error: String::new(),
-        vendor_total,
-        page1_rows,
-    }
-}
-
 /// Ask the VENDOR how many items exist — the ground truth the Vacuous arm was missing (F823).
 ///
 /// The Vacuous verdict exists so an EMPTY vendor is never blamed on the app; that mercy was the
@@ -21993,119 +21807,6 @@ def normalize(r):
         assert!(
             from_empty.kind_prompt,
             "a config.yaml omitting kind_prompt must KEEP the baked default, not serde's false"
-        );
-    }
-
-    #[test]
-    fn spec_vendor_parses_the_spec_idiom_and_stays_inert_without_it() {
-        // The exact idiom both spec-build.md versions use — the F825 vendor-truth chain
-        // starts here, so the parse is pinned against silent drift.
-        let spec = "The Meridian API documentation is at `http://127.0.0.1:8935/v1/docs`. \
-                    Read it before you start. Base URL `http://127.0.0.1:8935`,\n\
-                    API key `sk_test_meridian`.";
-        let (docs, base, key) = spec_vendor(spec);
-        assert_eq!(docs.as_deref(), Some("http://127.0.0.1:8935/v1/docs"));
-        assert_eq!(base.as_deref(), Some("http://127.0.0.1:8935"));
-        assert_eq!(key.as_deref(), Some("sk_test_meridian"));
-
-        // A spec naming no vendor must yield Nones — the whole chain stays inert, and the
-        // Vacuous arm keeps its original never-blame-the-app behavior.
-        let (d2, b2, k2) = spec_vendor("Build a todo app. No vendor here.");
-        assert!(d2.is_none() && b2.is_none() && k2.is_none());
-    }
-
-    /// P1-8 isolation fixture: a local vendor serving `/v3/docs` + `/v3/payments`. The probe must
-    /// deliver BOTH real literals (`data`, `amount_minor`) into the doc_facts block — the two
-    /// names r2's sync guessed wrong on its way to 0/12288 — and a dead vendor must come back
-    /// promptly as a measured `ok:false`, never a failure or a wait.
-    #[tokio::test]
-    async fn the_vendor_probe_delivers_real_body_literals_and_measures_a_dead_vendor() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            for _ in 0..2 {
-                let Ok((mut s, _)) = listener.accept() else {
-                    break;
-                };
-                let mut buf = [0u8; 4096];
-                let n = std::io::Read::read(&mut s, &mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]).to_string();
-                let body = if req.starts_with("GET /v3/docs") {
-                    "Meridian vendor API.\nGET /v3/payments returns one page of payments."
-                        .to_string()
-                } else {
-                    r#"{"data":[{"id":"p_1","amount_minor":1250,"currency":"EUR"}],"total":12288,"limit":100,"offset":0}"#
-                        .to_string()
-                };
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut s, resp.as_bytes());
-            }
-        });
-
-        let base = format!("http://{addr}");
-        let probe = probe_vendor(&format!("{base}/v3/docs"), &base, Some("sk_test")).await;
-        server.join().unwrap();
-        assert!(probe.ok, "a live vendor probes ok: {}", probe.error);
-        assert_eq!(probe.endpoints, vec!["/v3/payments".to_string()]);
-        assert_eq!(probe.fetched, 1, "one page of the one advertised GET");
-        assert!(
-            probe.block.contains(r#""data""#),
-            "the vendor's real collection key must reach doc_facts verbatim: {}",
-            probe.block
-        );
-        assert!(
-            probe.block.contains("amount_minor"),
-            "the vendor's real field literal must reach doc_facts verbatim: {}",
-            probe.block
-        );
-
-        // The dead-vendor case: a port nothing listens on refuses the connect, and the probe
-        // returns a MEASUREMENT — ok:false, empty block — promptly, on the transport's connect
-        // path alone. (The elapsed assertion is a test measuring a test fixture, not a cap on
-        // model work: no model is anywhere near this code.)
-        let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let dead_addr = dead.local_addr().unwrap();
-        drop(dead);
-        let started = std::time::Instant::now();
-        let probe = probe_vendor(
-            &format!("http://{dead_addr}/v3/docs"),
-            &format!("http://{dead_addr}"),
-            None,
-        )
-        .await;
-        assert!(!probe.ok);
-        assert!(probe.block.is_empty(), "{}", probe.block);
-        assert!(!probe.error.is_empty());
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(10),
-            "connect-refused must answer promptly, not wait on a read"
-        );
-    }
-
-    /// P1-8: the docs-body GET parser — dedupe, template filling, param'd-path exclusion.
-    #[test]
-    fn vendor_docs_get_paths_dedupes_fills_templates_and_excludes_param_routes() {
-        let docs = "GET /v3/payments returns a page. GET /v3/payments?limit=<int>&offset=<int> \
-                    pages it. GET /v3/payments/{id} returns one. GET /v3/reversals lists reversals. \
-                    GET /v3/payments is idempotent.";
-        let got = vendor_docs_get_paths(docs);
-        assert!(got.contains(&"/v3/payments".to_string()), "{got:?}");
-        assert!(
-            got.contains(&"/v3/payments?limit=1&offset=1".to_string()),
-            "a templated query is filled, not dropped: {got:?}"
-        );
-        assert!(got.contains(&"/v3/reversals".to_string()), "{got:?}");
-        assert!(
-            !got.iter().any(|p| p.contains("{id}")),
-            "a param'd PATH cannot be probed blind: {got:?}"
-        );
-        assert_eq!(
-            got.iter().filter(|p| *p == "/v3/payments").count(),
-            1,
-            "deduped: {got:?}"
         );
     }
 }
@@ -28437,12 +28138,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
     // P1-8: VENDOR PROBE. If the spec names a vendor (its own idiom — docs URL + base URL), fetch
-    // the docs page and one page of each GET those docs advertise, and put the vendor's REAL
+    // the docs page and one page of each GET those docs advertise, and put the vendor's live
     // response bodies into every worker's doc_facts. r2's root critical was a sync that guessed
     // the vendor's shape and acquired 0 of 12,288 rows; the probe makes the true key literals
     // (`data`, `amount_minor`) part of the prompt instead of a discovery the build may never make.
     // Inert when the spec names no vendor; a dead vendor yields vendor_probe{ok:false} and an
-    // unchanged doc_facts — measured outcome, never a failure.
+    // unchanged doc_facts — measured outcome, never a failure. VA-105: the docs page rides WHOLE
+    // (r6h's 6,000-char cut lost §7–§9 for the planner and every worker while the header called
+    // the fragment complete); an endpoint body over the budget is `vendor_probe_truncated` plus a
+    // CUT marker in the block, and an advertised GET the probe could not fetch is
+    // `vendor_probe_fetch_failed` plus a listed line — said, never dropped.
     {
         let (docs_url, base_url, vendor_key) = spec_vendor(&opts.prompt);
         if let (Some(docs_url), Some(base_url)) = (docs_url, base_url) {
@@ -28455,10 +28160,32 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "endpoints": probe.endpoints,
                 "fetched": probe.fetched,
                 "bytes": probe.bytes,
+                "docs_chars": probe.docs_chars,
+                "docs_kept": probe.docs_kept,
+                "bodies_truncated": probe.cuts.len(),
+                "fetch_failed": probe.fetch_failures.len(),
+                "fetched_at": probe.fetched_at,
                 "error": probe.error,
                 "vendor_total": probe.vendor_total,
                 "page1_rows": probe.page1_rows,
             }));
+            for cut in &probe.cuts {
+                sink.write_value(serde_json::json!({
+                    "event": "vendor_probe_truncated",
+                    "kind": "body",
+                    "url": cut.url,
+                    "chars": cut.chars,
+                    "kept": cut.kept,
+                    "at_object_boundary": cut.at_object_boundary,
+                }));
+            }
+            for failure in &probe.fetch_failures {
+                sink.write_value(serde_json::json!({
+                    "event": "vendor_probe_fetch_failed",
+                    "url": failure.url,
+                    "error": failure.error,
+                }));
+            }
             // P1-12: persist the probe's row truth WHERE THE GATE CAN READ IT. The `sync_rows`
             // gate row compares the app's own row count against what the vendor held, and a
             // number that lives only in run.jsonl is invisible to run_spec_contract — the same
@@ -28490,8 +28217,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 eprintln!(
                     "{}",
                     style(format!(
-                        "vendor probe: docs + {} endpoint page(s) — real vendor bodies to every worker",
-                        probe.fetched
+                        "vendor probe: docs whole ({} chars) + {} endpoint page(s), {} cut, {} not fetched — live vendor bodies to every worker",
+                        probe.docs_chars,
+                        probe.fetched,
+                        probe.cuts.len(),
+                        probe.fetch_failures.len()
                     ))
                     .green()
                 );
@@ -33519,38 +33249,6 @@ mod audit_regressions {
         ] {
             assert!(!engine_critical(minor), "must ship as a known bug: {minor}");
         }
-    }
-
-    /// P1-12: the row-evidence readers are pinned — `total` outranks a page length (a page is
-    /// bounded by `limit`; the total is the collection), a collection array counts when no total
-    /// is documented, and a body that is not JSON or carries neither ABSTAINS (None), never
-    /// invents a zero — a zero here becomes a repair finding, so an invented one would send a
-    /// fixer at working code.
-    #[test]
-    fn row_evidence_reads_total_over_page_and_abstains_on_neither() {
-        assert_eq!(
-            json_rows_and_total(r#"{"data": [1, 2, 3], "total": 12288, "limit": 64}"#),
-            (Some(12288), Some(3))
-        );
-        assert_eq!(
-            json_rows_evidence(r#"{"data": [1, 2], "total": 12288}"#),
-            Some(12288)
-        );
-        assert_eq!(json_rows_evidence(r#"{"events": [1]}"#), Some(1));
-        assert_eq!(json_rows_evidence(r#"{"data": []}"#), Some(0));
-        assert_eq!(json_rows_evidence(r#"{"status": "ok"}"#), None);
-        assert_eq!(json_rows_evidence("<html>not json</html>"), None);
-        // the persisted probe file round-trips through the gate-side reader
-        let dir = tmp("vendor-probe");
-        assert_eq!(read_vendor_probe_rows(&dir), None, "absent file abstains");
-        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
-        std::fs::write(
-            dir.join(".swarm/vendor-probe.json"),
-            r#"{"ok": true, "vendor_total": 12288, "page1_rows": 64}"#,
-        )
-        .unwrap();
-        assert_eq!(read_vendor_probe_rows(&dir), Some(12288));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// P1-12 (MILD): the sync_rows FINDING repairs and never blocks — its wording must stay
