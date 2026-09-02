@@ -182,22 +182,37 @@ pub(super) fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
 /// because a chain of small edits costs a round-trip each on a local model. Repair: the opposite
 /// — the order is the smallest edit that removes an OBSERVED defect, and a whole-file re-emit
 /// from memory is how a repair round regresses code no finding named (the same reason
-/// `skeleton_first_note` and `multifile_stub_note` are disarmed for this kind). The authoring
-/// text is byte-identical to its swarm.rs inline origin, including the supervisor-note exception.
-pub(super) fn write_granularity_rule(repairing: bool) -> &'static str {
+/// `skeleton_first_note` and `multifile_stub_note` are disarmed for this kind).
+///
+/// VA-102 (refuter): the authoring text said "plan the whole file first, then write it once" and
+/// the model read it BEFORE the owner body's "START by writing README.md … KEEP IT CURRENT" — in
+/// one prompt, a rule against drafts and an order for a first version. Reconciled here, per kind:
+/// "plan the whole file" is ONE file at a time, after the previous one is on disk, never every
+/// owned file before the first write; for a SHARD each PIECE is one complete `write` and the
+/// README is the named exception (first version first, kept current by `edit`s as pieces land).
+pub(super) fn write_granularity_rule(repairing: bool, shard: bool) -> &'static str {
     if repairing {
         "- CHANGE ONLY WHAT THE FINDING NAMES: prefer `edit` on the exact lines, and do not \
          re-emit a live file from memory — a rewrite silently drops the parts of it no finding \
          mentioned. A full `write` is right only for a small file you have read in full here.\n"
+    } else if shard {
+        "- Write each PIECE COMPLETE in ONE `write` and move on. Do NOT write a rough draft of a \
+         piece then refine it with a chain of small `edit`s — plan ONE piece, the one you are about \
+         to write, after the previous piece is on disk; never every piece before the first write. \
+         Every extra round-trip costs ~30-60s on a local model. THE ONE EXCEPTION IS YOUR README.md: \
+         its first version is your FIRST write and it is kept current with `edit`s as each piece \
+         lands (UNFINISHED shrinks, PROVIDES and CHECKED_WITH grow) — the bytes on disk are the \
+         deliverable; composing a piece in your reasoning instead of writing it is the failure mode.\n"
     } else {
         "- Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
-         it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
-         round-trip costs ~30-60s on a local model and is the main reason tasks run slow. EXCEPTION: a \
-         SUPERVISOR NOTE asking for a FIRST MINIMAL VERSION of a file OVERRIDES this rule — a minimal \
-         version IS a complete file (it parses/loads clean and exports the named API; stub bodies are \
-         fine), which you then EXTEND with further complete writes. When such a note arrives, the bytes \
-         on disk are the deliverable; composing more of the file in your reasoning instead of writing \
-         it is the failure mode the note is correcting.\n"
+         it with a chain of small `edit`s — plan ONE file at a time, the one you are about to write, \
+         after the previous one is on disk (never every file you own before the first write), then \
+         write it once. Every extra round-trip costs ~30-60s on a local model and is the main reason \
+         tasks run slow. EXCEPTION: a SUPERVISOR NOTE asking for a FIRST MINIMAL VERSION of a file \
+         OVERRIDES this rule — a minimal version IS a complete file (it parses/loads clean and exports \
+         the named API; stub bodies are fine), which you then EXTEND with further complete writes. \
+         When such a note arrives, the bytes on disk are the deliverable; composing more of the file \
+         in your reasoning instead of writing it is the failure mode the note is correcting.\n"
     }
 }
 
@@ -538,10 +553,17 @@ pub(super) fn first_write_target<'a>(
     owned_files: &'a [String],
     description: &str,
 ) -> Option<&'a str> {
+    // A README/`.md` is never the first write of a task that owns code (VA-102 refuter: r6h's
+    // ledgerd-core owned `README.md` beside seven `.py` files and escaped it only because the
+    // brief named the README three times) — the doc describes code that must exist first.
+    let owns_code = owned_files
+        .iter()
+        .any(|f| !is_doc_file(f) && !super::judge_context::is_intentional_empty_marker(f));
     let real: Vec<(usize, &'a String)> = owned_files
         .iter()
         .enumerate()
         .filter(|(_, f)| !super::judge_context::is_intentional_empty_marker(f))
+        .filter(|(_, f)| !(owns_code && is_doc_file(f)))
         .collect();
     let pool: Vec<(usize, &'a String)> = if real.is_empty() {
         owned_files.iter().enumerate().collect()
@@ -551,6 +573,37 @@ pub(super) fn first_write_target<'a>(
     pool.into_iter()
         .min_by_key(|(i, f)| (mentions(description, f), *i))
         .map(|(_, f)| f.as_str())
+}
+
+fn is_doc_file(f: &str) -> bool {
+    Path::new(f)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+}
+
+/// The deliverable gate's retry hint for a file author that finished with owned files still
+/// missing. It said "write EACH of them IN FULL" — the same every-file-at-once order
+/// `write_first_body` replaced (VA-102); it now names the one file to write first, the rest
+/// one `write` each. Empty only when nothing is missing, which the caller excludes.
+pub(super) fn missing_files_hint(missing: &[String], description: &str) -> String {
+    let Some(first) = first_write_target(missing, description) else {
+        return String::new();
+    };
+    let rest = if missing.len() > 1 {
+        format!(
+            ", then the other {} missing file(s), one `write` each",
+            missing.len() - 1
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this attempt \
+         MUST be ONE `write`: `{first}`, complete{rest}, then finish — do NOT explore, cat, or \
+         explain first, and do NOT compose the files in your reasoning before the first write.",
+        missing.join(", ")
+    )
 }
 
 /// How many times the description names `file` — by basename, because plans and briefs drop the
@@ -800,13 +853,26 @@ mod tests {
     /// whole file first, then write it once" in the same prompt as "make the SMALLEST edit".
     #[test]
     fn the_write_granularity_rule_reverses_for_a_repair_shard() {
-        let authoring = write_granularity_rule(false);
+        let authoring = write_granularity_rule(false, false);
         assert!(
             authoring.contains("Write each file COMPLETE in ONE `write`")
                 && authoring.contains("SUPERVISOR NOTE"),
-            "the authoring half stays byte-identical, exception included"
+            "the authoring half keeps its rule and its exception"
         );
-        let repair = write_granularity_rule(true);
+        assert!(
+            !authoring.contains("plan the whole file first")
+                && authoring.contains("never every file you own before the first write"),
+            "VA-102: one file at a time, never the whole set before the first write: {authoring}"
+        );
+        let shard = write_granularity_rule(false, true);
+        assert!(
+            shard.contains("Write each PIECE COMPLETE in ONE `write`")
+                && shard.contains("THE ONE EXCEPTION IS YOUR README.md")
+                && shard.contains("kept current with `edit`s"),
+            "a shard's README is the named exception to one-complete-write: {shard}"
+        );
+        let repair = write_granularity_rule(true, false);
+        assert_eq!(repair, write_granularity_rule(true, true));
         assert!(
             !repair.contains("COMPLETE in ONE `write`") && !repair.contains("plan the whole file"),
             "a repair shard must not be told to re-emit its live file: {repair}"
@@ -991,6 +1057,43 @@ mod tests {
             Some("pkg/__init__.py"),
             "a lone marker is still the one file to write"
         );
+    }
+
+    /// VA-102 refuter: r6h's ledgerd-core owned `README.md` beside seven `.py` files, and the
+    /// README escaped the first write only because its brief named it three times. The rule, not
+    /// the luck: a `.md` is never the first write while the task owns code; a docs-only task still
+    /// writes its doc first.
+    #[test]
+    fn first_write_target_never_opens_with_a_readme_when_code_is_owned() {
+        let owned: Vec<String> = [
+            "app/__init__.py",
+            "app/ledgerd/impl.py",
+            "app/db.py",
+            "app/sync.py",
+            "README.md",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let desc = "impl.py serves the API and imports sync.py; sync.py polls the vendor; db.py \
+                    opens the store; impl.py wires sync.py.";
+        assert_eq!(first_write_target(&owned, desc), Some("app/db.py"));
+        let unnamed_readme = "impl.py, db.py and sync.py are described above; the README is not.";
+        assert_ne!(
+            first_write_target(&owned, unnamed_readme),
+            Some("README.md"),
+            "zero mentions must not make the README the first write of a code task"
+        );
+        let docs_only = vec!["DECISIONS.md".to_string(), "README.md".to_string()];
+        assert_eq!(first_write_target(&docs_only, ""), Some("DECISIONS.md"));
+        let hint = missing_files_hint(&owned, desc);
+        assert!(
+            hint.starts_with("You finished WITHOUT writing your owned file(s): app/__init__.py, ")
+                && hint.contains("MUST be ONE `write`: `app/db.py`, complete, then the other 4 missing file(s), one `write` each"),
+            "{hint}"
+        );
+        assert!(!hint.contains("IN FULL"));
+        assert!(missing_files_hint(&[], desc).is_empty());
     }
 
     /// r6h `ledgerd-core`: 8 owned files, 72k reasoning chars, 2 calls, 0 files, then "So let me
