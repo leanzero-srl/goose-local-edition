@@ -448,7 +448,13 @@ fn swarm_rs_line_count_only_decreases() {
     // commands/swarm/repeat_break.rs beside the produced-chars floor that replaced its 60 s
     // clock, paying for `mod repeat_break;`, the floor's three loop lines and the shadow desk's
     // reach argument.
-    const SWARM_RS_LINE_BASELINE: usize = 33_281;
+    // Tightened to 33,280 (VA-139 + VA-136): the honest dispatch-occupancy cluster (`occupancy_on`,
+    // `dispatch_occupancy_pct`, the run_finished `phases` annotation and its test) moved to
+    // commands/swarm/occupancy.rs (`annotate_phases`), paying for `mod memory;`, the dispatcher's
+    // `memory` cell and its doors (the key at OPEN, the opener's turn, the dispatch brief, the
+    // vendor shape, `close_run` after run_finished) and VA-136's `tag_require_tests` line at the
+    // smoke gate; the baseline is the count AFTER both commits, so the first sits under it.
+    const SWARM_RS_LINE_BASELINE: usize = 33_280;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
