@@ -288,10 +288,15 @@ pub(crate) struct SettledListMeter {
 /// OMNI_JUDGE_MIN_CHARS: nothing about the call changes when it is not met.
 pub(crate) const SETTLED_LIST_MIN_ITEMS: usize = 3;
 
-/// How much of one occurrence's text is carried for the judge — a scale on carried text, never
-/// a bound on model work. r6h's list #3 ran 6.5k chars, r6j's drafted-objective pass ~12k; a
-/// longer one is cut at the tail and the cut is stated on the row and in the prompt block.
-const SETTLED_SPAN_KEEP_CHARS: usize = 12_000;
+/// How much of one occurrence's text the meter KEEPS for the row and the judge — a scale on
+/// carried text, never a bound on model work. Six look tails (`ladder::LOOK_TAIL_CHARS`, the
+/// judge's own reading scale): r6h's list #3 ran 6.5k chars, r6j's drafted-objective pass ~12k,
+/// so six tails hold the longest measured pass whole; a longer one is cut at the tail and the
+/// cut is stated on the row and in the prompt block. The judge's block is cut at the LIVE look
+/// tail (`settled_list_block(r, ShownBudgets::look_tail_chars)`, swarm.rs); this keep stays the
+/// reference ratio because `SettledListMeter::new()` (swarm.rs) has no budget reach — scaling
+/// it with the fleet window is that one call site.
+const SETTLED_SPAN_KEEP_CHARS: usize = 6 * super::ladder::LOOK_TAIL_CHARS; // ratio: 6 × the judge's look tail (12,000 on the 262,144 reference window)
 
 const PATH_EXTENSIONS: &[&str] = &[
     "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm", "css", "scss", "md", "json",

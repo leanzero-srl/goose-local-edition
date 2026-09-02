@@ -768,21 +768,46 @@ fn the_value_gate_is_carried() {
 /// lane's own median produced chars between calls (`repeat_break::ProducedRhythm`); the
 /// recurrence reach moved from a desk.rs literal to `budgets::RECURRENCE_REACH_SHINGLES`, the
 /// reference numerator of a window ratio (count unchanged by the move).
-const LIVE_NUMERIC_LITERAL_BASELINE: usize = 27;
+/// 27 → 28 (VA-140): the ratchet's own counter read 33 at 7697e71b7 with NO numeric const added
+/// to the scan set since 2daa2845b — 27 was never this scan's measured count — so the baseline
+/// is set from the counter's replica, never from a doc. The four `budgets.rs` reference values
+/// carry `// measured:` on their lines (r6h on the 262,144 window, r6h-golden-0.4616) and
+/// desk.rs's settled-list keep is coded `6 * ladder::LOOK_TAIL_CHARS` (`// ratio:`): 33 → 28.
+/// The 28 survivors are algorithm constants (evidence floors, the trigger ratio, the shingle
+/// width, row counts) and the sibling modules' reference numerators still unmarked
+/// (dep_sources, judge_context, ledger_block, user_notes, vendor_probe).
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
 
 fn is_numeric_const_literal(line: &str) -> bool {
     let s = line.trim_start();
-    let s = s.strip_prefix("pub(crate) ").or_else(|| s.strip_prefix("pub(super) ")).or_else(|| s.strip_prefix("pub ")).unwrap_or(s);
-    let Some(rest) = s.strip_prefix("const ") else { return false };
-    let Some((_, after_colon)) = rest.split_once(':') else { return false };
+    let s = s
+        .strip_prefix("pub(crate) ")
+        .or_else(|| s.strip_prefix("pub(super) "))
+        .or_else(|| s.strip_prefix("pub "))
+        .unwrap_or(s);
+    let Some(rest) = s.strip_prefix("const ") else {
+        return false;
+    };
+    let Some((_, after_colon)) = rest.split_once(':') else {
+        return false;
+    };
     let ty_and_val = after_colon.trim_start();
-    let Some((ty, val)) = ty_and_val.split_once('=') else { return false };
+    let Some((ty, val)) = ty_and_val.split_once('=') else {
+        return false;
+    };
     let ty = ty.trim();
-    if !matches!(ty, "usize" | "u64" | "u32" | "i64" | "f64" | "f32") { return false; }
+    if !matches!(ty, "usize" | "u64" | "u32" | "i64" | "f64" | "f32") {
+        return false;
+    }
     let val = val.trim();
-    let Some(val) = val.strip_suffix(';') else { return false };
+    let Some(val) = val.strip_suffix(';') else {
+        return false;
+    };
     let val = val.trim();
-    !val.is_empty() && val.chars().all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+    !val.is_empty()
+        && val
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_' || c == '.')
 }
 
 /// Counts live numeric const literals in one file, skipping every `#[cfg(test)]`-attributed block by
@@ -854,7 +879,10 @@ fn live_numeric_literals_only_shrink() {
     }
     for (doc, needle) in [
         ("AGENTS.md", "THE NO-ABSOLUTES GATE"),
-        (".claude/rules/development-gates.md", "THE NO-ABSOLUTES GATE"),
+        (
+            ".claude/rules/development-gates.md",
+            "THE NO-ABSOLUTES GATE",
+        ),
     ] {
         assert!(read(doc).contains(needle), "{doc} lost gate 10 ({needle})");
     }
@@ -876,13 +904,22 @@ fn a_scheduled_action_names_what_it_waits_on() {
         let Some(status) = cells.get(3) else { continue };
         let status = status.trim();
         if status.starts_with("SCHEDULED") && !status.contains("waits on:") {
-            bad.push_str(&format!("  {} — SCHEDULED without `waits on:`\n", cells[0].trim_start_matches("| ")));
+            bad.push_str(&format!(
+                "  {} — SCHEDULED without `waits on:`\n",
+                cells[0].trim_start_matches("| ")
+            ));
         }
         if status.starts_with("QUEUED") && !status.contains("behind:") {
-            bad.push_str(&format!("  {} — QUEUED without `behind:`\n", cells[0].trim_start_matches("| ")));
+            bad.push_str(&format!(
+                "  {} — QUEUED without `behind:`\n",
+                cells[0].trim_start_matches("| ")
+            ));
         }
         if status.to_ascii_lowercase().contains("after the run") {
-            bad.push_str(&format!("  {} — \"after the run\" is never a status\n", cells[0].trim_start_matches("| ")));
+            bad.push_str(&format!(
+                "  {} — \"after the run\" is never a status\n",
+                cells[0].trim_start_matches("| ")
+            ));
         }
     }
     assert!(

@@ -46,15 +46,15 @@ use super::vendor_probe::VENDOR_PROBE_BODY_CHARS;
 /// The window every reference value was measured on: r6h's fleet, qwen3.8-27b at LM Studio's
 /// `loaded_context_length` = 262,144. Not a cap and not a model property — the denominator of a
 /// dimensionless ratio, so a window of exactly this size is the fixed point of `for_window`.
-pub(super) const REFERENCE_WINDOW_TOKENS: usize = 262_144;
+pub(super) const REFERENCE_WINDOW_TOKENS: usize = 262_144; // measured: LM Studio loaded_context_length on r6h's fleet, the window every reference below was sized at (r6h-golden-0.4616, 393a99351)
 
 /// A spec-named document's fetched body (`doc_fetched`, per URL). 24,000 was `DOC_MAX_BYTES` in
 /// `run_swarm`'s doc-fetch block — chars, despite the old name — on the 262,144 window.
-pub(super) const DOC_FETCH_CHARS: usize = 24_000;
+pub(super) const DOC_FETCH_CHARS: usize = 24_000; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// The sink's ledger block (`render_ledger_block_measured`'s budget in
 /// `sink_semantic_description`). 7,000 was the literal at that one live site on the 262,144 window.
-pub(super) const LEDGER_BLOCK_CHARS: usize = 7_000;
+pub(super) const LEDGER_BLOCK_CHARS: usize = 7_000; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// The recurrence meter's shingle reach (`desk::RecurrenceMeter`): how many 48-char shingle
 /// fingerprints it holds, i.e. how far back a repetition period stays visible. 65,536 was
@@ -62,7 +62,7 @@ pub(super) const LEDGER_BLOCK_CHARS: usize = 7_000;
 /// longest repetition period measured (~4,000 chars) and 27x the tail window that was blind to
 /// it — on the 262,144 window: exactly one quarter of it, so a model that can hold four times the
 /// reasoning is watched four times as far back (VA-137).
-pub(super) const RECURRENCE_REACH_SHINGLES: usize = 65_536;
+pub(super) const RECURRENCE_REACH_SHINGLES: usize = 65_536; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// The budgets a run shows its models under, all scaled from one window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
