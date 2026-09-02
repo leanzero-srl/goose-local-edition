@@ -8,6 +8,7 @@ import { startNewSession } from '../../sessions';
 import { SURFACE } from '../lz';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
+import { contrast, resolvedPaint, studioToken } from '../lz/resolvedPaint';
 
 /**
  * The Projects tree in the Studio register (ui/desktop/DESIGN.md): a SectionHeader that counts
@@ -146,7 +147,22 @@ describe('ProjectsSection (Studio look)', () => {
     expect(within(other).queryByRole('img')).toBeNull();
     expect(other.className).toContain(SURFACE.hover);
     expect(other.className).not.toContain('ring-lz-accent');
-  });
+
+    // The current session's ring is the accent and its label stays ink on the sidebar surface in
+    // both themes, at rest and under the pointer (the neutral hover step) — never white on light.
+    const label = screen.getByText('Fix the panel');
+    for (const theme of ['light', 'dark'] as const) {
+      const surface = studioToken('--color-lz-surface', theme);
+      const rest = await resolvedPaint(current, theme, { inherit: { bg: surface } });
+      expect(rest.missing).toEqual([]);
+      expect(rest.ring).toBe(studioToken('--color-lz-accent', theme));
+      const ink = await resolvedPaint(label, theme, { inherit: { bg: rest.bg ?? surface } });
+      expect(contrast(ink.bg, ink.text)).toBeGreaterThan(4.5);
+      const hovered = await resolvedPaint(current, theme, { hover: true, inherit: { bg: surface } });
+      const hoveredInk = await resolvedPaint(label, theme, { inherit: { bg: hovered.bg ?? surface } });
+      expect(contrast(hoveredInk.bg, hoveredInk.text)).toBeGreaterThan(4.5);
+    }
+  }, 30_000);
 
   it('row actions are ghost Buttons hidden by visibility until hover or focus — never an opacity', async () => {
     electronMocks([{ path: '/proj/goose', addedAt: 1 }]);

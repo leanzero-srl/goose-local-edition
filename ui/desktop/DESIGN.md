@@ -109,7 +109,8 @@ dark:shadow-lz-overlay-dark` (`0 8px 24px rgba(15,23,42,.12)` / `rgba(0,0,0,.55)
 
 - Hover: a SOLID step to surface-2 (`SURFACE.hover`). Never an opacity, never a tint.
 - Selected: the accent fill with white ink (`SURFACE.selected`) — rows, segments — or a 2px accent
-  INSET ring (`SURFACE.selectedRing`) where the fill would hide content.
+  INSET ring (`SURFACE.selectedRing`) where the fill would hide content. Hover on a selected row is
+  the accent-hover step (`SURFACE.selectedHover`), never the neutral step: selected always wins.
 - Focus: the app's own accent ring on `:focus-visible` (`FOCUS` = 2px outline, `--color-ring`).
 - Disabled: solid — surface-2 fill, ink-3 text, hairline border, pointer-events off (`DISABLED`).
   Never `opacity-50`.

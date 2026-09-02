@@ -9,6 +9,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { updateSkillSource, deleteSkillSource, readSkillSourceFresh } from '../../acp/sources';
 import { isEditable, isPersonaPath, splitPersona, recomposePersona } from './skillKinds';
 import { buildSkillTree, defaultExpanded, type TreeNode } from './skillTree';
+import { SURFACE, cx } from '../lz';
 
 /** Solid, saturated origin colors — one hue per root, no tints. */
 const ORIGIN_STYLE: Record<string, { label: string; className: string }> = {
@@ -258,9 +259,11 @@ function FileTree({
       <div key={`${n.path}:${isDir ? 'd' : 'f'}`}>
         <button
           onClick={() => (isDir ? toggle(n.path) : onOpen(n))}
-          className={`w-full flex items-center gap-1.5 py-1 px-2 text-left text-xs transition-colors ${
-            selected ? 'bg-background-accent text-white' : 'hover:bg-background-secondary'
-          }`}
+          // The open file is the Studio accent fill (bg-background-accent compiled to nothing).
+          className={cx(
+            'w-full flex items-center gap-1.5 py-1 px-2 text-left text-xs transition-colors',
+            selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
+          )}
           style={{ paddingLeft: 8 + depth * 14 }}
         >
           {isDir ? (
@@ -277,7 +280,7 @@ function FileTree({
               )}
               <span className="truncate font-medium">{n.name}</span>
               <span
-                className={`ml-auto shrink-0 text-[10px] ${selected ? 'text-white/70' : 'text-text-tertiary'}`}
+                className={cx('ml-auto shrink-0 text-[10px]', selected ? 'text-lz-accent-ink' : 'text-lz-ink-3')}
               >
                 {n.fileCount}
               </span>

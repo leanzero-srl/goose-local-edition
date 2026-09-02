@@ -124,6 +124,9 @@ export const SURFACE = {
   inset: 'bg-lz-surface-2',
   hover: 'hover:bg-lz-surface-2',
   selected: 'bg-lz-accent text-lz-accent-ink',
+  /** Hover on a SELECTED row: one solid step deeper into the accent — the neutral hover step would
+   *  hide the white ink. Pair with `selected`; never with `hover`. */
+  selectedHover: 'hover:bg-lz-accent-hover',
   selectedRing: 'ring-2 ring-inset ring-lz-accent',
   hairline: 'border-lz-border',
   outline: 'border border-lz-border-strong',
