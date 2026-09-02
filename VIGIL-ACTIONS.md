@@ -155,7 +155,7 @@ prompt · design · harness.
 
 
 
-| VA-134 | 09-02 | swarm.rs | CLAIMED 22:1x swarm-surgeon in va134-verdict (off r6k-staging; + the unrouted `collect_only_import_health` python spawn): loud `verdict_severity_mismatch` + `complete_result.mismatched`, partition UNCHANGED (least-impact: r6h's verdict must not move); cargo-free | panel-surgeon on VA-129 read r6h's complete_result: a bug with severity_label `critical` shipped as a KNOWN bug under passed:true — the passed partition (engine criticals + render-class = 0) and the severity label disagree. Read the two classings in findings.rs and the verdict site (swarm.rs ~30118) and make them ONE rule or make the disagreement a loud `verdict_severity_mismatch{finding, partition, label}`; check r6h's actual finding text first (it may be a label defect, not a partition defect). |
+| VA-134 | 09-02 | swarm.rs | CLAIMED — committed 934b8adac + 7b03c8659 on va134-verdict, merged into r6k-staging 7b03c8659 (22:3x): `verdict_severity_mismatch{finding, partition, label, source}` rows ahead of complete_result + `mismatched: N` (present-only), passed UNCHANGED (r6h: one row, mismatched 1); `collect_only_import_health` routed through lang_arms (Python path byte-identical). ROOT CAUSE named: the LABEL is wrong — the no-tests finding rides the SmokeGate batch tag (class Critical) with no source of its own → VA-136. Proof chain pending | panel-surgeon on VA-129 read r6h's complete_result: a bug with severity_label `critical` shipped as a KNOWN bug under passed:true — the passed partition (engine criticals + render-class = 0) and the severity label disagree. Read the two classings in findings.rs and the verdict site (swarm.rs ~30118) and make them ONE rule or make the disagreement a loud `verdict_severity_mismatch{finding, partition, label}`; check r6h's actual finding text first (it may be a label defect, not a partition defect). |
 
 
 
@@ -171,3 +171,6 @@ prompt · design · harness.
 
 
 
+
+| VA-136 | 09-02 | swarm.rs | QUEUED behind: va127-memory / va120 (the next swarm.rs+findings.rs slot) | VA-134's root cause: the 'app ships NO executable tests' finding has no `FindingSource` of its own — it is batch-tagged `FindingSource::SmokeGate` (class Critical) so its label reads critical while the partition ships it as a minor. FIX: push its own source at the smoke gate (`FindingSource::RequireTests`, class = whatever the partition treats it as) so label and partition agree and the VA-134 mismatch row goes to 0 on r6h's shape; test that the require_tests finding carries its own source. Least-impact: passed unchanged; only the label moves to match. |
+| VA-137 | 09-02 | swarm.rs | QUEUED behind: va134's slot (class 2 ship-now pair — REACH as 25% of the probed window with the 'desk fields change, verdicts identical' label; REPEAT_BREAK_MIN_SECS → a produced-bytes floor, byte-identical on r6h) | from VA-126's class-2 trace; also the 20 s subprocess literal inside the moved collect_only body and `findings.rs:522`'s pre-existing unwrap_or_default (prove-empty or event). |
