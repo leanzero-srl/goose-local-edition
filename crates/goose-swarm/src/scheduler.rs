@@ -2110,12 +2110,29 @@ impl State {
         // reaches this door past it because `fail_descendants` relaxed it, and re-doing its piece is
         // the real gap the door exists for. A FAILED gap shard HAS been sent out once: gap ids are
         // fresh per lap, so its identical re-request would otherwise be accepted under a new id,
-        // fail again, and cycle forever. The refusal names the landed shard AND its state. (The
-        // responsibility text is compared across every shard in the dag, not only this module's.)
+        // fail again, and cycle forever. The refusal names the landed shard AND its state. LANDED
+        // is scoped to THIS merger's own shards — `merger_of.shards`, its plan shards plus every
+        // gap this door already spliced for it (widened at re-arm) — never every shard in the dag
+        // (VA-071): with two fat modules in one plan, a landed shard of module A whose words match
+        // module B's gap would otherwise satisfy it, and B's hole would splice nothing. A task
+        // that is no merger owns no shards, so nothing is filtered before its batch is refused by
+        // name below.
+        let merger = self
+            .dag
+            .tasks
+            .get(tid)
+            .and_then(|n| n.spec.merger_of.as_ref())
+            .map(|m| (m.module.clone(), m.shards.clone()));
+        let own_shard = |id: &str| {
+            merger
+                .as_ref()
+                .is_some_and(|(_, shards)| shards.iter().any(|s| s == id))
+        };
         let landed: Vec<(String, String, TaskState)> = self
             .dag
             .tasks
             .values()
+            .filter(|n| own_shard(&n.spec.id))
             .filter(|n| n.state == TaskState::Done || self.gap_shards.contains(&n.spec.id))
             .filter_map(|n| {
                 n.spec
@@ -2162,13 +2179,7 @@ impl State {
         fn gaps_ids(gaps: &[crate::dag::TaskSpec]) -> Vec<String> {
             gaps.iter().map(|g| g.id.clone()).collect()
         }
-        let Some(module) = self
-            .dag
-            .tasks
-            .get(tid)
-            .and_then(|n| n.spec.merger_of.as_ref())
-            .map(|m| m.module.clone())
-        else {
+        let Some(module) = merger.map(|(module, _)| module) else {
             return refuse(self, "the completing task is not a merger".to_string());
         };
         let prefix = format!(".swarm/shards/{module}/");
