@@ -3,6 +3,11 @@
 //! Sibling module under the incremental-split law (development_gates::
 //! swarm_rs_line_count_only_decreases); extracted from `run_task_inner` for VA-103.
 //!
+//! `all_files` is the plan's owned files SORTED and DEDUPED (scheduler.rs, the dispatch's
+//! `all_files.sort(); all_files.dedup();`), not plan order — so the budget is spent alphabetically:
+//! in r6h `app/__main__.py` came before `app/ledgerd/__init__.py`, which came before the notifierd
+//! skeleton.
+//!
 //! Two ceilings live here and both are literals older than any measurement: `DEP_SOURCES_BUDGET_CHARS`
 //! (14,000, 350fca46b 2026-06-27, "bound context on slow local models") and `DEP_SOURCE_FILE_CHARS`
 //! (3,500, same origin; the line-boundary cut and its marker came with afc90a2cd 2026-08-03). They are
@@ -17,11 +22,17 @@
 //!    notifier_url=..., vendor_url=..., tokens_file=...)` — the exact signature the task had to
 //!    deliver — and the 3,500-char cut kept 3,481 bytes (97 lines, inside `SkeletonHandler`'s body
 //!    read loop). The worker's first words were "let me check the remaining part of
-//!    `app/ledgerd/__init__.py` (it was truncated)" and its second call was `sed -n '120,260p'`. A
-//!    file that names the module the task owns (bare from the same directory — `from . import impl`,
-//!    `impl.run(`, `mod impl;` — or qualified from elsewhere — `ledgerd.impl`, `ledgerd/impl`,
-//!    `ledgerd::impl`, `ledgerd import impl`) is where the call sites are; it is carried WHOLE and
-//!    debits the budget so the rest is bounded.
+//!    `app/ledgerd/__init__.py` (it was truncated)" and its second call was `sed -n '120,260p'`.
+//!    The independent tracer measured that recovery at ~1.5 lane-minutes (the docstring's one-line
+//!    contract was inside the old cut), so this is a LOUDNESS and CORRECTNESS fix, not a time win.
+//!    A file is the contract when it REFERENCES the owned module in code syntax — an import
+//!    (`from . import impl`, `from .impl import`, `import app.db`, `from app import db`,
+//!    `from app.db import`, `mod impl;`), a qualified attribute (`app.db.Store`), or a path literal of
+//!    the owned file (`app/ledgerd/impl.py`, `ledgerd::impl`, `./impl`) — never a bare word: the
+//!    first cut of this rule matched `--db-dir` in `app/__main__.py`'s usage text and labelled that
+//!    file the contract for `app/db.py`. Bare forms (`from . import x`, `import x`, `mod x;`) count
+//!    only from the module's own directory; every other file must name it qualified. The contract is
+//!    carried WHOLE and debits the budget so the rest stays bounded.
 //! 2. Every cut and every omission is LOUD: a `DepSourceCut` the caller emits as
 //!    `dep_source_truncated{task_id, file, bytes, kept, reason}`, and a marker in the brief at the cut
 //!    point that carries the exact `sed -n 'A,Bp' <file>` recovering what is missing — a handoff, not
@@ -76,59 +87,151 @@ fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// `needle` occurs in `text` bounded on both sides by a non-identifier character (or the ends).
-fn contains_word(text: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
+fn word_end(c: Option<char>) -> bool {
+    c.is_none_or(|c| !is_ident_char(c))
+}
+
+fn ident_start(c: Option<char>) -> bool {
+    c.is_some_and(|c| c.is_alphabetic() || c == '_')
+}
+
+/// `needle` occurs in `text` with a non-identifier character (or the start) before it and a
+/// character satisfying `after` following it (`None` = end of text).
+fn occurs(text: &str, needle: &str, after: impl Fn(Option<char>) -> bool) -> bool {
     text.match_indices(needle).any(|(i, _)| {
-        let before_ok = text[..i].chars().next_back().is_none_or(|c| !is_ident_char(c));
-        let after_ok = text[i + needle.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !is_ident_char(c));
-        before_ok && after_ok
+        text[..i].chars().next_back().is_none_or(|c| !is_ident_char(c))
+            && after(text[i + needle.len()..].chars().next())
     })
 }
 
-/// The module a caller names for `owned`: (stem, the directory it is imported from). A package
-/// marker (`__init__.py`, `mod.rs`, `index.ts`) is named by its directory, from the directory above.
-fn module_of(owned: &str) -> Option<(&str, Option<&Path>)> {
-    let path = Path::new(owned);
-    let stem = path.file_stem()?.to_str()?;
-    let dir = path.parent();
-    if matches!(stem, "__init__" | "mod" | "index") {
-        if let Some(pkg) = dir.and_then(|d| d.file_name()).and_then(|n| n.to_str()) {
-            return Some((pkg, dir.and_then(|d| d.parent())));
-        }
-    }
-    Some((stem, dir))
+/// A `<from_prefix> a, b as c` line whose imported names include `stem` as a whole word.
+fn imports_name(text: &str, from_prefix: &str, stem: &str) -> bool {
+    text.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix(from_prefix)
+            .is_some_and(|names| occurs(names, stem, word_end))
+    })
 }
 
-/// Is the dependency at `dep_path` (with `content`) a CALLER of one of `owned_files` — the file that
-/// names the module this task must deliver? Returns the owned file it names. A sibling in the same
-/// directory names it bare (`from . import impl`, `impl.run(`, `mod impl;`); a file elsewhere names
-/// it qualified by its package (`ledgerd.impl`, `ledgerd/impl`, `ledgerd::impl`,
-/// `ledgerd import impl`). Such a file is the task's contract and is carried whole.
+/// The module a caller names for an owned file. A package marker (`__init__.py`, `mod.rs`,
+/// `index.ts`) is named by its directory, from the directory above.
+struct OwnedModule<'a> {
+    stem: &'a str,
+    dir: Option<&'a Path>,
+    /// The directory's last component (`ledgerd` for `app/ledgerd/impl.py`); `None` at the root.
+    pkg: Option<&'a str>,
+    /// `app.ledgerd` for `app/ledgerd/impl.py`; empty at the root.
+    parent_dotted: String,
+    /// `app.ledgerd.impl` for `app/ledgerd/impl.py`.
+    dotted: String,
+}
+
+fn owned_module(owned: &str) -> Option<OwnedModule<'_>> {
+    let path = Path::new(owned);
+    let mut stem = path.file_stem()?.to_str()?;
+    let mut dir = path.parent();
+    if matches!(stem, "__init__" | "mod" | "index") {
+        if let Some(pkg) = dir.and_then(|d| d.file_name()).and_then(|n| n.to_str()) {
+            stem = pkg;
+            dir = dir.and_then(|d| d.parent());
+        }
+    }
+    let components: Vec<&str> = dir
+        .into_iter()
+        .flat_map(|d| d.components())
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    let parent_dotted = components.join(".");
+    let dotted = if parent_dotted.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{parent_dotted}.{stem}")
+    };
+    Some(OwnedModule {
+        stem,
+        dir,
+        pkg: components.last().copied(),
+        parent_dotted,
+        dotted,
+    })
+}
+
+/// The reference syntax by which `content` names `m`, if any — returned verbatim so the brief can
+/// quote what matched. Qualified forms are valid from any directory; bare forms only from the
+/// module's own (`same_dir`), because a bare `impl` elsewhere is somebody else's `impl`.
+fn reference_form(content: &str, m: &OwnedModule<'_>, same_dir: bool) -> Option<String> {
+    let stem = m.stem;
+    let dotted = &m.dotted;
+    // A root-level module has nothing to qualify with (`dotted == stem`): its import forms are the
+    // bare ones below, gated on the directory like every other bare form.
+    if !m.parent_dotted.is_empty() {
+        let import_dotted = format!("import {dotted}");
+        if occurs(content, &import_dotted, word_end) {
+            return Some(import_dotted);
+        }
+        let from_dotted = format!("from {dotted} import");
+        if occurs(content, &from_dotted, |_| true) {
+            return Some(from_dotted);
+        }
+        let from_parent = format!("from {} import", m.parent_dotted);
+        if imports_name(content, &from_parent, stem) {
+            return Some(format!("{from_parent} {stem}"));
+        }
+        let attribute = format!("{dotted}.");
+        if occurs(content, &attribute, ident_start) {
+            return Some(attribute);
+        }
+    }
+    if let Some(pkg) = m.pkg {
+        for sep in ["/", "::"] {
+            let path_literal = format!("{pkg}{sep}{stem}");
+            if occurs(content, &path_literal, word_end) {
+                return Some(path_literal);
+            }
+        }
+    }
+    if !same_dir {
+        return None;
+    }
+    if imports_name(content, "from . import", stem) {
+        return Some(format!("from . import {stem}"));
+    }
+    let relative = format!("from .{stem}");
+    if occurs(content, &relative, |c| matches!(c, Some(' ') | Some('.'))) {
+        return Some(relative);
+    }
+    let import_bare = format!("import {stem}");
+    if occurs(content, &import_bare, word_end) {
+        return Some(import_bare);
+    }
+    let from_bare = format!("from {stem} import");
+    if occurs(content, &from_bare, |_| true) {
+        return Some(from_bare);
+    }
+    let mod_decl = format!("mod {stem}");
+    if occurs(content, &mod_decl, |c| matches!(c, Some(';') | Some(' ') | Some('{'))) {
+        return Some(mod_decl);
+    }
+    let ts_relative = format!("./{stem}");
+    if occurs(content, &ts_relative, word_end) {
+        return Some(ts_relative);
+    }
+    None
+}
+
+/// Is the dependency at `dep_path` (with `content`) a CALLER of one of `owned_files` — a file that
+/// names, in reference syntax, the module this task must deliver? Returns the owned file it names
+/// and the form that matched. Such a file is the task's contract and is carried whole.
 pub(super) fn names_owned_module<'a>(
     dep_path: &str,
     content: &str,
     owned_files: &'a [String],
-) -> Option<&'a String> {
+) -> Option<(&'a String, String)> {
     let dep_dir = Path::new(dep_path).parent();
-    owned_files.iter().find(|owned| {
-        let Some((stem, dir)) = module_of(owned) else {
-            return false;
-        };
-        if dep_dir == dir {
-            return contains_word(content, stem);
-        }
-        let Some(pkg) = dir.and_then(|d| d.file_name()).and_then(|n| n.to_str()) else {
-            return false;
-        };
-        [".", "/", "::", " import "]
-            .iter()
-            .any(|sep| contains_word(content, &format!("{pkg}{sep}{stem}")))
+    owned_files.iter().find_map(|owned| {
+        let m = owned_module(owned)?;
+        let form = reference_form(content, &m, dep_dir == m.dir)?;
+        Some((owned, form))
     })
 }
 
@@ -183,12 +286,12 @@ pub(super) fn dependency_sources_block(
         let bytes = api_source.len();
         let hint = targeted_read_hint(f);
 
-        if let Some(named) = names_owned_module(f, &api_source, owned_files) {
+        if let Some((named, form)) = names_owned_module(f, &api_source, owned_files) {
             budget = budget.saturating_sub(total_chars);
             out.text.push_str(&format!(
-                "## API of {f} — CARRIED WHOLE: this file names your module `{named}`, so it is the \
-                 contract you implement (every call into what you own is here; build to THESE \
-                 signatures):\n```\n{api_source}\n```\n\n"
+                "## API of {f} — CARRIED WHOLE: this file references your module `{named}` \
+                 (`{form}`), so it is a caller of what you own; build to the signatures it \
+                 uses:\n```\n{api_source}\n```\n\n"
             ));
             continue;
         }
@@ -274,64 +377,18 @@ pub(super) fn dependency_sources_block(
 mod tests {
     use super::*;
 
+    /// r6h's files as the engine saw them at ledgerd-core's dispatch (2026-09-02 02:36:52Z), copied
+    /// from the run tree byte for byte.
+    const R6H_LEDGERD_INIT: &str = include_str!("testdata/va103/ledgerd__init__.py");
+    const R6H_NOTIFIERD_INIT: &str = include_str!("testdata/va103/notifierd__init__.py");
+    const R6H_APP_MAIN: &str = include_str!("testdata/va103/app__main__.py");
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("dep-sources-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("app/ledgerd")).unwrap();
         std::fs::create_dir_all(dir.join("app/notifierd")).unwrap();
         dir
-    }
-
-    /// Pad `s` with comment lines to EXACTLY `target` bytes (the last line absorbs the remainder).
-    fn pad_to(s: &mut String, target: usize) {
-        while s.len() + 40 <= target {
-            s.push_str("# skeleton filler line\n");
-        }
-        let rest = target - s.len();
-        assert!(rest >= 2, "padding remainder too small: {rest}");
-        s.push('#');
-        s.push_str(&"-".repeat(rest - 2));
-        s.push('\n');
-    }
-
-    /// r6h's `app/ledgerd/__init__.py`, shape-faithful: 6,104 bytes, `def run(` at byte 5,128,
-    /// `from . import impl` and `return impl.run(` inside it, the ROUTES table before.
-    fn r6h_ledgerd_init() -> String {
-        let mut s = String::from(
-            "\"\"\"Walking skeleton for the ledgerd service.\n\n\
-             Contract for the real implementation (``app/ledgerd/impl.py``, owned by the\n\
-             ledgerd-core task): ``impl.run(db_dir, port, notifier_url, vendor_url, tokens_file)``.\n\
-             \"\"\"\n\n\
-             import json\nimport os\nimport sys\n\
-             from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n\n\
-             HOST = \"127.0.0.1\"\n\n\
-             ROUTES = (\n    (\"GET\", \"/health\"),\n    (\"GET\", \"/ledger\"),\n    (\"POST\", \"/sync\"),\n)\n\n\
-             class SkeletonHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        pass\n\n",
-        );
-        pad_to(&mut s, 5128);
-        s.push_str(
-            "def run(db_dir, port, notifier_url=None, vendor_url=None, tokens_file=None):\n\
-             \x20   \"\"\"Bind 127.0.0.1:<port> and serve; blocks until the process exits.\"\"\"\n\
-             \x20   os.makedirs(db_dir, exist_ok=True)\n\
-             \x20   try:\n\
-             \x20       from . import impl  # real service lands here (ledgerd-core task)\n\
-             \x20   except ImportError as exc:\n\
-             \x20       impl = None\n\
-             \x20   if impl is not None and hasattr(impl, \"run\"):\n\
-             \x20       return impl.run(\n\
-             \x20           db_dir=db_dir,\n\
-             \x20           port=port,\n\
-             \x20           notifier_url=notifier_url,\n\
-             \x20           vendor_url=vendor_url,\n\
-             \x20           tokens_file=tokens_file,\n\
-             \x20       )\n\
-             \x20   server = ThreadingHTTPServer((HOST, int(port)), SkeletonHandler)\n\
-             \x20   server.serve_forever()\n\n",
-        );
-        pad_to(&mut s, 6104);
-        assert_eq!(s.len(), 6104);
-        assert_eq!(s.find("\ndef run(").unwrap() + 1, 5128);
-        s
     }
 
     fn r6h_owned() -> Vec<String> {
@@ -352,25 +409,28 @@ mod tests {
 
     /// r6h, 02:36:52: ledgerd-core's brief cut `app/ledgerd/__init__.py` at 3,481 of 6,104 bytes and
     /// the `def run(...)` / `impl.run(...)` contract at byte 5,128 fell off the end. The file names
-    /// the owned module `impl` from the same directory, so it is the contract: carried whole, no cut.
-    /// The notifierd skeleton (same size, names ITS OWN impl, not ledgerd's) is not this task's
-    /// contract: cut on a line boundary, loudly, with the exact recovery command.
+    /// the owned module by path (`app/ledgerd/impl.py`, docstring line 7) and by relative import
+    /// (`from . import impl`, line 155): the contract, carried whole, no cut. The notifierd skeleton
+    /// (3,746 trimmed bytes, names ITS OWN impl) is not this task's contract: cut on a line boundary
+    /// at 3,470 bytes, loudly, with `sed -n '108,115p'`. `app/__main__.py` mentions `--db-dir` in
+    /// prose and is NOT the contract for `app/db.py`; it fits under the cap and is carried plain.
     #[test]
     fn r6h_the_contract_caller_is_carried_whole_and_the_other_cut_is_loud() {
+        assert_eq!(R6H_LEDGERD_INIT.len(), 6104);
+        assert_eq!(R6H_LEDGERD_INIT.find("\ndef run(").unwrap() + 1, 5128);
         let root = scratch("r6h");
-        let ledgerd = r6h_ledgerd_init();
-        std::fs::write(root.join("app/ledgerd/__init__.py"), &ledgerd).unwrap();
-        let notifierd = ledgerd.replace("ledgerd", "notifierd");
-        std::fs::write(root.join("app/notifierd/__init__.py"), &notifierd).unwrap();
+        std::fs::write(root.join("app/ledgerd/__init__.py"), R6H_LEDGERD_INIT).unwrap();
+        std::fs::write(root.join("app/notifierd/__init__.py"), R6H_NOTIFIERD_INIT).unwrap();
+        std::fs::write(root.join("app/__main__.py"), R6H_APP_MAIN).unwrap();
         let owned = r6h_owned();
         let mut all = owned.clone();
         all.extend(
             [
                 "app/__main__.py",
-                "app/notifierd/__init__.py",
-                "app/notifierd/__main__.py",
                 "app/ledgerd/__init__.py",
                 "app/ledgerd/__main__.py",
+                "app/notifierd/__init__.py",
+                "app/notifierd/__main__.py",
             ]
             .iter()
             .map(|s| s.to_string()),
@@ -388,7 +448,8 @@ mod tests {
         );
         assert!(block.text.contains("return impl.run("));
         assert!(block.text.contains(
-            "## API of app/ledgerd/__init__.py — CARRIED WHOLE: this file names your module `app/ledgerd/impl.py`"
+            "## API of app/ledgerd/__init__.py — CARRIED WHOLE: this file references your module \
+             `app/ledgerd/impl.py` (`ledgerd/impl`)"
         ));
         assert!(
             !block.cuts.iter().any(|c| c.file == "app/ledgerd/__init__.py"),
@@ -396,36 +457,45 @@ mod tests {
             block.cuts
         );
 
+        // `--db-dir` in usage prose is not a reference to app/db.py: plain, whole, unlabelled.
+        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &owned), None);
+        assert!(block.text.contains(
+            "## API of app/__main__.py (a dependency you import — build against THIS"
+        ));
+        assert!(!block.text.contains("## API of app/__main__.py — CARRIED WHOLE"));
+        assert!(block.text.contains("from .ledgerd import run as ledgerd_run"));
+
         // The non-contract sibling: cut on a line boundary, named, with the recovery command.
         let cut = block
             .cuts
             .iter()
             .find(|c| c.file == "app/notifierd/__init__.py")
             .expect("the notifierd skeleton is over the per-file cap and is cut loudly");
-        assert_eq!(cut.bytes, notifierd.trim().len());
-        assert_eq!(cut.reason, CUT_PER_FILE_CAP);
-        assert!(cut.kept < DEP_SOURCE_FILE_CHARS && cut.kept > 0, "{cut:?}");
-        let marker = format!(
-            "# … [dep source TRUNCATED at {} of {} bytes — lines ",
-            cut.kept, cut.bytes
+        assert_eq!(
+            (cut.bytes, cut.kept, cut.reason),
+            (3746, 3470, CUT_PER_FILE_CAP),
+            "{cut:?}"
         );
-        let at = block.text.find(&marker).expect("the marker sits at the cut");
+        assert!(block.text.contains(
+            "# … [dep source TRUNCATED at 3470 of 3746 bytes — lines 108-115 of \
+             app/notifierd/__init__.py are NOT shown; read them before building against this file: \
+             `sed -n '108,115p' app/notifierd/__init__.py`]"
+        ));
+        let marker = "# … [dep source TRUNCATED at 3470 of 3746 bytes";
+        let at = block.text.find(marker).unwrap();
         let section_start = block
             .text
             .find("## API of app/notifierd/__init__.py")
             .unwrap();
         let fence = block.text[section_start..at].rfind("```\n").unwrap() + section_start + 4;
         let kept_text = &block.text[fence..at - 1];
-        assert_eq!(kept_text.len(), cut.kept);
+        assert_eq!(kept_text.len(), 3470);
+        let trimmed = R6H_NOTIFIERD_INIT.trim();
+        assert!(trimmed.starts_with(kept_text), "the kept text is a prefix of the source");
         assert!(
-            notifierd.trim().starts_with(kept_text) && notifierd.trim()[kept_text.len()..].starts_with('\n'),
+            trimmed[kept_text.len()..].starts_with('\n'),
             "the kept prefix ends on a line boundary"
         );
-        let next_line = notifierd[..kept_text.len()].lines().count() + 1;
-        let last_line = notifierd.lines().count();
-        assert!(block.text.contains(&format!(
-            "`sed -n '{next_line},{last_line}p' app/notifierd/__init__.py`"
-        )));
         assert_eq!(block.cuts.len(), 1, "{:?}", block.cuts);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -480,38 +550,103 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The first cut of this rule was a prose word-match: `--db-dir` in `app/__main__.py`'s usage
+    /// text made it "the contract for app/db.py". Only reference SYNTAX names a module.
     #[test]
-    fn names_owned_module_matches_a_bare_sibling_or_a_qualified_reference_only() {
+    fn a_bare_word_in_prose_is_not_a_reference_but_an_import_of_the_same_name_is() {
+        let db = vec!["app/db.py".to_string()];
+        assert!(R6H_APP_MAIN.contains("--db-dir"));
+        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &db), None);
+        // Positive control: the same file with one relative import of the module IS its caller.
+        let with_import = format!("{R6H_APP_MAIN}\nfrom . import db\n");
+        assert_eq!(
+            names_owned_module("app/__main__.py", &with_import, &db),
+            Some((&db[0], "from . import db".to_string()))
+        );
+        // `ledger.db` (a filename in a help string) is not a reference to app/ledger.py either.
+        let ledger = vec!["app/ledger.py".to_string()];
+        assert!(R6H_APP_MAIN.contains("ledger.db"));
+        assert_eq!(names_owned_module("app/__main__.py", R6H_APP_MAIN, &ledger), None);
+        // Nor is `from .ledgerd import` a reference to `app/ledger.py`.
+        assert!(R6H_APP_MAIN.contains("from .ledgerd import run"));
+    }
+
+    #[test]
+    fn names_owned_module_matches_reference_syntax_only() {
         let owned = vec!["app/ledgerd/impl.py".to_string()];
-        // Same directory, bare name.
+        let form = |dep: &str, text: &str| {
+            names_owned_module(dep, text, &owned).map(|(_, form)| form)
+        };
+        // Same directory, bare import forms.
         assert_eq!(
-            names_owned_module("app/ledgerd/__init__.py", "from . import impl\n", &owned),
-            Some(&owned[0])
+            form("app/ledgerd/__init__.py", "from . import impl\n"),
+            Some("from . import impl".into())
         );
-        assert!(names_owned_module("app/ledgerd/__main__.py", "impl.run(1)\n", &owned).is_some());
+        assert_eq!(
+            form("app/ledgerd/__init__.py", "from . import run, impl  # comment\n"),
+            Some("from . import impl".into())
+        );
+        assert_eq!(
+            form("app/ledgerd/__main__.py", "from .impl import run\n"),
+            Some("from .impl".into())
+        );
+        assert_eq!(form("app/ledgerd/__main__.py", "import impl\n"), Some("import impl".into()));
+        // A bare call with no import is not enough — and prose never is.
+        assert_eq!(form("app/ledgerd/__main__.py", "impl.run(1)\n"), None);
+        assert_eq!(form("app/ledgerd/__main__.py", "the impl is late\n"), None);
+        assert_eq!(form("app/ledgerd/__init__.py", "from . import impl_helpers\n"), None);
+        assert_eq!(form("app/ledgerd/__init__.py", "from .impl_helpers import x\n"), None);
         // Another directory naming ITS OWN impl: not this task's contract.
-        assert_eq!(
-            names_owned_module("app/notifierd/__init__.py", "from . import impl\nimpl.run()", &owned),
-            None
-        );
+        assert_eq!(form("app/notifierd/__init__.py", "from . import impl\nimpl.run()\n"), None);
         // Another directory, qualified.
-        assert!(names_owned_module("app/__main__.py", "from app.ledgerd import impl\n", &owned).is_some());
-        assert!(names_owned_module("app/__main__.py", "import app.ledgerd.impl\n", &owned).is_some());
-        assert!(names_owned_module("tools/x.py", "open('app/ledgerd/impl.py')", &owned).is_some());
-        // An identifier that merely starts with the stem is not a reference.
         assert_eq!(
-            names_owned_module("app/ledgerd/__init__.py", "from . import impl_helpers\n", &owned),
-            None
+            form("app/__main__.py", "from app.ledgerd import impl\n"),
+            Some("from app.ledgerd import impl".into())
         );
         assert_eq!(
-            names_owned_module("app/__main__.py", "from app.ledgerd import impl_helpers\n", &owned),
-            None
+            form("app/__main__.py", "import app.ledgerd.impl as ledger_impl\n"),
+            Some("import app.ledgerd.impl".into())
         );
-        // Rust: a package marker owned file is named by its directory from the directory above.
+        assert_eq!(
+            form("app/__main__.py", "from app.ledgerd.impl import run\n"),
+            Some("from app.ledgerd.impl import".into())
+        );
+        assert_eq!(
+            form("app/__main__.py", "app.ledgerd.impl.run()\n"),
+            Some("app.ledgerd.impl.".into())
+        );
+        assert_eq!(
+            form("tools/x.py", "open('app/ledgerd/impl.py')\n"),
+            Some("ledgerd/impl".into())
+        );
+        assert_eq!(form("app/__main__.py", "from app.ledgerd import impl_helpers\n"), None);
+        assert_eq!(form("app/__main__.py", "import app.ledgerd.implx\n"), None);
+        // A root-level owned file has no parent to qualify with: imports only, from the root.
+        let root_db = vec!["db.py".to_string()];
+        assert!(names_owned_module("main.py", "import db\n", &root_db).is_some());
+        assert!(names_owned_module("main.py", "see db.py for the schema\n", &root_db).is_none());
+        assert!(names_owned_module("app/x.py", "import db\n", &root_db).is_none());
+        // Rust: a package marker is named by its directory from the directory above.
         let rs = vec!["src/ledgerd/mod.rs".to_string()];
-        assert!(names_owned_module("src/main.rs", "mod ledgerd;\nuse ledgerd::run;\n", &rs).is_some());
+        assert_eq!(
+            names_owned_module("src/main.rs", "mod ledgerd;\nuse ledgerd::run;\n", &rs),
+            Some((&rs[0], "mod ledgerd".to_string()))
+        );
         assert!(names_owned_module("src/lib.rs", "use ledgerd_ext::run;\n", &rs).is_none());
         let rs_impl = vec!["src/ledgerd/impl.rs".to_string()];
-        assert!(names_owned_module("src/main.rs", "use ledgerd::impl::run;\n", &rs_impl).is_some());
+        assert_eq!(
+            names_owned_module("src/main.rs", "use ledgerd::impl::run;\n", &rs_impl),
+            Some((&rs_impl[0], "ledgerd::impl".to_string()))
+        );
+        // TypeScript: a relative path literal from the same directory.
+        let ts = vec!["src/ledger/impl.ts".to_string()];
+        assert_eq!(
+            names_owned_module("src/ledger/index.ts", "import { run } from './impl';\n", &ts),
+            Some((&ts[0], "./impl".to_string()))
+        );
+        assert_eq!(
+            names_owned_module("src/main.ts", "import { run } from '../ledger/impl';\n", &ts),
+            Some((&ts[0], "ledger/impl".to_string()))
+        );
     }
 }
