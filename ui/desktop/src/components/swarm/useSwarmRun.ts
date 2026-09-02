@@ -5110,6 +5110,9 @@ export function buildPhaseTodo(
   const r2LaneKinds = new Map<string, Map<number, string>>();
   const r2LaneMissed = new Map<string, number>();
   const r2LaneClosed = new Map<string, string>();
+  // VA-145: the choices a lane left to its builder (`research_builder_decides`, one event each, after
+  // the closer) — the lane row reads `landed N · builder_decides M` like its close line does.
+  const r2LaneDecides = new Map<string, number>();
   let r2LaneSeq = 0;
   const laneOrderOf = (slice: string) => {
     let o = r2LaneOrder.get(slice);
@@ -5420,6 +5423,9 @@ export function buildPhaseTodo(
         if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
         r2LaneMissed.set(slice, (r2LaneMissed.get(slice) ?? 0) + 1);
       }
+    } else if (t === 'research_builder_decides') {
+      const slice = str(e['slice']);
+      r2LaneDecides.set(slice, (r2LaneDecides.get(slice) ?? 0) + 1);
     } else if (t === 'research_question_ignored')
       r2Ignored.push({ slice: str(e['slice']), count: num(e['count']) });
     else if (t === 'research_slice_resumed')
@@ -5693,6 +5699,7 @@ export function buildPhaseTodo(
       const landed = r2LaneLanded.get(slice)?.size ?? 0;
       const kinds = tallyKinds([...(r2LaneKinds.get(slice)?.values() ?? [])]);
       const missed = r2LaneMissed.get(slice) ?? 0;
+      const decides = r2LaneDecides.get(slice) ?? 0;
       const closer = r2LaneClosed.get(slice);
       const over = closer != null || r2Over || r2FanPanicked;
       const state: TodoState = !over ? 'running' : landed > 0 ? 'done' : 'unverified';
@@ -5703,6 +5710,7 @@ export function buildPhaseTodo(
           state,
           [
             `landed ${landed}`,
+            decides > 0 ? `builder_decides ${decides}` : '',
             kinds,
             missed > 0 ? `${missed} unanswered` : '',
             order.rank != null ? `rank ${order.rank}` : '',

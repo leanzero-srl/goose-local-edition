@@ -388,6 +388,16 @@ const ReasoningBlock: React.FC<{
   );
 };
 
+/** Solid fill per research question KIND (`research_question_kind.kind`, the lane's own word): the
+ *  engine's vocabulary is design | external | unkinded; any other word the engine may name gets the
+ *  neutral slate rather than no chip. White ink on every fill — no tints. */
+const RESEARCH_KIND_COLOR: Record<string, string> = {
+  design: '#7c3aed',
+  external: '#0e7490',
+  unkinded: SWARM_STATUS.stopped,
+};
+const researchKindColor = (kind: string) => RESEARCH_KIND_COLOR[kind] ?? SWARM_STATUS.stopped;
+
 /**
  * THE QUESTIONS A RESEARCH LANE CARRIES (VA-029), numbered by the engine's own q_index, each with the
  * outcome its terminal event recorded. Module scope, like every component here. One lane per slice
@@ -395,6 +405,13 @@ const ReasoningBlock: React.FC<{
  * learns what the lane was asked — and which of its questions came back unanswered (the loud twin: an
  * unanswered question stays a raw question in the brief, never a fabricated answer). Solid status
  * chips, full borders — no rails, no tints.
+ *
+ * VA-145: this list is where a lane's LANDINGS stay PINNED. The compact feed is a 30-row window and
+ * r6j's 37 landings spread over 144 minutes, so a lane's early landings had scrolled out of it long
+ * before the lane closed; here every landing is a row for as long as the lane exists — the kind the
+ * lane named as a solid chip, the answer's chars, what it raised, the lane clock it landed at (the
+ * same facts the feed's `<slice> · q<n> landed · <kind> · <chars> · raised <n>` line carries, read off
+ * the one carry rather than copied from the feed). The header folds the rows; the close line stays.
  */
 const ResearchQuestionRows: React.FC<{
   questions: ResearchQuestionRow[];
@@ -402,6 +419,7 @@ const ResearchQuestionRows: React.FC<{
   close?: ResearchLaneClose;
   live: boolean;
 }> = ({ questions, close, live }) => {
+  const [expanded, setExpanded] = useState(true);
   const answered = questions.filter((q) => q.status === 'answered').length;
   const missed = questions.filter((q) => q.status === 'unanswered').length;
   const open = questions.length - answered - missed;
@@ -414,45 +432,75 @@ const ResearchQuestionRows: React.FC<{
           ? STATUS_COLOR.running
           : CALL_PENDING;
   const caption = (q: ResearchQuestionRow) => {
+    // A landing's line: the answer's size, what it raised, and the engine's lane clock at the landing
+    // (`research_answered.secs`) — absent on a landing-only archive, and then unsaid.
     if (q.status === 'answered')
-      return `${(q.chars ?? 0).toLocaleString()} chars${q.raised ? ` · ${q.raised} raised` : ''}`;
+      return [
+        `${(q.chars ?? 0).toLocaleString()} chars`,
+        q.raised ? `${q.raised} raised` : '',
+        q.secs != null ? `${q.secs}s` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
     if (q.status === 'unanswered')
       return `unanswered${q.reason ? ` · ${q.reason.replace(/_/g, ' ')}` : ''}`;
     // Dispatched, no terminal event: answering while the lane runs; on a lane that is over, the
     // honest words are that no outcome was recorded — never "answered".
     return live ? 'answering…' : 'no outcome recorded';
   };
+  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <div data-testid="research-questions">
-      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
-        Questions · {questions.length}
-        {answered > 0 ? ` · ${answered} answered` : ''}
-        {missed > 0 ? ` · ${missed} unanswered` : ''}
-        {open > 0 && live ? ` · ${open} open` : ''}
-      </div>
-      <ol
-        className="bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
-        style={{ borderRadius: CHIP_RADIUS }}
+      <button
+        type="button"
+        onClick={() => setExpanded((x) => !x)}
+        aria-expanded={expanded}
+        data-testid="research-questions-toggle"
+        className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary transition-colors mb-1.5"
       >
-        {questions.map((q) => (
-          <li
-            key={`${q.slice}::${q.qIndex}`}
-            className="flex items-start gap-2 text-[11px] min-w-0"
-            data-testid="research-question"
-            data-status={q.status}
-            title={q.detail || undefined}
-          >
-            <span
-              className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
-              style={{ background: chipColor(q), borderRadius: 3 }}
+        <Chevron className="h-3 w-3 shrink-0" />
+        <span>
+          Questions · {questions.length}
+          {answered > 0 ? ` · ${answered} answered` : ''}
+          {missed > 0 ? ` · ${missed} unanswered` : ''}
+          {open > 0 && live ? ` · ${open} open` : ''}
+        </span>
+      </button>
+      {expanded ? (
+        <ol
+          className="bg-background-primary border border-border-primary px-2 py-1.5 space-y-1"
+          style={{ borderRadius: CHIP_RADIUS }}
+        >
+          {questions.map((q) => (
+            <li
+              key={`${q.slice}::${q.qIndex}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-question"
+              data-status={q.status}
+              title={q.detail || undefined}
             >
-              q{q.qIndex}
-            </span>
-            <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
-            <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
-          </li>
-        ))}
-      </ol>
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                style={{ background: chipColor(q), borderRadius: 3 }}
+              >
+                q{q.qIndex}
+              </span>
+              {q.kind ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: researchKindColor(q.kind), borderRadius: 3 }}
+                  data-testid="research-kind"
+                  data-kind={q.kind}
+                >
+                  {q.kind}
+                </span>
+              ) : null}
+              <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
       {/* VA-143: the lane's close — what it landed and the choices it left to its builder — from the
           `remainder_empty` closer and the `research_builder_decides` events, clocked by the engine's
           own lane secs. r6j web-viz: "landed 4 · builder_decides 11 · done 34m", where the closer
