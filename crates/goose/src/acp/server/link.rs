@@ -919,6 +919,9 @@ impl GooseAcpAgent {
     ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
         let config = build_link_config(key, binaries)?;
         let source = self.link_source();
+        // A remote prompt (`link_serve.rs`) must run on the managers THIS source reads,
+        // or its cancel token never reaches the busy set the idle guard consults.
+        link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone());
         let mut manager = LinkManager::new(config, source)
             .internal_err_ctx("constructing the LeanZero Link manager")?;
         // Attach the process-wide remote executor if goose-server injected one at boot; a

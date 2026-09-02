@@ -97,6 +97,8 @@ pub use link::{
     ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, RemoteExecutor,
     SessionDeltaKind,
 };
+mod link_serve;
+pub use link_serve::ServeRemoteExecutor;
 mod list_sessions;
 mod load_session;
 mod local_inference;
