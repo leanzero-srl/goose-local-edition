@@ -47,7 +47,7 @@ describe('FanInCard', () => {
     expect(statuses).toHaveLength(3);
     expect(statuses.map((s) => s.tagName.toLowerCase())).toEqual(['svg', 'svg', 'svg']);
     expect(
-      statuses.map((s) => s.className.baseVal.match(/\btext-lz-(ok|warn|err)\b/)?.[1])
+      statuses.map((s) => (s.getAttribute('class') ?? '').match(/\btext-lz-(ok|warn|err)\b/)?.[1])
     ).toEqual(['ok', 'warn', 'err']);
     for (const s of statuses) expect(s.getAttribute('style')).toBeNull();
     const text = container.textContent ?? '';
