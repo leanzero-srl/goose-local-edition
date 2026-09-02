@@ -59,6 +59,7 @@ use super::{finalize_plan_before_dag, string_list, GooseAgentDispatcher};
 /// piece's definitions into `ASSEMBLED.<ext>` in the declared interface's order; the merger's job
 /// becomes the glue. A child of this module so swarm.rs gains no wiring line.
 mod assembly;
+mod assumes;
 
 /// Where a module's shards work. Under `.swarm/` on purpose: every tree lister, snapshot and
 /// manifest already excludes it (`tree::SNAPSHOT_EXCLUDES`), so pieces never reach the scored tree
@@ -3756,8 +3757,32 @@ fn same_symbol(declared: &str, found: &str) -> bool {
         || last_segment(declared) == last_segment(found)
 }
 
+/// Parameter NAMES from a parameter list. Split at depth 0 only: `batch: {batch: number,
+/// records: object[]}` is ONE parameter (VA-108 — r6h's `applyBatch` declared exactly that, and
+/// the comma inside its object type read as a second parameter, so the dossier reported a
+/// `signature_disagreement` and completion emitted `merge_signature_mismatch{applyBatch, found
+/// "batch"}` against a definition that matched its declaration).
 fn normalize_params(p: &str) -> Vec<String> {
-    p.split(',')
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in p.chars() {
+        match c {
+            '(' | '[' | '{' | '<' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' | '}' | '>' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth <= 0 => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    parts
+        .into_iter()
         .map(|x| {
             x.trim()
                 .split([':', '='])
@@ -3844,7 +3869,16 @@ pub(super) struct MergeDossier {
     pub(super) declared_missing: Vec<String>,
     /// (declared name, declared signature, found params, shard)
     pub(super) signature_disagreements: Vec<(String, String, String, String)>,
+    /// (shard, ASSUMES clause) — clauses naming at least one identifier no shard defines
+    /// (`assumes::resolve`, VA-108); the names themselves are `assumptions_unbacked`.
     pub(super) assumptions_unmet: Vec<(String, String)>,
+    /// One per (shard, name) an ASSUMES clause names that no shard's piece defines and no declared
+    /// shared-state root covers, with the nearest sibling name when one is close — r6h's `gl`
+    /// (data-stream wrote `vizGL`) and `uBrushActive` (its uniform is `uBrush`).
+    pub(super) assumptions_unbacked: Vec<assumes::AssumeUnbacked>,
+    /// (shard, ASSUMES clause) — clauses of words only, no code-shaped identifier; the merger
+    /// reads them, nothing resolves them.
+    pub(super) assumptions_prose: Vec<(String, String)>,
     pub(super) unfinished: Vec<(String, String)>,
     pub(super) prior_merge: Option<String>,
     pub(super) final_file_symbols: Vec<Symbol>,
@@ -3922,6 +3956,9 @@ pub(super) async fn build_merge_dossier(
     lang: super::TargetLang,
 ) -> MergeDossier {
     let mut shards: Vec<ShardDossier> = Vec::new();
+    // (shard id, its pieces as (file name, source)) — the ASSUMES resolver's vocabulary and
+    // free-reference scan read the text the symbols were extracted from.
+    let mut sources: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for (i, id) in merger.shards.iter().enumerate() {
         let folder = merger
             .folders
@@ -3941,19 +3978,23 @@ pub(super) async fn build_merge_dossier(
             .filter(|n| n != "README.md")
             .collect();
         names.sort();
+        let mut srcs: Vec<(String, String)> = Vec::new();
         for n in names {
             let path = dir.join(&n);
             // An unreadable piece (non-UTF-8, a permission error) is SAID — never rendered as
             // "parses — no definitions found" (fallback gate, S12-D).
             let (verdict, symbols) = match std::fs::read_to_string(&path) {
-                Ok(src) => (
-                    parse_piece(&path).await,
-                    extract_symbols(&src, lang_for_path(&n, lang)),
-                ),
+                Ok(src) => {
+                    let symbols = extract_symbols(&src, lang_for_path(&n, lang));
+                    let verdict = parse_piece(&path).await;
+                    srcs.push((n.clone(), src));
+                    (verdict, symbols)
+                }
                 Err(e) => (Some(format!("unreadable: {e}")), Vec::new()),
             };
             pieces.push((format!("{folder}/{n}"), verdict, symbols));
         }
+        sources.push((id.clone(), srcs));
         shards.push(ShardDossier {
             id: id.clone(),
             folder,
@@ -4021,12 +4062,14 @@ pub(super) async fn build_merge_dossier(
             declared_missing.push(e.name.clone());
         }
     }
-    let mut assumptions_unmet = Vec::new();
     let mut unfinished = Vec::new();
     let mut interface_leaks: Vec<(String, String, Vec<String>)> = Vec::new();
+    // ASSUMES are resolved per NAME against every shard's DEFINITIONS and the declared
+    // shared-state roots (`assumes::resolve`, VA-108) — the old any-candidate-met rule never saw
+    // r6h's `gl` or `uBrushActive` and flagged a keyword and a global's member instead.
+    let resolved = assumes::resolve(&shards, &sources, &merger.interface.shared_state);
     // An assumption about the DECLARED shared state (`S.dirty` when the declaration names `S`)
-    // is met by the declaration — the merger reconciles the shape; only a name no sibling
-    // provides and no declaration carries is unmet.
+    // is covered by the declaration — the merger reconciles the shape.
     let declared_roots: Vec<String> = merger
         .interface
         .shared_state
@@ -4038,16 +4081,6 @@ pub(super) async fn build_merge_dossier(
         if let Some(n) = &sh.note {
             for a in &n.assumes {
                 let names = candidate_names(a);
-                let met = |nm: &String| {
-                    shards.iter().any(|o| o.defines_name(nm))
-                        || nm
-                            .split('.')
-                            .next()
-                            .is_some_and(|root| declared_roots.iter().any(|r| r == root))
-                };
-                if !names.is_empty() && !names.iter().any(met) {
-                    assumptions_unmet.push((sh.id.clone(), a.clone()));
-                }
                 // INTERFACE LEAK (split v2 §5): does the DECLARATION cover this assumption — an
                 // export it names (any word of it, `same_symbol`) or a declared shared-state root?
                 // If not, the shards coordinated outside the declaration, whether or not a sibling
@@ -4121,7 +4154,9 @@ pub(super) async fn build_merge_dossier(
         duplicates,
         declared_missing,
         signature_disagreements,
-        assumptions_unmet,
+        assumptions_unmet: resolved.unmet,
+        assumptions_unbacked: resolved.unbacked,
+        assumptions_prose: resolved.prose,
         unfinished,
         prior_merge,
         final_file_symbols,
@@ -4132,6 +4167,17 @@ pub(super) async fn build_merge_dossier(
 }
 
 impl MergeDossier {
+    /// The unbacked names of one (shard, ASSUMES clause), in clause order.
+    fn unbacked_of<'a>(
+        &'a self,
+        shard: &'a str,
+        clause: &'a str,
+    ) -> impl Iterator<Item = &'a assumes::AssumeUnbacked> + 'a {
+        self.assumptions_unbacked
+            .iter()
+            .filter(move |u| u.shard == shard && u.clause == clause)
+    }
+
     /// One `shard_provides_unbacked{module, task_id, shard, names}` per shard whose README promises
     /// a symbol no piece defines (DESIGN-SPLIT-V2 §3) — said at the merger's dispatch; the brief
     /// lists the same names under GAPS.
@@ -4179,7 +4225,8 @@ impl MergeDossier {
             "duplicates": self.duplicates.iter().map(|(n, o)| serde_json::json!({"symbol": n, "shards": o})).collect::<Vec<_>>(),
             "declared_missing": self.declared_missing,
             "signature_disagreements": self.signature_disagreements.iter().map(|(n, d, f, s)| serde_json::json!({"symbol": n, "declared": d, "found_params": f, "shard": s})).collect::<Vec<_>>(),
-            "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
+            "assumptions_unmet": self.assumptions_unmet.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a, "names": self.unbacked_of(s, a).map(assumes::AssumeUnbacked::to_json).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+            "assumptions_prose": self.assumptions_prose.iter().map(|(s, a)| serde_json::json!({"shard": s, "assumes": a})).collect::<Vec<_>>(),
             "unfinished": self.unfinished.iter().map(|(s, u)| serde_json::json!({"shard": s, "item": u})).collect::<Vec<_>>(),
             "provides_unbacked": self.shards.iter().filter(|s| !s.provides_unbacked.is_empty()).map(|s| serde_json::json!({"shard": s.id, "names": s.provides_unbacked})).collect::<Vec<_>>(),
             "shared_state_writers": self.shared_state_writers.iter().map(|(st, sh)| serde_json::json!({"state": st, "shards": sh})).collect::<Vec<_>>(),
@@ -4388,9 +4435,23 @@ impl MergeDossier {
             ));
         }
         for (shard, assumption) in &self.assumptions_unmet {
-            item(&mut s, format!(
-                "shard `{shard}` ASSUMES \"{assumption}\" and no shard provides it — reconcile to the declared interface/shared state; if that means new code, write it or send it out."
-            ));
+            // Per NAME: the two names, the two shards, the rule — and the decision left to the
+            // merger (VA-108; r6h's `gl` → `vizGL`, `uBrushActive` → `uBrush`).
+            let names: Vec<String> = self
+                .unbacked_of(shard, assumption)
+                .map(assumes::AssumeUnbacked::glue)
+                .collect();
+            item(
+                &mut s,
+                format!(
+                    "shard `{shard}` ASSUMES \"{assumption}\" and no shard provides it — {}",
+                    if names.is_empty() {
+                        "reconcile to the declared interface/shared state; if that means new code, write it or send it out.".to_string()
+                    } else {
+                        names.join(" ")
+                    }
+                ),
+            );
         }
         for name in &self.declared_missing {
             item(&mut s, format!(
@@ -5227,6 +5288,16 @@ mod merger_tests {
         assert_eq!(
             normalize_params("sx: number, sy = 0, ...rest"),
             vec!["sx", "sy", "rest"]
+        );
+        // r6h: `applyBatch(batch: {batch: number, records: object[]})` is ONE parameter — the
+        // comma inside the object type split it and manufactured `merge_signature_mismatch`.
+        assert_eq!(
+            normalize_params("batch: {batch: number, records: object[]}"),
+            vec!["batch"]
+        );
+        assert_eq!(
+            normalize_params("cb: (ids: string[]) => void, opts: Map<string, number>"),
+            vec!["cb", "opts"]
         );
     }
 
