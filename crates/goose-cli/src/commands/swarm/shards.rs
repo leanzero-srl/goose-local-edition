@@ -331,6 +331,32 @@ pub(super) struct ShardPlan {
     /// The shared state this shard is the single WRITER of (split v2 §4); a pure reader lists none.
     #[serde(default)]
     pub(super) writes: Vec<String>,
+    /// The declared clusters this shard runs — filled by `size_shards_to_hosts`, never by the
+    /// planner (VA-102 refuter: grouping kept only the union, and the piece boundaries the brief
+    /// needs to name a FIRST write were gone; r6h's `camera`+`labels-brush` shard could not say
+    /// `camera` was its lightest piece). Empty means unsized: the shard is its own one cluster.
+    #[serde(default)]
+    pub(super) clusters: Vec<ClusterPlan>,
+}
+
+/// One declared cluster inside a sized shard: its id, the names it provides, and the weight the
+/// partition used (its claimed sections, floor 1 — `split_sized.weights`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub(super) struct ClusterPlan {
+    pub(super) id: String,
+    #[serde(default)]
+    pub(super) provides: Vec<String>,
+    #[serde(default)]
+    pub(super) weight: usize,
+}
+
+/// A declared shard as the one cluster it is.
+fn cluster_of(s: &ShardPlan) -> ClusterPlan {
+    ClusterPlan {
+        id: s.id.clone(),
+        provides: s.provides.clone(),
+        weight: s.sections.len().max(1),
+    }
 }
 
 pub(super) fn split_schema() -> serde_json::Value {
@@ -564,93 +590,170 @@ pub(super) const README_FIELDS: [&str; 5] = [
 /// reasoned 102k chars in 46 minutes — 46,410 of them inside code fences, full piece bodies it
 /// would then have to retype — with one `ls` of its empty folder and no file, because the brief
 /// listed every declared name, put the README's structure LAST, and never said which file comes
-/// first. The README comes first (its PROVIDES/ASSUMES are the split's own facts), then ONE piece
-/// — the smallest by derivation — and the model is told where an open question goes instead of
-/// into more reasoning. MILD: text, nothing refuses.
+/// first. The README comes first with its PROVIDES lines rendered from the declaration (copy-in,
+/// signatures included — the refuter caught "each with its declared signature" pointing at an
+/// interface the text said not to read yet), then ONE piece: the LIGHTEST DECLARED CLUSTER the
+/// shard runs (`split_sized.weights`; r6h: `camera`, weight 1 — the string-length proxy this
+/// replaced picked `viz3d.brush`, a one-line getter, and `initViz`, the GL setup). MILD: text,
+/// nothing refuses.
 fn first_action_paragraph(
     module_files: &[String],
     shard: &ShardPlan,
     folder: &str,
     interface: &ModuleInterface,
 ) -> String {
+    let (p, a, u, c, w) = (
+        README_FIELDS[0],
+        README_FIELDS[1],
+        README_FIELDS[2],
+        README_FIELDS[3],
+        README_FIELDS[4],
+    );
+    let clusters = shard_clusters(shard);
     let provides = if shard.provides.is_empty() {
-        "the names your sections require".to_string()
+        // The absence is SAID (`shard_provides_empty`, apply_module_split) and stated here where
+        // the copy-in lines would be — never a phrase standing in for names.
+        if shard.sections.is_empty() {
+            format!(
+                "{p}: (synthesis declared neither exports nor sections for this shard — \
+                 `shard_provides_empty` is on the run log; its responsibility is the one fact: {})",
+                shard.responsibility.trim()
+            )
+        } else {
+            format!(
+                "{p}: (synthesis declared no exports for this shard — `shard_provides_empty` is on \
+                 the run log; list each symbol you define for the sections {})",
+                shard
+                    .sections
+                    .iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
     } else {
-        shard
-            .provides
-            .iter()
-            .map(|p| format!("`{p}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        field_lines(
+            p,
+            &shard
+                .provides
+                .iter()
+                .map(|n| provides_line(n, interface))
+                .collect::<Vec<_>>(),
+        )
     };
+    let unfinished = field_lines(
+        u,
+        &clusters.iter().map(|k| k.id.clone()).collect::<Vec<_>>(),
+    );
     let writes = if shard.writes.is_empty() {
-        format!("`{w}: none`", w = README_FIELDS[4])
+        format!("{w}: none")
     } else {
-        format!("{w}: {}", shard.writes.join(", "), w = README_FIELDS[4])
+        field_lines(w, &shard.writes)
     };
-    let piece = match smallest_piece(module_files, shard, interface, folder) {
-        Some((name, path)) => format!(
-            "Then write your smallest piece, `{path}` (`{name}`), alone, and check it with a \
-             parse/lint."
-        ),
-        // No provides and no sections: the split left this shard only its responsibility, so the
-        // first piece is named from that and nothing else.
-        None => "Then write your smallest piece alone — the first function your responsibility \
-                 needs — and check it with a parse/lint."
-            .to_string(),
+    let Some(first) = clusters.iter().min_by_key(|k| k.weight) else {
+        unreachable!("shard_clusters returns at least the shard itself")
+    };
+    let path = format!("{folder}/{}{}", kebab(&first.id), piece_ext(module_files));
+    let names = if first.provides.is_empty() {
+        "the definitions its sections require".to_string()
+    } else {
+        first.provides.join(", ")
+    };
+    let piece = if clusters.len() == 1 {
+        format!(
+            "Then write your FIRST PIECE — your one cluster `{id}` is your one piece: `{path}` — \
+             {names}. You may split it across more files; the README's {u}: lists whichever are \
+             not yet written.",
+            id = first.id
+        )
+    } else {
+        let others = clusters
+            .iter()
+            .filter(|k| k.id != first.id)
+            .map(|k| format!("`{}`", k.id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Then write your FIRST PIECE: `{path}` — the `{id}` cluster, the lightest of your {k} \
+             (weight {wt}: its claimed spec sections, floor 1): {names} — alone, complete in one \
+             `write`, and check it with a parse/lint. Only then think about the next piece \
+             ({others}), one `write` per piece.",
+            id = first.id,
+            k = clusters.len(),
+            wt = first.weight
+        )
     };
     format!(
-        "YOUR FIRST ACTION — before any design, before reading the interface below: write \
-         `{folder}/README.md`, first version — {p}: {provides}, each with its declared signature; \
-         {a}: the sibling names and shared state you will read; {u}: every piece you have not written \
-         yet, one per line; {c}: none yet; {writes}. {piece} Only then think about the next piece, \
-         one `write` per piece, updating the README's {u}: lines as each lands. Do NOT draft a \
-         file's body in your reasoning — a body drafted there has to be typed twice; write it to the \
-         file and read the tool result back. An open question goes under {u}: in the README, not \
-         into more reasoning.\n\n",
-        p = README_FIELDS[0],
-        a = README_FIELDS[1],
-        u = README_FIELDS[2],
-        c = README_FIELDS[3],
+        "YOUR FIRST ACTION — before any design: write `{folder}/README.md`, first version, these \
+         lines copied in:\n\
+         {provides}\n\
+         {a}: <the sibling names and shared state you will read — one per line>\n\
+         {unfinished}\n\
+         {c}: none yet\n\
+         {writes}\n\
+         {piece} Update the README's {u}: lines as each piece lands. Do NOT draft a file's body in \
+         your reasoning — a body drafted there has to be typed twice; write it to the file and read \
+         the tool result back. An open question goes under {u}: in the README, not into more \
+         reasoning.\n\n"
     )
 }
 
-/// The shard's smallest piece BY DERIVATION: of the names its split provides, the one whose
-/// declared signature is shortest (a signature's length is the one size the plan knows before any
-/// code exists), ties to the split's order, a name synthesis declared no signature for ranking
-/// after every declared one; with no provides, the first claimed section. The path is
-/// `<folder>/<kebab name>.<ext>`, the extension the module's own final file's.
-fn smallest_piece(
-    module_files: &[String],
-    shard: &ShardPlan,
-    interface: &ModuleInterface,
-    folder: &str,
-) -> Option<(String, String)> {
-    let name = shard
-        .provides
+/// The clusters a shard runs: what sizing recorded, or — unsized (a declaration with no more
+/// clusters than hosts that never passed `size_shards_to_hosts`, a merger's gap shard) — the
+/// shard as its own one cluster. Never empty.
+fn shard_clusters(shard: &ShardPlan) -> Vec<ClusterPlan> {
+    if shard.clusters.is_empty() {
+        vec![cluster_of(shard)]
+    } else {
+        shard.clusters.clone()
+    }
+}
+
+/// One README field as copy-in lines: `FIELD: first`, then `- next` per item (the shape
+/// `parse_shard_note` reads back). Empty for no items — callers pass at least one.
+fn field_lines(field: &str, items: &[String]) -> String {
+    let mut s = String::new();
+    for (i, it) in items.iter().enumerate() {
+        if i == 0 {
+            s.push_str(&format!("{field}: {it}"));
+        } else {
+            s.push_str(&format!("\n- {it}"));
+        }
+    }
+    s
+}
+
+/// A PROVIDES line for one declared name: the declaration's signature with the FULL name in
+/// front — `viz3d.brush` + `brush(): string[]` → `viz3d.brush(): string[]`, so the merger's
+/// identifier read (`ident_at`) sees the dotted name and not a bare `brush` two shards both
+/// provide. A signature that does not start with the name's last segment rides after a dash; a
+/// name synthesis gave no signature stands alone.
+fn provides_line(name: &str, interface: &ModuleInterface) -> String {
+    let short = name.rsplit('.').next().unwrap_or(name);
+    match interface
+        .exports
         .iter()
-        .enumerate()
-        .min_by_key(|(i, p)| {
-            interface
-                .exports
-                .iter()
-                .find(|e| e.name == **p)
-                .map_or((true, 0, *i), |e| (false, e.signature.len(), *i))
-        })
-        .map(|(_, p)| p.clone())
-        .or_else(|| shard.sections.first().cloned())?;
-    // A final file with no extension (a `Makefile`-class module) yields pieces with none — that
-    // empty IS the module's own naming, not a substitute.
-    let ext = match module_files
+        .find(|e| e.name == name)
+        .map(|e| e.signature.trim())
+        .filter(|sig| !sig.is_empty())
+    {
+        Some(sig) if sig.starts_with(short) => format!("{name}{}", &sig[short.len()..]),
+        Some(sig) => format!("{name} — {sig}"),
+        None => name.to_string(),
+    }
+}
+
+/// The piece files' extension: the module's own final file's. A final file with no extension (a
+/// `Makefile`-class module) yields pieces with none — that empty IS the module's own naming.
+fn piece_ext(module_files: &[String]) -> String {
+    match module_files
         .first()
         .and_then(|f| std::path::Path::new(f).extension())
         .and_then(|e| e.to_str())
     {
         Some(e) => format!(".{e}"),
         None => String::new(),
-    };
-    let path = format!("{folder}/{}{ext}", kebab(&name));
-    Some((name, path))
+    }
 }
 
 /// A shard's brief, assembled by CODE from this run's facts: its split, its siblings' splits, the
@@ -909,6 +1012,19 @@ pub(super) fn apply_module_split(
             "reason": "the module task carries no difficulty; its shards carry none either and the DAG reads both as its default",
         }));
     }
+    // VA-102: a shard synthesis gave no exports has no PROVIDES lines to copy into its README; the
+    // brief says so in their place and the run log says it here — never a phrase standing in.
+    for (s, id) in split.shards.iter().zip(shard_ids.iter()) {
+        if s.provides.is_empty() {
+            events.push(serde_json::json!({
+                "event": "shard_provides_empty",
+                "module": module_id,
+                "shard": id,
+                "sections": s.sections,
+                "reason": "synthesis declared no exports for this shard; its brief states the absence where the README's PROVIDES lines would be copied in",
+            }));
+        }
+    }
     // ONE WRITER PER SHARED STATE (split v2 §4): the declaration names each state's single writer;
     // two shards claiming one state is the `cooperate` edge synthesis should have merged into one
     // shard. Said here from the declaration and again from the READMEs at the merger's dispatch;
@@ -1046,8 +1162,19 @@ pub(super) fn size_shards_to_hosts(
         .collect();
     let Some(hosts) = free_hosts.filter(|h| *h >= 2 && *h < declared) else {
         let groups = split.shards.iter().map(|s| vec![s.id.clone()]).collect();
+        let shards = split
+            .shards
+            .into_iter()
+            .map(|s| ShardPlan {
+                clusters: vec![cluster_of(&s)],
+                ..s
+            })
+            .collect();
         return (
-            split,
+            ModuleSplit {
+                interface: split.interface,
+                shards,
+            },
             Sizing {
                 declared,
                 hosts: free_hosts,
@@ -1062,7 +1189,10 @@ pub(super) fn size_shards_to_hosts(
         let members = &split.shards[r];
         groups.push(members.iter().map(|s| s.id.clone()).collect());
         if let [only] = members {
-            shards.push(only.clone());
+            shards.push(ShardPlan {
+                clusters: vec![cluster_of(only)],
+                ..only.clone()
+            });
             continue;
         }
         let mut merged = ShardPlan {
@@ -1079,6 +1209,7 @@ pub(super) fn size_shards_to_hosts(
             sections: Vec::new(),
             provides: Vec::new(),
             writes: Vec::new(),
+            clusters: members.iter().map(cluster_of).collect(),
         };
         let union = |into: &mut Vec<String>, from: &[String]| {
             for x in from {
@@ -1647,40 +1778,105 @@ mod tests {
         assert_eq!(m.fat.len(), 1, "web-viz stays the one fat task: {m:?}");
     }
 
+    /// r6h's declaration of `viz-engine`, verbatim from the run's `.swarm/plan-loaded.json`
+    /// (30 exports: name/kind/signature; the 9 provides of `camera-labels-brush`) and its
+    /// `split_sized` event (seq 466: five clusters, weights [2,3,1,2,4], three hosts, groups
+    /// [[data-stream, render-pick], [camera, labels-brush], [debug-api]]). Purposes omitted —
+    /// the brief's first paragraph never reads them.
+    fn r6h_viz_engine_declaration() -> ModuleSplit {
+        serde_json::from_value(serde_json::json!({
+            "interface": {
+                "exports": [
+                    {"name": "viz3d.toggleBrush", "kind": "method (window.viz3d)", "signature": "toggleBrush(id: string): void"},
+                    {"name": "viz3d.clearBrush", "kind": "method (window.viz3d)", "signature": "clearBrush(): void"},
+                    {"name": "viz3d.brush", "kind": "method (window.viz3d)", "signature": "brush(): string[]"},
+                    {"name": "viz3d.onBrush", "kind": "method (window.viz3d)", "signature": "onBrush(cb: (ids: string[]) => void): void"},
+                    {"name": "vs7dbg.layout", "kind": "method (window.vs7dbg)", "signature": "layout(): {d0: string, D0: number, R0: number}"},
+                    {"name": "vs7dbg.sceneDigest", "kind": "method (window.vs7dbg)", "signature": "sceneDigest(): {count: number, Sh: number, Sh2: number, Sx: number, Sz: number, Sxh: number, Szh: number, brushedCount: number}"},
+                    {"name": "vs7dbg.camera", "kind": "method (window.vs7dbg)", "signature": "camera(): {yaw: number, pitch: number, distance: number, vyaw: number, vpitch: number}"},
+                    {"name": "vs7dbg.setCamera", "kind": "method (window.vs7dbg)", "signature": "setCamera(yaw: number, pitch: number, distance: number): void"},
+                    {"name": "vs7dbg.pick", "kind": "method (window.vs7dbg)", "signature": "pick(sx: number, sy: number): {id: string, index: number} | null"},
+                    {"name": "vs7dbg.pickPixel", "kind": "method (window.vs7dbg)", "signature": "pickPixel(sx: number, sy: number): [number, number, number, number]"},
+                    {"name": "vs7dbg.brush", "kind": "method (window.vs7dbg)", "signature": "brush(): string[]"},
+                    {"name": "vs7dbg.frames", "kind": "method (window.vs7dbg)", "signature": "frames(): number"},
+                    {"name": "loadRecords", "kind": "function (data-stream)", "signature": "loadRecords(): Promise<void>"},
+                    {"name": "applyBatch", "kind": "function (data-stream)", "signature": "applyBatch(batch: {batch: number, records: object[]}): Set<string>"},
+                    {"name": "heightFor", "kind": "function (data-stream)", "signature": "heightFor(amountMinor: number, currency: string): number"},
+                    {"name": "topColorRGB", "kind": "function (data-stream)", "signature": "topColorRGB(status: string): [number, number, number]"},
+                    {"name": "onStreamMessage", "kind": "event-handler (data-stream)", "signature": "onStreamMessage(event: MessageEvent): void"},
+                    {"name": "initViz", "kind": "function (render-pick)", "signature": "initViz(): boolean"},
+                    {"name": "renderFrame", "kind": "function (render-pick)", "signature": "renderFrame(): void"},
+                    {"name": "requestRender", "kind": "function (render-pick)", "signature": "requestRender(): void"},
+                    {"name": "pickCore", "kind": "function (render-pick)", "signature": "pickCore(sx: number, sy: number): {id: string, index: number} | null"},
+                    {"name": "pickPixelCore", "kind": "function (render-pick)", "signature": "pickPixelCore(sx: number, sy: number): [number, number, number, number]"},
+                    {"name": "setPanelState", "kind": "function (render-pick)", "signature": "setPanelState(state: 'ready' | 'empty' | 'error' | 'unavailable'): void"},
+                    {"name": "bindClickInput", "kind": "event-handler (render-pick)", "signature": "bindClickInput(canvas: HTMLCanvasElement): void"},
+                    {"name": "project", "kind": "function (camera)", "signature": "project(x: number, y: number, z: number): {sx: number, sy: number} | null"},
+                    {"name": "getCamera", "kind": "function (camera)", "signature": "getCamera(): {yaw: number, pitch: number, distance: number, vyaw: number, vpitch: number}"},
+                    {"name": "setCameraCore", "kind": "function (camera)", "signature": "setCameraCore(yaw: number, pitch: number, distance: number): void"},
+                    {"name": "bindCameraInput", "kind": "event-handler (camera)", "signature": "bindCameraInput(canvas: HTMLCanvasElement): void"},
+                    {"name": "updateLabels", "kind": "function (labels-brush)", "signature": "updateLabels(): void"},
+                    {"name": "boot", "kind": "function (debug-api)", "signature": "boot(): Promise<void>"}
+                ],
+                "shared_state": "records — columnar full collection; WRITTEN by data-stream. instanceGeom — Float32Array stride 6 [x, z, h, topR, topG, topB]; WRITTEN by data-stream. layoutBasis — {d0, D0, R0}; WRITTEN by data-stream. digestSums; WRITTEN by data-stream. camera — {yaw, pitch, distance, vyaw, vpitch}; WRITTEN by camera. brushSet + brushFlag; WRITTEN by labels-brush. frames; WRITTEN by render-pick.",
+                "layout": ["Constants", "Shared state", "Data → scene", "Streaming", "Camera", "Rendering", "Pick buffer", "Labels", "Brush", "vs7dbg facade", "Boot"]
+            },
+            "shards": [
+                {"id": "data-stream", "responsibility": "Fetch /api/viz/records once, build and maintain the per-instance scene state (stable arrival index n, locked layout basis {d0,D0,R0}, x/z/h geometry with currency-exponent heights, exact status colors, float64 digest sums), and apply SSE batches to exactly the minimal changed set under the byte-accounting budget.", "sections": ["Data → scene", "Streaming diffs — SSE with byte accounting"], "provides": ["loadRecords", "applyBatch", "heightFor", "topColorRGB", "onStreamMessage"], "writes": ["records", "instanceGeom", "layoutBasis", "digestSums"]},
+                {"id": "render-pick", "responsibility": "Create the main-thread WebGL context on #viz3d with DPR-sized backing store, run instanced draws within the ≤8 default-FBO budget under demand-only rendering, maintain the offscreen RGBA8+depth pick FBO with idNum encoding and real-pass accounting for pick/pickPixel, own click-to-brush semantics, and drive the canvas panel states (#viz-empty, #viz-error, 3D-unavailable).", "sections": ["7. `web/` — the frontend", "Rendering — bounded draw calls, demand rendering", "The pick buffer"], "provides": ["initViz", "renderFrame", "requestRender", "pickCore", "pickPixelCore", "setPanelState", "bindClickInput"], "writes": ["frames"]},
+                {"id": "camera", "responsibility": "Own the orbit camera state and exact projection contract, wire drag/wheel-consumed/double-click input on the canvas, and implement the closed-form τ=0.4 s inertia coast with continuous clamps, stop threshold, and cancel rules satisfying the remaining-coast identity and settle budget.", "sections": ["Camera — orbit + inertia"], "provides": ["project", "getCamera", "setCameraCore", "bindCameraInput"], "writes": ["camera"]},
+                {"id": "labels-brush", "responsibility": "Maintain the ONE shared brush set exposed via window.viz3d (with per-instance dim flag upload ≤ stride+4096 and no realloc, plus D1 behavior for streamed mutations) and render the 12 top-a_major DOM labels with pick-buffer occlusion culling and deterministic greedy collision culling.", "sections": ["Screen-space labels — deterministic collision culling", "The linked brush — table ⇄ instances"], "provides": ["viz3d.toggleBrush", "viz3d.clearBrush", "viz3d.brush", "viz3d.onBrush", "updateLabels"], "writes": ["brushSet", "brushFlag"]},
+                {"id": "debug-api", "responsibility": "Wire window.vs7dbg as the synchronous, truthful graded facade over all other shards and own boot-time assembly, carrying the cross-cutting contracts (section 8 overview, performance budgets, rules) that the whole module must satisfy.", "sections": ["8. The 3D field — 12,288 instances, five mechanisms", "`vs7dbg` — REQUIRED and graded", "Performance budgets", "Rules"], "provides": ["vs7dbg.layout", "vs7dbg.sceneDigest", "vs7dbg.camera", "vs7dbg.setCamera", "vs7dbg.pick", "vs7dbg.pickPixel", "vs7dbg.brush", "vs7dbg.frames", "boot"]}
+            ]
+        }))
+        .unwrap()
+    }
+
     /// VA-102 (r6h, BUILD 05:13→06:00, three shards of `viz-engine`, zero live bytes): the shard
     /// `camera-labels-brush` reasoned 102k chars — 49% inside code fences, full piece bodies — with
     /// one `ls` and no file; `data-stream-render-pick` 102k chars, 3 calls, 0 files. Their briefs
-    /// listed every declared name and put the README's structure last. The brief's FIRST
-    /// instruction now names the README, then ONE derived piece, ahead of the interface and the
-    /// module brief. The module and two shard ids are r6h's; the third shard and the exports stand
-    /// in for a declaration the archive did not carry into this brief.
+    /// listed every declared name and put the README's structure last. Now, on r6h's own
+    /// declaration sized onto its three hosts: the first instruction names the README with its
+    /// PROVIDES lines copied in from the declaration (dotted names rejoined with their
+    /// signatures), then the LIGHTEST DECLARED CLUSTER as the first piece — `camera` (weight 1),
+    /// not `viz3d.brush` (the shortest signature, a one-line getter, which the string-length proxy
+    /// picked); `data-stream` (weight 2) before `render-pick` (3), not `initViz`; and `debug-api`,
+    /// one cluster, is told it is its one piece.
     #[test]
     fn the_shard_brief_orders_the_readme_write_before_the_design_r6h() {
-        let split: ModuleSplit = serde_json::from_value(serde_json::json!({
-            "interface": {
-                "exports": [
-                    {"name": "updateBasis", "kind": "function", "signature": "updateBasis(yaw, pitch, distance) -> void", "purpose": "camera basis"},
-                    {"name": "project", "kind": "function", "signature": "project(x, y, z) -> {sx, sy, depth}", "purpose": "world to screen"},
-                    {"name": "updateLabels", "kind": "function", "signature": "updateLabels(visibleIds, projectFn, canvasW, canvasH) -> void", "purpose": "cull and place labels"},
-                    {"name": "toggleBrush", "kind": "function", "signature": "toggleBrush(id) -> void", "purpose": "flip one id in the linked brush"},
-                    {"name": "buildScene", "kind": "function", "signature": "buildScene(data) -> void", "purpose": "fill the instance buffers"},
-                    {"name": "readPickAt", "kind": "function", "signature": "readPickAt(sx, sy) -> {id, index} | null", "purpose": "pick from the FBO"}
-                ],
-                "shared_state": "S = {yaw, pitch, distance, brush: Set<id>, dirty}",
-                "layout": ["constants", "state S", "camera", "labels", "brush", "stream", "render", "pick", "boot"]
-            },
-            "shards": [
-                {"id": "camera-labels-brush", "responsibility": "the orbit camera, label culling and the linked brush", "sections": ["Camera — orbit + inertia", "Screen-space labels", "The linked brush"], "provides": ["updateBasis", "project", "updateLabels", "toggleBrush"], "writes": ["S.brush"]},
-                {"id": "data-stream-render-pick", "responsibility": "the data stream, instanced rendering and the pick FBO", "sections": ["Streaming", "Rendering", "The pick buffer"], "provides": ["buildScene", "readPickAt"]},
-                {"id": "debug-api-boot", "responsibility": "the vs7dbg API and boot", "sections": ["`vs7dbg` — REQUIRED and graded"], "provides": []}
-            ]
-        }))
-        .unwrap();
+        let (sized, sizing) = size_shards_to_hosts(r6h_viz_engine_declaration(), Some(3));
+        assert_eq!(
+            sizing.weights,
+            vec![2, 3, 1, 2, 4],
+            "the run's split_sized.weights"
+        );
+        assert_eq!(
+            sizing.groups,
+            vec![
+                vec!["data-stream".to_string(), "render-pick".to_string()],
+                vec!["camera".to_string(), "labels-brush".to_string()],
+                vec!["debug-api".to_string()],
+            ],
+            "the run's split_sized.groups"
+        );
+        assert_eq!(
+            sized.shards[1]
+                .clusters
+                .iter()
+                .map(|k| (k.id.as_str(), k.weight))
+                .collect::<Vec<_>>(),
+            vec![("camera", 1), ("labels-brush", 2)],
+            "grouping keeps the cluster boundaries"
+        );
         let p = plan(&[
-            ("web-console", &["web/index.html"]),
+            ("console-page", &["web/index.html"]),
             ("viz-engine", &["web/viz.js"]),
         ]);
-        let (out, _) = apply_module_split(&p.to_string(), "viz-engine", &split).unwrap();
+        let (out, events) = apply_module_split(&p.to_string(), "viz-engine", &sized).unwrap();
+        assert!(
+            !events.iter().any(|e| e["event"] == "shard_provides_empty"),
+            "every r6h shard provides names"
+        );
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         let brief_of = |id: &str| -> String {
             v["subtasks"]
@@ -1705,43 +1901,107 @@ mod tests {
         assert!(first < readme_at && readme_at < where_you_work);
         assert!(
             b.contains(
-                "`.swarm/shards/viz-engine/camera-labels-brush/togglebrush.js` (`toggleBrush`)"
+                "PROVIDES: project(x: number, y: number, z: number): {sx: number, sy: number} | null\n\
+                 - getCamera(): {yaw: number, pitch: number, distance: number, vyaw: number, vpitch: number}\n\
+                 - setCameraCore(yaw: number, pitch: number, distance: number): void\n\
+                 - bindCameraInput(canvas: HTMLCanvasElement): void\n\
+                 - viz3d.toggleBrush(id: string): void\n\
+                 - viz3d.clearBrush(): void\n\
+                 - viz3d.brush(): string[]\n\
+                 - viz3d.onBrush(cb: (ids: string[]) => void): void\n\
+                 - updateLabels(): void\n"
             ),
-            "the smallest piece is the shortest declared signature, in the module's extension: {b}"
+            "the 9 provides as copy-in signature lines, dotted names rejoined: {b}"
         );
+        assert!(b.contains("UNFINISHED: camera\n- labels-brush\n"), "{b}");
+        assert!(
+            b.contains("WRITES: camera\n- brushSet\n- brushFlag\n"),
+            "{b}"
+        );
+        assert!(
+            b.contains(
+                "Then write your FIRST PIECE: `.swarm/shards/viz-engine/camera-labels-brush/camera.js` \
+                 — the `camera` cluster, the lightest of your 2 (weight 1: its claimed spec sections, \
+                 floor 1): project, getCamera, setCameraCore, bindCameraInput — alone"
+            ),
+            "the lightest declared cluster, its exports listed: {b}"
+        );
+        assert!(
+            !b.contains("viz3d-brush.js"),
+            "REFUTED proxy: the shortest signature (`brush(): string[]`) is not the first piece"
+        );
+        assert!(b.contains("next piece (`labels-brush`)"));
         assert!(b.contains("Do NOT draft a file's body in your reasoning"));
-        assert!(b.contains("PROVIDES: `updateBasis`, `project`, `updateLabels`, `toggleBrush`"));
-        assert!(b.contains("WRITES: S.brush"));
-        for (id, folder) in [
-            (
-                "viz-engine-camera-labels-brush",
-                ".swarm/shards/viz-engine/camera-labels-brush",
+        assert_eq!(
+            kebab("viz3d.brush"),
+            "viz3d-brush",
+            "a dotted cluster id's piece path"
+        );
+        let ds = brief_of("viz-engine-data-stream-render-pick");
+        assert!(
+            ds.contains(
+                "FIRST PIECE: `.swarm/shards/viz-engine/data-stream-render-pick/data-stream.js` — the \
+                 `data-stream` cluster, the lightest of your 2 (weight 2"
             ),
-            (
-                "viz-engine-data-stream-render-pick",
-                ".swarm/shards/viz-engine/data-stream-render-pick",
+            "weight 2 before weight 3; never `initViz` by signature length: {ds}"
+        );
+        assert!(!ds.contains("initviz.js"));
+        let dbg = brief_of("viz-engine-debug-api");
+        assert!(
+            dbg.contains(
+                "your one cluster `debug-api` is your one piece: \
+                 `.swarm/shards/viz-engine/debug-api/debug-api.js` — vs7dbg.layout, vs7dbg.sceneDigest"
             ),
-            (
-                "viz-engine-debug-api-boot",
-                ".swarm/shards/viz-engine/debug-api-boot",
-            ),
+            "a single-cluster shard is told its one piece is the cluster: {dbg}"
+        );
+        assert!(dbg.contains("WRITES: none\n"));
+        assert!(dbg.contains("- vs7dbg.brush(): string[]\n"));
+        for id in [
+            "viz-engine-camera-labels-brush",
+            "viz-engine-data-stream-render-pick",
+            "viz-engine-debug-api",
         ] {
             let b = brief_of(id);
             assert!(
                 b.find("YOUR FIRST ACTION").unwrap() < b.find("WHERE YOU WORK").unwrap(),
                 "{id}: the write precedes the design material"
             );
-            assert!(
-                b.contains(&format!("write `{folder}/README.md`, first version")),
-                "{id}: README named first"
-            );
         }
-        let dbg = brief_of("viz-engine-debug-api-boot");
+    }
+
+    /// A shard synthesis gave no exports: the absence is SAID (`shard_provides_empty`) and stated
+    /// in the brief where the PROVIDES lines would be — the real section titles, never a phrase.
+    #[test]
+    fn a_shard_with_no_declared_exports_says_so_instead_of_a_phrase() {
+        let mut split = r6h_viz_engine_declaration();
+        split.shards[4].provides.clear();
+        let (sized, _) = size_shards_to_hosts(split, Some(3));
+        let p = plan(&[("viz-engine", &["web/viz.js"])]);
+        let (out, events) = apply_module_split(&p.to_string(), "viz-engine", &sized).unwrap();
+        let ev = events
+            .iter()
+            .find(|e| e["event"] == "shard_provides_empty")
+            .expect("the absence is said");
+        assert_eq!(ev["shard"], "viz-engine-debug-api");
+        assert_eq!(ev["sections"][1], "`vs7dbg` — REQUIRED and graded");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let dbg = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "viz-engine-debug-api")
+            .unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(
-            dbg.contains("`.swarm/shards/viz-engine/debug-api-boot/vs7dbg-required-and-graded.js`"),
-            "no provides: the first claimed section names the piece: {dbg}"
+            dbg.contains(
+                "PROVIDES: (synthesis declared no exports for this shard — `shard_provides_empty` is on \
+                 the run log; list each symbol you define for the sections `8. The 3D field"
+            ),
+            "{dbg}"
         );
-        assert!(dbg.contains("`WRITES: none`"));
+        assert!(!dbg.contains("the names your sections require"));
     }
 
     fn viz_split() -> ModuleSplit {
@@ -2196,15 +2456,45 @@ mod tests {
         assert_eq!(ev["groups"][1][2], "labels-culling");
         assert!(ev["source"].as_str().unwrap().starts_with("fleet"), "{ev}");
 
+        // Unsized, the declaration stands — and each shard now carries itself as its one cluster
+        // (VA-102: the brief names a first piece from the clusters, so the unsized path records them too).
+        let stands = |same: &ModuleSplit, why: &str| {
+            assert_eq!(same.interface, split.interface, "{why}");
+            assert_eq!(same.shards.len(), split.shards.len(), "{why}");
+            for (s, d) in same.shards.iter().zip(split.shards.iter()) {
+                assert_eq!(
+                    (
+                        &s.id,
+                        &s.responsibility,
+                        &s.sections,
+                        &s.provides,
+                        &s.writes
+                    ),
+                    (
+                        &d.id,
+                        &d.responsibility,
+                        &d.sections,
+                        &d.provides,
+                        &d.writes
+                    ),
+                    "{why}"
+                );
+                assert_eq!(
+                    s.clusters,
+                    vec![cluster_of(d)],
+                    "{why}: the shard is its own one cluster"
+                );
+            }
+        };
         let (same, eight) = size_shards_to_hosts(split.clone(), Some(8));
-        assert_eq!(same, split);
+        stands(&same, "eight hosts for eight clusters");
         assert_eq!(eight.groups.len(), 8);
         assert!(sized_event("m", &eight)["source"]
             .as_str()
             .unwrap()
             .starts_with("declaration — no more clusters"));
         let (same, none) = size_shards_to_hosts(split.clone(), None);
-        assert_eq!(same, split, "no count: the declaration stands");
+        stands(&same, "no count: the declaration stands");
         assert!(none.hosts.is_none());
         let ev = sized_event("m", &none);
         assert!(ev["hosts"].is_null());
@@ -4294,6 +4584,8 @@ pub(super) fn gap_specs(
                 Some(n) => n.writes.clone(),
                 None => Vec::new(),
             },
+            // a finished shard is one piece to its merger; no partition ran over it
+            clusters: Vec::new(),
         })
         .collect();
     let base = merger.shards.len();
@@ -4310,6 +4602,7 @@ pub(super) fn gap_specs(
             // a gap shard fills a hole; it writes no shared state of its own (split v2 §4)
             writes: Vec::new(),
             provides: candidate_names(g),
+            clusters: Vec::new(),
         })
         .collect();
     siblings.extend(plans.iter().cloned());
