@@ -1,3 +1,11 @@
+## 2026-09-02 — review + fix campaign (branch goose/mlx-inferencing), ~130 commits
+- Review vs main: 6 reviewers → 6 refuters; 34 findings → 30 confirmed, 4 refuted, 9 reviewer fixes caught wrong. Every shipped fix traced (gate 8) by an independent tracer; 5 further corrections from tracers (S-H2 2→8 slots; S-H1 premise = LM Studio 401 → LMSTUDIO_API_KEY; breaker trips at the 4TH death; U-M3 REFUTED (static meta CSP) → probes moved into main; AgentBusyGuard race).
+- Worker: lockout fix LIVE (Funnel XFF measured per-client), OTP race closed, strict HuJSON policy, nodeSecret contract, sweeper; works-prover WORKS 7/7.
+- Crate: 16 commits (DaemonExited loud, listener-pid readiness, Origin→403, key via file:, allow default OFF gates /execute+/mlx, look-count demotion). Link layer: both busy doors, receiver's mode, validated cwd, no email token. C2: executor/mlx/delta WIRED under goose serve (/execute 202).
+- Swarm: planner engine-aware, per-engine fleet slots, per-engine request knobs, unservable devices leave by name, token-bearing probes, canonical node names carry the engine kind, 503 admission cap = transient. Sidecar: refuse unsupervised listener, proof-gated killpg, breaker wired, progress-based stall, active_requests busy signal.
+- Desktop: Cmd+W/N/Q + mouse-close guards (custom dialog), truth feed for dead lanes (+MLX), per-pid bench reap, fleet probes in main, design system 'LeanZero Studio' + 9 remake surfaces + i18n 15 locales green + the two user-reported fixes.
+- LIVE: real Link connect proven end to end (receipts in NOW.md); packaged app verified in both themes.
+
 # MLX engine campaign — LEDGER
 
 ## 2026-09-01 — LEANZERO LINK wired into goosed (b5c0ab725); P1-P3 real, deeper half is a decision
