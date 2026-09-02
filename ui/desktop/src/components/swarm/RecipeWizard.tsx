@@ -4,27 +4,31 @@ import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import { Button, FOCUS, MOTION, RADIUS, SURFACE, TONE_FILL, TONE_TEXT, TYPE, cx } from '../lz';
 
 /**
  * Goose Local Edition — a GUIDED recipe wizard. It ASKS the questions in the UI (what should the agent do,
  * a name, a one-line description) and assembles + saves a real recipe. This replaces the earlier "build with
  * the swarm" step, which wrongly sent a "please ask me questions" prompt to the swarm PROVIDER — but the
  * swarm is a build orchestrator, not a conversational model, so it just started a build run instead of a Q&A.
+ *
+ * Studio chrome: the one overlay elevation, hairline dividers, the field recipe on border-strong /
+ * surface / body ink, ONE primary Button (Save).
  */
 
-const AZURE = SWARM_STATUS.action;
-
-const inputClass =
-  'w-full bg-background-primary border border-border-primary px-2.5 py-1.5 text-sm text-text-primary focus:border-text-secondary outline-none';
+const FIELD = cx(
+  'w-full border border-lz-border-strong bg-lz-surface px-2.5 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+  RADIUS.control,
+  FOCUS
+);
 
 // Defined at module scope on purpose: a component declared inside RecipeWizard would be a new type
 // on every render, remounting its inputs and dropping focus after each keystroke.
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
-      <div className="text-sm text-text-primary mb-1">{label}</div>
-      {hint && <div className="text-xs text-text-secondary mb-1.5">{hint}</div>}
+      <div className="mb-1 text-lz-body text-lz-ink">{label}</div>
+      {hint && <div className="mb-1.5 text-lz-meta text-lz-ink-3">{hint}</div>}
       {children}
     </div>
   );
@@ -73,29 +77,35 @@ export function RecipeWizard({
   return (
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
       <div
-        className="bg-background-primary border border-border-primary shadow-lg w-[560px] max-h-[88vh] flex flex-col"
-        style={{ borderRadius: CHIP_RADIUS }}
+        className={cx('flex w-[560px] max-h-[88vh] flex-col', SURFACE.overlay)}
         data-testid="recipe-wizard"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
+        <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
           <div className="flex items-center gap-2">
             <span
-              className="flex items-center justify-center h-6 w-6"
-              style={{ backgroundColor: AZURE }}
+              className={cx(
+                'flex h-6 w-6 items-center justify-center',
+                RADIUS.control,
+                TONE_FILL.accent
+              )}
             >
               <LeanZero className="h-4 w-4 text-white" />
             </span>
-            <h3 className="text-sm font-semibold text-text-primary">Draft a recipe</h3>
+            <h3 className={TYPE.h2}>Draft a recipe</h3>
           </div>
-          <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
+          <button
+            onClick={onClose}
+            className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
+            aria-label="Close"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="px-4 py-3 overflow-y-auto space-y-4">
-          <p className="text-xs text-text-secondary flex items-center gap-1.5">
-            <Wand2 className="h-3.5 w-3.5" /> Answer a few questions and Goose saves a recipe your agent can
-            run in a loop.
+        <div className="space-y-4 overflow-y-auto px-4 py-3">
+          <p className={cx('flex items-center gap-1.5', TYPE.bodyMuted)}>
+            <Wand2 className="h-3.5 w-3.5 shrink-0" /> Answer a few questions and Goose saves a
+            recipe your agent can run in a loop.
           </p>
 
           <Field
@@ -107,8 +117,7 @@ export function RecipeWizard({
               onChange={(e) => setInstructions(e.target.value)}
               rows={5}
               placeholder="e.g. Check the CI dashboard for failed jobs, open the logs, and post a summary of any new failures to #alerts."
-              className={inputClass}
-              style={{ borderRadius: CHIP_RADIUS, resize: 'vertical' }}
+              className={cx(FIELD, 'resize-y')}
               autoFocus
             />
           </Field>
@@ -118,8 +127,7 @@ export function RecipeWizard({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. CI failure watcher"
-              className={inputClass}
-              style={{ borderRadius: CHIP_RADIUS }}
+              className={FIELD}
             />
           </Field>
 
@@ -128,32 +136,36 @@ export function RecipeWizard({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Watches CI and summarizes new failures."
-              className={inputClass}
-              style={{ borderRadius: CHIP_RADIUS }}
+              className={FIELD}
             />
           </Field>
 
           {error && (
             <div
-              className="text-xs px-3 py-2 border"
-              style={{ color: SWARM_STATUS.error, borderColor: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }}
+              className={cx(
+                'border border-lz-err px-3 py-2 text-lz-meta',
+                TONE_TEXT.err,
+                RADIUS.control
+              )}
             >
               {error}
             </div>
           )}
         </div>
 
-        <div className="px-4 py-3 border-t border-border-primary flex items-center justify-between">
-          <span className="text-xs text-text-secondary">Saved to Recipes — then create a loop from it.</span>
-          <button
+        <div className="flex items-center justify-between border-t border-lz-border px-4 py-3">
+          <span className="text-lz-meta text-lz-ink-3">
+            Saved to Recipes — then create a loop from it.
+          </span>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => void save()}
             disabled={!canSave || saving}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: AZURE, borderRadius: CHIP_RADIUS }}
+            icon={saving ? <Loader2 className="animate-spin" /> : <Check />}
           >
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
             Save recipe
-          </button>
+          </Button>
         </div>
       </div>
     </div>
