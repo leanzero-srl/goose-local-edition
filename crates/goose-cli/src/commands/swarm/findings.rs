@@ -345,10 +345,12 @@ pub(super) fn missing_deliverable_finding(file: &str) -> String {
 /// `on == false` returns None on every input => no finding is ever pushed => byte-identical. Pure so the
 /// distinction is unit-testable without a python3 on the box.
 ///
-/// PROVENANCE NOTE (VA-134): this finding has no `FindingSource` of its own — it rides the smoke
-/// gate's batch tag (`FindingSource::SmokeGate`, the build/test/entry oracle, class CRITICAL), so
-/// its label reads `critical` while the green partition reads it as a minor (no `engine_critical`
-/// wording, not a render probe). `verdict_severity_mismatches` makes that disagreement loud.
+/// PROVENANCE (VA-136, the root cause of VA-134's r6h row): this finding carries its OWN source,
+/// `FindingSource::RequireTests` (class MEDIUM — the class the green partition already gave it:
+/// no `engine_critical` wording, not a render probe), tagged by `tag_require_tests` at the smoke
+/// gate BEFORE the gate's batch tag. Until VA-136 it rode that batch tag
+/// (`FindingSource::SmokeGate`, CRITICAL), so its label read `critical` on a minor;
+/// `verdict_severity_mismatches` is the instrument that made that loud, and it stays.
 pub(super) fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Option<String> {
     if !on {
         return None;
@@ -359,6 +361,19 @@ pub(super) fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Optio
          skip a failing test to go green."
             .to_string()
     })
+}
+
+/// VA-136: the no-executable-tests finding's own tag, called at the smoke gate AHEAD of the
+/// gate's batch tag — `FindingProvenance::tag` is first-writer-wins (`or_insert`), so the tag
+/// that lands first owns the text and a later batch tag cannot relabel it. Keyed on the
+/// finding's exact text, the registry's own transport key: tagged only when the gate actually
+/// pushed it (the lever on and `TestRunVerdict::NoTests`, the one verdict that authors it).
+pub(super) fn tag_require_tests(prov: &mut FindingProvenance, findings: &[String]) {
+    if let Some(text) =
+        require_tests_finding(&TestRunVerdict::NoTests, true).filter(|t| findings.contains(t))
+    {
+        prov.tag(FindingSource::RequireTests, std::slice::from_ref(&text));
+    }
 }
 
 /// Does a browser console line name an UNCAUGHT JS EXCEPTION — `ReferenceError: x is not
@@ -566,6 +581,11 @@ pub(super) enum FindingSource {
     /// run_smoke_gate: the build/test/entry oracle (did not build, entry exited non-zero,
     /// failing tests).
     SmokeGate,
+    /// run_smoke_gate under GOOSE_SWARM_REQUIRE_TESTS: the app ships NO executable tests
+    /// (`pytest -q` collected 0). Its own source since VA-136: riding the smoke gate's batch tag
+    /// labelled it `critical` while the green partition ships it as a minor — r6h's one
+    /// `verdict_severity_mismatch` row (VA-134).
+    RequireTests,
     /// A planned task FAILED and the smoke gate was blind — a deterministic engine event.
     FailedTask,
     /// The planned-deliverable stat: a source deliverable is missing/empty on disk.
@@ -643,7 +663,9 @@ impl FindingSource {
     }
 
     /// THE DERIVATION TABLE. Class rules: app-unusable product checks are CRITICAL;
-    /// feature-severing evidence is HIGH; contract/shape is MEDIUM; cosmetic is LOW.
+    /// feature-severing evidence is HIGH; contract/shape is MEDIUM (the spec's test contract
+    /// too — an empty suite verifies nothing, but the app runs: `RequireTests`, the class the
+    /// green partition already gives it); cosmetic is LOW.
     pub(super) fn severity(self) -> FindingSeverity {
         match self {
             FindingSource::BootProbe
@@ -661,7 +683,8 @@ impl FindingSource {
             | FindingSource::DomIdScan => FindingSeverity::High,
             FindingSource::EndpointContractProbe
             | FindingSource::AggregateTruth
-            | FindingSource::HttpTimeoutScan => FindingSeverity::Medium,
+            | FindingSource::HttpTimeoutScan
+            | FindingSource::RequireTests => FindingSeverity::Medium,
             FindingSource::RenderGateStyling | FindingSource::CssCoherenceScan => {
                 FindingSeverity::Low
             }
@@ -678,7 +701,7 @@ impl FindingSource {
     pub(super) fn probe(self) -> &'static str {
         match self {
             FindingSource::BootProbe => "boot probe",
-            FindingSource::SmokeGate => "smoke gate",
+            FindingSource::SmokeGate | FindingSource::RequireTests => "smoke gate",
             FindingSource::FailedTask => "failed planned task",
             FindingSource::MissingDeliverable => "planned-deliverable stat",
             FindingSource::EndpointDeadProbe | FindingSource::EndpointContractProbe => {
@@ -705,6 +728,7 @@ impl FindingSource {
         match self {
             FindingSource::BootProbe => "boot probe (advertised entry never bound)",
             FindingSource::SmokeGate => "smoke gate (build/test/entry oracle)",
+            FindingSource::RequireTests => "smoke gate (no executable tests)",
             FindingSource::FailedTask => "failed planned task (engine event)",
             FindingSource::MissingDeliverable => "planned-deliverable stat (missing/empty)",
             FindingSource::EndpointDeadProbe => "endpoint dead probe (hang / dark reads)",
@@ -2043,21 +2067,34 @@ mod tests {
         );
     }
 
-    /// VA-134, r6h's exact shape: the no-executable-tests finding, tagged by the smoke gate's
-    /// batch tag, is a MINOR to the green partition (`passed` stays true) and `critical` to the
-    /// label. One mismatch row names the finding, both readings and the authoring check; a
-    /// medium-labelled minor produces none; `passed` is unchanged by either.
+    /// VA-134 → VA-136, r6h's exact shape: the no-executable-tests finding tagged at the smoke
+    /// gate — its own source FIRST, then the gate's batch tag. The partition still reads it as a
+    /// minor (`passed` unchanged), its label now reads `medium` from its own source, and the
+    /// mismatch rows are EMPTY (`mismatched` absent from complete_result). Nothing is tagged
+    /// when the gate did not push the finding.
     #[test]
-    fn a_critical_labelled_minor_is_one_mismatch_row_and_never_blocks_passed() {
+    fn the_require_tests_finding_carries_its_own_source_and_r6h_has_no_mismatch_rows() {
         let no_tests = require_tests_finding(&TestRunVerdict::NoTests, true).unwrap();
         let shape = "POST /api/drafts's response does not carry the documented field(s) \
                      `amount_minor`"
             .to_string();
+        let gate_findings = vec![no_tests.clone()];
         let mut prov = FindingProvenance::default();
-        prov.tag(FindingSource::SmokeGate, std::slice::from_ref(&no_tests));
+        tag_require_tests(&mut prov, &gate_findings);
+        prov.tag(FindingSource::SmokeGate, &gate_findings);
         prov.tag(
             FindingSource::EndpointContractProbe,
             std::slice::from_ref(&shape),
+        );
+        assert_eq!(
+            prov.source_of(&no_tests),
+            Some(FindingSource::RequireTests),
+            "its own source, not the batch tag's"
+        );
+        assert_eq!(prov.severity_label(&no_tests), "medium");
+        assert_eq!(
+            prov.source_label(&no_tests),
+            "smoke gate (no executable tests)"
         );
         let findings = vec![no_tests.clone(), shape.clone()];
         let (criticals, minors) = prov.partition_criticals(&findings);
@@ -2067,17 +2104,32 @@ mod tests {
         );
         assert_eq!(minors, findings);
         let passed = criticals.is_empty() && !minors.iter().any(|m| prov.is_render_class(m));
+        assert!(passed, "r6h's verdict stands — unchanged by the label");
         assert!(
-            passed,
-            "r6h's verdict stands — the label never blocks green"
+            prov.verdict_severity_mismatches(&minors).is_empty(),
+            "label and partition agree: no row"
         );
+        let mut none = FindingProvenance::default();
+        tag_require_tests(&mut none, std::slice::from_ref(&shape));
+        assert_eq!(none.source_of(&no_tests), None);
+        assert_eq!(none.source_of(&shape), None);
+    }
 
+    /// The tag ORDER is the rule: `tag` keeps the first writer, so the batch tag landing first
+    /// (the pre-VA-136 site) reproduces r6h's `critical`-labelled minor and its ONE mismatch
+    /// row — the instrument keeps guarding the next unsourced finding.
+    #[test]
+    fn the_batch_tag_landing_first_reproduces_r6hs_mismatch_row() {
+        let no_tests = require_tests_finding(&TestRunVerdict::NoTests, true).unwrap();
+        let gate_findings = vec![no_tests.clone()];
+        let mut prov = FindingProvenance::default();
+        prov.tag(FindingSource::SmokeGate, &gate_findings);
+        tag_require_tests(&mut prov, &gate_findings);
+        assert_eq!(prov.source_of(&no_tests), Some(FindingSource::SmokeGate));
+        let (criticals, minors) = prov.partition_criticals(&gate_findings);
+        assert!(criticals.is_empty());
         let rows = prov.verdict_severity_mismatches(&minors);
-        assert_eq!(
-            rows.len(),
-            1,
-            "one row per critical/high-labelled minor: {rows:?}"
-        );
+        assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0]["event"], "verdict_severity_mismatch");
         assert_eq!(rows[0]["partition"], "minor");
         assert_eq!(rows[0]["label"], "critical");
@@ -2086,9 +2138,5 @@ mod tests {
             rows[0]["finding"],
             no_tests.chars().take(160).collect::<String>()
         );
-        // The count `complete_result` carries is the rows' length; a medium-only list has none.
-        assert!(prov
-            .verdict_severity_mismatches(std::slice::from_ref(&shape))
-            .is_empty());
     }
 }
