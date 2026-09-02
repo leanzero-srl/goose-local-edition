@@ -2122,7 +2122,6 @@ mod tests {
             id: id.into(),
             title: id.into(),
             objective: objective.into(),
-            questions: Vec::new(),
             weight: 3,
             sections: sections.iter().map(|s| s.to_string()).collect(),
         };
@@ -2947,6 +2946,25 @@ pub(super) fn lang_for_path(path: &str, run_lang: super::TargetLang) -> super::T
 /// local, not what the module provides, so indentation decides: a local read as a definition
 /// would be a "duplicate" across shards and a "dropped" name after every merge. Python:
 /// `def`/`async def`/`class`, and top-level `NAME = …`. Other languages: `fn`/`func` heads.
+/// Is `rhs` (the text after `=`) a function VALUE — `function …`, `async …`, `(params) => …` or
+/// `x => …` — as opposed to a value that merely CONTAINS an arrow inside a call? VA-100 (r6g,
+/// `.swarm/shards/viz-engine/labels-brush/updateLabels.js:47`): the indented
+/// `const candIds = new Set(cands.map((n) => rec.ids[n]))` read as a Function `candIds` under
+/// "contains `=>`" — a false duplicate the moment two shards share an inner arrow name. ONE rule
+/// for the `const`/`let`/`var` arm and the dotted-assignment arm: the arrow must be the rhs's
+/// OWN — right after its leading parenthesised parameter list, or right after one bare
+/// identifier. Indentation is deliberately NOT the law for JS: an IIFE-wrapped module (r6c's
+/// viz.js, `the_extractor_finds_every_definition_shape_once`) indents every real definition.
+fn rhs_is_function(rhs: &str) -> bool {
+    if rhs.starts_with("function") || rhs.starts_with("async") {
+        return true;
+    }
+    if rhs.starts_with('(') {
+        return after_params(rhs).is_some_and(|rest| rest.trim_start().starts_with("=>"));
+    }
+    ident_at(rhs).is_some_and(|name| rhs.split_at(name.len()).1.trim_start().starts_with("=>"))
+}
+
 pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symbol> {
     let mut out: Vec<Symbol> = Vec::new();
     // JS object-literal depth, so `{ pick, brush }` shorthand PROPERTIES are recorded — flagged
@@ -3132,13 +3150,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                                 .filter(|r| !r.starts_with('='))
                                 .map(str::trim_start);
                             match rhs {
-                                Some(rhs)
-                                    if rhs.starts_with("function")
-                                        || rhs.starts_with("async")
-                                        || (rhs.contains("=>")
-                                            && (rhs.starts_with('(')
-                                                || ident_at(rhs).is_some())) =>
-                                {
+                                Some(rhs) if rhs_is_function(rhs) => {
                                     push(name, params_after(rhs), line, SymbolKind::Function);
                                 }
                                 _ if top_level && !name.contains('.') => {
@@ -3162,10 +3174,7 @@ pub(super) fn extract_symbols(source: &str, lang: super::TargetLang) -> Vec<Symb
                         if let Some(rhs) = after.strip_prefix('=') {
                             let rhs = rhs.trim_start();
                             if !rhs.starts_with('=') {
-                                if rhs.starts_with("function")
-                                    || rhs.starts_with("async")
-                                    || rhs.contains("=>")
-                                {
+                                if rhs_is_function(rhs) {
                                     push(name, params_after(rhs), line, SymbolKind::Function);
                                 } else if top_level {
                                     push(name, None, line, SymbolKind::State);
@@ -4620,6 +4629,58 @@ mod merger_tests {
                 "api".into(),
             ],
         }
+    }
+
+    /// VA-100, on r6g's `.swarm/shards/viz-engine/labels-brush/updateLabels.js` (its lines 10-16,
+    /// 18, 40, 46-49 verbatim, plus one indented real arrow and one dotted call value): the
+    /// indented `const candIds = new Set(cands.map((n) => rec.ids[n]))` is a LOCAL holding a value
+    /// that merely contains an arrow inside a call — "contains `=>`" recorded it as a Function
+    /// `candIds`, a false duplicate whenever two shards share an inner name. The arrow must be the
+    /// rhs's OWN: the module's real definitions — the four constants, the two state names, the two
+    /// functions — are found once each, `cands` / `candIds` / `placed` / `shown` and the dotted
+    /// `window.viz.pickLabel = new Set(…)` are not, and an indented REAL arrow (an IIFE-wrapped
+    /// module) still is.
+    #[test]
+    fn a_value_that_merely_contains_an_arrow_inside_a_call_is_not_a_function_definition() {
+        let js = "const LABEL_W = 110; // CSS px, border-box\nconst LABEL_H = 18;  // CSS px, border-box\nconst LABEL_DX = 10; // rect top-left = (A.sx + 10, A.sy - 9)\nconst LABEL_DY = -9;\n\nlet labelHost = null;        // #viz-labels element (absolutely positioned over the canvas)\nconst labelEls = new Map();  // record id -> persistent .viz-label element (reused across frames)\n\nfunction ensureLabelEl(id) {\n  return labelEls.get(id);\n}\n\nfunction updateLabels() {\n  labelHost = host;\n\n  const cands = labelCandidates(); // priority order: a_major DESC, id ASC\n  const candIds = new Set(cands.map((n) => rec.ids[n]));\n  const placed = [];               // rects of already-shown labels this pass\n  const shown = new Set();\n  const byId = (n) => rec.ids[n];\n  window.viz.pickLabel = new Set(cands.map((n) => n));\n}\n";
+        let syms = extract_symbols(js, super::super::TargetLang::TypeScript);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "LABEL_W",
+                "LABEL_H",
+                "LABEL_DX",
+                "LABEL_DY",
+                "labelHost",
+                "labelEls",
+                "ensureLabelEl",
+                "updateLabels",
+                "byId"
+            ],
+            "{syms:?}"
+        );
+        let kind_of = |n: &str| &syms.iter().find(|s| s.name == n).unwrap().kind;
+        assert_eq!(
+            kind_of("byId"),
+            &SymbolKind::Function,
+            "an indented REAL arrow is still a function (IIFE-wrapped modules)"
+        );
+        assert_eq!(
+            kind_of("labelEls"),
+            &SymbolKind::State,
+            "`new Map()` at top level is state, never a function"
+        );
+        assert_eq!(kind_of("LABEL_W"), &SymbolKind::Constant);
+        assert_eq!(kind_of("ensureLabelEl"), &SymbolKind::Function);
+        // The rule itself, on the shapes that decide it.
+        assert!(rhs_is_function("(v, lo, hi) => v;"));
+        assert!(rhs_is_function("n => rec.ids[n];"));
+        assert!(rhs_is_function("async (x) => x;"));
+        assert!(rhs_is_function("function (dt) {};"));
+        assert!(!rhs_is_function("new Set(cands.map((n) => rec.ids[n]));"));
+        assert!(!rhs_is_function("useCallback((a) => a, []);"));
+        assert!(!rhs_is_function("110; // CSS px"));
     }
 
     /// The archived r6c viz.js (39,519 bytes) carries FIVE names defined twice — hoisted empty

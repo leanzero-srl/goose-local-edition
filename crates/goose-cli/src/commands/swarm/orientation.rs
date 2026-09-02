@@ -13,7 +13,7 @@
 use super::OpenOutput;
 
 /// SYNTHESIS TAKES THE SLICES DIRECTLY (P1-5): each slice's brief IS the slice — its objective
-/// plus its own questions, plus the decisions PARTITION (item 0: settled answers quoted verbatim;
+/// plus its research lane's answers, plus the decisions PARTITION (item 0: settled answers quoted verbatim;
 /// only a still-open one keeps "choose the conventional option"). RESEARCH used to write these
 /// briefs over 48 measured minutes (r2) with
 /// 2 of 3 nodes idle, and its median-4,789-char paraphrases did not prevent the five wrong-key
