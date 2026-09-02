@@ -114,3 +114,7 @@ writing only — aim under 40 tool uses for a five-commit brief and say when you
 ## Wiring a new value — test at the CONSUMER (VA-119, 2026-09-02)
 
 When a change introduces a value that crosses a seam (a landing, a channel, a map entry), the test asserts the value at the CONSUMER — the fan's return, the brief text, the plan door — never only at the producer. VA-118's first wiring persisted, emitted and relayed every tool-landed row perfectly and returned only a COUNT to `research_fan`, so synthesis saw zero rows from a compliant lane; 886 tests passed because none read the return. The review found it; the proof chain could not. Name the consumer in the commit message.
+
+## Baselines come from the counter, never from arithmetic (VA-140, 2026-09-02)
+
+When you move `SWARM_RS_LINE_BASELINE`, `UNWRAP_OR_DEFAULT_BASELINE` or `LIVE_NUMERIC_LITERAL_BASELINE`, set it to the number a REPLICA of the gate's own counter yields on your branch (`wc -l`; the `unwrap_or_default()` grep over `run_path_files`; the cfg(test)-skipping literal scan), and print that count in the commit. VA-137 set 28 → 27 by subtracting one removed literal while the real count was 33: six literals had landed after the gate's mint, and the gate was red on staging until VA-140 measured it. A baseline moved by arithmetic on the previous baseline is a guess.
