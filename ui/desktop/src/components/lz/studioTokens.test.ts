@@ -40,6 +40,10 @@ const SURFACE_TOKENS = [
   '--color-lz-accent-hover',
   '--color-lz-secondary',
   '--color-lz-secondary-ink',
+  '--color-lz-syntax-key',
+  '--color-lz-syntax-string',
+  '--color-lz-syntax-number',
+  '--color-lz-syntax-bool',
 ];
 
 function luminance(hex: string): number {
@@ -104,6 +108,13 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
         4.5
       );
       expect(contrast('#ffffff', theme['--color-lz-accent-hover'])).toBeGreaterThan(4.5);
+      // The syntax palette is TEXT on the surface (the JSON viewer): AA in both themes.
+      for (const register of ['key', 'string', 'number', 'bool']) {
+        expect(
+          contrast(theme[`--color-lz-syntax-${register}`], theme['--color-lz-surface']),
+          register
+        ).toBeGreaterThan(4.5);
+      }
     }
     expect(contrast('#ffffff', '#1d4ed8')).toBeGreaterThan(4.5);
   });

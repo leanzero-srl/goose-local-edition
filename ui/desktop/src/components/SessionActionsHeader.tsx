@@ -201,7 +201,7 @@ function JsonPrimitiveValue({
       return (
         <button
           type="button"
-          className="min-w-0 rounded-sm text-left text-blue-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active dark:text-blue-300 break-all"
+          className="min-w-0 rounded-sm text-left text-lz-syntax-string underline decoration-dotted underline-offset-2 hover:decoration-solid focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active break-all"
           onClick={() => onOpenText({ path, value })}
           title={path}
         >
@@ -210,17 +210,15 @@ function JsonPrimitiveValue({
       );
     }
 
-    return (
-      <span className="min-w-0 text-emerald-700 dark:text-emerald-300 break-all">{preview}</span>
-    );
+    return <span className="min-w-0 text-lz-syntax-string break-all">{preview}</span>;
   }
 
   if (typeof value === 'number') {
-    return <span className="text-purple-700 dark:text-purple-300">{value}</span>;
+    return <span className="text-lz-syntax-number">{value}</span>;
   }
 
   if (typeof value === 'boolean') {
-    return <span className="text-amber-700 dark:text-amber-300">{String(value)}</span>;
+    return <span className="text-lz-syntax-bool">{String(value)}</span>;
   }
 
   if (value === null) {
@@ -252,7 +250,7 @@ function JsonTreeNode({
 
   const labelNode =
     label === undefined ? null : (
-      <span className="text-text-secondary">{isArrayItem ? label : JSON.stringify(label)}:</span>
+      <span className="text-lz-syntax-key">{isArrayItem ? label : JSON.stringify(label)}:</span>
     );
 
   if (!isContainer) {
@@ -557,7 +555,10 @@ export default function SessionActionsHeader({
             <Button variant="outline" onClick={() => setIsRenameOpen(false)} disabled={isRenaming}>
               {intl.formatMessage(i18n.cancel)}
             </Button>
-            <Button onClick={() => void handleRename()} disabled={isRenaming || !renameValue.trim()}>
+            <Button
+              onClick={() => void handleRename()}
+              disabled={isRenaming || !renameValue.trim()}
+            >
               {isRenaming ? intl.formatMessage(i18n.saving) : intl.formatMessage(i18n.save)}
             </Button>
           </DialogFooter>

@@ -447,6 +447,14 @@
   --color-lz-secondary: var(--color-lz-secondary, #6d28d9);
   --color-lz-secondary-ink: var(--color-lz-secondary-ink, #ffffff);
 
+  /* Syntax palette — the JSON viewer's four value registers (key / string / number / bool).
+     Strong, not pastel; each measures over 4.5:1 on the surface in both themes
+     (studioTokens.test.ts). Falls back to the light value like accent-hover and secondary. */
+  --color-lz-syntax-key: var(--color-lz-syntax-key, #0369a1);
+  --color-lz-syntax-string: var(--color-lz-syntax-string, #15803d);
+  --color-lz-syntax-number: var(--color-lz-syntax-number, #7e22ce);
+  --color-lz-syntax-bool: var(--color-lz-syntax-bool, #c2410c);
+
   /* Status triad — `-solid` is a FILL carrying white ink; the bare token is for text, icons, dots. */
   --color-lz-ok: var(--color-status-ok, #16a34a);
   --color-lz-warn: var(--color-status-warn, #d97706);
@@ -487,6 +495,10 @@
   --color-lz-accent-hover: #1e40af;
   --color-lz-secondary: #6d28d9;
   --color-lz-secondary-ink: #ffffff;
+  --color-lz-syntax-key: #0369a1;
+  --color-lz-syntax-string: #15803d;
+  --color-lz-syntax-number: #7e22ce;
+  --color-lz-syntax-bool: #c2410c;
 }
 
 /* LeanZero Studio surfaces — dark. */
@@ -503,6 +515,10 @@
   --color-lz-accent-hover: #2563eb;
   --color-lz-secondary: #c084fc;
   --color-lz-secondary-ink: #0b1220;
+  --color-lz-syntax-key: #38bdf8;
+  --color-lz-syntax-string: #4ade80;
+  --color-lz-syntax-number: #a78bfa;
+  --color-lz-syntax-bool: #fb923c;
 }
 
 /* Host-button hover fills — HOST-WIDE, not .local-edition: ui/button.tsx renders in every edition
