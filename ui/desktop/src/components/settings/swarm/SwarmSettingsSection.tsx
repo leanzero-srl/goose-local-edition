@@ -60,6 +60,7 @@ import {
   WeightStepper,
   nodeHue,
 } from '../../leanzero-swarm/studio';
+import { LOCAL_CHIP, chipFor } from '../../leanzero-swarm/cloud';
 
 // The engine-config (config.yaml) field each UI knob writes through to — snake_case, the same
 // fields `goose swarm run` resolves when no per-run env override is present.
@@ -339,11 +340,6 @@ const CLOUD_PROVIDERS = [
   { seg: 'DeepSeek', cli: 'deepseek', label: 'DeepSeek', keyPlaceholder: 'DeepSeek API key (sk-…)', region: false },
 ] as const;
 type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
-const chipFor = (provider: string | null | undefined) =>
-  CLOUD_PROVIDERS.find((c) => c.cli === provider) ?? null;
-/** A node is local unless a cloud provider claims it. The list is node-first, so the provider travels
- *  with the node as a quiet label rather than being a mode the whole panel is in. */
-const LOCAL_CHIP = { seg: 'LM Studio' } as const;
 
 const NODE_PROVIDERS = ['LM Studio', ...CLOUD_PROVIDERS.map((c) => c.seg)] as [string, ...string[]];
 type NodeProvider = string;
