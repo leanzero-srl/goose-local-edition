@@ -44,39 +44,31 @@ function readMark() {
   };
   const goose = grab(/export const GOOSE_PATH =\s*'([^']+)'/, 'GOOSE_PATH')[1];
   const lPath = grab(/export const LEANZERO_MARK_L = '([^']+)'/, 'LEANZERO_MARK_L')[1];
-  const halo = Number(grab(/export const LEANZERO_MARK_HALO = ([\d.]+)/, 'LEANZERO_MARK_HALO')[1]);
   const centre = grab(/GOOSE_CENTRE = \{ x: ([\d.]+), y: ([\d.]+) \}/, 'GOOSE_CENTRE');
   const geeseBlock = grab(/export const LEANZERO_MARK_GEESE = \[([\s\S]*?)\];/, 'LEANZERO_MARK_GEESE')[1];
   const geese = [...geeseBlock.matchAll(/\{ x: (-?[\d.]+), y: (-?[\d.]+), scale: (-?[\d.]+), rotate: (-?[\d.]+) \}/g)].map(
     (m) => ({ x: +m[1], y: +m[2], scale: +m[3], rotate: +m[4] })
   );
   if (geese.length !== 2) die(`expected 2 geese in LEANZERO_MARK_GEESE, found ${geese.length}`);
-  return { goose, lPath, halo, cx: +centre[1], cy: +centre[2], geese };
+  return { goose, lPath, cx: +centre[1], cy: +centre[2], geese };
 }
 
 const M = readMark();
 const at = (g) => `translate(${g.x} ${g.y}) rotate(${g.rotate}) scale(${g.scale}) translate(${-M.cx} ${-M.cy})`;
-const [back, front] = M.geese;
 
-/** The mark's inner SVG, mask and all — the string form of LeanZeroMarkContent. */
-const markInner = (id) => `
-  <mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
-    <rect width="64" height="64" fill="white"/>
-    <path d="${M.goose}" transform="${at(front)}" fill="black" stroke="black"
-          stroke-width="${M.halo / front.scale}" stroke-linejoin="round"/>
-  </mask>
-  <path d="${M.lPath}"/>
-  <g mask="url(#${id})"><path d="${M.goose}" transform="${at(back)}"/></g>
-  <path d="${M.goose}" transform="${at(front)}"/>`;
+/** The mark's inner SVG — the string form of LeanZeroMarkContent. The geese simply overlap and
+ *  merge; the back one's leading wing passes under the front one and is not drawn. */
+const markInner = () =>
+  `<path d="${M.lPath}"/>` + M.geese.map((g) => `<path d="${M.goose}" transform="${at(g)}"/>`).join('');
 
 /** The app icon: a solid plate on Apple's grid (824 of 1024) carrying the mark in white. */
 const appIconSvg = (px) => `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 1024 1024">
   <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="${PLATE}"/>
-  <g transform="translate(512 512) scale(7.1) translate(-32 -32)" fill="#ffffff">${markInner('app')}</g>
+  <g transform="translate(512 512) scale(7.1) translate(-32 -32)" fill="#ffffff">${markInner()}</g>
 </svg>`;
 
 const traySvg = (extra = '', viewBox = '0 0 64 64', w = 512, h = 512) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${viewBox}" fill="#000000">${markInner('tray')}${extra}</svg>`;
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${viewBox}" fill="#000000">${markInner()}${extra}</svg>`;
 
 const WORK = mkdtempSync(path.join(tmpdir(), 'lz-icons-'));
 const shot = (svg, out, w, h) => {
