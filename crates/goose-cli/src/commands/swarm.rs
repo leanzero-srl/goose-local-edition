@@ -160,8 +160,8 @@ mod findings;
 use findings::engine_critical;
 use findings::{
     console_error_is_exception, dedupe_findings_exact, elide_middle, missing_deliverable_finding,
-    parse_finding_verdicts, parse_numbered_findings, require_tests_finding, FindingProvenance,
-    FindingSource,
+    parse_finding_verdicts, parse_numbered_findings, require_tests_finding, tag_require_tests,
+    FindingProvenance, FindingSource,
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
@@ -28741,6 +28741,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // wave and the reporting, and never gates (green stays the engine_critical
             // partition below, membership unchanged).
             let mut prov = FindingProvenance::default();
+            // VA-136: the no-executable-tests finding names its own check FIRST — `tag` keeps the
+            // first writer, so the batch tag below cannot relabel it `critical` (r6h's mismatch row).
+            tag_require_tests(&mut prov, &verdict.findings);
             prov.tag(FindingSource::SmokeGate, &verdict.findings);
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
             // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
