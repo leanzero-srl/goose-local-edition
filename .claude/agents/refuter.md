@@ -29,3 +29,10 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Learned 2026-09-02 (six passes over ~34 findings: 4 refuted outright, 3 partial, 9 proposed fixes corrected or rejected)
+- "Not constructible" is the refutation, and the CONSTRUCTION often finds the real defect: R-L5 (two daemons) died in 0.02s on safesocket, but building it exposed MeshEngine::start probing AFTER spawn (a dead child adopted); R-M4/FH#7's UnknownPeer was unreachable (self id == target → local dispatch) and two real issues surfaced instead. Report the new defect with its own anchors.
+- Probe the LIVE deployment when one exists: W-H1 was confirmed by the KV already holding `rl:ip:unknown:*` buckets and a 10×200/5×429 probe — live evidence beats reading.
+- A CORRECTED FIX is itself a claim — measure the mechanism it rests on. The U-M3 correction (add the swarm origin to the header CSP) was refuted by the tracer: the packaged renderer is a file:// document with a STATIC meta CSP that headers can only narrow, and the fix regressed every default install. When a correction depends on a runtime fact (document origin, CSP source, a flag's default), name it as verified or as an assumption.
+- Check the proposed fix's reachability at the commit it would land in (the flag's default, what a sibling commit changes): R-H1's fix was wrong-by-omission (one of two doors), U-H1's assumed main watched stamps it never reads.
+- When the tree is mid-edit by siblings, anchor in the COMMIT (`git show <sha>`) as well as the tree, and say which you read.

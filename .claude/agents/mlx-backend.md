@@ -77,3 +77,13 @@ observations REPORTED, never silently fixed out of scope. Campaign files
 AUTHORITATIVE SOURCES: crates/goose-sidecar/src/{engine.rs,hf.rs,lib.rs},
 crates/goose/src/acp/server/mlx_engine.rs, local-edition/mlx/LEDGER.md,
 local-edition/skills/goose-mlx-inference/SKILL.md.
+
+## Learned 2026-09-02 (sidecar E + the Q1 busy signal, measured)
+- MEASURE THE PROCESS TREE before any kill design: `uv` is a REAL parent of the python engine (same group); SIGTERM is forwarded, SIGKILL is NOT (SIGKILL uv → python re-parents to 1 still holding the port).
+- Law 4's "never killpg" is now the PROOF-GATED form of gates §4 (7d08bc4b3): `sigkill_owned_group` may killpg ONLY the child's own group when `getpgid(pid)==pid && pid!=getpgrp()`; an orphan (pgid≠pid) fails the proof → per-pid. `release_port` partitions LISTEN pids by pgid and never signals a foreign listener.
+- `lsof -ti :PORT` lists CLIENT connections too (negative control: it named goosed's own status-poll keep-alive) — use `lsof -ti TCP:PORT -sTCP:LISTEN`.
+- A warm 9B load has a measured 4.91s zero-progress gap: every stall window must exceed it (180s default; the 5s grace is not a stall bound; the 600s startup literal is gone). Residual: the sampler counts CPU spent answering our own probes, so an engine answering /v1/models 5xx never stalls.
+- Rapid-MLX 0.13.1 `/v1/status` → {num_running, num_waiting, status}; busy = the SUM (sample 1 read `idle 0 2`); `--max-concurrent-requests N` is a HARD 503 "Server is busy" admission cap, not a queue; the sidecar passes no api key, so an exported RAPID_MLX_API_KEY drops it from reportedNodes entirely (probeError).
+- `ensure_running` trips the breaker on the FOURTH death per supervisor (`restarts.len()>=3` checked before push) — e09790ad0's message said third; count before writing the number. A same-id orphan is ADOPTED by ensure_loaded's fast path; S-H3's refuse-on-listener fires only after our own shutdown.
+- `SidecarConfig::new(name, cmd, base_url, expected_model_id)` (4 args); `probe()` requires `data[0].id == expected`; mounting an identical config on a healthy engine VERIFIES and keeps the pid — unmount+mount is the explicit restart.
+- Q1's brief SANCTIONED the DTO's TS mirror + one hook edit in ui/desktop; absent that sentence the NEVER above stands — report exact wire names and let the panel-surgeon land the mirror.
