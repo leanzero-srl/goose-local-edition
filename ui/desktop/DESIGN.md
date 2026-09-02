@@ -86,7 +86,10 @@ tokens.ts adds the ink). Emphasis inside a step: `WEIGHT.medium` / `WEIGHT.semib
 
 **Measured:** `font-medium`, `font-semibold`, `font-bold` and `font-normal` compile to NO rule in
 this app — the MCP theme registration sets `--font-weight-*` to `initial`. Every such class in
-the existing app is a silent no-op; the Studio never uses them.
+the existing app is a silent no-op; the Studio never uses them. (Re-measured 2026-09-02 through
+`candidatesToCss`: the no-op set is exactly those four; `font-extrabold` DOES emit a rule. The rule
+stands regardless — never rely on any host `font-*` weight utility; use `font-lz-medium` /
+`font-lz-semibold`, which resolve to the Studio tokens in both editions.)
 
 ## Rhythm, radius, motion, elevation
 
