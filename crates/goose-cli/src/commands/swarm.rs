@@ -89,6 +89,7 @@ use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod lang;
 mod lang_arms;
 mod ledger_writers;
+mod memory;
 mod parse_checks;
 use lang::detect_language;
 mod repair_waves;
@@ -167,6 +168,7 @@ use pitfalls::relevant_pitfalls;
 mod vendor_probe;
 use vendor_probe::{json_rows_evidence, probe_vendor, read_vendor_probe_rows, spec_vendor};
 mod fleet_order;
+mod occupancy;
 mod telemetry_rates;
 use fleet_order::{
     aux_candidate_models, configured_speed_weight, fanout_over_fleet, least_loaded_aux_model,
@@ -9716,25 +9718,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
-    #[test]
-    fn dispatch_occupancy_is_honest_fraction() {
-        // 3 nodes, 10-min window = 30 node-min available. 15 node-min held => 50%.
-        assert_eq!(
-            dispatch_occupancy_pct(15 * 60_000, 10.0 * 60_000.0, 3),
-            50.0
-        );
-        // Fully idle fleet.
-        assert_eq!(dispatch_occupancy_pct(0, 10.0 * 60_000.0, 3), 0.0);
-        // Degenerate denominators never divide-by-zero or emit garbage.
-        assert_eq!(dispatch_occupancy_pct(999, 0.0, 3), 0.0);
-        assert_eq!(dispatch_occupancy_pct(999, 10.0, 0), 0.0);
-        // Rounding-slop above 100 is clamped, never > 100%.
-        assert_eq!(
-            dispatch_occupancy_pct(31 * 60_000, 10.0 * 60_000.0, 3),
-            100.0
-        );
-    }
-
     /// A scout that reads the vendor's live docs with `curl` has looked something up. One that echoes a URL
     /// has not. MEASURED on a bench run whose `research_tools` was `{available: [], can_look_things_up:
     /// false}`: 11 curl requests reached the vendor and the scout quoted `GET /v1/payments?cursor=&limit=`
@@ -11349,6 +11332,9 @@ pub struct GooseAgentDispatcher {
     /// VA-060 (gate 10): the run's language and the Python-only arms already said not to apply
     /// (`lang_unsupported`), set once by `run_linear_plan` before the first lane runs.
     lang_arms: lang_arms::LangArms,
+    /// VA-139: the run's cross-run memory handle (`memory::RunMemory`), set once by
+    /// `run_linear_plan` beside `lang_arms`; empty and `memory_off` at every door under benchmark.
+    memory: memory::MemoryCell,
     /// OWNED-FILE FENCE (GOOSE_SWARM_OWNED_FILE_FENCE, #131): file -> (owner_task_id, authoritative bytes)
     /// captured when a file-owning task completes. Before the integrate-verify sink runs, any owned file whose
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
@@ -11551,6 +11537,7 @@ impl GooseAgentDispatcher {
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             spec_frozen: Mutex::new(String::new()),
             lang_arms: lang_arms::LangArms::default(),
+            memory: memory::MemoryCell::default(),
             owner_snapshots: Mutex::new(HashMap::new()),
             transcript_failures: Mutex::new(std::collections::HashSet::new()),
             stream_decode_retry,
@@ -19469,10 +19456,13 @@ impl GooseAgentDispatcher {
     /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices
     /// (each with the spec sections it owns) and the decisions the spec genuinely leaves open.
     /// It writes NO questions (VA-089): each slice's research lane derives its own, in parallel.
+    /// `learned` is the memory block (VA-139, `memory::opener_user_text`) — empty under benchmark,
+    /// so the turn is then byte-identical.
     pub(crate) async fn open_slices(
         &self,
         planner_model: &str,
         user_prompt: &str,
+        learned: &str,
     ) -> Result<OpenOutput> {
         let existing = existing_files_manifest(&self.working_dir);
         let existing_block = if existing.is_empty() {
@@ -19593,12 +19583,20 @@ impl GooseAgentDispatcher {
                 "spec_chars": user_prompt.chars().count(),
                 "orientation_chars": orientation.chars().count(),
             }));
-            format!(
-                "The request, as its ORIENTATION INDEX (the engine splices each section's full \
-                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}"
+            memory::opener_user_text(
+                &format!(
+                    "The request, as its ORIENTATION INDEX (the engine splices each section's \
+                     full text into the owning slice's brief after you answer):\n\n{orientation}"
+                ),
+                learned,
+                &sources_block,
             )
         } else {
-            format!("The request:\n\n{user_prompt}{sources_block}")
+            memory::opener_user_text(
+                &format!("The request:\n\n{user_prompt}"),
+                learned,
+                &sources_block,
+            )
         };
         let out = self
             .run_agent_timed_at(
@@ -20087,6 +20085,8 @@ async fn run_linear_plan(
     devices: &[DeviceCfg],
     cwd_for_ask: &std::path::Path,
     ask_wait_secs: u64,
+    run_id: &str,
+    vendor_shape: Option<&str>,
 ) -> Result<(String, Dag, PlanConf)> {
     let worker_models: Vec<String> = live_fleet_slots(devices);
 
@@ -20105,9 +20105,18 @@ async fn run_linear_plan(
     let tree_at_start: Vec<String> = existing_files_manifest(&dispatcher.working_dir);
     // VA-060: the run's language on the dispatcher for every lane's Python-only arm — the same
     // pure derivation `lang` below makes for the plan door, made before the first lane runs.
-    dispatcher
-        .lang_arms
-        .set(detect_language(&opts.prompt, &tree_at_start));
+    let lang_at_start = detect_language(&opts.prompt, &tree_at_start);
+    dispatcher.lang_arms.set(lang_at_start);
+    // VA-139: the memory key — the tree at start, the vendor's probed SHAPE, the language — set
+    // beside `lang_arms`; every door renders empty and says `memory_off` under benchmark.
+    dispatcher.memory.set(memory::RunMemory::new(
+        memory::MemoryStore::open(memory::MemoryStore::default_root()),
+        lang_at_start,
+        &tree_at_start,
+        vendor_shape,
+        run_id,
+        benchmark(),
+    ));
     sink.write_value(serde_json::json!({"event": "phase", "phase": "open"}));
     let t_open = std::time::Instant::now();
     // OPEN PROCEEDS REGARDLESS. Section 8.1 says so and the code did not: this was a single `?`, so a
@@ -20119,8 +20128,13 @@ async fn run_linear_plan(
     // single-slice fallback: the whole request as one slice. That always parses, always validates, and
     // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
     // is a worse plan and still a plan.
+    // VA-139: what earlier builds of this shape measured, rendered ONCE (the re-ask reuses it);
+    // empty under benchmark, so the opener's turn is then byte-identical (`opener_user_text`).
+    let learned = dispatcher
+        .memory
+        .render_for(&memory::Consumer::Opener, sink.as_ref());
     let opened = match dispatcher
-        .open_slices(&cfg.planner_model, &opts.prompt)
+        .open_slices(&cfg.planner_model, &opts.prompt, &learned)
         .await
     {
         Ok(o) => o,
@@ -20130,7 +20144,7 @@ async fn run_linear_plan(
                 style("!").yellow()
             );
             match dispatcher
-                .open_slices(&cfg.planner_model, &opts.prompt)
+                .open_slices(&cfg.planner_model, &opts.prompt, &learned)
                 .await
             {
                 Ok(o) => o,
@@ -23619,35 +23633,10 @@ fn author_pitfalls_on() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_AUTHOR_PITFALLS", load_config().author_pitfalls)
 }
 
-/// Emit the honest fleet dispatch-occupancy alongside run_finished. Observability only. `swarm.occupancy` in
-/// config; env wins. OFF => run_finished is byte-identical.
-fn occupancy_on() -> bool {
-    swarm_gate_cfg("GOOSE_SWARM_OCCUPANCY", load_config().occupancy)
-}
-
 /// Inject the write-first (skeleton-first) mold into every worker prompt. `swarm.write_first` in config; env
 /// wins. OFF => the worker prompt is byte-identical (the block is an empty string).
 fn write_first_on() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_WRITE_FIRST", load_config().write_first)
-}
-
-/// Honest fleet DISPATCH-OCCUPANCY: the fraction (0-100%) of available node-time a node actually HELD a task,
-/// computed from the scheduler's per-device task-holding time (`busy_ms`), NOT from CPU/generation sampling.
-///
-/// This distinction is the whole point (§1-#10): a `PARALLEL:1` local model blocked on I/O reads 0% CPU while
-/// it is BUSY holding a dispatched task, so a CPU-sampled "12% util / 85% idle" figure overstates idleness and
-/// any headroom claim resting on it. Dispatch-occupancy cannot lie that way — a node either holds a task or it
-/// does not.
-///
-/// `busy_node_ms` = Σ busy_ms over devices; `wall_ms` = the wall-clock window; `node_count` = fleet size. A
-/// device runs tasks sequentially so its busy_ms ≤ wall_ms, hence the sum ≤ wall_ms·node_count and the ratio
-/// is a true fraction (clamped only against float rounding). Pure — unit-testable without a run.
-fn dispatch_occupancy_pct(busy_node_ms: u64, wall_ms: f64, node_count: usize) -> f64 {
-    if node_count == 0 || wall_ms <= 0.0 {
-        return 0.0;
-    }
-    let cap = wall_ms * node_count as f64;
-    ((busy_node_ms as f64 / cap) * 100.0).clamp(0.0, 100.0)
 }
 
 /// Render the pillars as a worker-prompt block. Empty pillars -> empty string (a true no-op), so injection is
@@ -25579,6 +25568,17 @@ impl GooseAgentDispatcher {
                 }));
             }
         }
+        // VA-139: the facts earlier builds measured about THIS task's owned files, appended after
+        // the brief floor measured the plan's own brief; empty under benchmark (`memory_off`).
+        let learned = self.memory.render_for(
+            &memory::Consumer::Worker {
+                task_id: &req.task_id,
+                owned_files: req.owned_files.as_slice(),
+            },
+            self.events.as_ref(),
+        );
+        let with_memory = memory::with_learned(effective_description, &learned);
+        let effective_description: &str = &with_memory;
         // II-8: a re-dispatch must not start blind. The generic transient hint GUESSES ("any file
         // you had written is still on disk") and on r2 that guess was false — ledger-core-tests'
         // attempt 0 wrote nothing, and attempt 1 opened on a lie, twice. The II-1 capture survives
@@ -27395,6 +27395,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // the fragment complete); an endpoint body over the budget is `vendor_probe_truncated` plus a
     // CUT marker in the block, and an advertised GET the probe could not fetch is
     // `vendor_probe_fetch_failed` plus a listed line — said, never dropped.
+    // VA-139: the vendor's SHAPE (host class + the version segment its endpoints share) for the
+    // memory key; None when the spec names no vendor — the key's documented absent form.
+    let mut vendor_shape: Option<String> = None;
     {
         let (docs_url, base_url, vendor_key) = spec_vendor(&opts.prompt);
         if let (Some(docs_url), Some(base_url)) = (docs_url, base_url) {
@@ -27427,6 +27430,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .map(|p| p.url.clone())
                     .collect::<Vec<_>>(),
             }));
+            vendor_shape = Some(memory::vendor_shape(&base_url, &probe.endpoints));
             // VA-126: an advertised GET whose query template is an opaque token (`?cursor=<next>`)
             // is not requested at all — r6h's blind `?cursor=1` 400'd `bad_cursor` on every run —
             // and the absence is SAID once per path. Reading the parameter's first-page form off
@@ -28000,6 +28004,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             &devices,
             &cwd_for_ask,
             ask_wait_secs,
+            &run_id,
+            vendor_shape.as_deref(),
         )
         .await?
     };
@@ -29979,39 +29985,29 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "gates_min": (gates_m * 10.0).round() / 10.0,
         "total_min": (total_m * 10.0).round() / 10.0,
     });
-    // HONEST DISPATCH-OCCUPANCY (§1-#10 / #104). OFF => `phases_value` is untouched and run_finished is
-    // byte-identical to today. ON => add the fraction of node-time a node actually HELD a task (from the
-    // scheduler's per-device busy_ms), NOT a CPU sample — the instrument the "12% util" figure needs before
-    // any headroom claim (B1) may be trusted. `_run` divides the SAME execute-phase busy time by the WHOLE-run
-    // wall (the analog of the historical whole-run util); `_execute` divides by the execute window alone.
-    if occupancy_on() {
-        let busy_node_ms: u64 = report.per_device.values().map(|s| s.busy_ms).sum();
-        let occ_execute = dispatch_occupancy_pct(busy_node_ms, execute_m * 60_000.0, fleet_size);
-        let occ_run = dispatch_occupancy_pct(busy_node_ms, total_m * 60_000.0, fleet_size);
-        let busy_node_min = (busy_node_ms as f64 / 60_000.0 * 10.0).round() / 10.0;
-        let round1 = |x: f64| (x * 10.0).round() / 10.0;
-        if let Some(obj) = phases_value.as_object_mut() {
-            obj.insert("fleet_nodes".into(), serde_json::json!(fleet_size));
-            obj.insert("busy_node_min".into(), serde_json::json!(busy_node_min));
-            obj.insert(
-                "dispatch_occupancy_execute_pct".into(),
-                serde_json::json!(round1(occ_execute)),
-            );
-            obj.insert(
-                "dispatch_occupancy_run_pct".into(),
-                serde_json::json!(round1(occ_run)),
-            );
-        }
-        eprintln!(
-            "dispatch-occupancy (node HELD a task, not CPU): execute {:.1}% · whole-run {:.1}% across {} node(s) ({:.1} node-min busy)",
-            occ_execute, occ_run, fleet_size, busy_node_min
-        );
-    }
+    // HONEST DISPATCH-OCCUPANCY (§1-#10 / #104, `occupancy.rs`): OFF => `phases_value` untouched.
+    occupancy::annotate_phases(
+        &mut phases_value,
+        report.per_device.values().map(|s| s.busy_ms).sum::<u64>(),
+        execute_m,
+        total_m,
+        fleet_size,
+    );
     sink.write_value(serde_json::json!({
         "event": "run_finished",
         "report": report_value,
         "phases": phases_value,
     }));
+    // VA-139: what this run measured about itself, read back from its own stream and stored under
+    // the tree it BUILT (`memory_written`, then `memory_retired`; `memory_off` under benchmark).
+    // Before the stdout report: the desktop provider kills the CLI the instant it reads that.
+    dispatcher.memory.close_run(
+        &snapshot_tree_files(&working_dir)
+            .into_keys()
+            .collect::<Vec<String>>(),
+        log_path.as_deref(),
+        sink.as_ref(),
+    );
 
     if json {
         println!(
