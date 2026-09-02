@@ -20561,7 +20561,7 @@ fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut 
         // replanner re-added the task four minutes into BUILD with the shadow back. The work the
         // planner assigned survives at an unshadowed path inside the package; only a path some
         // other task already claims falls back to the old drop.
-        let rewritten = format!("{prefix}impl.py");
+        let rewritten = format!("{prefix}{}", plan_repairs::PACKAGE_IMPL_FILE);
         let rewrite_free = !subtasks.iter().any(|st| owns(st, &rewritten));
         if let Some(files) = subtasks[module_owner]
             .get_mut("files")
@@ -21449,12 +21449,6 @@ where
     // The event above carries COUNTS; the full text — the briefs the workers will actually
     // receive — goes to the `.swarm/plan.json` sidecar so the vigil can read it between now and
     // plan_loaded (r6c: 133k chars of briefs, persisted nowhere for the whole planning window).
-    // VA-104: an answer that names another task's file, or the asker's own file where another
-    // task's objective names it, rides into THAT task's description with the plan's owner stated —
-    // r6h's ledgerd-core re-derived and drafted webhook registration beside webhooks-workflow
-    // because the per-slice filter kept q5/q6/q14 in one brief. Every plan the door sees passes
-    // here (the DAG-invalid flat plan below too). `answer_routing.rs`.
-    let plan_json = route_cross_slice_answers(plan_json, &briefs, research, sink.as_ref());
     persist_plan_sidecar(working_dir, "plan.json", &plan_json, sink.as_ref());
 
     // (The LLM REVIEW round that ran here is deleted — VA-014; see this function's doc. The
@@ -21466,6 +21460,12 @@ where
     // injects advertised entry files, and emits `plan_repaired` every time — actions or none.
     let plan_json =
         finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
+    // VA-104: an answer naming another task's file, or the asker's own file where another task's
+    // objective names it, rides into THAT task's description with the plan's owner stated (r6h's
+    // ledgerd-core drafted webhook registration beside webhooks-workflow). AFTER the repairs, so
+    // the owner map holds FINAL paths — the module/package rename rewrites only the renamed
+    // task's own brief; the DAG-invalid flat plan below walks the same order. `answer_routing.rs`.
+    let plan_json = route_cross_slice_answers(plan_json, &briefs, research, sink.as_ref());
 
     // THE SPLIT (VA-021 / VA-024): on the finalized plan, spec sections per owned file are
     // measured against the plan's own distribution; a fat task (r6c web-viz: 7 sections → 1 file →
@@ -21501,19 +21501,19 @@ where
                 "  {} the synthesised plan will not load ({e}) — one task per slice instead",
                 style("!").yellow().bold()
             );
-            plan_json = finalize_plan_before_dag(
-                route_cross_slice_answers(
+            plan_json = route_cross_slice_answers(
+                finalize_plan_before_dag(
                     flat_plan_from_briefs(&briefs, lang, user_prompt),
-                    &briefs,
-                    research,
-                    sink.as_ref(),
+                    user_prompt,
+                    every_decision_settled,
+                    sink,
+                    // Finding 6: the second finalize of one planning pass — tagged so the tick's
+                    // fired-twice defect line can except it instead of paging on a legitimate arm.
+                    "dag_fallback",
                 ),
-                user_prompt,
-                every_decision_settled,
-                sink,
-                // Finding 6: the second finalize of one planning pass — tagged so the tick's
-                // fired-twice defect line can except it instead of paging on a legitimate arm.
-                "dag_fallback",
+                &briefs,
+                research,
+                sink.as_ref(),
             );
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
