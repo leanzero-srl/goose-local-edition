@@ -11680,9 +11680,8 @@ pub struct GooseAgentDispatcher {
     /// running session, never a restream. Nothing here bounds or ends anything.
     research_running: Mutex<HashMap<String, research::RelayTarget>>,
     research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
-    /// VA-118 (wired r6j): activity key -> the per-answer landing of a research lane between its
-    /// dispatch and its rows (`research_tool`); the `research_answer` tool is registered only for
-    /// a key present here, and each of its calls lands one row through `land_research_answer`.
+    /// VA-118: activity key -> a research lane's per-answer landing between dispatch and its rows
+    /// (`research_tool`); the `research_answer` tool is registered only for a key present here.
     research_landing: Mutex<HashMap<String, ResearchLanding>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
@@ -12858,8 +12857,7 @@ impl GooseAgentDispatcher {
                                     });
                                 }
                             },
-                            // VA-118: the agent parks the lane on its result channel until this
-                            // replies (`research_tool::frontend_tool_result` — every arm replies).
+                            // VA-118: the agent parks the lane until this replies (every arm replies).
                             MessageContent::FrontendToolRequest(req) => {
                                 let result = self.frontend_tool_result(activity_key, req);
                                 agent.handle_tool_result(req.id.clone(), result).await;
@@ -21171,14 +21169,14 @@ impl GooseAgentDispatcher {
                         )
                         .await;
                     let secs = t.elapsed().as_secs();
-                    // The rows the lane's research_answer calls already landed (VA-118): the final
-                    // reply folds only the REMAINDER, numbered after them.
-                    let landed = me
+                    // VA-118: the rows the lane's research_answer calls already landed — the final
+                    // reply folds only the REMAINDER, numbered after them; the rows seed the return.
+                    let (landed, landed_rows) = me
                         .research_landing
                         .lock()
                         .unwrap()
                         .remove(&key)
-                        .map_or(0, |l| l.next_q_index);
+                        .map_or((0, Vec::new()), ResearchLanding::close);
                     let folded = match out {
                         Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
                         Err(e) => Err(e.to_string()),
@@ -21202,7 +21200,9 @@ impl GooseAgentDispatcher {
                         }));
                     }
                     me.research_running.lock().unwrap().remove(&key);
-                    let mut out_rows: Vec<ResearchRow> = Vec::new();
+                    // Tool-landed rows first (persisted, emitted, relayed at their landing), then the
+                    // remainder: this one list is what synthesis reads; disk minis are read at resume.
+                    let mut out_rows: Vec<ResearchRow> = landed_rows;
                     for row in lane_rows {
                         // The mini is written for BOTH outcomes — the absence is a fact the
                         // ledger holds — and the events (one funnel, `emit_research_outcome`:

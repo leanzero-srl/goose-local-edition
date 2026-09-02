@@ -1,7 +1,8 @@
 //! The per-answer research landing (VA-118 item 4, wired r6j): a slice lane's `research_answer`
 //! tool call lands ONE settled question as one ledger mini the moment the lane calls it —
-//! persisted, emitted through the one outcome funnel, relayed to the sibling lanes — instead of
-//! every answer arriving in one final_output after an hour at 0 bytes (r6i's
+//! persisted, emitted through the one outcome funnel, relayed to the sibling lanes, and KEPT on
+//! the landing so the fan returns it to synthesis beside the final reply's remainder — instead
+//! of every answer arriving in one final_output after an hour at 0 bytes (r6i's
 //! research-web-console-structure lane: output frame empty for 63 minutes, 113,720 reasoning
 //! chars, nine answers at once). The tool is a goose FRONTEND extension: the agent yields
 //! `MessageContent::FrontendToolRequest` and parks the lane on its result channel until
@@ -9,30 +10,35 @@
 //! would park the lane forever. Nothing here bounds or ends anything: a call that cannot be
 //! folded is a named stray and an error reply the lane can act on, never a stop.
 
+use std::path::Path;
+
 use goose::agents::ExtensionConfig;
 use goose::conversation::message::FrontendToolRequest;
 use rmcp::model::{CallToolResult, Content, ErrorCode, ErrorData, Tool};
 
 use super::research::{
     emit_research_outcome, fold_research_entry, persist_research_row, relay_note, relay_targets,
-    research_answer_tool_schema, research_mini_name, RelayTarget, ResearchRow,
+    research_answer_tool_schema, research_mini_name, RelayTarget, ResearchRow, StrayAnswer,
     RESEARCH_ANSWER_TOOL,
 };
-use super::GooseAgentDispatcher;
+use super::{EventSink, GooseAgentDispatcher};
 
 /// One research lane's landing state for the life of its call, keyed by the lane's activity key
 /// in `GooseAgentDispatcher::research_landing`: the slice the rows belong to, the model that
 /// answers (row attribution), the call's start (`secs` on each row is the lane's elapsed at the
-/// landing) and the q_index the next landed entry takes — the count landed so far, which the
-/// fan reads back after the call so the final reply's remainder continues the numbering
-/// (`fold_research_lane_from`). The index advances only when a row lands: a stray never burns
-/// a number.
+/// landing), the q_index the next landed entry takes and the rows landed so far. The fan takes
+/// both back after the call (`close`): the count numbers the final reply's remainder
+/// (`fold_research_lane_from`) and the rows seed the lane's returned rows — a mini on disk is
+/// re-read only at resume, so a row that lived on disk alone never reached synthesis (the review
+/// of the first wiring: the better a lane obeyed the tool, the blinder the plan). The index
+/// advances only when a row lands: a stray never burns a number.
 #[derive(Debug)]
 pub(super) struct ResearchLanding {
     slice: String,
     model: String,
     started: std::time::Instant,
-    pub(super) next_q_index: usize,
+    next_q_index: usize,
+    landed: Vec<ResearchRow>,
 }
 
 impl ResearchLanding {
@@ -42,7 +48,52 @@ impl ResearchLanding {
             model: model.to_string(),
             started: std::time::Instant::now(),
             next_q_index: 0,
+            landed: Vec::new(),
         }
+    }
+
+    /// ONE tool call → one row landed NOW: folded at the next q_index (`fold_research_entry`),
+    /// persisted (`persist_research_row`), emitted through the one outcome funnel
+    /// (`emit_research_outcome`) plus `research_answer_landed{task, slice, q_index, kind, status,
+    /// chars, raised, via: tool}` so the vigil sees answers arrive mid-lane, and kept for
+    /// `close`. A stray (no question text, nothing parseable) lands NO row and is the caller's to
+    /// name.
+    fn land(
+        &mut self,
+        root: &Path,
+        events: &dyn EventSink,
+        key: &str,
+        arguments: &str,
+    ) -> Result<ResearchRow, StrayAnswer> {
+        let row = fold_research_entry(
+            &self.slice,
+            self.next_q_index,
+            &self.model,
+            self.started.elapsed().as_secs(),
+            arguments,
+        )?;
+        self.next_q_index += 1;
+        persist_research_row(root, events, &row);
+        emit_research_outcome(events, &row);
+        events.write_value(serde_json::json!({
+            "event": "research_answer_landed",
+            "task": key,
+            "slice": row.slice,
+            "q_index": row.q_index,
+            "kind": row.kind,
+            "status": row.status,
+            "chars": row.answer.chars().count(),
+            "raised": row.raised.len(),
+            "via": "tool",
+        }));
+        self.landed.push(row.clone());
+        Ok(row)
+    }
+
+    /// What the fan takes back after the call: the next q_index (the remainder's first) and the
+    /// landed rows, in q_index order, already persisted, emitted and relayed.
+    pub(super) fn close(self) -> (usize, Vec<ResearchRow>) {
+        (self.next_q_index, self.landed)
     }
 }
 
@@ -123,15 +174,13 @@ impl GooseAgentDispatcher {
         }
     }
 
-    /// ONE `research_answer` call → one row landed NOW: folded at the lane's next q_index
-    /// (`fold_research_entry`), persisted (`persist_research_row`), emitted through the one
-    /// outcome funnel (`emit_research_outcome`) plus `research_answer_landed{task, slice,
-    /// q_index, kind, status, chars, raised, via: tool}` so the vigil sees answers arrive
-    /// mid-lane, and relayed to the still-running sibling lanes (`queue_research_relay`). A call
-    /// on a key with no landing open (a lane the fan never registered — `research_answer_unopened`)
-    /// or an entry with no question text lands NO row: `research_batch_stray_answer{via: tool}`
-    /// names it and the tool's error reply tells the lane what was missing, so its next call can
-    /// carry it. MILD: an error reply is information for the lane, never a stop.
+    /// ONE `research_answer` call on this lane: `ResearchLanding::land` under the landing lock,
+    /// then the relay to the still-running sibling lanes (`queue_research_relay`) and the reply
+    /// naming the mini and the next index. A call on a key with no landing open (a lane the fan
+    /// never registered — `research_answer_unopened`) or an entry with no question text lands
+    /// NO row: `research_batch_stray_answer{via: tool}` names it and the tool's error reply
+    /// tells the lane what was missing, so its next call can carry it. MILD: an error reply is
+    /// information for the lane, never a stop.
     pub(super) fn land_research_answer(
         &self,
         key: Option<&str>,
@@ -143,7 +192,7 @@ impl GooseAgentDispatcher {
             ))]);
         };
         let text = arguments.to_string();
-        let folded = {
+        let landed = {
             let mut landing = self.research_landing.lock().unwrap();
             let Some(open) = landing.get_mut(key) else {
                 self.events.write_value(serde_json::json!({
@@ -156,35 +205,12 @@ impl GooseAgentDispatcher {
                      the entry in final_output"
                 ))]);
             };
-            match fold_research_entry(
-                &open.slice,
-                open.next_q_index,
-                &open.model,
-                open.started.elapsed().as_secs(),
-                &text,
-            ) {
-                Ok(row) => {
-                    open.next_q_index += 1;
-                    Ok(row)
-                }
-                Err(stray) => Err((open.slice.clone(), stray)),
-            }
+            let slice = open.slice.clone();
+            open.land(&self.working_dir, self.events.as_ref(), key, &text)
+                .map_err(|stray| (slice, stray))
         };
-        match folded {
+        match landed {
             Ok(row) => {
-                persist_research_row(&self.working_dir, self.events.as_ref(), &row);
-                emit_research_outcome(self.events.as_ref(), &row);
-                self.events.write_value(serde_json::json!({
-                    "event": "research_answer_landed",
-                    "task": key,
-                    "slice": row.slice,
-                    "q_index": row.q_index,
-                    "kind": row.kind,
-                    "status": row.status,
-                    "chars": row.answer.chars().count(),
-                    "raised": row.raised.len(),
-                    "via": "tool",
-                }));
                 self.queue_research_relay(&row);
                 CallToolResult::success(vec![Content::text(format!(
                     "landed {} ({}, kind {}); q{} is the next question you settle; final_output \
@@ -241,7 +267,22 @@ impl GooseAgentDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use super::super::research::{
+        briefs_from_slices, fold_research_lane_from, load_research_mini, RESEARCH_ANSWERED,
+        RESEARCH_UNANSWERED,
+    };
+    use super::super::{NullSink, OpenOutput, OpenSlice, SwarmEvent};
     use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ValueSink(Mutex<Vec<serde_json::Value>>);
+    impl EventSink for ValueSink {
+        fn emit(&self, _event: &SwarmEvent) {}
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().unwrap().push(value);
+        }
+    }
 
     #[test]
     fn the_tool_is_one_entry_under_its_bare_name() {
@@ -257,5 +298,95 @@ mod tests {
             .description
             .as_deref()
             .is_some_and(|d| d.contains("once per question")));
+    }
+
+    /// The fan's take after the call, as `research_fan`'s closure performs it: the landing's
+    /// `close` seeds the lane's returned rows with the tool-landed rows, the final reply folds
+    /// only the remainder numbered after them, and the brief renders the tool-landed answer under
+    /// ANSWERS SETTLED AT PLAN TIME. (The closure itself needs a model; this is the seam it
+    /// calls, with its two lines replicated verbatim.)
+    #[test]
+    fn a_tool_landed_row_reaches_the_lane_rows_and_the_brief() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let mut landing = ResearchLanding::open("api", "m");
+        let entry = serde_json::json!({
+            "question": "which port",
+            "kind": "design",
+            "cite": "request.md:12 'boots on'",
+            "alternatives": ["8850", "8000"],
+            "open_because": "L12 names the vendor's port, not the app's",
+            "answer": "Port 8850, from the spec's own boot table."
+        });
+        let row = landing
+            .land(dir.path(), &sink, "research-api", &entry.to_string())
+            .unwrap();
+        assert_eq!((row.q_index, row.status.as_str()), (0, RESEARCH_ANSWERED));
+        assert!(load_research_mini(dir.path(), "api", 0).is_some());
+        assert!(
+            landing
+                .land(dir.path(), &sink, "research-api", "not json")
+                .is_err(),
+            "a stray lands no row"
+        );
+        {
+            let ev = sink.0.lock().unwrap();
+            let landed: Vec<&serde_json::Value> = ev
+                .iter()
+                .filter(|e| e["event"] == "research_answer_landed")
+                .collect();
+            assert_eq!(landed.len(), 1);
+            assert_eq!(landed[0]["q_index"], 0);
+            assert_eq!(landed[0]["via"], "tool");
+            assert_eq!(landed[0]["task"], "research-api");
+        }
+        // research_fan, after the call:
+        let (landed, mut out_rows) = Some(landing).map_or((0, Vec::new()), ResearchLanding::close);
+        assert_eq!(landed, 1, "the stray burned no index");
+        let (remainder, strays) = fold_research_lane_from(
+            "api",
+            "m",
+            300,
+            Ok(serde_json::json!({
+                "answers": [{"question": "which storage", "kind": "design", "answer": ""}]
+            })
+            .to_string()),
+            landed,
+        );
+        assert!(strays.is_empty());
+        out_rows.extend(remainder);
+        assert_eq!(
+            out_rows
+                .iter()
+                .map(|r| (r.q_index, r.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, RESEARCH_ANSWERED), (1, RESEARCH_UNANSWERED)],
+            "tool-landed first, the remainder numbered after it"
+        );
+        let opened = OpenOutput {
+            slices: vec![OpenSlice {
+                id: "api".into(),
+                title: "the api".into(),
+                objective: "serve GET /health".into(),
+                weight: 3,
+                sections: Vec::new(),
+            }],
+            open_decisions: Vec::new(),
+        };
+        let briefs = briefs_from_slices(&opened, "build the app", &out_rows, &[], &NullSink);
+        let b = &briefs[0].brief;
+        let settled_at = b
+            .find("ANSWERS SETTLED AT PLAN TIME")
+            .expect("the tool-landed answer is settled at plan time");
+        assert!(
+            b.split_at(settled_at)
+                .1
+                .contains("Q: [design] which port\nA: Port 8850, from the spec's own boot table."),
+            "the tool-landed row renders under ANSWERS SETTLED:\n{b}"
+        );
+        let questions_at = b.find("QUESTIONS this slice must settle").unwrap();
+        assert!(
+            settled_at < questions_at && b.split_at(questions_at).1.contains("- which storage")
+        );
     }
 }
