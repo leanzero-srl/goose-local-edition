@@ -521,6 +521,91 @@ pub(super) fn thin_brief_missing(
     missing
 }
 
+/// VA-102: the ONE owned file a worker writes FIRST, named in its brief so the first action is a
+/// concrete `write` and not a design of every file. r6h (BUILD 05:13→06:00, three lanes, zero live
+/// bytes): `ledgerd-core` reasoned 72k chars over "So let me write all 8 files. Plan:" with 0 files;
+/// the shard `viz-engine-camera-labels-brush` drafted 46,410 of 95,233 reasoning chars INSIDE code
+/// fences — full piece bodies it then had to retype — because its brief asked for every declared
+/// name and never said which file comes first. A 27B cannot hold five files and then type them.
+///
+/// Derived from THIS task's facts, never a literal: the owned file the description names the
+/// FEWEST times (a spec section that claims a file names it, so fewer mentions = the smaller part
+/// of the task), ties to the plan's order. Intentional-empty markers (`__init__.py`, `py.typed`)
+/// are skipped while any other file exists — an empty first write advances nothing. `None` only
+/// for a worker that owns nothing (the sink, a read-only verify shard), which never reads the
+/// write-first script.
+pub(super) fn first_write_target<'a>(
+    owned_files: &'a [String],
+    description: &str,
+) -> Option<&'a str> {
+    let real: Vec<(usize, &'a String)> = owned_files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !super::judge_context::is_intentional_empty_marker(f))
+        .collect();
+    let pool: Vec<(usize, &'a String)> = if real.is_empty() {
+        owned_files.iter().enumerate().collect()
+    } else {
+        real
+    };
+    pool.into_iter()
+        .min_by_key(|(i, f)| (mentions(description, f), *i))
+        .map(|(_, f)| f.as_str())
+}
+
+/// How many times the description names `file` — by basename, because plans and briefs drop the
+/// directory (`thin_brief_missing` reads ownership the same way).
+fn mentions(description: &str, file: &str) -> usize {
+    let name = Path::new(file)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file);
+    description.matches(name).count()
+}
+
+/// The file author's WRITE FIRST script — moved here from swarm.rs's owner_body `else` arm (VA-102).
+/// It opened "your VERY FIRST action must be to `write` your owned file(s) IN FULL": for an 8-file
+/// owner that is an order to finish every file in reasoning before the first write, and r6h's lanes
+/// obeyed it (72k–102k reasoning chars, 0 files, one `ls`). The first sentence now names ONE file
+/// (`first_write_target`) and forbids drafting a body in reasoning; the reading prohibitions that
+/// follow are the original's, unchanged.
+pub(super) fn write_first_body(owned_files: &[String], description: &str) -> String {
+    // Honest-empty: this is the FILE AUTHOR's script; a worker owning nothing never receives it
+    // (its arm is chosen upstream on `owned_files.is_empty()`), so there is no file to name.
+    let Some(target) = first_write_target(owned_files, description) else {
+        return String::new();
+    };
+    let n = owned_files.len();
+    let then_the_rest = if n > 1 {
+        format!(
+            " Then the next of your {n} owned files, one `write` each — never all {n} designed in \
+             one stretch of reasoning and typed afterwards."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "WRITE FIRST. Your FIRST action is ONE `write`: the first version of `{target}`, built from \
+         the spec sections above that name it — its imports and every function/class they ask for, \
+         bodies included where the spec settles them. Do NOT draft a file's body in your reasoning \
+         and then retype it into the tool call: write it to the file, read the tool result back, and \
+         only then think about the next piece; anything still open is settled by a later `edit` of \
+         that file, not by reasoning longer before the first write.{then_the_rest} Do NOT \
+         `ls`/`find`/`tree`/`cat` to 'understand the API', hunt for tests, or 'see the current state \
+         of the project': the PROJECT FILE LAYOUT above IS the complete structure (there is nothing \
+         on disk to discover), tests are a SEPARATE subtask, and the API of EVERY dependency you \
+         import is ALREADY injected below under 'API of …' — read it THERE, NEVER `cat` the module. \
+         Cat-ing files whose APIs are already injected only bloats your context until you LOOP — \
+         repeating 'let me write the file' over and over without ever emitting the write. Implement \
+         from the spec + injected APIs, THEN run `python3 -m pytest` to check — never piped through \
+         `head`/`tail` (the pipe hides the real exit code), and `collected 0 items`/`no tests \
+         ran`/`file or directory not found` in the output means the check DID NOT RUN, whatever the \
+         exit code says. A turn that ends without every owned file written and non-empty FAILS and \
+         is retried — exploring/cat-ing instead of writing is the #1 way workers burn their whole \
+         budget and produce nothing.\n\n"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,5 +955,90 @@ mod tests {
             !thin_brief_missing(&by_basename, &["app/ledger_core.py".to_string()], "core")
                 .contains(&"owned_file")
         );
+    }
+
+    /// VA-102: the first write is ONE file, named — the least-claimed real owned file, the plan's
+    /// order on ties; never `__init__.py` while another file exists (an empty first write advances
+    /// nothing); `None` only when nothing is owned.
+    #[test]
+    fn first_write_target_is_the_least_claimed_real_owned_file() {
+        let owned: Vec<String> = [
+            "app/ledgerd/__init__.py",
+            "app/ledgerd/server.py",
+            "app/ledgerd/store.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let desc = "server.py serves /api/ledger and /api/stream; server.py owns the SSE loop; \
+                    store.py holds the rows; server.py parses --port.";
+        assert_eq!(
+            first_write_target(&owned, desc),
+            Some("app/ledgerd/store.py")
+        );
+        let one = vec!["web/viz.js".to_string()];
+        assert_eq!(first_write_target(&one, "anything"), Some("web/viz.js"));
+        assert_eq!(first_write_target(&[], "anything"), None);
+        let ties: Vec<String> = ["a/x.py", "a/y.py"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            first_write_target(&ties, "neither named"),
+            Some("a/x.py"),
+            "ties go to the plan's order"
+        );
+        let only_marker = vec!["pkg/__init__.py".to_string()];
+        assert_eq!(
+            first_write_target(&only_marker, ""),
+            Some("pkg/__init__.py"),
+            "a lone marker is still the one file to write"
+        );
+    }
+
+    /// r6h `ledgerd-core`: 8 owned files, 72k reasoning chars, 2 calls, 0 files, then "So let me
+    /// write all 8 files. Plan:" — the script it read opened with "write your owned file(s) IN
+    /// FULL". The script now opens with ONE named write, ahead of every reading prohibition, and
+    /// the phrase that ordered all eight at once is gone.
+    #[test]
+    fn write_first_body_opens_with_one_named_write_and_never_says_in_full() {
+        let owned: Vec<String> = [
+            "app/ledgerd/__init__.py",
+            "app/ledgerd/server.py",
+            "app/ledgerd/store.py",
+            "app/ledgerd/stream.py",
+            "app/ledgerd/routes.py",
+            "app/ledgerd/pagination.py",
+            "app/ledgerd/errors.py",
+            "app/ledgerd/config.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let desc = "server.py binds --port; routes.py maps /api/ledger; stream.py is the SSE \
+                    loop; pagination.py cursors; config.py reads env; errors.py shapes 4xx; \
+                    store.py holds rows; server.py imports routes.py and stream.py.";
+        let body = write_first_body(&owned, desc);
+        assert!(
+            body.starts_with(
+                "WRITE FIRST. Your FIRST action is ONE `write`: the first version of \
+                 `app/ledgerd/store.py`"
+            ),
+            "{body}"
+        );
+        assert!(
+            !body.contains("IN FULL"),
+            "r6h: 'write your owned file(s) IN FULL' designed 8 files before the first write"
+        );
+        assert!(body.contains("Do NOT draft a file's body in your reasoning"));
+        assert!(body.contains("the next of your 8 owned files, one `write` each"));
+        assert!(
+            body.find("first version of").unwrap() < body.find("Do NOT `ls`").unwrap(),
+            "the named write precedes every reading prohibition"
+        );
+        assert!(
+            write_first_body(&[], "x").is_empty(),
+            "owns nothing: no file to name"
+        );
+        let single = write_first_body(&["web/viz.js".to_string()], "");
+        assert!(single.contains("first version of `web/viz.js`"));
+        assert!(!single.contains("owned files, one `write` each"));
     }
 }
