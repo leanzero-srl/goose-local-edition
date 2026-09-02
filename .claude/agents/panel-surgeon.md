@@ -38,3 +38,12 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Learned 2026-09-02 (the Studio remake + desktop-logic fix wave, measured)
+- `ui/desktop/DESIGN.md` is the contract; primitives live in `src/components/lz`. Join classes with `cx` (lz/tokens.ts) — `cn`/tailwind-merge DELETES `text-lz-*` classes.
+- `font-normal/medium/semibold/bold` compile to NOTHING app-wide (`font-extrabold` does) → use `font-lz-medium/semibold`. `px-0` cannot override `px-2.5` in this pipeline → square icon buttons are `size-7`/`size-8` (md height is h-8).
+- Run the ban grep (DESIGN.md Bans 1–5) with `/usr/bin/grep -E`; ugrep errors on `\b` inside a group.
+- `just run-ui` dev mode is BROKEN (the Vite renderer dev server closes during dep-scan; vite.renderer.config.mts:21). Verify via `pnpm run package` → launch the packaged app with `--remote-debugging-port=9897` → CDP shots into ~/goose-screenshots/. Hub tabs are lz Segmented: a driver selects by role=radio / data-value (the old leanzero-swarm-tab-* testids are gone).
+- Never `pnpm add` ad hoc (the reconcile removed 145 hoisted packages from ui/node_modules). One agent per file set — a file a sibling holds is not yours until it is freed. Targeted vitest per commit, the full suite ONCE per batch; no Electron launch per agent — one orchestrated screenshot pass after a wave lands.
+- The packaged renderer is a file:// document whose index.html carries a STATIC meta CSP (`connect-src 'self' http://127.0.0.1:* https: ws: wss:`); headers can only NARROW it → LAN/localhost probes and the wizard chat run in MAIN over IPC (`fleet-probe`/`fleet-chat`, utils/fleetProbe.ts), and `localhost:1234` is normalized to 127.0.0.1 — 949d3fa6e deleted that normalization and regressed every default install (tracer-refuted; fixed by 987889548/d1b683d32).
+- Renderer secrets are MASKED (acp config.rs mask_secret; /config/read masks) and main has no secret-store accessor while the keyring is on → no bearer reaches a probe through the renderer; LMSTUDIO_API_KEY comes from the app env or a main-side store reader — an owner decision, never a workaround.

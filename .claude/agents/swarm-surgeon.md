@@ -76,3 +76,12 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Learned 2026-09-02 (the sidecar/engine-trait series D + wave-2, measured)
+- Gate in a DETACHED WORKTREE at HEAD + your files with its OWN target dir whenever the main tree carries siblings' uncommitted edits (it did not compile for hours on 2026-09-02); NEVER share target/ between checkouts — path packages alias by workspace-relative hash. Trace a change AT ITS COMMIT (`git show <sha>`), not the moving tree.
+- Every commit's gate: `cargo test -p goose-cli swarm` (SUM the `test result:` lines — 721/0 at d82f8e711) + `cargo test -p goose-swarm --test development_gates` (8/0) + workspace clippy. swarm.rs = 44,651 lines at d82f8e711; tighten the ratchet with every shrink.
+- The mixed-pool trace configuration: 3 LM Studio devices (lms ps PARALLEL 2 → weight 2 each) + 1 sidecar (weight 2) = 8 fleet slots (S-H2's self-trace said 1→7; the tracer measured 2→8). The live config is the single MLX device, so a mixed-pool YES is a NET here — label it so.
+- LM Studio on this fleet answers 401 to an unauthenticated probe: `endpoint_model_ids()` and every servability consumer (drop_unservable, require_servable, planner_fallback) were INERT until 3030c9f0d threaded LMSTUDIO_API_KEY (ConfigKeyResolver: env → secret store) and emitted `lm-probe-unauthorized`. The key is set NOWHERE on this Mac — an empty `data` is a 401 until it is.
+- A ONE-DOOR claim names the door by WALKING reachability: the bootstrap branch cannot fire once any enabled sidecar device exists (merge already made the pool non-empty) — the unregistered device entered via merge_sidecar_devices, not the branch D named (the tracer caught it).
+- `cargo remove <crate> -p <member>` also gc's ROOT workspace deps (04abe8a9a dropped opentelemetry-http and the load-bearing icu_calendar/icu_locale =2.1.1 pins); commit the member's Cargo.toml + lock lines only and `git checkout -- Cargo.toml` the root collateral.
+- The sidecar's `--max-concurrent-requests` (8) is a HARD 503 admission cap, not a queue: d82f8e711 maps it to an infra Transient with provider backoff (commands/swarm/provider_failures.rs) for run_agent callers only — fans/judge calls that hit run_agent_in directly rely on supervision_reply.

@@ -42,3 +42,7 @@ and amends this file in the same turn a gap shows. Changelog:
 path back to the MacBook (sync is one-way MacBook → workhorse). A brief that names a repo path such as
 `evals/swarm-bench/bench/tick.py` is WRONG — refuse and hand back a fixture + the verbatim event payloads, as done
 on 2026-09-02, rather than minting a second tick.py that no operator runs (the duplicate-shadows shape).
+
+## Learned 2026-09-02
+- The routing fact above held on the campaign's only bench-scorer brief: the repo-path tick.py brief was refused correctly (orchestrator error, logged in ROSTER.md).
+- MacBook-side backlog the workhorse cannot clear: tick.py rows for FIVE engine events landed this campaign — `sidecar-device-excluded{id,reason}` and `sidecar-unmounted-and-load-disabled{devices}` (9d5958f19), `lm-probe-unauthorized` (3030c9f0d), `fleet-probe-failed` (653ffb48f), `sidecar-admission-cap` (d82f8e711). Fixture: the session scratchpad's fixture-pool-absence/run.jsonl. The UNREAD-EVENTS line will not be empty on the next mixed-pool run until they print.

@@ -42,3 +42,9 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Learned 2026-09-02 (the Link Rust hunt FH#1–#13: 6 confirmed, 1 refuted, 2 sharpened by the refuter)
+- Construct the firing sequence before classing GUILTY: FH#7 (node-id split → UnknownPeer) was REFUTED — the self-check compares `source.local_node().node_id` with the target, so a renamed node dispatches LOCALLY; the `.ok()?` swallow was real, its claimed consequence was not. Two real issues surfaced from the construction (a fresh source on the not-connected arm; peers never pruning sessions under the old origin id) — report those with their own anchors.
+- Report the ratchet coverage of your surface: `development_gates.rs run_path_files()` did NOT cover crates/leanzero-link or link.rs (9 non-test `unwrap_or_default()` unguarded) — a surface outside the ratchet is where the class returns.
+- The sharpest form this pass: FH#8 — a proxy failure returned `Ok([])`, DEFEATING the UI's own keep-last-roster-on-throw guard; the honest arm returns the error so the consumer's existing guard can fire. "Would anyone know in a week?" — the roster silently emptied.
+- Transient vs persistent matters in the harm statement: R-M2's fabricated Idle bites on TRANSIENT store failures (sqlx timeout / SQLITE_BUSY) — exactly when a Busy node would accept a second job; the persistent failure was already loud (500).

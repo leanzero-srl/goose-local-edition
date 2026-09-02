@@ -38,3 +38,10 @@ without quotes is invalid — quote the code, the config, the test output. You n
 Charter law: `.claude/rules/development-gates.md` gate 1 (happy-path criterion), AGENTS.md GATES,
 memory `works-not-appears`. If your briefs repeatedly carry the same extra context, tell the
 orchestrator to amend this charter.
+
+## Learned 2026-09-02 (Link as-configured → APPEARS-TO-WORK; worker → WORKS; live pass pending)
+- A hand-driven traversal of the same endpoints is NOT the happy path. WP-2's earlier "proven e2e" was a scripted chain; the app's own `connect_inner` had never reached its join-key line (node_suffix() writes ~/.leanzero/node-id first, and that file did not exist). Prove the path the APP runs, and name the receipts only the app's path can leave.
+- The receipts for a real Link connect from the packaged app: `~/.leanzero/identity.json` (0600) after verify; `~/.leanzero/node-id` after connect; the goose log lines "leanzero-link tailscaled ready" AND "control service listening"; ONE Headscale node named `<sanitized-host>-<6hex>` under `acct-<sha256(email)[:16]>`, online; the worker log's `headscale_join_key_minted` + `node_secret_minted` and the FIRST EVER `auth_verified` (no live /verify had succeeded on this deployment before 2026-09-02 — every Headscale node was hand-scripted).
+- "The 501 arm IS the implementation" recurs: WP-4 found executor/mlx/delta injection only under `goosed agent` while the desktop runs `goose serve` → remote execute answered 501 in the shipped app. Check WHICH binary entry point the shipped app runs before crediting a seam.
+- A built artifact is part of reachability: the bundled-tailscaled wiring was correct and tested, and NO packaged app contained it (all predated 88f7ccf5c). Check the asar/Resources, not the source.
+- Fix specs you hand back are claims: the WP-4 spec ("a port, not a call") was corrected by the refuter (GoosedMlxControl is a one-liner; only the executor/delta source need a goose-crate port).

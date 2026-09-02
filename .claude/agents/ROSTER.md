@@ -49,6 +49,10 @@ boundary), run one gate-auditor pass over the whole roster.
 | feature-dev surgeon | non-swarm goose features (goose-feature-dev skill's surface) | first real feature task outside the swarm |
 | publish-officer | leanzero.net board publishing (guarded exact-id publisher) | next publish task |
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
+| studio-remake surgeon | LeanZero Studio remakes of non-swarm desktop surfaces (shell/nav, session chrome, hub, benchmark/settings, MLX view) | TRIPPED 8× on 2026-09-02 (design system, stage-1 polish, R1–R6) — deliberately NOT minted on the grading pass: panel-surgeon's Learned 2026-09-02 block absorbs the Studio facts; mint if the next campaign briefs a remake inline again |
+| ban/leftovers sweeper | DESIGN.md ban sweeps + primitive promotion after a remake wave | TRIPPED 5× on 2026-09-02 (chrome leftovers, leftovers-2/-3, tiny ban fix, lz-extensions) — NOT minted; same absorption |
+| diff-reviewer (lens review) | branch-review lenses (worker, Rust security, UI, engine) that feed the refuter | TRIPPED 4× on 2026-09-02 — NOT minted; each lens is one brief with the refuter as its gate (kill ratio on the day: 4 refuted, 3 partial, 9 fixes corrected of ~34) |
+| non-run fix-tracer | gate-8 traces over desktop/link/crate commits with no archived run (live config + the refuter's sequence as the motivating case) | TRIPPED 5× on 2026-09-02 — NOT minted; fix-tracer's Learned 2026-09-02 block states the live-config motivating case instead |
 
 ## The works-prover fan (standing practice, Mihai 2026-08-30)
 
@@ -113,6 +117,75 @@ R7 / GATED (deliberately parked, each with its qualifying condition):
 NEXT-BATCH COSMETICS: judge-lane SAID chips say 'attempt' where looks are meant; fan lane groups
 sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appear live-dead;
 research_request_block's armed-no-claimed-sections arm wording.
+
+## Grading pass 2026-09-02 — the branch-review + fix-wave + Studio-remake campaign (one pass over 50 returns)
+
+Graded in one sitting from the campaign's delegation log (the session scratchpad's review-findings-index.md),
+after the functional work landed (consumption policy). Every amendment below was verified against the log or
+the tree before it went into a charter; nothing speculative was folded. Grades: gap / unclear / bloat / leak —
+`—` = no. Bloat was observed in NONE of the 49 graded returns. Two facts from the orchestrator's brief could
+not be verified in any primary source and were NOT folded: "vitest could not resolve node_modules in a
+worktree" and the OTP sender's local part (the env holds a leanzero.atlascrafted.com address; only the
+domain is written into link-backend). Row 50 (the works-prover live pass) was still running — ungraded.
+
+| # | agent | task (shas) | gap | unclear | bloat | leak | amendment |
+|---|---|---|---|---|---|---|---|
+| 1 | general-purpose (worker lens) | branch review W-H1..W-L12, probed | no charter | — | — | — | CANDIDATE diff-reviewer |
+| 2 | general-purpose + fallback-hunter | Link Rust R-* / FH#1–13 | ratchet coverage of the surface | FH#7 GUILTY on an unconstructed sequence (refuted) | — | — | fallback-hunter Learned |
+| 3 | general-purpose (UI lens) | U-H1..U-L10 | no charter | — | — | — | CANDIDATE diff-reviewer |
+| 4 | works-prover | Link as-configured WP-1..7 → APPEARS | receipts list absent | its own prior "proven e2e" was a scripted chain (self-caught) | — | — | works-prover Learned |
+| 5 | general-purpose (engine lens) | S-H1..S-L11 | no charter | — | — | — | CANDIDATE diff-reviewer |
+| 6 | refuter | Link Rust fallbacks (6 C, 1 X, 2 new defects) | — | — | — | — | refuter Learned (construction finds the defect) |
+| 7 | refuter | worker (7/7 C, live KV probe) | — | — | — | — | refuter Learned (probe the live deployment) |
+| 8 | refuter | works-prover claims WP-2/WP-4 (2/2 C+corr) | — | — | — | — | — |
+| 9 | refuter | desktop UI (5 C, 1 P, 1 X; 2 fixes wrong) | renderer CSP source unknown → its U-M3 correction was later refuted | — | — | — | refuter Learned (a corrected fix is a claim) |
+| 10 | refuter | Link Rust security (7 C, 1 P, 2 X) | — | — | — | — | — |
+| 11 | refuter | swarm engine (7/7 C, 2 P on "silent") | — | — | — | — | — |
+| 12 | link-backend | worker wave 1 ffc2e38a0..94fa06376 | Funnel XFF semantics; nodeSecret contract | — | — | — | link-backend Learned |
+| 13 | panel-surgeon | desktop logic F 03b291c84..6512c99e7 | renderer CSP is a static meta (U-M3 regressed) | — | — | — | panel-surgeon Learned |
+| 14 | panel-surgeon (inline: design system) | Studio d64068fb6..77dd6f690 | cx-not-cn; font-lz-*; no pnpm add | — | — | — | Learned + CANDIDATE studio-remake |
+| 15 | link-backend | W-L9 sweeper 5ab48a8c2 | — | — | — | — | — |
+| 16 | panel-surgeon (inline: polish) | stage-1 575a141a3..cdcc6588c | just run-ui broken → package + CDP 9897 | — | — | — | Learned |
+| 17 | swarm-surgeon | engine D a7ffb0516..7f74d3730 | worktree + own target; LM 401 premise | one-door: named the wrong door (reachability not walked) | — | — | swarm-surgeon Learned |
+| 18 | mlx-backend | sidecar E fcab044c0/71189f66b/e09790ad0 | lsof clients; process tree; 4.91s gap | law 4 vs the proof-gated killpg; breaker miscount (4th death) | — | — | mlx-backend Learned |
+| 19 | panel-surgeon (inline: remake R2) | session chrome 9ace453ee.. | px-0 vs px-2.5 | — | — | — | Learned |
+| 20 | panel-surgeon (inline: remake R1) | shell/nav/projects 8ccdbd9b9.. | /usr/bin/grep -E for the ban grep | — | — | — | Learned |
+| 21 | fix-tracer | sidecar + swarm (3 + 2 + one-door) | motivating case = live config, not a run | — | — | brief framed an archived run; tracer used the live fleet (right) | fix-tracer Learned |
+| 22 | panel-surgeon (inline: remake R4) | benchmark + settings efafa4700.. | — | — | — | — | — |
+| 23 | link-backend (seam) | goose link layer C1 7a745914f..94fd2ccdf | uppercase key = env override | — | — | — | Learned |
+| 24 | panel-surgeon (inline: remake R3) | hub/link/nodes e610a589d.. | CDP driver must select role=radio/data-value | — | — | — | Learned |
+| 25 | bench-scorer | tick.py rows for the new events | BRIEF ERROR (repo path; orchestrator's) — fixed 5a791375c | — | — | brief path wrong | confirmed reads right; Learned (5 unprinted events) |
+| 26 | panel-surgeon (inline: remake R5) | MLX engine + models 3713e606c.. | — | — | — | — | — |
+| 27 | panel-surgeon | Q2 confirm-on-close a80209a40..805d6a00d | — | — | — | — | — |
+| 28 | panel-surgeon (inline: remake R6) | SwarmRunPanel d0acc8581..95ee1b8fb | — | — | — | — | — |
+| 29 | link-backend | crate B (14 commits b7f1c3425..5938a2bf7) | LOCAL_PEERPID readiness; EINVAL = sun_path | — | — | — | Learned |
+| 30 | panel-surgeon (inline: leftovers) | chrome leftovers c5743a61c..bb767a6e6 | size-N for square buttons | — | — | — | Learned + CANDIDATE sweeper |
+| 31 | works-prover | worker → WORKS (7/7, live probes) | — | — | — | — | Learned (auth_verified never seen) |
+| 32 | fix-tracer | desktop logic (4 C/P; U-M3 REGRESSION found) | — | — | — | — | Learned (composition trap; refuting a fix) |
+| 33 | panel-surgeon (inline: leftovers-2) | 21614dfa8..f7ed93434 | — | — | — | stale finding (tone migration already done) | — |
+| 34 | fix-tracer | link layer (6 C, 2 P; AgentBusyGuard race found) | — | — | — | — | Learned (409 unreachable at that commit) |
+| 35 | fix-tracer | crate (7/7 C; errno measured on 1.98.5) | — | — | — | — | — |
+| 36 | general-purpose | AgentBusyGuard race 70f7718c7 (goose-server) | no charter | — | — | — | — |
+| 37 | panel-surgeon (inline: leftovers-3) | caaac7221..26832ab02 | — | — | — | — | — |
+| 38 | panel-surgeon | U-M3/U-M8 correction 987889548..62d12d110 | probes belong in main | — | — | — | Learned |
+| 39 | mlx-backend | Q1 busy signal 527eb821a..ed409244f | /v1/status; 503 admission cap | touched ui/desktop under a brief sanction — the NEVER lacks the seam clause | — | — | Learned |
+| 40 | panel-surgeon | R7 timestamps + polish 8156093d7..1f36638f5 | font-extrabold compiles | — | — | — | Learned |
+| 41 | link-backend | crate follow-ups 16730333a, 4a0e912a8 | — | — | — | — | Learned (look-count demotion) |
+| 42 | link-backend (seam) | C2 goose-serve 59074c710..04abe8a9a | — | `cargo remove` root collateral committed partially | — | — | Learned (link + swarm) |
+| 43 | panel-surgeon (inline: lz-ext) | 4d901286a..0787de9fc | — | — | — | — | — |
+| 44 | fix-tracer | 5 newest commits (4 C, 1 P; freeBusy asymmetry) | — | — | — | — | — |
+| 45 | general-purpose | i18n 9291aa9c2 | no charter | — | — | — | — |
+| 46 | panel-surgeon | tiny ban fix b8072447d, 594cca9d2 | — | — | — | — | — |
+| 47 | swarm-surgeon | wave-2 7d08bc4b3..d82f8e711 | LMSTUDIO_API_KEY set nowhere here; 503 cap scope | — | — | — | Learned |
+| 48 | panel-surgeon | node-field follow-up cffe7bc1f..ba5d54a14 | main has no secret-store accessor | — | — | — | Learned |
+| 49 | panel-surgeon | node identity e2e 3ab2197bf..03e88d064 | renderer secrets masked | — | — | — | Learned |
+| 50 | works-prover | LIVE PASS (packaged app + OTP hand-off) | NOT GRADED — still running at this pass | | | | grade on return |
+
+Totals: 23 charter gaps (all folded), 6 unclear (each sharpened with its receipt), 0 bloat, 3 brief leaks
+(rows 21, 25, 33 — two orchestrator errors, one stale finding), 5 no-charter returns → the four candidates
+above. Staleness seen, not fixed on this pass (existing text is kept by rule): panel-surgeon's gate line
+about the realfs push tests is garbled from a 2026-08-30 edit; mlx-backend/link-backend trailers still say
+"Claude Fable 5".
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
 - 2026-08-30 swarm-surgeon (cluster A, 6abd934c3..8a68a9c59): CLEAN PASS — six items with honest
