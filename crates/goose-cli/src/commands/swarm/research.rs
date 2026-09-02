@@ -32,24 +32,31 @@ use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
 use super::{EventSink, SpecSection};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
-/// What kind of question a research lane says it derived (VA-089): `design` — the request is
-/// silent and a builder must choose (the lane decides with a reason and the grep that found no
-/// match as evidence); `external` — the vendor's documentation or another source outside the
-/// request answers it (the lane cites the doc section). There is NO lookup kind: a fact the
-/// request states is not a question — the lane holds the section text and reads it. `Unkinded`
-/// is not a kind a lane may choose: it is the parse-time reading of a kind the contract does not
-/// name, kept (the answer is still an answer) and visible on `research_question_kind`.
+/// What kind of question a research lane says it derived (VA-089): `design` — the request leaves
+/// it open and the lane DECIDES, naming the alternatives it chose between and why the request
+/// does not settle it (VA-118); `external` — the vendor's documentation or another source
+/// outside the request answers it (the lane cites the doc section). There is NO lookup kind: a
+/// fact the request states is not a question — the lane holds the section text and reads it.
+/// `SpecRestated` is not a kind a lane may choose either: it is the CLASSIFIER's reading
+/// (`classify_design_entry`) of a `design` entry that named fewer than two alternatives — by the
+/// contract's own definition a decision the request left open has two admissible answers, so an
+/// entry that can show only one is the request's fact restated (r6i: 35 of 35 `design` tags,
+/// 2 of the 6 a reader checked were request.md lines rewritten as code). `Unkinded` is the
+/// parse-time reading of a kind the contract does not name, kept (the answer is still an
+/// answer) and visible on `research_question_kind`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QuestionKind {
     Design,
     External,
+    SpecRestated,
     Unkinded,
 }
 
 impl QuestionKind {
     /// Lenient on decoration (case, `-`/` ` for `_`), strict on vocabulary: only the two names
     /// the schema enumerates resolve; anything else is `Unkinded`, never a guess at what the
-    /// model meant.
+    /// model meant. `spec_restated` is deliberately NOT parsed: a lane that knows an entry
+    /// restates the request writes no entry for it.
     fn parse(raw: &str) -> Self {
         match raw.trim().to_lowercase().replace(['-', ' '], "_").as_str() {
             "design" => Self::Design,
@@ -62,7 +69,28 @@ impl QuestionKind {
         match self {
             Self::Design => "design",
             Self::External => "external",
+            Self::SpecRestated => "spec_restated",
             Self::Unkinded => "unkinded",
+        }
+    }
+
+    /// Who decided this kind — `research_question_kind.source`, so the vigil sees whether the
+    /// lane's self-tag or the code's reading of it is speaking. A function of the kind, not a
+    /// stored field: only the classifier produces `spec_restated`, and it produces nothing else.
+    pub(crate) fn source(self) -> &'static str {
+        match self {
+            Self::SpecRestated => "classifier",
+            _ => "model",
+        }
+    }
+
+    /// The parse-time reading of a stored kind string (`ResearchRow::kind`, `question_kind` on
+    /// disk): the classifier's name resolves too, so a resumed row reports the same source.
+    pub(crate) fn from_stored(raw: &str) -> Self {
+        if raw.trim() == "spec_restated" {
+            Self::SpecRestated
+        } else {
+            Self::parse(raw)
         }
     }
 }
@@ -177,13 +205,20 @@ pub(super) fn research_schema() -> serde_json::Value {
     })
 }
 
-/// A SLICE lane's structured deliverable (VA-089): the lane's OWN questions and answers —
-/// `{answers: [{question, kind, cite, answer, raised}]}`, `kind` one of the two the contract
-/// names. The position of an entry IS its q_index (`fold_research_lane`): the prompt carried no
-/// questions, so no tag table exists between prompt and ledger. `cite` and `raised` legitimately
-/// default to empty; an empty `answer` is classified honestly as unanswered/empty_answer rather
-/// than rejected at validation, and an unknown `kind` is kept and named (`unkinded`), never
-/// refused — a refusal re-streams the whole session.
+/// A SLICE lane's structured deliverable (VA-089, widened by VA-118): the lane's OWN questions
+/// and answers — `{answers: [{question, kind, cite, alternatives, open_because, answer, raised,
+/// raised_for}], builder_decides}`, `kind` one of the two the contract names. The position of an
+/// entry IS its q_index (`fold_research_lane`): the prompt carried no questions, so no tag table
+/// exists between prompt and ledger. `alternatives` (two or more) and `open_because` are what
+/// make a `design` entry a decision instead of a restatement (`classify_design_entry`);
+/// `raised_for` gives a point that belongs to ANOTHER slice its destination (r6i's structure
+/// lane spent reasoning at 60k and 100k chars on whether such points were "accidentally
+/// claimed" — with nowhere to put them); `builder_decides` is the lane-level list of choices
+/// only this slice's builder feels — named, unanswered, cheap. `cite`, `alternatives`,
+/// `open_because`, `raised`, `raised_for` and `builder_decides` legitimately default to empty;
+/// an empty `answer` is classified honestly as unanswered/empty_answer rather than rejected at
+/// validation, and an unknown `kind` is kept and named (`unkinded`), never refused — a refusal
+/// re-streams the whole session.
 pub(super) fn research_derived_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -191,21 +226,60 @@ pub(super) fn research_derived_schema() -> serde_json::Value {
         "properties": {
             "answers": {
                 "type": "array",
+                "items": research_answer_entry_schema()
+            },
+            "builder_decides": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+/// ONE derived entry's schema — the item of `research_derived_schema`'s `answers` and the whole
+/// argument of the per-answer `research_answer` tool (`research_answer_tool_schema`), so the two
+/// landing paths cannot drift.
+pub(super) fn research_answer_entry_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["question", "kind", "answer"],
+        "properties": {
+            "question": {"type": "string"},
+            "kind": {"type": "string", "enum": ["design", "external"]},
+            "cite": {"type": "string"},
+            "alternatives": {"type": "array", "items": {"type": "string"}},
+            "open_because": {"type": "string"},
+            "answer": {"type": "string"},
+            "raised": {"type": "array", "items": {"type": "string"}},
+            "raised_for": {
+                "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["question", "kind", "answer"],
+                    "required": ["slice", "text"],
                     "properties": {
-                        "question": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["design", "external"]},
-                        "cite": {"type": "string"},
-                        "answer": {"type": "string"},
-                        "raised": {"type": "array", "items": {"type": "string"}}
+                        "slice": {"type": "string"},
+                        "text": {"type": "string"}
                     }
                 }
             }
         }
     })
 }
+
+/// The per-answer landing tool (VA-118 item 4): one settled question lands as one mini the
+/// moment the lane calls it, so the lane's frame never sits at 0 bytes for an hour (r6i's
+/// structure lane: 113,720 reasoning chars, output frame empty until minute 63, nine answers
+/// in one final_output). The tool's argument is exactly one entry (`research_answer_entry_schema`)
+/// and `fold_research_entry` turns it into the same row `fold_research_lane` would have built at
+/// that position. UNWIRED in this commit: registering the tool on the research call and handing
+/// its arguments to `fold_research_entry` (then `persist_research_row` + `emit_research_outcome`,
+/// and `fold_research_lane_from(.., first_q_index)` for the remainder in the final call) is one
+/// edit in swarm.rs's `research_fan` lane closure, which this commit's boundary does not include —
+/// the prompt therefore still asks for ONE final_output and does not name this tool.
+#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: consumed by swarm.rs's research_fan next
+pub(super) fn research_answer_tool_schema() -> serde_json::Value {
+    research_answer_entry_schema()
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: the tool's name for the swarm.rs registration
+pub(super) const RESEARCH_ANSWER_TOOL: &str = "research_answer";
 
 pub(super) fn research_mini_name(slice: &str, q_index: usize) -> String {
     format!("research-{}-q{}.json", activity_digest_key(slice), q_index)
@@ -464,7 +538,9 @@ pub(super) fn fold_research_batch(
     (rows, strays)
 }
 
-/// One slice lane's entry (VA-089): the lane's own question, kind, evidence and answer.
+/// One slice lane's entry (VA-089): the lane's own question, kind, evidence and answer; since
+/// VA-118 also the alternatives a design entry chose between, why the request leaves it open,
+/// and the points raised FOR other slices.
 #[derive(serde::Deserialize, Default)]
 struct DerivedAnswer {
     #[serde(default)]
@@ -474,9 +550,221 @@ struct DerivedAnswer {
     #[serde(default)]
     cite: String,
     #[serde(default)]
+    alternatives: Vec<String>,
+    #[serde(default)]
+    open_because: String,
+    #[serde(default)]
     answer: String,
     #[serde(default)]
     raised: Vec<String>,
+    #[serde(default)]
+    raised_for: Vec<RaisedFor>,
+}
+
+/// A point the lane raised that belongs to ANOTHER slice: the destination it had no way to name
+/// before VA-118 (r6i's structure lane, @60k: "are there any questions that are actually OTHER
+/// slices' territory that I'm accidentally claiming?").
+#[derive(serde::Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+struct RaisedFor {
+    #[serde(default)]
+    slice: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// How a raised line rides in `ResearchRow::raised`, whose shape this commit cannot widen
+/// (swarm.rs:33260 and :33312 build the row as struct literals and swarm.rs is outside this
+/// change's boundary): a point for another slice is `[for <slice>] text`, a choice only this
+/// slice's builder makes is `[builder decides] text`, anything else is a raised question for
+/// this slice's builder as before. ONE writer (`row_from_entry` / `fold_research_lane`), ONE
+/// reader (`raised_destination`), consumed by `emit_research_outcome` (three distinct events) —
+/// the brief block renders each line with its label so the builder sees whose point it is.
+/// The honest shape is two fields on the row; that is the swarm.rs surgeon's one-line follow-up.
+pub(super) const RAISED_FOR_PREFIX: &str = "[for ";
+pub(super) const BUILDER_DECIDES_PREFIX: &str = "[builder decides] ";
+
+/// Where a raised line goes, read back from its label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RaisedDestination<'a> {
+    ThisBuilder(&'a str),
+    OtherSlice { slice: &'a str, text: &'a str },
+    BuilderDecides(&'a str),
+}
+
+pub(super) fn raised_destination(line: &str) -> RaisedDestination<'_> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix(BUILDER_DECIDES_PREFIX) {
+        return RaisedDestination::BuilderDecides(rest.trim());
+    }
+    if let Some(rest) = line.strip_prefix(RAISED_FOR_PREFIX) {
+        if let Some((slice, text)) = rest.split_once("] ") {
+            let slice = slice.trim();
+            if !slice.is_empty() {
+                return RaisedDestination::OtherSlice {
+                    slice,
+                    text: text.trim(),
+                };
+            }
+        }
+    }
+    RaisedDestination::ThisBuilder(line)
+}
+
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// THE CLASSIFIER (VA-118 item 2). A `design` entry is a decision the request leaves open — by
+/// definition one with at least two admissible answers. An entry tagged `design` that names
+/// fewer than two distinct alternatives is recorded `spec_restated`: it shows no choice, so
+/// either the request settled it or the lane asserted a pick without showing the alternatives;
+/// both are the builder's to read from the sections, not research. `external` and unknown kinds
+/// pass through untouched. Returns the kind and the evidence line the row carries as `cite`
+/// (the lane's cite, then `open because: …`, then `alternatives: a | b`) so the brief's
+/// EVIDENCE line and the mini hold the words the classifier read.
+///
+/// WHY a structural rule and not a token-overlap threshold (the brief asked for one, derived
+/// from r6i's six read answers — the derivation was run, and the threshold does not exist):
+/// share of the answer's content words (`content_words`) found in the slice's handed sections,
+/// r6i archive — the two a reader marked SPEC_RESTATED: behavior-q1 0.53, behavior-q11 0.61;
+/// the two DESIGN-INTRA: viz-q1 0.55, behavior-q6 0.51; the two DESIGN-REAL: viz-q4 0.72,
+/// viz-q7 0.62. Sentence-level (share of sentences ≥ 0.85 in-section): 0.25 / 0.10 vs
+/// 0.05 / 0.00 vs 0.17 / 0.00. In-order 4-gram share: 0.03 / 0.03 vs 0.05 / 0.03 vs
+/// 0.10 / 0.03. No cut separates the restated pair from the design pairs on any of the three;
+/// the reader's verdict rested on WHICH claims restated the request, which no lexical share
+/// sees (gate 7: the words decide, shapes corroborate). A threshold fitted to six points would
+/// be an instrument impersonating a reader. What code can honestly read is whether the entry
+/// SHOWS a choice — and the prompt now makes showing it the contract.
+pub(super) fn classify_design_entry(
+    model_kind: &str,
+    cite: &str,
+    alternatives: &[String],
+    open_because: &str,
+) -> (QuestionKind, String) {
+    let parsed = QuestionKind::parse(model_kind);
+    let mut alts: Vec<String> = Vec::new();
+    for a in alternatives {
+        let a = one_line(a);
+        if !a.is_empty() && !alts.contains(&a) {
+            alts.push(a);
+        }
+    }
+    let open_because = one_line(open_because);
+    let mut evidence = one_line(cite);
+    if parsed == QuestionKind::Design && !open_because.is_empty() {
+        if !evidence.is_empty() {
+            evidence.push_str("; ");
+        }
+        evidence.push_str("open because: ");
+        evidence.push_str(&open_because);
+    }
+    if parsed == QuestionKind::Design && !alts.is_empty() {
+        if !evidence.is_empty() {
+            evidence.push_str("; ");
+        }
+        evidence.push_str("alternatives: ");
+        evidence.push_str(&alts.join(" | "));
+    }
+    let kind = if parsed == QuestionKind::Design && alts.len() < 2 {
+        QuestionKind::SpecRestated
+    } else {
+        parsed
+    };
+    (kind, evidence)
+}
+
+/// ONE derived entry → ONE row at `q_index` — the shared body of `fold_research_lane` (every
+/// entry of the final reply) and `fold_research_entry` (the per-answer tool), so a question lands
+/// identically whichever door it came through. `None` when the entry has no question text: a
+/// `StrayAnswer` for the caller to name, never a row. A non-empty answer is answered, a blank one
+/// unanswered/empty_answer with its raised lines kept; `raised_for` lines are labelled for their
+/// slice (`RAISED_FOR_PREFIX`) and ride behind the plain raised lines.
+fn row_from_entry(
+    slice: &str,
+    q_index: usize,
+    entry: DerivedAnswer,
+    model: &str,
+    secs: u64,
+) -> Result<ResearchRow, StrayAnswer> {
+    let question = one_line(&entry.question);
+    if question.is_empty() {
+        return Err(StrayAnswer {
+            question_index: Some(q_index),
+            answer_head: entry.answer.chars().take(200).collect(),
+        });
+    }
+    let answered = !entry.answer.trim().is_empty();
+    let (kind, cite) = classify_design_entry(
+        &entry.kind,
+        &entry.cite,
+        &entry.alternatives,
+        &entry.open_because,
+    );
+    let mut raised: Vec<String> = entry
+        .raised
+        .iter()
+        .map(|r| one_line(r))
+        .filter(|r| !r.is_empty())
+        .collect();
+    for rf in &entry.raised_for {
+        let text = one_line(&rf.text);
+        let target = one_line(&rf.slice);
+        if text.is_empty() {
+            continue;
+        }
+        if target.is_empty() {
+            // A point with no destination is a point for this slice's builder — stated as it
+            // came, never dropped.
+            raised.push(text);
+        } else {
+            raised.push(format!("{RAISED_FOR_PREFIX}{target}] {text}"));
+        }
+    }
+    Ok(ResearchRow {
+        slice: slice.to_string(),
+        q_index,
+        question,
+        status: if answered {
+            RESEARCH_ANSWERED.to_string()
+        } else {
+            RESEARCH_UNANSWERED.to_string()
+        },
+        answer: if answered {
+            entry.answer
+        } else {
+            String::new()
+        },
+        // Parsed, but the deliverable slot is blank — a named absence, never a stub.
+        reason: (!answered).then(|| "empty_answer".to_string()),
+        detail: None,
+        raised,
+        model: model.to_string(),
+        secs,
+        kind: kind.as_str().to_string(),
+        cite,
+        batch: 0,
+    })
+}
+
+/// The per-answer tool's fold (VA-118 item 4; see `research_answer_tool_schema` for the wiring
+/// this commit leaves to swarm.rs): the tool call's arguments are one entry, landed at the
+/// `q_index` the caller assigns (the count of entries landed so far for this lane). Nothing
+/// parseable is a stray with the raw head, never a row. `secs` is the lane's elapsed at the call.
+#[cfg_attr(not(test), allow(dead_code))] // UNWIRED: the per-answer door's fold, see the schema's doc
+pub(super) fn fold_research_entry(
+    slice: &str,
+    q_index: usize,
+    model: &str,
+    secs: u64,
+    arguments: &str,
+) -> Result<ResearchRow, StrayAnswer> {
+    match parse_json_lenient::<DerivedAnswer>(arguments) {
+        Some(entry) => row_from_entry(slice, q_index, entry, model, secs),
+        None => Err(StrayAnswer {
+            question_index: Some(q_index),
+            answer_head: arguments.chars().take(200).collect(),
+        }),
+    }
 }
 
 /// The one row a slice lane leaves when it produced NO question rows — the lane's OUTCOME as a
@@ -526,10 +814,30 @@ pub(super) fn fold_research_lane(
     secs: u64,
     out: Result<String, String>,
 ) -> (Vec<ResearchRow>, Vec<StrayAnswer>) {
+    fold_research_lane_from(slice, model, secs, out, 0)
+}
+
+/// `fold_research_lane` with the numbering started at `first_q_index` — the remainder of a lane
+/// whose earlier answers already landed one by one through the per-answer tool
+/// (`fold_research_entry`), so the final reply's entries never collide with landed minis.
+/// The lane-level `builder_decides` list (VA-118 item 3) rides labelled
+/// (`BUILDER_DECIDES_PREFIX`) in the FIRST row's `raised` — or in the lane-outcome row when no
+/// question landed — because the row cannot grow in this commit (see the prefix consts); a lane
+/// that derived no question but listed builder decisions is still `no_questions`, with the count
+/// stated in its detail.
+pub(super) fn fold_research_lane_from(
+    slice: &str,
+    model: &str,
+    secs: u64,
+    out: Result<String, String>,
+    first_q_index: usize,
+) -> (Vec<ResearchRow>, Vec<StrayAnswer>) {
     #[derive(serde::Deserialize, Default)]
     struct DerivedReply {
         #[serde(default)]
         answers: Vec<DerivedAnswer>,
+        #[serde(default)]
+        builder_decides: Vec<String>,
     }
     let raw = match out {
         Ok(raw) => raw,
@@ -545,86 +853,69 @@ pub(super) fn fold_research_lane(
             );
         }
     };
-    let entries: Vec<DerivedAnswer> = match parse_json_lenient::<DerivedReply>(&raw) {
-        Some(reply) => reply.answers,
-        None => {
-            return (
-                vec![lane_outcome_row(slice, "empty_answer", &raw, model, secs)],
-                Vec::new(),
-            );
+    let (entries, builder_decides): (Vec<DerivedAnswer>, Vec<String>) =
+        match parse_json_lenient::<DerivedReply>(&raw) {
+            Some(reply) => (reply.answers, reply.builder_decides),
+            None => {
+                return (
+                    vec![lane_outcome_row(slice, "empty_answer", &raw, model, secs)],
+                    Vec::new(),
+                );
+            }
+        };
+    let mut decides: Vec<String> = Vec::new();
+    for d in &builder_decides {
+        let d = one_line(d);
+        if !d.is_empty() && !decides.contains(&d) {
+            decides.push(d);
         }
+    }
+    let labelled_decides = || -> Vec<String> {
+        decides
+            .iter()
+            .map(|d| format!("{BUILDER_DECIDES_PREFIX}{d}"))
+            .collect()
     };
     if entries.is_empty() {
-        return (
-            vec![lane_outcome_row(
-                slice,
-                "no_questions",
-                "the lane read its sections and derived no design or external question",
-                model,
-                secs,
-            )],
-            Vec::new(),
-        );
+        let detail = if decides.is_empty() {
+            "the lane read its sections and derived no design or external question".to_string()
+        } else {
+            format!(
+                "the lane read its sections and derived no design or external question; it \
+                 listed {} choice(s) only this slice's builder makes (builder_decides)",
+                decides.len()
+            )
+        };
+        let mut outcome = lane_outcome_row(slice, "no_questions", &detail, model, secs);
+        outcome.raised = labelled_decides();
+        return (vec![outcome], Vec::new());
     }
     let mut rows: Vec<ResearchRow> = Vec::new();
     let mut strays: Vec<StrayAnswer> = Vec::new();
     for (position, entry) in entries.into_iter().enumerate() {
-        let question = entry
-            .question
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if question.is_empty() {
-            strays.push(StrayAnswer {
-                question_index: Some(position),
-                answer_head: entry.answer.chars().take(200).collect(),
-            });
-            continue;
+        match row_from_entry(slice, first_q_index + position, entry, model, secs) {
+            Ok(row) => rows.push(row),
+            Err(stray) => strays.push(stray),
         }
-        let answered = !entry.answer.trim().is_empty();
-        rows.push(ResearchRow {
-            slice: slice.to_string(),
-            q_index: position,
-            question,
-            status: if answered {
-                RESEARCH_ANSWERED.to_string()
-            } else {
-                RESEARCH_UNANSWERED.to_string()
-            },
-            answer: if answered {
-                entry.answer
-            } else {
-                String::new()
-            },
-            // Parsed, but the deliverable slot is blank — a named absence, never a stub.
-            reason: (!answered).then(|| "empty_answer".to_string()),
-            detail: None,
-            raised: entry.raised,
-            model: model.to_string(),
-            secs,
-            kind: QuestionKind::parse(&entry.kind).as_str().to_string(),
-            cite: entry.cite.split_whitespace().collect::<Vec<_>>().join(" "),
-            batch: 0,
-        });
     }
     if rows.is_empty() {
         // Every entry lacked a question: the strays are named by the fan; the slice still needs
         // its terminal row.
-        return (
-            vec![lane_outcome_row(
-                slice,
-                "empty_answer",
-                "every entry of the lane's reply lacked a question",
-                model,
-                secs,
-            )],
-            strays,
+        let mut outcome = lane_outcome_row(
+            slice,
+            "empty_answer",
+            "every entry of the lane's reply lacked a question",
+            model,
+            secs,
         );
+        outcome.raised = labelled_decides();
+        return (vec![outcome], strays);
     }
     let n = rows.len();
     for row in &mut rows {
         row.batch = n;
     }
+    rows[0].raised.extend(labelled_decides());
     (rows, strays)
 }
 
@@ -664,13 +955,19 @@ pub(super) fn fold_research_panic(q: &ResearchQuestion, error: &str) -> Research
 /// rule's own exemption, the same cut `research_dispatched` makes).
 pub(super) fn emit_research_outcome(events: &dyn EventSink, row: &ResearchRow) {
     // VA-089: the question's KIND is the lane's word about its own question, named as the row
-    // lands (the opener names none). A lane-outcome row has no question and no kind.
+    // lands (the opener names none). A lane-outcome row has no question and no kind. VA-118:
+    // `source` says who decided — the lane (`model`) or `classify_design_entry` (`classifier`,
+    // kind `spec_restated`, whose `model_kind` was `design` — the only tag the classifier
+    // overrides).
     if !row.question.is_empty() {
+        let kind = QuestionKind::from_stored(&row.kind);
         events.write_value(serde_json::json!({
             "event": "research_question_kind",
             "slice": row.slice,
             "q_index": row.q_index,
             "kind": row.kind,
+            "source": kind.source(),
+            "model_kind": (kind == QuestionKind::SpecRestated).then_some("design"),
             "cite": (!row.cite.is_empty()).then(|| row.cite.clone()),
             "question": row.question.chars().take(200).collect::<String>(),
         }));
@@ -698,13 +995,39 @@ pub(super) fn emit_research_outcome(events: &dyn EventSink, row: &ResearchRow) {
         }));
     }
     for q in &row.raised {
-        events.write_value(serde_json::json!({
-            "event": "research_raised_folded",
-            "slice": row.slice,
-            "q_index": row.q_index,
-            "raised_by": research_mini_name(&row.slice, row.q_index),
-            "question": q.chars().take(200).collect::<String>(),
-        }));
+        match raised_destination(q) {
+            // VA-118 item 5: a point for another slice, named with its destination — the field
+            // answer_routing reads at plan time once the row carries it as a field.
+            RaisedDestination::OtherSlice { slice, text } => {
+                events.write_value(serde_json::json!({
+                    "event": "research_raised_for",
+                    "from": row.slice,
+                    "to": slice,
+                    "q_index": row.q_index,
+                    "raised_by": research_mini_name(&row.slice, row.q_index),
+                    "text": text.chars().take(200).collect::<String>(),
+                }));
+            }
+            // VA-118 item 3: a choice only this slice's builder makes — the named absence of a
+            // research question, one event per line so the vigil reads the words.
+            RaisedDestination::BuilderDecides(text) => {
+                events.write_value(serde_json::json!({
+                    "event": "research_builder_decides",
+                    "slice": row.slice,
+                    "q_index": row.q_index,
+                    "text": text.chars().take(200).collect::<String>(),
+                }));
+            }
+            RaisedDestination::ThisBuilder(text) => {
+                events.write_value(serde_json::json!({
+                    "event": "research_raised_folded",
+                    "slice": row.slice,
+                    "q_index": row.q_index,
+                    "raised_by": research_mini_name(&row.slice, row.q_index),
+                    "question": text.chars().take(200).collect::<String>(),
+                }));
+            }
+        }
     }
 }
 
@@ -784,7 +1107,16 @@ pub(super) fn splice_claimed_sections(
         let key = heading_key(want);
         match sections.iter().find(|s| heading_key(&s.heading) == key) {
             Some(sec) => {
-                spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
+                // VA-118: the section's request.md span rides under its heading so a lane's
+                // `cite` is the handed lines — r6i's structure lane ran 14 sed/grep calls over
+                // ranges it already held to learn the line numbers it wanted to cite.
+                spliced.push_str(&format!(
+                    "\n### {}\n[request.md:{}-{}]\n{}",
+                    sec.heading,
+                    sec.line_start,
+                    sec.line_end,
+                    sec.body.trim()
+                ));
             }
             None => {
                 events.write_value(serde_json::json!({
@@ -1045,8 +1377,10 @@ pub(super) fn consumed_spec_sections(
             .iter()
             .map(|i| {
                 format!(
-                    "\n### {}\n{}",
+                    "\n### {}\n[request.md:{}-{}]\n{}",
                     sections[*i].heading,
+                    sections[*i].line_start,
+                    sections[*i].line_end,
                     sections[*i].body.trim()
                 )
             })
@@ -1219,29 +1553,38 @@ pub(super) fn research_user_text(prior_block: &str, lane: &ResearchLane) -> Stri
     } else {
         format!(
             "\n\nTHE OTHER SLICES OF THIS REQUEST — their objectives, what THEIR builders own. A \
-             question about one of these is theirs, not yours; ask it here only when this slice's \
-             sections must match its exact shape (a path, a payload, a signature):\n{}",
+             question about one of these is theirs, not yours: ask it here only when this slice's \
+             sections must match its exact shape (a path, a payload, a DOM id, a signature both \
+             builders must agree on); a point you notice that belongs to one of them goes in \
+             `raised_for` with that slice's id — it is handed to that slice, so do not deliberate \
+             whether to drop it:\n{}",
             lane.siblings
         )
     };
     format!(
         "{}{prior_block}{siblings}\n\nYOUR WORK, slice `{}`: DERIVE this slice's questions, then \
-         ANSWER them, in this one session. Read the sections above — they are this slice's own \
-         text, verbatim — the sources named under SOURCES (the vendor's documentation when the \
-         request names one) and the other slices' objectives. Write down, as QUESTIONS, only what \
-         a builder of this slice would still have to decide or look up OUTSIDE these sections:\n\
-         — kind design: the request is SILENT on a convention the builder must choose. Evidence \
-         first: RUN `grep -n -i '<term>'` against the request file named under SOURCES and put in \
-         `cite` the line(s) closest to it AND that grep's 'no match'; then DECIDE — the answer \
-         names the convention and the reason.\n\
+         ANSWER them, in this one session. THE SPEC'S OWN SECTIONS above ARE the request for this \
+         slice: every fact they state you already hold, verbatim, with each section's request.md \
+         lines under its heading — do not re-read them from the request file and do not search the \
+         request to prove a silence; a silence is stated by naming the handed section that would \
+         have carried the fact and does not. Sort every candidate three ways before you write: a \
+         pasted line answers it → it is NOT a question, write nothing (the builder holds the same \
+         text); the vendor's documentation answers it → kind external; the request leaves it OPEN → \
+         kind design, only when another slice's builder or the vendor must AGREE to the answer, or \
+         its consequence reaches beyond this slice's own files:\n\
+         — kind design: name in `alternatives` the two or more answers the request admits, in \
+         `open_because` why the handed lines do not settle it, in `cite` the request.md line(s) of \
+         the handed section nearest to it; then DECIDE — the answer names the choice and the reason. \
+         A design entry that can show only one option is recorded as spec_restated: the request \
+         settled it.\n\
          — kind external: the vendor's documentation (or another source outside the request) \
          settles it. Fetch it, answer from its words, and put the doc section (URL and heading) \
          in `cite`.\n\
-         A fact the request states is NOT a question — the answer is in the sections above and \
-         the builder holds the same text; write no entry for it. A question that IS one of the \
-         open decisions (USER DECISIONS above, or one the request assigns to the builder as a \
-         decision) is not yours either. Answer every question you write; the reply shape is in \
-         the system message.",
+         Not a question: a fact a pasted line states; one of the open decisions (USER DECISIONS \
+         above, or one the request assigns to the builder as a decision); a choice only this \
+         slice's builder feels at the keyboard — a buffer layout, a debounce, a helper's name, an \
+         internal state shape — list those under `builder_decides`, one line each, no answer. \
+         Answer every question you write; the reply shape is in the system message.",
         lane.head, lane.slice
     )
 }
@@ -2184,34 +2527,46 @@ pub(super) fn research_system_text(lane: &ResearchLane) -> String {
      have one."
             .to_string();
     }
-    "You are the RESEARCHER of ONE slice of this request. You derive that slice's questions \
-     yourself — the request's own text for the slice is in your message, verbatim — and you \
-     answer them, all in this one session. Ground every answer: read the sections you were \
-     given, read the existing tree's files with your shell and tree tools, RUN the grep the \
-     message asks for against the request file, and when the request names a documentation URL, \
-     fetch it — an answer copied from the real source beats any paraphrase. Do NOT create or \
-     edit files: you have no write or edit tool, and your structured reply IS your deliverable.\n\n\
-     A question is worth writing only if a builder holding the same sections would still have \
-     to DECIDE (kind design — the request is silent; decide, with the reason) or LOOK OUTSIDE the \
-     request (kind external — the vendor's documentation; cite its section). What the sections \
-     already state is not a question: write no entry for it, the builder reads the same text. \
-     Each answer is a HANDOFF to the builder: exact files, exact key/field literals, exact \
-     endpoints or signatures where the request implies them; a convention is stated as a \
-     convention. Settle a shared fact ONCE and let later answers refer back to it, never \
-     contradict it. Keep each answer under a page.\n\n\
+    "You are the RESEARCHER of ONE slice of this request. The sections in your message ARE the \
+     request for this slice — verbatim, each with its request.md lines under its heading — so you \
+     already hold every fact they state; re-reading them from disk or searching the request for \
+     what they say is not research. You derive this slice's questions yourself and answer them, \
+     all in this one session. Ground every answer in the sections you were given, the existing \
+     tree's files (your shell and tree tools) and, when the request names a documentation URL, \
+     the vendor's documentation — fetch it; an answer copied from the real source beats any \
+     paraphrase. Do NOT create or edit files: you have no write or edit tool, and your structured \
+     reply IS your deliverable.\n\n\
+     A question is worth writing only if a builder holding the same sections would still have to \
+     settle it WITH someone else: another slice's builder (a path, a payload, a DOM id, a \
+     signature both sides must agree on), the vendor (kind external — its documentation; cite the \
+     section), or a decision the request leaves open whose consequence reaches beyond this \
+     slice's files (kind design — name the alternatives the request admits, why the handed lines \
+     do not settle it, then decide with the reason). What the sections already state is not a \
+     question: write no entry for it, the builder reads the same text. A choice only this slice's \
+     builder feels — a buffer layout, a debounce, a helper's name, an internal state shape — is not \
+     research: list it under `builder_decides`, one line each, no answer. A design entry that can \
+     name only one option is recorded as spec_restated — the request settled it. Each answer is a \
+     HANDOFF to the builder: exact files, exact key/field literals, exact endpoints or signatures \
+     where the request implies them; a convention is stated as a convention. Settle a shared fact \
+     ONCE and let later answers refer back to it, never contradict it. Keep each answer under a \
+     page.\n\n\
      When you are done, call the final_output tool ONCE with {\"answers\": [{\"question\": \
-     \"...\", \"kind\": \"design\" | \"external\", \"cite\": \"...\", \"answer\": \"...\", \
-     \"raised\": [...]}, ...]} — one entry per question you derived, in the order you settled \
-     them. COMPOSE EACH ENTRY INSIDE THAT CALL'S ARGUMENTS: a question or an answer drafted in \
-     your reasoning first is written twice and read by no one until the call lands — once you \
-     have a question and its evidence, the next thing you write is the tool call that carries \
-     it. If the sections settle everything and no design or external question remains, call \
-     final_output with an EMPTY answers list — that is a complete, honest reply. A question you \
-     could not answer still gets its entry with an empty answer and the reason in `raised`. \
-     `raised` lists further questions you could NOT settle: do not answer them, and nothing will \
-     dispatch them; they are handed VERBATIM to this slice's builder as open points, so phrase \
-     each as a decision that builder can make in one line, naming the conventional choice when \
-     you have one."
+     \"...\", \"kind\": \"design\" | \"external\", \"cite\": \"request.md:<lines> or <doc \
+     section>\", \"alternatives\": [\"...\", \"...\"], \"open_because\": \"...\", \"answer\": \
+     \"...\", \"raised\": [...], \"raised_for\": [{\"slice\": \"<other slice id>\", \"text\": \
+     \"...\"}]}, ...], \"builder_decides\": [\"...\"]} — one entry per question you derived, in \
+     the order you settled them. COMPOSE EACH ENTRY INSIDE THAT CALL'S ARGUMENTS: a question or \
+     an answer drafted in your reasoning first is written twice and read by no one until the call \
+     lands — once you have a question and its evidence, the next thing you write is the tool call \
+     that carries it. If the sections settle everything and no design or external question \
+     remains, call final_output with an EMPTY answers list (builder_decides may still be filled) — \
+     that is a complete, honest reply. A question you could not answer still gets its entry with \
+     an empty answer and the reason in `raised`. `raised` lists points for THIS slice's builder \
+     you could not settle: do not answer them, and nothing will dispatch them; they are handed \
+     VERBATIM to that builder as open points, so phrase each as a decision the builder can make in \
+     one line, naming the conventional choice when you have one. `raised_for` lists points that \
+     belong to ANOTHER slice — its id from THE OTHER SLICES list and the point in one line; they \
+     are handed to that slice, so do not deliberate whether to drop them."
         .to_string()
 }
 
@@ -3452,6 +3807,339 @@ mod tests {
         );
     }
 
+    /// VA-118 item 2, THE CLASSIFIER, on r6i's own material (archive local-sb7-swarm-r6i-STOPPED-
+    /// by-Mihai-research-tail-…-research-107m-501e38a98, `.swarm/ledger/research-<slice>-q<N>.json`):
+    /// the six answers the tick-surgeon read against the spec — behavior-q1 and -q11 SPEC_RESTATED
+    /// (request.md:144/:405/:408 and :241-249/:392/:472 rewritten as code), viz-q1 and behavior-q6
+    /// DESIGN-INTRA (the same builder's keyboard choices), viz-q4 and viz-q7 DESIGN-REAL — all 35 of
+    /// the run's entries self-tagged `design` and none named an alternative (the contract had no
+    /// field for one). The classifier does NOT reproduce the reader's 2/2/2 split and does not
+    /// try: `classify_design_entry`'s doc carries the measurement (0.53/0.61 vs 0.55/0.51 vs
+    /// 0.72/0.62 in-section word share — no cut exists). What it reads is whether the entry SHOWS
+    /// a choice: shaped as r6i wrote them, all six are `spec_restated` by the classifier, and the
+    /// event says so (`source: classifier`, `model_kind: design`); the same viz-q7 with its two
+    /// admissible owners named stays `design` by the model, its evidence line carrying the words.
+    #[test]
+    fn the_classifier_reads_whether_a_design_entry_shows_a_choice_and_the_event_names_who_decided()
+    {
+        let r6i: [(&str, &str, &str, &str); 6] = [
+            ("web-console-behavior",
+             "What page size, offset handling, readout formula, sort mapping and DOM selectors does the payments table use?",
+             "request.md:405 (showing X–Y of TOTAL), :407–408 (clickable headers, aria-sort), :117 + Endpoints 'Payments' (limit default 50/cap 200, sort vocabulary, total reflects filters), :827 (p95 at limit=50)",
+             "app.js holds one view state `view = {limit: 50, offset: 0, status: \"\", currency: \"\", sort: \"created_at\"}` and always fetches `GET /api/payments` with `limit=50` … Prev/Next (`#prev`, `#next`) move offset by 50 … Readout text is exactly `showing ${offset+1}–${offset+data.length} of ${total}` (request.md:405)"),
+            ("web-console-behavior",
+             "How are ledgerd error envelopes displayed, and what shared fetch helper guarantees a clean console?",
+             "request.md:235–252 (single envelope shape, snake_case codes), :392/:423 (non-blocking notice in #notice role=status), :472 (no alert/confirm/prompt)",
+             "One shared `api(path, opts)` helper is the ONLY network path in app.js … On HTTP !ok with a parseable envelope `{error: {code, message, field_errors?}}`: set `#notice` (role=\"status\") textContent to EXACTLY `error.message`"),
+            ("viz-engine",
+             "How is the WebGL scene organized (geometry, instance buffer layout/stride, draw-call stream, dim scheme, context choice)?",
+             "request.md:545–567 (Rendering), :689 (brush cost), :710–712 (upload accounting)",
+             "DECIDE the minimal stream: ONE static unit-box vertex VBO … ONE interleaved instance VBO, DYNAMIC_DRAW, stride 32 bytes"),
+            ("web-console-behavior",
+             "How does app.js apply a streamed batch to the table and summary (immediate patch vs re-fetch)?",
+             "request.md:695–717 (streaming diffs; batch shape), §7 (status badge hexes), :837 (250 ms apply budget)",
+             "patch that row's cells in place immediately … Then schedule ONE debounced (300 ms) `loadPage()` + `/api/summary` refetch"),
+            ("viz-engine",
+             "What does vs7dbg.layout() (and the other vs7dbg methods) return before the first non-empty /api/viz/records response has been applied?",
+             "request.md:501–504, :722, :737",
+             "DECIDE: `layout()` returns `null` until the first non-empty response is applied, then returns the frozen `{d0, D0: 96, R0}` for the life of the page"),
+            ("viz-engine",
+             "Who owns the viz panel states (#viz-empty / #viz-error), and how must viz.js handle canvas resize and WebGL context loss?",
+             "request.md:445–447 (§7 States); :549–550 (DPR sizing), :559 (at-rest budget)",
+             "DECIDE: (1) viz.js owns visibility of both elements — it alone knows the fetch outcome and scene count"),
+        ];
+        for (slice, question, cite, answer) in r6i {
+            let reply = serde_json::json!({"answers": [
+                {"question": question, "kind": "design", "cite": cite, "answer": answer}
+            ]})
+            .to_string();
+            let (rows, strays) = fold_research_lane(slice, "qwen3.8-27b", 3758, Ok(reply));
+            assert!(strays.is_empty());
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].kind, "spec_restated",
+                "an r6i-shaped design entry names no alternative: {question}"
+            );
+            assert_eq!(
+                rows[0].cite, cite,
+                "the lane's cite is kept verbatim (one line)"
+            );
+            let sink = ValueSink::default();
+            emit_research_outcome(&sink, &rows[0]);
+            let ev = sink.0.lock().unwrap();
+            assert_eq!(ev[0]["event"], "research_question_kind");
+            assert_eq!(ev[0]["kind"], "spec_restated");
+            assert_eq!(ev[0]["source"], "classifier");
+            assert_eq!(ev[0]["model_kind"], "design");
+            assert_eq!(ev[1]["event"], "research_answered");
+        }
+        // viz-q7 as the new contract asks for it: the two admissible owners named, the request's
+        // silence stated — a decision, kept as the model's own word.
+        let (kind, evidence) = classify_design_entry(
+            "design",
+            "request.md:445-447 (§7 States)",
+            &[
+                "viz.js owns #viz-empty / #viz-error".into(),
+                "app.js owns them".into(),
+                " viz.js owns #viz-empty / #viz-error ".into(),
+            ],
+            "§7 names both elements and no owner",
+        );
+        assert_eq!(kind, QuestionKind::Design);
+        assert_eq!(kind.source(), "model");
+        assert_eq!(
+            evidence,
+            "request.md:445-447 (§7 States); open because: §7 names both elements and no owner; \
+             alternatives: viz.js owns #viz-empty / #viz-error | app.js owns them",
+            "the evidence line carries the words the classifier read; a duplicate alternative counts once"
+        );
+        // One alternative is not a choice; external and unknown kinds pass through untouched.
+        assert_eq!(
+            classify_design_entry("design", "request.md:1", &["only this".into()], "").0,
+            QuestionKind::SpecRestated
+        );
+        let (kind, evidence) =
+            classify_design_entry("external", "docs §Webhooks", &["ignored".into()], "ignored");
+        assert_eq!(
+            (kind, evidence.as_str()),
+            (QuestionKind::External, "docs §Webhooks")
+        );
+        assert_eq!(
+            classify_design_entry("lookup", "", &[], "").0,
+            QuestionKind::Unkinded
+        );
+        assert_eq!(
+            QuestionKind::from_stored("spec_restated").source(),
+            "classifier"
+        );
+        assert_eq!(QuestionKind::parse("spec_restated"), QuestionKind::Unkinded);
+    }
+
+    /// VA-118 items 1 and 3: the slice lane's prompt makes the pasted sections THE request for the
+    /// slice and orders no search of the request file — r6i's structure lane ran 14 `sed`/grep
+    /// calls over ranges it already held plus five sweeps for silence proofs, under a prompt that
+    /// said "RUN `grep -n -i '<term>'` … AND that grep's 'no match'". A design entry must name its
+    /// alternatives; intra-slice choices go to `builder_decides`; a point for another slice has
+    /// `raised_for`. The splice writes each section's request.md span under its heading so the
+    /// cite is the handed lines. The decisions lane's text is not this change's subject.
+    #[test]
+    fn the_slice_lane_prompt_makes_the_pasted_sections_the_spec_and_orders_no_search() {
+        let mut lane = lane("web-console-structure", "HEAD", "material");
+        lane.siblings = "viz-engine — owns web/viz.js".to_string();
+        let system = research_system_text(&lane);
+        let user = research_user_text("", &lane);
+        let instruction = user.split("YOUR WORK, slice").nth(1).unwrap();
+        for (name, text) in [("system", system.as_str()), ("instruction", instruction)] {
+            assert!(
+                !text.to_lowercase().contains("grep") && !text.contains("no match"),
+                "{name} orders no search of the request:\n{text}"
+            );
+            for needle in [
+                "alternatives",
+                "open_because",
+                "builder_decides",
+                "spec_restated",
+            ] {
+                assert!(text.contains(needle), "{name} names `{needle}`:\n{text}");
+            }
+        }
+        assert!(system.contains("The sections in your message ARE the request for this slice"));
+        assert!(
+            instruction.contains("THE SPEC'S OWN SECTIONS above ARE the request for this slice")
+        );
+        assert!(instruction.contains("do not re-read them from the request file"));
+        assert!(
+            user.contains("goes in `raised_for` with that slice's id"),
+            "the siblings block gives a cross-slice point its destination:\n{user}"
+        );
+        assert!(system.contains("`raised_for` lists points that belong to ANOTHER slice"));
+        let schema = research_derived_schema();
+        let item = &schema["properties"]["answers"]["items"]["properties"];
+        for field in ["alternatives", "open_because", "raised_for"] {
+            assert!(item.get(field).is_some(), "schema item carries `{field}`");
+        }
+        assert_eq!(
+            item["raised_for"]["items"]["required"],
+            serde_json::json!(["slice", "text"])
+        );
+        assert!(schema["properties"]["builder_decides"].is_object());
+        assert_eq!(
+            research_answer_tool_schema(),
+            schema["properties"]["answers"]["items"],
+            "the per-answer tool takes exactly one entry"
+        );
+        assert_eq!(RESEARCH_ANSWER_TOOL, "research_answer");
+        assert!(
+            !system.contains(RESEARCH_ANSWER_TOOL),
+            "the prompt names no tool that is not registered yet (unwired in this commit)"
+        );
+        let spec = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
+        let spliced = splice_claimed_sections(
+            "boot",
+            &["Beta".to_string()],
+            &spec_sections(spec),
+            &NullSink,
+        );
+        assert_eq!(spliced, "\n### Beta\n[request.md:4-5]\nbeta body text");
+    }
+
+    /// VA-118 items 3, 4 and 5 at the fold: one entry landed through the per-answer door
+    /// (`fold_research_entry`) is byte-for-byte the row the final-reply fold builds at that
+    /// position (`fold_research_lane_from`), it round-trips its mini (a `raised_for` point keeps
+    /// its destination label), and the outcome funnel names each raised line by destination —
+    /// `research_raised_for{from, to, text}`, `research_builder_decides{text}`,
+    /// `research_raised_folded` — while a lane that derived nothing but listed builder decisions
+    /// is still `no_questions`, with the list carried and counted.
+    #[test]
+    fn a_per_answer_entry_lands_the_same_row_as_the_lane_fold_and_round_trips_its_mini() {
+        let entry = serde_json::json!({
+            "question": "Which element carries the filter's data-value?",
+            "kind": "design",
+            "cite": "request.md:411-414",
+            "alternatives": ["the wrapper div", "the trigger button"],
+            "open_because": "L414 says the grader reads data-value and names no element",
+            "answer": "The wrapper <div class=\"filter-dd\" id=\"status-filter\"> carries it.",
+            "raised": ["label text for the off option"],
+            "raised_for": [
+                {"slice": "web-console-behavior", "text": "set data-value on the div only"},
+                {"slice": "", "text": "a point with no destination stays with this builder"},
+                {"slice": "viz-engine", "text": "   "}
+            ]
+        });
+        let row =
+            fold_research_entry("web-console-structure", 3, "m", 120, &entry.to_string()).unwrap();
+        let (mut rows, strays) = fold_research_lane_from(
+            "web-console-structure",
+            "m",
+            120,
+            Ok(serde_json::json!({"answers": [entry]}).to_string()),
+            3,
+        );
+        assert!(strays.is_empty());
+        rows[0].batch = 0;
+        assert_eq!(format!("{row:?}"), format!("{:?}", rows[0]));
+        assert_eq!((row.q_index, row.kind.as_str()), (3, "design"));
+        assert_eq!(
+            row.raised,
+            vec![
+                "label text for the off option".to_string(),
+                "[for web-console-behavior] set data-value on the div only".to_string(),
+                "a point with no destination stays with this builder".to_string(),
+            ],
+            "a blank text is dropped, a blank destination keeps the point for this builder"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        write_research_ledger(dir.path(), &row).unwrap();
+        let back = load_research_mini(dir.path(), "web-console-structure", 3).unwrap();
+        assert_eq!(format!("{back:?}"), format!("{row:?}"));
+        assert!(back
+            .cite
+            .ends_with("alternatives: the wrapper div | the trigger button"));
+        let sink = ValueSink::default();
+        emit_research_outcome(&sink, &back);
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_question_kind",
+                "research_answered",
+                "research_raised_folded",
+                "research_raised_for",
+                "research_raised_folded",
+            ]
+        );
+        assert_eq!(ev[0]["source"], "model");
+        assert!(ev[0]["model_kind"].is_null());
+        assert_eq!(ev[3]["from"], "web-console-structure");
+        assert_eq!(ev[3]["to"], "web-console-behavior");
+        assert_eq!(ev[3]["text"], "set data-value on the div only");
+        assert_eq!(ev[3]["raised_by"], "research-web-console-structure-q3.json");
+        assert_eq!(
+            ev[4]["question"],
+            "a point with no destination stays with this builder"
+        );
+        drop(ev);
+        assert!(fold_research_entry("s", 0, "m", 1, "not json").is_err());
+        // builder_decides with no questions: still no_questions, the list carried and counted.
+        let (rows, strays) = fold_research_lane(
+            "viz-engine",
+            "m",
+            300,
+            Ok(serde_json::json!({
+                "answers": [],
+                "builder_decides": ["instance VBO layout and stride", " ", "debounce interval", "instance VBO layout and stride"]
+            })
+            .to_string()),
+        );
+        assert!(strays.is_empty());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reason.as_deref(), Some("no_questions"));
+        assert!(
+            rows[0].detail.as_deref().unwrap().ends_with(
+                "it listed 2 choice(s) only this slice's builder makes (builder_decides)"
+            ),
+            "{:?}",
+            rows[0].detail
+        );
+        assert_eq!(
+            rows[0].raised,
+            vec![
+                "[builder decides] instance VBO layout and stride".to_string(),
+                "[builder decides] debounce interval".to_string()
+            ]
+        );
+        let sink = ValueSink::default();
+        emit_research_outcome(&sink, &rows[0]);
+        let ev = sink.0.lock().unwrap();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_unanswered",
+                "research_builder_decides",
+                "research_builder_decides"
+            ]
+        );
+        assert_eq!(ev[1]["text"], "instance VBO layout and stride");
+        let block = raised_questions_brief_block(&[&rows[0]]);
+        assert!(
+            block.contains("- [builder decides] debounce interval"),
+            "{block}"
+        );
+        // With questions, the list rides on the FIRST row only.
+        let (rows, _) = fold_research_lane(
+            "viz-engine",
+            "m",
+            300,
+            Ok(serde_json::json!({
+                "answers": [
+                    {"question": "q0", "kind": "external", "cite": "docs §1", "answer": "a0"},
+                    {"question": "q1", "kind": "external", "cite": "docs §2", "answer": "a1"}
+                ],
+                "builder_decides": ["debounce interval"]
+            })
+            .to_string()),
+        );
+        assert_eq!(
+            rows[0].raised,
+            vec!["[builder decides] debounce interval".to_string()]
+        );
+        assert!(rows[1].raised.is_empty());
+        assert_eq!(
+            raised_destination("[for viz-engine] who toggles #viz-empty"),
+            RaisedDestination::OtherSlice {
+                slice: "viz-engine",
+                text: "who toggles #viz-empty"
+            }
+        );
+        assert_eq!(
+            raised_destination("[for ] malformed label"),
+            RaisedDestination::ThisBuilder("[for ] malformed label"),
+            "a label with no closing bracket is a plain raised line, never a lost point"
+        );
+    }
+
     /// VA-089's terminal fold for a slice lane whose questions are its OWN: every outcome — the
     /// lane's derived Q/A entries (kind and cite kept, position = q_index), a blank answer, an
     /// entry with no question (a stray, named), an unknown kind (kept as `unkinded`), a reply
@@ -3461,9 +4149,13 @@ mod tests {
     /// reachable with no clock. A miss is a loud named absence, never a substituted answer.
     #[test]
     fn a_slice_lanes_derived_answers_fold_to_rows_and_every_outcome_is_terminal() {
+        // VA-118 re-pin: the first entry names two alternatives, so it stays `design` under the
+        // classifier (a design entry naming fewer than two is recorded spec_restated — pinned in
+        // the classifier's own test); its cite keeps the lane's words and gains the alternatives.
         let reply = serde_json::json!({"answers": [
             {"question": "Which journal mode for notify.db?", "kind": "design",
-             "cite": "request.md:77 'SQLite'; grep -n -i 'wal' → no match",
+             "cite": "request.md:77 'SQLite'",
+             "alternatives": ["WAL", "rollback journal (DELETE)"],
              "answer": "WAL — one writer, readers never block.", "raised": ["single writer?"]},
             {"question": "Which header carries the vendor's signature?", "kind": "external",
              "cite": "docs §Webhooks → Signing", "answer": "  "},
