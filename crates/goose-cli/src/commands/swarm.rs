@@ -25834,21 +25834,9 @@ impl GooseAgentDispatcher {
                      your owned file written and non-empty FAILS and is retried.\n\n"
                         .to_string()
                 } else {
-                    "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
-                     `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
-                     the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
-                     LAYOUT above IS the complete structure (there is nothing on disk to discover), tests are a \
-                     SEPARATE subtask, and the API of EVERY dependency you import is ALREADY injected below \
-                     under 'API of …' — read it THERE, NEVER `cat` the module. Cat-ing files whose APIs are \
-                     already injected only bloats your context until you LOOP — repeating 'let me write the \
-                     file' over and over without ever emitting the write. Implement from the spec + injected \
-                     APIs, THEN run `python3 -m pytest` to check — never piped through `head`/`tail` (the \
-                     pipe hides the real exit code), and `collected 0 items`/`no tests ran`/`file or \
-                     directory not found` in the output means the check DID NOT RUN, whatever the exit \
-                     code says. A turn that ends without every owned file \
-                     written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
-                     #1 way workers burn their whole budget and produce nothing.\n\n"
-                        .to_string()
+                    // VA-102: ONE named first write (briefs.rs) — "write your owned file(s) IN FULL"
+                    // had r6h's ledgerd-core design all 8 files in reasoning before its first write.
+                    briefs::write_first_body(&req.owned_files, &req.description)
                 };
                 // THE PORT RULE, for every test author regardless of the kind-prompt lever. It is
                 // a correctness rule, not kind tailoring: coupling it to the A/B lever meant the
@@ -26683,22 +26671,30 @@ impl GooseAgentDispatcher {
         // exists yet. A worker that owns nothing, or has already written something, reads nothing new.
         // S12-C: never for the MERGER — "write it now, in one `write`" is the retype its brief
         // forbids (the pieces are the source; the final file is assembled, not typed).
-        let worker_user_text = if act_now_nudge()
+        // VA-102: ONE file by name — it used to list every owned file joined by "and", so an
+        // 8-file owner read "write it now, in one `write`" about all eight; the target is the same
+        // derivation the WRITE FIRST script opens with, so the two agree. A shard's one owned file
+        // is its README, which nothing runs — its next step is the piece its brief names.
+        let act_now_target = if act_now_nudge()
             && req.merger_of.is_none()
             && !req.owned_files.is_empty()
             && !req.owned_files.iter().any(|f| root.join(f).is_file())
         {
-            format!(
-                "{worker_user_text}\n\nYour next message must be a TOOL CALL, not prose. \
-                 {} does not exist yet — write it now, in one `write`, then verify by running it.",
-                req.owned_files
-                    .iter()
-                    .map(|f| format!("`{f}`"))
-                    .collect::<Vec<_>>()
-                    .join(" and ")
-            )
+            briefs::first_write_target(&req.owned_files, effective_description)
         } else {
-            worker_user_text
+            None
+        };
+        let worker_user_text = match act_now_target {
+            Some(first) => format!(
+                "{worker_user_text}\n\nYour next message must be a TOOL CALL, not prose. \
+                 `{first}` does not exist yet — write it now, in one `write`, then {next}.",
+                next = if req.shard_of.is_some() {
+                    "the smallest piece your task names"
+                } else {
+                    "verify by running it"
+                }
+            ),
+            None => worker_user_text,
         };
         // THE SINK IS NOT A WORKER, AND THE TURN BUDGET NEVER NOTICED.
         //
