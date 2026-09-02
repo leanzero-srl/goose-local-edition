@@ -1380,27 +1380,139 @@ pub(super) fn merge_sidecar_devices(
     excluded
 }
 
-/// The tying fact S-M7 lacked: a declared sidecar device whose engine serves NOTHING (its
-/// servable probe is None) while model loading is OFF can be served by nobody this run — the
-/// pre-warm is the only mount path and it is gated by allow_model_load. Such devices leave the
-/// pool here, BEFORE the planner-keep guard (a sidecar planner on an unmountable device would
-/// otherwise survive as the pinned planner and every planning call would fail); their ids come
-/// back for the named event (`sidecar-unmounted-and-load-disabled`). With loading ON the
-/// partition is untouched — the pre-warm mounts it. A partition that answered (Some) is judged by
-/// `drop_unservable_devices_per_engine` like every other. Mild: never a refusal of the run.
+/// One sidecar device that leaves the pool before dispatch, and the measured reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum SidecarExclusion {
+    /// The engine serves NOTHING (its probe answered None) and loading is off: nobody will mount
+    /// it this run.
+    Unmounted { id: String },
+    /// The engine ANSWERED with a catalog that lacks this device's alias, and loading is off: a
+    /// negative PROVEN by the device's own engine on the same object — the process is up,
+    /// serving `serving`, and nothing will remount it as `wanted`.
+    ServesOtherAlias {
+        id: String,
+        wanted: String,
+        serving: Vec<String>,
+    },
+}
+
+impl SidecarExclusion {
+    fn id(&self) -> &str {
+        match self {
+            SidecarExclusion::Unmounted { id } | SidecarExclusion::ServesOtherAlias { id, .. } => {
+                id
+            }
+        }
+    }
+}
+
+/// The tying fact S-M7 lacked: a declared sidecar device that nobody can mount this run leaves
+/// the pool here, BEFORE the planner-keep guard (a sidecar planner on an unmountable device
+/// would otherwise survive as the pinned planner and every planning call would fail). Two
+/// measured shapes, both only while model loading is OFF (the pre-warm is the only mount path
+/// and allow_model_load gates it):
+/// - the engine serves NOTHING (probe None) → `Unmounted`;
+/// - the engine serves OTHER aliases (probe Some, lacking this device's model_id) →
+///   `ServesOtherAlias` — the pool half of S-H3: `drop_unservable_devices` would KEEP such a
+///   device when it is its partition's only member (the never-empties-the-pool rule reads an
+///   all-unservable partition as a broken probe), so a wrong-alias sidecar stayed in the pool
+///   with no event and every dispatch to it failed.
+///
+/// With loading ON the partition is untouched — the pre-warm mounts/remounts it. Mild: never a
+/// refusal of the run; `sidecar_exclusion_events` turns each exclusion into its stderr line and
+/// run.jsonl event.
 pub(super) fn exclude_unmountable_sidecar_devices(
     pool: &mut Vec<SwarmDevice>,
     served: &HashMap<EngineKind, Option<HashSet<String>>>,
     allow_model_load: bool,
-) -> Vec<String> {
-    if allow_model_load || served.get(&EngineKind::MlxSidecar) != Some(&None) {
+) -> Vec<SidecarExclusion> {
+    if allow_model_load {
         return Vec::new();
     }
-    let (gone, keep): (Vec<SwarmDevice>, Vec<SwarmDevice>) = pool
-        .drain(..)
-        .partition(|d| device_engine_kind(d) == EngineKind::MlxSidecar);
+    let Some(partition) = served.get(&EngineKind::MlxSidecar) else {
+        return Vec::new();
+    };
+    let mut gone = Vec::new();
+    let mut keep = Vec::new();
+    for d in pool.drain(..) {
+        if device_engine_kind(&d) != EngineKind::MlxSidecar {
+            keep.push(d);
+            continue;
+        }
+        match partition {
+            Some(set) if set.contains(&d.model_id) => keep.push(d),
+            Some(set) if !set.is_empty() => {
+                let mut serving: Vec<String> = set.iter().cloned().collect();
+                serving.sort();
+                gone.push(SidecarExclusion::ServesOtherAlias {
+                    id: d.id,
+                    wanted: d.model_id,
+                    serving,
+                });
+            }
+            _ => gone.push(SidecarExclusion::Unmounted { id: d.id }),
+        }
+    }
     *pool = keep;
-    gone.into_iter().map(|d| d.id).collect()
+    gone
+}
+
+/// The stderr line and the run.jsonl event for each sidecar exclusion: one grouped
+/// `sidecar-unmounted-and-load-disabled{devices}` (byte-identical to the S-M7 shape) and one
+/// `sidecar-device-serves-other-alias{id, serving, wanted}` per wrong-alias device. The caller
+/// writes the events right after `run_started`.
+pub(super) fn sidecar_exclusion_events(exclusions: &[SidecarExclusion]) -> Vec<serde_json::Value> {
+    let mut events = Vec::new();
+    let unmounted: Vec<String> = exclusions
+        .iter()
+        .filter(|x| matches!(x, SidecarExclusion::Unmounted { .. }))
+        .map(|x| x.id().to_string())
+        .collect();
+    if !unmounted.is_empty() {
+        eprintln!(
+            "{}",
+            style(format!(
+                "sidecar-unmounted-and-load-disabled: [{}] — the mlx-sidecar serves nothing and \
+                 allow_model_load is off, so nothing will mount them this run; mount the sidecar \
+                 first or enable loading via `goose swarm pool`",
+                unmounted.join(", ")
+            ))
+            .yellow()
+            .bold()
+        );
+        events.push(serde_json::json!({
+            "event": "sidecar-unmounted-and-load-disabled",
+            "devices": unmounted,
+        }));
+    }
+    for x in exclusions {
+        let SidecarExclusion::ServesOtherAlias {
+            id,
+            wanted,
+            serving,
+        } = x
+        else {
+            continue;
+        };
+        eprintln!(
+            "{}",
+            style(format!(
+                "sidecar-device-serves-other-alias: '{id}' wants '{wanted}' but the mlx-sidecar is \
+                 serving [{}] and allow_model_load is off, so nothing will remount it this run — \
+                 out of the pool; mount '{wanted}' or enable loading via `goose swarm pool`",
+                serving.join(", ")
+            ))
+            .yellow()
+            .bold()
+        );
+        events.push(serde_json::json!({
+            "event": "sidecar-device-serves-other-alias",
+            "id": id,
+            "serving": serving,
+            "wanted": wanted,
+        }));
+    }
+    events
 }
 
 /// Drop devices the endpoint will not serve, so a dead node cannot silently eat a third of the run.
@@ -2463,7 +2575,9 @@ mod tests {
         let mut p = pool.clone();
         assert_eq!(
             exclude_unmountable_sidecar_devices(&mut p, &unmounted, false),
-            vec!["workhorse-mlx".to_string()]
+            vec![SidecarExclusion::Unmounted {
+                id: "workhorse-mlx".to_string()
+            }]
         );
         assert_eq!(
             p.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
@@ -2486,6 +2600,75 @@ mod tests {
         let mut p = pool.clone();
         assert!(exclude_unmountable_sidecar_devices(&mut p, &lm_only, false).is_empty());
         assert_eq!(p.len(), 3);
+    }
+
+    /// The pool half of S-H3: the sidecar is UP and serving alias X while the declared device
+    /// wants Y, loading off. `drop_unservable_devices` keeps a lone unservable partition member
+    /// (never-empties-the-pool), so the device is excluded HERE as a proven negative with its
+    /// own event; loading on leaves it for the pre-warm's remount; a mounted alias stays.
+    #[test]
+    fn a_sidecar_serving_another_alias_under_load_off_leaves_the_pool_by_name() {
+        let wanted = "workhorse-qwen3.5-9b-4bit-mlx";
+        let pool = vec![
+            dev("mac-gabee", "gabee-qwen3.8-27b", None),
+            dev("workhorse-mlx", wanted, Some(EngineKind::MlxSidecar)),
+            dev("local-mihai", "mihai-qwen3.8-27b", None),
+        ];
+        let lm_ids: &[&str] = &["gabee-qwen3.8-27b", "mihai-qwen3.8-27b"];
+        let other = served(&[
+            (EngineKind::LmStudio, Some(lm_ids)),
+            (
+                EngineKind::MlxSidecar,
+                Some(&["workhorse-qwen3-coder-30b-mlx"]),
+            ),
+        ]);
+        let mut p = pool.clone();
+        let gone = exclude_unmountable_sidecar_devices(&mut p, &other, false);
+        assert_eq!(
+            gone,
+            vec![SidecarExclusion::ServesOtherAlias {
+                id: "workhorse-mlx".to_string(),
+                wanted: wanted.to_string(),
+                serving: vec!["workhorse-qwen3-coder-30b-mlx".to_string()],
+            }]
+        );
+        assert_eq!(
+            p.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            vec!["mac-gabee", "local-mihai"],
+            "the LM Studio partition is untouched and in order"
+        );
+        // The proven negative would otherwise have SURVIVED the per-engine drop: a lone
+        // unservable partition member is kept by the never-empties rule.
+        let (kept, dropped) = drop_unservable_devices_per_engine(pool.clone(), &other);
+        assert_eq!(kept.len(), 3);
+        assert!(dropped.is_empty());
+        let mut p = pool.clone();
+        assert!(
+            exclude_unmountable_sidecar_devices(&mut p, &other, true).is_empty(),
+            "loading on: the pre-warm remounts it under the wanted alias"
+        );
+        assert_eq!(p.len(), 3);
+        // The events: one grouped unmounted event (S-M7 shape) plus one per wrong-alias device.
+        let events = sidecar_exclusion_events(&[
+            SidecarExclusion::Unmounted {
+                id: "mlx-a".to_string(),
+            },
+            gone[0].clone(),
+            SidecarExclusion::Unmounted {
+                id: "mlx-b".to_string(),
+            },
+        ]);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event"], "sidecar-unmounted-and-load-disabled");
+        assert_eq!(events[0]["devices"], serde_json::json!(["mlx-a", "mlx-b"]));
+        assert_eq!(events[1]["event"], "sidecar-device-serves-other-alias");
+        assert_eq!(events[1]["id"], "workhorse-mlx");
+        assert_eq!(events[1]["wanted"], wanted);
+        assert_eq!(
+            events[1]["serving"],
+            serde_json::json!(["workhorse-qwen3-coder-30b-mlx"])
+        );
+        assert!(sidecar_exclusion_events(&[]).is_empty());
     }
 
     /// The pre-warm never routes an unregistered engine's device to LM Studio (the deleted

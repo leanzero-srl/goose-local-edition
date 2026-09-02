@@ -35,8 +35,8 @@ use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
     drop_unservable_devices_per_engine, engines_for_run, exclude_unmountable_sidecar_devices,
     gen_entry_id, live_fleet_slots, local_request_params, merge_sidecar_devices, planner_fallback,
-    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind,
-    Engines, LmsProcess,
+    prewarm_pool, reconcile_pool_with_fleet, require_servable, served_by_engine,
+    sidecar_exclusion_events, EngineKind, Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -36249,28 +36249,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // The probes' own named absences (`lm-probe-unauthorized`: LM Studio refused the catalog
     // probe for want of a token, so its partition is unproven) ride to run.jsonl with the rest.
     pool_absences.extend(engines.take_probe_absences());
-    // A declared sidecar device whose engine serves nothing while loading is OFF has no mount path
-    // this run (the pre-warm is the only one and allow_model_load gates it): out of the pool by
-    // name, before the planner-keep guard can pin an unmountable planner. Mild — the run goes on.
-    let unmountable =
-        exclude_unmountable_sidecar_devices(&mut fleet_pool, &served, cfg.allow_model_load);
-    if !unmountable.is_empty() {
-        eprintln!(
-            "{}",
-            style(format!(
-                "sidecar-unmounted-and-load-disabled: [{}] — the mlx-sidecar serves nothing and \
-                 allow_model_load is off, so nothing will mount them this run; mount the sidecar \
-                 first or enable loading via `goose swarm pool`",
-                unmountable.join(", ")
-            ))
-            .yellow()
-            .bold()
-        );
-        pool_absences.push(serde_json::json!({
-            "event": "sidecar-unmounted-and-load-disabled",
-            "devices": unmountable,
-        }));
-    }
+    // A declared sidecar device that nobody can mount this run — its engine serves nothing, or
+    // serves ANOTHER alias, while loading is OFF (the pre-warm is the only mount path and
+    // allow_model_load gates it) — leaves the pool by name, before the planner-keep guard can pin
+    // an unmountable planner. Each exclusion is a stderr line + a run.jsonl event
+    // (`sidecar_exclusion_events`). Mild — the run goes on.
+    pool_absences.extend(sidecar_exclusion_events(
+        &exclude_unmountable_sidecar_devices(&mut fleet_pool, &served, cfg.allow_model_load),
+    ));
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
