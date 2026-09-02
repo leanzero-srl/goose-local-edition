@@ -373,6 +373,47 @@ pub(super) fn dependency_sources_block(
     out
 }
 
+impl DepSourcesBlock {
+    /// One `dep_source_truncated{task_id, file, bytes, kept, reason}` per cut — the loud half of
+    /// the budget (module doc, point 2); the caller writes each to the run's event stream.
+    pub(super) fn cut_events(&self, task_id: &str) -> Vec<serde_json::Value> {
+        self.cuts
+            .iter()
+            .map(|cut| {
+                serde_json::json!({
+                    "event": "dep_source_truncated",
+                    "task_id": task_id,
+                    "file": cut.file,
+                    "bytes": cut.bytes,
+                    "kept": cut.kept,
+                    "reason": cut.reason,
+                })
+            })
+            .collect()
+    }
+
+    /// The brief's dependency section: the "API of …" blocks, or — D3, a FIRST-WAVE task with no
+    /// dependency file on disk yet — the same heading with a redirect. The worker prompts point at
+    /// "'API of …'" as the authoritative surface; an empty block would point the worker at a
+    /// section that is not there, and emitting the heading WITH the redirect makes every pointer
+    /// true without touching the prompts that carry them. (The redirect once pointed at the FROZEN
+    /// MODULE INTERFACES bundle; that died with CONTRACTS, P1-4 — the plan manifest is the naming
+    /// authority.)
+    pub(super) fn text_or_none_on_disk(self) -> String {
+        if self.text.is_empty() {
+            NONE_ON_DISK_YET.to_string()
+        } else {
+            self.text
+        }
+    }
+}
+
+const NONE_ON_DISK_YET: &str = "## API of dependencies — NONE ON DISK YET\n\
+    No dependency source exists on disk yet (your siblings are still building). The \
+    PROJECT FILE LAYOUT above is the naming authority: import your dependencies from \
+    EXACTLY those paths, and once a dependency lands on disk read its real source \
+    (`grep -n`/`sed -n`) before writing calls against it.\n\n";
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -103,6 +103,7 @@ mod ledger_block;
 #[cfg(test)]
 use ledger_block::render_ledger_block;
 mod merge_holes;
+mod shard_siblings;
 mod shard_verify;
 use ledger_block::{
     read_ledger_rollup, render_ledger_block_measured, render_repair_history, truncate_block_at_line,
@@ -21669,9 +21670,12 @@ def normalize(r):
         .contains("DATA SHAPES"));
         // And the first-wave redirect survives: a worker with no dependency on disk yet is told
         // so, under the same heading its prompts point at (P1-4 rewired it off the deleted
-        // frozen-interfaces bundle; P1-6 keeps it).
+        // frozen-interfaces bundle; P1-6 keeps it; VA-106 moved it beside the block it stands
+        // in for, `dep_sources::DepSourcesBlock::text_or_none_on_disk`).
         assert!(
-            include_str!("swarm.rs").contains("## API of dependencies — NONE ON DISK YET"),
+            dep_sources::DepSourcesBlock::default()
+                .text_or_none_on_disk()
+                .starts_with("## API of dependencies — NONE ON DISK YET\n"),
             "the first-wave NONE ON DISK YET redirect must stay"
         );
     }
@@ -25576,37 +25580,28 @@ impl GooseAgentDispatcher {
                 lang,
                 dep_signatures_on(),
             );
-            for cut in &dep_sources.cuts {
-                self.events.write_value(serde_json::json!({
-                    "event": "dep_source_truncated",
-                    "task_id": req.task_id,
-                    "file": cut.file,
-                    "bytes": cut.bytes,
-                    "kept": cut.kept,
-                    "reason": cut.reason,
-                }));
+            for ev in dep_sources.cut_events(&req.task_id) {
+                self.events.write_value(ev);
             }
-            let dep_block = dep_sources.text;
-            // D3: the worker prompts point at "'API of …'" as the authoritative surface, and for a
-            // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY and the
-            // heading is absent, so the worker is pointed at a section that is not there. Emitting
-            // the heading WITH a redirect makes every pointer true without touching the prompts
-            // that carry them. (The redirect used to point at the FROZEN MODULE INTERFACES bundle;
-            // that died with CONTRACTS, P1-4 — the plan manifest is now the naming authority.)
-            let dep_block = if dep_block.is_empty() {
-                "## API of dependencies — NONE ON DISK YET\n\
-                 No dependency source exists on disk yet (your siblings are still building). The \
-                 PROJECT FILE LAYOUT above is the naming authority: import your dependencies from \
-                 EXACTLY those paths, and once a dependency lands on disk read its real source \
-                 (`grep -n`/`sed -n`) before writing calls against it.\n\n"
-                    .to_string()
-            } else {
-                dep_block
+            // D3 (a first-wave task, nothing on disk): the same heading with a redirect, so every
+            // prompt pointer at "'API of …'" stays true — `DepSourcesBlock::text_or_none_on_disk`.
+            let dep_block = dep_sources.text_or_none_on_disk();
+            // VA-106: a SHARD's parallel siblings share no DAG edge, so the dep_block above never
+            // carries them. Every sibling whose ledger row is `done` rides here — folder, pieces
+            // with sizes, PROVIDES/WRITES verbatim, the ASSUMES that name this shard — and the
+            // event (`shard_siblings_delivered` / `shard_siblings_none`) says what was handed over.
+            let siblings_block = match shard {
+                Some(sh) => {
+                    let b = shard_siblings::landed_siblings(&root, sh, &req.all_files);
+                    self.events.write_value(b.event(&req.task_id));
+                    b.text
+                }
+                None => String::new(),
             };
             format!(
                 "## PROJECT FILE LAYOUT — the agreed plan\n\
                  Every module lives at EXACTLY these paths; import from here, NEVER invent another \
-                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
+                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}{siblings_block}"
             )
         };
         // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
