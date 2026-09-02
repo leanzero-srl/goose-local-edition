@@ -20,11 +20,13 @@ import { deviceFromModelId, useFleetStatus } from './useFleet';
  *     is REPORTED; generating/processingPrompt is BUSY.
  *   - MLX sidecar: `useMlxEngineStatusPoll` (the same status the engine surfaces already poll), armed only
  *     when the swarm config declares a LOCAL `mlx-sidecar` device — no chatter otherwise. `running` with a
- *     clean probe means the engine REPLIED, so the device is REPORTED. It is never BUSY: the status DTO
- *     (MlxEngineStatus) carries no generating/idle fact, so "not busy" is unknowable for a sidecar and the
- *     demotion of a sidecar lane rests on the digest window alone (15 min for an open call) — the same
- *     exposure an LM Studio lane has during a tool call, when lms reports idle too. A remote sidecar
- *     (`host` set) is not corroborated by the local engine and stays out — treated as cloud, never demoted.
+ *     clean probe means the engine REPLIED, so the device is REPORTED. BUSY is the engine's OWN count
+ *     (Q1, 2026-09-02): `activeRequests` is Rapid-MLX's `/v1/status` num_running + num_waiting, read by the
+ *     sidecar on that same probe; `> 0` puts the device in busyNodes. An ABSENT count (an older agent, or a
+ *     refused `/v1/status` probe named in `activeRequestsError`) is "the engine did not say": the device
+ *     stays reported and never busy, so its lanes keep the pre-Q1 exposure — demotion on the digest window
+ *     alone (15 min for an open call) — rather than failing closed. A remote sidecar (`host` set) is not
+ *     corroborated by the local engine and stays out — treated as cloud, never demoted.
  *
  * Names are the short node names deriveFleet's `lmsName` compares against (`deviceFromModelId`).
  */
@@ -34,9 +36,10 @@ export interface FleetCorroboration {
   nodeStatus: Record<string, string>;
   /** Every node some feed replied about this poll, idle ones included. */
   reportedNodes: string[];
-  /** Nodes LM Studio reports generating or prompt-processing. */
+  /** Nodes LM Studio reports generating or prompt-processing, plus the local sidecar devices whose
+   *  engine reports `activeRequests > 0`. */
   busyNodes: string[];
-  /** Local sidecar devices whose engine answered `running` — in reportedNodes, busy-unknowable. */
+  /** Local sidecar devices whose engine answered `running` — in reportedNodes; busy only by its count. */
   mlxNodes: string[];
 }
 
@@ -73,18 +76,21 @@ export function useFleetCorroboration(pollMs = 1500): FleetCorroboration {
 
   const { status: mlx } = useMlxEngineStatusPoll(sidecarNames.length > 0);
   const mlxReplied = mlx?.state === 'running' && !mlx.probeError;
+  // Busy needs the count ITSELF: `undefined` is the engine not saying (never treated as 0).
+  const mlxBusy = mlxReplied && typeof mlx.activeRequests === 'number' && mlx.activeRequests > 0;
 
   return useMemo(() => {
     const mlxNodes = mlxReplied ? sidecarNames : [];
     const reported = new Set<string>([...Object.keys(nodeStatus), ...mlxNodes]);
-    const busyNodes = Object.entries(nodeStatus)
+    const lmsBusy = Object.entries(nodeStatus)
       .filter(([, st]) => BUSY_STATES.has(st))
       .map(([n]) => n);
+    const busyNodes = Array.from(new Set([...lmsBusy, ...(mlxBusy ? mlxNodes : [])]));
     return {
       nodeStatus,
       reportedNodes: Array.from(reported).sort(),
       busyNodes,
       mlxNodes,
     };
-  }, [nodeStatus, mlxReplied, sidecarNames]);
+  }, [nodeStatus, mlxReplied, mlxBusy, sidecarNames]);
 }

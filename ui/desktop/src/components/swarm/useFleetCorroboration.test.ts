@@ -59,9 +59,40 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
     expect(mockMlxStatus).not.toHaveBeenCalled();
   });
 
-  it('a running local sidecar device is REPORTED under its short node name, never busy', async () => {
+  it('a running local sidecar whose status carries NO count is REPORTED, not busy — the engine did not say', async () => {
     mockReadConfig.mockResolvedValue(SIDECAR_CFG);
     mockMlxStatus.mockResolvedValue(RUNNING);
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    expect(result.current.reportedNodes).toEqual(['gabee', 'mihai', 'workhorse']);
+    expect(result.current.busyNodes).toEqual(['mihai']);
+  });
+
+  // Q1 (2026-09-02): `activeRequests` is Rapid-MLX's own /v1/status num_running + num_waiting, read by
+  // the sidecar. Measured on the real engine: idle is an explicit 0; a 10-stream burst read 8.
+  it('a local sidecar whose engine reports activeRequests > 0 is BUSY under its short node name', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 1 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.busyNodes).toEqual(['mihai', 'workhorse']));
+    expect(result.current.reportedNodes).toEqual(['gabee', 'mihai', 'workhorse']);
+    expect(result.current.mlxNodes).toEqual(['workhorse']);
+  });
+
+  it('activeRequests 0 is an explicit idle: reported, not busy', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    expect(result.current.busyNodes).toEqual(['mihai']);
+  });
+
+  it('a refused /v1/status probe (activeRequestsError, no count) keeps the device reported and never busy', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    mockMlxStatus.mockResolvedValue({
+      ...RUNNING,
+      activeRequestsError: 'GET http://127.0.0.1:8090/v1/status returned HTTP 401',
+    });
     const { result } = renderHook(() => useFleetCorroboration(10_000_000));
     await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
     expect(result.current.reportedNodes).toEqual(['gabee', 'mihai', 'workhorse']);
@@ -118,6 +149,20 @@ describe('deriveFleet × the MLX feed', () => {
       reportedNodes: ['gabee', 'workhorse'],
     });
     expect(fleet.workingByDevice.has('workhorse')).toBe(false);
+  });
+
+  // Q1's contract: the engine's own count is the second independent signal. A lane whose digest is
+  // stale past the open-call window is NOT demoted while the sidecar reports requests in flight.
+  it('a sidecar lane past the open-call window stays WORKING while its engine reports it busy', () => {
+    const fleet = deriveFleet({
+      pool: ['gabee', 'workhorse'],
+      laneSources: [lane('workhorse')],
+      ...staleOpenCall,
+      now: NOW,
+      busyNodes: ['workhorse'],
+      reportedNodes: ['gabee', 'workhorse'],
+    });
+    expect(fleet.workingByDevice.has('workhorse')).toBe(true);
   });
 
   it('the same lane stays working while the sidecar is NOT reported (engine down: no evidence)', () => {
