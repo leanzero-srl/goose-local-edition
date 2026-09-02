@@ -93,10 +93,7 @@ describe('SessionActionsHeader — the JSON viewer wears the Studio syntax palet
       JSON.stringify({ name: 'hello', count: 42, live: true, long: 'x'.repeat(2000) })
     );
     mount(makeSession({ name: 'Palette' }));
-    fireEvent.pointerDown(
-      screen.getByTestId('session-title-trigger'),
-      new PointerEvent('pointerdown', { bubbles: true, button: 0 })
-    );
+    fireEvent.pointerDown(screen.getByTestId('session-title-trigger'), { button: 0 });
     fireEvent.click(screen.getByTestId('session-title-trigger'));
     fireEvent.click(await screen.findByText('View session JSON'));
 
