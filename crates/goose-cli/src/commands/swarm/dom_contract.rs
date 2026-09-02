@@ -110,6 +110,10 @@ fn is_hex_colour(s: &str) -> bool {
 }
 
 /// Every DOM id `line` names by element syntax, in the order written (module doc).
+// string_slice: every index is a `find`/`match_indices` hit, that hit moved past ASCII syntax
+// (`<`, `>`, `id=`, a quote, `#`), or an `ident_len` (a `char_indices` offset or `s.len()`) —
+// char boundaries by construction.
+#[allow(clippy::string_slice)]
 pub(super) fn dom_ids_in_line(line: &str) -> Vec<IdToken> {
     let mut out: Vec<IdToken> = Vec::new();
     let mut tag_spans: Vec<(usize, usize)> = Vec::new();
@@ -561,6 +565,8 @@ mod tests {
     /// its decisions block. console-page's OWN ids (`#app-header`, `#viz-empty`, request.md:381,
     /// 445) do not ride: the citing task owns the page. viz-engine's brief is byte-identical; one
     /// `dom_contract_routed`; nothing unowned.
+    // string_slice: `block_at` is a `find` hit.
+    #[allow(clippy::string_slice)]
     #[test]
     fn r6h_canvas_and_labels_container_reach_the_index_html_owner() {
         let plan = r6h_plan(&[

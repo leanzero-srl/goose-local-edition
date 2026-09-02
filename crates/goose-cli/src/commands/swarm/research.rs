@@ -827,9 +827,6 @@ pub(super) struct ConsumedSections {
     pub(super) called_into: String,
     /// Rule (c): the cross-cutting top-level sections, for every slice that did not claim them.
     pub(super) cross_cutting: String,
-    /// Every section the two blocks above render, as indices into the orientation's sections —
-    /// so the brief can tell which spec lines it already carries in full (VA-096).
-    pub(super) indices: Vec<usize>,
 }
 
 /// SPEC SECTIONS ROUTE TO CONSUMERS, not only to owners — THE ONE helper beside
@@ -1076,7 +1073,6 @@ pub(super) fn consumed_spec_sections(
     ConsumedSections {
         called_into: render(&called),
         cross_cutting: render(&broadcast),
-        indices: called.iter().chain(broadcast.iter()).copied().collect(),
     }
 }
 

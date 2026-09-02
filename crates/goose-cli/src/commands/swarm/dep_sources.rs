@@ -97,6 +97,8 @@ fn ident_start(c: Option<char>) -> bool {
 
 /// `needle` occurs in `text` with a non-identifier character (or the start) before it and a
 /// character satisfying `after` following it (`None` = end of text).
+// string_slice: `i` is a `match_indices` hit and `i + needle.len()` its end.
+#[allow(clippy::string_slice)]
 fn occurs(text: &str, needle: &str, after: impl Fn(Option<char>) -> bool) -> bool {
     text.match_indices(needle).any(|(i, _)| {
         text[..i]
@@ -248,6 +250,10 @@ fn targeted_read_hint(f: &str) -> String {
 /// list of cuts the caller must emit. Test files, non-source files, missing and empty files are
 /// skipped exactly as before; `signatures_on` (GOOSE_SWARM_DEP_SIGNATURES, ships OFF) swaps the body
 /// for `shape_excerpt` and falls back to the body when the excerpt is empty.
+// string_slice (the recovery line): `leading` is where `content.trim_start()` begins and `kept` is
+// the byte length of `whole` — a prefix of `trimmed` (a slice of `content`) cut at a `\n` — so the
+// sum is a char boundary of `content` by construction.
+#[allow(clippy::string_slice)]
 pub(super) fn dependency_sources_block(
     root: &Path,
     owned_files: &[String],
@@ -460,6 +466,10 @@ mod tests {
     /// (3,746 trimmed bytes, names ITS OWN impl) is not this task's contract: cut on a line boundary
     /// at 3,470 bytes, loudly, with `sed -n '108,115p'`. `app/__main__.py` mentions `--db-dir` in
     /// prose and is NOT the contract for `app/db.py`; it fits under the cap and is carried plain.
+    // string_slice: every index is a `find`/`rfind` hit moved past ASCII fence text (the byte before
+    // the marker is the `\n` the cut leaves), or the length of `kept_text`, asserted a prefix of
+    // `trimmed` before it is used.
+    #[allow(clippy::string_slice)]
     #[test]
     fn r6h_the_contract_caller_is_carried_whole_and_the_other_cut_is_loud() {
         assert_eq!(R6H_LEDGERD_INIT.len(), 6104);

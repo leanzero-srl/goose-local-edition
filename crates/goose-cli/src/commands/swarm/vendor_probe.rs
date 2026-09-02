@@ -193,6 +193,9 @@ pub(super) const VENDOR_PROBE_BODY_CHARS: usize = 6_000;
 /// longest prefix under the budget that ends after a whole JSON object (`},` / `}]` / `}` — a row
 /// close, never mid-key; a body with no such boundary under the budget is cut raw and the marker
 /// says so). The kept text is a SAMPLE and is not valid JSON on its own; the marker names that.
+// string_slice: `budget_end` is a `char_indices` offset or `t.len()`; `cut_at` is an `rfind` hit
+// moved past its ASCII `}` — char boundaries by construction.
+#[allow(clippy::string_slice)]
 pub(super) fn excerpt_body(url: &str, body: &str) -> (String, Option<ProbeCut>) {
     let t = body.trim();
     let chars = t.chars().count();
@@ -753,12 +756,16 @@ mod tests {
         assert!(
             kept.ends_with('}'),
             "{}",
-            &kept[kept.len().saturating_sub(80)..]
+            kept.chars()
+                .skip(kept.chars().count().saturating_sub(80))
+                .collect::<String>()
         );
         assert!(
             kept.ends_with(r#""country": "DE"}}"#),
             "the cut lands after a whole ROW (its nested counterparty closed too): {}",
-            &kept[kept.len().saturating_sub(80)..]
+            kept.chars()
+                .skip(kept.chars().count().saturating_sub(80))
+                .collect::<String>()
         );
         assert!(cut.kept <= VENDOR_PROBE_BODY_CHARS);
         assert_eq!(cut.kept, kept.chars().count());

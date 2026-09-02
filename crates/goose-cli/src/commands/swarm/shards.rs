@@ -738,8 +738,10 @@ fn provides_line(name: &str, interface: &ModuleInterface) -> String {
         .map(|e| e.signature.trim())
         .filter(|sig| !sig.is_empty())
     {
-        Some(sig) if sig.starts_with(short) => format!("{name}{}", &sig[short.len()..]),
-        Some(sig) => format!("{name} — {sig}"),
+        Some(sig) => match sig.strip_prefix(short) {
+            Some(rest) => format!("{name}{rest}"),
+            None => format!("{name} — {sig}"),
+        },
         None => name.to_string(),
     }
 }
@@ -3766,12 +3768,16 @@ fn normalize_params(p: &str) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut depth = 0i32;
+    let mut prev = ' ';
     for c in p.chars() {
         match c {
             '(' | '[' | '{' | '<' => {
                 depth += 1;
                 cur.push(c);
             }
+            // The `>` of an arrow type (`cb: (ids) => void`) closes nothing: counted as a closer
+            // it left the following `Map<string, number>` at depth 0 and split its type's comma.
+            '>' if prev == '=' => cur.push(c),
             ')' | ']' | '}' | '>' => {
                 depth -= 1;
                 cur.push(c);
@@ -3779,6 +3785,7 @@ fn normalize_params(p: &str) -> Vec<String> {
             ',' if depth <= 0 => parts.push(std::mem::take(&mut cur)),
             _ => cur.push(c),
         }
+        prev = c;
     }
     parts.push(cur);
     parts
@@ -6361,6 +6368,11 @@ mod merger_tests {
     /// unmet-assumptions check cannot see) and "the canvas is square" (a prose leak with no
     /// names). The gap the merger sends out for `pick`'s UNFINISHED "inertia coast stop" was
     /// PREDICTABLE — the README said it; `drawBrush(ids)` was discovered at the merge.
+    ///
+    /// `assumptions_unmet` (VA-108, per NAME against the shards' DEFINITIONS) sees the dossier
+    /// differently from the leak check: `scene.points` is met by pick's `points()`, "the canvas is
+    /// square" is prose, and `buildScene` is UNBACKED — the interface declares it but no shard in
+    /// this dossier defines it, and a declaration meets nothing (the r6h `gl` class).
     #[tokio::test]
     async fn an_assumption_outside_the_declaration_leaks_and_an_unfinished_gap_is_predictable() {
         let dir = tempfile::tempdir().unwrap();
@@ -6409,10 +6421,30 @@ mod merger_tests {
             "{:?}",
             d.interface_leaks
         );
-        assert!(
-            d.assumptions_unmet.is_empty(),
-            "`points` is defined by pick and prose names nothing — unmet sees neither leak: {:?}",
-            d.assumptions_unmet
+        assert_eq!(
+            d.assumptions_unmet,
+            vec![(
+                "web-viz-labels".to_string(),
+                "buildScene fills geoCPU before labels run".to_string()
+            )],
+            "`scene.points` is met by pick's `points()`; `buildScene` is defined by no shard"
+        );
+        assert_eq!(
+            d.assumptions_unbacked,
+            vec![super::assumes::AssumeUnbacked {
+                shard: "web-viz-labels".into(),
+                name: "buildScene".into(),
+                clause: "buildScene fills geoCPU before labels run".into(),
+                nearest: None,
+            }],
+            "no sibling name is close to `buildScene` — nothing is invented"
+        );
+        assert_eq!(
+            d.assumptions_prose,
+            vec![(
+                "web-viz-labels".to_string(),
+                "the canvas is square".to_string()
+            )]
         );
         let events = d.interface_leak_events("web-viz");
         assert_eq!(events.len(), 2);

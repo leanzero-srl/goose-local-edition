@@ -527,6 +527,9 @@ fn is_word_char(c: char) -> bool {
     is_ident_char(c) || c == '-'
 }
 
+// string_slice: `from` is 0 or a previous match end; `start`/`end` bound a `find` hit — char
+// boundaries by construction.
+#[allow(clippy::string_slice)]
 fn word_occurs(text: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
