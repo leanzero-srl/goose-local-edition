@@ -739,6 +739,9 @@ pub(super) struct SummonFacts {
     pub(super) recurring: bool,
     /// A forming tool call's argument bytes stopped while reasoning grew (`forming_stalled`).
     pub(super) forming_stall: bool,
+    /// VA-124: the settled-list meter measured the same list — the same item territories —
+    /// written again with no material read between (`desk::SettledListMeter::relist_pending`).
+    pub(super) settled_relist: bool,
 }
 
 /// Which measured fact summons the judge on this pass — or none. EVERY lane kind is looked at on
@@ -755,9 +758,12 @@ pub(super) struct SummonFacts {
 /// REPEATED judge NEXT across two looks is evidence too, but it is evidence about DELIVERY, not
 /// summoning (the omni seam's `repeated_next`: the prior look's undelivered NEXT is the first
 /// witness, the next DRIFTING the second, and that NEXT is delivered instead of a third look).
-/// `ready` gates the meter only; repeat and degenerate bypass it, as they always did. The name
-/// returned rides `judge_look_dispatched.trigger`, so a replay never re-derives the trigger from
-/// counters.
+/// `ready` gates the meter only; repeat and degenerate bypass it, as they always did. VA-124 adds
+/// the SETTLED-LIST arm: a list of three or more items whose territories equal an earlier list's,
+/// with no material read between — evidence by construction (two multi-thousand-char lists), so
+/// it is not gated by `ready` either; r6j's opener re-listed six settled slices five times over
+/// 27 minutes at a meter rate of 0.056 and was never looked at. The name returned rides
+/// `judge_look_dispatched.trigger`, so a replay never re-derives the trigger from counters.
 pub(super) fn judge_summon_trigger(f: SummonFacts) -> Option<&'static str> {
     if f.repeat {
         return Some("repeat");
@@ -768,10 +774,68 @@ pub(super) fn judge_summon_trigger(f: SummonFacts) -> Option<&'static str> {
     if f.ready && f.recurring {
         return Some("recurrence");
     }
+    if f.settled_relist {
+        return Some("settled_list_relisted");
+    }
     if f.forming_stall {
         return Some("forming_stall");
     }
     None
+}
+
+/// The judge's evidence for a settled-list summon (VA-124): BOTH lists verbatim — the first
+/// occurrence of this territory and the current re-list — beside the shared item territories, and
+/// the steer the judge delivers when it agrees. The read-the-words gate: the judge is shown the
+/// two texts side by side, never a count about them; renamed titles are exactly what the
+/// territory lines make visible. `span_chars` is the caller's carried-text scale
+/// (`ShownBudgets::look_tail_chars`); a list longer than it is cut at the tail and the cut is
+/// stated, never silent (a partial list read as whole would hide a moved boundary).
+pub(super) fn settled_list_block(r: &super::desk::SettledRelist, span_chars: usize) -> String {
+    let clamp = |text: &str, already_cut: usize| {
+        let total = text.chars().count();
+        if total > span_chars {
+            let shown: String = text.chars().take(span_chars).collect();
+            format!(
+                "{shown}\n[… {} more chars of this list not shown]",
+                total - span_chars + already_cut
+            )
+        } else if already_cut > 0 {
+            format!("{text}\n[… {already_cut} more chars of this list not shown]")
+        } else {
+            text.to_string()
+        }
+    };
+    let items = r
+        .items
+        .iter()
+        .map(|i| format!("\n- {i}"))
+        .collect::<String>();
+    let n = r.items.len();
+    format!(
+        "\n\nTHE SAME LIST, TWICE (settled-list meter): this call has written an ordered list of \
+         {n} items whose TERRITORY — the files, sections or title each item claims — is \
+         IDENTICAL to a list it wrote earlier in this same call (list #{} at char \
+         {}, now list #{} at char {}), with {} lookup call(s) and no material read between them. \
+         The territories both lists carve:{items}\n\
+         THE FIRST SETTLED LIST, VERBATIM (from char {}):\n{}\n\
+         THE CURRENT RE-LIST, VERBATIM (from char {}):\n{}\n\
+         READ BOTH. Renamed titles do not make a new list — compare what each item OWNS. If the \
+         two carve the same territory, re-listing it is the loop: the verdict is LOOPING and NEXT \
+         says, in these words, 'the {n} slices are settled since char {}; write their objectives \
+         and sections now and call the output tool with them'. If the current list genuinely \
+         moves a boundary the territory lines could not see, say OK and NAME the boundary that \
+         moved.",
+        r.first_settled_occurrence,
+        r.first_settled_offset,
+        r.occurrence,
+        r.current_offset,
+        r.lookups_between,
+        r.first_settled_offset,
+        clamp(&r.first_span, r.first_span_cut_chars),
+        r.current_offset,
+        clamp(&r.current_span, r.current_span_cut_chars),
+        r.first_settled_offset,
+    )
 }
 
 /// The TASK ATTEMPT's supervision history — what the judge has recorded about and delivered to
@@ -1813,6 +1877,15 @@ mod summon_tests {
                 }),
                 Some("forming_stall")
             );
+            // VA-124: a settled re-list is evidence by construction — not gated by `ready`.
+            assert_eq!(
+                judge_summon_trigger(SummonFacts {
+                    settled_relist: true,
+                    ready: false,
+                    ..base
+                }),
+                Some("settled_list_relisted")
+            );
             // repeat and degenerate bypass the readiness floor, as before.
             assert_eq!(
                 judge_summon_trigger(SummonFacts {
@@ -1839,6 +1912,53 @@ mod summon_tests {
                 ..build_lane()
             }),
             None
+        );
+    }
+
+    /// VA-124: the summon's prompt block carries BOTH lists verbatim (the words, gate 7), the
+    /// shared territories, the lookup count, and the steer in the words the judge is to deliver;
+    /// a list longer than the carried-text scale is cut with the cut STATED (gate 1).
+    #[test]
+    fn a_settled_re_list_summons_with_both_lists_verbatim_and_the_cut_stated() {
+        let r = super::super::desk::SettledRelist {
+            occurrence: 4,
+            first_settled_occurrence: 3,
+            first_settled_offset: 76_768,
+            current_offset: 89_878,
+            items: vec![
+                "files: app/auth.py, app/drafts.py, app/webhooks.py".into(),
+                "files: app/notifierd.py".into(),
+                "files: web/viz.js".into(),
+            ],
+            first_span: "**S3: notifierd** — weight 3\nOwns: `app/notifierd.py`\n".into(),
+            first_span_cut_chars: 0,
+            current_span: "3. **notifierd** (weight 3) — standalone idempotent consumer service.\n"
+                .into(),
+            current_span_cut_chars: 0,
+            lookups_between: 0,
+        };
+        let block = settled_list_block(&r, 2_000);
+        assert!(block.contains("list #3 at char 76768, now list #4 at char 89878"));
+        assert!(block.contains("with 0 lookup call(s)"));
+        assert!(block.contains("- files: app/notifierd.py"));
+        assert!(block.contains("**S3: notifierd** — weight 3\nOwns: `app/notifierd.py`"));
+        assert!(block.contains("3. **notifierd** (weight 3) — standalone idempotent consumer"));
+        assert!(
+            block.contains("'the 3 slices are settled since char 76768; write their objectives")
+        );
+        assert!(!block.contains("not shown"), "nothing was cut: {block}");
+        // Cut at the carried-text scale, stated with the chars the meter itself did not carry.
+        let mut long = r.clone();
+        long.first_span = "x".repeat(2_050);
+        long.current_span_cut_chars = 400;
+        let block = settled_list_block(&long, 2_000);
+        assert!(
+            block.contains("[… 50 more chars of this list not shown]"),
+            "{block}"
+        );
+        assert!(
+            block.contains("[… 400 more chars of this list not shown]"),
+            "{block}"
         );
     }
 
