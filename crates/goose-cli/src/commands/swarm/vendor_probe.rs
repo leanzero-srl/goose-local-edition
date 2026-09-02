@@ -137,14 +137,36 @@ pub(super) fn json_rows_evidence(body: &str) -> Option<i64> {
     total.or(rows)
 }
 
-/// VA-105, pure: the top-level keys of a JSON object body (as serde_json orders them) — the one
-/// fact about a cut body's SHAPE the excerpt cannot lose. Empty for anything that is not a JSON
-/// object (an array, a scalar, HTML), and the marker says so instead of listing nothing.
+/// VA-105, pure: the top-level keys of a JSON object body, SORTED — the one fact about a cut
+/// body's SHAPE the excerpt cannot lose, rendered the same whatever map order serde_json builds
+/// (goose-cli declares no `preserve_order`; a transitive dependency may). Empty for anything that
+/// is not a JSON object (an array, a scalar, HTML), and the marker says so instead of listing
+/// nothing.
 fn json_top_level_keys(body: &str) -> Vec<String> {
     match serde_json::from_str::<serde_json::Value>(body.trim()) {
-        Ok(serde_json::Value::Object(m)) => m.keys().cloned().collect(),
+        Ok(serde_json::Value::Object(m)) => {
+            let mut keys: Vec<String> = m.keys().cloned().collect();
+            keys.sort();
+            keys
+        }
         _ => Vec::new(),
     }
+}
+
+/// VA-105, pure: the top-level key whose value is the body's row array — the largest array, ties
+/// by name — so the header names where THIS vendor's rows live instead of a baked example. None
+/// when no top-level value is an array (the header then carries no rows clause at all).
+fn json_row_array_key(body: &str) -> Option<String> {
+    let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(body.trim())
+    else {
+        return None;
+    };
+    let mut arrays: Vec<(usize, String)> = m
+        .iter()
+        .filter_map(|(k, v)| v.as_array().map(|a| (a.len(), k.clone())))
+        .collect();
+    arrays.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    arrays.into_iter().next().map(|(_, k)| k)
 }
 
 /// P1-12: the vendor row truth the RUN persisted at BUILD start (`.swarm/vendor-probe.json`,
@@ -329,6 +351,7 @@ pub(super) async fn probe_vendor(
     let mut page1_rows: Option<i64> = None;
     let mut cuts: Vec<ProbeCut> = Vec::new();
     let mut fetch_failures: Vec<ProbeFetchFailure> = Vec::new();
+    let mut row_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for path in &endpoints {
         let url = format!("{}{path}", base_url.trim_end_matches('/'));
         match fetch(url.clone()).await {
@@ -337,6 +360,9 @@ pub(super) async fn probe_vendor(
                 let (t, r) = json_rows_and_total(&body);
                 vendor_total = vendor_total.max(t);
                 page1_rows = page1_rows.max(r);
+                if let Some(k) = json_row_array_key(&body) {
+                    row_keys.insert(k);
+                }
                 let (kept, cut) = excerpt_body(&url, &body);
                 match cut {
                     Some(cut) => {
@@ -376,12 +402,26 @@ pub(super) async fn probe_vendor(
             fetch_failures.len()
         )
     };
+    // Where THIS vendor's rows live, read off the fetched bodies — never a baked example (`items`
+    // for `data` was sb-7's fact and wrong advice for a vendor whose key IS `items`). No fetched
+    // body with a row array → no clause.
+    let rows_note = if row_keys.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " The rows of the fetched pages live under {} — that key, not a guessed one.",
+            row_keys
+                .iter()
+                .map(|k| format!("`{k}`"))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        )
+    };
     let block = format!(
         "## Vendor probe — the vendor's live responses, fetched by the engine at {fetched_at}\n\
          The docs page below is complete ({docs_chars} chars, as served). Each endpoint page is \
          one live response body{bodies}.{failures} The key names and body shapes are the vendor's \
-         own — use these literals exactly, never a guessed name (`items` for `data` is how a sync \
-         acquires nothing).\n\n{}",
+         own — use these literals exactly, never a guessed name.{rows_note}\n\n{}",
         pages.join("\n\n")
     );
     let bytes = block.len();
@@ -651,15 +691,30 @@ mod tests {
         assert!(cut.url.ends_with("/v3/payments"));
         assert_eq!(cut.chars, payments_page().chars().count());
         assert!(cut.kept <= VENDOR_PROBE_BODY_CHARS && cut.at_object_boundary);
+        assert_eq!(
+            (cut.chars, cut.kept),
+            (28_840, 5_912),
+            "the 200-row page is 28,840 chars; the last row boundary under 6,000 ends at 5,912"
+        );
         assert!(
-            probe.block.contains(&format!(
-                "[CUT by the probe: the first {} of {} chars, ending after a whole JSON object. \
-                 The FULL body's top-level keys: {}; total=12288; 200 rows in its \
-                 collection array.",
-                cut.kept, cut.chars, "data, total, limit"
-            )),
+            probe.block.contains(
+                "[CUT by the probe: the first 5912 of 28840 chars, ending after a whole JSON \
+                 object. The FULL body's top-level keys: data, limit, total; total=12288; 200 rows \
+                 in its collection array."
+            ),
             "{}",
             probe.block
+        );
+        assert!(
+            probe.block.contains(
+                "The rows of the fetched pages live under `data` — that key, not a guessed one."
+            ),
+            "the rows clause is THIS vendor's key, read off its bodies: {}",
+            probe.block.lines().take(3).collect::<Vec<_>>().join("\n")
+        );
+        assert!(
+            !probe.block.contains("`items` for `data`"),
+            "no baked example"
         );
         assert!(
             probe.block.contains(&format!(
@@ -709,8 +764,17 @@ mod tests {
         assert_eq!(cut.kept, kept.chars().count());
         assert_eq!(cut.chars, page.chars().count());
         assert!(cut.at_object_boundary);
+        assert_eq!((cut.chars, cut.kept), (28_840, 5_912));
+        assert_eq!(
+            kept.matches(r#""id""#).count(),
+            41,
+            "41 whole rows of 200 fit under the budget"
+        );
+        assert_eq!(json_row_array_key(&page).as_deref(), Some("data"));
+        assert_eq!(json_row_array_key("<html>"), None);
+        assert_eq!(json_row_array_key(r#"{"ok": true}"#), None);
         let marker = body_cut_marker(&cut, None, &page);
-        assert!(marker.contains("top-level keys: data, total, limit; total=12288; 200 rows"));
+        assert!(marker.contains("top-level keys: data, limit, total; total=12288; 200 rows"));
         assert!(
             marker.contains("`curl -s http://v/v3/payments`"),
             "{marker}"
