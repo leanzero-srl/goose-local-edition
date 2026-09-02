@@ -71,10 +71,12 @@ mod research;
 use research::{
     announce_research_phase, briefs_from_slices, emit_research_outcome, emit_research_planned,
     files_from_objective, fold_research_panic, load_research_mini, persist_request_text,
-    persist_research_row, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
-    research_prompt_head, research_request_block, research_schema, research_sources_block,
-    research_system_text, ResearchLane, ResearchQuestion, ResearchRow, REQUEST_FILE,
+    persist_research_row, research_dispatch_text, research_fan_lanes, research_prompt_head,
+    research_request_block, research_schema, research_sources_block, research_system_text,
+    ResearchLane, ResearchQuestion, ResearchRow, REQUEST_FILE,
 };
+mod research_tool;
+use research_tool::ResearchLanding;
 mod imports;
 use imports::{tree_import_gaps, verify_tree_imports};
 mod cross_task;
@@ -11678,6 +11680,10 @@ pub struct GooseAgentDispatcher {
     /// running session, never a restream. Nothing here bounds or ends anything.
     research_running: Mutex<HashMap<String, research::RelayTarget>>,
     research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
+    /// VA-118 (wired r6j): activity key -> the per-answer landing of a research lane between its
+    /// dispatch and its rows (`research_tool`); the `research_answer` tool is registered only for
+    /// a key present here, and each of its calls lands one row through `land_research_answer`.
+    research_landing: Mutex<HashMap<String, ResearchLanding>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
@@ -11762,30 +11768,6 @@ impl GooseAgentDispatcher {
     /// `avoid` is the SUPERVISED lane's model (the omni-look passes its worker's; the replanner
     /// has none): ranked last among equal loads, never excluded — r6d's q0 looks all landed on
     /// q0's own node while another sat as idle (`least_loaded_aux_model`).
-    /// r6e E7: hand a just-landed mini to every still-running lane of its slice
-    /// (`relay_targets`); the target's own loop delivers it and names the delivery
-    /// (`research_mini_relayed`). MEASURED: r6d research-ledger-core-q5 dispatched 04:46:55Z,
-    /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
-    /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
-    fn queue_research_relay(&self, row: &ResearchRow) {
-        let running: Vec<(String, research::RelayTarget)> = self
-            .research_running
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(k, t)| (k.clone(), t.clone()))
-            .collect();
-        let targets = relay_targets(row, &running);
-        if targets.is_empty() {
-            return;
-        }
-        let note = relay_note(row);
-        let mut inbox = self.research_relay.lock().unwrap();
-        for t in targets {
-            inbox.entry(t).or_default().push(note.clone());
-        }
-    }
-
     fn aux_model_for_call(&self, avoid: Option<&str>) -> (String, u32) {
         // Same poison-recovery idiom as `fleet_order::InflightGuard`'s enter/Drop arms: the map
         // holds plain u32 counters, so a panic mid-increment leaves at worst an off-by-one that
@@ -11849,6 +11831,7 @@ impl GooseAgentDispatcher {
             defects_told: Mutex::new(HashMap::new()),
             research_running: Mutex::new(HashMap::new()),
             research_relay: Mutex::new(HashMap::new()),
+            research_landing: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             cross_task_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
@@ -12403,6 +12386,13 @@ impl GooseAgentDispatcher {
                 eprintln!("(worker extension add failed: {e})");
             }
         }
+        // VA-118: the per-answer research tool, only for a lane whose landing the fan opened.
+        if let Some(ext) = activity_key.and_then(|k| self.research_answer_extension_for(k)) {
+            agent
+                .add_extension(ext, &session_id)
+                .await
+                .map_err(|e| anyhow!("add {}: {e}", research::RESEARCH_ANSWER_TOOL))?;
+        }
 
         // Captured before the move: the judge loop below needs to know whether this call OWES a
         // structured reply, which is what makes "zero tool calls" a failure rather than a style.
@@ -12868,6 +12858,12 @@ impl GooseAgentDispatcher {
                                     });
                                 }
                             },
+                            // VA-118: the agent parks the lane on its result channel until this
+                            // replies (`research_tool::frontend_tool_result` — every arm replies).
+                            MessageContent::FrontendToolRequest(req) => {
+                                let result = self.frontend_tool_result(activity_key, req);
+                                agent.handle_tool_result(req.id.clone(), result).await;
+                            }
                             MessageContent::ToolResponse(resp) => {
                                 if let Some(InflightCall {
                                     name,
@@ -21144,6 +21140,13 @@ impl GooseAgentDispatcher {
                     } else {
                         research_schema()
                     };
+                    if lane.derives() {
+                        // VA-118: the per-answer tool is open for this lane's key until its rows.
+                        me.research_landing
+                            .lock()
+                            .unwrap()
+                            .insert(key.clone(), ResearchLanding::open(&lane.slice, &model));
+                    }
                     let t = std::time::Instant::now();
                     let out = me
                         .run_agent_timed_at(
@@ -21168,16 +21171,24 @@ impl GooseAgentDispatcher {
                         )
                         .await;
                     let secs = t.elapsed().as_secs();
+                    // The rows the lane's research_answer calls already landed (VA-118): the final
+                    // reply folds only the REMAINDER, numbered after them.
+                    let landed = me
+                        .research_landing
+                        .lock()
+                        .unwrap()
+                        .remove(&key)
+                        .map_or(0, |l| l.next_q_index);
                     let folded = match out {
                         Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
                         Err(e) => Err(e.to_string()),
                     };
-                    // Terminal rows: a slice lane's OWN questions (`fold_research_lane` — at least
-                    // one row, the lane's outcome, when none landed); the decisions lane's tagged
-                    // batch (`fold_research_batch`, one row per decision). An entry the fold
-                    // cannot attribute is named, never silently dropped.
+                    // Terminal rows: a slice lane's OWN remaining questions (`fold_research_lane_from`
+                    // — at least one row, the lane's outcome, when none landed either way); the
+                    // decisions lane's tagged batch (`fold_research_batch`, one row per decision).
+                    // An entry the fold cannot attribute is named, never silently dropped.
                     let (lane_rows, strays) = if lane.derives() {
-                        research::fold_research_lane(&lane.slice, &model, secs, folded)
+                        research::fold_research_lane_from(&lane.slice, &model, secs, folded, landed)
                     } else {
                         research::fold_research_batch(&lane.questions, &model, secs, folded)
                     };
