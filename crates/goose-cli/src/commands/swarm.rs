@@ -152,6 +152,7 @@ use pitfalls::relevant_pitfalls;
 mod vendor_probe;
 use vendor_probe::{json_rows_evidence, probe_vendor, read_vendor_probe_rows, spec_vendor};
 mod fleet_order;
+mod telemetry_rates;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
 use fleet_order::{
@@ -159,6 +160,7 @@ use fleet_order::{
     live_fleet_slots, measured_rate_for, one_lane_per_host, publish_fleet_speed_weights,
     rank_fix_target, reconcile_pool_with_fleet, unmatched_speed_weight_patterns, InflightGuard,
 };
+use telemetry_rates::telemetry_node_rates;
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -6220,6 +6222,8 @@ mod tests {
                 "m",
                 &SaidProvenance::at_dispatch(0),
                 None,
+                None,
+                None,
             )
         };
         let d = build(&pending);
@@ -6287,6 +6291,8 @@ mod tests {
             "workhorse-qwen",
             &said0,
             None,
+            None,
+            None,
         );
         assert_eq!(d0["attempt"], 0);
         assert_eq!(
@@ -6330,6 +6336,8 @@ mod tests {
             "",
             "workhorse-qwen",
             &said1,
+            None,
+            None,
             None,
         );
         assert_eq!(d1["attempt"], 1);
@@ -6397,6 +6405,8 @@ mod tests {
             "m",
             &said,
             Some("judge-open-1"),
+            None,
+            None,
         );
         assert_eq!(d["supervision"], serde_json::json!(true));
         assert_eq!(
@@ -6416,6 +6426,8 @@ mod tests {
             "m",
             &said,
             Some("test-store-core"),
+            None,
+            None,
         );
         assert!(
             w.get("supervision").is_none(),
@@ -11417,6 +11429,11 @@ fn build_worker_digest(
     model_id: &str,
     said: &SaidProvenance,
     activity_key: Option<&str>,
+    // VA-107: the last provider-reported usage total and the context window as the compaction
+    // guard knows it (`goose::context_mgmt::effective_context_limit`) — the digest half of the
+    // lane's measured context line, so tick.py and the panel read the two numbers the lane reads.
+    usage_total: Option<i64>,
+    context_window: Option<usize>,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
     let recent: Vec<String> = tool_calls
@@ -11479,6 +11496,8 @@ fn build_worker_digest(
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
         "last_thinking": tail_chars(last_thinking, LOOK_TAIL_CHARS),
         "model": model_id,
+        "usage_total": usage_total,
+        "context_window": context_window,
         // SAID provenance — which attempt `last_text` belongs to, when it was dispatched, when the
         // answer channel last advanced, whether the text is the model's or an agent error, and what
         // a prior attempt left behind. Kept in the shared builder so no write site can drop them.
@@ -12523,12 +12542,16 @@ impl GooseAgentDispatcher {
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
+        let provider = self.provider_for(model_id).await?;
+        // VA-107: the window as the compaction guard compares it — ONE derivation shared with
+        // `check_if_compaction_needed` and the lane's per-turn context line, so the digest's
+        // `context_window` is the number the lane actually read. r6h receipt: the engine held
+        // 128,000 (DEFAULT_CONTEXT_LIMIT — the n_ctx probe reads llama.cpp's `meta.n_ctx`; LM
+        // Studio serves `loaded_context_length` = 180,224 on /api/v0/models) and nothing wrote it.
+        let context_window =
+            goose::context_mgmt::effective_context_limit(provider.as_ref(), &model_config).await;
         agent
-            .update_provider(
-                self.provider_for(model_id).await?,
-                model_config,
-                &session_id,
-            )
+            .update_provider(provider, model_config, &session_id)
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
@@ -12544,6 +12567,9 @@ impl GooseAgentDispatcher {
         // worker_max_turns and keeps its tools). Every other call is byte-identical.
         let judge_probe = max_turns == JUDGE_PROBE_TURNS
             && activity_key.is_some_and(|k| supervision_lane_kind(k) == Some("judge"));
+        // VA-107: every lane but the judge probe reads the measured context line each turn (the
+        // probe has no tools and one turn; the desk/judge context is untouched).
+        agent.set_swarm_measured_context(!judge_probe);
         if !judge_probe {
             agent
                 .add_extension(
@@ -12767,6 +12793,8 @@ impl GooseAgentDispatcher {
         // VA-081: the last provider usage this lane reported (`AgentEvent::Usage`, one per turn) —
         // the `tokens_before` a compaction notice carries. Instrumentation only.
         let mut last_usage_total: Option<i64> = None;
+        // VA-107: `usage_unavailable` fires ONCE per lane, never per turn.
+        let mut usage_unavailable_reported = false;
         // REMOVED: the sink wall-clock cap (sink_cap_secs, sink_cap_ref_bytes, scaled_sink_cap,
         // GOOSE_SWARM_SINK_CAP_SECS, sink_plan and sink_capped).
         //
@@ -13102,13 +13130,39 @@ impl GooseAgentDispatcher {
                             MessageContent::SystemNotification(n) => {
                                 let kind = format!("{:?}", n.notification_type);
                                 let about_compaction = n.msg.to_lowercase().contains("compact");
-                                self.events.write_value(serde_json::json!({
-                                    "event": if about_compaction { "lane_compaction" } else { "lane_notice" },
-                                    "task": activity_key,
-                                    "kind": kind,
-                                    "text": n.msg,
-                                    "tokens_before": last_usage_total,
-                                }));
+                                // VA-107: core says the last call reported no usage (the lane's
+                                // context line rendered its not-reported arm). ONE event per lane —
+                                // the arm repeats every turn the provider stays silent.
+                                let usage_unavailable = n.msg.starts_with(
+                                    goose::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE,
+                                );
+                                if usage_unavailable && usage_unavailable_reported {
+                                    continue;
+                                }
+                                if usage_unavailable {
+                                    usage_unavailable_reported = true;
+                                    let turn = n
+                                        .msg
+                                        .rsplit("(turn ")
+                                        .next()
+                                        .and_then(|r| r.strip_suffix(')'))
+                                        .and_then(|r| r.parse::<u32>().ok());
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "usage_unavailable",
+                                        "task": activity_key,
+                                        "attempt": attempt,
+                                        "turn": turn,
+                                        "text": n.msg,
+                                    }));
+                                } else {
+                                    self.events.write_value(serde_json::json!({
+                                        "event": if about_compaction { "lane_compaction" } else { "lane_notice" },
+                                        "task": activity_key,
+                                        "kind": kind,
+                                        "text": n.msg,
+                                        "tokens_before": last_usage_total,
+                                    }));
+                                }
                                 if let Some(p) = &activity_file {
                                     let errs = append_lane_note(
                                         p,
@@ -14007,6 +14061,8 @@ impl GooseAgentDispatcher {
                                                 model_id,
                                                 &said,
                                                 activity_key,
+                                                last_usage_total,
+                                                Some(context_window),
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
                                             let _ = std::fs::write(p, d.to_string());
@@ -15099,6 +15155,8 @@ impl GooseAgentDispatcher {
                         model_id,
                         &said,
                         activity_key,
+                        last_usage_total,
+                        Some(context_window),
                     );
                     let _ = std::fs::write(p, digest.to_string());
                     if let Some(m) = &activity_mirror {
@@ -15149,6 +15207,8 @@ impl GooseAgentDispatcher {
                 model_id,
                 &said,
                 activity_key,
+                last_usage_total,
+                Some(context_window),
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
             // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
@@ -27049,85 +27109,6 @@ fn env_f32_clamped(name: &str, lo: f32, hi: f32) -> Option<f32> {
         .and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite())
         .map(|v| v.clamp(lo, hi))
-}
-
-/// Median decode rate (tokens/sec) per node, from the run's OWN telemetry file. A record
-/// contributes only when it carries real backend usage and a positive decode window —
-/// approximations and failed calls never rank a node. Pure/testable.
-fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
-    let mut samples: std::collections::HashMap<String, Vec<f64>> = Default::default();
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Default::default();
-    };
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if v.get("usage").and_then(|x| x.as_bool()) != Some(true) {
-            continue;
-        }
-        let (Some(node), Some(ct), Some(ttft), Some(total)) = (
-            v.get("node").and_then(|x| x.as_str()),
-            v.get("completion_tokens").and_then(|x| x.as_f64()),
-            v.get("ttft_ms").and_then(|x| x.as_f64()),
-            v.get("total_ms").and_then(|x| x.as_f64()),
-        ) else {
-            continue;
-        };
-        let decode_s = (total - ttft) / 1000.0;
-        if ct > 0.0 && decode_s > 0.0 {
-            samples
-                .entry(node.to_string())
-                .or_default()
-                .push(ct / decode_s);
-        }
-    }
-    samples
-        .into_iter()
-        .map(|(k, mut v)| {
-            v.sort_by(|a, b| a.total_cmp(b));
-            let m = v[v.len() / 2];
-            (k, m)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod telemetry_rank_tests {
-    use super::*;
-
-    #[test]
-    fn rates_use_median_and_skip_useless_records() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let p = dir.path().join("t.jsonl");
-        std::fs::write(
-            &p,
-            [
-                // three good gabee samples: 10, 20, 30 tok/s -> median 20
-                r#"{"node":"gabee","usage":true,"completion_tokens":100,"ttft_ms":0,"total_ms":10000}"#,
-                r#"{"node":"gabee","usage":true,"completion_tokens":200,"ttft_ms":0,"total_ms":10000}"#,
-                r#"{"node":"gabee","usage":true,"completion_tokens":300,"ttft_ms":0,"total_ms":10000}"#,
-                // no real usage -> never ranks a node
-                r#"{"node":"mihai","usage":false,"completion_tokens":900,"ttft_ms":0,"total_ms":1000}"#,
-                // zero decode window -> skipped
-                r#"{"node":"mihai","usage":true,"completion_tokens":50,"ttft_ms":1000,"total_ms":1000}"#,
-                "not json at all",
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-        let rates = telemetry_node_rates(&p);
-        assert_eq!(
-            rates.len(),
-            1,
-            "only nodes with usable samples rank: {rates:?}"
-        );
-        assert!(
-            (rates["gabee"] - 20.0).abs() < 1e-9,
-            "median, not mean: {rates:?}"
-        );
-        assert!(telemetry_node_rates(Path::new("/definitely/missing")).is_empty());
-    }
 }
 
 fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
