@@ -369,6 +369,7 @@ impl ResearchLane {
             slice: self.slice.clone(),
             paths: path_tokens(&self.material),
             files: declared_files(&self.material),
+            landing: self.derives(),
         }
     }
 }
@@ -381,6 +382,11 @@ pub(super) struct RelayTarget {
     pub(super) slice: String,
     pub(super) paths: BTreeSet<String>,
     pub(super) files: BTreeSet<String>,
+    /// VA-033: whether the fan opens a `ResearchLanding` for this lane (a slice lane derives
+    /// and lands through the tool; the decisions lane never does). The relay reads it to tell
+    /// a lane whose landing is GONE (closed — skip, loud) from one that never has one (open on
+    /// `research_running` alone, as before): the landing map by itself cannot say which.
+    pub(super) landing: bool,
 }
 
 /// VA-089: the text the cross-slice path rule reads for a slice lane — its objective and the
