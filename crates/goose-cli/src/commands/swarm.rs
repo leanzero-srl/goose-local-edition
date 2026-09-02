@@ -44,10 +44,10 @@ mod levers;
 use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
     escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
-    produced_since_look, restream_seed, since_steer_block, since_steer_span, split_steer_followed,
-    steer_followed_ask, steer_note, stream_woke, tail_shingle_set, tails_recur, write_progress,
-    wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts, DIGEST_IO_CADENCE, JUDGE_WAKE,
-    LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
+    produced_since_look, restream_seed, settled_list_block, since_steer_block, since_steer_span,
+    split_steer_followed, steer_followed_ask, steer_note, stream_woke, tail_shingle_set,
+    tails_recur, write_progress, wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts,
+    DIGEST_IO_CADENCE, JUDGE_WAKE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
 };
 mod ask_floor;
 use ask_floor::{ask_floor_weak_bump, model_active_params_b};
@@ -139,7 +139,9 @@ use transcripts::{
     render_previous_attempt_block, write_lane_brief, InflightCall,
 };
 mod desk;
-use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
+use desk::{
+    spawn_shadow_desk, RecurrenceMeter, SettledListMeter, SettledRelist, RECURRENCE_MIN_SPAN,
+};
 mod attribution;
 use attribution::{
     attribute_findings, console_error_source, criticals_left_unassigned, handoffs_from_rollup,
@@ -12303,6 +12305,12 @@ impl GooseAgentDispatcher {
         // #F924: `last_thinking` is a 2,400-char rolling tail, so it cannot hold a long-period
         // loop. This carries the fingerprints the tail throws away.
         let mut recur = RecurrenceMeter::new();
+        // VA-124: the settled-list meter beside the shingle meter. A rename defeats a verbatim
+        // meter (r6j's opener re-listed six settled slices five times at rate 0.056, never looked
+        // at); this one compares the TERRITORY each list item claims. Its re-list is an edge,
+        // held in `pending_relist` until the look that carries both lists to the judge.
+        let mut settled = SettledListMeter::new();
+        let mut pending_relist: Option<SettledRelist> = None;
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, InflightCall> = HashMap::new();
         // E7: the sibling minis relayed to THIS research lane so far (question -> mini), so the
@@ -12667,6 +12675,7 @@ impl GooseAgentDispatcher {
                                 // #F924: fingerprint BEFORE the truncation below discards it —
                                 // this is the only place the full stream is ever seen.
                                 recur.push(&t.thinking);
+                                settled.push(&t.thinking);
                                 if last_thinking.chars().count() > 3000 {
                                     last_thinking = tail_chars(&last_thinking, 2400);
                                 }
@@ -12711,6 +12720,7 @@ impl GooseAgentDispatcher {
                                 Err(e) => {
                                     malformed += 1;
                                     let name = malformed_tool_name(&e.message);
+                                    settled.note_tool_result(e.message.chars().count());
                                     call_records.push((
                                         name.clone(),
                                         e.message.to_string(),
@@ -12771,6 +12781,7 @@ impl GooseAgentDispatcher {
                                             }
                                         }
                                     }
+                                    settled.note_tool_result(result.chars().count());
                                     call_records.push((name.clone(), summary, Some(ok), result));
                                     tool_calls.push(ToolCallRecord {
                                         name,
@@ -13015,12 +13026,29 @@ impl GooseAgentDispatcher {
                     forming_sample_at_thinking = thinking_chars;
                     stalled
                 };
+            // VA-124: a measured re-list is an EDGE — taken once, announced once (the row tick.py
+            // and the monitor read; the shadow desk's `desk_summon` is the replay's twin), and
+            // held until the look that shows the judge both lists consumes it.
+            if let Some(r) = settled.take_relist() {
+                self.events.write_value(serde_json::json!({
+                    "event": "settled_list_relisted",
+                    "task": activity_key,
+                    "occurrence": r.occurrence,
+                    "first_settled_occurrence": r.first_settled_occurrence,
+                    "first_settled_offset": r.first_settled_offset,
+                    "current_offset": r.current_offset,
+                    "items": &r.items,
+                    "lookups_between": r.lookups_between,
+                }));
+                pending_relist = Some(r);
+            }
             let summon_trigger = judge_summon_trigger(SummonFacts {
                 repeat: repeat_evidence.is_some(),
                 degenerate: degenerate_answer,
                 ready: thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge,
                 recurring: recur.recurring(),
                 forming_stall,
+                settled_relist: pending_relist.is_some(),
             });
             if omni_judge_on && !stream_ended_during_probe && summon_trigger.is_some() {
                 let produced_since_last_look =
@@ -13503,12 +13531,19 @@ impl GooseAgentDispatcher {
                     &required_blocks,
                 );
                 let earlier_block = earlier_span_block(recur.earlier());
+                // VA-124: the settled-list evidence rides beside the recurrence span — BOTH lists
+                // verbatim at the look's own tail scale, consumed by this look. No measured
+                // re-list means no block: the empty is the absence of evidence, never its stand-in.
+                let settled_block = match pending_relist.take() {
+                    Some(r) => settled_list_block(&r, self.budgets.look_tail_chars),
+                    None => String::new(),
+                };
                 let user = format!(
                     "THIS CALL'S JOB: {}\n\n\
                      Judge it against THAT job, not against the wider build. A call doing its own job \
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
-                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}\
+                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}{settled_block}\
                      \n\nMost recent reasoning:\n{tail}{since_steer_block_text}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
@@ -14713,8 +14748,10 @@ impl GooseAgentDispatcher {
                             omni_looping_streak = 0;
                             omni_prior_looping_tails.clear();
                             // The re-stream abandons that reasoning, so its fingerprints must not count
-                            // against what follows.
+                            // against what follows — nor a re-list measured in it (VA-124).
                             recur.reset();
+                            settled.reset();
+                            pending_relist = None;
                             // THE LADDER RESETS WITH THE ATTEMPT (r6a, KILLED at OPEN 49m). The
                             // nudged/ignored memory below outlived the stream it measured, so the
                             // FIRST look at each fresh attempt read "no action since the previous
@@ -17115,136 +17152,7 @@ async fn boot_invocation(
 }
 
 #[cfg(test)]
-mod boot_invocation_tests {
-    use super::*;
-
-    /// A fake app with EXACTLY r0's wrapper shape: it `Popen`s a grandchild with no `stdout=`/
-    /// `stderr=` kwargs, so the grandchild inherits the pipe write-ends `boot_invocation` is
-    /// reading, prints the grandchild's pid so the test can check it died, and never binds a port.
-    /// `popen_kwargs` lets one test move the grandchild out of the process group. The sleeps are
-    /// a test-fixture bound on a fake app, not model work.
-    fn fake_app(name: &str, popen_kwargs: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("goose_bootinv_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("fakeapp")).unwrap();
-        std::fs::write(root.join("fakeapp/__init__.py"), "").unwrap();
-        std::fs::write(
-            root.join("fakeapp/__main__.py"),
-            format!(
-                "import subprocess, sys, time\n\
-                 p = subprocess.Popen([sys.executable, \"-c\", \"import time; time.sleep(60)\"]{popen_kwargs})\n\
-                 print(f\"grandchild={{p.pid}}\", flush=True)\n\
-                 time.sleep(60)\n"
-            ),
-        )
-        .unwrap();
-        root
-    }
-
-    fn have_python3() -> bool {
-        std::process::Command::new("python3")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
-    /// A port nobody will bind during the test: taken from the kernel and released at once.
-    fn never_bound_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    }
-
-    fn pid_alive(pid: i32) -> bool {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    fn grandchild_pid(tail: &str) -> i32 {
-        tail.split("grandchild=")
-            .nth(1)
-            .and_then(|s| s.split_whitespace().next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("no grandchild pid in the captured tail: {tail:?}"))
-    }
-
-    /// The probe against the fake app, under a TEST-HARNESS bound: the fake app never binds, so
-    /// the 80x50ms bind poll ends in ~4s and anything past 30s is the hang itself. Not a model cap.
-    async fn probe(root: &Path, port: u16) -> Result<Option<String>, tokio::time::error::Elapsed> {
-        let scratch = root.join("scratch");
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            boot_invocation(root, "fakeapp", &[], &[port], &scratch),
-        )
-        .await
-    }
-
-    /// THE r0 EXIT HANG. The wrapper was SIGKILLed after the bind poll, but the services it
-    /// `Popen`'d with inherited stdio outlived tokio's one-pid kill and held the pipe write-ends
-    /// open, so the readers never saw EOF and `stdout_task.await` parked the whole run — the
-    /// heartbeat ticked, CPU sat at 0%, and no result was ever emitted. The probe must return once
-    /// its child is dead, and the grandchild must die with it.
-    #[tokio::test]
-    async fn boot_invocation_returns_when_a_grandchild_holds_the_pipe() {
-        if !have_python3() {
-            return;
-        }
-        let root = fake_app("inherits", "");
-        let res = probe(&root, never_bound_port()).await;
-        let tail = res
-            .expect("boot_invocation must return once the child is killed even though a grandchild inherited the pipe")
-            .expect("the fake app never binds, so this must be Some(tail)");
-        assert!(
-            tail.contains("grandchild="),
-            "the wrapper's own output must survive the group kill: {tail}"
-        );
-        let pid = grandchild_pid(&tail);
-        // `kill -0` still succeeds on a zombie until launchd reaps it, so give it a moment.
-        for _ in 0..40 {
-            if !pid_alive(pid) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        let leaked = pid_alive(pid);
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status();
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            !leaked,
-            "grandchild {pid} outlived the probe — the process group was not killed"
-        );
-    }
-
-    /// The other half of the guarantee, independent of the group kill: a grandchild that left the
-    /// group (`setsid`, a double-forked daemon) cannot be reached by any signal we send and holds
-    /// the write-end for as long as it likes. The probe must STILL return, because the wait is on
-    /// the group's liveness and never on pipe EOF.
-    #[tokio::test]
-    async fn boot_invocation_returns_when_the_grandchild_escaped_the_group() {
-        if !have_python3() {
-            return;
-        }
-        let root = fake_app("escapes", ", start_new_session=True");
-        let res = probe(&root, never_bound_port()).await;
-        let tail = res
-            .expect("boot_invocation must return once its process group is gone even though an escaped grandchild still holds the pipe")
-            .expect("the fake app never binds, so this must be Some(tail)");
-        let pid = grandchild_pid(&tail);
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status();
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
+mod boot_invocation_tests;
 
 /// The `python3 -m PKG` entry package the spec literally advertises, if any — skipping tool
 /// modules (`python3 -m pytest` in a testing note is not the app entry). Pure/testable.
@@ -20766,6 +20674,12 @@ impl GooseAgentDispatcher {
                     siblings,
                     questions: Vec::new(),
                     material: research::slice_material(sl, &sections),
+                    hand: research::section_hand(
+                        &sl.id,
+                        &sl.sections,
+                        &sections,
+                        self.events.as_ref(),
+                    ),
                 },
             ));
         }
@@ -20802,6 +20716,7 @@ impl GooseAgentDispatcher {
                     siblings: String::new(),
                     questions: decision_questions,
                     material,
+                    hand: Vec::new(),
                 },
             ));
         }
@@ -20906,7 +20821,7 @@ impl GooseAgentDispatcher {
                         me.research_landing
                             .lock()
                             .unwrap()
-                            .insert(key.clone(), ResearchLanding::open(&lane.slice, &model));
+                            .insert(key.clone(), ResearchLanding::open(&lane, &model));
                     }
                     let t = std::time::Instant::now();
                     let out = me
