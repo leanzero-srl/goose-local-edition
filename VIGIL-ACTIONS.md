@@ -159,7 +159,8 @@ prompt · design · harness.
 
 
 
-| VA-135 | 09-02 | tick.py | CLAIMED 21:3x bench-scorer (reads the emit sites in the worktrees; present-only rows; r6h replay must be identical) | bench-scorer batch for tick.py + useSwarmRun.ts prefix rows: `budgets_resolved` / `budgets_window_unprobed` / `vendor_probe_pagination_skipped` (va126), `dep_source_carried_whole` + `context_line_skipped` (va-instruments), `research_section_handed` (va128), `settled_list_relisted` (va124), the VA-131 admission reason on `research_mini_relayed`; fields read from the emit sites, present-only rows, replay on the r6h archive unchanged. |
+| VA-135 | 09-02 | tick.py | LANDED loop-state abb40d9 (21:4x): six rows from the branches' emit sites (RESEARCH SECTIONS per lane, budgets + window-unprobed, DEP SOURCE CARRIED WHOLE, context_line_skipped folded on USAGE UNAVAILABLE, vendor pagination skipped, settled-list relist with the judge_block); r6h + r5 replays identical, live run no exception, synthetic stream renders all six | bench-scorer batch for tick.py + useSwarmRun.ts prefix rows: `budgets_resolved` / `budgets_window_unprobed` / `vendor_probe_pagination_skipped` (va126), `dep_source_carried_whole` + `context_line_skipped` (va-instruments), `research_section_handed` (va128), `settled_list_relisted` (va124), the VA-131 admission reason on `research_mini_relayed`; fields read from the emit sites, present-only rows, replay on the r6h archive unchanged. |
+
 
 
 
