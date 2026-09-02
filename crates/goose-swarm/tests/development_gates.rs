@@ -458,7 +458,13 @@ fn swarm_rs_line_count_only_decreases() {
     // `spec_python_invocations`, `spec_boot_line`, their test) moved to commands/swarm/spec_boot.rs
     // beside the new `spec_boot_flags`, paying for `mod spec_boot;`, rule (e)'s `spec` argument
     // (the ownership seam) and the `skeleton_flags_absent` key in the skeleton fan-out.
-    const SWARM_RS_LINE_BASELINE: usize = 33_232;
+    // Tightened to 33,074 (VA-144): the ledger-mini writers (`LEDGER_DIR`, `write_ledger_mini`,
+    // `write_ledger_mini_checked`, `rebuild_ledger_rollup` and the §II.2 header) moved to
+    // commands/swarm/ledger_writers.rs beside the task/gate/shard writers that call them, paying
+    // for `mod first_turn;`, the dispatcher's `brief_rest` stash, the layout/deps split, the
+    // write-alone arm at the system prompt, the stash/settle at dispatch and `drain_brief_rest!`
+    // at the loop's two drain sites.
+    const SWARM_RS_LINE_BASELINE: usize = 33_074;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
