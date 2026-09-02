@@ -32,7 +32,9 @@
 //! * the digest's `last_thinking` view (`tail_chars(_, LOOK_TAIL_CHARS)`, swarm.rs): a VIEW the
 //!   panel reads; the two model-facing tails (the judge's look tail and the re-stream seed's
 //!   carried tail) are derived — `look_tail_chars`.
-//! * the split rule's 2.0× median and the recurrence meter's shingle sizes: different classes.
+//! * the split rule's 2.0× median and the recurrence meter's 48-char shingle WIDTH: different
+//!   classes (a statistic of the plan; the unit of verbatim repetition). The meter's REACH — how
+//!   far back it can see a period — IS a window budget and is derived here (`recurrence_reach`).
 
 use super::dep_sources::{DEP_SOURCES_BUDGET_CHARS, DEP_SOURCE_FILE_CHARS};
 use super::judge_context::{OWNED_EXCERPT_PER_FILE, OWNED_EXCERPT_TOTAL};
@@ -53,6 +55,14 @@ pub(super) const DOC_FETCH_CHARS: usize = 24_000;
 /// The sink's ledger block (`render_ledger_block_measured`'s budget in
 /// `sink_semantic_description`). 7,000 was the literal at that one live site on the 262,144 window.
 pub(super) const LEDGER_BLOCK_CHARS: usize = 7_000;
+
+/// The recurrence meter's shingle reach (`desk::RecurrenceMeter`): how many 48-char shingle
+/// fingerprints it holds, i.e. how far back a repetition period stays visible. 65,536 was
+/// `RECURRENCE_REACH` in desk.rs — ~65k characters of memory at ~3 MB per live call, 16x the
+/// longest repetition period measured (~4,000 chars) and 27x the tail window that was blind to
+/// it — on the 262,144 window: exactly one quarter of it, so a model that can hold four times the
+/// reasoning is watched four times as far back (VA-137).
+pub(super) const RECURRENCE_REACH_SHINGLES: usize = 65_536;
 
 /// The budgets a run shows its models under, all scaled from one window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +90,8 @@ pub(super) struct ShownBudgets {
     pub(super) owned_excerpt_per_file_chars: usize,
     /// `LOOK_TAIL_CHARS` scaled: the judge's look tail and the re-stream seed's carried tail.
     pub(super) look_tail_chars: usize,
+    /// `RECURRENCE_REACH_SHINGLES` scaled: the recurrence meter's shingle reach, live and replayed.
+    pub(super) recurrence_reach: usize,
 }
 
 /// `reference_chars × window / REFERENCE_WINDOW_TOKENS`, floored. u128 so no product overflows;
@@ -103,7 +115,14 @@ impl ShownBudgets {
             owned_excerpt_total_chars: scaled(OWNED_EXCERPT_TOTAL, window_tokens),
             owned_excerpt_per_file_chars: scaled(OWNED_EXCERPT_PER_FILE, window_tokens),
             look_tail_chars: scaled(LOOK_TAIL_CHARS, window_tokens),
+            recurrence_reach: scaled(RECURRENCE_REACH_SHINGLES, window_tokens),
         }
+    }
+
+    /// The set on the reference window — the fixed point of `for_window`, every field its
+    /// reference constant. The dispatcher's pre-resolve placeholder and the tests use it.
+    pub(super) fn reference() -> Self {
+        Self::for_window(REFERENCE_WINDOW_TOKENS)
     }
 
     /// The set as JSON for the `budgets_resolved` event — every field, so tick.py and a reader
@@ -121,6 +140,7 @@ impl ShownBudgets {
             "owned_excerpt_total_chars": self.owned_excerpt_total_chars,
             "owned_excerpt_per_file_chars": self.owned_excerpt_per_file_chars,
             "look_tail_chars": self.look_tail_chars,
+            "recurrence_reach": self.recurrence_reach,
         })
     }
 }
@@ -244,6 +264,7 @@ mod tests {
         assert_eq!(b.owned_excerpt_total_chars, 2_400);
         assert_eq!(b.owned_excerpt_per_file_chars, 1_200);
         assert_eq!(b.look_tail_chars, 2_000);
+        assert_eq!(b.recurrence_reach, 65_536);
         // The same numbers whichever host's window is listed first or last.
         let mut reversed = fleet.clone();
         reversed.reverse();
@@ -265,6 +286,7 @@ mod tests {
         assert_eq!(b.owned_excerpt_total_chars, 9_600);
         assert_eq!(b.owned_excerpt_per_file_chars, 4_800);
         assert_eq!(b.look_tail_chars, 8_000);
+        assert_eq!(b.recurrence_reach, 262_144);
     }
 
     /// What gabee ALONE would have received under a per-host derivation (the later, measured
@@ -277,6 +299,7 @@ mod tests {
         assert_eq!(b.dep_source_file_chars, 2_406);
         assert_eq!(b.vendor_body_chars, 4_125);
         assert_eq!(b.look_tail_chars, 1_375);
+        assert_eq!(b.recurrence_reach, 45_056);
     }
 
     /// The old default the engine held before VA-112's probe (128,000, `DEFAULT_CONTEXT_LIMIT`):
@@ -299,6 +322,23 @@ mod tests {
         let j = ShownBudgets::for_window(REFERENCE_WINDOW_TOKENS).to_json();
         assert_eq!(j["window_tokens"], 262_144);
         assert_eq!(j["look_tail_chars"], 2_000);
-        assert_eq!(j.as_object().map(|o| o.len()), Some(11));
+        assert_eq!(j.as_object().map(|o| o.len()), Some(12));
+    }
+
+    /// VA-137: the recurrence meter's reach is one quarter of the window — 65,536 shingles on
+    /// this fleet to the byte, 262,144 on a 1M-window model; verdict-identical on r6h (max rate
+    /// 0.1465 < 0.25 at every reach), the `desk_look.detectors.span/recur_rate` fields differ
+    /// only on a smaller-window host.
+    #[test]
+    fn recurrence_reach_is_one_quarter_of_the_window() {
+        assert_eq!(ShownBudgets::for_window(262_144).recurrence_reach, 65_536);
+        assert_eq!(
+            ShownBudgets::for_window(1_048_576).recurrence_reach,
+            262_144
+        );
+        assert_eq!(
+            ShownBudgets::reference().recurrence_reach,
+            RECURRENCE_REACH_SHINGLES
+        );
     }
 }

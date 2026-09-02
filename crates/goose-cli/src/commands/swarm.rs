@@ -9123,7 +9123,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the period ({period_len}) must exceed the old 2,400-char tail window"
         );
 
-        let mut looping = RecurrenceMeter::new();
+        let mut looping = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         for _ in 0..8 {
             looping.push(&period);
         }
@@ -9155,7 +9155,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         // And an ADVANCING call of the same length must NOT trip it, or the fix trades one
         // failure mode for a worse one: killing healthy deep reasoning.
-        let mut advancing = RecurrenceMeter::new();
+        let mut advancing =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         for i in 0..900 {
             advancing.push(&format!(
                 "Step {i}: considering constraint {i} against invariant {} and recording the \
@@ -9181,7 +9182,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn the_r2_straggler_replays_as_a_loop() {
         let captured = include_str!("../../tests/fixtures/f924-looping-detail-call.txt");
-        let mut m = RecurrenceMeter::new();
+        let mut m = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         // Dribbled the way the stream actually arrives, a few characters at a time.
         let chars: Vec<char> = captured.chars().collect();
         for c in chars.chunks(5) {
@@ -9206,7 +9207,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // And the judge's actual view of the same stream — the last 2,000 characters — is clean,
         // which is precisely why it kept answering OK.
         let tail: String = chars[chars.len() - 2_000..].iter().collect();
-        let mut window_only = RecurrenceMeter::new();
+        let mut window_only =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         window_only.push(&tail);
         assert!(
             window_only.rate() < 0.10,
@@ -9220,10 +9222,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn the_meter_is_indifferent_to_how_the_stream_is_chunked() {
         let text = "the same sentence recurs here and again and again in this stream ".repeat(300);
-        let mut whole = RecurrenceMeter::new();
+        let mut whole = RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         whole.push(&text);
 
-        let mut dribbled = RecurrenceMeter::new();
+        let mut dribbled =
+            RecurrenceMeter::new(budgets::ShownBudgets::reference().recurrence_reach);
         let chars: Vec<char> = text.chars().collect();
         for c in chars.chunks(3) {
             dribbled.push(&c.iter().collect::<String>());
@@ -11671,7 +11674,7 @@ impl GooseAgentDispatcher {
             node_by_model: std::sync::OnceLock::new(),
             // Overwritten below before `me` leaves this constructor; the `?` on the resolve means a
             // dispatcher never exists with the reference set standing in for a probed one.
-            budgets: budgets::ShownBudgets::for_window(budgets::REFERENCE_WINDOW_TOKENS),
+            budgets: budgets::ShownBudgets::reference(),
         };
         me.budgets = me.resolve_fleet_budgets(&fleet_models).await?;
         Ok(me)
@@ -12279,7 +12282,7 @@ impl GooseAgentDispatcher {
         let mut last_thinking: String = String::new();
         // #F924: `last_thinking` is a 2,400-char rolling tail, so it cannot hold a long-period
         // loop. This carries the fingerprints the tail throws away.
-        let mut recur = RecurrenceMeter::new();
+        let mut recur = RecurrenceMeter::new(self.budgets.recurrence_reach);
         // VA-124: the settled-list meter beside the shingle meter. A rename defeats a verbatim
         // meter (r6j's opener re-listed six settled slices five times at rate 0.056, never looked
         // at); this one compares the TERRITORY each list item claims. Its re-list is an edge,
@@ -27099,14 +27102,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     });
 
-    // SHADOW JUDGE DESK (r6 qualifying measurement; DESIGN-JUDGE-DESK.md). A reader of the
-    // durable lane files that records what an out-of-phase judge WOULD have done — desk_*
-    // events only, no model calls, no worker-visible effect. Same guard pattern as the
-    // heartbeat above: aborted on every run_swarm exit path by Drop.
-    let _desk = log_path
-        .as_ref()
-        .map(|p| spawn_shadow_desk(working_dir.clone(), p.clone(), sink.clone()));
-
     // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
     eprintln!(
         "{} working dir: {}",
@@ -27341,6 +27336,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
     dispatcher.set_fleet_nodes(&devices);
+
+    // SHADOW JUDGE DESK (r6 qualifying measurement; DESIGN-JUDGE-DESK.md). A reader of the
+    // durable lane files that records what an out-of-phase judge WOULD have done — desk_*
+    // events only, no model calls, no worker-visible effect. Same guard pattern as the
+    // heartbeat above: aborted on every run_swarm exit path by Drop. Spawned once the
+    // dispatcher exists because its replayed recurrence meter takes the reach the dispatcher
+    // resolved from the fleet's window (VA-137) — no lane file exists before the first
+    // dispatch, so the later start misses nothing.
+    let _desk = log_path.as_ref().map(|p| {
+        spawn_shadow_desk(
+            working_dir.clone(),
+            p.clone(),
+            sink.clone(),
+            dispatcher.budgets.recurrence_reach,
+        )
+    });
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
