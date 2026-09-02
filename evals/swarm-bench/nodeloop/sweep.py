@@ -659,8 +659,13 @@ ARMS = [
                 "i3 — file-less findings dispatch as complete-fix::cross-file with "
                 "shard:'(cross-file)', baseline re-measured post-wave; a round with unassigned "
                 "findings and NO cross-file event means the real-tree gate could not run (the "
-                "designed skip, not a bug). SAFETY unchanged and now enforced per shard by "
-                "shard_beats_baseline (pinned by test).",
+                "designed skip, not a bug). SAFETY is per FINDING now, not per shard: "
+                "decide_promotion (repair_waves.rs) promotes ON THE FLIP -- the finding's own "
+                "check fails fewer times on the merged preview than on the tree now and no check "
+                "fails more (finding_flipped); finding_still_failing / preview_regressed promote "
+                "nothing, and a finding with no authoring check never promotes "
+                "(finding_unverifiable{promote:false}). shard_beats_baseline and its test are "
+                "deleted (VA-098).",
     },
     {
         "name": "fill_fan",
