@@ -1,21 +1,28 @@
 /**
- * THE LEANZERO MARK — a bold "L" cradling a flock of three geese climbing out of its crook.
+ * THE LEANZERO MARK — a bold "L" with two geese lifting out of it.
  *
  * Owner brief (2026-09-02): "a big L encompassing them ... 2 or 3 geese flying ... black or maybe
- * blue the same colour as leanzero". The L is the leanzero.net monogram language (sharp corners,
- * one weight); the geese are the product (Goose Flock). Drawn in `currentColor` so ONE mark serves
- * every context: white on the accent square, LeanZero blue (--color-action-solid) on a plain
- * surface, black in a menu-bar template.
+ * blue the same colour as leanzero", then, on the three-bird draft: "2 BIGGER geese going out of
+ * that L". The L is the leanzero.net monogram language (sharp corners, one weight); the pair is
+ * the product (Goose Flock) leaving it. Drawn in `currentColor` so ONE mark serves every context:
+ * white on the accent square, LeanZero blue (--color-action-solid) on a plain surface, black in a
+ * menu-bar template.
  *
- * Geometry notes, so a later edit does not quietly break it:
- *  - 64x64 design grid. The L is 10 units thick, inset 6, so the flock has a >=2.5-unit gutter
- *    from both arms at every size — birds touching the L turn the mark into a blob.
+ * Geometry notes, so a later edit does not quietly break it — all four were paid for by a render
+ * that looked wrong:
+ *  - 64x64 design grid. The L has LETTER proportions (31 wide x 46 tall, 12 thick), not the
+ *    half-canvas corner bracket of the first draft: a near-square bracket reads as a frame, and it
+ *    left no room for geese this size. The short foot (ends at x=35) is what lets the trailing
+ *    goose's wing dip past it instead of colliding with it.
+ *  - The geese are EQUAL size (1.55) — a pair, not a perspective trick — and large enough to be
+ *    the subject rather than decoration in the corner.
  *  - GOOSE is mirror-symmetric BY CONSTRUCTION (each wing is the reflection of the other through
- *    x=0). The first three attempts read as darts and swooshes purely because they were not.
- *  - The birds fly nose-up in their own frame; rotate(52) points the flock up-and-right, which
- *    puts consecutive birds along their SHORT axis (length 13.4) rather than their wingspan
- *    (20.4), so an echelon this tight still separates.
- *  - Smallest honest size is ~20px; below that the three birds merge. Call sites render it at 20+.
+ *    x=0). Two earlier freehand attempts read as a jet and a swoosh purely because they were not.
+ *  - They fly at rotate(52), which puts the pair along their SHORT axis (length 13.4) rather than
+ *    their wingspan (20.4), so the echelon separates: 8.4 units clear between lead tail and
+ *    trailing nose. Everything stays inside x 4..57, y 7..60 — nothing touches the viewBox edge,
+ *    which is what clipped the second draft's lead bird.
+ *  - Smallest honest size is 20px. Call sites render it at 20+.
  */
 
 /** One goose in flight seen from below: neck thrust forward, wings swept back, short tail. */
@@ -34,14 +41,13 @@ const GOOSE = [
 
 const goose = (x: number, y: number) => ({
   d: GOOSE,
-  transform: `translate(${x} ${y}) rotate(52)`,
+  transform: `translate(${x} ${y}) rotate(52) scale(1.55)`,
 });
 
 export const LEANZERO_MARK_VIEWBOX = '0 0 64 64';
 
 export const LEANZERO_MARK: { d: string; transform?: string }[] = [
-  { d: 'M6,6 H16 V48 H58 V58 H6 Z' },
-  goose(28.5, 37),
-  goose(39.5, 26),
-  goose(50.5, 15),
+  { d: 'M4,14 H16 V48 H35 V60 H4 Z' },
+  goose(33, 40),
+  goose(45, 20),
 ];

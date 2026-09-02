@@ -170,9 +170,11 @@ CSS variables in `main.css` are copy-ready.
 ## The brand mark
 
 ONE geometry, `src/components/icons/leanzeroMark.ts`, drawn in `currentColor` — a bold "L" (the
-leanzero.net monogram language: sharp corners, one weight) cradling three geese climbing out of its
-crook. Owner brief, 2026-09-02: *"a big L encompassing them ... 2 or 3 geese flying ... black or
-maybe blue the same colour as leanzero"*.
+leanzero.net monogram language: sharp corners, one weight) with TWO large geese lifting out of it.
+Owner brief, 2026-09-02: *"a big L encompassing them ... 2 or 3 geese flying ... black or maybe
+blue the same colour as leanzero"*, then on the three-bird draft: *"2 bigger geese going out of
+that L"*. The L has LETTER proportions (31x46 in a 64 grid) — a near-square corner bracket reads
+as a frame, not a letter, and leaves no room for geese at this size.
 
 - `<LeanZero/>` (icons) and `<LeanZeroGlyph/>` (ProjectLanding, carries `data-testid`) render the
   SAME path list. Never hand-copy the paths into a third component — that is how a mark drifts.
@@ -182,8 +184,11 @@ maybe blue the same colour as leanzero"*.
 - **Smallest honest size is 20px.** Below that the three geese merge into texture. The sidebar
   brand square is 28px with a 20px mark; the chat chip is 18px. If a new surface needs it under
   20px, make the surface bigger rather than shrinking the mark.
-- The geese are mirror-symmetric BY CONSTRUCTION and fly at `rotate(52)`. Three earlier attempts
-  read as darts and swooshes purely because the halves were drawn freehand; keep the reflection.
+- The geese are mirror-symmetric BY CONSTRUCTION and fly at `rotate(52)` — which sets them along
+  their SHORT axis, so a tight pair still separates. Earlier freehand attempts read as a dart and a
+  swoosh purely because the halves were not reflections; keep the reflection.
+- Nothing touches the viewBox edge (the mark lives in x 4..57, y 7..60). A draft with a bigger lead
+  goose was silently clipped flat by the frame.
 - App icon, tray template and Linux scalable icon (`src/images/icon.*`, `iconTemplate*.png`) are
   rendered FROM this geometry — a solid `#1d4ed8` squircle (824 in a 1024 canvas, Apple's grid)
   with the mark in white at 52%. Regenerate them together, never one alone.
