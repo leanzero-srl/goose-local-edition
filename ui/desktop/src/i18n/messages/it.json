@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Annulla"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Configura in Provider cloud"
+  },
   "addNode.description": {
     "defaultMessage": "Un nodo nasce scegliendo cosa lo serve: scegli un provider, poi un modello."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Un motore LeanZero MLX serve UN solo modello: tutti i nodi MLX condividono ciò che il motore ha montato, quindi un modello diverso per nodo non è ancora possibile. Aggiungere questo nodo punta il motore sul modello scelto qui."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "nessuna chiave"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} non ha ancora una chiave API su questa macchina. Aggiungila in Provider cloud, poi torna qui per aggiungere il nodo."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Provider"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Scegli un provider…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "I provider dei nodi sono quelli supportati dal motore swarm — altre famiglie cloud arriveranno con il supporto del motore."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Rimuovi e ri-aggiungi"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Configura la modalità di approvazione"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Chiudendo questa finestra l'esecuzione si ferma: il backend della finestra viene rilasciato e al motore swarm sottostante viene segnalato di uscire."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Continua a eseguire"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Esecuzione {runId} in {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Ferma l'esecuzione e chiudi"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Arresto dell'esecuzione…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "In questa finestra è attiva un'esecuzione swarm"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Attenzione"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "No"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Mostra meno"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Non riuscito"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Caricato"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Caricamento"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Caricato parzialmente"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{# estensione caricata correttamente} other{# estensioni caricate correttamente}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Chiedi qualsiasi cosa a goose..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Accedi per collegare i tuoi dispositivi in una mesh privata — niente password, solo un codice via e-mail."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Un unico posto per tutto lo sciame: il motore MLX interno, le credenziali dei provider cloud e il pool di nodi con cui lo sciame costruisce."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Provider cloud"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Impostazioni sciame"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Chiudi"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Modello corrente"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Competenze"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "non riuscito"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "inattivo"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "in montaggio"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "in servizio"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Nodi"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Il server potrebbe essere in fase di avvio o temporaneamente non disponibile."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Cinese (tradizionale)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Ripristina le righe della flotta scoperta da LM Studio e lo stato dei nodi in tutta l'app. Se disattivato, nulla interroga LM Studio e nessuna riga scoperta viene mostrata."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "Flotta LM Studio nascosta (legacy) — attivala qui sopra per vedere i nodi in tempo reale"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "Mostra flotta LM Studio (legacy)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Mostra goose nella barra dei menu"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nodo MLX di una macchina remota — salvato nel pool, servito quando arriverà il routing per nodo"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Ancora nessun nodo — aggiungine uno, o avvia LM Studio su {endpoint} per farlo scoprire."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Ogni nodo che lo sciame esegue — le righe configurate più ciò che LM Studio ha residente in questo momento. Peso: più alto riceve una parte maggiore dei compiti."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Rimuovi nodo"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Condividi"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Torna all'elenco dei modelli"

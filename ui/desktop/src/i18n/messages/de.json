@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Abbrechen"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Unter Cloud-Anbieter konfigurieren"
+  },
   "addNode.description": {
     "defaultMessage": "Ein Node entsteht durch die Wahl dessen, was ihn bedient: erst einen Anbieter wählen, dann ein Modell."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Eine LeanZero-MLX-Engine bedient EIN Modell: Alle MLX-Nodes teilen sich, was die Engine gemountet hat — ein anderes Modell pro Node ist noch nicht möglich. Dieser Node richtet die Engine auf das hier gewählte Modell aus."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "kein Schlüssel"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} hat auf diesem Rechner noch keinen API-Schlüssel. Füge ihn unter Cloud-Anbieter hinzu und komm dann zurück, um den Node hinzuzufügen."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Anbieter"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Anbieter wählen…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Node-Anbieter sind die, die die Swarm-Engine unterstützt — weitere Cloud-Familien kommen mit der Engine-Unterstützung hinzu."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Entfernen & neu hinzufügen"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Genehmigungsmodus konfigurieren"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Das Schließen dieses Fensters stoppt den Lauf: Das Backend des Fensters wird freigegeben und die darunterliegende Swarm-Engine wird zum Beenden aufgefordert."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Weiterlaufen lassen"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Lauf {runId} in {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Lauf stoppen und schließen"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Lauf wird gestoppt…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "In diesem Fenster läuft ein Swarm-Lauf"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Warnung"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Nein"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Weniger anzeigen"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Fehlgeschlagen"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Geladen"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Wird geladen"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Teilweise geladen"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{# Erweiterung erfolgreich geladen} other{# Erweiterungen erfolgreich geladen}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Frag goose irgendetwas..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Melde dich an, um deine Geräte zu einem privaten Mesh zu verbinden — kein Passwort, nur ein Code per E-Mail."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Ein Ort für den ganzen Schwarm: die hauseigene MLX-Engine, Cloud-Zugangsdaten und der Node-Pool, mit dem der Schwarm baut."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Cloud-Anbieter"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Schwarm-Einstellungen"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Schließen"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Aktuelles Modell"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "fehlgeschlagen"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "inaktiv"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "wird gemountet"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "bereitgestellt"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Nodes"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Chinesisch (traditionell)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Zeigt die von LM Studio erkannten Flotten-Zeilen und den Node-Status wieder in der ganzen App an. Ist es aus, fragt nichts LM Studio ab und es werden keine erkannten Zeilen gerendert."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM-Studio-Flotte ausgeblendet (Legacy) — oben aktivieren, um hier Live-Nodes zu sehen"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "LM-Studio-Flotte anzeigen (Legacy)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "goose in der Menüleiste anzeigen"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "MLX-Node einer entfernten Maschine — im Pool gespeichert, bedient sobald das Routing pro Node kommt"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Noch keine Nodes — füge einen hinzu oder starte LM Studio unter {endpoint}, um erkannt zu werden."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Jeder Node, den der Schwarm fährt — konfigurierte Zeilen plus alles, was LM Studio gerade resident hat. Gewicht: höher bekommt einen größeren Anteil der Aufgaben."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Node entfernen"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Teilen"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Zurück zur Modellliste"

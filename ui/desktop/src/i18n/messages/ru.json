@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Отмена"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Настроить в разделе «Облачные провайдеры»"
+  },
   "addNode.description": {
     "defaultMessage": "Узел создаётся выбором того, что его обслуживает: выберите провайдера, затем модель."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Один движок LeanZero MLX обслуживает ОДНУ модель: все MLX-узлы делят то, что движок смонтировал, поэтому разная модель на узел пока невозможна. Добавление этого узла направит движок на выбранную здесь модель."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "нет ключа"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "У {label} на этой машине пока нет API-ключа. Добавьте его в разделе «Облачные провайдеры», затем вернитесь, чтобы добавить узел."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Провайдер"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Выберите провайдера…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Провайдеры узлов — те, что поддерживает движок swarm; новые облачные семейства появятся вместе с поддержкой в движке."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Удалить и добавить заново"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Настроить режим подтверждения"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Закрытие этого окна останавливает запуск: бэкенд окна освобождается, а движку swarm под ним подаётся сигнал на завершение."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Продолжить выполнение"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Запуск {runId} в {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Остановить запуск и закрыть"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Остановка запуска…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "В этом окне выполняется запуск swarm"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Предупреждение"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Нет"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Показать меньше"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Ошибка"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Загружено"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Загрузка"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Загружено частично"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count, plural, one {Успешно загружено # расширение} few {Успешно загружено # расширения} many {Успешно загружено # расширений} other {Успешно загружено # расширения}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Спросите goose о чем угодно..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Войдите, чтобы объединить свои устройства в приватную mesh-сеть — без пароля, только код по электронной почте."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Одно место для всего роя: собственный движок MLX, учётные данные облачных провайдеров и пул узлов, которым рой строит."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Облачные провайдеры"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Настройки роя"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Закрыть"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Текущая модель"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Навыки"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "сбой"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "простаивает"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "монтируется"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "обслуживает"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Узлы"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Китайский (традиционный)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Возвращает строки флота, обнаруженного LM Studio, и статус узлов во всём приложении. Если выключено, ничто не опрашивает LM Studio и обнаруженные строки не отображаются."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "Флот LM Studio скрыт (устаревшее) — включите выше, чтобы видеть здесь живые узлы"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "Показывать флот LM Studio (устаревшее)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Показывать goose в строке меню"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "MLX-узел удалённой машины — сохранён в пуле, заработает с поузловой маршрутизацией"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Узлов пока нет — добавьте один или запустите LM Studio на {endpoint}, чтобы он был обнаружен."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Каждый узел, который запускает рой — настроенные строки плюс всё, что сейчас резидентно в LM Studio. Вес: чем выше, тем большая доля задач."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Удалить узел"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Поделиться"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Назад к списку моделей"

@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "取消"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "在雲端提供方中設定"
+  },
   "addNode.description": {
     "defaultMessage": "節點由「誰來服務它」決定:先選提供方,再選模型。"
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "一個 LeanZero MLX 引擎只服務一個模型:所有 MLX 節點共享引擎目前掛載的模型,暫時無法為每個節點配置不同的模型。新增此節點會讓引擎指向你在這裡選擇的模型。"
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "無金鑰"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} 在這台機器上還沒有 API 金鑰。請先在雲端提供方中新增,然後回來新增節點。"
+  },
   "addNode.providerLabel": {
     "defaultMessage": "提供方"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "選擇提供方…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "節點提供方即 swarm 引擎支援的提供方——更多雲端系列會隨引擎支援一起到來。"
   },
   "addNode.reassignButton": {
     "defaultMessage": "移除並重新新增"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "設定核准模式"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "關閉此視窗會停止本次執行:視窗的後端將被釋放,其下的 swarm 引擎會收到結束訊號。"
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "繼續執行"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "{runDir} 中的執行 {runId}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "停止執行並關閉"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "正在停止執行…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "此視窗中有一個 swarm 執行正在進行"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "警告"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "否"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "顯示較少"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "失敗"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "已載入"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "載入中"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "部分載入"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{已成功載入 # 個擴充功能} other{已成功載入 # 個擴充功能}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "向 goose 詢問任何問題…"
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "登入即可把你的裝置連成一個私有 mesh 網路——不需要密碼,只需電子郵件收到的一組驗證碼。"
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "整個蜂群的統一入口:自研 MLX 引擎、雲端提供方憑證,以及蜂群建置所用的節點池。"
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "雲端提供方"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "蜂群設定"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "關閉"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "目前模型"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "技能"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "失敗"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "閒置"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "掛載中"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "服務中"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "節點"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "中文（繁體）"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "在整個應用程式中恢復顯示 LM Studio 發現的艦隊列和節點狀態。關閉後,不會輪詢 LM Studio,也不會渲染任何發現的列。"
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio 艦隊已隱藏(舊版)——在上方啟用即可在此查看即時節點"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "顯示 LM Studio 艦隊(舊版)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "在選單列中顯示 goose"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "遠端機器的 MLX 節點 — 已儲存在節點池,待逐節點路由上線後提供服務"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "還沒有節點 — 新增一個,或在 {endpoint} 啟動 LM Studio 以便被發現。"
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "蜂群執行的每個節點 — 已設定的列,加上 LM Studio 目前常駐的模型。權重:越高分到的任務越多。"
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "移除節點"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "分享"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "返回模型清單"

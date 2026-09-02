@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "취소"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "클라우드 제공자에서 구성"
+  },
   "addNode.description": {
     "defaultMessage": "노드는 무엇이 담당할지 골라서 만듭니다. 제공자를 고른 뒤 모델을 선택하세요."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "하나의 LeanZero MLX 엔진은 하나의 모델만 제공합니다. 모든 MLX 노드는 엔진이 마운트한 것을 공유하므로 노드마다 다른 모델은 아직 불가능합니다. 이 노드를 추가하면 엔진이 여기서 고른 모델로 향합니다."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "키 없음"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label}에는 아직 이 컴퓨터에 API 키가 없습니다. 클라우드 제공자에서 추가한 뒤 돌아와 노드를 추가하세요."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "제공자"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "제공자 선택…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "노드 제공자는 swarm 엔진이 지원하는 것들입니다. 엔진 지원과 함께 더 많은 클라우드 계열이 추가됩니다."
   },
   "addNode.reassignButton": {
     "defaultMessage": "제거 후 다시 추가"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "승인 모드 구성"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "이 창을 닫으면 실행이 중지됩니다. 창의 백엔드가 해제되고 그 아래의 swarm 엔진에 종료 신호가 전달됩니다."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "계속 실행"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "{runDir}의 실행 {runId}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "실행 중지 후 닫기"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "실행을 중지하는 중…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "이 창에서 swarm 실행이 진행 중입니다"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "경고"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "아니요"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "간략히 보기"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "실패"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "로드됨"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "로드 중"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "일부 로드됨"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{#개의 익스텐션을 성공적으로 로드했습니다} other{#개의 익스텐션을 성공적으로 로드했습니다}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "goose에게 무엇이든 물어보세요..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "로그인하여 기기를 비공개 메시로 연결하세요. 비밀번호 없이 이메일로 받은 코드만 있으면 됩니다."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "스웜 전체를 한곳에서: 자체 MLX 엔진, 클라우드 제공자 자격 증명, 스웜이 빌드에 쓰는 노드 풀."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "클라우드 제공자"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "스웜 설정"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "닫기"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "현재 모델"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "스킬"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "실패"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "유휴"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "마운트 중"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "서빙 중"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "노드"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "중국어(번체)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "LM Studio가 발견한 플릿 행과 노드 상태를 앱 전체에 다시 표시합니다. 끄면 LM Studio를 폴링하지 않으며 발견된 행도 표시되지 않습니다."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio 플릿 숨김(레거시) — 위에서 켜면 여기에 실시간 노드가 표시됩니다"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "LM Studio 플릿 표시(레거시)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "메뉴 막대에 goose를 표시합니다."
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "원격 머신의 MLX 노드 — 풀에 저장됨, 노드별 라우팅이 오면 서비스됩니다"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "아직 노드가 없습니다 — 하나 추가하거나 {endpoint}에서 LM Studio를 실행하면 발견됩니다."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "스웜이 돌리는 모든 노드 — 설정된 행과 LM Studio에 지금 상주하는 것들. 가중치: 높을수록 더 많은 작업을 받습니다."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "노드 제거"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "공유"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "모델 목록으로 돌아가기"

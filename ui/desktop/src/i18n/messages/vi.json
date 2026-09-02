@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Hủy"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Cấu hình trong Nhà cung cấp đám mây"
+  },
   "addNode.description": {
     "defaultMessage": "Một nút được tạo bằng cách chọn thứ phục vụ nó: chọn nhà cung cấp, rồi chọn mô hình."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Một động cơ LeanZero MLX chỉ phục vụ MỘT mô hình: mọi nút MLX dùng chung thứ động cơ đã gắn, nên mỗi nút một mô hình khác nhau là chưa thể. Thêm nút này sẽ trỏ động cơ tới mô hình bạn chọn ở đây."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "chưa có khóa"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} chưa có khóa API trên máy này. Hãy thêm nó trong Nhà cung cấp đám mây, rồi quay lại để thêm nút."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Nhà cung cấp"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Chọn nhà cung cấp…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Nhà cung cấp nút là những nhà cung cấp mà động cơ swarm hỗ trợ — thêm họ đám mây sẽ xuất hiện cùng với hỗ trợ của động cơ."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Gỡ & thêm lại"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Cấu hình chế độ phê duyệt"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Đóng cửa sổ này sẽ dừng lượt chạy: backend của cửa sổ được giải phóng và động cơ swarm bên dưới nhận tín hiệu thoát."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Tiếp tục chạy"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Lượt chạy {runId} trong {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Dừng lượt chạy và đóng"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Đang dừng lượt chạy…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "Một lượt chạy swarm đang hoạt động trong cửa sổ này"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Cảnh báo"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Không"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Hiện ít hơn"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Thất bại"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Đã nạp"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Nạp một phần"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{Đã tải thành công # tiện ích mở rộng} other{Đã tải thành công # tiện ích mở rộng}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Hỏi goose bất cứ điều gì..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Đăng nhập để liên kết các thiết bị của bạn vào một mạng mesh riêng — không cần mật khẩu, chỉ cần một mã gửi qua email."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Một nơi cho cả bầy: động cơ MLX tự phát triển, thông tin xác thực nhà cung cấp đám mây, và nhóm nút mà bầy dùng để xây dựng."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Nhà cung cấp đám mây"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Cài đặt bầy"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Đóng"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Mô hình hiện tại"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Kỹ năng"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "thất bại"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "rảnh"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "đang gắn"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "đang phục vụ"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Nút"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Tiếng Trung (Phồn thể)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Hiển thị lại các hàng đội máy do LM Studio phát hiện và trạng thái nút trên toàn ứng dụng. Khi tắt, không có gì thăm dò LM Studio và không hàng phát hiện nào được hiển thị."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "Đội máy LM Studio đang ẩn (cũ) — bật ở trên để xem các nút trực tiếp tại đây"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "Hiện đội máy LM Studio (cũ)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Hiển thị goose trên thanh menu"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nút MLX của máy từ xa — đã lưu trong nhóm, phục vụ khi có định tuyến theo nút"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Chưa có nút nào — thêm một cái, hoặc khởi động LM Studio tại {endpoint} để được phát hiện."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Mọi nút mà bầy chạy — các hàng đã cấu hình cộng với những gì LM Studio đang thường trú lúc này. Trọng số: càng cao càng nhận phần việc lớn hơn."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Gỡ nút"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Chia sẻ"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Quay lại danh sách mô hình"
