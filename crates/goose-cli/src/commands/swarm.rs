@@ -26345,7 +26345,7 @@ impl GooseAgentDispatcher {
         // reverses under repair: the shard's own order is the SMALLEST edit that removes an
         // observed defect, and re-emitting a live file from memory is how a repair round regresses
         // work no finding named. Branched in briefs.rs; the authoring text is byte-identical.
-        let write_granularity_rule = briefs::write_granularity_rule(repairing);
+        let write_granularity_rule = briefs::write_granularity_rule(repairing, shard.is_some());
         let worker_directive = lang.directive();
         // LANGUAGE- AND FRAMEWORK-SPECIFIC RULES, GATED — they used to be unconditional.
         //
@@ -26976,11 +26976,9 @@ impl GooseAgentDispatcher {
                                 m, &missing,
                             )));
                         }
-                        return Err(DispatchError::ContentRetry(format!(
-                            "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this \
-                             attempt MUST be to `write` EACH of them IN FULL from your spec, then finish — do \
-                             NOT explore, cat, or explain first.",
-                            missing.join(", ")
+                        return Err(DispatchError::ContentRetry(briefs::missing_files_hint(
+                            &missing,
+                            &req.description,
                         )));
                     }
                 }
