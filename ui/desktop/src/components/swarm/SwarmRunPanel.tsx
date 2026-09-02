@@ -533,7 +533,15 @@ const LaneRow: React.FC<{
           <NodeDot index={idx} letter={letter} />
         </Tip>
         <Tip label={<span className="font-mono">{lane.device}</span>}>
-          <span className="w-16 shrink-0 truncate font-mono text-lz-mono text-lz-ink-3">{lane.device}</span>
+          <Clipped
+            text={lane.device}
+            mono
+            label="Node"
+            context={laneContext(lane)}
+            hoverTitle={false}
+            className="w-16 shrink-0 font-mono text-lz-mono text-lz-ink-3"
+            testId="lane-row-device"
+          />
         </Tip>
         {/* Readable name: the architect's description ("Tokenize the template source") is the primary label;
             the terse id ("lexer") drops to a mono sub-tag so it's still identifiable but no longer cryptic. */}
@@ -554,9 +562,14 @@ const LaneRow: React.FC<{
               "slice-approval-workflow-outbox" is the same string twice, on every row of every group —
               Mihai: "a lot of this UI is self duplicating information". It stays in the hover tip, where
               it is available without costing a line. */}
-          <span className="min-w-0 flex-1 truncate text-lz-body text-lz-ink">
-            {lane.description || lane.taskId}
-          </span>
+          <Clipped
+            text={lane.description || lane.taskId}
+            label="Task brief"
+            context={laneContext(lane)}
+            hoverTitle={false}
+            className="min-w-0 flex-1 text-lz-body text-lz-ink"
+            testId="lane-row-desc"
+          />
         </Tip>
         {/* THE MODEL ID IS THE SAME ON EVERY ROW. A homogeneous fleet runs one model, so
             "workhorse-qwen3.8-27b-br…" truncated identically on fourteen rows says nothing the node
@@ -565,9 +578,15 @@ const LaneRow: React.FC<{
             cloud fleet, where it is the whole point. */}
         {lane.model && heterogeneous && (
           <Tip label={<span className="font-mono">{lane.model}</span>}>
-            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate font-mono text-lz-mono text-lz-ink-3">
-              {lane.model}
-            </span>
+            <Clipped
+              text={lane.model}
+              mono
+              label="Model"
+              context={laneContext(lane)}
+              hoverTitle={false}
+              className="hidden sm:inline-flex shrink-0 max-w-[9rem] font-mono text-lz-mono text-lz-ink-3"
+              testId="lane-row-model"
+            />
           </Tip>
         )}
         <span className={cx('flex shrink-0 items-center gap-2 text-lz-meta text-lz-ink-3', TNUM)}>
@@ -628,7 +647,9 @@ const LaneRow: React.FC<{
           {mode === 'compact' ? (
             // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
             compactLine ? (
-              <div className="text-xs text-lz-ink-2 truncate">{compactLine}</div>
+              <div className="flex min-w-0 text-xs text-lz-ink-2">
+                <Clipped text={compactLine} label="Working on" context={laneContext(lane)} testId="lane-row-compact" />
+              </div>
             ) : null
           ) : (
             <>
@@ -2167,9 +2188,10 @@ const HistoryChannelPane: React.FC<{
  * renderer state for no benefit, while a re-expand is one IPC read of a local file the OS page cache
  * already holds. No LRU — the cache an LRU would manage already exists in the filesystem.
  */
-const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
+const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string; brief?: string }> = ({
   entry,
   runDir,
+  brief,
 }) => {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<{
@@ -2242,7 +2264,14 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
         <Chip tone={lane.interrupted ? 'stopped' : lane.status === 'error' ? 'err' : 'ok'}>
           {lane.interrupted ? 'interrupted' : lane.status === 'error' ? 'failed' : 'finished'}
         </Chip>
-        <span className="min-w-0 flex-1 truncate text-lz-ink">{title}</span>
+        <Clipped
+          text={title}
+          full={brief || lane.description?.trim() || title}
+          label="Task brief"
+          context={laneContext(lane)}
+          className="min-w-0 flex-1 text-lz-ink"
+          testId="history-row-title"
+        />
         {lane.interrupted ? (
           <span className={cx('shrink-0 text-lz-meta', TONE_TEXT.stopped)}>
             went quiet mid-call — no completion stamp
@@ -2308,8 +2337,10 @@ const NodeInspector: React.FC<{
   history: NodeHistoryEntry[];
   /** The RESOLVED run dir (readSwarmRun's `dir`) — where the on-demand full-log reads aim. */
   runDir: string;
+  /** The plan's own brief for a task id ('' when the plan has none) — a lane's description is a clip of it. */
+  briefOf?: (taskId: string) => string;
   onClose: () => void;
-}> = ({ device, letter, index, lane, nodeState, history, runDir, onClose }) => {
+}> = ({ device, letter, index, lane, nodeState, history, runDir, briefOf, onClose }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -2496,7 +2527,14 @@ const NodeInspector: React.FC<{
             ) : null;
           })()}
           {lane?.description && (
-            <span className="truncate text-lz-meta text-lz-ink-3">{lane.description}</span>
+            <Clipped
+              text={lane.description}
+              full={briefOf?.(lane.taskId) || undefined}
+              label="Task brief"
+              context={laneContext(lane)}
+              className="text-lz-meta text-lz-ink-3"
+              testId="inspector-task"
+            />
           )}
           <Button
             variant="ghost"
@@ -2660,7 +2698,12 @@ const NodeInspector: React.FC<{
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 space-y-1">
               {shownHistory.map((h) => (
-                <NodeHistoryRow key={h.lane.taskId} entry={h} runDir={runDir} />
+                <NodeHistoryRow
+                  key={h.lane.taskId}
+                  entry={h}
+                  runDir={runDir}
+                  brief={briefOf?.(h.lane.taskId) ?? ''}
+                />
               ))}
             </div>
           </div>
@@ -3172,6 +3215,7 @@ const FleetStrip: React.FC<{
                 nodeState={nodeStatus[shortName(inspect.device)]}
                 history={deviceHistory}
                 runDir={runDir}
+                briefOf={planBrief}
                 onClose={() => setInspect(null)}
               />
             );

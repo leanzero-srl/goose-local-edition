@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import SwarmRunPanel from './SwarmRunPanel';
 import { assertStudioClean } from '../lz/assertStudioClean';
+import { IntlTestWrapper } from '../../i18n/test-utils';
 
 /**
  * THE OWNER'S CASE, RENDERED (Mihai, 2026-09-02): a build-phase task carries a 400-char brief, the WORK
@@ -81,17 +82,34 @@ export function mockRun(events = EVENTS, activity: Record<string, unknown> = ACT
   electron.readSwarmActivityLog = vi.fn(async () => null);
 }
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 // jsdom lays nothing out: every measured span reports as overflowing, the way a long line does in the app.
 beforeAll(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
   Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 1000 });
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 100 });
 });
 afterAll(() => {
+  vi.unstubAllGlobals();
   delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
   delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
 });
 beforeEach(() => mockRun());
 afterEach(() => vi.restoreAllMocks());
+
+/** The panel under the intl provider some of its empty states need. */
+function renderPanel() {
+  return render(
+    <IntlTestWrapper>
+      <SwarmRunPanel workingDir="/tmp/build" />
+    </IntlTestWrapper>
+  );
+}
 
 /** Click a clipped control, read the reveal, Escape it, and prove focus came back. */
 export function revealAndClose(control: HTMLElement, expectText: string) {
@@ -115,7 +133,7 @@ async function findBriefSummary(): Promise<HTMLElement> {
 
 describe('WORK board — the 400-char brief behind a 90-char summary', () => {
   it('the running row summary is clipped, titled with the brief, and reveals it whole', async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const summary = await findBriefSummary();
     expect(summary).toHaveAttribute('data-clipped', 'true');
     expect(summary).toHaveAttribute('role', 'button');
@@ -134,7 +152,7 @@ describe('WORK board — the 400-char brief behind a 90-char summary', () => {
   });
 
   it('opening the reveal does not toggle the row it lives in', async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const summary = await findBriefSummary();
     const row = summary.closest('[data-testid="board-row"]') as HTMLElement;
     const before = row.querySelectorAll('*').length;
@@ -144,7 +162,7 @@ describe('WORK board — the 400-char brief behind a 90-char summary', () => {
   });
 
   it("the running row's live call line reveals the whole command, monospace", async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const live = await screen.findByTestId('board-row-live');
     expect(live).toHaveAttribute('data-clipped', 'true');
     expect(live).toHaveAttribute('title', ACTIVITY.store.calls[0].summary);
@@ -155,7 +173,7 @@ describe('WORK board — the 400-char brief behind a 90-char summary', () => {
   });
 
   it('a queued row says what it waits on, and the wait list is a door too', async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const deps = await screen.findAllByTestId('board-row-deps');
     expect(deps[0]).toHaveAttribute('title', 'after store');
     revealAndClose(deps[0], 'after store');
@@ -174,7 +192,7 @@ describe('Planning — a checklist row detail is a door too', () => {
       ],
       {}
     );
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const details = await screen.findAllByTestId('todo-row-detail');
     const ask = details.find((el) => (el.getAttribute('title') ?? '').includes('unanswered at the unattended window'));
     expect(ask).toBeDefined();
@@ -188,7 +206,7 @@ describe('Planning — a checklist row detail is a door too', () => {
 
 describe('Event log — a line’s sub-detail and the collapsed header’s last event', () => {
   it('the dispatch line’s detail is a door, and the row’s own inline expand still works beside it', async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     // The default log mode is verbose: the log is open and every line wraps to a two-line clamp.
     const subs = await screen.findAllByTestId('activity-sub');
     const dispatch = subs.find((el) => el.getAttribute('title') === 'on gabee');
@@ -210,7 +228,7 @@ describe('Event log — a line’s sub-detail and the collapsed header’s last 
   });
 
   it('the collapsed header’s last event reveals the line with its detail', async () => {
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const header = await screen.findByText('Event log');
     fireEvent.click(header.closest('button') as HTMLElement);
     const last = await screen.findByTestId('event-log-last');
@@ -233,7 +251,7 @@ describe('FLEET — the task cell, the node name, the live cell’s corner door,
 
   it('the task cell reveals the whole brief without opening the node inspector', async () => {
     mockRun(twoOnGabee, activity);
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const door = await waitFor(() => {
       const hit = [
         ...screen.queryAllByTestId('fleet-node-task'),
@@ -254,7 +272,7 @@ describe('FLEET — the task cell, the node name, the live cell’s corner door,
 
   it('the node name is a door when the column clips it', async () => {
     mockRun(twoOnGabee, activity);
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const names = await screen.findAllByTestId('fleet-node-name');
     const gabee = names.find((el) => el.getAttribute('title') === 'gabee');
     expect(gabee).toBeDefined();
@@ -263,7 +281,7 @@ describe('FLEET — the task cell, the node name, the live cell’s corner door,
 
   it('the live generation cell has a corner door to the whole line, monospace', async () => {
     mockRun(twoOnGabee, activity);
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const glyphs = await screen.findAllByTestId('reveal-glyph');
     const inFleet = glyphs.find((g) => g.closest('[data-testid="fleet-node"]'));
     expect(inFleet).toBeDefined();
@@ -279,7 +297,7 @@ describe('FLEET — the task cell, the node name, the live cell’s corner door,
 
   it('the also-row’s live line is a door and its click never re-aims the inspector', async () => {
     mockRun(twoOnGabee, activity);
-    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    renderPanel();
     const live = await screen.findByTestId('fleet-also-live');
     expect(live).toHaveAttribute('data-clipped', 'true');
     const full = live.getAttribute('title') ?? '';
@@ -288,5 +306,63 @@ describe('FLEET — the task cell, the node name, the live cell’s corner door,
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(screen.getByTestId('reveal-body')).toHaveTextContent(full);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  });
+});
+
+describe('Lane rows, the node inspector header, and history rows', () => {
+  it('a planning lane’s description is a door inside the row button, and the row keeps its own toggle', async () => {
+    mockRun(
+      [...EVENTS.slice(0, 4)],
+      { synthesis: { model: POOL[1].model_id, last_text: 'wiring the dag from the two slice specs into one build order' } }
+    );
+    renderPanel();
+    const desc = await screen.findByTestId('lane-row-desc');
+    expect(desc).toHaveAttribute('data-clipped', 'true');
+    expect(desc).toHaveAttribute('role', 'button');
+    expect(desc).not.toHaveAttribute('title');
+    const laneEl = desc.closest('[data-testid="turn-lane"]') as HTMLElement;
+    const before = laneEl.querySelectorAll('*').length;
+    const full = desc.textContent ?? '';
+    revealAndClose(desc, full);
+    expect(laneEl.querySelectorAll('*').length).toBe(before);
+  });
+
+  it('the inspector header’s task is a door that stacks OVER the inspector; Escape closes only the reveal', async () => {
+    mockRun();
+    renderPanel();
+    const rows = await screen.findAllByTestId('fleet-node');
+    const gabee = rows.find((r) => r.getAttribute('data-device') === 'gabee') as HTMLElement;
+    fireEvent.click(gabee);
+    const inspector = document.querySelector('[role="dialog"][aria-label^="Node "]') as HTMLElement;
+    expect(inspector).not.toBeNull();
+    const task = within(inspector).getByTestId('inspector-task');
+    expect(task).toHaveAttribute('title', BRIEF);
+    fireEvent.click(task);
+    expect(screen.getByTestId('reveal-body')).toHaveTextContent(BRIEF);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByTestId('reveal-dialog')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).not.toBeNull();
+    expect(document.activeElement).toBe(task);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).toBeNull();
+  });
+
+  it('a finished call in the inspector’s history opens on the plan’s whole brief', async () => {
+    mockRun([
+      ...EVENTS,
+      { event: 'task_completed', ts, task_id: 'store', status: 'done', device: 'gabee-qwen3.6-27b', attempts: 1, elapsed_ms: 155142, tool_calls: [] },
+    ]);
+    renderPanel();
+    const rows = await screen.findAllByTestId('fleet-node');
+    const gabee = rows.find((r) => r.getAttribute('data-device') === 'gabee') as HTMLElement;
+    await waitFor(() => expect(gabee).toHaveAttribute('data-expandable', 'true'));
+    fireEvent.click(gabee);
+    const title = await screen.findByTestId('history-row-title');
+    expect(title).toHaveAttribute('title', BRIEF);
+    fireEvent.click(title);
+    expect(screen.getByTestId('reveal-body')).toHaveTextContent(BRIEF);
+    expect(screen.queryByTestId('node-history-entry')?.querySelector('pre')).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).not.toBeNull();
   });
 });
