@@ -1444,6 +1444,10 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         allowed_origins,
     } = args;
 
+    // Before anything binds or spawns: a stop that lands during startup must reach the
+    // teardown, never the default action (which kills goosed and leaks its children).
+    let mut exit_signals = ExitSignals::install()?;
+
     let builtins = if builtins.is_empty() {
         vec!["developer".to_string()]
     } else {
@@ -1536,14 +1540,20 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
             info!("Starting ACP server on https://{}", addr);
 
             #[cfg(feature = "rustls-tls")]
-            axum_server::bind_rustls(addr, tls_setup.config)
-                .serve(router.into_make_service_with_connect_info::<SocketAddr>())
-                .await?;
+            serve_until_exit_signal(
+                axum_server::bind_rustls(addr, tls_setup.config)
+                    .serve(router.into_make_service_with_connect_info::<SocketAddr>()),
+                &mut exit_signals,
+            )
+            .await?;
 
             #[cfg(feature = "native-tls")]
-            axum_server::bind_openssl(addr, tls_setup.config)
-                .serve(router.into_make_service_with_connect_info::<SocketAddr>())
-                .await?;
+            serve_until_exit_signal(
+                axum_server::bind_openssl(addr, tls_setup.config)
+                    .serve(router.into_make_service_with_connect_info::<SocketAddr>()),
+                &mut exit_signals,
+            )
+            .await?;
         }
 
         #[cfg(not(any(feature = "rustls-tls", feature = "native-tls")))]
@@ -1557,14 +1567,105 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     } else {
         info!("Starting ACP server on http://{}", addr);
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
+        serve_until_exit_signal(
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            ),
+            &mut exit_signals,
         )
         .await?;
     }
 
     Ok(())
+}
+
+/// A stop signal `goose serve` received, and the conventional exit code for it.
+#[derive(Debug, Clone, Copy)]
+struct ExitSignal {
+    name: &'static str,
+    number: i32,
+}
+
+impl ExitSignal {
+    fn exit_code(self) -> i32 {
+        128 + self.number
+    }
+}
+
+/// The signals that stop `goose serve`: SIGTERM (the desktop's lease cleanup, launchd),
+/// SIGINT (a terminal ^C) and SIGHUP (the terminal went away). goosed supervises processes
+/// spawned into their own process groups (the mesh daemon, the engine sidecar), so a signal
+/// that ends goosed without running the teardown leaks them — measured on the packaged app
+/// 2026-09-02: an orphaned `tailscaled` on the mesh socket and an orphaned `rapid-mlx` tree
+/// on the engine port after every relaunch, both refused by the next goosed by design.
+#[cfg(unix)]
+struct ExitSignals {
+    term: tokio::signal::unix::Signal,
+    int: tokio::signal::unix::Signal,
+    hup: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl ExitSignals {
+    fn install() -> Result<Self> {
+        use tokio::signal::unix::{signal, SignalKind};
+        Ok(Self {
+            term: signal(SignalKind::terminate())?,
+            int: signal(SignalKind::interrupt())?,
+            hup: signal(SignalKind::hangup())?,
+        })
+    }
+
+    async fn recv(&mut self) -> ExitSignal {
+        use tokio::signal::unix::SignalKind;
+        tokio::select! {
+            _ = self.term.recv() => ExitSignal { name: "SIGTERM", number: SignalKind::terminate().as_raw_value() },
+            _ = self.int.recv() => ExitSignal { name: "SIGINT", number: SignalKind::interrupt().as_raw_value() },
+            _ = self.hup.recv() => ExitSignal { name: "SIGHUP", number: SignalKind::hangup().as_raw_value() },
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct ExitSignals;
+
+#[cfg(not(unix))]
+impl ExitSignals {
+    fn install() -> Result<Self> {
+        Ok(Self)
+    }
+
+    async fn recv(&mut self) -> ExitSignal {
+        let _ = tokio::signal::ctrl_c().await;
+        ExitSignal {
+            name: "SIGINT",
+            number: 2,
+        }
+    }
+}
+
+/// Drive the server until it ends on its own or a stop signal arrives. On a signal: tear
+/// down everything goosed supervises (`goose::acp::server::teardown_supervised` — the mesh
+/// daemon per-pid with the identity kept, then the engine sidecar through its own SIGTERM
+/// → grace → proven group kill), then exit with the conventional `128 + signal` code. The
+/// only bounds on the teardown are the supervisors' own per-pid grace windows; no wait is
+/// added here, and no clock decides any model work — this is process lifecycle.
+async fn serve_until_exit_signal<S>(serve: S, signals: &mut ExitSignals) -> Result<()>
+where
+    S: std::future::IntoFuture<Output = std::io::Result<()>>,
+{
+    let serve = serve.into_future();
+    tokio::pin!(serve);
+    tokio::select! {
+        result = &mut serve => Ok(result?),
+        signal = signals.recv() => {
+            tracing::info!(signal = signal.name, "goose serve: stop requested; tearing down supervised processes");
+            let reports = goose::acp::server::teardown_supervised().await;
+            tracing::info!(steps = reports.len(), exit_code = signal.exit_code(), "goose serve: teardown complete; exiting");
+            std::process::exit(signal.exit_code())
+        }
+    }
 }
 
 async fn handle_session_subcommand(command: SessionCommand) -> Result<()> {

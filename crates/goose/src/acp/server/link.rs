@@ -35,7 +35,7 @@
 use super::*;
 
 use crate::config::ConfigError;
-use std::sync::{Mutex as StdMutex, OnceLock};
+use std::sync::{Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -47,7 +47,10 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
 use leanzero_link::identity;
-use leanzero_link::manager::{AuthState, LinkError, LinkManager, LinkManagerConfig, LinkState};
+use leanzero_link::manager::{
+    AuthState, LinkError, LinkManager, LinkManagerConfig, LinkState, Mesh, MeshFactory,
+    RealMeshFactory,
+};
 use leanzero_link::mesh::{MeshConfig, MeshStatus};
 use leanzero_link::state::SwarmStateSource;
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
@@ -654,6 +657,95 @@ fn record_connect_refusal(refusal: Option<String>) {
 
 static LINK: OnceLock<StdMutex<LinkHolder>> = OnceLock::new();
 
+// ---------------------------------------------------------------------------
+// The meshes this process started, so `goose serve`'s exit path can stop their daemons.
+// ---------------------------------------------------------------------------
+
+/// Every mesh the manager's factory started, held WEAKLY: the manager owns each mesh and
+/// drops it on logout or a daemon fault, so this list only ever knows which are still
+/// alive. `goose serve`'s signal path uses it to stop the live daemons per-pid before the
+/// process exits — without that the bundled `tailscaled`, spawned into its own process
+/// group, outlives goosed and the next launch's Connect refuses to adopt it (measured
+/// 2026-09-02: pid 14022 on `~/.leanzero/tailscale/tailscaled.sock` after every relaunch).
+pub(super) struct MeshRegistry {
+    started: StdMutex<Vec<Weak<dyn Mesh>>>,
+}
+
+impl MeshRegistry {
+    pub(super) const fn new() -> Self {
+        Self {
+            started: StdMutex::new(Vec::new()),
+        }
+    }
+
+    /// Wrap `inner` so every mesh it starts is recorded here.
+    pub(super) fn factory(&'static self, inner: Arc<dyn MeshFactory>) -> Arc<dyn MeshFactory> {
+        Arc::new(TrackingMeshFactory {
+            registry: self,
+            inner,
+        })
+    }
+
+    fn record(&self, mesh: &Arc<dyn Mesh>) {
+        let mut started = self.started.lock().unwrap();
+        started.retain(|weak| weak.strong_count() > 0);
+        started.push(Arc::downgrade(mesh));
+    }
+
+    /// Stop every live mesh's daemon per-pid (`MeshEngine::shutdown`: SIGTERM, the grace
+    /// window, SIGKILL — the daemon pid alone). Nothing is logged out of the tailnet and
+    /// the identity file is never touched: the next launch is `LoggedIn` with an intact
+    /// state dir, exactly what `logout` would have thrown away.
+    pub(super) async fn shutdown_live(&self) -> String {
+        let live: Vec<Arc<dyn Mesh>> = self
+            .started
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        if live.is_empty() {
+            return "no mesh daemon running under this goosed".to_string();
+        }
+        for mesh in &live {
+            mesh.shutdown().await;
+        }
+        format!(
+            "{} mesh daemon(s) stopped per-pid (SIGTERM, grace, SIGKILL); identity and state dir kept",
+            live.len()
+        )
+    }
+}
+
+struct TrackingMeshFactory {
+    registry: &'static MeshRegistry,
+    inner: Arc<dyn MeshFactory>,
+}
+
+#[async_trait::async_trait]
+impl MeshFactory for TrackingMeshFactory {
+    async fn start(
+        &self,
+        config: leanzero_link::mesh::MeshConfig,
+    ) -> Result<Arc<dyn Mesh>, leanzero_link::mesh::MeshError> {
+        let mesh = self.inner.start(config).await?;
+        self.registry.record(&mesh);
+        Ok(mesh)
+    }
+}
+
+static STARTED_MESHES: MeshRegistry = MeshRegistry::new();
+
+/// The production mesh factory, recording into [`STARTED_MESHES`].
+fn tracking_mesh_factory() -> Arc<dyn MeshFactory> {
+    STARTED_MESHES.factory(Arc::new(RealMeshFactory))
+}
+
+/// `goose serve`'s exit path for the mesh; see [`MeshRegistry::shutdown_live`].
+pub(super) async fn shutdown_started_meshes() -> String {
+    STARTED_MESHES.shutdown_live().await
+}
+
 /// Resolve the worker base URL from the env override, else the crate default; logs which.
 fn resolve_worker_base_url() -> String {
     match std::env::var("LEANZERO_LINK_WORKER_URL") {
@@ -922,7 +1014,9 @@ impl GooseAcpAgent {
         // A remote prompt (`link_serve.rs`) must run on the managers THIS source reads,
         // or its cancel token never reaches the busy set the idle guard consults.
         link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone());
-        let mut manager = LinkManager::new(config, source)
+        // The tracking factory is what lets `goose serve`'s exit path find the daemon this
+        // manager started (`shutdown_started_meshes`); the mesh itself is the real one.
+        let mut manager = LinkManager::with_mesh_factory(config, source, tracking_mesh_factory())
             .internal_err_ctx("constructing the LeanZero Link manager")?;
         // Attach the process-wide remote executor if goose-server injected one at boot; a
         // node built without it serves `/v1/swarm/execute` as `501` (execution not wired).
@@ -2295,5 +2389,118 @@ mod tests {
                 }
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The mesh registry behind `goose serve`'s exit path.
+    // -----------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Counters live OUTSIDE the mesh so the test can drop a mesh (as the manager does on
+    /// logout / daemon fault) and still read what happened to it.
+    struct FakeMesh {
+        shutdowns: Arc<AtomicUsize>,
+        logouts: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Mesh for FakeMesh {
+        async fn join(
+            &self,
+            _auth_key: &str,
+            _hostname: &str,
+        ) -> Result<(), leanzero_link::mesh::MeshError> {
+            Ok(())
+        }
+        async fn status(&self) -> Result<MeshStatus, leanzero_link::mesh::MeshError> {
+            Ok(MeshStatus::stopped())
+        }
+        async fn logout(&self) -> Result<(), leanzero_link::mesh::MeshError> {
+            self.logouts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn shutdown(&self) {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct FakeMeshFactory {
+        started: StdMutex<Vec<(Arc<AtomicUsize>, Arc<AtomicUsize>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MeshFactory for FakeMeshFactory {
+        async fn start(
+            &self,
+            _config: MeshConfig,
+        ) -> Result<Arc<dyn Mesh>, leanzero_link::mesh::MeshError> {
+            let shutdowns = Arc::new(AtomicUsize::new(0));
+            let logouts = Arc::new(AtomicUsize::new(0));
+            self.started
+                .lock()
+                .unwrap()
+                .push((shutdowns.clone(), logouts.clone()));
+            Ok(Arc::new(FakeMesh { shutdowns, logouts }))
+        }
+    }
+
+    fn test_mesh_config() -> MeshConfig {
+        MeshConfig::new(
+            PathBuf::from("/nonexistent/tailscaled"),
+            PathBuf::from("/nonexistent/tailscale"),
+            "test-node".to_string(),
+        )
+        .expect("a mesh config template")
+    }
+
+    /// The exit path stops every mesh the factory started and still alive, per-pid through
+    /// the mesh's own `shutdown` — and NEVER through `logout`, which is what would expire
+    /// the node key and (in the manager) clear the identity. A mesh the manager already
+    /// dropped is gone from the registry and is not touched.
+    #[tokio::test]
+    async fn exit_path_stops_live_meshes_per_pid_without_logging_out() {
+        let registry: &'static MeshRegistry = Box::leak(Box::new(MeshRegistry::new()));
+        let fake = Arc::new(FakeMeshFactory {
+            started: StdMutex::new(Vec::new()),
+        });
+        let factory = registry.factory(fake.clone());
+
+        let live = factory.start(test_mesh_config()).await.unwrap();
+        let dropped = factory.start(test_mesh_config()).await.unwrap();
+        drop(dropped);
+
+        let outcome = registry.shutdown_live().await;
+
+        let started = fake.started.lock().unwrap();
+        let (live_shutdowns, live_logouts) = &started[0];
+        let (dropped_shutdowns, dropped_logouts) = &started[1];
+        assert_eq!(live_shutdowns.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            live_logouts.load(Ordering::SeqCst),
+            0,
+            "logout must never run"
+        );
+        assert_eq!(
+            dropped_shutdowns.load(Ordering::SeqCst),
+            0,
+            "a mesh the manager dropped is not ours to touch"
+        );
+        assert_eq!(dropped_logouts.load(Ordering::SeqCst), 0);
+        assert!(
+            outcome.starts_with("1 mesh daemon(s) stopped per-pid"),
+            "{outcome}"
+        );
+        assert!(outcome.contains("identity and state dir kept"), "{outcome}");
+        drop(live);
+    }
+
+    #[tokio::test]
+    async fn exit_path_reports_when_no_mesh_is_running() {
+        let registry: &'static MeshRegistry = Box::leak(Box::new(MeshRegistry::new()));
+        assert_eq!(
+            registry.shutdown_live().await,
+            "no mesh daemon running under this goosed"
+        );
     }
 }
