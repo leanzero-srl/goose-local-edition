@@ -1,7 +1,7 @@
-import { LEANZERO_MARK, LEANZERO_MARK_VIEWBOX } from './leanzeroMark';
+import { LEANZERO_MARK_VIEWBOX, LeanZeroMarkContent } from './leanzeroMark';
 
-// The LeanZero brand mark — the "L" monogram of leanzero.net cradling three geese in flight
-// (the Goose Flock). Geometry and the reasoning behind it live in ./leanzeroMark.ts.
+// The LeanZero brand mark — the "L" monogram of leanzero.net with two of the ORIGINAL goose (the
+// upstream product's own mark) flying out of it. Geometry and the reasoning: ./leanzeroMark.ts.
 // Uses currentColor so it inherits the surrounding text/icon color, matching the Goose mark.
 export function LeanZero({ className = '' }) {
   return (
@@ -13,9 +13,7 @@ export function LeanZero({ className = '' }) {
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      {LEANZERO_MARK.map((p, i) => (
-        <path key={i} d={p.d} transform={p.transform} />
-      ))}
+      <LeanZeroMarkContent />
     </svg>
   );
 }
