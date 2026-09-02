@@ -11390,8 +11390,10 @@ pub struct GooseAgentDispatcher {
     /// (`research_tool`); the `research_answer` tool is registered only for a key present here.
     research_landing: Mutex<HashMap<String, ResearchLanding>>,
     /// VA-144: `first_turn::rest_key` -> the rest of a build lane's brief, parked at dispatch and
-    /// delivered by that lane's own loop after its first write lands (`first_turn.rs`).
-    brief_rest: Mutex<HashMap<String, String>>,
+    /// delivered by that lane's own loop after its first write lands (`first_turn.rs`); VA-148:
+    /// the dispatch-seam events about the parked blocks wait with it, and a judge look reads
+    /// the parked/landed state (`brief_rest_state`).
+    brief_rest: Mutex<first_turn::BriefRestStash>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
@@ -11548,7 +11550,7 @@ impl GooseAgentDispatcher {
             research_running: Mutex::new(HashMap::new()),
             research_relay: Mutex::new(HashMap::new()),
             research_landing: Mutex::new(HashMap::new()),
-            brief_rest: Mutex::new(HashMap::new()),
+            brief_rest: Mutex::new(first_turn::BriefRestStash::default()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             cross_task_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
@@ -13404,6 +13406,15 @@ impl GooseAgentDispatcher {
                     self.budgets.owned_excerpt_total_chars,
                     self.budgets.owned_excerpt_per_file_chars,
                 );
+                // VA-148: what the lane has actually been HANDED (GEN-4). Under the write-alone
+                // arm the pitfalls, notes, pillars, dependency sources and context are parked
+                // until its first write lands — a look during the first turn must read them as
+                // NOT YET DELIVERED and never direct the lane at an 'API of' excerpt it has not
+                // received; with nothing parked the prompt reads exactly as before.
+                let rest_block = first_turn::rest_state_block(&match activity_key {
+                    Some(k) => self.brief_rest_state(&work_dir, k),
+                    None => first_turn::RestState::NotParked,
+                });
                 // THE SAME BLINDNESS, FOR A CALL WHOSE DELIVERABLE IS A STRUCTURED REPLY RATHER THAN A
                 // FILE. `owned_block` above covers build tasks; a planning lane owns nothing, so it stays
                 // empty and the judge again reads "enormous reasoning, no actions" as thinking hard.
@@ -13435,7 +13446,7 @@ impl GooseAgentDispatcher {
                      Judge it against THAT job, not against the wider build. A call doing its own job \
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
-                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}{settled_block}\
+                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{rest_block}{structured_block}{measured}{earlier_block}{settled_block}\
                      \n\nMost recent reasoning:\n{tail}{since_steer_block_text}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
@@ -24280,6 +24291,18 @@ impl GooseAgentDispatcher {
         // byte-identical for every other task.
         let shard = req.shard_of.as_ref();
         let shard_final_before = shards::snapshot_final_files(&root, shard);
+        // VA-144: ONE arm (first_turn.rs). ON, a first-attempt file author's first turn is the
+        // WRITE ALONE and the fact blocks ride the second turn, delivered by its own loop after
+        // the first write lands (`drain_brief_rest!`); OFF, every block sits in the system
+        // prompt as before. VA-148: the events that SAY a parked block reached the model
+        // (`shard_siblings_*`, `pitfalls_delivered`, `user_notes_delivered`) are parked with it
+        // and fire at `brief_rest_delivered`, each stamped with the turn — so a look during the
+        // first turn reads them as not yet delivered (GEN-4), and run.jsonl never says a block
+        // was delivered before it was.
+        let first_file = briefs::first_write_target(&req.owned_files, &req.description);
+        let write_alone =
+            first_turn::write_alone(&req, repairing, sink_brief.is_some()) && first_file.is_some();
+        let mut rest_events: Vec<serde_json::Value> = Vec::new();
         // VA-144: the layout (manifest + YOU OWN) and the dependency sources are two blocks —
         // the first turn keeps the layout, the deps may ride the second turn (first_turn.rs).
         let (layout_block, deps_block) = if req.all_files.is_empty() {
@@ -24613,7 +24636,7 @@ impl GooseAgentDispatcher {
             let siblings_block = match shard {
                 Some(sh) => {
                     let b = shard_siblings::landed_siblings(&root, sh, &req.all_files);
-                    self.events.write_value(b.event(&req.task_id));
+                    self.say_at_delivery(write_alone, &mut rest_events, b.event(&req.task_id));
                     b.text
                 }
                 None => String::new(),
@@ -24669,13 +24692,19 @@ impl GooseAgentDispatcher {
         };
         // F864 observability (forensics ask): "did THIS task's prompt carry pitfall facts" used
         // to require reconstructing retrieval by hand — the r1 urlopen question burned an agent
-        // proving the F388 fact HAD been delivered. Now it is one grep.
-        self.events.write_value(serde_json::json!({
-            "event": "pitfalls_delivered",
-            "task_id": req.task_id,
-            "delivered": !pitfalls_block.is_empty(),
-            "chars": pitfalls_block.len(),
-        }));
+        // proving the F388 fact HAD been delivered. Now it is one grep. VA-148: under the
+        // write-alone arm the block rides the second turn, so the event fires when the rest
+        // LANDS (`turn` stamped) — never at a dispatch whose first message does not carry it.
+        self.say_at_delivery(
+            write_alone,
+            &mut rest_events,
+            serde_json::json!({
+                "event": "pitfalls_delivered",
+                "task_id": req.task_id,
+                "delivered": !pitfalls_block.is_empty(),
+                "chars": pitfalls_block.len(),
+            }),
+        );
         // QUEUED USER NOTES — read at DISPATCH, which is the one safe moment: run() is called once at the
         // START of a worker's life, so a live worker is never mutated. Placed before the pillars so it
         // reads as background, never as something that outranks a NON-NEGOTIABLE.
@@ -24701,14 +24730,18 @@ impl GooseAgentDispatcher {
                 }));
             }
             if !d.ids.is_empty() {
-                self.events.write_value(serde_json::json!({
-                    "event": "user_notes_delivered",
-                    "task_id": req.task_id,
-                    "attempt": req.attempt,
-                    "notes": d.ids,
-                    "count": d.ids.len(),
-                    "dropped": d.dropped,
-                }));
+                self.say_at_delivery(
+                    write_alone,
+                    &mut rest_events,
+                    serde_json::json!({
+                        "event": "user_notes_delivered",
+                        "task_id": req.task_id,
+                        "attempt": req.attempt,
+                        "notes": d.ids,
+                        "count": d.ids.len(),
+                        "dropped": d.dropped,
+                    }),
+                );
             }
             d.block
         } else {
@@ -25116,12 +25149,6 @@ impl GooseAgentDispatcher {
         } else {
             String::new()
         };
-        // VA-144: ONE arm (first_turn.rs). ON, a first-attempt file author's first turn is the
-        // WRITE ALONE and the fact blocks ride the second turn, delivered by its own loop after
-        // the first write lands (`drain_brief_rest!`); OFF, every block sits here as before.
-        let first_file = briefs::first_write_target(&req.owned_files, &req.description);
-        let write_alone =
-            first_turn::write_alone(&req, repairing, sink_brief.is_some()) && first_file.is_some();
         let first_turn::Placed {
             pre_layout,
             post_layout,
@@ -25387,7 +25414,7 @@ impl GooseAgentDispatcher {
         if let Some(file) = first_file.filter(|_| write_alone) {
             let rest = first_turn::rest_text(&req.task_id, file, &rest_blocks, &learned);
             let first_chars = system_prompt.chars().count() + worker_user_text.chars().count();
-            self.stash_brief_rest(&root, &req.task_id, file, first_chars, rest);
+            self.stash_brief_rest(&root, &req.task_id, file, first_chars, rest, rest_events);
         }
         // II-11c: the forming observer (`<key>.forming.json`) is armed INSIDE run_agent_in for
         // every keyed call — this site passes Some(task_id) below and owns nothing else. The
