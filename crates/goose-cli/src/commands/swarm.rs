@@ -19697,7 +19697,10 @@ impl GooseAgentDispatcher {
              slice's brief after you answer, and that slice's research lane reads the same text \
              to derive its questions — you write none. For each slice, list in `sections` the \
              EXACT headings (verbatim from the index) of every section that slice owns; every \
-             section must appear in at least one slice's `sections`."
+             section must appear in at least one slice's `sections`. A section listed under two \
+             slices reaches BOTH — each slice's research lane and brief receive the full text of \
+             every heading in that slice's own list — so a section two slices need is listed \
+             under both."
         } else {
             ""
         };
