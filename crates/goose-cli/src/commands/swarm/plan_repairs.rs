@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::plan_shape::decomposition_of;
-use super::skeleton::SKELETON_ID;
+use super::skeleton::{composition_hooks, CompositionHook, SKELETON_ID};
 
 /// Rule (e)'s tail header — `decisions::brief_decisions_block` cuts a brief's decisions block
 /// before it, because the list is the owner's, not a repair shard's.
@@ -244,8 +244,18 @@ pub(super) fn repair_unassigned_endpoints(
 /// never a refusal; one `brief_names_unowned_file` row per (task, path). The engine-authored
 /// briefs are exempt by construction: the skeleton's PLANNED MODULES block lists every task's
 /// files on purpose and the join owns nothing and verifies everything.
+///
+/// VA-142 (a), THE OWNERSHIP SEAM (r6j tick 23): when the named file is a skeleton ENTRY a
+/// module task serves, the listed line is the COMPOSITION CONTRACT (`skeleton::CompositionHook`)
+/// — the new owner, the flags the entry parses and the hook the module must expose — the same
+/// words the skeleton's brief carries; the module owner gets that line even when its brief never
+/// named the entry (`composition_hook_rendered`), and a bare `__main__.py` resolves to the entry
+/// of the package the task writes into. r6j's 28 rows were every one `rewritten: false` because
+/// the claim forms this rule rewrites are "(owned by this slice/task)" and r6j's losers wrote
+/// "my composition root (app/ledgerd/__main__.py)" — the seam line, not a rewrite, is the mild fix.
 pub(super) fn repair_brief_file_mentions(
     plan: &mut serde_json::Value,
+    spec: &str,
     actions: &mut Vec<String>,
 ) -> Vec<serde_json::Value> {
     let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
@@ -264,6 +274,22 @@ pub(super) fn repair_brief_file_mentions(
                 .map(move |f| (f, id.clone()))
         })
         .collect();
+    // VA-142 (a): the composition hooks, computed ONCE from the repaired ownership and the
+    // skeleton's own regenerated brief — the same derivation that rendered them there, so the
+    // losers read the words the skeleton reads.
+    let hooks: Vec<CompositionHook> = match subtasks
+        .iter()
+        .find(|t| t.get("id").and_then(|i| i.as_str()) == Some(SKELETON_ID))
+    {
+        Some(sk) => composition_hooks(
+            &subtasks[..],
+            spec,
+            &string_list(&sk["files"]),
+            sk.get("description").and_then(|d| d.as_str()),
+        ),
+        // No skeleton means no engine-owned entry files, hence no contract — empty is empty.
+        None => Vec::new(),
+    };
     let mut rows = Vec::new();
     for t in subtasks.iter_mut() {
         let Some(id) = t.get("id").and_then(|i| i.as_str()).map(str::to_string) else {
@@ -277,9 +303,10 @@ pub(super) fn repair_brief_file_mentions(
             continue;
         };
         let mut desc = desc.to_string();
-        let mut named: Vec<(String, String)> = Vec::new();
+        // (path, owner, the contract when the path is a skeleton entry a module task serves)
+        let mut named: Vec<(String, String, Option<&CompositionHook>)> = Vec::new();
         for (path, owner) in &owners {
-            if *owner == id || own.contains(path) || named.iter().any(|(p, _)| p == path) {
+            if *owner == id || own.contains(path) || named.iter().any(|(p, _, _)| p == path) {
                 continue;
             }
             // Idempotent (the chain's own contract, `plan_repair_is_idempotent`): a path this
@@ -287,7 +314,18 @@ pub(super) fn repair_brief_file_mentions(
             if desc.contains(&format!("- `{path}` → owned by task")) {
                 continue;
             }
-            if !path_token_named(path, &desc) {
+            // VA-142 (a): a BARE `__main__.py` — r6j notifierd's "`__main__.py` (python -m
+            // app.notifierd --db-dir P --port M)" — names the entry of the package this task
+            // writes into (the entry's directory is the direct parent of one of its own files)
+            // when it owns no file of that name itself; the path matcher alone missed it.
+            let bare = !path_token_named(path, &desc)
+                && !own.iter().any(|f| f.ends_with("__main__.py"))
+                && path.strip_suffix("/__main__.py").is_some_and(|dir| {
+                    own.iter()
+                        .any(|f| f.rsplit_once('/').map(|(d, _)| d) == Some(dir))
+                })
+                && path_token_named("__main__.py", &desc);
+            if !bare && !path_token_named(path, &desc) {
                 continue;
             }
             let mut rewritten = false;
@@ -302,12 +340,18 @@ pub(super) fn repair_brief_file_mentions(
                     }
                 }
             }
+            let hook = hooks.iter().find(|h| h.entry == *path);
             actions.push(format!(
-                "`{id}`: its brief names `{path}`, owned by `{owner}` — marked not-yours-to-write{}",
+                "`{id}`: its brief names `{path}`{}, owned by `{owner}` — marked not-yours-to-write{}{}",
+                if bare { " (as a bare `__main__.py`)" } else { "" },
                 if rewritten {
                     "; its ownership claim rewritten to name the owner"
                 } else {
                     ""
+                },
+                match hook {
+                    Some(h) => format!("; the composition hook `{}` rendered", h.qualified()),
+                    None => String::new(),
                 }
             ));
             rows.push(serde_json::json!({
@@ -316,16 +360,46 @@ pub(super) fn repair_brief_file_mentions(
                 "path": path,
                 "owner": owner,
                 "rewritten": rewritten,
+                "bare": bare,
+                "hook": hook.map(CompositionHook::qualified),
             }));
-            named.push((path.clone(), owner.clone()));
+            named.push((path.clone(), owner.clone(), hook));
+        }
+        // VA-142 (a): the module OWNER of a hook learns the contract even when its brief never
+        // named the entry — r6j's losers wrote "my composition root" and the skeleton invented
+        // `build_server` for both; the line is the one the skeleton's brief carries.
+        for h in hooks.iter().filter(|h| h.owner == id) {
+            if named.iter().any(|(p, _, _)| *p == h.entry)
+                || desc.contains(&format!("- `{}` → owned by task", h.entry))
+            {
+                continue;
+            }
+            actions.push(format!(
+                "`{id}`: the composition hook `{}` rendered — `{}` calls it",
+                h.qualified(),
+                h.entry
+            ));
+            rows.push(serde_json::json!({
+                "event": "composition_hook_rendered",
+                "task": id,
+                "path": h.entry,
+                "hook": h.qualified(),
+                "named": false,
+            }));
+            named.push((h.entry.clone(), SKELETON_ID.to_string(), Some(h)));
         }
         if !named.is_empty() {
             desc.push_str(&format!(
                 "\n\n{UNOWNED_FILES_HEADER} — read them if you need them, never write them (your \
                  own files are the YOU OWN list):\n"
             ));
-            for (path, owner) in &named {
-                desc.push_str(&format!("- `{path}` → owned by task `{owner}`\n"));
+            for (path, owner, hook) in &named {
+                match hook {
+                    Some(h) if h.owner == id => desc.push_str(&h.owner_line()),
+                    Some(h) => desc.push_str(&h.reader_line()),
+                    None => desc.push_str(&format!("- `{path}` → owned by task `{owner}`")),
+                }
+                desc.push('\n');
             }
             t["description"] = serde_json::Value::String(desc);
         }
@@ -963,7 +1037,7 @@ mod tests {
              "description": "boot, curl every route, read DECISIONS.md and web/app.js"}
         ]});
         let mut actions = Vec::new();
-        let rows = repair_brief_file_mentions(&mut v, &mut actions);
+        let rows = repair_brief_file_mentions(&mut v, "", &mut actions);
         let desc = task(&v, "web-console")["description"].as_str().unwrap();
         assert!(
             desc.contains("`DECISIONS.md` (owned by task `decisions-doc` — do not write it)"),
@@ -1028,7 +1102,7 @@ mod tests {
         assert_eq!(actions.len(), 2, "{actions:?}");
         // Idempotent: a second pass finds the owner-naming note, not a new mention.
         let mut again = Vec::new();
-        let rows2 = repair_brief_file_mentions(&mut v, &mut again);
+        let rows2 = repair_brief_file_mentions(&mut v, "", &mut again);
         assert!(rows2.is_empty() && again.is_empty(), "{rows2:?} {again:?}");
         assert_eq!(
             task(&v, "web-console")["description"]
@@ -1235,5 +1309,155 @@ mod tests {
         assert!(strings(&task(&py, "ledgerd-routes")["files"])
             .contains(&"app/ledgerd/__init__.py".to_string()));
         assert_eq!(actions.len(), 1, "{actions:?}");
+    }
+
+    /// VA-142 (a) — THE OWNERSHIP SEAM, r6j's shape (tick 23, primary events): `plan_repaired`
+    /// moved `app/ledgerd/__main__.py` (from ledgerd-api) and `app/notifierd/__main__.py` (from
+    /// notifierd) to the skeleton, then `brief_names_unowned_file` fired with `rewritten: false`
+    /// on every row while ledgerd-api's brief still read "my composition root
+    /// (app/ledgerd/__main__.py)" and notifierd's named a BARE "`__main__.py`" the matcher
+    /// missed; the skeleton then invented a `build_server` hook nobody else's brief named. Now:
+    /// each loser's brief carries the entry's new owner AND the hook it must expose, in the
+    /// skeleton's own words (`CompositionHook::owner_line`), the bare name resolves to the
+    /// package the task writes into (`bare: true`), a non-owner that names the entry reads who
+    /// writes the hook, and a second pass is a no-op.
+    #[test]
+    fn a_losers_brief_carries_the_new_owner_and_the_composition_hook() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v = serde_json::json!({"subtasks": [
+            {"id": "skeleton", "files": ["app/__main__.py", "app/ledgerd/__main__.py", "app/notifierd/__main__.py"], "depends_on": [],
+             "description": "WALKING SKELETON (regenerated by the chain before this rule runs)"},
+            {"id": "ledgerd-api", "files": ["app/ledgerd/api.py", "app/ledgerd/store.py"], "depends_on": ["skeleton"],
+             "description": "Own the ledgerd service: my composition root (app/ledgerd/__main__.py) parses --db-dir and --port and mounts the handlers in app/ledgerd/api.py."},
+            {"id": "notifierd", "files": ["app/notifierd/impl.py"], "depends_on": ["skeleton"],
+             "description": "`__main__.py` (python -m app.notifierd --db-dir P --port M) boots the notifier from app/notifierd/impl.py."},
+            {"id": "web-console", "files": ["web/index.html", "web/app.js"], "depends_on": ["skeleton"],
+             "description": "The console; the drafts panel talks to the routes app/ledgerd/__main__.py serves."},
+            {"id": "integrate-verify", "files": [], "depends_on": ["skeleton", "ledgerd-api", "notifierd", "web-console"],
+             "description": "verify"}
+        ]});
+        let mut actions = Vec::new();
+        let rows = repair_brief_file_mentions(&mut v, spec, &mut actions);
+        let ledgerd = task(&v, "ledgerd-api")["description"].as_str().unwrap();
+        assert!(
+            ledgerd.contains(
+                "- `app/ledgerd/__main__.py` → owned by task `skeleton`; it parses `--db-dir P \
+                 --port N --notifier http://127.0.0.1:M --vendor URL --tokens-file T` and calls \
+                 `app.ledgerd.api.build_server(args)` — expose `build_server` from \
+                 `app/ledgerd/api.py` (yours)"
+            ),
+            "the loser reads the new owner AND the hook:\n{ledgerd}"
+        );
+        assert!(
+            ledgerd.contains("my composition root (app/ledgerd/__main__.py)"),
+            "prose is left verbatim — the seam line is the mild fix:\n{ledgerd}"
+        );
+        let notifierd = task(&v, "notifierd")["description"].as_str().unwrap();
+        assert!(
+            notifierd.contains(
+                "- `app/notifierd/__main__.py` → owned by task `skeleton`; it parses `--db-dir P \
+                 --port M` and calls `app.notifierd.impl.build_server(args)` — expose \
+                 `build_server` from `app/notifierd/impl.py` (yours)"
+            ),
+            "the bare `__main__.py` resolved to this task's package:\n{notifierd}"
+        );
+        assert!(
+            !notifierd.contains("`app/__main__.py` → owned"),
+            "a bare name never resolves to a package the task does not write into:\n{notifierd}"
+        );
+        let web = task(&v, "web-console")["description"].as_str().unwrap();
+        assert!(
+            web.contains(
+                "- `app/ledgerd/__main__.py` → owned by task `skeleton`; it parses `--db-dir P \
+                 --port N --notifier http://127.0.0.1:M --vendor URL --tokens-file T` and calls \
+                 `app.ledgerd.api.build_server(args)`, which task `ledgerd-api` writes in \
+                 `app/ledgerd/api.py` — import from there, never re-implement it"
+            ),
+            "a non-owner reads who writes the hook:\n{web}"
+        );
+        let facts: Vec<(String, String, bool, Option<String>)> = rows
+            .iter()
+            .filter(|r| r["event"] == "brief_names_unowned_file")
+            .map(|r| {
+                (
+                    r["task"].as_str().unwrap().to_string(),
+                    r["path"].as_str().unwrap().to_string(),
+                    r["bare"].as_bool().unwrap(),
+                    r["hook"].as_str().map(str::to_string),
+                )
+            })
+            .collect();
+        assert_eq!(
+            facts,
+            vec![
+                (
+                    "ledgerd-api".to_string(),
+                    "app/ledgerd/__main__.py".to_string(),
+                    false,
+                    Some("app.ledgerd.api.build_server".to_string())
+                ),
+                (
+                    "notifierd".to_string(),
+                    "app/notifierd/__main__.py".to_string(),
+                    true,
+                    Some("app.notifierd.impl.build_server".to_string())
+                ),
+                (
+                    "web-console".to_string(),
+                    "app/ledgerd/__main__.py".to_string(),
+                    false,
+                    Some("app.ledgerd.api.build_server".to_string())
+                ),
+            ],
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().all(|r| r["rewritten"] == false),
+            "r6j's rows: no claim form to rewrite, and none is invented: {rows:?}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r["event"] == "composition_hook_rendered"),
+            "both owners named their entry, so no owner-only row: {rows:?}"
+        );
+        assert_eq!(actions.len(), 3, "{actions:?}");
+        // Idempotent through the seam: the rendered lines are repaired facts, not new mentions.
+        let mut again = Vec::new();
+        let rows2 = repair_brief_file_mentions(&mut v, spec, &mut again);
+        assert!(rows2.is_empty() && again.is_empty(), "{rows2:?} {again:?}");
+    }
+
+    /// The owner-only door: a module task whose brief never names the entry still receives the
+    /// contract line, under its own event, so no loser builds against a hook it never read.
+    #[test]
+    fn a_module_owner_that_never_named_the_entry_still_reads_the_hook() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v = serde_json::json!({"subtasks": [
+            {"id": "skeleton", "files": ["app/__main__.py", "app/ledgerd/__main__.py", "app/notifierd/__main__.py"], "depends_on": [], "description": "WALKING SKELETON"},
+            {"id": "ledgerd-core", "files": ["app/ledgerd/impl.py"], "depends_on": ["skeleton"], "description": "The ledger store and sync loop."},
+            {"id": "integrate-verify", "files": [], "depends_on": ["skeleton", "ledgerd-core"], "description": "verify"}
+        ]});
+        let mut actions = Vec::new();
+        let rows = repair_brief_file_mentions(&mut v, spec, &mut actions);
+        let desc = task(&v, "ledgerd-core")["description"].as_str().unwrap();
+        assert!(
+            desc.contains("FILES NAMED ABOVE")
+                && desc.contains(
+                    "- `app/ledgerd/__main__.py` → owned by task `skeleton`; it parses `--db-dir \
+                     P --port N --notifier http://127.0.0.1:M --vendor URL --tokens-file T` and \
+                     calls `app.ledgerd.impl.build_server(args)` — expose `build_server` from \
+                     `app/ledgerd/impl.py` (yours)"
+                ),
+            "{desc}"
+        );
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["event"], "composition_hook_rendered");
+        assert_eq!(rows[0]["task"], "ledgerd-core");
+        assert_eq!(rows[0]["hook"], "app.ledgerd.impl.build_server");
+        assert_eq!(rows[0]["named"], false);
+        let mut again = Vec::new();
+        assert!(repair_brief_file_mentions(&mut v, spec, &mut again).is_empty());
+        assert!(again.is_empty(), "{again:?}");
     }
 }

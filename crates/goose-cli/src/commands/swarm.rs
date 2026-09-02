@@ -85,7 +85,9 @@ use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state
 mod prose;
 use prose::rewrite_path_token;
 mod skeleton;
+mod spec_boot;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
+use spec_boot::{spec_boot_flags, spec_boot_line, spec_python_entry, spec_python_invocations};
 mod lang;
 mod lang_arms;
 mod ledger_writers;
@@ -5286,16 +5288,6 @@ mod tests {
             spec_run_argv_v2("`python -m other --port N`", "app", tmp.path(), 9)
                 .0
                 .is_empty()
-        );
-    }
-
-    #[test]
-    fn spec_python_invocations_lists_every_advertised_entry_once() {
-        let spec = "`python -m app --db-dir P` boots both. `python -m app.ledgerd --port N` alone. `python -m app.notifierd --port M` alone. Test with `python -m pytest`. Again: `python -m app --db-dir P`.";
-        assert_eq!(
-            spec_python_invocations(spec),
-            vec!["app", "app.ledgerd", "app.notifierd"],
-            "deduped, spec order, tool modules excluded"
         );
     }
 
@@ -17008,19 +17000,6 @@ async fn boot_invocation(
 #[cfg(test)]
 mod boot_invocation_tests;
 
-/// The `python3 -m PKG` entry package the spec literally advertises, if any — skipping tool
-/// modules (`python3 -m pytest` in a testing note is not the app entry). Pure/testable.
-fn spec_python_entry(spec: &str) -> Option<String> {
-    let re = regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)").ok()?;
-    let names: Vec<String> = re.captures_iter(spec).map(|c| c[1].to_string()).collect();
-    names.into_iter().find(|p| {
-        !matches!(
-            p.as_str(),
-            "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
-        )
-    })
-}
-
 /// Ask the VENDOR how many items exist — the ground truth the Vacuous arm was missing (F823).
 ///
 /// The Vacuous verdict exists so an EMPTY vendor is never blamed on the app; that mercy was the
@@ -17525,27 +17504,6 @@ fn spec_json_stub(spec: &str, flag: &str) -> String {
     } else {
         "{}".to_string()
     }
-}
-
-/// EVERY `python -m X` package the spec advertises (tool modules excluded, deduped,
-/// spec order). F910 defect 2's parser: the gate must boot each of these, not just the
-/// first — the sb-7 fleet run shipped ledgerd/notifierd packages with no __main__.py and
-/// nothing in-run could see it. Pure/testable.
-fn spec_python_invocations(spec: &str) -> Vec<String> {
-    let Ok(re) = regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)") else {
-        return Vec::new();
-    };
-    let mut seen = std::collections::HashSet::new();
-    re.captures_iter(spec)
-        .map(|c| c[1].to_string())
-        .filter(|p| {
-            !matches!(
-                p.as_str(),
-                "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
-            )
-        })
-        .filter(|p| seen.insert(p.clone()))
-        .collect()
 }
 
 /// The task best placed to write a package's entry: most files under the package dir, else most under
@@ -20044,7 +20002,7 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str, lang: TargetLang)
         // its text from the repaired ownership BEFORE rule (d) appends to this very brief (r6c).
         refresh_skeleton_description(plan, spec, &mut actions);
         repair_unassigned_endpoints(plan, spec, &mut actions);
-        mentions = repair_brief_file_mentions(plan, &mut actions);
+        mentions = repair_brief_file_mentions(plan, spec, &mut actions);
         // (f) LAST: every rule above may add or remove a task; the join's deps must cover the
         // final set (plan_repairs.rs; r6c's join never waited on the review-added decisions-doc).
         if let Some(row) = repair_sink_deps(plan, &mut actions) {
@@ -21101,7 +21059,11 @@ fn finalize_plan_before_dag(
         // fanned out here they become first-class events tick.py prints by name, so a relaxed
         // task and the reason it starts at BUILD minute 0 read from run.jsonl without digging
         // into the prepended event's arrays.
-        for key in ["skeleton_dep_kept", "skeleton_dep_relaxed"] {
+        for key in [
+            "skeleton_dep_kept",
+            "skeleton_dep_relaxed",
+            "skeleton_flags_absent",
+        ] {
             for row in ev[key].as_array().into_iter().flatten() {
                 sink.write_value(row.clone());
             }
@@ -23880,16 +23842,6 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
         write_forming_atomic(&out_path, &bytes).ok()?;
     }
     Some(rollup)
-}
-
-/// The spec's own boot invocation for `pkg`, verbatim with its placeholders — the SHAPE of the
-/// argv `run_spec_contract` will spawn. `spec_run_argv_v2` fills the same backtick span, but
-/// calling it at dispatch would bind real ephemeral ports and create scratch dirs just to print
-/// a prompt string, so the span is quoted as the spec wrote it instead.
-fn spec_boot_line(spec: &str, pkg: &str) -> Option<String> {
-    let needle = format!("-m {pkg}");
-    let span = spec.split('`').find(|s| s.contains(&needle))?;
-    Some(span.trim().to_string())
 }
 
 /// II-3, the SINK's semantic description — the replacement for the 3,668-char zero-fact

@@ -8,8 +8,8 @@
 //! `skeleton_dependency_verdict`).
 
 use super::{
-    decomposition_of, spec_get_endpoints, spec_python_invocations, spec_surface_rows, string_list,
-    SpecSurface,
+    decomposition_of, spec_boot_flags, spec_get_endpoints, spec_python_invocations,
+    spec_surface_rows, string_list, SpecSurface,
 };
 
 /// PART III — THE WALKING SKELETON. The plan's first task, prepended by CODE after the review:
@@ -57,6 +57,209 @@ fn skeleton_invocation_files(
     files
 }
 
+/// The BOOT lines — each invocation with the FLAGS its own spec span documents (VA-142 b) — and
+/// the invocations the spec documents no span for. r6j's brief read "with exactly the flags the
+/// spec documents for it" ×3 and carried zero flags, so the skeleton's first three calls were
+/// spec greps; the flags are a parser's output (`spec_boot_flags`) and ride verbatim. An absent
+/// span is SAID in the line and returned for the `skeleton_flags_absent` event — never the
+/// sentence that sent the model to grep.
+fn boot_lines(spec: &str, invocations: &[String]) -> (String, Vec<String>) {
+    let mut s = String::new();
+    let mut absent = Vec::new();
+    for inv in invocations {
+        match spec_boot_flags(spec, inv).as_deref() {
+            Some("") => s.push_str(&format!(
+                "- `python3 -m {inv}` — the spec's boot line carries no flags; parse none\n"
+            )),
+            Some(flags) => s.push_str(&format!(
+                "- `python3 -m {inv} {flags}` — parse EXACTLY these flags (each placeholder is \
+                 the caller's value)\n"
+            )),
+            None => {
+                absent.push(inv.clone());
+                s.push_str(&format!(
+                    "- `python3 -m {inv}` — the spec documents NO boot line for this invocation \
+                     (skeleton_flags_absent); bind the port its endpoint table names\n"
+                ));
+            }
+        }
+    }
+    (s, absent)
+}
+
+/// The flags clause a composition line renders, from the same parser: quoted when the spec
+/// documents them, the stated absence otherwise.
+fn flags_text(flags: Option<&str>, inv: &str) -> String {
+    match flags {
+        Some("") => "no flags (the spec's boot line carries none)".to_string(),
+        Some(f) => format!("`{f}`"),
+        None => format!(
+            "the flags the spec never documents for `python3 -m {inv}` (skeleton_flags_absent)"
+        ),
+    }
+}
+
+/// THE COMPOSITION HOOK (VA-142 a): the ONE function a service module exposes and the
+/// skeleton's entry file calls, rendered word for word into BOTH briefs. r6j (tick 23):
+/// `repair_shared_files` moved `app/ledgerd/__main__.py` and `app/notifierd/__main__.py` to the
+/// skeleton, the losers' briefs kept "my composition root (app/ledgerd/__main__.py)", and the
+/// skeleton's written `app/__main__.py` called `ledgerd.build_server(` — a hook no other brief
+/// named. The name is derived, never guessed twice: the skeleton brief's own declaration when it
+/// already carries one (`declared_hook_name`, so a re-finalized plan keeps its contract), else
+/// the engine's contract name under the module the spec's own invocation boots
+/// (`app.ledgerd` → `app.ledgerd.<module>.build_server`).
+pub(super) struct CompositionHook {
+    /// The spec's invocation this hook serves (`app.ledgerd`).
+    pub(super) invocation: String,
+    /// The skeleton's entry file that calls it (`app/ledgerd/__main__.py`).
+    pub(super) entry: String,
+    /// `spec_boot_flags` for the invocation: None = no span, Some("") = a span with no flags.
+    pub(super) flags: Option<String>,
+    /// The module task's file the hook lives in (`app/ledgerd/server.py`) and its import path.
+    pub(super) module_file: String,
+    pub(super) module_path: String,
+    /// The task that writes the module — the brief that receives the same line.
+    pub(super) owner: String,
+    pub(super) hook: String,
+}
+
+/// The engine's contract name when no skeleton brief declared one yet — the same word on both
+/// sides is the whole point; the QUALIFIED name is derived from the plan and the spec.
+const COMPOSITION_HOOK: &str = "build_server";
+
+impl CompositionHook {
+    pub(super) fn qualified(&self) -> String {
+        format!("{}.{}", self.module_path, self.hook)
+    }
+
+    pub(super) fn flags_text(&self) -> String {
+        flags_text(self.flags.as_deref(), &self.invocation)
+    }
+
+    /// The line rule (e) renders under `FILES NAMED ABOVE THAT ANOTHER TASK OWNS` in the module
+    /// owner's brief: the new owner, the flags the entry parses, and the hook it must expose.
+    pub(super) fn owner_line(&self) -> String {
+        format!(
+            "- `{entry}` → owned by task `{SKELETON_ID}`; it parses {flags} and calls \
+             `{qualified}(args)` — expose `{hook}` from `{file}` (yours): the server bound to the \
+             parsed port with every route registered, returned not yet serving; the entry file \
+             starts it",
+            entry = self.entry,
+            flags = self.flags_text(),
+            qualified = self.qualified(),
+            hook = self.hook,
+            file = self.module_file,
+        )
+    }
+
+    /// The same contract in a brief that NAMES the entry without owning the module: who writes
+    /// the hook and where, so a reader imports it instead of re-implementing it.
+    pub(super) fn reader_line(&self) -> String {
+        format!(
+            "- `{entry}` → owned by task `{SKELETON_ID}`; it parses {flags} and calls \
+             `{qualified}(args)`, which task `{owner}` writes in `{file}` — import from there, \
+             never re-implement it",
+            entry = self.entry,
+            flags = self.flags_text(),
+            qualified = self.qualified(),
+            owner = self.owner,
+            file = self.module_file,
+        )
+    }
+}
+
+/// A brief's already-declared hook for `module_path` — the identifier between
+/// `` `{module_path}. `` and `(args)` — so a second finalize pass reuses the first's word.
+fn declared_hook_name(brief: &str, module_path: &str) -> Option<String> {
+    let lead = format!("`{module_path}.");
+    brief.match_indices(&lead).find_map(|(at, _)| {
+        let rest = &brief[at + lead.len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        (!name.is_empty() && rest[name.len()..].starts_with("(args)")).then_some(name)
+    })
+}
+
+/// A module file of a package: source, not the package's own markers, not a test.
+fn is_module_file(path: &str, dir: &str) -> bool {
+    let Some(rest) = path.strip_prefix(&format!("{dir}/")) else {
+        return false;
+    };
+    let base = rest.rsplit('/').next().unwrap_or(rest);
+    path.ends_with(".py")
+        && base != "__init__.py"
+        && base != "__main__.py"
+        && !base.starts_with("test_")
+        && !rest.split('/').any(|seg| seg == "tests")
+}
+
+/// The task that writes a package's module: the most module files under `dir/` (ties to plan
+/// order), with its first such file — the one the hook is exposed from. None when no task puts
+/// a module file there: the skeleton serves that invocation alone and no contract is needed.
+fn module_owner(subtasks: &[serde_json::Value], dir: &str) -> Option<(String, String)> {
+    let mut best: Option<(usize, String, String)> = None;
+    for t in subtasks {
+        let Some(id) = t.get("id").and_then(|i| i.as_str()) else {
+            continue;
+        };
+        if id == goose_swarm::SINK_ID || id == SKELETON_ID || t.get("shard_of").is_some() {
+            continue;
+        }
+        let files: Vec<String> = string_list(&t["files"])
+            .into_iter()
+            .filter(|f| is_module_file(f, dir))
+            .collect();
+        let Some(first) = files.first() else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(n, _, _)| files.len() > *n) {
+            best = Some((files.len(), id.to_string(), first.clone()));
+        }
+    }
+    best.map(|(_, id, file)| (id, file))
+}
+
+/// Every hook the plan needs: one per LEAF invocation (`app.ledgerd`, not `app`, which composes
+/// the leaves) whose entry the skeleton owns and whose package a module task writes into.
+pub(super) fn composition_hooks(
+    subtasks: &[serde_json::Value],
+    spec: &str,
+    skeleton_files: &[String],
+    prior_brief: Option<&str>,
+) -> Vec<CompositionHook> {
+    let invocations = spec_python_invocations(spec);
+    let mut hooks = Vec::new();
+    for inv in &invocations {
+        let is_parent = invocations
+            .iter()
+            .any(|o| o.starts_with(&format!("{inv}.")));
+        let dir = inv.replace('.', "/");
+        let entry = format!("{dir}/__main__.py");
+        if is_parent || !skeleton_files.contains(&entry) {
+            continue;
+        }
+        let Some((owner, module_file)) = module_owner(subtasks, &dir) else {
+            continue;
+        };
+        let module_path = module_file.trim_end_matches(".py").replace('/', ".");
+        let hook = prior_brief
+            .and_then(|b| declared_hook_name(b, &module_path))
+            .unwrap_or_else(|| COMPOSITION_HOOK.to_string());
+        hooks.push(CompositionHook {
+            invocation: inv.clone(),
+            entry,
+            flags: spec_boot_flags(spec, inv),
+            module_file,
+            module_path,
+            owner,
+            hook,
+        });
+    }
+    hooks
+}
+
 /// The skeleton's brief, assembled from the spec's tables and the plan — every clause traceable to a
 /// deterministic parser (`spec_python_invocations`, `spec_surface_rows`/`spec_get_endpoints`, the
 /// plan's own `files`). The advertised rows are quoted VERBATIM so `brief_mentions_path` — the same
@@ -67,6 +270,7 @@ fn skeleton_description(
     spec: &str,
     invocations: &[String],
     owned: &[String],
+    prior_brief: Option<&str>,
 ) -> String {
     let mut s = String::from(
         "WALKING SKELETON — assembled by the engine from the spec's own tables and the plan.\n\
@@ -75,10 +279,51 @@ fn skeleton_description(
          you fill their modules in behind these routes; your job is the frame they land in.\n\n\
          BOOT — the spec's own invocations; each must start, bind its documented port, and serve:\n",
     );
-    for inv in invocations {
-        s.push_str(&format!(
-            "- `python3 -m {inv}` with exactly the flags the spec documents for it\n"
-        ));
+    s.push_str(&boot_lines(spec, invocations).0);
+    let hooks = composition_hooks(subtasks, spec, owned, prior_brief);
+    if !hooks.is_empty() {
+        s.push_str(
+            "\nCOMPOSITION CONTRACT — ONE hook per service module, declared here and, word for \
+             word, in that module task's brief, so the two sides agree before either file is \
+             written (r6j's skeleton invented one nobody else's brief named):\n",
+        );
+        for h in &hooks {
+            s.push_str(&format!(
+                "- `{entry}` (yours): parse {flags}, then `from {module} import {hook}` and \
+                 start `{qualified}(args)` — task `{owner}` writes it in `{file}`: the server \
+                 bound to the parsed port with every route registered, returned not yet serving. \
+                 Until it lands, guard the import and serve this task's own 501 routes on that \
+                 port.\n",
+                entry = h.entry,
+                flags = h.flags_text(),
+                module = h.module_path,
+                hook = h.hook,
+                qualified = h.qualified(),
+                owner = h.owner,
+                file = h.module_file,
+            ));
+        }
+        for parent in invocations.iter().filter(|inv| {
+            !hooks.iter().any(|h| &h.invocation == *inv)
+                && owned.contains(&format!("{}/__main__.py", inv.replace('.', "/")))
+        }) {
+            let below: Vec<String> = hooks
+                .iter()
+                .filter(|h| h.invocation.starts_with(&format!("{parent}.")))
+                .map(|h| format!("`{}(args)`", h.qualified()))
+                .collect();
+            if below.is_empty() {
+                continue;
+            }
+            s.push_str(&format!(
+                "- `{dir}/__main__.py` (yours): parse {flags} and start every service above on \
+                 its own thread through the same hooks — {below} — each with the flags its own \
+                 invocation documents.\n",
+                dir = parent.replace('.', "/"),
+                flags = flags_text(spec_boot_flags(spec, parent).as_deref(), parent),
+                below = below.join(", "),
+            ));
+        }
     }
     s.push_str(
         "\nYOU OWN EXACTLY THESE FILES — module tasks own everything else, never write theirs:\n",
@@ -329,7 +574,20 @@ pub(super) fn prepend_skeleton_task(
     if files.is_empty() {
         return None;
     }
-    let description = skeleton_description(subtasks, spec, &invocations, &files);
+    let description = skeleton_description(subtasks, spec, &invocations, &files, None);
+    // VA-142 (b): one self-describing row per invocation the spec documents no boot span for —
+    // fanned out by the finalize seam like the dependency verdicts below.
+    let flags_absent: Vec<serde_json::Value> = boot_lines(spec, &invocations)
+        .1
+        .into_iter()
+        .map(|inv| {
+            serde_json::json!({
+                "event": "skeleton_flags_absent",
+                "task": SKELETON_ID,
+                "invocation": inv,
+            })
+        })
+        .collect();
     subtasks.insert(
         0,
         serde_json::json!({
@@ -375,6 +633,7 @@ pub(super) fn prepend_skeleton_task(
         "relaxed": relaxed.len(),
         "skeleton_dep_kept": kept,
         "skeleton_dep_relaxed": relaxed,
+        "skeleton_flags_absent": flags_absent,
         "description_chars": description.chars().count(),
     }))
 }
@@ -425,8 +684,9 @@ pub(super) fn refresh_skeleton_description(
         else {
             return;
         };
-        let fresh = skeleton_description(subtasks, spec, &invocations, &owned);
-        if subtasks[idx].get("description").and_then(|d| d.as_str()) == Some(fresh.as_str()) {
+        let prior = subtasks[idx].get("description").and_then(|d| d.as_str());
+        let fresh = skeleton_description(subtasks, spec, &invocations, &owned, prior);
+        if prior == Some(fresh.as_str()) {
             return;
         }
         (idx, fresh)
@@ -443,7 +703,9 @@ mod tests {
     use super::super::{
         finalize_plan_before_dag, repair_plan_flags, string_list, unassigned_endpoints, TargetLang,
     };
-    use super::{prepend_skeleton_task, refresh_skeleton_description};
+    use super::{
+        composition_hooks, declared_hook_name, prepend_skeleton_task, refresh_skeleton_description,
+    };
     use goose_swarm::{EventSink, NullSink};
     use std::sync::Arc;
 
@@ -474,13 +736,25 @@ mod tests {
             "exactly the advertised entries; no __init__.py because every package has a planned owner"
         );
         let desc = skel["description"].as_str().unwrap();
+        // VA-142 (b): each boot line carries the FLAGS its own spec span documents, verbatim.
         for boot in [
-            "python3 -m app`",
-            "python3 -m app.ledgerd`",
-            "python3 -m app.notifierd`",
+            "- `python3 -m app --db-dir P --ledger-port N --notifier-port M --vendor URL \
+             --tokens-file T` — parse EXACTLY these flags",
+            "- `python3 -m app.ledgerd --db-dir P --port N --notifier http://127.0.0.1:M \
+             --vendor URL --tokens-file T` — parse EXACTLY these flags",
+            "- `python3 -m app.notifierd --db-dir P --port M` — parse EXACTLY these flags",
         ] {
-            assert!(desc.contains(boot), "boot command missing: {boot}");
+            assert!(desc.contains(boot), "boot command missing: {boot}\n{desc}");
         }
+        assert!(
+            !desc.contains("exactly the flags the spec documents"),
+            "the sentence that sent r6j's skeleton to grep the spec is gone:\n{desc}"
+        );
+        assert!(
+            ev["skeleton_flags_absent"].as_array().unwrap().is_empty(),
+            "sb-7 documents every boot span: {}",
+            ev["skeleton_flags_absent"]
+        );
         for route in [
             "GET /api/health",
             "/api/payments?limit=",
@@ -853,5 +1127,119 @@ mod tests {
         let mut none = Vec::new();
         refresh_skeleton_description(&mut v, spec, &mut none);
         assert!(none.is_empty(), "{none:?}");
+    }
+
+    /// VA-142 (a) on r2's real plan and the real spec: after the repairs the skeleton's brief
+    /// declares ONE hook per service under the module the spec's own invocation boots —
+    /// `api-endpoints` keeps `app/ledgerd/server.py`, so the entry the fence moved off it calls
+    /// `app.ledgerd.server.build_server` — and the composer's entry starts both through the same
+    /// names. The hooks are computed ONCE (`composition_hooks`) and rule (e) renders the same
+    /// words into the losers' briefs (plan_repairs.rs's seam test); a declared name is reused.
+    #[test]
+    fn the_skeleton_brief_declares_the_composition_hooks_after_the_repairs() {
+        let spec = include_str!("../../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/r2-plan.json")).unwrap();
+        prepend_skeleton_task(&mut v, spec).expect("the sb-7 spec advertises boots");
+        repair_plan_flags(&mut v, spec, TargetLang::Python);
+        let desc = v["subtasks"][0]["description"].as_str().unwrap();
+        for line in [
+            "COMPOSITION CONTRACT — ONE hook per service module",
+            "- `app/ledgerd/__main__.py` (yours): parse `--db-dir P --port N --notifier \
+             http://127.0.0.1:M --vendor URL --tokens-file T`, then `from app.ledgerd.server \
+             import build_server` and start `app.ledgerd.server.build_server(args)` — task \
+             `api-endpoints` writes it in `app/ledgerd/server.py`",
+            "- `app/notifierd/__main__.py` (yours): parse `--db-dir P --port M`, then `from \
+             app.notifierd.server import build_server` and start \
+             `app.notifierd.server.build_server(args)` — task `notification-engine` writes it in \
+             `app/notifierd/server.py`",
+            "- `app/__main__.py` (yours): parse `--db-dir P --ledger-port N --notifier-port M \
+             --vendor URL --tokens-file T` and start every service above on its own thread \
+             through the same hooks — `app.ledgerd.server.build_server(args)`, \
+             `app.notifierd.server.build_server(args)`",
+        ] {
+            assert!(
+                desc.contains(line),
+                "composition line missing: {line}\n{desc}"
+            );
+        }
+        let hooks = composition_hooks(
+            v["subtasks"].as_array().unwrap(),
+            spec,
+            &strings(&v["subtasks"][0]["files"]),
+            Some(desc),
+        );
+        let named: Vec<(String, String, String)> = hooks
+            .iter()
+            .map(|h| (h.invocation.clone(), h.owner.clone(), h.qualified()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                (
+                    "app.ledgerd".to_string(),
+                    "api-endpoints".to_string(),
+                    "app.ledgerd.server.build_server".to_string()
+                ),
+                (
+                    "app.notifierd".to_string(),
+                    "notification-engine".to_string(),
+                    "app.notifierd.server.build_server".to_string()
+                ),
+            ]
+        );
+        assert!(
+            hooks[0].owner_line().contains(
+                "- `app/ledgerd/__main__.py` → owned by task `skeleton`; it parses `--db-dir P \
+                 --port N --notifier http://127.0.0.1:M --vendor URL --tokens-file T` and calls \
+                 `app.ledgerd.server.build_server(args)` — expose `build_server` from \
+                 `app/ledgerd/server.py` (yours)"
+            ),
+            "{}",
+            hooks[0].owner_line()
+        );
+        // A brief that already declares a hook keeps its word on the next pass, whatever it is.
+        let renamed = desc.replace("build_server", "make_app");
+        assert_eq!(
+            declared_hook_name(&renamed, "app.ledgerd.server").as_deref(),
+            Some("make_app")
+        );
+        assert_eq!(declared_hook_name(desc, "app.web.nothing"), None);
+    }
+
+    /// VA-142 (b): a spec that boots a package but documents no backtick boot span for it —
+    /// the BOOT line SAYS so, the event row names the invocation, and the composition line
+    /// carries the stated absence; the sentence "exactly the flags the spec documents" is gone.
+    #[test]
+    fn an_undocumented_boot_span_is_said_in_the_brief_and_emitted() {
+        let spec = "Run it as python3 -m quorum on port 8000. GET /api/polls returns the list.";
+        let mut v = serde_json::json!({"subtasks": [
+            {"id": "core", "files": ["quorum/server.py"], "depends_on": [], "description": "the server"},
+            {"id": "integrate-verify", "files": [], "depends_on": ["core"], "description": "verify"}
+        ]});
+        let ev = prepend_skeleton_task(&mut v, spec).expect("one advertised invocation");
+        let desc = v["subtasks"][0]["description"].as_str().unwrap();
+        assert!(
+            desc.contains(
+                "- `python3 -m quorum` — the spec documents NO boot line for this invocation \
+                 (skeleton_flags_absent)"
+            ),
+            "{desc}"
+        );
+        assert_eq!(
+            ev["skeleton_flags_absent"],
+            serde_json::json!([
+                {"event": "skeleton_flags_absent", "task": "skeleton", "invocation": "quorum"}
+            ])
+        );
+        assert!(
+            desc.contains(
+                "- `quorum/__main__.py` (yours): parse the flags the spec never documents for \
+                 `python3 -m quorum` (skeleton_flags_absent), then `from quorum.server import \
+                 build_server`"
+            ),
+            "{desc}"
+        );
+        assert!(!desc.contains("exactly the flags the spec documents"));
     }
 }
