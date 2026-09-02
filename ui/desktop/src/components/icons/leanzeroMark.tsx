@@ -1,39 +1,41 @@
-import { useId } from 'react';
-
 /**
- * THE LEANZERO MARK — a bold "L" with two geese flying out of it.
+ * THE LEANZERO MARK — a big "L" with two of the ORIGINAL goose flying out of it.
  *
- * Owner brief, over three rounds (2026-09-02): "a big L encompassing them ... 2 or 3 geese flying
- * ... black or maybe blue the same colour as leanzero", then "2 BIGGER geese going out of that L",
- * and finally the one that settled it: "take the original shape of the goose from the original
- * icon, shrink it and bring 2 of those almost side by side ... so people know that this was part of
- * the original goose product".
+ * Owner brief, over four rounds (2026-09-02), each one correcting the last:
+ *   1. "a big L encompassing them ... 2 or 3 geese flying ... black or maybe blue the same colour
+ *      as leanzero"
+ *   2. "2 BIGGER geese going out of that L"
+ *   3. "take the original shape of the goose from the original icon, shrink it and bring 2 of those
+ *      almost side by side ... so people know that this was part of the original goose product"
+ *   4. "the geese should blend together where one's wing goes under the other, essentially not
+ *      being visible still offering the illusion of in flight and the L should be bigger"
  *
- * So GOOSE_PATH below is not a drawing of mine — it is the goose from `./Goose.tsx`, the upstream
- * product's own mark, verbatim. Two earlier attempts drew geese from scratch and both were rejected
- * (they read as a dart and as a swoosh); the lineage is the point.
+ * So GOOSE_PATH is not a drawing of mine — it is the goose from `./Goose.tsx`, the upstream
+ * product's own mark, verbatim. Two rounds of hand-drawn birds were rejected ("they don't look like
+ * geese"); the lineage is the point, do not substitute a simpler bird.
  *
  * Geometry notes, each paid for by a render that looked wrong:
  *  - 64x64 grid. The original goose measures 16.628 square with its centre at (12.642, 12.103) —
  *    measured with getBBox in the live app, which is why `gooseAt` places by CENTRE. At rotate(0)
- *    the goose already flies up-and-right, so the pair needs almost no rotation.
- *  - The L has LETTER proportions (29 wide x 45 tall, 12 thick). A near-square corner bracket reads
- *    as a frame, not a letter, and leaves no room for geese this size. Its short foot (ends at
- *    x=33) is what lets the trailing goose's wing dip past it instead of colliding.
- *  - The two geese OVERLAP, and that is why the mark carries a MASK: the front goose is stamped a
- *    second time, fattened by LEANZERO_MARK_HALO, and knocked out of the back one. Without it the
- *    pair fuses into one tangled blob — the original goose has spread wings and a long neck, so any
- *    "almost side by side" placement intersects. Placing them apart instead (tested) reads as one
- *    long streak, not two birds.
- *  - They are banked a few degrees apart (-6 and +5) so the pair does not read as the same stamp
- *    twice.
+ *    it already flies up-and-right, so the pair needs almost no rotation.
+ *  - The two geese OVERLAP AND MERGE, deliberately. The back one's leading wing passes under the
+ *    front one and is simply not drawn — round 4's instruction, and it is what makes them read as a
+ *    flock in flight rather than as two stamps. An earlier version knocked a halo out between them;
+ *    that gap is exactly what the owner rejected. Do NOT reintroduce a mask here.
+ *  - The offset between them runs along the FLIGHT axis (back one low-left, front one high-right).
+ *    Offsetting along the wing axis instead was tested and fuses the pair into one long diagonal
+ *    streak with two heads.
+ *  - They are banked apart (-8 and +6) and differ slightly in size so the pair does not read as the
+ *    same stamp twice.
+ *  - The L is 36 wide x 53 tall x 14 thick — round 4 asked for bigger, and it is now the dominant
+ *    form. Its foot ends at x=40, which is what lets the back goose's lower wing clear it.
  *  - Smallest honest size is ~24px: the original goose carries feather detail that fills in below
  *    that. Call sites render it at 24+.
  *
  * `scripts/build-brand-icons.mjs` reads THIS file to render the app icon, the Linux SVG and the
  * menu-bar templates, so the shipped assets cannot drift from what the UI draws. Geometry and
  * component live together because the filesystem here is case-insensitive: a separate
- * `LeanZeroMark.tsx` collides with `leanzeroMark.ts`.
+ * `LeanZeroMark.tsx` silently IS `leanzeroMark.ts`.
  */
 
 /** The goose from ./Goose.tsx — the upstream product's own mark, verbatim. */
@@ -50,45 +52,25 @@ export const gooseAt = (x: number, y: number, scale: number, rotate: number) =>
 export const LEANZERO_MARK_VIEWBOX = '0 0 64 64';
 
 /** The L monogram. */
-export const LEANZERO_MARK_L = 'M4,15 H16 V48 H33 V60 H4 Z';
+export const LEANZERO_MARK_L = 'M4,7 H18 V46 H40 V60 H4 Z';
 
-/** Units the front goose is fattened by when knocked out of the one behind it. */
-export const LEANZERO_MARK_HALO = 2;
-
-/** Back goose first, front goose last — the front one is also the knockout. */
+/** Back goose first: it is drawn under the front one, and the overlap simply merges. */
 export const LEANZERO_MARK_GEESE = [
-  { x: 32, y: 36, scale: 1.55, rotate: -6 },
-  { x: 46, y: 21, scale: 1.62, rotate: 5 },
+  { x: 36, y: 32, scale: 1.45, rotate: -8 },
+  { x: 46, y: 21, scale: 1.5, rotate: 6 },
 ];
 
 /**
  * Everything inside the <svg>, so the two components that draw the mark (LeanZero in the icons
- * barrel, LeanZeroGlyph on the project landing) share one geometry and one mask instead of each
- * carrying a copy. `useId` keys the mask per instance — several marks on one page must not share
- * a mask id.
+ * barrel, LeanZeroGlyph on the project landing) share one geometry instead of each carrying a copy.
  */
 export function LeanZeroMarkContent() {
-  const maskId = `lz-mark-${useId().replace(/:/g, '')}`;
-  const [back, front] = LEANZERO_MARK_GEESE;
-  const frontTransform = gooseAt(front.x, front.y, front.scale, front.rotate);
   return (
     <>
-      <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
-        <rect width="64" height="64" fill="white" />
-        <path
-          d={GOOSE_PATH}
-          transform={frontTransform}
-          fill="black"
-          stroke="black"
-          strokeWidth={LEANZERO_MARK_HALO / front.scale}
-          strokeLinejoin="round"
-        />
-      </mask>
       <path d={LEANZERO_MARK_L} />
-      <g mask={`url(#${maskId})`}>
-        <path d={GOOSE_PATH} transform={gooseAt(back.x, back.y, back.scale, back.rotate)} />
-      </g>
-      <path d={GOOSE_PATH} transform={frontTransform} />
+      {LEANZERO_MARK_GEESE.map((g, i) => (
+        <path key={i} d={GOOSE_PATH} transform={gooseAt(g.x, g.y, g.scale, g.rotate)} />
+      ))}
     </>
   );
 }
