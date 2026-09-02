@@ -32,6 +32,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use goose::config::paths::Paths;
 use serde::{Deserialize, Serialize};
@@ -928,6 +929,138 @@ pub(super) fn render_block(key_label: &str, facts: &[Fact]) -> String {
     out
 }
 
+/// The retire floor `MemoryStore::retire` runs with after every run (`RunMemory::close_run`): a
+/// fact offered to this many runs and rendered into no prompt is dropped. RECEIPT: on the sb-7
+/// shape every owned file recurred across the three same-shape builds on record (r5, r6c and r6h
+/// each owned `web/viz.js` and `web/index.html`), so a worker fact naming a file no three builds
+/// of a shape owned names a file that shape does not have; the opener's plan-level facts render
+/// on their first offer (`Consumer::wants`) and never reach the floor.
+pub(super) const MEMORY_RETIRE_MIN_RUNS: usize = 3; // ratio: 3 offered runs to 0 renders
+
+/// The run's handle on the store: opened at OPEN by `run_linear_plan` (swarm.rs, beside
+/// `lang_arms`) from the tree at start, the vendor's probed shape and the run's language; read
+/// at the opener's turn and at every worker dispatch (`MemoryCell::render_for`); closed after
+/// `run_finished` (`MemoryCell::close_run`) under the key of the tree the run BUILT.
+pub(super) struct RunMemory {
+    store: MemoryStore,
+    lang: TargetLang,
+    vendor: Option<String>,
+    key: MemoryKey,
+    run_id: String,
+    benchmark: bool,
+}
+
+impl RunMemory {
+    pub(super) fn new(
+        store: MemoryStore,
+        lang: TargetLang,
+        tree_at_start: &[String],
+        vendor: Option<&str>,
+        run_id: &str,
+        benchmark: bool,
+    ) -> Self {
+        Self {
+            key: MemoryKey::derive(lang, tree_at_start, vendor),
+            store,
+            lang,
+            vendor: vendor.map(str::to_string),
+            run_id: run_id.to_string(),
+            benchmark,
+        }
+    }
+
+    fn render_for(&self, consumer: &Consumer<'_>, sink: &dyn EventSink) -> String {
+        self.store
+            .render_for(&self.key, consumer, &self.run_id, self.benchmark, sink)
+    }
+
+    /// THE WRITE DOOR: the run's own stream read back, harvested, appended under the key of the
+    /// tree it built (OPEN's lang and vendor, the FINISHED layout), then the facts
+    /// `MEMORY_RETIRE_MIN_RUNS` runs were offered and none read are retired. No run log
+    /// (`--no-log`) is a loud `memory_harvest_skipped{source: run_jsonl}`; under benchmark the
+    /// log is not read at all and each door says `memory_off`.
+    fn close_run(&self, tree_files: &[String], run_jsonl: Option<&Path>, sink: &dyn EventSink) {
+        let key = MemoryKey::derive(self.lang, tree_files, self.vendor.as_deref());
+        let events = match (self.benchmark, run_jsonl) {
+            (true, _) => Vec::new(),
+            (false, Some(p)) => load_events(p, sink),
+            (false, None) => {
+                sink.write_value(serde_json::json!({
+                    "event": "memory_harvest_skipped",
+                    "source": "run_jsonl",
+                    "missing": "no run log (--no-log): nothing to read the run's own rows from",
+                }));
+                Vec::new()
+            }
+        };
+        let facts = harvest(&events, &key, &self.run_id, self.benchmark, sink);
+        self.store.append(&key, &facts, self.benchmark, sink);
+        self.store
+            .retire(&key, MEMORY_RETIRE_MIN_RUNS, self.benchmark, sink);
+    }
+}
+
+/// ONE field on `GooseAgentDispatcher`, set once by `run_linear_plan`. A run that never set it
+/// (a RESUME skips OPEN) renders nothing and says `memory_unset{at}` — a loud absence, never a
+/// default (gate 1).
+#[derive(Default)]
+pub(super) struct MemoryCell(OnceLock<RunMemory>);
+
+impl MemoryCell {
+    pub(super) fn set(&self, memory: RunMemory) {
+        let _ = self.0.set(memory);
+    }
+
+    /// The `LEARNED FROM EARLIER BUILDS` block for `consumer` — empty under benchmark, with
+    /// nothing stored, and when no run set the cell.
+    pub(super) fn render_for(&self, consumer: &Consumer<'_>, sink: &dyn EventSink) -> String {
+        match self.0.get() {
+            Some(m) => m.render_for(consumer, sink),
+            None => {
+                sink.write_value(serde_json::json!({
+                    "event": "memory_unset",
+                    "at": format!("render:{}", consumer.name()),
+                }));
+                String::new()
+            }
+        }
+    }
+
+    /// `RunMemory::close_run` for the run that set the cell; `memory_unset{at: close_run}` otherwise.
+    pub(super) fn close_run(
+        &self,
+        tree_files: &[String],
+        run_jsonl: Option<&Path>,
+        sink: &dyn EventSink,
+    ) {
+        match self.0.get() {
+            Some(m) => m.close_run(tree_files, run_jsonl, sink),
+            None => sink.write_value(serde_json::json!({
+                "event": "memory_unset",
+                "at": "close_run",
+            })),
+        }
+    }
+}
+
+/// `text` with the LEARNED block on its own paragraph after it; `text` unchanged, byte for byte,
+/// when the block is empty — every benchmark run (r6k) and every run with nothing stored.
+pub(super) fn with_learned(text: &str, learned: &str) -> String {
+    if learned.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}\n\n{learned}")
+    }
+}
+
+/// The opener's user turn (swarm.rs `open_slices`): the request — whole, or its orientation
+/// index — then the LEARNED block, then the SOURCES block (the instructions on what is research
+/// material). With an empty block the bytes are exactly the pre-VA-139 turn,
+/// `{request}{sources_block}`.
+pub(super) fn opener_user_text(request: &str, learned: &str, sources_block: &str) -> String {
+    format!("{}{sources_block}", with_learned(request, learned))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::SwarmEvent;
@@ -1414,5 +1547,154 @@ mod tests {
         assert_eq!(bad[0]["bad_lines"], 1);
         assert!(load_events(&dir.path().join("absent.jsonl"), &sink).is_empty());
         assert_eq!(sink.named("memory_unreadable").len(), 2);
+    }
+
+    /// VA-139 at the CONSUMERS: the opener's user turn and a worker's brief. Under benchmark
+    /// (r6k) both are the pre-wiring bytes with facts on disk; off benchmark the block sits
+    /// between the request and SOURCES, and the worker's brief ends with the fact naming its
+    /// owned file.
+    #[test]
+    fn under_benchmark_the_opener_turn_and_the_worker_brief_are_byte_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("memory");
+        let sink = ValueSink::default();
+        let key = r6h_key();
+        let store = MemoryStore::open(root.clone());
+        assert_eq!(store.append(&key, &facts_off_benchmark(), false, &sink), 8);
+
+        let cell = MemoryCell::default();
+        cell.set(RunMemory::new(
+            MemoryStore::open(root.clone()),
+            TargetLang::Python,
+            &[],
+            Some("vendor-local-v3"),
+            "swarm-r6k",
+            true,
+        ));
+        let request = "The request:\n\n# Build `app`";
+        let sources = "\n\nSOURCES — what is research material here:\n- `.swarm/` is this \
+                       engine's own state.\n";
+        let learned = cell.render_for(&Consumer::Opener, &sink);
+        assert_eq!(learned, "");
+        assert_eq!(
+            opener_user_text(request, &learned, sources),
+            format!("{request}{sources}"),
+            "the pre-VA-139 opener turn, byte for byte"
+        );
+        let desc = "Write `web/index.html`: the console page the spec's §6 describes.";
+        let owned = vec!["web/index.html".to_string()];
+        let worker = Consumer::Worker {
+            task_id: "web-page",
+            owned_files: owned.as_slice(),
+        };
+        let learned = cell.render_for(&worker, &sink);
+        assert_eq!(with_learned(desc, &learned), desc);
+        let off = sink.named("memory_off");
+        assert_eq!(off.len(), 2, "{off:?}");
+        assert_eq!(off[0]["at"], "render:opener");
+        assert_eq!(off[1]["at"], "render:worker:web-page");
+        assert!(sink.named("memory_read").is_empty());
+        let (on_disk, _) = load_facts(&store.facts_path(&key), &sink);
+        assert!(
+            on_disk
+                .iter()
+                .all(|f| f.consumed == 0 && f.offered_by.is_empty()),
+            "a benchmark run touches nothing on disk"
+        );
+
+        let cell = MemoryCell::default();
+        cell.set(RunMemory::new(
+            MemoryStore::open(root),
+            TargetLang::Python,
+            &[],
+            Some("vendor-local-v3"),
+            "swarm-next",
+            false,
+        ));
+        let turn = opener_user_text(request, &cell.render_for(&Consumer::Opener, &sink), sources);
+        assert!(turn.starts_with(request), "{turn}");
+        let block_at = turn
+            .find("LEARNED FROM EARLIER BUILDS (python/flat/vendor-local-v3, 7 facts)")
+            .unwrap_or_else(|| panic!("{turn}"));
+        let sources_at = turn.find("SOURCES — ").unwrap();
+        assert!(block_at > request.len() && block_at < sources_at, "{turn}");
+        let brief = with_learned(desc, &cell.render_for(&worker, &sink));
+        assert!(brief.starts_with(desc), "{brief}");
+        assert!(brief.contains("viz-labels"), "{brief}");
+        assert_eq!(sink.named("memory_read").len(), 2);
+    }
+
+    /// VA-139's write door: the FINISHED tree's key (not OPEN's flat one), a loud absence for a
+    /// run with no log, a loud `memory_unset` before OPEN set the cell, and no read at all under
+    /// benchmark.
+    #[test]
+    fn close_run_stores_under_the_built_tree_and_an_unset_cell_is_loud() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("memory");
+        let sink = ValueSink::default();
+        let cell = MemoryCell::default();
+        assert_eq!(cell.render_for(&Consumer::Opener, &sink), "");
+        cell.close_run(&r6h_tree(), None, &sink);
+        let unset = sink.named("memory_unset");
+        assert_eq!(unset.len(), 2, "{unset:?}");
+        assert_eq!(unset[0]["at"], "render:opener");
+        assert_eq!(unset[1]["at"], "close_run");
+        assert!(!root.exists());
+
+        let run_jsonl = dir.path().join("run.jsonl");
+        let body: String = r6h_like_stream().iter().map(|v| format!("{v}\n")).collect();
+        std::fs::write(&run_jsonl, body).unwrap();
+        cell.set(RunMemory::new(
+            MemoryStore::open(root.clone()),
+            TargetLang::Python,
+            &[],
+            Some("vendor-local-v3"),
+            RUN,
+            false,
+        ));
+        cell.close_run(&r6h_tree(), Some(&run_jsonl), &sink);
+        let written = sink.named("memory_written");
+        assert_eq!(written.len(), 1, "{written:?}");
+        assert_eq!(
+            written[0]["key"], "python/app+web/vendor-local-v3",
+            "the BUILT tree's key, not OPEN's flat one"
+        );
+        assert_eq!(written[0]["facts"], 8);
+        assert!(root
+            .join("python/app+web/vendor-local-v3/facts.jsonl")
+            .is_file());
+        assert!(
+            sink.named("memory_retired").is_empty(),
+            "nothing was ever offered"
+        );
+
+        cell.close_run(&r6h_tree(), None, &sink);
+        let skipped = sink.named("memory_harvest_skipped");
+        assert_eq!(skipped.len(), 1, "{skipped:?}");
+        assert_eq!(skipped[0]["source"], "run_jsonl");
+        assert_eq!(sink.named("memory_written")[1]["facts"], 0);
+
+        let bench = MemoryCell::default();
+        bench.set(RunMemory::new(
+            MemoryStore::open(root),
+            TargetLang::Python,
+            &[],
+            Some("vendor-local-v3"),
+            "swarm-r6k",
+            true,
+        ));
+        let sink = ValueSink::default();
+        bench.close_run(&r6h_tree(), Some(&dir.path().join("absent.jsonl")), &sink);
+        let at: Vec<String> = sink
+            .named("memory_off")
+            .iter()
+            .map(|e| e["at"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(at, vec!["harvest", "append", "retire"]);
+        assert_eq!(
+            sink.0.lock().unwrap().len(),
+            3,
+            "an absent log is never read under benchmark: no memory_unreadable"
+        );
     }
 }
