@@ -25297,6 +25297,13 @@ impl GooseAgentDispatcher {
             for ev in dep_sources.cut_events(&req.task_id) {
                 self.events.write_value(ev);
             }
+            // VA-115: the contract carry is as loud as the cut; the owner is read from the
+            // published ownership map (plan load + dispatch), null when it does not hold the file.
+            let carried =
+                dep_sources.carried_events(&req.task_id, &self.owned_files_by_task.lock().unwrap());
+            for ev in carried {
+                self.events.write_value(ev);
+            }
             // D3 (a first-wave task, nothing on disk): the same heading with a redirect, so every
             // prompt pointer at "'API of …'" stays true — `DepSourcesBlock::text_or_none_on_disk`.
             let dep_block = dep_sources.text_or_none_on_disk();

@@ -43,6 +43,7 @@
 //!    fleet's probed window (byte-identical on this fleet, proportional on a 1M-window model).
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::{shape_excerpt, TargetLang};
@@ -56,6 +57,8 @@ pub(super) const DEP_SOURCE_FILE_CHARS: usize = 3_500;
 
 pub(super) const CUT_PER_FILE_CAP: &str = "per_file_cap";
 pub(super) const CUT_BUDGET_EXHAUSTED: &str = "dep_budget_exhausted";
+/// The one reason a dependency rides whole past the per-file ceiling (module doc, point 1).
+pub(super) const CARRIED_NAMES_OWNED_MODULE: &str = "names_owned_module";
 
 /// One dependency source the block did not carry whole. `kept == 0` means the file was named but
 /// not shown at all (the budget was spent before it).
@@ -67,10 +70,29 @@ pub(super) struct DepSourceCut {
     pub(super) reason: &'static str,
 }
 
+/// One dependency carried WHOLE because it names the task's own module (module doc, point 1).
+/// VA-115: the carry debits the block's budget exactly like a shown file and was the one arm
+/// with no event — a 30k importer riding whole spent the budget of every file after it unseen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DepSourceCarried {
+    pub(super) file: String,
+    pub(super) chars: usize,
+    /// The owned file it references, and the reference form that matched.
+    pub(super) named: String,
+    pub(super) form: String,
+    /// The block budget left AFTER this file debited it.
+    pub(super) budget_left: usize,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct DepSourcesBlock {
     pub(super) text: String,
     pub(super) cuts: Vec<DepSourceCut>,
+    pub(super) carried: Vec<DepSourceCarried>,
+    /// The pair IN FORCE for this block (`ShownBudgets`, VA-126) — what the events report, never
+    /// the reference literals.
+    pub(super) budget_chars: usize,
+    pub(super) file_chars: usize,
 }
 
 pub(super) fn sig_lang(lang: TargetLang) -> goose_swarm::SigLang {
@@ -272,7 +294,11 @@ pub(super) fn dependency_sources_block(
 ) -> DepSourcesBlock {
     let owned_set: std::collections::HashSet<&String> = owned_files.iter().collect();
     let leader = comment_leader(lang);
-    let mut out = DepSourcesBlock::default();
+    let mut out = DepSourcesBlock {
+        budget_chars,
+        file_chars,
+        ..Default::default()
+    };
     let mut budget = budget_chars;
     for f in all_files {
         if owned_set.contains(f) || !lang.is_source_file(f) {
@@ -308,6 +334,13 @@ pub(super) fn dependency_sources_block(
 
         if let Some((named, form)) = names_owned_module(f, &api_source, owned_files) {
             budget = budget.saturating_sub(total_chars);
+            out.carried.push(DepSourceCarried {
+                file: f.clone(),
+                chars: total_chars,
+                named: named.clone(),
+                form: form.clone(),
+                budget_left: budget,
+            });
             out.text.push_str(&format!(
                 "## API of {f} — CARRIED WHOLE: this file references your module `{named}` \
                  (`{form}`), so it is a caller of what you own; build to the signatures it \
@@ -407,6 +440,41 @@ impl DepSourcesBlock {
                     "bytes": cut.bytes,
                     "kept": cut.kept,
                     "reason": cut.reason,
+                })
+            })
+            .collect()
+    }
+
+    /// VA-115: one `dep_source_carried_whole{task, dep_task, file, chars, reason, named, form,
+    /// budget_chars, file_chars, budget_left}` per contract file — the carry as loud as the cut
+    /// (point 2 of the module doc made only the cuts visible). `budget_chars` / `file_chars` are
+    /// the pair in force, never the reference literals; `dep_task` is the task the caller's
+    /// ownership map (task id -> owned files) names for the file, null when the map does not
+    /// hold it — an absence stated, never a guessed owner.
+    pub(super) fn carried_events(
+        &self,
+        task_id: &str,
+        owners: &HashMap<String, Vec<String>>,
+    ) -> Vec<serde_json::Value> {
+        self.carried
+            .iter()
+            .map(|c| {
+                let dep_task = owners
+                    .iter()
+                    .find(|(_, files)| files.iter().any(|f| *f == c.file))
+                    .map(|(task, _)| task.as_str());
+                serde_json::json!({
+                    "event": "dep_source_carried_whole",
+                    "task": task_id,
+                    "dep_task": dep_task,
+                    "file": c.file,
+                    "chars": c.chars,
+                    "reason": CARRIED_NAMES_OWNED_MODULE,
+                    "named": c.named,
+                    "form": c.form,
+                    "budget_chars": self.budget_chars,
+                    "file_chars": self.file_chars,
+                    "budget_left": c.budget_left,
                 })
             })
             .collect()
@@ -630,6 +698,62 @@ mod tests {
             assert!(block.text.contains(&format!("`sed -n 'A,Bp' {f}`")));
         }
         assert_eq!(block.cuts.len(), 6, "{:?}", block.cuts);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// VA-115: the carry is as loud as the cut. r6h's contract file rides whole, and the event
+    /// names the owner, the chars debited and the pair of budgets IN FORCE — the ones the caller
+    /// passed (a 1M-window fleet scales them; the reference literals would then be a lie).
+    #[test]
+    fn the_contract_carry_is_reported_with_the_budget_in_force() {
+        let root = scratch("carried");
+        std::fs::write(root.join("app/ledgerd/__init__.py"), R6H_LEDGERD_INIT).unwrap();
+        let owned = vec!["app/ledgerd/impl.py".to_string()];
+        let all = vec![owned[0].clone(), "app/ledgerd/__init__.py".to_string()];
+        let (budget, per_file) = (DEP_SOURCES_BUDGET_CHARS * 4, DEP_SOURCE_FILE_CHARS * 4);
+        let block = dependency_sources_block(
+            &root,
+            &owned,
+            &all,
+            TargetLang::Python,
+            false,
+            budget,
+            per_file,
+        );
+        let chars = R6H_LEDGERD_INIT.trim().chars().count();
+        assert_eq!(
+            block.carried,
+            vec![DepSourceCarried {
+                file: "app/ledgerd/__init__.py".to_string(),
+                chars,
+                named: "app/ledgerd/impl.py".to_string(),
+                form: "ledgerd/impl".to_string(),
+                budget_left: budget - chars,
+            }]
+        );
+        assert!(block.cuts.is_empty());
+        let mut owners = HashMap::new();
+        owners.insert(
+            "skeleton".to_string(),
+            vec!["app/ledgerd/__init__.py".to_string()],
+        );
+        owners.insert("ledgerd-core".to_string(), owned.clone());
+        let events = block.carried_events("ledgerd-core", &owners);
+        assert_eq!(events.len(), 1, "{events:?}");
+        let ev = &events[0];
+        assert_eq!(ev["event"], "dep_source_carried_whole");
+        assert_eq!(ev["task"], "ledgerd-core");
+        assert_eq!(ev["dep_task"], "skeleton");
+        assert_eq!(ev["file"], "app/ledgerd/__init__.py");
+        assert_eq!(ev["chars"], chars);
+        assert_eq!(ev["reason"], CARRIED_NAMES_OWNED_MODULE);
+        assert_eq!(ev["form"], "ledgerd/impl");
+        assert_eq!(ev["budget_chars"], budget);
+        assert_eq!(ev["file_chars"], per_file);
+        assert_eq!(ev["budget_left"], budget - chars);
+        // A file the map does not hold is a stated absence, never a guessed owner.
+        let unowned = block.carried_events("ledgerd-core", &HashMap::new());
+        assert!(unowned[0]["dep_task"].is_null(), "{unowned:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
