@@ -20,6 +20,14 @@ export interface MlxEngineStatus {
    * when a served-model alias is configured. Chat requests MUST use this id.
    */
   servedModelId?: string;
+  /**
+   * Requests the engine has accepted and not finished (Rapid-MLX `/v1/status` num_running +
+   * num_waiting), read by the sidecar on the same probe as `servedModelId`. Absent when the engine
+   * did not report it — never a fabricated 0; `activeRequestsError` says why. `> 0` is the node's
+   * BUSY fact for the fleet corroboration; an explicit 0 is idle.
+   */
+  activeRequests?: number;
+  activeRequestsError?: string;
   baseUrl?: string;
   pid?: number;
   contextWindow?: number;
