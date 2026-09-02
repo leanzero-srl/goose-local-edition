@@ -435,6 +435,31 @@ describe('MlxEngineView engine tab', () => {
     unmount();
   });
 
+  it('a rejected mount with an ACP RequestError shows the sidecar reason (data), not the class (message)', async () => {
+    // Measured 2026-09-02: {"code":-32602,"message":"Invalid params","data":"port 8090 has an
+    // unsupervised listener — unmount/reclaim it first"} rendered as "Mount failed  Invalid params".
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockSettingsRead.mockResolvedValue({ ...SETTINGS });
+    mockMount.mockRejectedValue(
+      Object.assign(new Error('Invalid params'), {
+        code: -32602,
+        data: 'port 8090 has an unsupervised listener — unmount/reclaim it first',
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
+    });
+    await userEvent.click(screen.getByRole('button', { name: /^Mount$/ }));
+    await waitFor(() => {
+      expect(
+        screen.getByText('port 8090 has an unsupervised listener — unmount/reclaim it first')
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Invalid params')).not.toBeInTheDocument();
+    unmount();
+  });
+
   it('a stray listener while stopped shows the amber banner and an enabled Unmount that reclaims it', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped', strayListenerPort: 9600 }));
     const { unmount } = render(<MlxEngineView />);

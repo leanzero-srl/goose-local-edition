@@ -50,7 +50,7 @@ import {
   type KeyValueItem,
   type Tone,
 } from '../lz';
-import { errorMessage } from '../../utils/conversionUtils';
+import { mlxErrorMessage } from './mlxErrorMessage';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -1100,7 +1100,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
         setNextCursor(page.nextCursor ?? null);
       } catch (e) {
         if (epoch.current !== id) return;
-        setError(errorMessage(e, 'Hugging Face browse failed.'));
+        setError(mlxErrorMessage(e, 'Hugging Face browse failed.'));
         setHits(null);
       } finally {
         if (epoch.current === id) setLoading(false);
@@ -1123,7 +1123,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
         setNextCursor(page.nextCursor ?? null);
       } catch (e) {
         if (epoch.current !== id) return;
-        setError(errorMessage(e, 'Loading the next page failed.'));
+        setError(mlxErrorMessage(e, 'Loading the next page failed.'));
       } finally {
         if (epoch.current === id) setLoadingMore(false);
       }
@@ -1575,7 +1575,7 @@ function ModelsSection({
         setDirDialogOpen(false);
         refreshModels();
       } catch (error) {
-        setDirError(errorMessage(error, 'Could not save the models folder.'));
+        setDirError(mlxErrorMessage(error, 'Could not save the models folder.'));
       } finally {
         setDirSaving(false);
       }
@@ -1593,7 +1593,7 @@ function ModelsSection({
       setPendingDelete(null);
       refreshModels();
     } catch (error) {
-      setDeleteError(errorMessage(error, `Could not delete ${pendingDelete.id}.`));
+      setDeleteError(mlxErrorMessage(error, `Could not delete ${pendingDelete.id}.`));
     } finally {
       setDeleting(false);
     }
@@ -2117,7 +2117,7 @@ const MlxEngineView: React.FC = () => {
       setStatusError(null);
     } catch (error) {
       if (activeNodeRef.current !== activeNodeId) return;
-      setStatusError(errorMessage(error, 'Could not read the engine status.'));
+      setStatusError(mlxErrorMessage(error, 'Could not read the engine status.'));
     }
   }, [activeNodeId]);
 
@@ -2157,7 +2157,7 @@ const MlxEngineView: React.FC = () => {
       } catch (error) {
         if (activeNodeRef.current !== activeNodeId) return;
         // The models list failing is a real fact; show it where models are picked.
-        setMountError(errorMessage(error, 'Could not list local models.'));
+        setMountError(mlxErrorMessage(error, 'Could not list local models.'));
       } finally {
         // The node's models have landed (or failed loudly) — the switch is done.
         if (activeNodeRef.current === activeNodeId) setNodeSwitching(false);
@@ -2178,7 +2178,7 @@ const MlxEngineView: React.FC = () => {
       try {
         setBrowseFilters(await mlxEngineBrowseFilters(activeNodeId));
       } catch (error) {
-        setBrowseFiltersError(errorMessage(error, 'Could not load the filter vocabularies.'));
+        setBrowseFiltersError(mlxErrorMessage(error, 'Could not load the filter vocabularies.'));
       }
     })();
   }, [tab, activeNodeId]);
@@ -2247,7 +2247,7 @@ const MlxEngineView: React.FC = () => {
           delete next[repoId];
           return next;
         });
-        setDownloadError(repoId, errorMessage(error, 'Download failed to start.'));
+        setDownloadError(repoId, mlxErrorMessage(error, 'Download failed to start.'));
       }
     },
     [clearDownloadError, setDownloadError, activeNodeId]
@@ -2258,7 +2258,7 @@ const MlxEngineView: React.FC = () => {
       try {
         await mlxEngineDownloadPause(repoId, activeNodeId);
       } catch (error) {
-        setDownloadError(repoId, errorMessage(error, 'Pause failed.'));
+        setDownloadError(repoId, mlxErrorMessage(error, 'Pause failed.'));
       }
       await syncProgress(repoId);
     },
@@ -2277,7 +2277,7 @@ const MlxEngineView: React.FC = () => {
       try {
         await mlxEngineDownloadResume(repoId, activeNodeId);
       } catch (error) {
-        setDownloadError(repoId, errorMessage(error, 'Resume failed.'));
+        setDownloadError(repoId, mlxErrorMessage(error, 'Resume failed.'));
       }
       // Real state replaces the optimistic entry; a refused untracked resume drops it.
       await syncProgress(repoId, { dropIfUntracked: true });
@@ -2290,7 +2290,7 @@ const MlxEngineView: React.FC = () => {
       try {
         await mlxEngineDownloadCancel(repoId, activeNodeId);
       } catch (error) {
-        setDownloadError(repoId, errorMessage(error, 'Cancel failed.'));
+        setDownloadError(repoId, mlxErrorMessage(error, 'Cancel failed.'));
         return;
       }
       // Paused/failed cancels delete synchronously — this sync sees "cancelled" and the
@@ -2386,7 +2386,7 @@ const MlxEngineView: React.FC = () => {
         setSettings(next);
       } catch (error) {
         if (activeNodeRef.current !== activeNodeId) return;
-        setSaveError(errorMessage(error, 'Could not read the engine settings.'));
+        setSaveError(mlxErrorMessage(error, 'Could not read the engine settings.'));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2433,7 +2433,7 @@ const MlxEngineView: React.FC = () => {
       try {
         await mlxEngineMount(mountModelId, activeNodeId);
       } catch (error) {
-        setMountError(errorMessage(error, 'Mount failed.'));
+        setMountError(mlxErrorMessage(error, 'Mount failed.'));
       } finally {
         setEngineBusy(false);
         void refreshStatus();
@@ -2448,7 +2448,7 @@ const MlxEngineView: React.FC = () => {
       try {
         await mlxEngineUnmount(activeNodeId);
       } catch (error) {
-        setMountError(errorMessage(error, 'Unmount failed.'));
+        setMountError(mlxErrorMessage(error, 'Unmount failed.'));
       } finally {
         setEngineBusy(false);
         void refreshStatus();
@@ -2466,7 +2466,7 @@ const MlxEngineView: React.FC = () => {
         await mlxEngineUnmount(activeNodeId);
         await mlxEngineMount(modelId, activeNodeId);
       } catch (error) {
-        setMountError(errorMessage(error, 'Remount failed.'));
+        setMountError(mlxErrorMessage(error, 'Remount failed.'));
       } finally {
         setEngineBusy(false);
         void refreshStatus();
@@ -2521,7 +2521,7 @@ const MlxEngineView: React.FC = () => {
           return next;
         });
       } catch (error) {
-        setSaveError(errorMessage(error, 'Could not save settings.'));
+        setSaveError(mlxErrorMessage(error, 'Could not save settings.'));
       } finally {
         setSaving(false);
       }
