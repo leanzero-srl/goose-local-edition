@@ -34,10 +34,20 @@
 
 use super::*;
 
-use std::sync::RwLock as StdRwLock;
+use std::pin::Pin;
+use std::sync::{LazyLock, Mutex as StdMutex, OnceLock, RwLock as StdRwLock};
+use std::task::{Context, Poll};
 
+use futures::stream::{BoxStream, Stream};
+use rmcp::model::ServerNotification;
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
+
+use crate::agents::AgentEvent;
 use crate::config::extensions::get_enabled_extensions_with_config;
 use crate::config::ConfigError;
+use crate::conversation::message::TokenState;
 
 /// The managers a remote prompt runs on: the pair the link layer's `SwarmStateSource` was
 /// built from, so the run's cancel token lands in the busy set the idle guard reads.
@@ -378,6 +388,9 @@ async fn drive_remote_reply(
         Ok(agent) => agent,
         Err(error) => {
             error!(%session_id, %error, "leanzeroLink: remote prompt could not get the session agent");
+            publish_tap(session_id, || {
+                TapEvent::Error(format!("Failed to get session agent: {error}"))
+            });
             return;
         }
     };
@@ -392,7 +405,7 @@ async fn drive_remote_reply(
         max_turns: None,
         retry_config: None,
     };
-    let mut stream = match agent
+    let stream = match agent
         .reply(
             Message::user().with_text(&prompt),
             session_config,
@@ -403,9 +416,13 @@ async fn drive_remote_reply(
         Ok(stream) => stream,
         Err(error) => {
             error!(%session_id, %error, "leanzeroLink: remote prompt failed to start its reply stream");
+            publish_tap(session_id, || TapEvent::Error(error.to_string()));
             return;
         }
     };
+    // The mirror: every event fans onto the process-wide tap, and the session's delta
+    // sequence closes with Finish when the stream ends or is dropped.
+    let mut stream = tapped_reply(session_id, stream);
 
     loop {
         let event = tokio::select! {
@@ -445,6 +462,336 @@ fn acp_error_text(error: &agent_client_protocol::Error) -> String {
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| error.message.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// The per-message mirror: one process-wide tap that every reply door feeds.
+// ---------------------------------------------------------------------------
+
+/// One reply-loop event as the mirror sees it. `Unclassified` names an `AgentEvent`
+/// that has no per-message delta class (`Usage`, `HistoryReplaced`) so the pump can log
+/// the gap as `delta_unclassified{kind}`; a notification is classified on the pump side,
+/// where its variant is inspected.
+#[derive(Clone, Debug)]
+pub(super) enum TapEvent {
+    Message(Message),
+    Notification {
+        request_id: String,
+        message: ServerNotification,
+    },
+    Error(String),
+    Finish {
+        reason: &'static str,
+    },
+    Unclassified(&'static str),
+}
+
+/// One tapped event with the ORIGIN node's per-session delta sequence stamped on it.
+#[derive(Clone, Debug)]
+pub(super) struct TappedMsg {
+    pub(super) session_id: String,
+    pub(super) seq: u64,
+    pub(super) event: TapEvent,
+}
+
+/// goose-server's `SESSION_DELTA_TAP_CAPACITY`: a pump that falls this far behind drops
+/// the oldest deltas (peers reconcile through their session poll) rather than blocking
+/// a reply.
+const REPLY_TAP_CAPACITY: usize = 1024;
+
+static REPLY_TAP: OnceLock<broadcast::Sender<TappedMsg>> = OnceLock::new();
+static DELTA_SEQ: LazyLock<StdMutex<HashMap<String, u64>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn reply_tap() -> &'static broadcast::Sender<TappedMsg> {
+    REPLY_TAP.get_or_init(|| broadcast::channel(REPLY_TAP_CAPACITY).0)
+}
+
+/// The origin's per-session delta sequence, minted at publish like goose-server's
+/// `bus.publish` so every subscriber sees the same `seq` for the same event. It advances
+/// for every tapped event whether or not a mirror is listening, so a peer that attaches
+/// mid-session sees the numbering it would have seen from the start.
+fn next_seq(session_id: &str) -> u64 {
+    let mut seqs = DELTA_SEQ.lock().unwrap();
+    let seq = seqs.entry(session_id.to_string()).or_insert(0);
+    *seq += 1;
+    *seq
+}
+
+/// Fan one reply event onto the tap. Non-fallible and non-blocking: with no subscriber
+/// (mesh not connected) the event is not even built — the reply path never pays for a
+/// mirror nobody reads, and never fails because of one.
+fn publish_tap(session_id: &str, event: impl FnOnce() -> TapEvent) {
+    let seq = next_seq(session_id);
+    let tap = reply_tap();
+    if tap.receiver_count() == 0 {
+        return;
+    }
+    let _ = tap.send(TappedMsg {
+        session_id: session_id.to_string(),
+        seq,
+        event: event(),
+    });
+}
+
+fn tap_agent_event(session_id: &str, event: &AgentEvent) {
+    publish_tap(session_id, || match event {
+        AgentEvent::Message(message) => TapEvent::Message(message.clone()),
+        AgentEvent::McpNotification((request_id, notification)) => TapEvent::Notification {
+            request_id: request_id.clone(),
+            message: notification.clone(),
+        },
+        AgentEvent::Usage(_) => TapEvent::Unclassified("usage"),
+        AgentEvent::HistoryReplaced(_) => TapEvent::Unclassified("history_replaced"),
+    });
+}
+
+/// The reply stream of either door, wrapped so every event it yields is mirrored and the
+/// session's delta sequence closes with a `Finish` — on natural end (`stop`), or when the
+/// stream is dropped before that (`cancelled`: the Stop button, a cancel token). An `Err`
+/// item mirrors as `Error`, and the `Finish` that follows says `stop`, as goose-server's
+/// reply loop ends every run.
+pub(super) struct TappedReply<S> {
+    inner: S,
+    session_id: String,
+    errored: bool,
+    finished: bool,
+}
+
+pub(super) fn tapped_reply<S>(session_id: &str, inner: S) -> TappedReply<S> {
+    TappedReply {
+        inner,
+        session_id: session_id.to_string(),
+        errored: false,
+        finished: false,
+    }
+}
+
+impl<S> TappedReply<S> {
+    fn finish(&mut self, reason: &'static str) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        publish_tap(&self.session_id, || TapEvent::Finish { reason });
+    }
+}
+
+impl<S> Stream for TappedReply<S>
+where
+    S: Stream<Item = anyhow::Result<AgentEvent>> + Unpin,
+{
+    type Item = S::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let polled = Pin::new(&mut this.inner).poll_next(cx);
+        match &polled {
+            Poll::Ready(Some(Ok(event))) => tap_agent_event(&this.session_id, event),
+            Poll::Ready(Some(Err(error))) => {
+                this.errored = true;
+                let text = error.to_string();
+                publish_tap(&this.session_id, || TapEvent::Error(text));
+            }
+            Poll::Ready(None) => this.finish("stop"),
+            Poll::Pending => {}
+        }
+        polled
+    }
+}
+
+impl<S> Drop for TappedReply<S> {
+    fn drop(&mut self) {
+        let reason = if self.errored { "stop" } else { "cancelled" };
+        self.finish(reason);
+    }
+}
+
+/// goose-server's `MessageEvent` wire shape (`routes/reply.rs`), reproduced field for
+/// field so a `SessionDelta.payload` from a `goose serve` node parses exactly like one
+/// from a `goosed agent` node — a consumer never learns which produced it.
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum WireDelta<'a> {
+    Message {
+        message: &'a Message,
+        token_state: TokenState,
+    },
+    Error {
+        error: &'a str,
+    },
+    Finish {
+        reason: &'a str,
+        token_state: TokenState,
+    },
+    Notification {
+        request_id: &'a str,
+        message: &'a ServerNotification,
+    },
+}
+
+/// The per-message [`DeltaSource`] for `goose serve`: each `subscribe` pumps the tap into
+/// classified [`DeltaInput`]s. The pump exits when its receiver (the control service's
+/// local delta stream) is dropped, so nothing leaks past a disconnect.
+pub struct ServeDeltaSource {
+    session_manager: Arc<SessionManager>,
+}
+
+impl ServeDeltaSource {
+    /// `session_manager` reads the token counters a `Message`/`Finish` payload carries —
+    /// its own handle over the same store, as goose-server's `AppState` has its own.
+    pub fn new(session_manager: Arc<SessionManager>) -> Self {
+        Self { session_manager }
+    }
+}
+
+impl DeltaSource for ServeDeltaSource {
+    fn subscribe(&self) -> BoxStream<'static, DeltaInput> {
+        let mut rx = reply_tap().subscribe();
+        let session_manager = self.session_manager.clone();
+        let (out_tx, out_rx) = mpsc::channel::<DeltaInput>(256);
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        if let Some(input) = to_delta_input(&session_manager, msg).await {
+                            if out_tx.send(input).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        warn!(
+                            dropped,
+                            "leanzeroLink delta tap: pump lagged and lost deltas; peers reconcile via their session poll"
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Box::pin(ReceiverStream::new(out_rx))
+    }
+}
+
+/// The wire class of a tool notification, exactly as goose's own ACP layer surfaces them
+/// (`tool_notifications.rs`) and goose-server's tap classifies them: logging, progress and
+/// `platform_event` are tool-call updates; anything else is not tool-related.
+fn tool_update_kind(notification: &ServerNotification) -> Option<SessionDeltaKind> {
+    match notification {
+        ServerNotification::LoggingMessageNotification(_)
+        | ServerNotification::ProgressNotification(_) => Some(SessionDeltaKind::ToolUpdate),
+        ServerNotification::CustomNotification(n) if n.method == "platform_event" => {
+            Some(SessionDeltaKind::ToolUpdate)
+        }
+        _ => None,
+    }
+}
+
+fn notification_kind(notification: &ServerNotification) -> String {
+    let kind = match notification {
+        ServerNotification::CancelledNotification(_) => "cancelled",
+        ServerNotification::ProgressNotification(_) => "progress",
+        ServerNotification::LoggingMessageNotification(_) => "logging_message",
+        ServerNotification::ResourceUpdatedNotification(_) => "resource_updated",
+        ServerNotification::ResourceListChangedNotification(_) => "resource_list_changed",
+        ServerNotification::ToolListChangedNotification(_) => "tool_list_changed",
+        ServerNotification::PromptListChangedNotification(_) => "prompt_list_changed",
+        ServerNotification::ElicitationCompletionNotification(_) => "elicitation_completion",
+        ServerNotification::CustomNotification(n) => {
+            return format!("notification:custom:{}", n.method)
+        }
+    };
+    format!("notification:{kind}")
+}
+
+/// The session's token counters as goose-server's `get_token_state` reads them. The delta
+/// is never dropped over this read: on a failure the counters ride as zeros and the
+/// failure is logged — the payload's `message` is the fact, `token_state` decorates it
+/// (goose-server's tap carries the identical `unwrap_or_default` there).
+async fn token_state(session_manager: &SessionManager, session_id: &str) -> TokenState {
+    match session_manager.get_session(session_id, false).await {
+        Ok(session) => TokenState::from(&session),
+        Err(error) => {
+            warn!(
+                %session_id,
+                %error,
+                "leanzeroLink delta tap: session token state unreadable; the delta carries zero counters"
+            );
+            TokenState::default()
+        }
+    }
+}
+
+fn unclassified(session_id: &str, seq: u64, kind: &str) {
+    info!(
+        %session_id,
+        seq,
+        kind,
+        "leanzeroLink delta tap: delta_unclassified — this reply event has no per-message delta class and is not mirrored; peers see its effect through their session poll"
+    );
+}
+
+async fn to_delta_input(session_manager: &SessionManager, msg: TappedMsg) -> Option<DeltaInput> {
+    let TappedMsg {
+        session_id,
+        seq,
+        event,
+    } = msg;
+    let (kind, payload) = match &event {
+        TapEvent::Message(message) => (
+            SessionDeltaKind::Message,
+            WireDelta::Message {
+                message,
+                token_state: token_state(session_manager, &session_id).await,
+            },
+        ),
+        TapEvent::Error(error) => (
+            SessionDeltaKind::Error,
+            WireDelta::Error {
+                error: error.as_str(),
+            },
+        ),
+        TapEvent::Finish { reason } => (
+            SessionDeltaKind::Finish,
+            WireDelta::Finish {
+                reason,
+                token_state: token_state(session_manager, &session_id).await,
+            },
+        ),
+        TapEvent::Notification {
+            request_id,
+            message,
+        } => match tool_update_kind(message) {
+            Some(kind) => (
+                kind,
+                WireDelta::Notification {
+                    request_id: request_id.as_str(),
+                    message,
+                },
+            ),
+            None => {
+                unclassified(&session_id, seq, &notification_kind(message));
+                return None;
+            }
+        },
+        TapEvent::Unclassified(kind) => {
+            unclassified(&session_id, seq, kind);
+            return None;
+        }
+    };
+    match serde_json::to_value(&payload) {
+        Ok(payload) => Some(DeltaInput {
+            session_id,
+            seq,
+            kind,
+            payload,
+        }),
+        Err(error) => {
+            warn!(%session_id, seq, %error, "leanzeroLink delta tap: delta failed to serialize; dropped");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -736,5 +1083,176 @@ mod tests {
             remote_session_name(&long).chars().count(),
             "Link: ".len() + 48
         );
+    }
+
+    fn logging_notification() -> ServerNotification {
+        use rmcp::model::{LoggingLevel, LoggingMessageNotificationParam, Notification};
+        ServerNotification::LoggingMessageNotification(Notification::new(
+            LoggingMessageNotificationParam::new(
+                LoggingLevel::Info,
+                serde_json::json!({ "line": "x" }),
+            ),
+        ))
+    }
+
+    fn cancelled_notification() -> ServerNotification {
+        use rmcp::model::{CancelledNotificationParam, Notification, NumberOrString};
+        ServerNotification::CancelledNotification(Notification::new(CancelledNotificationParam {
+            request_id: NumberOrString::String(Arc::from("r1")),
+            reason: None,
+        }))
+    }
+
+    /// Drain the subscriber stream for `session_id`'s deltas up to and including its
+    /// Finish (other tests' sessions interleave on the same process-wide tap).
+    async fn collect_deltas(
+        stream: &mut BoxStream<'static, DeltaInput>,
+        session_id: &str,
+    ) -> Vec<DeltaInput> {
+        let mut deltas = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(input) = stream.next().await {
+                if input.session_id != session_id {
+                    continue;
+                }
+                let done = input.kind == SessionDeltaKind::Finish;
+                deltas.push(input);
+                if done {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the session's Finish delta arrives");
+        deltas
+    }
+
+    fn assistant(text: &str) -> anyhow::Result<AgentEvent> {
+        Ok(AgentEvent::Message(Message::assistant().with_text(text)))
+    }
+
+    #[tokio::test]
+    async fn a_tapped_reply_mirrors_message_tool_update_and_finish_as_message_event_payloads() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let session_manager = Arc::new(SessionManager::new(temp.path().to_path_buf()));
+        let session = session_manager
+            .create_session(
+                temp.path().to_path_buf(),
+                "Chat".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        let source = ServeDeltaSource::new(session_manager.clone());
+        let mut deltas_stream = source.subscribe();
+
+        let events = vec![
+            assistant("mirror me"),
+            Ok(AgentEvent::HistoryReplaced(
+                crate::conversation::Conversation::new_unvalidated(Vec::new()),
+            )),
+            Ok(AgentEvent::McpNotification((
+                "tool_1".to_string(),
+                logging_notification(),
+            ))),
+            Ok(AgentEvent::McpNotification((
+                "tool_1".to_string(),
+                cancelled_notification(),
+            ))),
+        ];
+        let mut reply = tapped_reply(&session.id, stream::iter(events));
+        while reply.next().await.is_some() {}
+        drop(reply);
+
+        let deltas = collect_deltas(&mut deltas_stream, &session.id).await;
+        let kinds: Vec<SessionDeltaKind> = deltas.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SessionDeltaKind::Message,
+                SessionDeltaKind::ToolUpdate,
+                SessionDeltaKind::Finish
+            ]
+        );
+        // The origin's per-session sequence: every tapped event consumes one — the
+        // unclassified HistoryReplaced (2) and the non-tool notification (4) included.
+        let seqs: Vec<u64> = deltas.iter().map(|d| d.seq).collect();
+        assert_eq!(seqs, vec![1, 3, 5]);
+
+        let message = &deltas[0].payload;
+        assert_eq!(message["type"], "Message");
+        assert_eq!(message["message"]["role"], "assistant");
+        assert!(
+            message["token_state"].is_object(),
+            "goose-server's MessageEvent shape: {message}"
+        );
+        let update = &deltas[1].payload;
+        assert_eq!(update["type"], "Notification");
+        assert_eq!(update["request_id"], "tool_1");
+        let finish = &deltas[2].payload;
+        assert_eq!(finish["type"], "Finish");
+        assert_eq!(finish["reason"], "stop");
+        assert!(finish["token_state"].is_object());
+    }
+
+    #[tokio::test]
+    async fn a_reply_dropped_before_its_end_closes_with_a_cancelled_finish() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source =
+            ServeDeltaSource::new(Arc::new(SessionManager::new(temp.path().to_path_buf())));
+        let mut deltas_stream = source.subscribe();
+        let session_id = format!("s-{}", Uuid::new_v4());
+
+        let mut reply = tapped_reply(
+            &session_id,
+            stream::iter(vec![assistant("one"), assistant("two")]),
+        );
+        assert!(reply.next().await.is_some());
+        // The Stop button / a cancel token: the stream goes before its end.
+        drop(reply);
+
+        let deltas = collect_deltas(&mut deltas_stream, &session_id).await;
+        let kinds: Vec<SessionDeltaKind> = deltas.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![SessionDeltaKind::Message, SessionDeltaKind::Finish]
+        );
+        assert_eq!(deltas[1].payload["reason"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn a_failing_reply_mirrors_the_error_then_a_stop_finish() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source =
+            ServeDeltaSource::new(Arc::new(SessionManager::new(temp.path().to_path_buf())));
+        let mut deltas_stream = source.subscribe();
+        let session_id = format!("s-{}", Uuid::new_v4());
+
+        let events = vec![
+            assistant("partial"),
+            Err(anyhow::anyhow!("provider exploded")),
+        ];
+        let mut reply = tapped_reply(&session_id, stream::iter(events));
+        // `on_prompt` breaks out of its loop on the first Err and drops the stream.
+        while let Some(item) = reply.next().await {
+            if item.is_err() {
+                break;
+            }
+        }
+        drop(reply);
+
+        let deltas = collect_deltas(&mut deltas_stream, &session_id).await;
+        let kinds: Vec<SessionDeltaKind> = deltas.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SessionDeltaKind::Message,
+                SessionDeltaKind::Error,
+                SessionDeltaKind::Finish
+            ]
+        );
+        assert_eq!(deltas[1].payload["error"], "provider exploded");
+        assert_eq!(deltas[2].payload["reason"], "stop");
     }
 }

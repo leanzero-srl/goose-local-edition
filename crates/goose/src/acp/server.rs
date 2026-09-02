@@ -98,7 +98,7 @@ pub use link::{
     SessionDeltaKind,
 };
 mod link_serve;
-pub use link_serve::ServeRemoteExecutor;
+pub use link_serve::{ServeDeltaSource, ServeRemoteExecutor};
 mod list_sessions;
 mod load_session;
 mod local_inference;
@@ -2546,7 +2546,7 @@ impl GooseAcpAgent {
             retry_config: None,
         };
 
-        let mut stream = match agent
+        let stream = match agent
             .reply(user_message, session_config, Some(cancel_token.clone()))
             .await
         {
@@ -2558,6 +2558,10 @@ impl GooseAcpAgent {
                     .data(format!("Error getting agent reply: {error}")));
             }
         };
+        // Every reply door feeds the LeanZero Link mirror (link_serve.rs): each event fans
+        // onto the process-wide tap, and the session's delta sequence closes with Finish
+        // when the stream ends or is dropped.
+        let mut stream = link_serve::tapped_reply(&session_id, stream);
 
         let mut was_cancelled = false;
         let mut first_event_logged = false;
