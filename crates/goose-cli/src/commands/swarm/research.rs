@@ -2266,6 +2266,7 @@ mod tests {
             slice: slice.to_string(),
             head: head.to_string(),
             siblings: String::new(),
+            questions: Vec::new(),
             material: material.to_string(),
         }
     }

@@ -21283,6 +21283,7 @@ impl GooseAgentDispatcher {
                 slice: sl.id.clone(),
                 head,
                 siblings,
+                questions: Vec::new(),
                 material: research::slice_material(sl, &sections),
             });
         }
