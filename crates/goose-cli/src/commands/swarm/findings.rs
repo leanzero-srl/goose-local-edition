@@ -355,12 +355,13 @@ pub(super) fn console_error_is_exception(line: &str) -> bool {
 /// gate re-runs on the merged preview to decide promotion (§2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FindingCheck {
-    /// The check's identity ACROSS gate runs: the authoring check's label plus the finding
-    /// template's own first clause, parenthesized spans dropped and digit runs normalized. The
-    /// gate re-run on a preview boots the app on a fresh port, re-numbers a shifted line and
-    /// quotes whichever console error is first NOW — none of that is a different check. What
-    /// stays is the subject the template names outside parentheses: the endpoint, the DOM id,
-    /// the module, the deliverable path.
+    /// The check's identity ACROSS gate runs: the PROBE that ran (`FindingSource::probe` — the
+    /// render gate's console is one check whether its first error is an uncaught exception or a
+    /// resource failure) plus the finding template's own first clause, parenthesized spans
+    /// dropped and digit runs normalized. The gate re-run on a preview boots the app on a fresh
+    /// port, re-numbers a shifted line and quotes whichever console error is first NOW — none
+    /// of that is a different check. What stays is the subject the template names outside
+    /// parentheses: the endpoint, the DOM id, the module, the deliverable path.
     pub(super) key: String,
     /// The check as the gate states it in the finding's own words — its `GATE COMMAND` /
     /// `REPLAY IT` sentence, or the leading backticked command — verbatim. None when the
@@ -369,10 +370,12 @@ pub(super) struct FindingCheck {
     pub(super) command: Option<String>,
 }
 
-/// The identity of a check across gate runs. Parenthesized spans go (the quoted exemplar, the
-/// `(in \`file\`)` attribution, `(exit 1)`), digit runs become `#` (ports, line numbers, counts),
-/// and the key is the first clause — the engine's templates separate the claim from its
-/// elaboration with ` — `, a sentence end or a newline. Lowercased and whitespace-collapsed.
+/// The identity of a check across gate runs: the PROBE that ran (`FindingSource::probe`, never
+/// the severity-branch label) plus the finding's first clause. Parenthesized spans go (the
+/// quoted exemplar, the `(in \`file\`)` attribution, `(exit 1)`), digit runs become `#` (ports,
+/// line numbers, counts), and the key is the first clause — the engine's templates separate the
+/// claim from its elaboration with ` — `, a sentence end or a newline. Lowercased and
+/// whitespace-collapsed.
 pub(super) fn check_key(source: FindingSource, text: &str) -> String {
     let mut depth = 0usize;
     let mut in_digits = false;
@@ -412,7 +415,7 @@ pub(super) fn check_key(source: FindingSource, text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
-    format!("{} | {}", source.label(), norm)
+    format!("{} | {}", source.probe(), norm)
 }
 
 /// The gate's own replay, quoted from the finding: the sentence from its `GATE COMMAND` or
@@ -634,6 +637,38 @@ impl FindingSource {
             FindingSource::RenderGateStyling | FindingSource::CssCoherenceScan => {
                 FindingSeverity::Low
             }
+        }
+    }
+
+    /// The CHECK that ran — the identity `check_key` is built on. Where one check writes two
+    /// classes (the render gate's console: an uncaught exception vs. any other console error;
+    /// the POST probe: a hang/dark read vs. a response shape), both classes name the ONE probe:
+    /// a shard that turns `ReferenceError: x is not defined` into a resource-load error fixed
+    /// the exception and left the console check failing — the same check, fewer or equal
+    /// failures — never a check that "passed on the tree and fails on the preview" (VA-098:
+    /// keyed on `label()`, that edit read as `preview_regressed`).
+    pub(super) fn probe(self) -> &'static str {
+        match self {
+            FindingSource::BootProbe => "boot probe",
+            FindingSource::SmokeGate => "smoke gate",
+            FindingSource::FailedTask => "failed planned task",
+            FindingSource::MissingDeliverable => "planned-deliverable stat",
+            FindingSource::EndpointDeadProbe | FindingSource::EndpointContractProbe => {
+                "endpoint probe"
+            }
+            FindingSource::SyncAcquisition => "sync acquisition probe",
+            FindingSource::RenderGateRows => "render gate rows",
+            FindingSource::RestartDurability => "restart durability probe",
+            FindingSource::RenderGateConsole | FindingSource::RenderGateException => {
+                "render gate console"
+            }
+            FindingSource::ClientApiPaging => "client public-API paging probe",
+            FindingSource::CrossModuleDrift => "cross-module drift scan",
+            FindingSource::DomIdScan => "dom-id contract scan",
+            FindingSource::AggregateTruth => "aggregate-truth probe",
+            FindingSource::HttpTimeoutScan => "http timeout scan",
+            FindingSource::RenderGateStyling => "render gate styling",
+            FindingSource::CssCoherenceScan => "css coherence scan",
         }
     }
 
@@ -1715,8 +1750,18 @@ mod tests {
         assert_eq!(kb.key, ka.key, "port, count and exemplar are not the check");
         assert_eq!(
             kb.key,
-            "render gate exception (uncaught JS exception in the page's boot path) | the page \
-             renders but the browser console carries # error in normal use"
+            "render gate console | the page renders but the browser console carries # error in \
+             normal use"
+        );
+        // VA-098: the exception fixed, a resource-load error now first — the SAME console check
+        // (fewer failures), never a check that passed on the tree and fails on the preview.
+        assert_eq!(
+            check_key(FindingSource::RenderGateException, &before),
+            check_key(
+                FindingSource::RenderGateConsole,
+                &r5_console(1, "Failed to load resource: net::ERR_EMPTY_RESPONSE", 61003)
+            ),
+            "the console probe is one check across its two classes"
         );
         let dom = |line: u32, id: &str| {
             format!(
@@ -1749,12 +1794,11 @@ mod tests {
         assert_ne!(
             check_key(FindingSource::RenderGateRows, shared),
             check_key(FindingSource::EndpointContractProbe, shared),
-            "the same words under two authoring checks are two checks"
+            "the same words under two different probes are two checks"
         );
         assert_eq!(
             check_key(FindingSource::RenderGateRows, shared),
-            "render gate rows (journey dead in a browser) | the served page renders no data rows \
-             in a real browser"
+            "render gate rows | the served page renders no data rows in a real browser"
         );
         assert_eq!(
             check_key(
@@ -1763,8 +1807,8 @@ mod tests {
                  (`python3 -m app --db-dir X`), so it does not run at all. Check that the \
                  entrypoint BLOCKS while serving."
             ),
-            "boot probe (advertised entry never bound) | the app never bound port # when started \
-             exactly as its spec documents , so it does not run at all"
+            "boot probe | the app never bound port # when started exactly as its spec documents \
+             , so it does not run at all"
         );
         assert_eq!(prov.check_of("never tagged"), None, "unsourced = no check");
     }
