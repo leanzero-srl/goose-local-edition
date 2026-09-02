@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "İptal"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Bulut Sağlayıcıları'nda yapılandır"
+  },
   "addNode.description": {
     "defaultMessage": "Bir düğüm, onu neyin sunacağını seçerek oluşturulur: önce bir sağlayıcı, sonra bir model seçin."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Bir LeanZero MLX motoru TEK bir model sunar: tüm MLX düğümleri motorun bağladığını paylaşır, bu yüzden düğüm başına farklı model henüz mümkün değil. Bu düğümü eklemek motoru burada seçtiğiniz modele yönlendirir."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "anahtar yok"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} için bu makinede henüz API anahtarı yok. Bulut Sağlayıcıları'nda ekleyin, sonra düğümü eklemek için geri gelin."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Sağlayıcı"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Bir sağlayıcı seçin…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Düğüm sağlayıcıları swarm motorunun desteklediği sağlayıcılardır — motor desteğiyle birlikte daha fazla bulut ailesi gelecek."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Kaldır ve yeniden ekle"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Onay modunu yapılandırma"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Bu pencereyi kapatmak çalıştırmayı durdurur: pencerenin arka ucu serbest bırakılır ve altındaki swarm motoruna çıkış sinyali gönderilir."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Çalışmaya devam et"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "{runDir} içindeki {runId} çalıştırması"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Çalıştırmayı durdur ve kapat"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Çalıştırma durduruluyor…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "Bu pencerede bir swarm çalıştırması canlı"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Uyarı"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Hayır"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Daha az göster"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Başarısız"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Yüklendi"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Kısmen yüklendi"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{# uzantı başarıyla yüklendi} other{# uzantı başarıyla yüklendi}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "goose'a herhangi bir şey sorun..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Cihazlarınızı özel bir mesh ağında birbirine bağlamak için oturum açın — parola yok, yalnızca e-postayla bir kod."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Tüm sürü için tek yer: şirket içi MLX motoru, bulut sağlayıcı kimlik bilgileri ve sürünün inşa ettiği düğüm havuzu."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Bulut Sağlayıcıları"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Sürü Ayarları"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Kapat"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Mevcut model"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Beceriler"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "başarısız"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "boşta"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "bağlanıyor"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "sunuyor"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Düğümler"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Çince (Geleneksel)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "LM Studio'nun keşfettiği filo satırlarını ve düğüm durumunu uygulama genelinde geri getirir. Kapalıyken hiçbir şey LM Studio'yu yoklamaz ve keşfedilen satırlar gösterilmez."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio filosu gizli (eski) — canlı düğümleri burada görmek için yukarıdan etkinleştirin"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "LM Studio filosunu göster (eski)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Menü çubuğunda goose'yi göster"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Uzak makinenin MLX düğümü — havuzda kayıtlı, düğüm başına yönlendirme gelince hizmet verir"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Henüz düğüm yok — bir tane ekleyin veya keşfedilmesi için {endpoint} adresinde LM Studio'yu başlatın."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Sürünün çalıştırdığı her düğüm — yapılandırılmış satırlar artı LM Studio'da şu an yerleşik olanlar. Ağırlık: yükseldikçe görevlerden daha büyük pay alır."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Düğümü kaldır"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Paylaş"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Model listesine geri dön"

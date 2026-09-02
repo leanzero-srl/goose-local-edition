@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "Batal"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "Konfigurasi dalam Penyedia Awan"
+  },
   "addNode.description": {
     "defaultMessage": "Nod dibuat dengan memilih apa yang melayaninya: pilih penyedia, kemudian model."
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Satu enjin LeanZero MLX melayani SATU model: semua nod MLX berkongsi apa yang dimuatkan enjin, jadi model berbeza bagi setiap nod belum boleh dilakukan. Menambah nod ini menghala enjin ke model yang anda pilih di sini."
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "tiada kunci"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} belum mempunyai kunci API pada mesin ini. Tambahkannya dalam Penyedia Awan, kemudian kembali untuk menambah nod."
+  },
   "addNode.providerLabel": {
     "defaultMessage": "Penyedia"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "Pilih penyedia…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "Penyedia nod ialah yang disokong enjin swarm — lebih banyak keluarga awan akan tiba bersama sokongan enjin."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Buang & tambah semula"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "Konfigurasi mod kelulusan"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "Menutup tetingkap ini menghentikan larian: backend tetingkap dilepaskan dan enjin swarm di bawahnya diberi isyarat untuk keluar."
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "Teruskan larian"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "Larian {runId} dalam {runDir}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "Hentikan larian dan tutup"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "Menghentikan larian…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "Larian swarm sedang aktif dalam tetingkap ini"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Amaran"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Tidak"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "Tunjukkan kurang"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "Gagal"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "Dimuatkan"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "Dimuatkan sebahagian"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{Berjaya memuatkan # sambungan} other{Berjaya memuatkan # sambungan}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "Tanya goose apa sahaja..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "Log masuk untuk memautkan peranti anda ke dalam mesh peribadi — tiada kata laluan, hanya kod melalui e-mel."
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "Satu tempat untuk seluruh swarm: enjin MLX dalaman, kelayakan penyedia awan, dan kumpulan nod yang digunakan swarm untuk membina."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Penyedia Awan"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Tetapan Swarm"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "Tutup"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Model semasa"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "Kemahiran"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "gagal"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "melahu"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "melekap"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "melayan"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "Nod"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "Bahasa Cina (Tradisional)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "Paparkan semula baris armada yang ditemui LM Studio dan status nod di seluruh aplikasi. Jika dimatikan, tiada apa yang menyoal LM Studio dan tiada baris yang ditemui dipaparkan."
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "Armada LM Studio disembunyikan (legasi) — aktifkan di atas untuk melihat nod langsung di sini"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "Tunjukkan armada LM Studio (legasi)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "Tunjukkan goose dalam bar menu"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nod MLX mesin jauh — tersimpan dalam kumpulan, dilayani apabila penghalaan per nod tiba"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "Belum ada nod — tambah satu, atau mulakan LM Studio di {endpoint} untuk ditemui."
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Setiap nod yang dijalankan swarm — baris yang dikonfigurasi serta apa sahaja yang residen dalam LM Studio sekarang. Pemberat: lebih tinggi mendapat bahagian tugasan yang lebih besar."
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Buang nod"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "Kongsi"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Kembali ke senarai model"

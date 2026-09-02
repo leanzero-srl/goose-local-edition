@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "रद्द करें"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "क्लाउड प्रदाता में कॉन्फ़िगर करें"
+  },
   "addNode.description": {
     "defaultMessage": "नोड यह चुनकर बनता है कि उसे कौन चलाएगा: पहले प्रदाता चुनें, फिर मॉडल।"
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "एक LeanZero MLX इंजन केवल एक ही मॉडल चलाता है: सभी MLX नोड वही साझा करते हैं जो इंजन ने माउंट किया है, इसलिए हर नोड के लिए अलग मॉडल अभी संभव नहीं। यह नोड जोड़ने से इंजन यहाँ चुने गए मॉडल पर सेट हो जाएगा।"
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "कोई कुंजी नहीं"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} के लिए इस मशीन पर अभी कोई API कुंजी नहीं है। इसे क्लाउड प्रदाता में जोड़ें, फिर नोड जोड़ने के लिए वापस आएँ।"
+  },
   "addNode.providerLabel": {
     "defaultMessage": "प्रदाता"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "प्रदाता चुनें…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "नोड प्रदाता वही हैं जिन्हें swarm इंजन सपोर्ट करता है — इंजन सपोर्ट के साथ और क्लाउड परिवार आएँगे।"
   },
   "addNode.reassignButton": {
     "defaultMessage": "हटाएँ और फिर से जोड़ें"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "अनुमोदन मोड कॉन्फ़िगर करें"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "यह विंडो बंद करने से रन रुक जाता है: विंडो का बैकएंड छोड़ दिया जाता है और उसके नीचे चल रहे swarm इंजन को बाहर निकलने का संकेत दिया जाता है।"
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "चलने दें"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "{runDir} में रन {runId}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "रन रोकें और बंद करें"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "रन रोका जा रहा है…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "इस विंडो में एक swarm रन चल रहा है"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "चेतावनी"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "नहीं"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "कम दिखाओ"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "विफल"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "लोड हो गया"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "आंशिक रूप से लोड"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{# एक्सटेंशन सफलतापूर्वक लोड हो गया} other{# एक्सटेंशन सफलतापूर्वक लोड हो गए}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "goose से कुछ भी पूछें..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "अपने डिवाइस को एक निजी मेश में जोड़ने के लिए साइन इन करें — कोई पासवर्ड नहीं, बस ईमेल से एक कोड।"
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "पूरे स्वार्म के लिए एक जगह: अपना MLX इंजन, क्लाउड प्रदाता साख, और वह नोड पूल जिससे स्वार्म बनाता है।"
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "क्लाउड प्रदाता"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "स्वार्म सेटिंग्स"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "बंद करें"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "वर्तमान मॉडल"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "कौशल"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "विफल"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "निष्क्रिय"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "माउंट हो रहा है"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "सर्व कर रहा है"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "नोड"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "चीनी (पारंपरिक)"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "LM Studio द्वारा खोजी गई फ़्लीट पंक्तियाँ और नोड स्थिति पूरे ऐप में वापस लाएँ। बंद होने पर कुछ भी LM Studio को पोल नहीं करता और कोई खोजी गई पंक्ति नहीं दिखती।"
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio फ़्लीट छिपी है (लेगेसी) — यहाँ लाइव नोड देखने के लिए इसे ऊपर चालू करें"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "LM Studio फ़्लीट दिखाएँ (लेगेसी)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "मेनू बार में goose दिखाएँ"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "दूरस्थ मशीन का MLX नोड — पूल में सहेजा गया, प्रति-नोड रूटिंग आने पर सेवा देगा"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "अभी कोई नोड नहीं — एक जोड़ें, या {endpoint} पर LM Studio शुरू करें ताकि वह खोजा जा सके।"
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "स्वार्म द्वारा चलाया जाने वाला हर नोड — कॉन्फ़िगर की गई पंक्तियाँ और वह सब जो LM Studio में अभी मौजूद है। भार: जितना अधिक, कार्यों का उतना बड़ा हिस्सा।"
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "नोड हटाएँ"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "साझा करें"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "मॉडल सूची पर वापस जाएँ"

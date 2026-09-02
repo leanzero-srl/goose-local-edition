@@ -5,6 +5,9 @@
   "addNode.cancel": {
     "defaultMessage": "キャンセル"
   },
+  "addNode.configureCloud": {
+    "defaultMessage": "クラウドプロバイダーで設定"
+  },
   "addNode.description": {
     "defaultMessage": "ノードは何がそれを担うかを選んで作ります。プロバイダーを選び、次にモデルを選択してください。"
   },
@@ -65,11 +68,20 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "1 つの LeanZero MLX エンジンは 1 つのモデルのみを提供します。すべての MLX ノードはエンジンがマウントしているものを共有するため、ノードごとに別モデルはまだできません。このノードを追加すると、ここで選んだモデルにエンジンが切り替わります。"
   },
+  "addNode.noKeyBadge": {
+    "defaultMessage": "キーなし"
+  },
+  "addNode.noKeyPane": {
+    "defaultMessage": "{label} にはこのマシン上でまだ API キーがありません。クラウドプロバイダーで追加してから、戻ってノードを追加してください。"
+  },
   "addNode.providerLabel": {
     "defaultMessage": "プロバイダー"
   },
   "addNode.providerPlaceholder": {
     "defaultMessage": "プロバイダーを選択…"
+  },
+  "addNode.providersCaption": {
+    "defaultMessage": "ノードのプロバイダーは swarm エンジンが対応しているものです。エンジンの対応に合わせて、さらに多くのクラウド系列が加わります。"
   },
   "addNode.reassignButton": {
     "defaultMessage": "削除して再追加"
@@ -409,6 +421,27 @@
   },
   "configureApproveMode.title": {
     "defaultMessage": "承認モードを設定"
+  },
+  "confirmCloseRun.body": {
+    "defaultMessage": "このウィンドウを閉じるとランは停止します。ウィンドウのバックエンドが解放され、その下で動く swarm エンジンに終了が通知されます。"
+  },
+  "confirmCloseRun.keepRunning": {
+    "defaultMessage": "実行を続ける"
+  },
+  "confirmCloseRun.runLine": {
+    "defaultMessage": "{runDir} のラン {runId}"
+  },
+  "confirmCloseRun.stopAndClose": {
+    "defaultMessage": "ランを停止して閉じる"
+  },
+  "confirmCloseRun.stopping": {
+    "defaultMessage": "ランを停止しています…"
+  },
+  "confirmCloseRun.title": {
+    "defaultMessage": "このウィンドウで swarm のランが実行中です"
+  },
+  "confirmCloseRun.warning": {
+    "defaultMessage": "警告"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "いいえ"
@@ -1427,6 +1460,18 @@
   "groupedExtensionLoadingToast.showLess": {
     "defaultMessage": "表示を減らす"
   },
+  "groupedExtensionLoadingToast.statusFailed": {
+    "defaultMessage": "失敗"
+  },
+  "groupedExtensionLoadingToast.statusLoaded": {
+    "defaultMessage": "読み込み済み"
+  },
+  "groupedExtensionLoadingToast.statusLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "groupedExtensionLoadingToast.statusPartial": {
+    "defaultMessage": "一部読み込み済み"
+  },
   "groupedExtensionLoadingToast.successfullyLoaded": {
     "defaultMessage": "{count,plural,one{# 個の拡張機能を読み込みました} other{# 個の拡張機能を読み込みました}}"
   },
@@ -1760,11 +1805,17 @@
   "launcher.placeholder": {
     "defaultMessage": "gooseに何でも聞いて..."
   },
+  "leanzeroLink.tagline": {
+    "defaultMessage": "サインインしてデバイスをプライベートメッシュに接続します。パスワードは不要で、メールで届くコードだけです。"
+  },
   "leanzeroSwarm.subtitle": {
     "defaultMessage": "スウォーム全体をひとつの場所で: 自社製 MLX エンジン、クラウドプロバイダーの認証情報、そしてスウォームがビルドに使うノードプール。"
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "クラウドプロバイダー"
+  },
+  "leanzeroSwarm.tabLink": {
+    "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "スウォーム設定"
@@ -2405,6 +2456,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.close": {
+    "defaultMessage": "閉じる"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "現在のモデル"
   },
@@ -2449,6 +2503,21 @@
   },
   "navigation.itemSkills": {
     "defaultMessage": "スキル"
+  },
+  "nodesStrip.failed": {
+    "defaultMessage": "失敗"
+  },
+  "nodesStrip.idle": {
+    "defaultMessage": "アイドル"
+  },
+  "nodesStrip.mounting": {
+    "defaultMessage": "マウント中"
+  },
+  "nodesStrip.serving": {
+    "defaultMessage": "提供中"
+  },
+  "nodesStrip.title": {
+    "defaultMessage": "ノード"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
@@ -4154,6 +4223,15 @@
   "settings.language.zhTW": {
     "defaultMessage": "中国語（繁体字）"
   },
+  "settings.lmStudioFleet.description": {
+    "defaultMessage": "LM Studio が検出したフリートの行とノードの状態をアプリ全体に再表示します。オフにすると LM Studio へのポーリングは行われず、検出された行は表示されません。"
+  },
+  "settings.lmStudioFleet.hidden": {
+    "defaultMessage": "LM Studio フリートは非表示(レガシー)— 上で有効にするとここにライブのノードが表示されます"
+  },
+  "settings.lmStudioFleet.title": {
+    "defaultMessage": "LM Studio フリートを表示(レガシー)"
+  },
   "settings.menuBarIcon.description": {
     "defaultMessage": "メニューバーにgooseを表示します"
   },
@@ -4463,9 +4541,6 @@
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "リモートマシンの MLX ノード — プールに保存済み。ノードごとのルーティングが来たら稼働します"
   },
-  "swarmSettings.noNodes": {
-    "defaultMessage": "ノードはまだありません — 追加するか、{endpoint} で LM Studio を起動すると検出されます。"
-  },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "スウォームが動かすすべてのノード — 設定済みの行に加え、LM Studio に現在常駐しているもの。重み: 高いほどタスクの取り分が大きくなります。"
   },
@@ -4495,6 +4570,9 @@
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "ノードを削除"
+  },
+  "swarmSettings.shareLabel": {
+    "defaultMessage": "共有"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "モデル一覧に戻る"
