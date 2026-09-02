@@ -69,6 +69,7 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { postFleetChat, probeFleetModels } from './utils/fleetProbe';
+import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
   isBenchmarkViewUrl,
@@ -1924,11 +1925,25 @@ ipcMain.handle('list-git-worktree-dirs', async (_event, dir: string) => {
 // status per model. Returned as { identifier: 'generating' | 'processingPrompt' | 'idle' }. Empty on any error
 // (lms missing, no server, parse fail) so the caller degrades to the digest-only view. The renderer can't shell
 // this itself; it goes through main.
+// U-H2 (gate 8, 2026-09-02): useFleetCorroboration polls this every 1.5s on EVERY install, so `lms` is
+// resolved once (utils/lmsBinary.ts — the same ~/.lmstudio/bin/lms-then-PATH lookup) and an absent binary
+// answers the honest {} without spawning anything, logged once rather than a failing execFile per tick.
 ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
+  const bin = resolveLmsOnce(
+    () =>
+      findLmsBinary({
+        home: process.env.HOME || os.homedir(),
+        pathEnv: process.env.PATH,
+        platform: process.platform,
+        exists: fsSync.existsSync,
+      }),
+    () =>
+      log.info(
+        '[fleet-status] lms not found (~/.lmstudio/bin/lms or PATH): LM Studio status feed is empty; `lms ps` will not be spawned'
+      )
+  );
+  if (!bin) return {};
   return await new Promise<Record<string, string>>((resolve) => {
-    const home = process.env.HOME || os.homedir();
-    const lmsHome = `${home}/.lmstudio/bin/lms`;
-    const bin = fsSync.existsSync(lmsHome) ? lmsHome : 'lms';
     execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
       if (error) {
         resolve({});
