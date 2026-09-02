@@ -306,6 +306,73 @@ Refusing enforcement: `development_gates.rs::the_value_gate_is_carried` pins thi
 short form, the tick-surgeon's PHASE VALUE step, `VIGIL-ACTIONS.md`, note.sh's `action` kind and tick.py's
 cost row. The reader is the gate (see below); the test is the tripwire.
 
+## 10. THE NO-ABSOLUTES GATE — a number survives only as a ratio or a measurement
+
+Ordered by Mihai 2026-09-02, after the inventory he had to ask for: *"I said many times over but we
+need to avoid hard coded bits because this is an agent and that makes it useless outside of the scope
+of what we are doing now — the benchmark is the cause not the goal."* NO HARD CODING was already a
+prime directive under gate 1; nothing REFUSED it, so 147 named constants accumulated (28 of them live
+numeric absolutes outside `cfg(test)`) and nobody counted them until he asked.
+
+THE LAW: a literal may live in the engine only as (a) a RATIO of something the run itself produces
+(a fraction of the probed context window, a multiple of the app's own median response, a share of
+the lane's own output) or (b) a MEASUREMENT the engine already takes, or (c) a pure algorithm
+constant (a shingle width) / a named policy ratio carrying its receipt (2× median). A typed absolute
+sized for THIS model, THIS language or THIS API (24,000 chars for a 27B on 262,144; 200 seconds for a
+local app; `impl.py`; `?cursor=1`) is a defect, whether or not it moved a score.
+
+HOW IT REFUSES: `development_gates.rs::live_numeric_literals_only_shrink` counts every
+`const NAME: <int|float> = <literal>;` outside `#[cfg(test)]` across the run path and ratchets it —
+the count may only DECREASE. A new one lands only with the marker `// ratio: <of what>` or
+`// measured: <how>` on its line, which the ratchet exempts and a reviewer reads. The inventory
+command that found the 28 is in the campaign skill. The classes and their derivations: VA-126.
+
+### The least-impact rule for gate 10 (Mihai 2026-09-02 20:4x: "ensure that our work here does not affect or has least affects on impairing or making our solution lesser. we finally got to a point where this is amazing now.")
+
+The golden engine is `r6h-golden-0.4616` (393a99351) and its behaviour is the thing being protected. Every
+derivation lands in one of two forms, and the commit says which:
+- **BYTE-IDENTICAL on this fleet** — the derived value equals today's typed value for every host we run
+  (so the budgets derive from the fleet's MAXIMUM probed window, 262,144, not per host — per-host precision
+  is a later measured step), proven by a unit test that feeds this fleet's windows and asserts the exact
+  current numbers. A new probe path that would ADD content the golden run never saw (a vendor cursor page
+  that now succeeds) is not "removing a hard-coded bit", it is a behaviour change — remove the guess, state
+  the absence, add the feature later with its measurement.
+- **BEHAVIOUR-CHANGING** (a self-relative detector floor, an app-timing ratio, a lang.rs route) — ships only
+  with gate 8's trace showing the golden run's looks, verdicts and probes would have produced the SAME
+  outcomes, or it ships behind a measurement on the next run and is reverted on regression.
+Every VA-126 batch gets one full sb-7 run compared against 0.4616 with the revert path ready (the tag, the
+kept `Goose-prev-393a99351.app`); a score drop with no named cause reverts the batch, never argues with it.
+
+## 11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW; only cargo waits for the run
+
+Ordered by Mihai 2026-09-02 20:2x: *"just asking but are you not doing anything about the hard coded
+bits I asked about or did I misunderstood something?"* and then *"you made a mistake that you need to
+account for in our agentic mechanisms please so that with future compacting this never gets
+forgotten."* The mistake: VA-126 was filed OPEN with the sentence "I will run them as a batch after
+r6j finishes, not during, so the run keeps measuring one thing." That sentence is false on its face —
+an edit in a worktree touches nothing the running bundle executes — and it is the same shape as the
+19 SCHEDULED rows ("next scheduler touch", "next panel touch", "r7") that had quietly become a
+backlog, the thing he had already forbidden: *"don't let them rot in a fucking backlog."*
+
+THE RULE: an action row has exactly one of these statuses, and the reader is held to the words —
+- `OPEN` — filed this tick, triaged at the orchestrator's next turn (never survives two ticks);
+- `CLAIMED <who> <where>` — a surgeon is on it now;
+- `QUEUED behind: <the single-writer branch or the agent cap>` — the design is KNOWN and the only
+  thing it waits for is a slot (one surgeon per file, ~3 agents concurrent); it is dispatched the
+  moment the slot frees, in the same tick, without a new decision;
+- `SCHEDULED waits on: <the event or number a run must produce>` — the DESIGN depends on a
+  measurement that does not exist yet; the measurement is named, and the row flips to OPEN the tick
+  it lands;
+- `LANDED <sha>` / `DROPPED <reason>` / `DONE`.
+The ONLY in-run constraint on engine work is no cargo on the machine whose LM Studio node the run
+holds (compile load starves the local decode); a surgeon edits in a worktree cargo-free and the proof
+chain runs the minute the run ends. "After the run" is never a status.
+
+HOW IT REFUSES: `development_gates.rs::a_scheduled_action_names_what_it_waits_on` fails the build
+on any `SCHEDULED` row without `waits on:` and any `QUEUED` row without `behind:`; the orchestrator's
+triage line in CLAUDE.md carries the vocabulary; and the campaign skill's "engine work DURING a run"
+entry carries the cargo rule.
+
 ## HOW GATES 7 AND 8 ACTUALLY DECIDE — the reader is the gate, the test is only a tripwire
 
 **SCOPE (Mihai, same conversation): gates 7 and 8 are about HOW CLAUDE OPERATES ON GOOSE — the
@@ -366,6 +433,8 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "not pure deterministic garbage right?... Rethink please that gate" | tests are tripwires; an independent AI reading the primary data decides | 7+8 |
 | "Why would a phase that takes 4 hours and doesn't bring value continue?" | grade the PHASE every tick; NOT EARNING → an ACTION + cut | 9 VALUE |
 | "we don't want steps that consume time and not a lot of value. Get that straight" | a step lives only while its delivery is consumed; delete the mechanism | 9 VALUE |
+| "we need to avoid hard coded bits … the benchmark is the cause not the goal" | a literal is a ratio or a measurement; the live-const ratchet | 10 NO-ABSOLUTES |
+| "are you not doing anything about the hard coded bits I asked about?" | a known fix starts now in a worktree; SCHEDULED names what it waits on | 11 KNOWN-FIX |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file

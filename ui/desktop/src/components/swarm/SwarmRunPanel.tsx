@@ -5115,7 +5115,8 @@ const TerminalBanner: React.FC<{
       </div>
       {v?.passedMeans ? (
         // The engine's own definition of what "passed" asserts, verbatim — the honesty line that keeps
-        // PASSED from over-claiming (criticals closed; minors ship as known bugs, listed below).
+        // PASSED from over-claiming (criticals closed AND no render-class finding stands — VA-087;
+        // the other minors ship as known bugs, listed below).
         <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
           Passed means: {v.passedMeans}
           {v.shipped ? ` · shipped: ${v.shipped}` : ''}

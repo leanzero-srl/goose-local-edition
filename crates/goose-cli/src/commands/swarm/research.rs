@@ -346,20 +346,26 @@ impl ResearchLane {
         self.questions.is_empty()
     }
 
+    /// What both snowball channels match a stranger's row against (`stranger_admission`):
+    /// built here for the late relay's enrolment and again by `prior_minis_for` at dispatch,
+    /// so the two channels read ONE derivation of the lane.
     pub(super) fn relay_target(&self) -> RelayTarget {
         RelayTarget {
             slice: self.slice.clone(),
             paths: path_tokens(&self.material),
+            files: declared_files(&self.material),
         }
     }
 }
 
 /// What the late relay (E7) knows about a running lane: its slice (a lane never receives its
-/// own slice's row) and the route paths its material names.
+/// own slice's row), the route paths its material names, and the files its material declares
+/// in backticks (VA-131) — lowercased, as `names_a_file` matches them.
 #[derive(Clone, Debug)]
 pub(super) struct RelayTarget {
     pub(super) slice: String,
     pub(super) paths: BTreeSet<String>,
+    pub(super) files: BTreeSet<String>,
 }
 
 /// VA-089: the text the cross-slice path rule reads for a slice lane — its objective and the
@@ -1761,41 +1767,141 @@ fn path_tokens(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Does a lane's MATERIAL (`ResearchLane::material` — its objective and claimed sections, or the
-/// decisions' lines; VA-089: a lane has no questions before it runs) name a route path `row`'s
-/// question names? THE ONE cross-slice link — `/api/health`, `/api/events` — shared by the
-/// dispatch-time snowball (`prior_minis_for`) and the late relay (`relay_targets`), so the two
-/// channels cannot disagree about which stranger's mini a lane should see.
-fn names_a_shared_path(paths: &BTreeSet<String>, row: &ResearchRow) -> bool {
+/// The first route path a lane's MATERIAL (`ResearchLane::material` — its objective and claimed
+/// sections, or the decisions' lines; VA-089: a lane has no questions before it runs) shares
+/// with `row`'s question — `/api/health`, `/api/events` — or None. One of the three links
+/// `stranger_admission` reads; before VA-131 it was the only one.
+fn names_a_shared_path(paths: &BTreeSet<String>, row: &ResearchRow) -> Option<String> {
     let theirs = path_tokens(&row.question);
-    !theirs.is_empty() && !paths.is_disjoint(&theirs)
+    paths.intersection(&theirs).next().cloned()
+}
+
+/// The files a lane's MATERIAL declares in backticks (`files_from_objective`, lowercased). The
+/// opener is told to name each slice's owned files in its objective, which leads the material;
+/// a backticked file in a claimed section's body is one the request itself places in this
+/// slice's territory. A `ResearchLane` carries no `files` of its own (swarm.rs builds it as a
+/// literal of slice/head/siblings/questions/material — a `files` field there is that file's
+/// owner's one-line follow-up), so both channels read the declaration out of the same text the
+/// path rule reads.
+fn declared_files(material: &str) -> BTreeSet<String> {
+    files_from_objective(material)
+        .into_iter()
+        .map(|f| f.to_lowercase())
+        .collect()
+}
+
+/// The first of `files` that `text` names as a bare token — `web/app.js` in "between web/app.js
+/// (web-page) and web/viz.js (web-viz)" — trimmed of the punctuation prose hangs on it exactly
+/// as `path_tokens` trims a route, `./` stripped, lowercased. A possessive or a glued suffix
+/// (`web/app.js's`) is not recognised: conservative on purpose, like `files_from_objective`.
+fn names_a_file(files: &BTreeSet<String>, text: &str) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+    text.split_whitespace()
+        .map(|t| {
+            t.trim_matches(|c: char| "`'\"(),;:?![]{}<>".contains(c))
+                .trim_end_matches('.')
+        })
+        .map(|t| t.strip_prefix("./").unwrap_or(t).to_lowercase())
+        .find(|t| files.contains(t))
+}
+
+/// WHY a landed row reaches a lane — rendered into `research_context.prior_from` as
+/// `<mini> (<label>)` and into the snowball block, so the tick reads the link, not only a count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Admission {
+    /// The lane's own slice (the decisions lane's resumed decisions).
+    OwnSlice,
+    /// The row's question names this route path and so does the lane's material.
+    Path(String),
+    /// The row's lane raised a point FOR this slice: `[for <slice>]` in `raised`, the on-disk
+    /// form of the reply's `raised_for` (`row_from_entry` writes it, `raised_destination` reads it).
+    RaisedFor,
+    /// The row's question or answer names this file, which the lane's material declares.
+    File(String),
+}
+
+impl Admission {
+    pub(super) fn label(&self) -> String {
+        match self {
+            Admission::OwnSlice => "own slice".to_string(),
+            Admission::Path(p) => format!("path {p}"),
+            Admission::RaisedFor => "raised_for".to_string(),
+            Admission::File(f) => format!("file {f}"),
+        }
+    }
+}
+
+/// One prior mini a dispatching lane sees, and why.
+#[derive(Clone, Debug)]
+pub(super) struct PriorMini<'a> {
+    pub(super) row: &'a ResearchRow,
+    pub(super) why: Admission,
+}
+
+/// THE ONE admission rule for a STRANGER's row (another slice's answered mini), shared by the
+/// dispatch-time snowball (`prior_minis_for`) and the late relay (`relay_targets`) so the two
+/// channels cannot disagree about which stranger's mini a lane should see. Three links, the
+/// most explicit first: (1) the row's lane RAISED a point for this slice — r6j web-viz-q0's
+/// `[for web-page] Implement window.page.showRecord(id)…` addressed web-page by name and the
+/// path filter alone dropped it, so web-page (dispatched 17:02:23Z, prior_minis=0 with four
+/// web-viz minis on disk) designed a second, conflicting bridge; (2) the row's question names a
+/// route path the lane's material names (r6c's `/api/health`); (3) the row's question or answer
+/// names a file the lane's material declares (web-viz-q0's question named `web/app.js`, the
+/// file web-page owns). The caller decides what "stranger" means: `prior_minis_for` admits its
+/// own slice first, `relay_targets` never relays to the row's own slice.
+fn stranger_admission(target: &RelayTarget, row: &ResearchRow) -> Option<Admission> {
+    if row.status != RESEARCH_ANSWERED {
+        return None;
+    }
+    let raised_for_me = row.raised.iter().any(|line| {
+        matches!(
+            raised_destination(line),
+            RaisedDestination::OtherSlice { slice, .. } if slice.eq_ignore_ascii_case(&target.slice)
+        )
+    });
+    if raised_for_me {
+        return Some(Admission::RaisedFor);
+    }
+    if let Some(path) = names_a_shared_path(&target.paths, row) {
+        return Some(Admission::Path(path));
+    }
+    names_a_file(&target.files, &row.question)
+        .or_else(|| names_a_file(&target.files, &row.answer))
+        .map(Admission::File)
 }
 
 /// The already-answered minis a dispatching lane should see (fix B, the snowball inside the
 /// fan): every ANSWERED row of its own slice that is not in the lane (the decisions lane's
 /// resumed decisions — a slice lane never dispatches once its slice has rows), plus an answered
-/// row of ANOTHER slice when its question names a path the lane's MATERIAL names (r6c:
-/// ledgerd-api-q0's question named `/api/health` and its answer carried the exact Health shape
-/// ten minutes before ledgerd-core asked what `/api/health` exposes — and invented one). Own
-/// slice first, then the path-matched strangers, each row once. Unanswered rows are never
+/// row of ANOTHER slice that `stranger_admission` links to the lane (r6c: ledgerd-api-q0's
+/// question named `/api/health` and its answer carried the exact Health shape ten minutes
+/// before ledgerd-core asked what `/api/health` exposes — and invented one; r6j: web-page was
+/// dispatched with four web-viz minis on disk and saw none, because web-viz-q0's links to it
+/// were its `[for web-page]` raise and the file it named, never a route path). Own slice first,
+/// then the admitted strangers, each row once with its reason. Unanswered rows are never
 /// spliced: their absence already rode `research_unanswered`.
 pub(super) fn prior_minis_for<'a>(
     lane: &ResearchLane,
     rows: &'a [ResearchRow],
-) -> Vec<&'a ResearchRow> {
-    let paths = path_tokens(&lane.material);
-    let mut same: Vec<&ResearchRow> = Vec::new();
-    let mut matched: Vec<&ResearchRow> = Vec::new();
+) -> Vec<PriorMini<'a>> {
+    let target = lane.relay_target();
+    let mut same: Vec<PriorMini<'a>> = Vec::new();
+    let mut matched: Vec<PriorMini<'a>> = Vec::new();
     for r in rows {
         if r.status != RESEARCH_ANSWERED {
             continue;
         }
         if r.slice == lane.slice {
             if !lane.questions.iter().any(|q| q.q_index == r.q_index) {
-                same.push(r);
+                same.push(PriorMini {
+                    row: r,
+                    why: Admission::OwnSlice,
+                });
             }
-        } else if names_a_shared_path(&paths, r) {
-            matched.push(r);
+        } else if let Some(why) = stranger_admission(&target, r) {
+            matched.push(PriorMini { row: r, why });
         }
     }
     same.extend(matched);
@@ -1807,7 +1913,7 @@ pub(super) fn prior_minis_for<'a>(
 /// or which other slice, and the durable mini), its question, and its answer under the same
 /// per-answer splice budget the brief uses (`budget_research_answer`: a render budget on the
 /// splice, never a cap; the full text is in the mini it names).
-pub(super) fn prior_minis_block(slice: &str, prior: &[&ResearchRow]) -> String {
+pub(super) fn prior_minis_block(slice: &str, prior: &[PriorMini<'_>]) -> String {
     if prior.is_empty() {
         return String::new();
     }
@@ -1818,19 +1924,27 @@ pub(super) fn prior_minis_block(slice: &str, prior: &[&ResearchRow]) -> String {
          both answers) — never contradict one silently:\n",
         prior.len()
     );
-    for r in prior {
+    for p in prior {
+        let r = p.row;
+        let link = match &p.why {
+            Admission::OwnSlice => String::new(),
+            Admission::Path(path) => format!(
+                "its question names `{path}`, a path this slice's objective or sections name"
+            ),
+            Admission::RaisedFor => {
+                format!(
+                    "its lane raised a point FOR this slice (`[for {slice}]` in its raised lines)"
+                )
+            }
+            Admission::File(file) => {
+                format!("it names `{file}`, a file this slice's objective or sections declare")
+            }
+        };
         let from = match (r.slice == slice, r.slice == DECISION_SLICE) {
             (true, true) => "an earlier open decision this fan settled".to_string(),
             (true, false) => "this slice's own earlier lane".to_string(),
-            (false, true) => {
-                "an open decision this fan settled — it names a path this slice's objective or \
-                 sections name"
-                    .to_string()
-            }
-            (false, false) => format!(
-                "slice `{}` — its question names a path this slice's objective or sections name",
-                r.slice
-            ),
+            (false, true) => format!("an open decision this fan settled — {link}"),
+            (false, false) => format!("slice `{}` — {link}", r.slice),
         };
         s.push_str(&format!(
             "\n[{from}; .swarm/ledger/{}]\nQ: {}\nA: {}\n",
@@ -1865,7 +1979,13 @@ pub(super) fn research_dispatch_text(
         "prior_minis": prior.len(),
         "prior_from": prior
             .iter()
-            .map(|r| research_mini_name(&r.slice, r.q_index))
+            .map(|p| {
+                format!(
+                    "{} ({})",
+                    research_mini_name(&p.row.slice, p.row.q_index),
+                    p.why.label()
+                )
+            })
             .collect::<Vec<_>>(),
         "index_sections": index_sections,
     }));
@@ -1887,28 +2007,43 @@ pub(super) struct RelayNote {
     pub(super) text: String,
 }
 
-/// The lanes a just-landed mini is relayed to — RE-AIMED by C3, then by VA-089. Under one lane
-/// per slice there is no same-slice sibling left to relay to (a slice's rows all land when its
-/// one lane ends), and a lane carries no questions before it runs, so the relay reads each
-/// running lane's MATERIAL with the same rule the dispatch-time snowball uses
-/// (`names_a_shared_path`): every STILL-RUNNING lane of another slice whose objective or claimed
-/// sections name a path the landed question names — the set `prior_minis_for` would have spliced
-/// had that lane dispatched a moment later. The first wave's lanes all dispatch at once and see
-/// NO prior minis, so this relay is the only way ledger-api's `/api/health` shape reaches a
-/// running ledger-core lane (the r6c invention). Only an answered row relays (an unanswered one
-/// already rode `research_unanswered`); a lane never receives its own slice's row. `running` is
-/// (activity key, the lane's relay target) for every lane between dispatch and its rows.
+/// The lanes a just-landed mini is relayed to — RE-AIMED by C3, then by VA-089, widened by
+/// VA-131. Under one lane per slice there is no same-slice sibling left to relay to (a slice's
+/// rows all land when its one lane ends), and a lane carries no questions before it runs, so
+/// the relay reads each running lane's `RelayTarget` with the same rule the dispatch-time
+/// snowball uses (`stranger_admission`): every STILL-RUNNING lane of another slice the landed
+/// row raised a point for, or whose objective or claimed sections name a path the landed
+/// question names or a file the landed row names — the set `prior_minis_for` would have
+/// spliced had that lane dispatched a moment later. The first wave's lanes all dispatch at once
+/// and see NO prior minis, so this relay is the only way ledger-api's `/api/health` shape
+/// reaches a running ledger-core lane (the r6c invention). Only an answered row relays (an
+/// unanswered one already rode `research_unanswered`); a lane never receives its own slice's
+/// row. `running` is (activity key, the lane's relay target) for every lane between dispatch
+/// and its rows.
 pub(super) fn relay_targets(
     landed: &ResearchRow,
     running: &[(String, RelayTarget)],
 ) -> Vec<String> {
+    relay_admissions(landed, running)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// `relay_targets` with each target's reason — the one `stranger_admission` the dispatch-time
+/// snowball applies, so a test can pin that the two channels agree on one fixture.
+/// `research_tool::queue_research_relay` reads only the keys: one note serves every target.
+pub(super) fn relay_admissions(
+    landed: &ResearchRow,
+    running: &[(String, RelayTarget)],
+) -> Vec<(String, Admission)> {
     if landed.status != RESEARCH_ANSWERED {
         return Vec::new();
     }
     running
         .iter()
-        .filter(|(_, t)| t.slice != landed.slice && names_a_shared_path(&t.paths, landed))
-        .map(|(k, _)| k.clone())
+        .filter(|(_, t)| t.slice != landed.slice)
+        .filter_map(|(key, t)| stranger_admission(t, landed).map(|why| (key.clone(), why)))
         .collect()
 }
 
@@ -1921,8 +2056,8 @@ pub(super) fn relay_note(landed: &ResearchRow) -> RelayNote {
     let from_mini = research_mini_name(&landed.slice, landed.q_index);
     let text = format!(
         "A MINI LANDED ({}) — the lane of slice `{}` settled this while you were working, and \
-         its question names a path this slice's objective or sections name; it is now in \
-         .swarm/ledger/{from_mini}. \
+         it links to this slice: it raised a point for you, or it names a route path or a file \
+         this slice's objective or sections name; it is now in .swarm/ledger/{from_mini}. \
          Build on it: where an answer of yours depends on it, agree with it or NAME the \
          disagreement and the request's words that decide it (the builder receives both \
          answers) — never contradict it silently. Continue the SAME work; do not restart.\n\
@@ -2990,8 +3125,8 @@ mod tests {
             "the real count:\n{second}"
         );
         assert!(second.contains(
-            "[slice `ledgerd-api` — its question names a path this slice's objective or sections \
-             name; .swarm/ledger/research-ledgerd-api-q0.json]"
+            "[slice `ledgerd-api` — its question names `/api/health`, a path this slice's \
+             objective or sections name; .swarm/ledger/research-ledgerd-api-q0.json]"
         ));
         assert!(
             second.contains("\"payments\": <int>"),
@@ -3011,7 +3146,7 @@ mod tests {
             assert_eq!(ev[1]["prior_minis"], 1);
             assert_eq!(
                 ev[1]["prior_from"],
-                serde_json::json!(["research-ledgerd-api-q0.json"])
+                serde_json::json!(["research-ledgerd-api-q0.json (path /api/health)"])
             );
         }
         let d = decisions_lane(
@@ -3523,12 +3658,248 @@ mod tests {
         let seen: Vec<String> =
             prior_minis_for(&lane("drafts-workflow", "H", &drafts_q4.question), &rows)
                 .iter()
-                .map(|r| format!("{}-q{}", r.slice, r.q_index))
+                .map(|p| format!("{}-q{}", p.row.slice, p.row.q_index))
                 .collect();
         assert_eq!(seen, vec!["ledger-api-q5".to_string()]);
         assert!(
             prior_minis_for(&lane("web-page", "H", &stranger.question), &rows).is_empty(),
             "the snowball agrees with the relay: no alternation links a stranger"
+        );
+    }
+
+    /// r6j (VA-131): web-viz-q0 landed 16:49:25Z with `[for web-page] Implement
+    /// window.page.showRecord(id)…` in its raised lines; web-page was dispatched 17:02:23Z with
+    /// `research_context.prior_minis=0` because the path filter read only the question's route
+    /// paths — and designed a second bridge (`window.appApi`) against the landed one. The row
+    /// now reaches a web-page lane whose material names NO shared path and declares NO file
+    /// (the raise alone links it), at the consumer: the dispatch text carries the landed
+    /// interface and `research_context.prior_from` says why.
+    #[test]
+    fn a_sibling_raise_for_this_slice_reaches_its_lane_without_a_shared_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let sink = ValueSink::default();
+        let mut viz_q0 = row(
+            "web-viz",
+            0,
+            RESEARCH_ANSWERED,
+            &[
+                "[for web-page] Implement window.page.showRecord(id) -> bool: scroll the table to \
+               the row and open the drawer; return false when the id is outside the current \
+               filter.",
+            ],
+        );
+        viz_q0.question = "What is the exact JS interface between web/app.js (web-page) and \
+                           web/viz.js (web-viz) for the linked brush?"
+            .into();
+        viz_q0.answer = "window.viz.toggleRecord(id) and window.viz.clearBrush(); viz dispatches \
+                         CustomEvents viz:brush and viz:batch; the page exposes \
+                         window.page.showRecord(id) -> bool."
+            .into();
+        write_research_ledger(root, &viz_q0).unwrap();
+        let page = lane(
+            "web-page",
+            "HEAD",
+            "Own the record table, the drawer and the brush highlight on the page.",
+        );
+        assert!(
+            page.relay_target().paths.is_empty() && page.relay_target().files.is_empty(),
+            "the fixture isolates the raise: no path, no declared file"
+        );
+        let text = research_dispatch_text(root, &sink, &page, "research-web-page", 12);
+        assert!(
+            text.contains("ALREADY ANSWERED BY THIS FAN before your dispatch (1)")
+                && text.contains("window.page.showRecord(id) -> bool")
+                && text.contains(
+                    "[slice `web-viz` — its lane raised a point FOR this slice (`[for web-page]` \
+                     in its raised lines); .swarm/ledger/research-web-viz-q0.json]"
+                ),
+            "the landed bridge reaches the lane that would otherwise design a second one:\n{text}"
+        );
+        let ev = sink.0.lock().unwrap();
+        assert_eq!(ev[0]["event"], "research_context");
+        assert_eq!(ev[0]["prior_minis"], 1);
+        assert_eq!(
+            ev[0]["prior_from"],
+            serde_json::json!(["research-web-viz-q0.json (raised_for)"])
+        );
+    }
+
+    /// VA-131's third link: a stranger's row naming a file the lane's material declares in
+    /// backticks — in its question (web-viz's `web/app.js`) or only in its answer
+    /// (`web/index.html`) — reaches the lane, tagged with the file; the raise, when present,
+    /// is the tag (the most explicit link wins). A case-insensitive `[for Web-Page]` and a
+    /// `./web/app.js` spelling both link.
+    #[test]
+    fn a_row_naming_a_file_the_lane_declares_reaches_it() {
+        let page = lane(
+            "web-page",
+            "H",
+            "Own `web/app.js` and `web/index.html`: the record table and the drawer.",
+        );
+        assert_eq!(
+            page.relay_target().files,
+            BTreeSet::from(["web/app.js".to_string(), "web/index.html".to_string()])
+        );
+        let mut in_question = row("web-viz", 1, RESEARCH_ANSWERED, &[]);
+        in_question.question =
+            "Which DOM hook does ./web/viz.js call on web/app.js when a bar is clicked?".into();
+        in_question.answer = "viz dispatches viz:brush; the page listens.".into();
+        let mut in_answer = row("api", 2, RESEARCH_ANSWERED, &[]);
+        in_answer.question = "Where is the static bundle served from?".into();
+        in_answer.answer = "GET / returns `web/index.html`; assets under ./web/.".into();
+        let mut raised_too = in_question.clone();
+        raised_too.q_index = 3;
+        raised_too.raised = vec!["[for Web-Page] listen for viz:brush on document".to_string()];
+        let rows = vec![in_question, in_answer, raised_too];
+        let seen: Vec<(String, Admission)> = prior_minis_for(&page, &rows)
+            .iter()
+            .map(|p| (format!("{}-q{}", p.row.slice, p.row.q_index), p.why.clone()))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                (
+                    "web-viz-q1".to_string(),
+                    Admission::File("web/app.js".to_string())
+                ),
+                (
+                    "api-q2".to_string(),
+                    Admission::File("web/index.html".to_string())
+                ),
+                ("web-viz-q3".to_string(), Admission::RaisedFor),
+            ]
+        );
+        let block = prior_minis_block("web-page", &prior_minis_for(&page, &rows));
+        assert!(
+            block.contains(
+                "[slice `web-viz` — it names `web/app.js`, a file this slice's objective or \
+                 sections declare; .swarm/ledger/research-web-viz-q1.json]"
+            ) && block.contains("[slice `api` — it names `web/index.html`, a file"),
+            "{block}"
+        );
+    }
+
+    /// VA-131 keeps the filter a filter: a stranger that raised a point for ANOTHER slice, names
+    /// a route the lane's material does not, names no declared file — or misspells the slice
+    /// (`web-pages`) — stays out; so does an unanswered row that raised a point for this slice.
+    #[test]
+    fn an_unrelated_stranger_still_stays_out_of_the_snowball() {
+        let page = lane(
+            "web-page",
+            "H",
+            "Own `web/app.js`: the record table and the drawer; it reads /api/records.",
+        );
+        let mut for_viz = row(
+            "api",
+            0,
+            RESEARCH_ANSWERED,
+            &["[for web-viz] bucket the totals"],
+        );
+        for_viz.question = "How does /api/events paginate?".into();
+        for_viz.answer = "By cursor; the page size is 100.".into();
+        let mut near_miss = row("api", 1, RESEARCH_ANSWERED, &["[for web-pages] keep it"]);
+        near_miss.question = "Which sort keys does sort=<k> accept?".into();
+        near_miss.answer = "amount, ts, status — from app/ledgerd/api.py.".into();
+        let mut unanswered = row(
+            "web-viz",
+            0,
+            RESEARCH_UNANSWERED,
+            &["[for web-page] showRecord"],
+        );
+        unanswered.question = "What does web/app.js expose?".into();
+        let rows = vec![for_viz, near_miss, unanswered];
+        assert!(
+            prior_minis_for(&page, &rows).is_empty(),
+            "no raise for web-page, no shared path, no declared file, no answered row"
+        );
+        let running = vec![("research-web-page".to_string(), page.relay_target())];
+        for r in &rows {
+            assert!(
+                relay_targets(r, &running).is_empty(),
+                "{}-q{}",
+                r.slice,
+                r.q_index
+            );
+        }
+    }
+
+    /// The two channels are ONE rule: for every (running lane, landed row) pair of one fixture —
+    /// a raise for the lane, a shared route path, a declared file, a stranger, the row's own
+    /// slice — `relay_admissions` names exactly the reason `prior_minis_for` would splice under,
+    /// or neither admits. (The own-slice pair is the one asymmetry by design: the snowball
+    /// splices a slice's resumed rows, the relay never sends a lane its own slice's row.)
+    #[test]
+    fn the_relay_and_the_snowball_agree_on_one_admission_rule() {
+        let lanes = vec![
+            (
+                "research-web-page".to_string(),
+                lane(
+                    "web-page",
+                    "H",
+                    "Own `web/app.js`: the table, the drawer, the brush.",
+                ),
+            ),
+            (
+                "research-ledger-core".to_string(),
+                lane(
+                    "ledger-core",
+                    "H",
+                    "Own `app/ledgerd/core.py`: sync and /api/health.",
+                ),
+            ),
+            (
+                "research-webhooks".to_string(),
+                lane(
+                    "webhooks",
+                    "H",
+                    "Own `app/ledgerd/hooks.py`: registration and replay.",
+                ),
+            ),
+        ];
+        let running: Vec<(String, RelayTarget)> = lanes
+            .iter()
+            .map(|(k, l)| (k.clone(), l.relay_target()))
+            .collect();
+        let mut viz_q0 = row(
+            "web-viz",
+            0,
+            RESEARCH_ANSWERED,
+            &["[for web-page] showRecord(id)"],
+        );
+        viz_q0.question = "What is the JS interface between web/app.js and web/viz.js?".into();
+        let mut api_q0 = row("ledger-api", 0, RESEARCH_ANSWERED, &[]);
+        api_q0.question = "What are the exact /api/health and /api/summary shapes?".into();
+        let mut core_q2 = row("ledger-core", 2, RESEARCH_ANSWERED, &[]);
+        core_q2.question = "Does the sync loop call into app/ledgerd/hooks.py on a 5xx?".into();
+        let mut stranger = row("drafts", 4, RESEARCH_ANSWERED, &[]);
+        stranger.question = "Do maker/checker see the same drafts list?".into();
+        let rows = vec![viz_q0, api_q0, core_q2, stranger];
+        let mut admitted = 0;
+        for r in &rows {
+            let relay = relay_admissions(r, &running);
+            for (key, l) in &lanes {
+                if l.slice == r.slice {
+                    let snow = prior_minis_for(l, std::slice::from_ref(r));
+                    assert_eq!(snow.len(), 1);
+                    assert_eq!(snow[0].why, Admission::OwnSlice);
+                    assert!(relay.iter().all(|(k, _)| k != key));
+                    continue;
+                }
+                let snow: Option<Admission> = prior_minis_for(l, std::slice::from_ref(r))
+                    .first()
+                    .map(|p| p.why.clone());
+                let late: Option<Admission> = relay
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, why)| why.clone());
+                assert_eq!(snow, late, "{}-q{} -> {key}", r.slice, r.q_index);
+                admitted += usize::from(snow.is_some());
+            }
+        }
+        assert_eq!(
+            admitted, 3,
+            "the raise, the path and the file each link once; the stranger links nobody"
         );
     }
 

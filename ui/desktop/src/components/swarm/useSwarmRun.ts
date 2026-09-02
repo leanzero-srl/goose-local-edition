@@ -4194,6 +4194,7 @@ export function foldSupervision(events: Array<Record<string, unknown>>): Supervi
       // it picked up next — for the rest of the run. A supervisor that is not reading anything is the
       // single most misleading thing that strip can say, because it is the label a reader trusts to
       // explain why a lane looks quiet.
+      // falls through — all three end the look span.
       case 'judge_look_failed':
         open.delete(`look:${taskId}`);
         break;
