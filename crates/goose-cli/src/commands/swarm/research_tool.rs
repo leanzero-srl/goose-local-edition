@@ -599,6 +599,15 @@ impl GooseAgentDispatcher {
     /// (`research_mini_relayed`). MEASURED: r6d research-ledger-core-q5 dispatched 04:46:55Z,
     /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
     /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
+    ///
+    /// VA-033: a note is queued ONLY for a target whose landing is still OPEN
+    /// (`relay_split_by_landing`). A lane's `research_running` entry outlives its landing —
+    /// the fan closure closes the landing the moment `run_agent_timed_at` returns and removes
+    /// the running entry only after the remainder is folded — and a note queued into that
+    /// sliver is never drained (the lane's loop is over; the inbox is cleared at the fan's end
+    /// with nothing said). Each skipped target is `research_relay_skipped{from, from_mini, to,
+    /// q_index, reason: lane_closed}` — a loud absence, never a silent drop. Not a bound on
+    /// anything: the mini is on disk and in synthesis's rows either way.
     pub(super) fn queue_research_relay(&self, row: &ResearchRow) {
         let running: Vec<(String, RelayTarget)> = self
             .research_running
@@ -611,12 +620,81 @@ impl GooseAgentDispatcher {
         if targets.is_empty() {
             return;
         }
+        let split = {
+            let landing = self.research_landing.lock().unwrap();
+            relay_split_by_landing(targets, &running, |key| landing.contains_key(key))
+        };
+        for to in &split.closed {
+            self.events.write_value(research_relay_skipped_event(
+                row,
+                to,
+                RELAY_SKIP_LANE_CLOSED,
+            ));
+        }
+        if split.open.is_empty() {
+            return;
+        }
         let note = relay_note(row);
         let mut inbox = self.research_relay.lock().unwrap();
-        for t in targets {
+        for t in split.open {
             inbox.entry(t).or_default().push(note.clone());
         }
     }
+}
+
+/// VA-033: the event a relay leaves for a target it did not queue to.
+const RESEARCH_RELAY_SKIPPED: &str = "research_relay_skipped";
+/// The target's landing is gone from the map: its call returned and the fan closure closed it,
+/// so nothing will drain a note queued for it.
+const RELAY_SKIP_LANE_CLOSED: &str = "lane_closed";
+
+/// `relay_targets`' admissions split by the landing map (VA-033): `open` is what the relay
+/// queues, `closed` is what it names.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct RelaySplit {
+    pub(super) open: Vec<String>,
+    pub(super) closed: Vec<String>,
+}
+
+/// THE OPEN SIGNAL. A target lane that opens a landing (`RelayTarget::landing`, the slice
+/// lanes) is open while its key is in the landing map — the fan opens the landing before the
+/// call and closes it the moment the call returns, so a running entry with no landing is a lane
+/// whose reply is already collected. A lane that never opens one (the decisions lane) is open
+/// on its running entry alone, exactly as before this split: skipping it would deliver
+/// nothing to the defect and lose a real relay. Order is `relay_targets`' order in both lists.
+pub(super) fn relay_split_by_landing(
+    targets: Vec<String>,
+    running: &[(String, RelayTarget)],
+    landing_open: impl Fn(&str) -> bool,
+) -> RelaySplit {
+    let opens_landing = |key: &str| running.iter().any(|(k, t)| k.as_str() == key && t.landing);
+    let mut split = RelaySplit::default();
+    for key in targets {
+        if !opens_landing(key.as_str()) || landing_open(key.as_str()) {
+            split.open.push(key);
+        } else {
+            split.closed.push(key);
+        }
+    }
+    split
+}
+
+/// The skip, named: the landed row's slice and mini (`from`, `from_mini` — the same provenance
+/// `research_mini_relayed` carries), the lane it did not reach (`to`, its activity key), the
+/// row's index and the reason.
+pub(super) fn research_relay_skipped_event(
+    landed: &ResearchRow,
+    to: &str,
+    reason: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event": RESEARCH_RELAY_SKIPPED,
+        "from": landed.slice,
+        "from_mini": research_mini_name(&landed.slice, landed.q_index),
+        "to": to,
+        "q_index": landed.q_index,
+        "reason": reason,
+    })
 }
 
 #[cfg(test)]
@@ -1167,5 +1245,152 @@ mod tests {
         let errs = append_research_call_row(&activity, &row);
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].0, "calls.jsonl");
+    }
+
+    /// A ledgerd-core row landed through the tool that raises a point for each of two slices,
+    /// so `relay_targets` admits both (`Admission::RaisedFor`) — r6j's core-q1 shape.
+    fn core_row_raised_for(dir: &Path, sink: &ValueSink, slices: &[&str]) -> ResearchRow {
+        let mut landing = ResearchLanding::open(&lane_with_hand("ledgerd-core", &[]), "m");
+        let raised_for: Vec<serde_json::Value> = slices
+            .iter()
+            .map(
+                |s| serde_json::json!({"slice": s, "text": "the cursor resumes from the last seq"}),
+            )
+            .collect();
+        // q0 first so the row under test is q1, as r6j's was.
+        landing
+            .land(
+                dir,
+                sink,
+                "research-ledgerd-core",
+                call(serde_json::json!({
+                    "question": "where the sync cursor persists",
+                    "kind": "external",
+                    "cite": "request.md:40",
+                    "answer": "In the state table, one row.",
+                })),
+            )
+            .unwrap();
+        landing
+            .land(
+                dir,
+                sink,
+                "research-ledgerd-core",
+                call(serde_json::json!({
+                    "question": "What are the exact cursor, resume, fault and conditional-request \
+                                 semantics of the vendor sync?",
+                    "kind": "external",
+                    "cite": "vendor docs §sync",
+                    "answer": "Cursor is the last seq; resume sends If-None-Match.",
+                    "raised_for": raised_for,
+                })),
+            )
+            .unwrap()
+            .row
+            .unwrap()
+    }
+
+    /// VA-033, r6j-shaped: web-viz's landing closed at 17:02:23Z (its `recipe__final_output`
+    /// 17:02:23.214Z, `research_unanswered{remainder_empty}` 17:02:23.220Z); ledgerd-core's q1
+    /// landed at 17:25:49Z raising a point for web-viz and for the drafts lane (dispatched
+    /// 17:24:46Z, landing open). The relay queues to drafts and names web-viz — the running
+    /// entry alone would have admitted it — with `research_relay_skipped{reason: lane_closed}`.
+    #[test]
+    fn a_relay_to_a_closed_landing_is_skipped_and_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let row = core_row_raised_for(dir.path(), &sink, &["web-viz", "ledgerd-webhooks-drafts"]);
+        assert_eq!((row.q_index, row.status.as_str()), (1, RESEARCH_ANSWERED));
+        let running = vec![
+            (
+                "research-web-viz".to_string(),
+                lane_with_hand("web-viz", &[]).relay_target(),
+            ),
+            (
+                "research-ledgerd-webhooks-drafts".to_string(),
+                lane_with_hand("ledgerd-webhooks-drafts", &[]).relay_target(),
+            ),
+        ];
+        let targets = relay_targets(&row, &running);
+        assert_eq!(
+            targets,
+            vec![
+                "research-web-viz".to_string(),
+                "research-ledgerd-webhooks-drafts".to_string()
+            ],
+            "the running map alone admits the closed lane"
+        );
+        let split = relay_split_by_landing(targets, &running, |key| {
+            key == "research-ledgerd-webhooks-drafts"
+        });
+        assert_eq!(
+            split,
+            RelaySplit {
+                open: vec!["research-ledgerd-webhooks-drafts".to_string()],
+                closed: vec!["research-web-viz".to_string()],
+            }
+        );
+        let ev = research_relay_skipped_event(&row, &split.closed[0], RELAY_SKIP_LANE_CLOSED);
+        assert_eq!(ev["event"], "research_relay_skipped");
+        assert_eq!(ev["from"], "ledgerd-core");
+        assert_eq!(ev["from_mini"], "research-ledgerd-core-q1.json");
+        assert_eq!(ev["to"], "research-web-viz");
+        assert_eq!(ev["q_index"], 1);
+        assert_eq!(ev["reason"], "lane_closed");
+    }
+
+    /// VA-033: every admitted target with an open landing is queued, in `relay_targets`' order;
+    /// the decisions lane never opens a landing and stays open on its running entry alone.
+    #[test]
+    fn a_relay_to_an_open_landing_still_lands() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let row = core_row_raised_for(
+            dir.path(),
+            &sink,
+            &["web-viz", "ledgerd-webhooks-drafts", "__open_decisions__"],
+        );
+        let mut decisions = lane_with_hand("__open_decisions__", &[]);
+        decisions.questions = vec![super::super::research::ResearchQuestion::decision(
+            0,
+            "Which port does the console bind?",
+        )];
+        assert!(
+            !decisions.derives() && !decisions.relay_target().landing,
+            "the decisions lane is handed its questions and opens no landing"
+        );
+        let running = vec![
+            (
+                "research-web-viz".to_string(),
+                lane_with_hand("web-viz", &[]).relay_target(),
+            ),
+            (
+                "research-ledgerd-webhooks-drafts".to_string(),
+                lane_with_hand("ledgerd-webhooks-drafts", &[]).relay_target(),
+            ),
+            (
+                "research-__open_decisions__".to_string(),
+                decisions.relay_target(),
+            ),
+        ];
+        let targets = relay_targets(&row, &running);
+        assert_eq!(targets.len(), 3);
+        let all_open = relay_split_by_landing(targets.clone(), &running, |key| {
+            key != "research-__open_decisions__"
+        });
+        assert_eq!(all_open.open, targets, "three admitted, three queued");
+        assert!(all_open.closed.is_empty());
+        let none_open = relay_split_by_landing(targets, &running, |_| false);
+        assert_eq!(
+            none_open,
+            RelaySplit {
+                open: vec!["research-__open_decisions__".to_string()],
+                closed: vec![
+                    "research-web-viz".to_string(),
+                    "research-ledgerd-webhooks-drafts".to_string()
+                ],
+            },
+            "with every landing gone only the lane that never opens one is still queued"
+        );
     }
 }
