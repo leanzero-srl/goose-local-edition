@@ -42,12 +42,13 @@ use ask::{ask_clarifying_questions, clarify_questions};
 mod ladder;
 mod levers;
 use ladder::{
-    calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
-    escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
-    produced_since_look, restream_seed, settled_list_block, since_steer_block, since_steer_span,
-    split_steer_followed, steer_followed_ask, steer_note, stream_woke, tail_shingle_set,
-    tails_recur, write_progress, wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts,
-    DIGEST_IO_CADENCE, JUDGE_WAKE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
+    calls_since_nudge, delivery_promise_due, drift_streak_step, drift_witness,
+    durable_clamped_produced, engine_witness, escalation_moved, forming_stalled,
+    judge_summon_trigger, nudge_arm, nudge_delivery, produced_since_look, restream_seed,
+    settled_list_block, since_steer_block, since_steer_span, split_steer_followed,
+    steer_followed_ask, steer_note, stream_woke, tail_shingle_set, tails_recur, write_progress,
+    wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts, DIGEST_IO_CADENCE, JUDGE_WAKE,
+    LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
 };
 mod ask_floor;
 use ask_floor::{ask_floor_weak_bump, model_active_params_b};
@@ -13587,6 +13588,11 @@ impl GooseAgentDispatcher {
                             "defects": unsent,
                             "framing": if none_written_yet { "none_written_yet" } else { "defect" },
                         }));
+                        // VA-146: the engine named the first write; the witness stands until an
+                        // owned file lands (`ladder::drift_witness`).
+                        if none_written_yet {
+                            history.note_defect_steer();
+                        }
                     }
                 }
                 // THE SUPERVISOR MUST NEVER STALL THE SUPERVISED.
@@ -14006,61 +14012,9 @@ impl GooseAgentDispatcher {
                             style("·").yellow()
                         );
                     }
-                    // DRIFTING needs no corroboration, and LOOPING still does. The asymmetry is the
-                    // point: the measured misread class is "the FIRST look says LOOPING and it is wrong"
-                    // (four fires at 1,200 / 1,201 / 3,759 / 4,003 reasoning chars, every kill wrong, the
-                    // tasks completed fine on retry), and the defence against it is the content-gated
-                    // streak below. DRIFTING is a different claim — the call is WORKING, on the wrong
-                    // thing — which tail recurrence structurally cannot corroborate, and whose cost is now
-                    // one in-session message rather than a dead worker. So it acts on the first look.
-                    // DRIFTING ON A CALL THAT IS PRODUCING IS AN OPINION, AND IT COSTS 66 MINUTES.
-                    //
-                    // MEASURED across run 4: of 34 nudges with a follow-up look, **ONE** was followed by
-                    // an action and 33 were not -- 43,842 characters of reasoning and 66 minutes of WORKER
-                    // time burned reading supervisor notes and doing nothing. The no-action nudges are
-                    // overwhelmingly DRIFTING fired at `produced` of 4,000-4,005: a call generating four
-                    // thousand fresh characters between looks, told it is working on the wrong thing.
-                    //
-                    // The justification for acting on the first look was that a steer costs "one
-                    // in-session message rather than a dead worker". At a 3% action rate that message is
-                    // not free -- it is a turn boundary, a re-read and a re-plan on the working node.
-                    //
-                    // So DRIFTING now acts only on a call that is NOT producing. A call that is steadily
-                    // generating gets left alone unless something factual is wrong with what it has
-                    // written, which is the verifier's job and not a matter of opinion. LOOPING and a
-                    // MEASURED repeat are unchanged: those are claims about a stuck call, not about taste.
-                    //
-                    // AND A CALL THAT IS ACTING IS PRODUCING. The hold was keyed on reasoning characters
-                    // alone, so it protected narrating planner lanes and left a tool-using worker nudged
-                    // on the FIRST DRIFTING look with no corroboration — the same inversion the rate block
-                    // already warns the judge about ("It is WORKING... do not read a low reasoning count
-                    // as a stall") while the engine went on doing it.
-                    //
-                    // BUT A HOLD WITH NO WAY BACK IS NOT CAUTION, IT IS BLINDNESS. Measured on this very
-                    // run: open-coverage-2 reached 21,749 reasoning characters with ZERO tool calls, was
-                    // diagnosed DRIFTING, and was held -- and nothing in the old rule could ever deliver
-                    // it, however far it went, because "producing" was true forever. Its sibling
-                    // open-coverage-1 sat at 17,710 in the same state. Five DRIFTING verdicts across the
-                    // run produced one nudge.
-                    //
-                    // LOOPING already has the right shape and DRIFTING did not: LOOPING acts on the
-                    // SECOND look that agrees, never the first. So drift corroborates the same way. One
-                    // DRIFTING on a producing call is the noise the 33-of-34 measurement describes; a
-                    // second DRIFTING with STILL no progress on the deliverable in between is the judge
-                    // saying the same thing twice about a call that has done nothing about it, and that
-                    // is evidence, not taste.
-                    //
-                    // AND "DID SOMETHING ABOUT IT" IS MEASURED ON THE DELIVERABLE, NOT ON TOOL CALLS
-                    // (r6c web-viz, BUILD+294m): five DRIFTING verdicts (15:51/16:21/17:13/17:39/18:37)
-                    // were ALL held because the lane logged 1-2 READ-ONLY sed/grep calls per look window
-                    // (act=1/2/1/2/1), each one resetting the old action-count streak — while it wrote
-                    // ZERO files and its formed channel moved 772->924 bytes across five hours. A
-                    // reads-but-never-writes lane was structurally shielded from ever receiving a steer.
-                    // And the reset-on-any-non-drift-verdict was the second shield: an interleaved ok
-                    // (18:01, established="" next="") disarmed the case the 17:39 hold had just armed.
-                    // `ladder::drift_streak_step` carries the rule: WRITE progress (owned bytes grew)
-                    // resets; a read-only call does not; on a files-owing lane an interleaved ok leaves
-                    // the armed case standing — only progress on the files it owes disarms it.
+                    // The DRIFTING hold's history (the 33/34 measurement, the reads-only shield, the
+                    // interleaved-ok disarm) and the corroboration rule live on `ladder::drift_witness`;
+                    // the streak's write-progress rule on `ladder::drift_streak_step`.
                     let owned_bytes_now: u64 = owned
                         .iter()
                         .map(|f| std::fs::metadata(self.working_dir.join(f)).map_or(0, |m| m.len()))
@@ -14068,6 +14022,9 @@ impl GooseAgentDispatcher {
                     let owned_grew_since_look = owned_bytes_now > omni_owned_bytes_at_last_look;
                     omni_owned_bytes_at_last_look = owned_bytes_now;
                     let any_owned_on_disk = owned.iter().any(|f| self.working_dir.join(f).exists());
+                    if any_owned_on_disk {
+                        history.owned_file_landed();
+                    }
                     let drift_verdict = omni_outcome.verdict == goose_swarm::Verdict::Drifting
                         && omni_outcome.confidence >= 0.8;
                     omni_drift_streak = drift_streak_step(
@@ -14088,8 +14045,23 @@ impl GooseAgentDispatcher {
                         && drift_verdict
                         && actions_since_last_look == 0
                         && history.undelivered_next.is_some();
-                    let drift_corroborated = drift_verdict
-                        && (omni_drift_streak >= 2 || recur.recurring() || repeated_next);
+                    // VA-146: the engine's own none-written-yet defect steer is the same kind of
+                    // witness on a files-owing lane — a named write, nothing delivered, no action
+                    // since. r6j web-viz-scene-stream look 1 (20:07:19Z) was held with it standing.
+                    let engine_witnessed = engine_witness(
+                        actions_since_last_look,
+                        !owned.is_empty(),
+                        owned_grew_since_look,
+                        history.defect_steer_standing,
+                    );
+                    let witness = drift_witness(
+                        drift_verdict,
+                        omni_drift_streak,
+                        recur.recurring(),
+                        repeated_next,
+                        engine_witnessed,
+                    );
+                    let drift_corroborated = witness.is_some();
                     let drifting_now =
                         drift_verdict && (!produced_anything_since_last_look || drift_corroborated);
                     if drift_verdict && produced_anything_since_last_look && !drift_corroborated {
@@ -14099,6 +14071,7 @@ impl GooseAgentDispatcher {
                             "produced_since_last_look": produced_since_last_look,
                             "actions_since_last_look": actions_since_last_look,
                             "drift_streak": omni_drift_streak,
+                            "defect_steer_standing": history.defect_steer_standing,
                             "detail": "DRIFTING on a producing call -- held for one look, because 33 of 34 \
                                        such nudges changed nothing and cost 66 minutes of worker time. A \
                                        second DRIFTING with no write progress since will be delivered.",
@@ -14192,6 +14165,7 @@ impl GooseAgentDispatcher {
                             "verdict": omni_outcome.verdict.as_str(),
                             "delivery": delivery_kind,
                             "reason": decided_reason,
+                            "witness": witness,
                         }));
                     }
                     // A RESTREAM IS RE-CHECKED AGAINST THE STREAM AS IT IS AT THE WIPE, not as the
@@ -14377,6 +14351,7 @@ impl GooseAgentDispatcher {
                             "delivery": if can_steer { "steer" } else { "restream" },
                             "reason": delivery_reason,
                             "arm": arm,
+                            "witness": witness,
                             "verdict": omni_outcome.verdict.as_str(),
                         }));
                         eprintln!(
