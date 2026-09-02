@@ -42,7 +42,11 @@ use super::swarm_engine::{
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
 mod decisions;
+mod provider_failures;
 use decisions::PlanDecision;
+use provider_failures::{
+    is_stream_decode_interrupt, said_kind_of, sidecar_admission_cap_refusal, supervision_reply,
+};
 mod supervision;
 use supervision::{
     fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
@@ -2864,19 +2868,6 @@ fn stream_decode_retry_resolved(env: Option<String>, cfg: Option<bool>) -> bool 
 
 fn stream_decode_retry_enabled(cfg: Option<bool>) -> bool {
     stream_decode_retry_resolved(std::env::var("GOOSE_SWARM_STREAM_RETRY").ok(), cfg)
-}
-
-/// #121: does this accumulated task output carry the deterministic mid-stream body-drop signature? The
-/// provider surfaces a dropped HTTP body as ProviderError::NetworkError("Stream decode error: ...") which
-/// the agent reply loop yields as assistant TEXT and then BREAKs — so the error sentence is guaranteed to be
-/// the LAST chunk. Requiring BOTH the "Stream decode error" marker AND that exact trailing sentence makes
-/// this ~zero-false-positive: a genuine verify verdict would have to literally contain the marker string and
-/// end with the resend sentence.
-fn is_stream_decode_interrupt(text: &str) -> bool {
-    text.contains("Stream decode error")
-        && text
-            .trim_end()
-            .ends_with("Please resend your message to try again.")
 }
 
 /// #135 straggler-stop gate: env GOOSE_SWARM_STRAGGLER_STOP wins, else config, else default OFF (a timing
@@ -7894,29 +7885,6 @@ mod tests {
         assert!(!stream_decode_retry_resolved(None, Some(false)));
         assert!(stream_decode_retry_resolved(Some("1".into()), Some(false)));
         assert!(stream_decode_retry_resolved(Some("YES".into()), None));
-    }
-
-    #[test]
-    fn stream_decode_interrupt_predicate_is_deterministic() {
-        // BOTH halves required: the marker AND the exact trailing resend sentence (the agent loop appends it
-        // as the last chunk after a NetworkError, then breaks).
-        let hit = "Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.";
-        assert!(is_stream_decode_interrupt(hit));
-        // Trailing whitespace is tolerated (trim_end before the suffix check).
-        assert!(is_stream_decode_interrupt(&format!("{hit}\n  ")));
-        // Marker present but NOT the trailing sentence (e.g. a genuine verdict that merely quotes the phrase)
-        // -> not an interrupt; the run's real output must be preserved.
-        assert!(!is_stream_decode_interrupt(
-            "The app logs a 'Stream decode error' when the socket closes; VERDICT: PASS."
-        ));
-        // The resend sentence WITHOUT the decode marker (some other transient) -> not this predicate.
-        assert!(!is_stream_decode_interrupt(
-            "Some other failure.\n\nPlease resend your message to try again."
-        ));
-        // A normal, clean verdict is never a false positive.
-        assert!(!is_stream_decode_interrupt(
-            "VERDICT: PASS — all endpoints return 200 and balances sum to zero."
-        ));
     }
 
     #[test]
@@ -13798,48 +13766,6 @@ fn inflight_rows(pending: &HashMap<String, InflightCall>) -> Vec<serde_json::Val
         .collect()
 }
 
-/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
-/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
-/// that reach the answer channel without the model having said them, so "does `last_text` end with
-/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
-/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
-/// is what the agent appends LAST before breaking the stream.
-const AGENT_ERROR_CLOSERS: [&str; 3] = [
-    "Please resend your message to try again.",
-    "Please retry if you think this is a transient or recoverable error.",
-    "resending this conversation is likely to be refused again.",
-];
-
-/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
-/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
-/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
-/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
-/// "this text is a dead attempt's transport error", because the digest never said which kind of
-/// text it was carrying.
-fn said_kind_of(last_text: &str) -> &'static str {
-    let t = last_text.trim_end();
-    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
-        "error"
-    } else {
-        "said"
-    }
-}
-
-/// A-2: a supervision call's reply, with the transport-failure disguise removed. The agent loop
-/// surfaces a provider failure as its own error-closer TEXT (agent.rs:2678 "Ran into this error:
-/// {provider_err}…"), so `run_agent` returns `Ok` and the caller reads an HTTP 400 body as a model
-/// reply. Every judge/review parser is deliberately LENIENT, which is exactly what makes it launder
-/// that text: r2's parse read gabee's 400 "Invalid model identifier" as substantive-and-not-OK and
-/// emitted 28 `drifting` verdicts whose hint WAS the error body, from 22:02:35Z until the run ended.
-/// `Err` here is the whole error text (tail-clipped), for the caller's failed event.
-fn supervision_reply(text: &str) -> Result<&str, String> {
-    if said_kind_of(text) == "error" {
-        Err(clip_tail(text, 400))
-    } else {
-        Ok(text)
-    }
-}
-
 /// Provenance of the SAID text: WHICH attempt produced `last_text`, WHEN it was dispatched and when
 /// the answer channel last advanced, and what any PRIOR attempt on this lane key left behind.
 /// Instrumentation only — nothing engine-side reads these fields back (the judge's digest reader is
@@ -14870,6 +14796,9 @@ pub struct GooseAgentDispatcher {
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
     sink_review_findings: Mutex<Vec<String>>,
+    /// Devices whose `sidecar-admission-cap` event this dispatcher already wrote — once per
+    /// device per dispatcher (one dispatcher per scheduler phase; the fix round builds its own).
+    admission_cap_said: Mutex<std::collections::HashSet<String>>,
     /// Q2 pre-review rotation: which REVIEW_DIMENSIONS brief the NEXT pre-review runs. Pre-review is the
     /// one idle mechanism that scales with the fleet (measured 2.0x/run at one node vs 10.2x at three,
     /// F670) and its prompt asked for exactly TWO defect classes — neither of them the Tier-B behaviour
@@ -15064,6 +14993,7 @@ impl GooseAgentDispatcher {
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
+            admission_cap_said: Mutex::new(std::collections::HashSet::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             settled_decisions: Mutex::new(String::new()),
             spec_frozen: Mutex::new(String::new()),
@@ -34535,6 +34465,61 @@ impl GooseAgentDispatcher {
                         "stream decode error (mid-stream body drop) on {}",
                         req.task_id
                     )));
+                }
+                // Rapid-MLX ADMISSION CAP (`sidecar_admission_cap_refusal`): the sidecar refused the
+                // call with a 503 past `--max-concurrent-requests`, the provider's own same-node
+                // backoff retries were exhausted, and the "answer" is the agent's error text. An
+                // infra TRANSIENT — never a device drop, never a task failure by content: the
+                // owned-file gates below would read it as "wrote nothing" and steer the retry with a
+                // hint about a transport fault (the 16933 class). Named once per device per
+                // dispatcher (`sidecar-admission-cap{device, in_flight}`), then one more step of
+                // the provider's OWN backoff (its RetryConfig, no new time literal, nothing bounding
+                // model work) before the slot is released so the re-dispatch does not land on the
+                // still-saturated node in the same instant. The scheduler picks the retry's device,
+                // exactly as for the stream-decode drop above.
+                if self.engine_models.get(&req.model_id) == Some(&EngineKind::MlxSidecar) {
+                    if let Some(in_flight) = sidecar_admission_cap_refusal(&out.text) {
+                        let first_for_device = self
+                            .admission_cap_said
+                            .lock()
+                            .unwrap()
+                            .insert(req.device_id.clone());
+                        if first_for_device {
+                            self.events.write_value(serde_json::json!({
+                                "event": "sidecar-admission-cap",
+                                "device": req.device_id,
+                                "model_id": req.model_id,
+                                "in_flight": in_flight,
+                                "task_id": req.task_id,
+                                "attempt": req.attempt,
+                            }));
+                        }
+                        let shown = in_flight.map_or("?".to_string(), |n| n.to_string());
+                        eprintln!(
+                            "  {} {} on {} ({:.1}s) — the mlx-sidecar refused admission (503, {shown} in-flight, its concurrency cap); re-dispatching after the provider's backoff",
+                            style("↻").yellow().bold(),
+                            style(&req.task_id).bold(),
+                            req.device_id,
+                            secs
+                        );
+                        match self.provider_for(&req.model_id).await {
+                            Ok(p) => {
+                                tokio::time::sleep(
+                                    p.retry_config()
+                                        .delay_for_attempt(req.attempt as usize + 1),
+                                )
+                                .await
+                            }
+                            Err(e) => eprintln!(
+                                "  provider lookup for '{}' failed ({e}) — re-dispatching without a backoff step",
+                                req.model_id
+                            ),
+                        }
+                        return Err(DispatchError::Transient(format!(
+                            "mlx-sidecar admission cap on {} ({shown} in-flight) for {}",
+                            req.device_id, req.task_id
+                        )));
+                    }
                 }
                 // Hallucinated-completion guard: a worker can call final_output ("done") WITHOUT ever
                 // writing its owned file — seen repeatedly (a test-archive task; parser/shared-models
