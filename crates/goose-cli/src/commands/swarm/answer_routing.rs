@@ -187,7 +187,7 @@ impl Arm {
 /// The routed block goes ABOVE the decisions partition when the brief carries one, so
 /// `decisions::brief_decisions_block`'s header-to-tail cut (what a repair shard is handed as
 /// "decisions") never swallows another slice's answers — 2a D11's lesson, kept structurally.
-fn insert_above_decisions(description: &str, block: &str) -> String {
+pub(super) fn insert_above_decisions(description: &str, block: &str) -> String {
     let at = [SETTLED_DECISIONS_HEADER, OPEN_DECISIONS_HEADER]
         .iter()
         .filter_map(|h| description.find(&format!("\n\n{h}")))
