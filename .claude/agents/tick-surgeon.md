@@ -184,3 +184,7 @@ reaching the logs — a duplicate buffered emit). Proof set: the `recipe__final_
 consuming event N minutes later, `lms ps` on the lane's node, the desk poll-counter reset. r6e's collection and consuming event
 share the same second — that is the baseline. RECOMMEND kill of the lane class with those quotes; the fix is the engine
 ending the lane at collection.
+
+## Verdict vocabulary (2026-09-02)
+
+The engine has no operator door to kill ONE lane; the only kill is the run. A lane that is not earning is a finding with its mechanism (an `action`), and the verdict is `continue` or `kill <run> <reason>` — never a lane cut. A 0-landed research lane is not a kill: its answers fold at the final reply (VA-119 seeds synthesis with both).
