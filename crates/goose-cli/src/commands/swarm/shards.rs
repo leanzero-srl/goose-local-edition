@@ -559,6 +559,100 @@ pub(super) const README_FIELDS: [&str; 5] = [
     "WRITES",
 ];
 
+/// VA-102: the shard brief's FIRST instruction — a concrete write, before any design. r6h
+/// (BUILD 05:13→06:00, three shards of `viz-engine`, zero live bytes): `camera-labels-brush`
+/// reasoned 102k chars in 46 minutes — 46,410 of them inside code fences, full piece bodies it
+/// would then have to retype — with one `ls` of its empty folder and no file, because the brief
+/// listed every declared name, put the README's structure LAST, and never said which file comes
+/// first. The README comes first (its PROVIDES/ASSUMES are the split's own facts), then ONE piece
+/// — the smallest by derivation — and the model is told where an open question goes instead of
+/// into more reasoning. MILD: text, nothing refuses.
+fn first_action_paragraph(
+    module_files: &[String],
+    shard: &ShardPlan,
+    folder: &str,
+    interface: &ModuleInterface,
+) -> String {
+    let provides = if shard.provides.is_empty() {
+        "the names your sections require".to_string()
+    } else {
+        shard
+            .provides
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let writes = if shard.writes.is_empty() {
+        format!("`{w}: none`", w = README_FIELDS[4])
+    } else {
+        format!("{w}: {}", shard.writes.join(", "), w = README_FIELDS[4])
+    };
+    let piece = match smallest_piece(module_files, shard, interface, folder) {
+        Some((name, path)) => format!(
+            "Then write your smallest piece, `{path}` (`{name}`), alone, and check it with a \
+             parse/lint."
+        ),
+        // No provides and no sections: the split left this shard only its responsibility, so the
+        // first piece is named from that and nothing else.
+        None => "Then write your smallest piece alone — the first function your responsibility \
+                 needs — and check it with a parse/lint."
+            .to_string(),
+    };
+    format!(
+        "YOUR FIRST ACTION — before any design, before reading the interface below: write \
+         `{folder}/README.md`, first version — {p}: {provides}, each with its declared signature; \
+         {a}: the sibling names and shared state you will read; {u}: every piece you have not written \
+         yet, one per line; {c}: none yet; {writes}. {piece} Only then think about the next piece, \
+         one `write` per piece, updating the README's {u}: lines as each lands. Do NOT draft a \
+         file's body in your reasoning — a body drafted there has to be typed twice; write it to the \
+         file and read the tool result back. An open question goes under {u}: in the README, not \
+         into more reasoning.\n\n",
+        p = README_FIELDS[0],
+        a = README_FIELDS[1],
+        u = README_FIELDS[2],
+        c = README_FIELDS[3],
+    )
+}
+
+/// The shard's smallest piece BY DERIVATION: of the names its split provides, the one whose
+/// declared signature is shortest (a signature's length is the one size the plan knows before any
+/// code exists), ties to the split's order, a name synthesis declared no signature for ranking
+/// after every declared one; with no provides, the first claimed section. The path is
+/// `<folder>/<kebab name>.<ext>`, the extension the module's own final file's.
+fn smallest_piece(
+    module_files: &[String],
+    shard: &ShardPlan,
+    interface: &ModuleInterface,
+    folder: &str,
+) -> Option<(String, String)> {
+    let name = shard
+        .provides
+        .iter()
+        .enumerate()
+        .min_by_key(|(i, p)| {
+            interface
+                .exports
+                .iter()
+                .find(|e| e.name == **p)
+                .map_or((true, 0, *i), |e| (false, e.signature.len(), *i))
+        })
+        .map(|(_, p)| p.clone())
+        .or_else(|| shard.sections.first().cloned())?;
+    // A final file with no extension (a `Makefile`-class module) yields pieces with none — that
+    // empty IS the module's own naming, not a substitute.
+    let ext = match module_files
+        .first()
+        .and_then(|f| std::path::Path::new(f).extension())
+        .and_then(|e| e.to_str())
+    {
+        Some(e) => format!(".{e}"),
+        None => String::new(),
+    };
+    let path = format!("{folder}/{}{ext}", kebab(&name));
+    Some((name, path))
+}
+
 /// A shard's brief, assembled by CODE from this run's facts: its split, its siblings' splits, the
 /// declared interface, its folder, the README contract, and the module's whole brief (the settled
 /// answers and the spec sections every shard shares — Mihai: trust the model with the information).
@@ -578,19 +672,28 @@ pub(super) fn shard_brief(
         .join(", ");
     let mut s = format!(
         "SHARD `{shard_id}` OF MODULE `{module_id}` — one of {n} shards building {final_files} in \
-         parallel on different machines.\n\n\
-         WHERE YOU WORK: ONLY inside your folder `{folder}/` (create it). Write your PIECES there as \
+         parallel on different machines.\n\n",
+        shard_id = shard.id,
+        n = siblings.len(),
+    );
+    s.push_str(&first_action_paragraph(
+        module_files,
+        shard,
+        folder,
+        interface,
+    ));
+    s.push_str(&format!(
+        "WHERE YOU WORK: ONLY inside your folder `{folder}/` (create it). Write your PIECES there as \
          files in the module's language — the functions, classes and sections your split names, \
-         e.g. `{folder}/<piece>.<ext>` — plus `{folder}/README.md` (structure below). NEVER write \
+         e.g. `{folder}/<piece>.<ext>` — plus `{folder}/README.md` (structure below; its first \
+         version is your FIRST write, above). NEVER write \
          {final_files}: the MERGER task `{module_id}` assembles the final file(s) from every shard's \
          pieces after all shards finish, and a shard that writes the final file overwrites its \
          siblings' work. Pieces cannot run alone — check each with a parse/lint (`node --check`, \
          `python3 -m py_compile`, or the language's equivalent) and say which you ran.\n\n\
          YOUR SPLIT: {responsibility}\n",
-        shard_id = shard.id,
-        n = siblings.len(),
         responsibility = shard.responsibility.trim(),
-    );
+    ));
     if !shard.sections.is_empty() {
         s.push_str(
             "Spec sections THIS shard implements (their text is in the module brief below):\n",
@@ -1544,6 +1647,103 @@ mod tests {
         assert_eq!(m.fat.len(), 1, "web-viz stays the one fat task: {m:?}");
     }
 
+    /// VA-102 (r6h, BUILD 05:13→06:00, three shards of `viz-engine`, zero live bytes): the shard
+    /// `camera-labels-brush` reasoned 102k chars — 49% inside code fences, full piece bodies — with
+    /// one `ls` and no file; `data-stream-render-pick` 102k chars, 3 calls, 0 files. Their briefs
+    /// listed every declared name and put the README's structure last. The brief's FIRST
+    /// instruction now names the README, then ONE derived piece, ahead of the interface and the
+    /// module brief. The module and two shard ids are r6h's; the third shard and the exports stand
+    /// in for a declaration the archive did not carry into this brief.
+    #[test]
+    fn the_shard_brief_orders_the_readme_write_before_the_design_r6h() {
+        let split: ModuleSplit = serde_json::from_value(serde_json::json!({
+            "interface": {
+                "exports": [
+                    {"name": "updateBasis", "kind": "function", "signature": "updateBasis(yaw, pitch, distance) -> void", "purpose": "camera basis"},
+                    {"name": "project", "kind": "function", "signature": "project(x, y, z) -> {sx, sy, depth}", "purpose": "world to screen"},
+                    {"name": "updateLabels", "kind": "function", "signature": "updateLabels(visibleIds, projectFn, canvasW, canvasH) -> void", "purpose": "cull and place labels"},
+                    {"name": "toggleBrush", "kind": "function", "signature": "toggleBrush(id) -> void", "purpose": "flip one id in the linked brush"},
+                    {"name": "buildScene", "kind": "function", "signature": "buildScene(data) -> void", "purpose": "fill the instance buffers"},
+                    {"name": "readPickAt", "kind": "function", "signature": "readPickAt(sx, sy) -> {id, index} | null", "purpose": "pick from the FBO"}
+                ],
+                "shared_state": "S = {yaw, pitch, distance, brush: Set<id>, dirty}",
+                "layout": ["constants", "state S", "camera", "labels", "brush", "stream", "render", "pick", "boot"]
+            },
+            "shards": [
+                {"id": "camera-labels-brush", "responsibility": "the orbit camera, label culling and the linked brush", "sections": ["Camera — orbit + inertia", "Screen-space labels", "The linked brush"], "provides": ["updateBasis", "project", "updateLabels", "toggleBrush"], "writes": ["S.brush"]},
+                {"id": "data-stream-render-pick", "responsibility": "the data stream, instanced rendering and the pick FBO", "sections": ["Streaming", "Rendering", "The pick buffer"], "provides": ["buildScene", "readPickAt"]},
+                {"id": "debug-api-boot", "responsibility": "the vs7dbg API and boot", "sections": ["`vs7dbg` — REQUIRED and graded"], "provides": []}
+            ]
+        }))
+        .unwrap();
+        let p = plan(&[
+            ("web-console", &["web/index.html"]),
+            ("viz-engine", &["web/viz.js"]),
+        ]);
+        let (out, _) = apply_module_split(&p.to_string(), "viz-engine", &split).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let brief_of = |id: &str| -> String {
+            v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .unwrap_or_else(|| panic!("{id} missing"))["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let b = brief_of("viz-engine-camera-labels-brush");
+        let first = b.find("YOUR FIRST ACTION").expect("the first instruction");
+        let where_you_work = b.find("WHERE YOU WORK").unwrap();
+        assert!(first < where_you_work, "{b}");
+        assert!(first < b.find("THE MODULE'S DECLARED INTERFACE").unwrap());
+        assert!(first < b.find("THE MODULE'S BRIEF").unwrap());
+        let readme_at = b
+            .find("write `.swarm/shards/viz-engine/camera-labels-brush/README.md`, first version")
+            .expect("the README is the first path the instruction names");
+        assert!(first < readme_at && readme_at < where_you_work);
+        assert!(
+            b.contains(
+                "`.swarm/shards/viz-engine/camera-labels-brush/togglebrush.js` (`toggleBrush`)"
+            ),
+            "the smallest piece is the shortest declared signature, in the module's extension: {b}"
+        );
+        assert!(b.contains("Do NOT draft a file's body in your reasoning"));
+        assert!(b.contains("PROVIDES: `updateBasis`, `project`, `updateLabels`, `toggleBrush`"));
+        assert!(b.contains("WRITES: S.brush"));
+        for (id, folder) in [
+            (
+                "viz-engine-camera-labels-brush",
+                ".swarm/shards/viz-engine/camera-labels-brush",
+            ),
+            (
+                "viz-engine-data-stream-render-pick",
+                ".swarm/shards/viz-engine/data-stream-render-pick",
+            ),
+            (
+                "viz-engine-debug-api-boot",
+                ".swarm/shards/viz-engine/debug-api-boot",
+            ),
+        ] {
+            let b = brief_of(id);
+            assert!(
+                b.find("YOUR FIRST ACTION").unwrap() < b.find("WHERE YOU WORK").unwrap(),
+                "{id}: the write precedes the design material"
+            );
+            assert!(
+                b.contains(&format!("write `{folder}/README.md`, first version")),
+                "{id}: README named first"
+            );
+        }
+        let dbg = brief_of("viz-engine-debug-api-boot");
+        assert!(
+            dbg.contains("`.swarm/shards/viz-engine/debug-api-boot/vs7dbg-required-and-graded.js`"),
+            "no provides: the first claimed section names the piece: {dbg}"
+        );
+        assert!(dbg.contains("`WRITES: none`"));
+    }
+
     fn viz_split() -> ModuleSplit {
         serde_json::from_value(serde_json::json!({
             "interface": {
@@ -2365,10 +2565,12 @@ pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
          from every shard's pieces; a shard that writes it overwrites its siblings. Do not run the \
          app or the test suite (your pieces cannot run alone); CHECK each piece with a parse/lint \
          (`node --check`, `python3 -m py_compile`, the language's equivalent) and record the \
-         command and its result. FINISH by writing `README.md` in your folder with the five \
-         fields — {p}: / {a}: / {u}: / {c}: / {w}: — one item per line, and end your final message \
-         with the same five fields (they are your handoff to the merger). A turn that ends without \
-         the README FAILS and is retried.\n\n",
+         command and its result. START by writing `README.md` in your folder — its first version, \
+         with the five fields — {p}: / {a}: / {u}: / {c}: / {w}: — one item per line, {u}: listing \
+         every piece not yet written — and KEEP IT CURRENT as each piece lands. Then ONE piece per \
+         `write`, checked; never draft a piece's body in your reasoning to type it later. End your \
+         final message with the same five fields (they are your handoff to the merger). A turn that \
+         ends without the README FAILS and is retried.\n\n",
         shard = shard.shard,
         module = shard.module,
         responsibility = shard.responsibility.trim(),
@@ -2706,6 +2908,11 @@ mod dispatch_tests {
         let body = shard_owner_body(&sh);
         assert!(body.contains("NEVER write the module's final file"));
         assert!(body.contains("PROVIDES: / ASSUMES: / UNFINISHED: / CHECKED_WITH:"));
+        assert!(body.contains("START by writing `README.md`"), "{body}");
+        assert!(
+            !body.contains("FINISH by writing"),
+            "VA-102 (r6h): the README ordered LAST deferred every write behind the whole design"
+        );
         assert!(
             !body.contains("pytest ONCE"),
             "the file author's script is not the shard's"
