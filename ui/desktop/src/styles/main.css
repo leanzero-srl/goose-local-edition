@@ -439,6 +439,10 @@
   --color-lz-accent: var(--color-action-solid, #1d4ed8);
   --color-lz-accent-hover: var(--color-lz-accent-hover, #1e40af);
   --color-lz-accent-ink: #ffffff;
+  /* The host button's two solid hover fills (ui/button.tsx default + destructive), set host-wide
+     below (:root / .dark) because that button renders in every edition. */
+  --color-lz-inverse-hover: var(--color-lz-inverse-hover, #262626);
+  --color-lz-danger-hover: var(--color-lz-danger-hover, #fa6161);
   /* Secondary accent — SPARING: the reasoning/thinking channel and one secondary emphasis. */
   --color-lz-secondary: var(--color-lz-secondary, #6d28d9);
   --color-lz-secondary-ink: var(--color-lz-secondary-ink, #ffffff);
@@ -499,6 +503,20 @@
   --color-lz-accent-hover: #2563eb;
   --color-lz-secondary: #c084fc;
   --color-lz-secondary-ink: #0b1220;
+}
+
+/* Host-button hover fills — HOST-WIDE, not .local-edition: ui/button.tsx renders in every edition
+   over --color-background-inverse (#000000 light / #cbd1d6 dark) and --color-background-danger
+   (#f94b4b / #ff6b6b). Each hover is ONE solid step toward the page in its theme — the direction
+   the old `/90` alpha blend produced — as a 6-digit hex, never an alpha. White ink on the danger
+   hover measures 3.0:1 light / 3.2:1 dark (the base fills measure 3.4 / 2.8). */
+:root {
+  --color-lz-inverse-hover: #262626;
+  --color-lz-danger-hover: #fa6161;
+}
+.dark {
+  --color-lz-inverse-hover: #b5bdc5;
+  --color-lz-danger-hover: #ff5252;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

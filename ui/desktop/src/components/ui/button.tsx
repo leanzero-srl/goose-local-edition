@@ -10,8 +10,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-background-inverse text-text-inverse hover:bg-background-inverse/90',
-        destructive: 'bg-background-danger text-white hover:bg-background-danger/90',
+        default: 'bg-background-inverse text-text-inverse hover:bg-lz-inverse-hover',
+        destructive: 'bg-background-danger text-white hover:bg-lz-danger-hover',
         outline: 'border hover:bg-background-secondary',
         secondary: 'bg-background-secondary text-text-primary hover:bg-background-tertiary',
         ghost: 'hover:bg-background-secondary',
