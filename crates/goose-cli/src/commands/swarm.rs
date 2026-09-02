@@ -75,7 +75,8 @@ use research::{
     research_system_text, ResearchLane, ResearchQuestion, ResearchRow, REQUEST_FILE,
 };
 mod imports;
-use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
+use imports::{tree_import_gaps, verify_tree_imports};
+mod cross_task;
 mod plan_store;
 use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state_from_dir};
 mod prose;
@@ -11854,7 +11855,7 @@ pub struct GooseAgentDispatcher {
     /// (the block ahead of `run_with_decisions`) and refreshed per task at dispatch (which is how a
     /// replan-spliced task enters). Read by the omni-judge loop, which is handed only an
     /// `activity_key` and otherwise cannot tell a build task from a planner call, and by
-    /// `attribute_import_gap`, which needs the PLAN's ownership, not the dispatch log's — on r5
+    /// `cross_task::classify_import_gap`, which needs the PLAN's ownership, not the dispatch log's — on r5
     /// three `delivery_defects` events read a planned owner (ledgerd-service / `app/httpapi.py`)
     /// as "no task owns" because this map used to grow only at dispatch.
     ///
@@ -11894,6 +11895,9 @@ pub struct GooseAgentDispatcher {
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
     spec_set_reported: Mutex<std::collections::HashSet<String>>,
+    /// (importer, module, verdict) cross-import facts already stated: the tree scan runs at EVERY
+    /// completion (r6h: the same three lines at five completions, 04:10 → 05:20); once per fact.
+    cross_task_reported: Mutex<std::collections::HashSet<String>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
     /// Mid-run AUX routing candidates (r6c 18:38): every omni-judge look and the dynamic replanner
@@ -12059,6 +12063,7 @@ impl GooseAgentDispatcher {
             research_running: Mutex::new(HashMap::new()),
             research_relay: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
+            cross_task_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
             aux_models,
             inflight_by_model: Mutex::new(HashMap::new()),
@@ -24960,53 +24965,58 @@ impl GooseAgentDispatcher {
             &imports::ledger_task_states(root),
             &self.dispatched_tasks.lock().unwrap(),
         );
-        // AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file perfectly and
-        // still leave the tree unrunnable by importing something nobody wrote. Run it here rather than on
-        // a cadence: a task completing is exactly when the tree changed, so there is nothing to schedule
-        // and nothing to poll.
-        //
-        // II-9: each gap is ATTRIBUTED from the DAG before it enters the event. The scan fires on
-        // whichever task completes, so without attribution the event's task_id charges the whole
-        // tree's gaps to that task — on r2, 5 of 6 events blamed the wrong one. The line itself now
-        // names the owner and its state, so a reader (and the ledger) gets "owned by sse-endpoint,
-        // state: running" instead of a defect pinned on the last task through the door.
-        // ROUTED, NOT DUMPED (r5 assessment item 5, receipts at run.jsonl seqs 172/223): the whole
-        // tree's gaps used to enter THIS event's `defects`, so decisions' completion carried
-        // notifierd/ledgerd import defects and frozen-rules-tests carried a ledgerd one — a reader
-        // grepping by task_id misattributed them, and a worker shown its own event was invited to
-        // reason about files it must not touch. The completing task's list now keeps only its OWN
-        // gaps plus explicitly-unowned ones; a gap the plan-load ownership map routes to another
-        // task rides `cross_task` with `owner_task` as data. Same scan, same loudness, one honest
-        // address per defect.
+        // AND THE CROSS-TASK CHECK, on the same free pass — a task completing is exactly when the
+        // tree changed. Every unresolved import is read against the PLAN's ownership
+        // (`cross_task::classify_import_gap`, VA-110): an owner still to finish is
+        // `cross_task_pending`, never a defect; an owner done without its file owns the defect; a
+        // file the plan never assigned is `cross_task_unowned` and the importer's line to fix.
+        // Routed, not dumped (r5 item 5): the completing task's `defects` keep its own gaps, another
+        // task's ride `cross_task` with `owner_task` as data — ONCE per fact across completions
+        // (r6h: the same three false lines at five completions, 04:10 → 05:20).
         let gaps = tree_import_gaps(root);
-        let mut cross_task: Vec<serde_json::Value> = Vec::new();
+        let mut cross_lines: Vec<serde_json::Value> = Vec::new();
         if !gaps.is_empty() {
             let ownership = self.owned_files_by_task.lock().unwrap().clone();
             let dispatched = self.dispatched_tasks.lock().unwrap().clone();
             let states = imports::ledger_task_states(root);
+            let mut seen = self.cross_task_reported.lock().unwrap();
+            let mut emit = |ev: serde_json::Value| {
+                self.events.write_value(ev);
+            };
+            let mut notice = |s: String| eprintln!("  {} {s}", style("·").dim());
             for (rel, module) in gaps {
-                let (d, owner) = attribute_import_gap_with_owner(
+                let verdict = cross_task::classify_import_gap(
                     &rel,
                     &module,
                     &ownership,
                     &states,
                     &dispatched,
                 );
-                match owner {
-                    Some(t) if t != task_id => {
-                        if !cross_task.iter().any(|c| c["defect"] == d.as_str()) {
-                            cross_task.push(serde_json::json!({"owner_task": t, "defect": d}));
+                match cross_task::route_import_gap(
+                    task_id,
+                    &rel,
+                    &module,
+                    verdict,
+                    &mut seen,
+                    &mut emit,
+                    &mut notice,
+                ) {
+                    Some(cross_task::Routed::Own(line)) => {
+                        if !defects.contains(&line) {
+                            defects.push(line);
                         }
                     }
-                    _ => {
-                        if !defects.contains(&d) {
-                            defects.push(d);
+                    Some(cross_task::Routed::Cross { owner, line }) => {
+                        if !cross_lines.iter().any(|c| c["defect"] == line.as_str()) {
+                            cross_lines
+                                .push(serde_json::json!({"owner_task": owner, "defect": line}));
                         }
                     }
+                    None => {}
                 }
             }
         }
-        if defects.is_empty() && cross_task.is_empty() {
+        if defects.is_empty() && cross_lines.is_empty() {
             return;
         }
         let mut ev = serde_json::json!({
@@ -25016,26 +25026,11 @@ impl GooseAgentDispatcher {
             "defects": defects,
             "salvaged": salvaged,
         });
-        if !cross_task.is_empty() {
-            ev["cross_task"] = serde_json::Value::from(cross_task.clone());
+        if !cross_lines.is_empty() {
+            ev["cross_task"] = serde_json::Value::from(cross_lines.clone());
         }
         self.events.write_value(ev);
-        for d in &defects {
-            eprintln!(
-                "  {} {} delivered a defect: {d}",
-                style("!").red().bold(),
-                style(task_id).bold()
-            );
-        }
-        for c in &cross_task {
-            eprintln!(
-                "  {} {} owns a defect surfaced at {}'s completion: {}",
-                style("!").red().bold(),
-                style(c["owner_task"].as_str().unwrap_or("?")).bold(),
-                task_id,
-                c["defect"].as_str().unwrap_or("?")
-            );
-        }
+        cross_task::print_delivery_lines(task_id, &defects, &cross_lines);
     }
 
     /// §II.2 WRITERS, task leg: persist what this attempt measurably did the moment it says it
@@ -29047,7 +29042,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     //
-    // THE WHOLE PLAN's OWNERSHIP, PUBLISHED BEFORE THE FIRST DISPATCH. `attribute_import_gap`
+    // THE WHOLE PLAN's OWNERSHIP, PUBLISHED BEFORE THE FIRST DISPATCH. `cross_task::classify_import_gap`
     // reads this map on every completion's import scan; populated only at dispatch it was the
     // dispatch log, not the plan — MEASURED on r5 (seqs 141/172/183): `app/ledgerd/__init__.py`'s
     // import of `app.httpapi` was reported "which no task owns — the import line is skeleton's to
