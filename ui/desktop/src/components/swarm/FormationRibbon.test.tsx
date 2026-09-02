@@ -38,7 +38,11 @@ describe('FormationRibbon', () => {
     expect(labels.indexOf('Research')).toBe(labels.indexOf('Synthesize') - 1);
     expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
     expect(within(phases).queryByText(/Review/)).not.toBeInTheDocument();
-    expect(within(phases).getByText('Ask').closest('li')).toHaveAttribute('data-state', 'complete');
+    // ASK and SPLIT are conditional (VA-138): with no evidence the run asked nothing and split
+    // nothing, so neither chip is drawn — and nothing back-fills a green check for an ask that
+    // never happened.
+    expect(within(phases).queryByText(/Ask/)).not.toBeInTheDocument();
+    expect(within(phases).queryByText(/Split/)).not.toBeInTheDocument();
     expect(within(phases).queryByText('Plan')).not.toBeInTheDocument();
 
     const nodes = screen.getAllByTestId('formation-node');

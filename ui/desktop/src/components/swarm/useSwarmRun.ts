@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormationEvidence, RunPhase } from './formationVisualState';
+import { EMPTY_PHASE_SPANS, type FormationEvidence, type PhaseSpans, type RunPhase } from './formationVisualState';
 
 /**
  * Reads the LIVE swarm run for a working directory (via the `read-swarm-run` IPC) and folds its event
@@ -502,6 +502,7 @@ export type PhaseKey =
   | 'synthesis'
   | 'review'
   | 'contracts'
+  | 'split'
   | 'build'
   | 'integrate'
   | 'repair'
@@ -799,6 +800,9 @@ export interface SwarmRunState {
   /** Which phases the engine actually emitted, so the ribbon can mark an un-run stage skipped instead of
    *  back-filling a green check for work that never happened. */
   runPhasesObserved: FormationEvidence;
+  /** Each phase's time on the clock from the event timestamps (VA-138) — the ribbon's per-chip
+   *  duration, so a 12-minute synthesis followed by a 23-minute split never reads "Synthesize 35m". */
+  runPhaseSpans: PhaseSpans;
   /** The OPEN cut + what RESEARCH wrote back from it. */
   slices: SliceFan | null;
   /** Who is answering the clarifying questions — the user, or goose from the spec (see ClarifyProxy). */
@@ -913,6 +917,7 @@ const EMPTY: SwarmRunState = {
   phase: '',
   runPhase: null,
   runPhasesObserved: {},
+  runPhaseSpans: EMPTY_PHASE_SPANS,
   slices: null,
   proxy: { timedOut: null },
   reviewRounds: [],
@@ -1218,6 +1223,8 @@ function judgeTone(verdict: string): ActivityTone {
  * interface stubs for minutes, and it rendered as "Build active" with three nodes parked under Build — the
  * owner's words: "Contracts is somehow in build". A phase the engine announces gets its own step.
  */
+// SPLIT is deliberately absent: the engine emits no `phase: split`; foldRunPhase enters it on
+// `plan_flag{kind: fat_task}` (VA-138).
 const ENGINE_PHASE: Record<string, RunPhase> = {
   open: 'open',
   ask: 'ask',
@@ -1252,15 +1259,42 @@ const ENGINE_PHASE: Record<string, RunPhase> = {
 export function foldRunPhase(events: Array<Record<string, unknown>>): {
   phase: RunPhase | null;
   observed: FormationEvidence;
+  /** Each phase's time on the clock from the event timestamps (VA-138), so "Synthesize 35m" can never
+   *  be read off a chip that was really 12 minutes of synthesis and 23 of the split lane. */
+  spans: PhaseSpans;
 } {
   let phase: RunPhase | null = null;
   const observed: FormationEvidence = {};
+  const spans: PhaseSpans = { phases: {}, lastTs: null };
+  let at: number | null = null;
   const enter = (next: RunPhase) => {
+    if (phase !== next) {
+      // Leaving the current phase closes its open segment; entering one opens (or re-opens) a segment.
+      // Both need a timestamp — an event without one (fixtures, pre-ts archives) moves the phase and
+      // leaves the clock alone, so no duration is ever invented.
+      if (at != null) {
+        const leaving = phase ? spans.phases[phase] : undefined;
+        if (leaving && leaving.since != null) {
+          leaving.ms += Math.max(0, at - leaving.since);
+          leaving.end = at;
+          leaving.since = null;
+        }
+        const entering = spans.phases[next];
+        if (entering) {
+          if (entering.since == null) entering.since = at;
+        } else spans.phases[next] = { start: at, end: null, ms: 0, since: at };
+      }
+    }
     phase = next;
     observed[next] = true;
   };
   for (const e of events) {
     const type = String(e['event'] ?? '');
+    const ts = typeof e['ts'] === 'string' ? Date.parse(e['ts']) : NaN;
+    if (Number.isFinite(ts)) {
+      at = ts;
+      spans.lastTs = ts;
+    }
     switch (type) {
       case 'phase': {
         const next = ENGINE_PHASE[str(e['phase'])];
@@ -1281,6 +1315,14 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
       case 'research_answered':
       case 'research_unanswered':
         enter('research');
+        break;
+      // THE SPLIT has no phase event either (VA-138). `plan_flag{kind: fat_task}` is the measurement
+      // that summons the one `split-<task>` planner call, and it is emitted AFTER synthesis has
+      // returned and the plan is repaired — so from here until the plan loads the run is splitting,
+      // not synthesising. r6j: `phase: synthesis` 18:52:32, plan_flag 19:04:30, the split lane still
+      // forming at 19:29 — the ribbon read Synthesize for the whole 35 minutes. plan_loaded ends it.
+      case 'plan_flag':
+        if (str(e['kind']) === 'fat_task') enter('split');
         break;
       case 'plan_loaded':
         enter('build');
@@ -1308,7 +1350,7 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
         break;
     }
   }
-  return { phase, observed };
+  return { phase, observed, spans };
 }
 
 /** Turn the run event stream into TWO timelines — a compact headline feed (phases only) and a VERBOSE feed
@@ -1839,6 +1881,41 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
             perFile != null ? `${perFile.toFixed(1)}/file` : '',
             threshold != null ? `threshold ${threshold.toFixed(1)}` : '',
             median != null ? `median ${median.toFixed(1)}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'info', sub });
+        verbose({ kind: 'plan', text: t, tone: 'info', sub });
+        // The header badge followed `phase` events only, so it read "Synthesizing" through the whole
+        // split call (VA-138) — the split is its own stage from this measurement until plan_loaded.
+        phase = `Splitting ${task}`;
+        break;
+      }
+      case 'split_hosts_scarce': {
+        // Fewer than two free hosts when the split ran: the shards are sized by the declaration's
+        // clusters and queue as nodes free. A fleet fact worth a line, never a declined split.
+        const free = num(e['free_hosts']);
+        const t = `Split of \`${str(e['task'])}\` sized by its declaration — ${free ?? '?'} free host${free === 1 ? '' : 's'} at split time`;
+        const sub = str(e['detail']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'split_sized': {
+        // THE SPLIT'S SIZING (shards.rs sized_event): the declaration's clusters grouped onto the
+        // free hosts, largest group minimised. `hosts` is null when the caller did not pass the free
+        // host count — said, never a literal.
+        const declared = num(e['declared']);
+        const shards = num(e['shards']);
+        const hosts = num(e['hosts']);
+        const t = `Split of \`${str(e['module'])}\` sized — ${shards ?? '?'} shard${shards === 1 ? '' : 's'}${
+          declared != null && declared !== shards ? ` from ${declared} declared` : ''
+        }${hosts != null ? ` on ${hosts} free host${hosts === 1 ? '' : 's'}` : ' (free host count unknown)'}`;
+        const weights = arr(e['weights']).map((w) => num(w) ?? '?');
+        const sub =
+          [
+            weights.length ? `cluster weights ${weights.join(', ')}` : '',
+            str(e['source']),
           ]
             .filter(Boolean)
             .join(' · ') || undefined;
@@ -4812,6 +4889,48 @@ export function buildPhaseTodo(
   const r2Kinds: Array<string | undefined> = [];
   const r2Reasons = new Map<string, number>();
   let r2FanPanicked = false;
+  // VA-138: the fan PER LANE, so the Research step lists its lanes and what each delivered — the
+  // dispatch order (research_dispatch_order: rank / host / sections), the answers that landed on it
+  // (research_answered and its VA-089 twin research_answer_landed, one set per slice so the two
+  // shapes never double-count), the kinds the lane named, its real misses, and the event that CLOSED
+  // it: a `research_unanswered{reason: remainder_empty}` is the engine's outcome row for a lane whose
+  // final reply added nothing behind the answers the tool already landed (research.rs
+  // fold_research_lane_from) — a lane closer, never a question kept raw in a brief.
+  const r2LaneOrder = new Map<
+    string,
+    { rank: number | null; host: string; sections: number | null; seq: number }
+  >();
+  const r2LaneLanded = new Map<string, Set<number>>();
+  const r2LaneKinds = new Map<string, Map<number, string>>();
+  const r2LaneMissed = new Map<string, number>();
+  const r2LaneClosed = new Map<string, string>();
+  let r2LaneSeq = 0;
+  const laneOrderOf = (slice: string) => {
+    let o = r2LaneOrder.get(slice);
+    if (!o) {
+      o = { rank: null, host: '', sections: null, seq: r2LaneSeq++ };
+      r2LaneOrder.set(slice, o);
+    }
+    return o;
+  };
+  const laneLanded = (slice: string, q: number | null, kind?: string) => {
+    if (q == null) return;
+    let set = r2LaneLanded.get(slice);
+    if (!set) r2LaneLanded.set(slice, (set = new Set()));
+    set.add(q);
+    if (kind) laneKind(slice, q, kind);
+  };
+  const laneKind = (slice: string, q: number | null, kind: string) => {
+    if (q == null || !kind) return;
+    let m = r2LaneKinds.get(slice);
+    if (!m) r2LaneKinds.set(slice, (m = new Map()));
+    m.set(q, kind);
+  };
+  // CROSS-SLICE ANSWER ROUTING (VA-104, answer_routing.rs) — synthesis's own delivery: an answer
+  // naming a file another task owns is rendered into that task's brief with the owner stated.
+  let r2Routed = 0;
+  let r2Unowned = 0;
+  let r2RoutingSkipped: string | null = null;
   const r2Ignored: Array<{ slice: string; count: number | null }> = [];
   const r2Resumed: Array<{ slice: string; rows: number | null }> = [];
   // The fan's PLAN event (research_planned, VA-089: lanes / per_slice_sections / resumed_slices /
@@ -4854,6 +4973,13 @@ export function buildPhaseTodo(
   const splits: Array<{ module: string; shards: string[]; exports: number; tasksAfter: number | null }> =
     [];
   const splitDeclined: Array<{ task: string; reason: string }> = [];
+  // THE SPLIT'S SIZING (shards.rs sized_event): the declaration's clusters grouped onto the free
+  // hosts; `hosts` null when the caller passed no free-host count (said, never a literal).
+  const splitSized = new Map<
+    string,
+    { declared: number | null; hosts: number | null; shards: number | null; weights: number[] }
+  >();
+  const splitScarce = new Map<string, number | null>();
   const shardOf = new Map<string, string>();
   const mergeDossiers = new Map<
     string,
@@ -4901,6 +5027,11 @@ export function buildPhaseTodo(
   let proxyFailed = false;
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: number | null = null;
+  // SYNTHESIS ENDS WHEN ITS PLAN IS ON THE LOG (VA-138): `plan_synthesized` (or the deterministic
+  // repairs / weighting that read it) — never plan_loaded, which lands only after the split lane has
+  // run. r6j: plan_synthesized 19:04:30, plan_loaded ~25 minutes later; the row read "Wiring the
+  // slices into a task DAG…" for every one of those minutes.
+  let synthesized = null as { tasks: number | null } | null;
   // LEGACY-LOG (2447d145c): the LLM REVIEW round is deleted, so review_findings / review_failed have no
   // emitter — these two collect archived rounds only; empty on every new run, and the REVIEW phase's
   // items stay empty with them (the PlanningZone drops an empty phase).
@@ -4941,6 +5072,33 @@ export function buildPhaseTodo(
     else if (t === 'clarify_proxy_failed') proxyFailed = true;
     else if (t === 'synthesis_fallback') synthesisFallback = num(e['tasks']) ?? 0;
     else if (t === 'sink_id_pinned') sinkRenamedFrom = str(e['from']);
+    else if (t === 'plan_synthesized')
+      synthesized = { tasks: num(e['tasks']) ?? synthesized?.tasks ?? null };
+    else if (t === 'plan_weighted' || (t === 'plan_repaired' && str(e['source']) === 'plan'))
+      synthesized = synthesized ?? { tasks: null };
+    else if (t === 'research_answer_routed') r2Routed += 1;
+    else if (t === 'research_answer_unowned') r2Unowned += 1;
+    else if (t === 'research_answer_routing_skipped') r2RoutingSkipped = str(e['error']) || 'the plan did not parse';
+    else if (t === 'split_sized')
+      splitSized.set(str(e['module']), {
+        declared: num(e['declared']),
+        hosts: num(e['hosts']),
+        shards: num(e['shards']),
+        weights: arr(e['weights']).map((w) => num(w) ?? 0),
+      });
+    else if (t === 'split_hosts_scarce') splitScarce.set(str(e['task']), num(e['free_hosts']));
+    else if (t === 'research_dispatch_order') {
+      const o = laneOrderOf(str(e['slice']));
+      o.rank = num(e['rank']);
+      o.host = e['host'] ? nodeOf(str(e['host'])) : o.host;
+      o.sections = num(e['sections']);
+    } else if (t === 'research_answer_landed') {
+      // VA-089's per-answer twin of research_answered (task, slice, q_index, kind, status) — the
+      // per-lane set dedups the two shapes; the fan totals stay on research_answered alone.
+      if (str(e['status']) === 'answered' || !e['status'])
+        laneLanded(str(e['slice']), num(e['q_index']), str(e['kind']) || undefined);
+      else laneKind(str(e['slice']), num(e['q_index']), str(e['kind']));
+    }
     else if (t === 'plan_flag' && str(e['kind']) === 'fat_task')
       fatTasks.set(str(e['task']), {
         sections: num(e['sections']),
@@ -5033,18 +5191,29 @@ export function buildPhaseTodo(
     } else if (t === 'research_dispatched') {
       // VA-089: one event per LANE, no q_index; LEGACY-LOG: one per question, q_index present.
       if (num(e['q_index']) != null) r2LegacyDispatched += 1;
-      else r2Lanes += 1;
+      else {
+        r2Lanes += 1;
+        const o = laneOrderOf(str(e['slice']));
+        if (!o.host && e['model']) o.host = nodeOf(str(e['model']));
+      }
     } else if (t === 'research_question_kind') {
       r2Questions.add(`${str(e['slice'])}::${num(e['q_index'])}`);
       r2Kinds.push(str(e['kind']) || undefined);
+      laneKind(str(e['slice']), num(e['q_index']), str(e['kind']));
     } else if (t === 'research_answered') {
       r2Answered += 1;
       r2Questions.add(`${str(e['slice'])}::${num(e['q_index'])}`);
+      laneLanded(str(e['slice']), num(e['q_index']));
     } else if (t === 'research_unanswered') {
-      r2Unanswered += 1;
-      r2Questions.add(`${str(e['slice'])}::${num(e['q_index'])}`);
+      const slice = str(e['slice']);
       const reason = str(e['reason']);
-      if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
+      if (reason === 'remainder_empty') r2LaneClosed.set(slice, reason);
+      else {
+        r2Unanswered += 1;
+        r2Questions.add(`${slice}::${num(e['q_index'])}`);
+        if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
+        r2LaneMissed.set(slice, (r2LaneMissed.get(slice) ?? 0) + 1);
+      }
     } else if (t === 'research_question_ignored')
       r2Ignored.push({ slice: str(e['slice']), count: num(e['count']) });
     else if (t === 'research_slice_resumed')
@@ -5306,6 +5475,46 @@ export function buildPhaseTodo(
             .join(' · ')
         )
       );
+    // ONE ROW PER LANE, IN DISPATCH ORDER (VA-138): what each lane delivered — the answers that
+    // landed, the kinds it named, its real misses — beside the rank and host it was dispatched at,
+    // and whether it is still running or what closed it. The node chip is the host. A closed lane
+    // that landed nothing reads unverified, never a clean pass.
+    const laneSlices = [...r2LaneOrder.entries()]
+      .sort(([, a], [, b]) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.seq - b.seq)
+      .map(([slice]) => slice);
+    for (const slice of laneSlices) {
+      const order = r2LaneOrder.get(slice)!;
+      const landed = r2LaneLanded.get(slice)?.size ?? 0;
+      const kinds = tallyKinds([...(r2LaneKinds.get(slice)?.values() ?? [])]);
+      const missed = r2LaneMissed.get(slice) ?? 0;
+      const closer = r2LaneClosed.get(slice);
+      const over = closer != null || r2Over || r2FanPanicked;
+      const state: TodoState = !over ? 'running' : landed > 0 ? 'done' : 'unverified';
+      research.push(
+        it(
+          `r2-lane-${slice}`,
+          `${researchSliceLabel(slice)} lane`,
+          state,
+          [
+            `landed ${landed}`,
+            kinds,
+            missed > 0 ? `${missed} unanswered` : '',
+            order.rank != null ? `rank ${order.rank}` : '',
+            order.sections != null ? `${order.sections} section${order.sections === 1 ? '' : 's'}` : '',
+            !over
+              ? 'running'
+              : closer === 'remainder_empty'
+                ? 'closed — the final reply added nothing behind the landed answers'
+                : closer
+                  ? `closed — ${closer.replace(/_/g, ' ')}`
+                  : 'closed',
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          order.host || undefined
+        )
+      );
+    }
     // The misses get their own row: an unanswered question stays a raw question in its brief (never a
     // fabricated answer), and this is where that absence shows once the feed has scrolled past.
     if (r2Unanswered > 0 && !r2FanPanicked)
@@ -5457,22 +5666,53 @@ export function buildPhaseTodo(
         'flatter and more serial; every module still specified and owned'
       )
     );
-  } else if (phasesSeen.has('synthesis') && !planLoaded && !phasesSeen.has('review'))
-    // On the live engine (no REVIEW since 2447d145c) synthesis runs until plan_loaded: synthesis ->
-    // plan_synthesized -> plan_repaired (deterministic) -> plan_loaded, nothing else in between.
+  } else if (phasesSeen.has('synthesis') && !planLoaded && !synthesized && !phasesSeen.has('review'))
+    // The synthesis call is live until its plan is on the log (plan_synthesized). What follows —
+    // the deterministic repairs, the answer routing, THE SPLIT — is not synthesis, and gating this
+    // row on plan_loaded painted it running through r6j's whole 23-minute split lane (VA-138).
     synthesis.push(it('s-run', 'Wiring the slices into a task DAG…', 'running'));
   // LEGACY-LOG: SYNTHESIS ENDED WHEN REVIEW OPENED, NOT WHEN THE PLAN LOADED. `plan_loaded` was emitted only
   // after REVIEW had finished patching the DAG, so gating this row on it made Synthesize render as
   // still-running for the whole of Review — on EVERY run, which read as the two phases executing in
   // parallel. They never did: measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly
   // sequential. Archived runs still carry that shape; a new run never sees `phase: review`.
-  else if (phasesSeen.has('review') && !planLoaded)
+  else if ((synthesized || phasesSeen.has('review')) && !planLoaded)
     synthesis.push(
       it(
         's-wired',
         'Slices wired into a DAG',
         'done',
-        'review is still patching it, so the task count lands with the plan'
+        phasesSeen.has('review')
+          ? 'review is still patching it, so the task count lands with the plan'
+          : [
+              synthesized?.tasks != null ? plural(synthesized.tasks, 'task') : '',
+              'the deterministic repairs and any split run before the plan loads',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+      )
+    );
+  // CROSS-SLICE ANSWER ROUTING (VA-104) — what synthesis delivered beyond the DAG: research answers
+  // rendered into the briefs of the tasks that own the files they name. r6h's ledgerd-core
+  // implemented webhook registration itself because the webhooks answers never reached it.
+  if (r2Routed > 0 || r2Unowned > 0)
+    synthesis.push(
+      it(
+        's-routed',
+        `Routed ${plural(r2Routed, 'research answer')} into the briefs of the tasks that own their files`,
+        r2Routed > 0 ? 'done' : 'unverified',
+        r2Unowned > 0
+          ? `${plural(r2Unowned, 'answer')} named files no task owns — left unrouted`
+          : undefined
+      )
+    );
+  if (r2RoutingSkipped)
+    synthesis.push(
+      it(
+        's-routing-skipped',
+        'Research answers were not routed into the briefs — the plan did not parse',
+        'unverified',
+        r2RoutingSkipped
       )
     );
   if (sinkRenamedFrom)
@@ -5482,48 +5722,6 @@ export function buildPhaseTodo(
         `Sink renamed from \`${sinkRenamedFrom}\``,
         'done',
         'so the engine’s own sink checks keep matching'
-      )
-    );
-  // THE SPLIT, in the order it runs: the measurement, then its one patch or its declined twin. A flagged
-  // task with neither outcome is being asked while the plan is still open; once the plan loaded without
-  // one it is an advisory — the engine moved on, and a spinner here would outlive the fact that fed it.
-  for (const [task, f] of fatTasks) {
-    if (splits.some((s) => s.module === task) || splitDeclined.some((d) => d.task === task)) continue;
-    const measure =
-      [
-        f.sections != null
-          ? `${f.sections} spec sections for ${f.files} file${f.files === 1 ? '' : 's'}`
-          : '',
-        f.perFile != null && f.threshold != null
-          ? `${f.perFile.toFixed(1)}/file vs threshold ${f.threshold.toFixed(1)}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join(' · ') || undefined;
-    synthesis.push(
-      planLoaded
-        ? it(`s-fat-${task}`, `Fat task ${task} flagged — no split event followed`, 'advisory', measure)
-        : it(`s-fat-${task}`, `Fat task ${task} — asking synthesis for a split`, 'running', measure)
-    );
-  }
-  for (const s of splits)
-    synthesis.push(
-      it(
-        `s-split-${s.module}`,
-        `Fat task ${s.module} split into ${s.shards.length} shard${s.shards.length === 1 ? '' : 's'} + a merger`,
-        'done',
-        [`${s.exports} exports declared`, s.tasksAfter != null ? `plan now ${s.tasksAfter} tasks` : '']
-          .filter(Boolean)
-          .join(' · ')
-      )
-    );
-  for (const d of splitDeclined)
-    synthesis.push(
-      it(
-        `s-split-declined-${d.task}`,
-        `Split of ${d.task} declined — builds as one lane`,
-        'advisory',
-        d.reason || undefined
       )
     );
   if (planLoaded) synthesis.push(it('s-done', `Plan wired — ${taskCount ?? 0} tasks`, 'done'));
@@ -5598,6 +5796,99 @@ export function buildPhaseTodo(
         'injected into every worker before Build'
       )
     );
+
+  // ---- SPLIT ---- (VA-138: its own step. Synthesis has returned and the plan is repaired; a task
+  // measured FAT gets ONE `split-<task>` planner call declaring its shards, sized to the free hosts,
+  // and the patched plan walks the repairs again. No phase event exists — the rows below are the
+  // measurement (plan_flag), the fleet fact (split_hosts_scarce), the sizing (split_sized), and the
+  // one patch or its declined twin. A run with no fat task has no rows here, and no chip.)
+  const split: PhaseTodoItem[] = [];
+  const splitTasks = [
+    ...new Set([
+      ...fatTasks.keys(),
+      ...splitScarce.keys(),
+      ...splitSized.keys(),
+      ...splits.map((sp) => sp.module),
+      ...splitDeclined.map((d) => d.task),
+    ]),
+  ];
+  for (const task of splitTasks) {
+    const f = fatTasks.get(task);
+    const patched = splits.find((sp) => sp.module === task);
+    const declined = splitDeclined.find((d) => d.task === task);
+    // The measurement, running while the call is out. A flagged task with neither outcome once the
+    // plan loaded is an advisory — the engine moved on, and a spinner here would outlive the fact.
+    if (f && !patched && !declined) {
+      const measure =
+        [
+          f.sections != null
+            ? `${f.sections} spec sections for ${f.files} file${f.files === 1 ? '' : 's'}`
+            : '',
+          f.perFile != null && f.threshold != null
+            ? `${f.perFile.toFixed(1)}/file vs threshold ${f.threshold.toFixed(1)}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined;
+      split.push(
+        planLoaded
+          ? it(`s-fat-${task}`, `Fat task ${task} flagged — no split event followed`, 'advisory', measure)
+          : it(`s-fat-${task}`, `Fat task ${task} — asking synthesis for a split`, 'running', measure)
+      );
+    }
+    const scarce = splitScarce.get(task);
+    if (scarce !== undefined)
+      split.push(
+        it(
+          `s-hosts-scarce-${task}`,
+          `${scarce ?? '?'} free host${scarce === 1 ? '' : 's'} at split time — shards sized by the declaration, queue as nodes free`,
+          'advisory'
+        )
+      );
+    const sized = splitSized.get(task);
+    if (sized)
+      split.push(
+        it(
+          `s-sized-${task}`,
+          `${task} sized to ${plural(sized.shards ?? 0, 'shard')}${
+            sized.hosts != null ? ` on ${plural(sized.hosts, 'free host')}` : ''
+          }`,
+          'done',
+          [
+            sized.declared != null && sized.declared !== sized.shards
+              ? `${sized.declared} declared`
+              : '',
+            sized.weights.length ? `weights ${sized.weights.join(', ')}` : '',
+            sized.hosts == null ? 'free host count unknown — clusters stand as declared' : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        )
+      );
+    if (patched)
+      split.push(
+        it(
+          `s-split-${patched.module}`,
+          `Fat task ${patched.module} split into ${patched.shards.length} shard${patched.shards.length === 1 ? '' : 's'} + a merger`,
+          'done',
+          [
+            `${patched.exports} exports declared`,
+            patched.tasksAfter != null ? `plan now ${patched.tasksAfter} tasks` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        )
+      );
+    if (declined)
+      split.push(
+        it(
+          `s-split-declined-${declined.task}`,
+          `Split of ${declined.task} declined — builds as one lane`,
+          'advisory',
+          declined.reason || undefined
+        )
+      );
+  }
 
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
@@ -5906,6 +6197,7 @@ export function buildPhaseTodo(
     mk('synthesis', 'Synthesize', synthesis),
     mk('review', 'Review', review),
     mk('contracts', 'Contracts', contracts),
+    mk('split', 'Split', split),
     mk('build', 'Build', build),
     mk('integrate', 'Integrate', integrate),
     mk('repair', 'Repair', repair),
@@ -6171,7 +6463,11 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
         const phaseTodo = buildPhaseTodo(data.events, digests, {
           clarifyPending: !!clarify?.pending,
         });
-        const { phase: runPhase, observed: runPhasesObserved } = foldRunPhase(data.events);
+        const {
+          phase: runPhase,
+          observed: runPhasesObserved,
+          spans: runPhaseSpans,
+        } = foldRunPhase(data.events);
         lastRunId.current = data.runId;
         // Engine-truth hold state: replay the pause events; the last run_paused with no later run_unpaused
         // means the scheduler actually reached the hold. This — never the sentinel stat — earns "Held".
@@ -6217,6 +6513,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // prop instead — the active chip renders a stopped-grey outline, no fill, no work claim.
           runPhase,
           runPhasesObserved,
+          runPhaseSpans,
           slices,
           proxy,
           reviewRounds,

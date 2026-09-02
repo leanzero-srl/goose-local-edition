@@ -545,8 +545,13 @@ describe('the Research checklist rows count what the fan measured', () => {
   it('over (phase:synthesis): answered of derived across lanes; misses and the ignored emit on their own rows', () => {
     const p = research(WHOLE);
     const labels = p.items.map((i) => i.label);
+    // VA-138: one row per lane, in dispatch order, between the summary and the misses — what each
+    // lane landed, the kinds it named, its own misses, and the host it ran on (the node chip).
     expect(labels).toEqual([
       'Research — 3 of 4 derived questions answered across 3 lanes, 1 resumed from the ledger',
+      'ledgerd-core lane',
+      'web-console lane',
+      'open decisions lane',
       '1 question unanswered — kept as raw questions in the briefs',
       'Opener wrote 3 questions for ledgerd-api — ignored; its research lane derives its own',
     ]);
@@ -554,8 +559,24 @@ describe('the Research checklist rows count what the fan measured', () => {
     expect(p.items[0].detail).toBe(
       '2 design, 1 external, 1 unkinded · answered questions become settled facts in their slice brief, beside the sources'
     );
-    expect(p.items[1].detail).toBe('judge ended ×1');
-    expect(p.items[2].state).toBe('advisory');
+    const lane = (id: string) => p.items.find((i) => i.id === id)!;
+    expect(lane('r2-lane-ledgerd-core')).toMatchObject({
+      state: 'done',
+      device: 'mihai',
+      detail: 'landed 2 · 1 design, 1 external · closed',
+    });
+    // A closed lane that landed nothing is never a clean pass — the miss is on its own row.
+    expect(lane('r2-lane-web-console')).toMatchObject({
+      state: 'unverified',
+      device: 'gabee',
+      detail: 'landed 0 · 1 unkinded · 1 unanswered · closed',
+    });
+    expect(lane('r2-lane-__open_decisions__')).toMatchObject({
+      state: 'done',
+      detail: 'landed 1 · 1 design · closed',
+    });
+    expect(lane('r2-miss').detail).toBe('judge ended ×1');
+    expect(p.items[5].state).toBe('advisory');
     expect(p.note).toBeUndefined();
     for (const i of p.items) expect(`${i.label} ${i.detail ?? ''}`).not.toContain('undefined');
   });

@@ -61,7 +61,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
 import FormationRibbon from './FormationRibbon';
-import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseList';
+import { isPlanningPhase, planningLanesFor, unclaimedPlanningLanes, type PhaseLaneGroup } from './phaseList';
 import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
@@ -4568,14 +4568,17 @@ const PlanningZone: React.FC<{
   const clarifyInterrupted = !!clarify?.pending && !proxy.timedOut && stale;
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
+  // Every step's own calls render UNDER that step (VA-138): the opener under Open, the synthesis
+  // call under Synthesize, the split-<task> call under Split — the r6j split lane ran 23 minutes in
+  // the trailing group with nothing saying which step it belonged to.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
-    const group = planningLanesFor(key, { sliceLanes, contractLanes, researchLanes });
+    const group = planningLanesFor(key, { sliceLanes, contractLanes, researchLanes, planningLanes });
     return group && group.lanes.length > 0 ? group : null;
   };
   const shownPhases = phases.filter((p) => p.items.length > 0 || fanOf(p.key) != null);
   // The generations that belong to no single phase, grouped by what they ARE.
   const laneGroups: Array<{ key: string; label: string; lanes: TurnLane[] }> = [
-    { key: 'planning', label: 'Planning calls', lanes: planningLanes },
+    { key: 'planning', label: 'Planning calls', lanes: unclaimedPlanningLanes(planningLanes) },
     { key: 'drafts', label: 'Candidate drafts', lanes: planLanes },
   ].filter((g) => g.lanes.length > 0);
   const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => {
@@ -5659,6 +5662,10 @@ export const SwarmRunPanel: React.FC<{
           phase={run.runPhase}
           nodes={formationNodes}
           evidence={run.runPhasesObserved}
+          spans={run.runPhaseSpans}
+          // The live clock only while the engine is alive and the run is open; otherwise the ribbon
+          // reads the open phase against the newest event, so a dead run's chip stops counting.
+          now={run.inProgress && !stale && !ended ? now : undefined}
           held={run.held}
           activeColor={activePhaseColor}
           metrics={

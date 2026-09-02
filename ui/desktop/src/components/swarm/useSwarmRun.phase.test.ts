@@ -201,21 +201,26 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
     expect(phase.items.some((i) => i.id === 's-run' && i.state === 'running')).toBe(true);
   });
 
-  // The live engine's stream: no review round, so synthesis runs until plan_loaded and the REVIEW phase
-  // has no items at all (the PlanningZone drops an empty phase — nothing reads "review" on a new run).
-  it('on the live stream synthesis closes on plan_loaded and REVIEW has nothing to show', () => {
+  // The live engine's stream: no review round, and the REVIEW phase has no items at all (the
+  // PlanningZone drops an empty phase — nothing reads "review" on a new run). Synthesis CLOSES when
+  // its plan is on the log (plan_synthesized) — VA-138: gating it on plan_loaded painted "Wiring the
+  // slices into a task DAG…" through r6j's whole 23-minute split lane; the plan then loads.
+  it('on the live stream synthesis closes on plan_synthesized and REVIEW has nothing to show', () => {
+    const synthesising = [OPEN, SLICES, ASK, SYNTHESIS];
+    expect(
+      todo(synthesising).find((p) => p.key === 'synthesis')!.items.map((i) => `${i.id}:${i.state}`)
+    ).toEqual(['s-run:running']);
     const live = [
-      OPEN,
-      SLICES,
-      ASK,
-      SYNTHESIS,
+      ...synthesising,
       { event: 'plan_synthesized', tasks: 6 },
       { event: 'plan_repaired', actions: [], before: {}, after: {} },
     ];
     const running = todo(live);
-    expect(running.find((p) => p.key === 'synthesis')!.items.map((i) => `${i.id}:${i.state}`)).toEqual([
-      's-run:running',
-    ]);
+    const wired = running.find((p) => p.key === 'synthesis')!.items;
+    expect(wired.map((i) => `${i.id}:${i.state}`)).toEqual(['s-wired:done']);
+    expect(wired[0].detail).toBe(
+      '6 tasks · the deterministic repairs and any split run before the plan loads'
+    );
     expect(running.find((p) => p.key === 'review')!.items).toHaveLength(0);
     const loaded = todo([...live, { event: 'plan_loaded', tasks: [{ id: 'core', deps: [] }] }]);
     const synthesis = loaded.find((p) => p.key === 'synthesis')!;
