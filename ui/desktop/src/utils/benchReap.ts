@@ -9,14 +9,31 @@ import path from 'node:path';
  * shared the engine's group) forbids group kills on groups we did not create. So: name the exact
  * tokens only this run's processes carry, match whole `ps` lines against them, and kill each pid.
  *
- * The tokens are what run_build.py puts on the command line and nothing else does:
+ * The tokens are what run_build.py and the scorers put on the command line and nothing else does:
  *   - the engine:  `goose swarm run … --log-file <workdir>/run.jsonl` (started in its own session,
  *     so the runner's group kill never reaches it — this is the process that keeps the fleet
  *     generating for a dead run);
- *   - the scorer's vendorsync child: `… --db <workdir>/graded.db`.
+ *   - the scorer's app-under-test children, by the RUN-UNIQUE db PATH PREFIX `<workdir>/graded`,
+ *     because the flag and the file name differ per tier (gate 8 refutation of the first cut,
+ *     2026-09-02): the sb-6 scorer spawns `vendorsync --db <workdir>/graded.db`, while on sb-7
+ *     run_build.py:291 sets the db to `<workdir>/graded-sb7-db` and score_sb7.py spawns
+ *     `app.ledgerd` / `app.notifierd` with `--db-dir <workdir>/graded-sb7-db` (start_new_session,
+ *     so no group we own reaches them). Matching `--db <workdir>/graded.db` alone left ledgerd and
+ *     notifierd holding their ports after a cancel during sb-7 scoring;
+ *   - score_sb7.py's two further app instances, `--db-dir <workdir>/sb7-empty-db` (the empty/D3
+ *     probe) and `--db-dir <workdir>/sb7-combined-db` (the combined-entrypoint smoke) — the same
+ *     class, alive during the scoring window a cancel can land in.
+ * `<workdir>/graded` matches `<workdir>/graded.db` and `<workdir>/graded-sb7-db` and nothing under a
+ * sibling workdir (`<workdir>b/graded…` fails the slash). `goose serve --platform desktop --host
+ * 127.0.0.1 --port N` carries none of these.
  */
 export function benchRunArgvTokens(workdir: string): string[] {
-  return [`--log-file ${path.join(workdir, 'run.jsonl')}`, `--db ${path.join(workdir, 'graded.db')}`];
+  return [
+    `--log-file ${path.join(workdir, 'run.jsonl')}`,
+    path.join(workdir, 'graded'),
+    path.join(workdir, 'sb7-empty-db'),
+    path.join(workdir, 'sb7-combined-db'),
+  ];
 }
 
 /** PIDs from `ps -axo pid=,args=` output whose full argv carries one of `tokens`; never `selfPid`. */
