@@ -2512,6 +2512,259 @@ async fn a_failed_gap_shards_identical_request_is_refused_a_different_one_accept
     );
 }
 
+/// A split module in the VA-064 shape, by name: shards owning only their folder README, the
+/// merger owning the module's final file and depending on every shard.
+fn module_shard(module: &str, shard: &str, responsibility: &str, final_file: &str) -> TaskSpec {
+    let id = format!("{module}-{shard}");
+    let folder = format!(".swarm/shards/{module}/{shard}");
+    let mut t = spec(&id, &[], &[&format!("{folder}/README.md")]);
+    t.shard_of = Some(goose_swarm::ShardOf {
+        module: module.into(),
+        shard: shard.into(),
+        folder,
+        responsibility: responsibility.into(),
+        interface: goose_swarm::ModuleInterface::default(),
+        module_files: vec![final_file.into()],
+    });
+    t
+}
+
+fn module_merger(module: &str, shards: &[&str], final_file: &str) -> TaskSpec {
+    let ids: Vec<String> = shards.iter().map(|s| format!("{module}-{s}")).collect();
+    let deps: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let mut t = spec(module, &deps, &[final_file]);
+    t.merger_of = Some(goose_swarm::MergerOf {
+        module: module.into(),
+        shards: ids.clone(),
+        folders: shards
+            .iter()
+            .map(|s| format!(".swarm/shards/{module}/{s}"))
+            .collect(),
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    t
+}
+
+/// `SplitRoleDispatcher` with the gap batches keyed by MERGER, for a plan with more than one:
+/// each merger's completions pop its own queue, in attempt order.
+struct PerMergerGapDispatcher {
+    attempts: Arc<Mutex<Vec<(String, u32)>>>,
+    merger_gaps: Mutex<HashMap<String, std::collections::VecDeque<Vec<TaskSpec>>>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for PerMergerGapDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let mut out: TaskRunOutput = format!("output-of-{}", req.task_id).into();
+        if req.merger_of.is_some() {
+            if let Some(batch) = self
+                .merger_gaps
+                .lock()
+                .unwrap()
+                .get_mut(&req.task_id)
+                .and_then(|q| q.pop_front())
+            {
+                out.follow_ups = batch;
+            }
+        }
+        self.attempts
+            .lock()
+            .unwrap()
+            .push((req.task_id.clone(), req.attempt));
+        Ok(out)
+    }
+}
+
+/// VA-071 (`splice_merge_gaps`): `landed` compared a gap's words against EVERY shard in the dag,
+/// so with two fat modules in one plan a landed shard of module A whose responsibility matched
+/// module B's gap satisfied it — `merge_gap_repeated{landed_as: <A's shard>}` — and B's hole
+/// spliced nothing. LANDED is scoped to the requesting merger's own shards: B's gap enters the
+/// door exactly as it would with A's shard absent, and A's own identical request is still refused
+/// by name (the S12-F terminator is scoped, not disabled).
+#[tokio::test]
+async fn a_gap_is_landed_only_by_the_requesting_mergers_own_shards() {
+    let gap = |module: &str, shard: &str, words: &str, final_file: &str| {
+        let mut g = module_shard(
+            module,
+            shard,
+            &format!("MERGE GAP sent out by the merger of `{module}`: {words}"),
+            final_file,
+        );
+        g.deps.clear();
+        g
+    };
+    // Module A `viz3d-engine` (shards a1 "pick buffer", a2 "camera inertia") and module B
+    // `ledgerd-core` (shards b1 "db schema", b2 "sync loop"); B's merger sends out a gap whose
+    // words are a1's landed responsibility, A's merger sends out the same words.
+    let plan = |with_a1: bool| {
+        let mut specs = Vec::new();
+        let mut a_shards = Vec::new();
+        if with_a1 {
+            specs.push(module_shard(
+                "viz3d-engine",
+                "pick-buffer",
+                "pick buffer",
+                "web/viz.js",
+            ));
+            a_shards.push("pick-buffer");
+        }
+        specs.push(module_shard(
+            "viz3d-engine",
+            "camera-inertia",
+            "camera inertia",
+            "web/viz.js",
+        ));
+        a_shards.push("camera-inertia");
+        specs.push(module_merger("viz3d-engine", &a_shards, "web/viz.js"));
+        specs.push(module_shard(
+            "ledgerd-core",
+            "db-schema",
+            "db schema",
+            "app/ledger.py",
+        ));
+        specs.push(module_shard(
+            "ledgerd-core",
+            "sync-loop",
+            "sync loop",
+            "app/ledger.py",
+        ));
+        specs.push(module_merger(
+            "ledgerd-core",
+            &["db-schema", "sync-loop"],
+            "app/ledger.py",
+        ));
+        let everything: Vec<String> = specs.iter().map(|t| t.id.clone()).collect();
+        let everything: Vec<&str> = everything.iter().map(|s| s.as_str()).collect();
+        specs.push(spec("integrate-verify", &everything, &[]));
+        Dag::from_specs(specs).unwrap()
+    };
+    let b_gap_batch = || vec![gap("ledgerd-core", "gap-1", "pick buffer", "app/ledger.py")];
+    let b_door_events = |events: &EventLog| -> Vec<serde_json::Value> {
+        events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e["event"].as_str(),
+                    Some(
+                        "merge_gap" | "merge_gap_repeated" | "merge_gap_refused" | "merge_rearmed"
+                    )
+                ) && e["task_id"] == "ledgerd-core"
+            })
+            .cloned()
+            .collect()
+    };
+
+    // WITH a1: B's gap must not be landed by a1; A's identical request is landed by a1.
+    let events = Arc::new(EventLog::default());
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(PerMergerGapDispatcher {
+        attempts: attempts.clone(),
+        merger_gaps: Mutex::new(HashMap::from([
+            (
+                "ledgerd-core".to_string(),
+                std::collections::VecDeque::from([b_gap_batch()]),
+            ),
+            (
+                "viz3d-engine".to_string(),
+                std::collections::VecDeque::from([vec![gap(
+                    "viz3d-engine",
+                    "gap-1",
+                    "pick buffer",
+                    "web/viz.js",
+                )]]),
+            ),
+        ])),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(plan(true), disp, String::new()).await.unwrap();
+    let accepted: Vec<(String, String)> = events
+        .named("merge_gap")
+        .iter()
+        .map(|e| {
+            (
+                e["module"].as_str().unwrap().to_string(),
+                e["shard"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        accepted,
+        vec![("ledgerd-core".to_string(), "ledgerd-core-gap-1".to_string())],
+        "B's gap enters the door although a1's words match; A's own repeat does not"
+    );
+    let repeated = events.named("merge_gap_repeated");
+    assert_eq!(repeated.len(), 1, "{repeated:?}");
+    assert_eq!(repeated[0]["task_id"], "viz3d-engine");
+    assert_eq!(repeated[0]["gap"], "viz3d-engine-gap-1");
+    assert_eq!(
+        repeated[0]["landed_as"], "viz3d-engine-pick-buffer",
+        "A's identical request is still refused by its OWN landed shard"
+    );
+    assert!(
+        events.named("merge_gap_refused").is_empty(),
+        "{:?}",
+        events.named("merge_gap_refused")
+    );
+    let rearmed: Vec<String> = events
+        .named("merge_rearmed")
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(rearmed, vec!["ledgerd-core".to_string()]);
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("ledgerd-core-gap-1")
+            && done.contains("ledgerd-core")
+            && done.contains("viz3d-engine")
+            && done.contains("integrate-verify"),
+        "{done:?}"
+    );
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    let merger_attempts = |module: &str| -> Vec<u32> {
+        attempts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(t, _)| t == module)
+            .map(|(_, a)| *a)
+            .collect()
+    };
+    assert_eq!(
+        merger_attempts("ledgerd-core"),
+        vec![0, 1],
+        "B sent its gap out and ran again after it landed"
+    );
+    assert_eq!(
+        merger_attempts("viz3d-engine"),
+        vec![0],
+        "A's repeat re-armed nothing; it completed on its first attempt"
+    );
+    let with_a1 = b_door_events(&events);
+
+    // WITHOUT a1: the same plan minus A's matching shard (A sends nothing) — B's door events are
+    // the same, event for event.
+    let events = Arc::new(EventLog::default());
+    let disp = Arc::new(PerMergerGapDispatcher {
+        attempts: Arc::new(Mutex::new(Vec::new())),
+        merger_gaps: Mutex::new(HashMap::from([(
+            "ledgerd-core".to_string(),
+            std::collections::VecDeque::from([b_gap_batch()]),
+        )])),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(plan(false), disp, String::new()).await.unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(
+        with_a1,
+        b_door_events(&events),
+        "B's gap is spliced exactly as it would be with a1 absent"
+    );
+}
+
 /// r6h's plan (`plan_loaded.tasks[]`, 2026-09-02, archive
 /// `local-sb7-swarm-r6h-FINISHED-0.4616-passed-507m-3d-draws-393a99351`) in its plan order, with the
 /// per-task `weight` the CLI writes from `plan_flag{kind: fat_task}.distribution[].sections`:
