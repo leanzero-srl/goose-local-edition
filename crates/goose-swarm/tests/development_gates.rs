@@ -464,7 +464,13 @@ fn swarm_rs_line_count_only_decreases() {
     // for `mod first_turn;`, the dispatcher's `brief_rest` stash, the layout/deps split, the
     // write-alone arm at the system prompt, the stash/settle at dispatch and `drain_brief_rest!`
     // at the loop's two drain sites.
-    const SWARM_RS_LINE_BASELINE: usize = 33_074;
+    // Tightened to 33,049 (VA-146): the DRIFTING hold's 55-line history comment moved to
+    // commands/swarm/ladder.rs as `drift_witness`'s doc beside the corroboration rule it
+    // explains, paying for the engine-witness wiring (`engine_witness`/`drift_witness` at the
+    // verdict site, `note_defect_steer` at the defect-steer emit, `owned_file_landed` at the
+    // disk stat, `witness` on `judge_delivery_decided`/`judge_nudge`, `defect_steer_standing`
+    // on `judge_drift_held`). Counter replica: `wc -l` = 33,049.
+    const SWARM_RS_LINE_BASELINE: usize = 33_049;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
