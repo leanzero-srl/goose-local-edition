@@ -10,7 +10,7 @@
 /// value is `budgets::ShownBudgets::user_notes_chars`, scaled from the fleet's probed window; every
 /// caller passes it in). It rides EVERY dispatch for the rest of the run, so an unbounded inbox
 /// silently taxes every worker prompt. Mirrors `dep_budget`, which caps injected dependency APIs.
-pub(super) const USER_NOTES_BUDGET_CHARS: usize = 1_500;
+pub(super) const USER_NOTES_BUDGET_CHARS: usize = 1_500; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// What the user's queued notes actually contributed to ONE dispatch.
 #[derive(Debug, Default, Clone)]

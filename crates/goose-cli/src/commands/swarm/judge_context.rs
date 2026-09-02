@@ -511,10 +511,10 @@ pub(super) fn lane_defect_view(
 
 /// Reference (262,144-window) budget of the judge's owned-file excerpts, all files — the live
 /// value is `budgets::ShownBudgets::owned_excerpt_total_chars`, passed to `judge_delivery_block`.
-pub(super) const OWNED_EXCERPT_TOTAL: usize = 2_400;
+pub(super) const OWNED_EXCERPT_TOTAL: usize = 2_400; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 /// Reference (262,144-window) budget of one file's excerpt — the live value is
 /// `budgets::ShownBudgets::owned_excerpt_per_file_chars`.
-pub(super) const OWNED_EXCERPT_PER_FILE: usize = 1_200;
+pub(super) const OWNED_EXCERPT_PER_FILE: usize = 1_200; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 #[cfg(test)]
 mod tests {

@@ -244,7 +244,7 @@ pub(super) fn read_vendor_probe_rows(root: &Path) -> Option<i64> {
 /// their header called complete. VA-126: this is the REFERENCE value on the 262,144 window; the
 /// live budget is `budgets::ShownBudgets::vendor_body_chars` (scaled from the fleet's probed
 /// window) and every caller passes it as `body_chars`.
-pub(super) const VENDOR_PROBE_BODY_CHARS: usize = 6_000;
+pub(super) const VENDOR_PROBE_BODY_CHARS: usize = 6_000; // measured: r6h value on the 262,144 reference window (r6h-golden-0.4616)
 
 /// VA-105, pure: an endpoint body's excerpt — the whole body when it fits `body_chars`, else the
 /// longest prefix under the budget that ends after a whole JSON object (`},` / `}]` / `}` — a row
