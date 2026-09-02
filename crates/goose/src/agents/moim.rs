@@ -1,4 +1,5 @@
 use crate::agents::extension_manager::ExtensionManager;
+use crate::context_mgmt::context_line::{context_line, LastCallUsage};
 use crate::conversation::message::MessageContent;
 use crate::conversation::{
     effective_role, fix_conversation, Conversation, CURRENT_TIME_TAG, TURN_CONTEXT_TAG,
@@ -42,6 +43,10 @@ pub async fn inject_moim(
     extension_manager: &ExtensionManager,
     turns_taken: u32,
     max_turns: u32,
+    // VA-107: Some(_) = a swarm lane — the block carries the measured `context: N of M tokens used
+    // (P%)` line (the compaction guard's two numbers) in place of the threshold-relative
+    // `<compaction>~Nk tokens remaining</compaction>` figure; None = every other agent, unchanged.
+    measured: Option<LastCallUsage>,
 ) -> Conversation {
     if SKIP.with(|f| f.get()) {
         return conversation;
@@ -59,11 +64,9 @@ pub async fn inject_moim(
     let context_limit = if let Some(model_config) = session_model_config.as_ref() {
         let provider = extension_manager.get_provider().lock().await.clone();
         match provider {
-            Some(provider) => provider
-                .get_context_limit(model_config)
-                .await
-                .ok()
-                .or_else(|| Some(model_config.context_limit())),
+            Some(provider) => Some(
+                crate::context_mgmt::effective_context_limit(provider.as_ref(), model_config).await,
+            ),
             None => Some(model_config.context_limit()),
         }
     } else {
@@ -92,6 +95,7 @@ pub async fn inject_moim(
         turns_taken,
         max_turns,
         extension_parts,
+        measured,
     );
 
     let mut messages = conversation.messages().clone();
@@ -133,6 +137,7 @@ fn should_skip_moim(context_limit: Option<usize>) -> bool {
     context_limit.is_some_and(|limit| limit < MIN_CONTEXT_FOR_MOIM)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compose_moim(
     working_dir: &Path,
     total_tokens: Option<i32>,
@@ -141,6 +146,7 @@ fn compose_moim(
     turns_taken: u32,
     max_turns: u32,
     extension_parts: Vec<String>,
+    measured: Option<LastCallUsage>,
 ) -> String {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:00");
     let mut lines = vec![
@@ -149,10 +155,23 @@ fn compose_moim(
         tag(WORKING_DIRECTORY_TAG, &working_dir.display().to_string()),
     ];
 
-    if let Some(value) =
-        compaction_remaining_line(total_tokens, context_limit, compaction_threshold)
-    {
-        lines.push(tag("compaction", &value));
+    match measured {
+        // VA-107: a swarm lane reads the two numbers the compaction guard compares, as a fact, in
+        // place of a "~Nk tokens remaining" figure relative to a threshold it cannot see — r6h's
+        // render-pick lane read "~11k tokens remaining" (from the 128,000 default limit) as its
+        // context and compressed its code (receipt on `context_mgmt::context_line`).
+        Some(last_call) => lines.push(context_line(
+            last_call,
+            total_tokens.map(i64::from),
+            context_limit,
+        )),
+        None => {
+            if let Some(value) =
+                compaction_remaining_line(total_tokens, context_limit, compaction_threshold)
+            {
+                lines.push(tag("compaction", &value));
+            }
+        }
     }
     if let Some(value) = turn_budget_line(turns_taken, max_turns) {
         lines.push(tag("turn-budget", &value));
@@ -256,7 +275,7 @@ mod tests {
             Message::assistant().with_text("Hi"),
             Message::user().with_text("Bye"),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -283,7 +302,7 @@ mod tests {
             .unwrap();
 
         let conv = Conversation::new_unvalidated(vec![Message::user().with_text("Hello")]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
 
         assert_eq!(result.messages().len(), 1);
         assert!(is_moim(&result.messages()[0].content[0]));
@@ -311,7 +330,7 @@ mod tests {
             Message::assistant().with_text("reply"),
             Message::user().with_text("user only").user_only(),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 2);
@@ -346,7 +365,7 @@ mod tests {
                 .with_tool_response("search_1", Ok(rmcp::model::CallToolResult::success(vec![]))),
         ]);
 
-        let result = inject_moim(&session.id, conv, &em, 0, 100).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -386,7 +405,45 @@ mod tests {
                 turns_taken,
                 max_turns,
                 extension_parts,
+                None,
             )
+        }
+
+        /// VA-107: measured mode carries the guard's two numbers as a fact and no
+        /// "~Nk tokens remaining" line; the block stays a turn-context block to the anthropic
+        /// relocator. The unmeasured block at r6h's numbers is the exact figure the lane read.
+        #[test]
+        fn measured_context_line_replaces_the_compaction_remaining_figure() {
+            let block = compose_moim(
+                Path::new("/Users/me/code/goose"),
+                Some(90_821),
+                Some(180_224),
+                0.8,
+                7,
+                0,
+                Vec::new(),
+                Some(LastCallUsage::Reported),
+            );
+            assert!(
+                block.contains("\ncontext: 90,821 of 180,224 tokens used (50%)\n"),
+                "{block}"
+            );
+            assert!(!block.contains("<compaction>"), "{block}");
+            assert!(is_turn_context_text(&block), "{block}");
+            let classic = compose_moim(
+                Path::new("/x"),
+                Some(90_821),
+                Some(128_000),
+                0.8,
+                7,
+                0,
+                Vec::new(),
+                None,
+            );
+            assert!(
+                classic.contains("<compaction>~11k tokens remaining</compaction>"),
+                "{classic}"
+            );
         }
 
         #[test]

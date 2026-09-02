@@ -33,6 +33,10 @@ pub const OPEN_AI_DEFAULT_BASE_PATH: &str = "v1/chat/completions";
 pub const OPEN_AI_VERSIONLESS_BASE_PATH: &str = "chat/completions";
 const OPEN_AI_DEFAULT_RESPONSES_PATH: &str = "v1/responses";
 const OPEN_AI_DEFAULT_MODELS_PATH: &str = "v1/models";
+/// LM Studio's native models endpoint. Its `/v1/models` carries only `id`/`object`/`owned_by`
+/// (measured 2026-09-02 on the local node); the loaded window is served here as
+/// `loaded_context_length`, beside `max_context_length` and `state`.
+const LM_STUDIO_NATIVE_MODELS_PATH: &str = "api/v0/models";
 pub const OPEN_AI_DEFAULT_MODEL: &str = "gpt-4o";
 pub const OPEN_AI_DEFAULT_FAST_MODEL: &str = "gpt-4o-mini";
 pub const OPEN_AI_KNOWN_MODELS: &[(&str, usize)] = &[
@@ -463,20 +467,64 @@ impl OpenAiProvider {
         Ok(models)
     }
 
-    /// llama.cpp and Ollama expose the actual allocated context window in the
-    /// non-standard `meta.n_ctx` field of `/v1/models`. Returns `None` when absent
-    /// (e.g. real OpenAI).
-    async fn fetch_n_ctx_from_api(&self, model_name: &str) -> Option<usize> {
+    /// Probe the server for the context window it actually has loaded for `model_name`.
+    /// Two shapes, in this order: llama.cpp and Ollama report it as the non-standard
+    /// `meta.n_ctx` on `/v1/models`; LM Studio reports it as `loaded_context_length` on
+    /// `/api/v0/models` (its `/v1/models` carries no window at all). `Err` names what each
+    /// endpoint said so the caller can log WHY it is falling to the default — r6f's opener was
+    /// compacted at 107,199 tokens and r6h's data-stream lane compressed its code against
+    /// "~11k remaining" because this probe missed LM Studio's shape and nothing said so.
+    async fn probe_context_window(&self, model_name: &str) -> Result<usize, String> {
         let models_path =
             Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        let response = self
-            .api_client
-            .request(&models_path)
-            .response_get()
-            .await
-            .ok()?;
-        let json = handle_response_openai_compat(response).await.ok()?;
-        parse_n_ctx_from_models(&json, model_name)
+        let v1_miss = match self.fetch_models_json(&models_path).await {
+            Ok(json) => match parse_n_ctx_from_models(&json, model_name) {
+                Some(n_ctx) => {
+                    tracing::info!(
+                        model = %model_name,
+                        context_window = n_ctx,
+                        "context window from {} meta.n_ctx",
+                        models_path
+                    );
+                    return Ok(n_ctx);
+                }
+                None => format!(
+                    "{models_path}: no meta.n_ctx for {model_name} ({})",
+                    describe_listing(&json)
+                ),
+            },
+            Err(e) => format!("{models_path}: {e}"),
+        };
+
+        let native_miss = match self.fetch_models_json(LM_STUDIO_NATIVE_MODELS_PATH).await {
+            Ok(json) => match parse_lm_studio_loaded_context_length(&json, model_name) {
+                Ok(loaded) => {
+                    tracing::info!(
+                        model = %model_name,
+                        context_window = loaded,
+                        "context window from {} loaded_context_length",
+                        LM_STUDIO_NATIVE_MODELS_PATH
+                    );
+                    return Ok(loaded);
+                }
+                Err(miss) => format!("{LM_STUDIO_NATIVE_MODELS_PATH}: {miss}"),
+            },
+            Err(e) => format!("{LM_STUDIO_NATIVE_MODELS_PATH}: {e}"),
+        };
+
+        Err(format!("{v1_miss}; {native_miss}"))
+    }
+
+    async fn fetch_models_json(&self, path: &str) -> Result<serde_json::Value, ProviderError> {
+        let response = self.api_client.request(path).response_get().await?;
+        handle_response_openai_compat(response).await
+    }
+}
+
+fn describe_listing(json: &serde_json::Value) -> String {
+    match json.get("data").and_then(|v| v.as_array()) {
+        Some(data) => format!("among {} listed ids", data.len()),
+        None => "no data array".to_string(),
     }
 }
 
@@ -505,6 +553,72 @@ fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option
     match data.as_slice() {
         [only] => n_ctx(only),
         _ => None,
+    }
+}
+
+/// Why LM Studio's `/api/v0/models` yielded no loaded window for the requested model. Rendered
+/// into the probe's miss reason; never swallowed.
+#[derive(Debug, PartialEq, Eq)]
+enum LmStudioWindowMiss {
+    NoDataArray,
+    ModelNotListed {
+        listed: usize,
+    },
+    /// The entry exists but carries no `loaded_context_length`: LM Studio omits the field while
+    /// `state` is `not-loaded` and reports only the model's `max_context_length`.
+    NotLoaded {
+        state: String,
+        max_context_length: Option<u64>,
+    },
+}
+
+impl std::fmt::Display for LmStudioWindowMiss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoDataArray => write!(f, "response carries no data array"),
+            Self::ModelNotListed { listed } => {
+                write!(f, "model not among the {listed} listed ids")
+            }
+            Self::NotLoaded {
+                state,
+                max_context_length: Some(max),
+            } => write!(
+                f,
+                "no loaded_context_length (state {state}, max_context_length {max})"
+            ),
+            Self::NotLoaded {
+                state,
+                max_context_length: None,
+            } => write!(f, "no loaded_context_length (state {state})"),
+        }
+    }
+}
+
+/// Extract `loaded_context_length` for `model_name` from an LM Studio `/api/v0/models` body.
+/// Matches on `id` only — LM Studio lists every downloaded model, loaded or not, so the
+/// sole-entry rule of the llama.cpp arm does not apply here.
+fn parse_lm_studio_loaded_context_length(
+    json: &serde_json::Value,
+    model_name: &str,
+) -> Result<usize, LmStudioWindowMiss> {
+    let data = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or(LmStudioWindowMiss::NoDataArray)?;
+    let entry = data
+        .iter()
+        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(model_name))
+        .ok_or(LmStudioWindowMiss::ModelNotListed { listed: data.len() })?;
+    match entry.get("loaded_context_length").and_then(|v| v.as_u64()) {
+        Some(loaded) => Ok(loaded as usize),
+        None => Err(LmStudioWindowMiss::NotLoaded {
+            state: entry
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<absent>")
+                .to_string(),
+            max_context_length: entry.get("max_context_length").and_then(|v| v.as_u64()),
+        }),
     }
 }
 
@@ -565,11 +679,12 @@ impl Provider for OpenAiProvider {
 
     /// Resolve the effective context limit. When the config carries an explicit
     /// limit (GOOSE_CONTEXT_LIMIT, a session override, or a known/canonical
-    /// value) it is used as-is. Otherwise probe `/v1/models`: llama.cpp and
-    /// Ollama report the real allocated window via the non-standard
-    /// `meta.n_ctx` field, which fixes auto-compaction for local servers that
-    /// would otherwise fall back to DEFAULT_CONTEXT_LIMIT. The probe is bounded
-    /// by a short timeout so a hung endpoint can't stall the caller.
+    /// value) it is used as-is. Otherwise probe the server for the window it has
+    /// loaded (`probe_context_window`: llama.cpp/Ollama `meta.n_ctx`, then LM Studio
+    /// `loaded_context_length`) — the number the compaction guard and the per-turn
+    /// context line run on. A miss falls to DEFAULT_CONTEXT_LIMIT LOUDLY: one warn per
+    /// model naming the host, both endpoints and their reasons, never quietly. The probe
+    /// is bounded by a short timeout so a hung endpoint can't stall the caller.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
         if let Some(limit) = model_config.context_limit {
             return Ok(self.apply_local_context_cap(limit));
@@ -586,13 +701,35 @@ impl Provider for OpenAiProvider {
         }
 
         const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        let probed = tokio::time::timeout(
+        let probed = match tokio::time::timeout(
             N_CTX_PROBE_TIMEOUT,
-            self.fetch_n_ctx_from_api(&model_config.model_name),
+            self.probe_context_window(&model_config.model_name),
         )
         .await
-        .ok()
-        .flatten();
+        {
+            Ok(Ok(window)) => Some(window),
+            Ok(Err(reason)) => {
+                tracing::warn!(
+                    host = %self.api_client.host(),
+                    model = %model_config.model_name,
+                    default_context_limit = model_config.context_limit(),
+                    reason = %reason,
+                    "context_window_probe_missed: no meta.n_ctx or loaded_context_length for this \
+                     model; the compaction guard and the per-turn context line run on the default"
+                );
+                None
+            }
+            Err(_) => {
+                tracing::warn!(
+                    host = %self.api_client.host(),
+                    model = %model_config.model_name,
+                    default_context_limit = model_config.context_limit(),
+                    "context_window_probe_timed_out after {:?}; running on the default",
+                    N_CTX_PROBE_TIMEOUT
+                );
+                None
+            }
+        };
 
         if let Ok(mut cache) = self.n_ctx_cache.lock() {
             cache.insert(model_config.model_name.clone(), probed);
@@ -1236,6 +1373,73 @@ mod tests {
             ]
         });
         assert_eq!(parse_n_ctx_from_models(&body, "model-c"), None);
+    }
+
+    /// The live LM Studio `/api/v0/models` body from the local node, 2026-09-02: three loaded
+    /// entries (`gabee-qwen3.8-27b` at 180,224 — the r6f/r6h window) and seven `not-loaded`.
+    const LM_STUDIO_API_V0_MODELS: &str = include_str!("testdata/lmstudio_api_v0_models.json");
+
+    fn lm_studio_models() -> serde_json::Value {
+        serde_json::from_str(LM_STUDIO_API_V0_MODELS).unwrap()
+    }
+
+    #[test]
+    fn lm_studio_arm_reads_loaded_context_length_for_the_loaded_model() {
+        let body = lm_studio_models();
+        assert_eq!(
+            parse_lm_studio_loaded_context_length(&body, "gabee-qwen3.8-27b"),
+            Ok(180_224)
+        );
+        assert_eq!(
+            parse_lm_studio_loaded_context_length(&body, "mihai-qwen3.8-27b"),
+            Ok(262_144)
+        );
+    }
+
+    #[test]
+    fn lm_studio_arm_names_a_not_loaded_model_instead_of_guessing_its_window() {
+        let miss =
+            parse_lm_studio_loaded_context_length(&lm_studio_models(), "qwen3.8-27b").unwrap_err();
+        assert_eq!(
+            miss,
+            LmStudioWindowMiss::NotLoaded {
+                state: "not-loaded".to_string(),
+                max_context_length: Some(262_144),
+            }
+        );
+        assert_eq!(
+            miss.to_string(),
+            "no loaded_context_length (state not-loaded, max_context_length 262144)"
+        );
+    }
+
+    #[test]
+    fn lm_studio_arm_names_an_unlisted_model() {
+        let miss = parse_lm_studio_loaded_context_length(&lm_studio_models(), "gabee").unwrap_err();
+        assert_eq!(miss, LmStudioWindowMiss::ModelNotListed { listed: 10 });
+        assert_eq!(miss.to_string(), "model not among the 10 listed ids");
+    }
+
+    #[test]
+    fn lm_studio_arm_names_a_body_without_a_data_array() {
+        assert_eq!(
+            parse_lm_studio_loaded_context_length(
+                &json!({ "error": "not found" }),
+                "gabee-qwen3.8-27b"
+            ),
+            Err(LmStudioWindowMiss::NoDataArray)
+        );
+    }
+
+    #[test]
+    fn llama_cpp_arm_finds_nothing_in_the_lm_studio_body() {
+        // The nine-week miss in one line: LM Studio's entries carry no `meta.n_ctx`, so the
+        // first arm returns None and, before VA-112, the default was taken without a word.
+        assert_eq!(
+            parse_n_ctx_from_models(&lm_studio_models(), "gabee-qwen3.8-27b"),
+            None
+        );
+        assert_eq!(describe_listing(&lm_studio_models()), "among 10 listed ids");
     }
 
     #[test]

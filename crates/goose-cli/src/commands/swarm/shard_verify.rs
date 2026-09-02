@@ -557,6 +557,12 @@ fn is_global(lang: ScanLang, name: &str) -> bool {
     }
 }
 
+/// A name the runtime supplies in either scanned language, or a JS keyword — never a sibling's
+/// to define (the dossier's ASSUMES resolution, `shards::assumes`, VA-108).
+pub(super) fn is_runtime_global(name: &str) -> bool {
+    is_js_global(name) || PY_BUILTINS.contains(&name) || JS_KEYWORDS.contains(&name)
+}
+
 // ---- tokens ------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1248,7 +1254,7 @@ fn scan_py(toks: &[Tok]) -> ScanSets {
     s
 }
 
-fn ident_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
+pub(super) fn ident_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !is_ident_char(c))
         .filter(|w| !w.is_empty() && w.chars().next().is_some_and(is_ident_start))
         .map(str::to_string)

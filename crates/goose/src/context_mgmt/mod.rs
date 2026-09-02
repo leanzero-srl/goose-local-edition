@@ -18,6 +18,8 @@ use tokio::task::JoinHandle;
 use tracing::info;
 use tracing::log::warn;
 
+pub mod context_line;
+
 pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
 
 const TOOLCALL_SUMMARIZATION_BATCH_SIZE: usize = 10;
@@ -259,6 +261,27 @@ pub async fn compact_messages_with_tail(
 }
 
 /// Check if messages exceed the auto-compaction threshold
+/// The context window as the compaction guard compares it: the provider's limit for this model
+/// (a probed n_ctx where the provider has one, else the model config's) under the optional
+/// GOOSE_LOCAL_CONTEXT_CAP. ONE derivation for `check_if_compaction_needed`, the MOIM turn-context
+/// block and the swarm's per-lane digest — VA-107's receipt is a lane reading a budget computed
+/// from a limit other than the one this guard used, so the number a lane reads is THIS one.
+///
+/// local-edition: the cap is an optional HARD cap on the effective window (quality-first lean
+/// context for hybrid local models like Qwen3.6). Read via Config — the same path that reads the
+/// threshold — so it gates the auto-compaction trigger regardless of any provider wrapping. No-op
+/// when GOOSE_LOCAL_CONTEXT_CAP is unset or 0.
+pub async fn effective_context_limit(provider: &dyn Provider, model_config: &ModelConfig) -> usize {
+    let context_limit = provider
+        .get_context_limit(model_config)
+        .await
+        .unwrap_or_else(|_| model_config.context_limit());
+    match Config::global().get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
+        Ok(cap) if cap > 0 => context_limit.min(cap),
+        _ => context_limit,
+    }
+}
+
 pub async fn check_if_compaction_needed(
     provider: &dyn Provider,
     conversation: &Conversation,
@@ -281,19 +304,7 @@ pub async fn check_if_compaction_needed(
         .model_config
         .clone()
         .unwrap_or_else(|| ModelConfig::new("unknown"));
-    let context_limit = provider
-        .get_context_limit(&model_config)
-        .await
-        .unwrap_or_else(|_| model_config.context_limit());
-
-    // local-edition: optional HARD cap on the effective window (quality-first lean context for
-    // hybrid local models like Qwen3.6). Read via Config here — the same path that reads the
-    // threshold above — so it reliably gates the auto-compaction trigger regardless of any
-    // provider wrapping. No-op when GOOSE_LOCAL_CONTEXT_CAP is unset or 0.
-    let context_limit = match config.get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
-        Ok(cap) if cap > 0 => context_limit.min(cap),
-        _ => context_limit,
-    };
+    let context_limit = effective_context_limit(provider, &model_config).await;
 
     let (current_tokens, _token_source) = match session.usage.total_tokens {
         Some(tokens) => (tokens as usize, "session metadata"),
