@@ -12780,27 +12780,43 @@ impl GooseAgentDispatcher {
                                 // VA-107: core says the last call reported no usage (the lane's
                                 // context line rendered its not-reported arm). ONE event per lane —
                                 // the arm repeats every turn the provider stays silent.
-                                let usage_unavailable = n.msg.starts_with(
-                                    goose::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE,
-                                );
+                                // VA-116: a turn after a STEER (a judge nudge, a research relay)
+                                // completed no provider call — the engine cut the stream at a
+                                // chunk boundary — and core renders `STEER_CUT_LINE` there, not
+                                // the not-reported arm (r6i's opener at 13:09:29 and r6j's api
+                                // lane at turn 2 said "not reported by the provider" about a call
+                                // nothing completed). Its own event, one per steer turn; it never
+                                // spends the once-per-lane latch, so a provider that DOES go
+                                // silent later in the same lane is still reported.
+                                let steer_cut = n
+                                    .msg
+                                    .starts_with(goose::context_mgmt::context_line::STEER_CUT_LINE);
+                                let usage_unavailable = !steer_cut
+                                    && n.msg.starts_with(
+                                        goose::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE,
+                                    );
                                 if usage_unavailable && usage_unavailable_reported {
                                     continue;
                                 }
-                                if usage_unavailable {
-                                    usage_unavailable_reported = true;
+                                if usage_unavailable || steer_cut {
+                                    usage_unavailable_reported |= usage_unavailable;
                                     let turn = n
                                         .msg
                                         .rsplit("(turn ")
                                         .next()
                                         .and_then(|r| r.strip_suffix(')'))
                                         .and_then(|r| r.parse::<u32>().ok());
-                                    self.events.write_value(serde_json::json!({
-                                        "event": "usage_unavailable",
+                                    let mut ev = serde_json::json!({
+                                        "event": if steer_cut { "context_line_skipped" } else { "usage_unavailable" },
                                         "task": activity_key,
                                         "attempt": attempt,
                                         "turn": turn,
                                         "text": n.msg,
-                                    }));
+                                    });
+                                    if steer_cut {
+                                        ev["reason"] = serde_json::Value::from("steer_turn");
+                                    }
+                                    self.events.write_value(ev);
                                 } else {
                                     self.events.write_value(serde_json::json!({
                                         "event": if about_compaction { "lane_compaction" } else { "lane_notice" },

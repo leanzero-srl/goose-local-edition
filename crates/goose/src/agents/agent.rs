@@ -2103,16 +2103,22 @@ impl Agent {
                     measured_context,
                 ).await;
                 // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
-                // into one `usage_unavailable{task, attempt, turn}` event per lane.
-                if measured_context
-                    == Some(crate::context_mgmt::context_line::LastCallUsage::NotReported)
-                {
+                // into one `usage_unavailable{task, attempt, turn}` event per lane. VA-116: the
+                // steer-cut arm is loud the same way, under its own prefix, so the swarm names it
+                // `context_line_skipped{reason: steer_turn}` instead of blaming the provider.
+                let notice_line = match measured_context {
+                    Some(crate::context_mgmt::context_line::LastCallUsage::NotReported) => {
+                        Some(crate::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE)
+                    }
+                    Some(crate::context_mgmt::context_line::LastCallUsage::CutForSteer) => {
+                        Some(crate::context_mgmt::context_line::STEER_CUT_LINE)
+                    }
+                    _ => None,
+                };
+                if let Some(line) = notice_line {
                     yield AgentEvent::Message(Message::assistant().with_system_notification(
                         SystemNotificationType::InlineMessage,
-                        format!(
-                            "{} (turn {turns_taken})",
-                            crate::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE
-                        ),
+                        format!("{line} (turn {turns_taken})"),
                     ));
                 }
 
@@ -2163,6 +2169,10 @@ impl Agent {
                 // response and the conversation needs repairing; waiting for the turn boundary costs
                 // nothing there, because a tool call IS a boundary and one is imminent.
                 let mut saw_tool_request_in_turn = false;
+                // VA-116: set at the steer arms below. A turn cut at a chunk boundary for a steer
+                // completed no provider call; the context line must say THAT, not blame the
+                // provider (`LastCallUsage::CutForSteer`).
+                let mut cut_for_steer = false;
 
                 loop {
                     let steer_may_interrupt = !saw_tool_request_in_turn
@@ -2174,15 +2184,15 @@ impl Agent {
                             // The message is already queued: stop at this chunk boundary and let the
                             // outer loop drain it. The partial is kept, which is the whole point --
                             // dropping the socket instead is what destroys the call's accumulated work.
-                            _ = std::future::ready(()), if steer_may_interrupt => break,
-                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => break,
+                            _ = std::future::ready(()), if steer_may_interrupt => { cut_for_steer = true; break }
+                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => { cut_for_steer = true; break }
                             next = stream.next() => next,
                         }
                     } else {
                         tokio::select! {
                             biased;
-                            _ = std::future::ready(()), if steer_may_interrupt => break,
-                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => break,
+                            _ = std::future::ready(()), if steer_may_interrupt => { cut_for_steer = true; break }
+                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => { cut_for_steer = true; break }
                             next = stream.next() => next,
                         }
                     };
@@ -2727,6 +2737,9 @@ impl Agent {
                             break;
                         }
                     }
+                }
+                if cut_for_steer {
+                    last_call_usage = crate::context_mgmt::context_line::LastCallUsage::CutForSteer;
                 }
                 can_drain_pending_steers = true;
 

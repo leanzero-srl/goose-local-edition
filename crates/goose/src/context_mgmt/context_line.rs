@@ -23,12 +23,24 @@ pub enum LastCallUsage {
     /// The last call returned no usage (or no total): the session figure is STALE, so the line
     /// says so instead of showing the previous call's number as if it were current.
     NotReported,
+    /// The last call was CUT by the engine at a chunk boundary for a steer (a judge nudge, a
+    /// research relay): no provider call completed, so the session figure is that of the last
+    /// COMPLETED call and the cut partial is unmeasured. VA-116: r6i's opener (13:09:29) and r6j's
+    /// api lane (turn 2, at the relay) rendered the not-reported arm here — "usage not reported by
+    /// the provider" about a call the engine itself had cut. A fact about the engine, named as one.
+    CutForSteer,
 }
 
 /// The not-reported arm, verbatim. The swarm matches this prefix on the notice core yields with it
 /// and emits ONE `usage_unavailable{task, attempt, turn}` event per lane.
 pub const USAGE_UNAVAILABLE_LINE: &str =
     "context: usage not reported by the provider on the last call";
+
+/// The steer-turn arm's prefix, verbatim. The swarm matches it on the notice core yields with it
+/// and emits `context_line_skipped{task, attempt, turn, reason: "steer_turn"}` — never
+/// `usage_unavailable`, whose once-per-lane latch a steer turn would otherwise spend.
+pub const STEER_CUT_LINE: &str =
+    "context: the last call was cut at a chunk boundary for a steer, its usage unmeasured";
 
 /// Render the line. `total_tokens` is the session's usage total (what the compaction guard reads);
 /// `window` is `effective_context_limit` (None only when the session carries no model config).
@@ -45,6 +57,15 @@ pub fn context_line(
         (LastCallUsage::NoCallYet, _, None) => {
             "context: no call completed yet; window unknown to the engine".to_string()
         }
+        (LastCallUsage::CutForSteer, Some(t), Some(w)) if w > 0 => {
+            let pct = ((t as f64 / w as f64) * 100.0).round() as i64;
+            format!(
+                "{STEER_CUT_LINE}; {} of {} tokens used ({pct}%) at the last completed call",
+                with_commas(t),
+                with_commas(w as i64)
+            )
+        }
+        (LastCallUsage::CutForSteer, _, _) => STEER_CUT_LINE.to_string(),
         (LastCallUsage::NotReported, _, _) | (LastCallUsage::Reported, None, _) => {
             USAGE_UNAVAILABLE_LINE.to_string()
         }
@@ -116,6 +137,28 @@ mod tests {
             context_line(LastCallUsage::Reported, None, Some(180_224)),
             USAGE_UNAVAILABLE_LINE
         );
+    }
+
+    /// VA-116 — r6i's opener, 13:09:29: the judge's steer cut the stream mid-generation; the next
+    /// turn is the engine's doing, not the provider's, and the line says so, keeping the last
+    /// completed call's figure as exactly that.
+    #[test]
+    fn a_steer_cut_turn_names_the_engine_not_the_provider() {
+        let line = context_line(LastCallUsage::CutForSteer, Some(74_112), Some(180_224));
+        assert_eq!(
+            line,
+            format!(
+                "{STEER_CUT_LINE}; 74,112 of 180,224 tokens used (41%) at the last completed call"
+            )
+        );
+        assert!(!line.contains("not reported by the provider"));
+        assert_eq!(
+            context_line(LastCallUsage::CutForSteer, None, None),
+            STEER_CUT_LINE
+        );
+        // The two prefixes the swarm matches never shadow each other.
+        assert!(!STEER_CUT_LINE.starts_with(USAGE_UNAVAILABLE_LINE));
+        assert!(!USAGE_UNAVAILABLE_LINE.starts_with(STEER_CUT_LINE));
     }
 
     #[test]
