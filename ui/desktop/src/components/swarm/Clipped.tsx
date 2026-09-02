@@ -169,10 +169,11 @@ export const RevealDialog: React.FC<RevealSpec & { onClose: () => void }> = ({
 };
 
 /** The one control class every reveal opener shares: pointer, focus ring, the glyph brightening on hover. */
-const OPENER = cx('group cursor-pointer', FOCUS, MOTION);
-const GLYPH = cx('size-3 shrink-0 text-lz-ink-3 group-hover:text-lz-ink', MOTION);
+const OPENER = cx('cursor-pointer [&:hover>svg]:text-lz-ink', FOCUS, MOTION);
+const GLYPH = cx('size-3 shrink-0 text-lz-ink-3', MOTION);
 
-export const Clipped: React.FC<{
+export interface ClippedProps
+  extends Omit<React.HTMLAttributes<HTMLSpanElement>, 'prefix' | 'title' | 'className'> {
   /** The text the row shows. */
   text: string;
   /** The whole text the row cannot show; defaults to `text`. A summary derived from a longer brief passes the brief. */
@@ -193,7 +194,32 @@ export const Clipped: React.FC<{
   /** 'start' for a multi-line clamp, so the glyph sits on the first line rather than mid-block. */
   align?: 'center' | 'start';
   testId?: string;
-}> = ({ text, full, label, context, mono, prefix, clamp, className, hoverTitle = true, align = 'center', testId }) => {
+}
+
+/**
+ * Forwards its ref and spreads the rest onto the control, so a Radix `asChild` tooltip trigger (the
+ * panel's `Tip`) can wrap it: the trigger's pointer/focus handlers land on the span and its own click
+ * runs before the reveal opens.
+ */
+export const Clipped = React.forwardRef<HTMLSpanElement, ClippedProps>(function Clipped(
+  {
+    text,
+    full,
+    label,
+    context,
+    mono,
+    prefix,
+    clamp,
+    className,
+    hoverTitle = true,
+    align = 'center',
+    testId,
+    onClick,
+    onKeyDown,
+    ...rest
+  },
+  ref
+) {
   const [open, setOpen] = useState(false);
   const spanRef = useRef<HTMLSpanElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -213,6 +239,8 @@ export const Clipped: React.FC<{
   return (
     <>
       <span
+        {...rest}
+        ref={ref}
         role={clipped ? 'button' : undefined}
         tabIndex={clipped ? 0 : undefined}
         aria-haspopup={clipped ? 'dialog' : undefined}
@@ -225,17 +253,17 @@ export const Clipped: React.FC<{
           className,
           clipped && OPENER
         )}
-        onClick={clipped ? openReveal : undefined}
-        onKeyDown={
-          clipped
-            ? (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openReveal(e);
-                }
-              }
-            : undefined
-        }
+        onClick={(e) => {
+          onClick?.(e);
+          if (clipped) openReveal(e);
+        }}
+        onKeyDown={(e) => {
+          onKeyDown?.(e);
+          if (clipped && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            openReveal(e);
+          }
+        }}
       >
         <span ref={spanRef} className={cx('min-w-0', clamp ?? 'truncate')}>
           {prefix}
@@ -248,7 +276,7 @@ export const Clipped: React.FC<{
       ) : null}
     </>
   );
-};
+});
 
 /**
  * The reveal door for a block the caller clips itself (a clamped live-generation cell): a small solid
