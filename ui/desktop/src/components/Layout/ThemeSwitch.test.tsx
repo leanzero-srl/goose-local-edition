@@ -127,6 +127,8 @@ describe('ThemeSwitch — one store, two controls', () => {
     mount();
     const group = screen.getByRole('radiogroup', { name: 'Theme' });
     expect(group.className).toContain('h-lz-row');
+    expect(group.className).toContain('w-full');
+    expect(group.className).toContain('[&>button]:flex-1');
     const radios = screen.getAllByRole('radio');
     expect(radios.map((r) => r.getAttribute('title'))).toEqual(['System', 'Light', 'Dark']);
     expect(radios.every((r) => r.querySelector('svg') != null)).toBe(true);
