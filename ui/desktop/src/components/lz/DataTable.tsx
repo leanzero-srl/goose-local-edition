@@ -1,4 +1,10 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import {
+  Fragment,
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { MOTION, ROW, SURFACE, TNUM, cx } from './tokens';
 
 export interface DataTableColumn<T> {
@@ -12,6 +18,14 @@ export interface DataTableColumn<T> {
   className?: string;
 }
 
+/**
+ * What `rowProps` may put on a row's `<tr>`: native attributes plus any `data-*` hook. Typed on
+ * HTMLElement like the table's own handlers (the app's eslint globals stop at HTMLDivElement).
+ */
+export type DataTableRowProps = HTMLAttributes<HTMLElement> & {
+  [attribute: `data-${string}`]: string | number | boolean | undefined;
+};
+
 export interface DataTableProps<T> {
   columns: readonly DataTableColumn<T>[];
   rows: readonly T[];
@@ -24,6 +38,19 @@ export interface DataTableProps<T> {
   onRowClick?: (row: T) => void;
   /** A trailing per-row slot (a ghost Button, a menu trigger). */
   rowAction?: (row: T) => ReactNode;
+  /**
+   * Extra attributes for a row's `<tr>` — `data-*` hooks, a `title`, a `className` joined onto
+   * the row recipe. `onClick`/`onKeyDown` run before the table's own and can `preventDefault()`
+   * to swallow the row click. `data-key` and the row's test id stay the table's.
+   */
+  rowProps?: (row: T) => DataTableRowProps;
+  /** The row's `data-testid` (default `lz-row`). */
+  rowTestId?: (row: T) => string;
+  /**
+   * A full-width row under the row, rendered when this returns content — a live download line,
+   * the fleet's sibling lanes. Keyed by the row's identity; carries the row's selection fill.
+   */
+  renderSubRow?: (row: T) => ReactNode;
   /** Rendered in one full-width row when `rows` is empty — pass an EmptyState. */
   empty?: ReactNode;
   'aria-label'?: string;
@@ -45,18 +72,14 @@ export function DataTable<T>({
   selectedKey = null,
   onRowClick,
   rowAction,
+  rowProps,
+  rowTestId,
+  renderSubRow,
   empty,
   'aria-label': ariaLabel,
   className,
 }: DataTableProps<T>) {
   const span = columns.length + (rowAction ? 1 : 0);
-  const onRowKeyDown = (row: T) => (e: KeyboardEvent<HTMLElement>) => {
-    if (!onRowClick) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      onRowClick(row);
-    }
-  };
   return (
     <div className={cx('w-full overflow-x-auto', className)}>
       <table data-testid="lz-data-table" aria-label={ariaLabel} className="w-full border-collapse">
@@ -90,22 +113,49 @@ export function DataTable<T>({
           {rows.map((row) => {
             const key = rowKey(row);
             const selected = selectedKey != null && key === selectedKey;
-            return (
+            const {
+              className: extraClassName,
+              onClick: extraOnClick,
+              onKeyDown: extraOnKeyDown,
+              'data-testid': extraTestId,
+              ...extra
+            } = rowProps?.(row) ?? {};
+            const onClick =
+              onRowClick || extraOnClick
+                ? (e: MouseEvent<HTMLElement>) => {
+                    extraOnClick?.(e);
+                    if (!e.defaultPrevented) onRowClick?.(row);
+                  }
+                : undefined;
+            const onKeyDown =
+              onRowClick || extraOnKeyDown
+                ? (e: KeyboardEvent<HTMLElement>) => {
+                    extraOnKeyDown?.(e);
+                    if (e.defaultPrevented || !onRowClick) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onRowClick(row);
+                    }
+                  }
+                : undefined;
+            const sub = renderSubRow?.(row);
+            const tr = (
               <tr
-                key={key}
-                data-testid="lz-row"
+                {...extra}
+                data-testid={rowTestId ? rowTestId(row) : (extraTestId ?? 'lz-row')}
                 data-key={key}
                 aria-selected={selected || undefined}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-                onKeyDown={onRowClick ? onRowKeyDown(row) : undefined}
+                tabIndex={onRowClick ? 0 : extra.tabIndex}
+                onClick={onClick}
+                onKeyDown={onKeyDown}
                 className={cx(
                   'border-t',
                   SURFACE.hairline,
                   dense ? ROW.dense : ROW.default,
                   selected ? SURFACE.selected : cx('text-lz-ink', SURFACE.hover),
                   onRowClick && 'cursor-pointer',
-                  MOTION
+                  MOTION,
+                  extraClassName
                 )}
               >
                 {columns.map((c) => (
@@ -126,6 +176,22 @@ export function DataTable<T>({
                   </td>
                 )}
               </tr>
+            );
+            if (sub == null || sub === false) return <Fragment key={key}>{tr}</Fragment>;
+            return (
+              <Fragment key={key}>
+                {tr}
+                <tr
+                  data-testid="lz-sub-row"
+                  data-key={key}
+                  aria-selected={selected || undefined}
+                  className={cx(selected ? SURFACE.selected : 'text-lz-ink', MOTION)}
+                >
+                  <td colSpan={span} className="px-3 pb-2 align-top text-lz-body">
+                    {sub}
+                  </td>
+                </tr>
+              </Fragment>
             );
           })}
         </tbody>

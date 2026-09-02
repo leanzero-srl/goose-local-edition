@@ -82,3 +82,99 @@ describe('lz/DataTable', () => {
     assertStudioClean(container);
   });
 });
+
+describe('lz/DataTable — rowProps, rowTestId, renderSubRow', () => {
+  it('rowProps puts data-* hooks, a title and a joined className on the row; its handlers run before the table’s own', () => {
+    const onRowClick = vi.fn();
+    const rowClick = vi.fn();
+    const { container, getAllByTestId } = render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        onRowClick={onRowClick}
+        rowProps={(r) => ({
+          'data-node': r.device,
+          'data-live': r.tokens > 100,
+          title: `${r.device} lane`,
+          className: 'group',
+          onClick: r.id === 'b' ? (e) => e.preventDefault() : rowClick,
+        })}
+      />
+    );
+    const [a, b] = getAllByTestId('lz-row');
+    expect(a.getAttribute('data-node')).toBe('m4-max');
+    expect(a.getAttribute('data-live')).toBe('true');
+    expect(a.getAttribute('title')).toBe('m4-max lane');
+    expect(a.className).toContain('group');
+    expect(a.className).toContain('h-lz-row');
+    expect(a.className).toContain('hover:bg-lz-surface-2');
+    // The table keeps its identity attributes.
+    expect(a.getAttribute('data-key')).toBe('a');
+    expect(a.getAttribute('tabindex')).toBe('0');
+    fireEvent.click(a);
+    expect(rowClick).toHaveBeenCalledTimes(1);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    // A rowProps onClick that prevents default swallows the row click.
+    fireEvent.click(b);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    assertStudioClean(container);
+  });
+
+  it('rowTestId replaces the row’s data-testid (the fleet pins fleet-node); data-key stays', () => {
+    const { container, queryAllByTestId, getAllByTestId } = render(
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} rowTestId={() => 'fleet-node'} />
+    );
+    expect(queryAllByTestId('lz-row')).toHaveLength(0);
+    const nodes = getAllByTestId('fleet-node');
+    expect(nodes.map((n) => n.getAttribute('data-key'))).toEqual(['a', 'b']);
+    assertStudioClean(container);
+  });
+
+  it('a data-testid from rowProps is honoured when no rowTestId is given', () => {
+    const { getAllByTestId } = render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowProps={(r) => ({ 'data-testid': `lane-${r.id}` })}
+      />
+    );
+    expect(getAllByTestId('lane-a')).toHaveLength(1);
+    expect(getAllByTestId('lane-b')).toHaveLength(1);
+  });
+
+  it('renderSubRow adds one full-width row under the row when it returns content, keyed by the row, carrying its selection', () => {
+    const { container, getAllByTestId, getByText } = render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        selectedKey="a"
+        rowAction={() => <button type="button">…</button>}
+        renderSubRow={(r) => (r.id === 'a' ? <span>downloading 42%</span> : null)}
+      />
+    );
+    const subs = getAllByTestId('lz-sub-row');
+    expect(subs).toHaveLength(1);
+    const sub = subs[0];
+    expect(sub.getAttribute('data-key')).toBe('a');
+    expect(getByText('downloading 42%').closest('td')?.getAttribute('colspan')).toBe('3');
+    // Sits directly under its row, before the next row.
+    const trs = Array.from(container.querySelectorAll('tbody tr'));
+    expect(trs.map((t) => t.getAttribute('data-testid'))).toEqual(['lz-row', 'lz-sub-row', 'lz-row']);
+    // The selected row's accent fill continues into its sub row; no divider between them.
+    for (const c of SURFACE.selected.split(' ')) expect(sub.className).toContain(c);
+    expect(sub.className).not.toContain('border-t');
+    expect(sub.getAttribute('aria-selected')).toBe('true');
+    assertStudioClean(container);
+  });
+
+  it('renderSubRow that returns nothing adds no row at all', () => {
+    const { container, queryByTestId } = render(
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} renderSubRow={() => null} />
+    );
+    expect(queryByTestId('lz-sub-row')).toBeNull();
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+  });
+});
