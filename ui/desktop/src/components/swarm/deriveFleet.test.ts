@@ -170,11 +170,12 @@ describe('deriveFleet — every pool node renders; idle is a state, never absenc
       ).toBe(true);
     });
 
-    it('matches nodeStatus short names to lane devices through the same shortName rule the cells use', () => {
+    it('a lane device the pool does NOT know (an older log, model-id suffixed) still joins by prefix', () => {
       // A lane device carrying a model-id suffix must still be recognized as the busy short-named
-      // node — a raw compare would demote a genuinely working node here.
+      // node — a raw compare would demote a genuinely working node here. The pool is the engine's
+      // canonical list (`gabee`), so the suffixed lane device is the unknown name the prefix rule is for.
       const fleet = deriveFleet({
-        pool: ['gabee-qwen3.6-27b'],
+        pool: ['gabee'],
         laneSources: [lane('gabee-qwen3.6-27b', 'running', 't-gabee')],
         digests: { 't-gabee': { calls: [{ ok: true }] } },
         digestMtimes: { 't-gabee': 0 },
@@ -600,5 +601,85 @@ describe('a task title must name the work, never a heading from its brief', () =
     expect(
       cleanTaskTitle('Build the notifications feed UI component that displays outbox events', 'x')
     ).toContain('notifications feed');
+  });
+});
+
+/**
+ * The MIXED pool (engine 748084b97): the sidecar beside LM Studio on one host is `workhorse-mlx`, and the
+ * corroboration feeds key their rows by the same canonical names (useFleetCorroboration × poolNodes).
+ * deriveFleet's join used to truncate EVERY name at the first dash, so `workhorse-mlx` re-collapsed to
+ * `workhorse` here regardless of what the feeds said: the sidecar's busy shielded the LM Studio lane, any
+ * LM Studio request shielded a dead sidecar lane, and the two rows could never be told apart.
+ */
+describe('deriveFleet × the mixed pool — a name the pool knows is compared verbatim', () => {
+  const MIXED = ['gabee', 'workhorse', 'workhorse-mlx'];
+  const ALL_REPORTED = ['gabee', 'workhorse', 'workhorse-mlx'];
+  const NOW = 10 * 60_000;
+  const staleLane = (device: string) => ({
+    laneSources: [lane(device, 'running', `t-${device}`)],
+    digests: { [`t-${device}`]: { calls: [{ ok: true }] } },
+    digestMtimes: { [`t-${device}`]: 0 },
+  });
+
+  it('three pool nodes are three FLEET rows — the sidecar is its own row, not a second `workhorse`', () => {
+    const { devices } = deriveFleet({ pool: MIXED, laneSources: [], digests: {}, digestMtimes: {}, now: NOW });
+    expect(devices).toEqual(['gabee', 'workhorse', 'workhorse-mlx']);
+  });
+
+  it('a stale sidecar lane stays WORKING while the SIDECAR is busy, and demotes while only LM Studio is', () => {
+    const kept = deriveFleet({
+      pool: MIXED,
+      ...staleLane('workhorse-mlx'),
+      now: NOW,
+      busyNodes: ['workhorse-mlx'],
+      reportedNodes: ALL_REPORTED,
+    });
+    expect(kept.workingByDevice.has('workhorse-mlx')).toBe(true);
+    // LM Studio's `workhorse` generating is not evidence about the sidecar — the old join read it as such.
+    const demoted = deriveFleet({
+      pool: MIXED,
+      ...staleLane('workhorse-mlx'),
+      now: NOW,
+      busyNodes: ['workhorse'],
+      reportedNodes: ALL_REPORTED,
+    });
+    expect(demoted.workingByDevice.has('workhorse-mlx')).toBe(false);
+  });
+
+  it('a stale LM Studio lane is not shielded by the sidecar being busy', () => {
+    const fleet = deriveFleet({
+      pool: MIXED,
+      ...staleLane('workhorse'),
+      now: NOW,
+      busyNodes: ['workhorse-mlx'],
+      reportedNodes: ALL_REPORTED,
+    });
+    expect(fleet.workingByDevice.has('workhorse')).toBe(false);
+  });
+
+  it('the r0-shaped pool (no `node`, dash-free names) joins exactly as before', () => {
+    const fleet = deriveFleet({
+      pool: ['gabee', 'mihai', 'workhorse'],
+      ...staleLane('gabee'),
+      now: NOW,
+      busyNodes: ['gabee'],
+      reportedNodes: ['gabee', 'mihai', 'workhorse'],
+    });
+    expect(fleet.workingByDevice.has('gabee')).toBe(true);
+  });
+});
+
+describe('run_started — the header node list reads the engine\'s own `node` per device', () => {
+  it('names the sidecar `workhorse-mlx` beside `workhorse` (three nodes, not two)', () => {
+    const { meta, verbose } = buildActivity([{ event: 'run_started', pool: MIXED_POOL, prompt: 'x' }]);
+    expect(meta?.nodes).toEqual(['gabee', 'workhorse', 'workhorse-mlx']);
+    expect(verbose.find((it) => it.kind === 'config')?.text).toBe(
+      'Fleet: 3 nodes — gabee, workhorse, workhorse-mlx'
+    );
+  });
+
+  it('an r0-shaped run_started (no `node`) derives from model_id exactly as before', () => {
+    const { meta } = buildActivity([RUN_STARTED]);
+    expect(meta?.nodes).toEqual(['gabee', 'mihai', 'workhorse']);
   });
 });
