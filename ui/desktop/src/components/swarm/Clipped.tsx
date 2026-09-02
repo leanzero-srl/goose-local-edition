@@ -185,7 +185,8 @@ export const Clipped: React.FC<{
   prefix?: React.ReactNode;
   /** The clip the row applies: `truncate` (default) or a line-clamp class set. */
   clamp?: string;
-  /** Sizing and colour for the control — the span's old classes minus the clip itself. */
+  /** Sizing and colour for the control — the span's old classes minus the clip itself. The control is a
+   *  flex item with min-w-0; a row bounds it, a `max-w-*` from the caller bounds it further. */
   className?: string;
   /** False when the row already shows a styled tooltip with the full text (a native title on top would double it). */
   hoverTitle?: boolean;
@@ -219,7 +220,7 @@ export const Clipped: React.FC<{
         data-testid={testId ?? 'clipped-text'}
         data-clipped={clipped ? 'true' : 'false'}
         className={cx(
-          'inline-flex min-w-0 max-w-full gap-1',
+          'inline-flex min-w-0 gap-1',
           align === 'start' ? 'items-start' : 'items-center',
           className,
           clipped && OPENER

@@ -220,3 +220,73 @@ describe('Event log — a line’s sub-detail and the collapsed header’s last 
     revealAndClose(last, full);
   });
 });
+
+describe('FLEET — the task cell, the node name, the live cell’s corner door, the also-row', () => {
+  const twoOnGabee = [
+    ...EVENTS,
+    { event: 'task_dispatched', ts, task_id: 'api', device: 'gabee-qwen3.6-27b', model: POOL[0].model_id },
+  ];
+  const activity = {
+    ...ACTIVITY,
+    api: { model: POOL[0].model_id, thinking_chars: 300, last_thinking: 'the api wraps Store.list in a handler', full_thinking: 'the api wraps Store.list in a handler' },
+  };
+
+  it('the task cell reveals the whole brief without opening the node inspector', async () => {
+    mockRun(twoOnGabee, activity);
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    const door = await waitFor(() => {
+      const hit = [
+        ...screen.queryAllByTestId('fleet-node-task'),
+        ...screen.queryAllByTestId('fleet-also-title'),
+      ].find((el) => el.getAttribute('title') === BRIEF);
+      if (!hit) throw new Error('no fleet cell carries the brief');
+      return hit;
+    });
+    expect(door).toHaveAttribute('data-clipped', 'true');
+    fireEvent.click(door);
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByTestId('reveal-dialog')).toHaveTextContent('store');
+    expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(door);
+  });
+
+  it('the node name is a door when the column clips it', async () => {
+    mockRun(twoOnGabee, activity);
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    const names = await screen.findAllByTestId('fleet-node-name');
+    const gabee = names.find((el) => el.getAttribute('title') === 'gabee');
+    expect(gabee).toBeDefined();
+    revealAndClose(gabee as HTMLElement, 'gabee');
+  });
+
+  it('the live generation cell has a corner door to the whole line, monospace', async () => {
+    mockRun(twoOnGabee, activity);
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    const glyphs = await screen.findAllByTestId('reveal-glyph');
+    const inFleet = glyphs.find((g) => g.closest('[data-testid="fleet-node"]'));
+    expect(inFleet).toBeDefined();
+    expect((inFleet as HTMLElement).tagName).toBe('BUTTON');
+    fireEvent.click(inFleet as HTMLElement);
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByTestId('reveal-dialog')).toHaveTextContent('Working on');
+    expect(screen.getByTestId('reveal-body').className).toContain('font-mono');
+    expect(document.querySelector('[role="dialog"][aria-label^="Node "]')).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(document.activeElement).toBe(inFleet);
+  });
+
+  it('the also-row’s live line is a door and its click never re-aims the inspector', async () => {
+    mockRun(twoOnGabee, activity);
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    const live = await screen.findByTestId('fleet-also-live');
+    expect(live).toHaveAttribute('data-clipped', 'true');
+    const full = live.getAttribute('title') ?? '';
+    expect(full.length).toBeGreaterThan(0);
+    fireEvent.click(live);
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByTestId('reveal-body')).toHaveTextContent(full);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  });
+});

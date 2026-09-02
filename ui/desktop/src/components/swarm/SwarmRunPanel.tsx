@@ -89,7 +89,7 @@ import {
   usePageVisible,
 } from './formationVisualState';
 import { engineLiveness, isEngineSilent } from './swarmRunLiveness';
-import { Clipped, RevealGlyph, type RevealFact } from './Clipped';
+import { Clipped, RevealGlyph, useOverflow, type RevealFact, type RevealSpec } from './Clipped';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -1028,27 +1028,74 @@ export function useSmoothText(target: string, charsPerSec = 110): string {
 // The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll, and
 // anchored to the BOTTOM (auto-scrolled) so the NEWEST generation is always visible. A line-clamp from the top
 // would freeze on the oldest text once the stream grew past a few lines.
-const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }) => {
+const NodeLiveText: React.FC<{ text: string; lines: number; reveal?: RevealSpec }> = ({
+  text,
+  lines,
+  reveal,
+}) => {
   const shown = useSmoothText(text);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [shown]);
+  // The clamp hides the BEGINNING (the box follows its end): when it does, a corner door brings the
+  // whole line up — the cell keeps its two/five lines and the reader keeps the text.
+  const over = useOverflow(ref, shown);
   return (
-    <div
-      ref={ref}
-      data-testid="fleet-node-gen"
-      className="mt-0.5 break-words whitespace-pre-wrap"
-      style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden', color: GEN_TEXT }}
-    >
-      {/* Model-authored text arrives with `backticks` and **bold**; rendered raw it showed its own
-          asterisks. InlineMarkdown gives code fragments a chip so they read differently from the prose,
-          and tolerates a half-streamed marker (an unclosed ** is just text). */}
-      <InlineMarkdown content={shown || text} />
+    <div className="relative">
+      <div
+        ref={ref}
+        data-testid="fleet-node-gen"
+        className="mt-0.5 break-words whitespace-pre-wrap"
+        style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden', color: GEN_TEXT }}
+      >
+        {/* Model-authored text arrives with `backticks` and **bold**; rendered raw it showed its own
+            asterisks. InlineMarkdown gives code fragments a chip so they read differently from the prose,
+            and tolerates a half-streamed marker (an unclosed ** is just text). */}
+        <InlineMarkdown content={shown || text} />
+      </div>
+      {over && reveal ? <RevealGlyph spec={reveal} className="absolute bottom-0 right-0" /> : null}
     </div>
   );
 };
+
+/** The dead-run twin of NodeLiveText: the last frozen snapshot, static, with the same corner door. */
+const FrozenGenText: React.FC<{ text: string; lines: number; reveal: RevealSpec }> = ({
+  text,
+  lines,
+  reveal,
+}) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const over = useOverflow(ref, text);
+  return (
+    <div className="relative">
+      <div
+        ref={ref}
+        data-testid="fleet-node-gen"
+        className="mt-0.5 whitespace-pre-wrap break-words text-lz-ink-3"
+        style={{
+          display: '-webkit-box',
+          WebkitLineClamp: lines,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {text}
+      </div>
+      {over ? <RevealGlyph spec={reveal} className="absolute bottom-0 right-0" /> : null}
+    </div>
+  );
+};
+
+/** The reveal's provenance chips for anything a lane shows: its task, its phase when stamped, its node. */
+function laneContext(lane: Pick<TurnLane, 'taskId' | 'phase' | 'device'>): RevealFact[] {
+  return [
+    { label: 'task', value: lane.taskId },
+    ...(lane.phase ? [{ label: 'phase', value: String(lane.phase) }] : []),
+    { label: 'node', value: nodeShortName(lane.device) },
+  ];
+}
 
 /**
  * ONE FOLLOW IMPLEMENTATION, for every scroller in the inspector.
@@ -2684,6 +2731,9 @@ const FleetStrip: React.FC<{
   historyByDevice: Map<string, NodeHistoryEntry[]>;
   /** The RESOLVED run dir, for the inspector's on-demand full-log reads. */
   runDir: string;
+  /** The loaded plan: a lane's `description` is cleanTaskTitle's 120-char clip of the task's brief, so
+   *  the cell's door opens on the plan's own text. */
+  plan?: PlanTask[];
 }> = ({
   deviceOrder,
   runningByDevice,
@@ -2694,6 +2744,7 @@ const FleetStrip: React.FC<{
   unattributed,
   historyByDevice,
   runDir,
+  plan,
 }) => {
   // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
   // which made the panel least readable exactly when a node was busiest.
@@ -2703,6 +2754,7 @@ const FleetStrip: React.FC<{
   const [inspect, setInspect] = useState<{ device: string; taskId: string } | null>(null);
   if (deviceOrder.length === 0) return null;
   const shortName = nodeShortName;
+  const planBrief = (taskId: string): string => plan?.find((t) => t.id === taskId)?.description?.trim() ?? '';
   return (
     <div className="bg-lz-surface">
       <div className="w-full overflow-x-auto">
@@ -2777,15 +2829,20 @@ const FleetStrip: React.FC<{
                   <td className="px-3 py-2 align-top">
                     <span className="flex h-5 items-center gap-2">
                       <NodeDot index={i} letter={letter} />
-                      <span className={cx('truncate font-mono text-lz-mono text-lz-ink', WEIGHT.medium)}>
-                        {short}
-                      </span>
+                      <Clipped
+                        text={short}
+                        mono
+                        label="Node"
+                        context={[{ label: 'node', value: letter }]}
+                        className={cx('font-mono text-lz-mono text-lz-ink', WEIGHT.medium)}
+                        testId="fleet-node-name"
+                      />
                     </span>
                   </td>
                   <td className="px-3 py-2 align-top">
                     <span className="flex h-5 items-center gap-2 text-lz-body text-lz-ink-2">
                       <StatusDot tone={state.tone} live={state.live} label={state.label} />
-                      <span className="truncate">{state.label}</span>
+                      <Clipped text={state.label} label="State" context={[{ label: 'node', value: short }]} testId="fleet-node-state" />
                       {/* LM Studio's OWN live state for this node (lms ps --json), independent of goose's
                           digest — the ground-truth "is it generating right now" Mihai asked for. A second
                           dot: green generating, amber prompt-processing, slate idle; nothing when LM Studio
@@ -2832,28 +2889,30 @@ const FleetStrip: React.FC<{
                             {supervising ? (
                               <Gavel size={12} className={cx('shrink-0', TONE_TEXT.accent)} />
                             ) : null}
-                            <span
-                              className={cx(
-                                'truncate',
-                                !live
-                                  ? TONE_TEXT.stopped
-                                  : supervising
-                                    ? cx(TONE_TEXT.accent, WEIGHT.semibold)
-                                    : 'text-lz-ink'
-                              )}
-                            >
-                              {lane.description || lane.taskId}
-                              {lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
-                                ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
-                                : ''}
-                              {(() => {
+                            <Clipped
+                              text={`${lane.description || lane.taskId}${
+                                lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
+                                  ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
+                                  : ''
+                              }${(() => {
                                 // The judge lane is ROLLING — one lane per supervised task, each look reseeding
                                 // the digest — and the caption owes the reader that fact (look N, 1-based;
                                 // earlier looks folded into superseded). Null everywhere else, pre-r6 included.
                                 const rolling = supervisionRollingCaption(lane);
                                 return rolling ? ` · ${rolling}` : '';
-                              })()}
-                            </span>
+                              })()}`}
+                              full={planBrief(lane.taskId) || undefined}
+                              label="Task brief"
+                              context={laneContext(lane)}
+                              className={
+                                !live
+                                  ? TONE_TEXT.stopped
+                                  : supervising
+                                    ? cx(TONE_TEXT.accent, WEIGHT.semibold)
+                                    : 'text-lz-ink'
+                              }
+                              testId="fleet-node-task"
+                            />
                             {canExpand ? (
                               <ChevronRight size={12} className="shrink-0 text-lz-ink-3" />
                             ) : null}
@@ -2866,12 +2925,18 @@ const FleetStrip: React.FC<{
                                 return (
                                   <div className="mt-0.5 flex items-center gap-1.5 text-lz-meta text-lz-ink-3">
                                     <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
-                                    <span className="truncate">
-                                      {cm.action}
-                                      {last.summary ? (
-                                        <span className="font-mono text-lz-mono text-lz-ink-3"> · {last.summary}</span>
-                                      ) : null}
-                                    </span>
+                                    <span className="shrink-0">{cm.action}</span>
+                                    {last.summary ? (
+                                      <Clipped
+                                        text={last.summary}
+                                        prefix="· "
+                                        mono
+                                        label="Latest call"
+                                        context={laneContext(lane)}
+                                        className="font-mono text-lz-mono text-lz-ink-3"
+                                        testId="fleet-node-call"
+                                      />
+                                    ) : null}
                                   </div>
                                 );
                               })()
@@ -2880,22 +2945,19 @@ const FleetStrip: React.FC<{
                             live ? (
                               // LIVE: typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5
                               // lines to fill the space, compact/verbose = 2. Click the row to expand the full stream.
-                              <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
+                              <NodeLiveText
+                                text={liveGen}
+                                lines={dev ? 5 : 2}
+                                reveal={{ label: 'Working on', text: liveGen, mono: true, context: laneContext(lane) }}
+                              />
                             ) : (
                               // HISTORICAL/DEAD run: the last frozen snapshot, static and on ink-3 — NEVER animated,
                               // so an old session no longer looks like it is still streaming.
-                              <div
-                                data-testid="fleet-node-gen"
-                                className="mt-0.5 whitespace-pre-wrap break-words text-lz-ink-3"
-                                style={{
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: dev ? 5 : 2,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                {liveGen}
-                              </div>
+                              <FrozenGenText
+                                text={liveGen}
+                                lines={dev ? 5 : 2}
+                                reveal={{ label: 'Working on', text: liveGen, mono: true, context: laneContext(lane) }}
+                              />
                             )
                           ) : null}
                         </div>
@@ -2962,17 +3024,28 @@ const FleetStrip: React.FC<{
                               {extra.supervision === true ? (
                                 <Gavel size={11} className={cx('shrink-0', TONE_TEXT.accent)} />
                               ) : null}
-                              <span
+                              <Clipped
+                                text={title}
+                                full={planBrief(extra.taskId) || extra.description?.trim() || title}
+                                label="Task brief"
+                                context={laneContext(extra)}
                                 className={cx(
-                                  'max-w-[40%] shrink-0 truncate',
+                                  'max-w-[40%] shrink-0',
                                   extra.supervision === true
                                     ? cx(TONE_TEXT.accent, WEIGHT.semibold)
                                     : 'text-lz-ink'
                                 )}
-                              >
-                                {title}
-                              </span>
-                              <span className="min-w-0 truncate">{laneLiveLine(extra)}</span>
+                                testId="fleet-also-title"
+                              />
+                              {laneLiveLine(extra) ? (
+                                <Clipped
+                                  text={laneLiveLine(extra)}
+                                  mono
+                                  label="Working on"
+                                  context={laneContext(extra)}
+                                  testId="fleet-also-live"
+                                />
+                              ) : null}
                               {extraCanExpand ? (
                                 <ChevronRight size={12} className="shrink-0 text-lz-ink-3" />
                               ) : null}
@@ -5734,6 +5807,7 @@ export const SwarmRunPanel: React.FC<{
             unattributed={fleet.unattributed}
             historyByDevice={nodeHistory}
             runDir={runDir ?? ''}
+            plan={run.plan}
           />
         </div>
       ) : null}
