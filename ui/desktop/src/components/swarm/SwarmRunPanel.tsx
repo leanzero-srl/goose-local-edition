@@ -25,6 +25,7 @@ import {
   supervisionRollingCaption,
   type TurnStatus,
   type TurnLane,
+  type ResearchLaneClose,
   type ResearchQuestionRow,
   type LiveChannel,
   type SwarmCall,
@@ -69,6 +70,7 @@ import {
   FORMATION_RAMP,
   PANEL_RADIUS,
   SWARM_STATUS,
+  fmtPhaseDuration,
   nextRevealedText,
   usePrefersReducedMotion,
   usePageVisible,
@@ -394,10 +396,12 @@ const ReasoningBlock: React.FC<{
  * unanswered question stays a raw question in the brief, never a fabricated answer). Solid status
  * chips, full borders — no rails, no tints.
  */
-const ResearchQuestionRows: React.FC<{ questions: ResearchQuestionRow[]; live: boolean }> = ({
-  questions,
-  live,
-}) => {
+const ResearchQuestionRows: React.FC<{
+  questions: ResearchQuestionRow[];
+  /** VA-143: the lane's closer — rendered as the lane's close line, never as a question row. */
+  close?: ResearchLaneClose;
+  live: boolean;
+}> = ({ questions, close, live }) => {
   const answered = questions.filter((q) => q.status === 'answered').length;
   const missed = questions.filter((q) => q.status === 'unanswered').length;
   const open = questions.length - answered - missed;
@@ -449,6 +453,29 @@ const ResearchQuestionRows: React.FC<{ questions: ResearchQuestionRow[]; live: b
           </li>
         ))}
       </ol>
+      {/* VA-143: the lane's close — what it landed and the choices it left to its builder — from the
+          `remainder_empty` closer and the `research_builder_decides` events, clocked by the engine's
+          own lane secs. r6j web-viz: "landed 4 · builder_decides 11 · done 34m", where the closer
+          used to read "q4 · unanswered · remainder empty". */}
+      {close ? (
+        <div
+          className="mt-1.5 flex items-center gap-2 text-[11px] min-w-0"
+          data-testid="research-lane-close"
+          data-reason={close.reason}
+          title={close.detail || undefined}
+        >
+          <span
+            className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
+            style={{ background: STATUS_COLOR.done, borderRadius: 3 }}
+          >
+            closed
+          </span>
+          <span className="tabular-nums text-text-primary">
+            landed {close.landed} · builder_decides {close.builderDecides}
+            {close.secs != null ? ` · done ${fmtPhaseDuration(close.secs * 1000)}` : ''}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -660,7 +687,11 @@ const LaneRow: React.FC<{
           {/* A research lane's questions (VA-029) — the lane's identity, not a reasoning dump, so every
               mode shows them: numbered, each with its own outcome from the per-question events. */}
           {lane.researchQuestions && lane.researchQuestions.length > 0 ? (
-            <ResearchQuestionRows questions={lane.researchQuestions} live={live} />
+            <ResearchQuestionRows
+              questions={lane.researchQuestions}
+              close={lane.researchClose}
+              live={live}
+            />
           ) : null}
           {mode === 'compact' ? (
             // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
