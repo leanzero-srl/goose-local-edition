@@ -4323,6 +4323,16 @@ impl MergeDossier {
             .filter(move |u| u.shard == shard && u.clause == clause)
     }
 
+    /// A shard that delivered at least one piece file — the only kind THE PIECES lists and the
+    /// assembly reads. One with none (README-only, or a bare folder) is named ONCE, as a GAP, by
+    /// the dispatch paragraph swarm.rs appends last (`merge_holes::gap_paragraph`); the brief's
+    /// numbered items skip it so the merger never reads a part that does not exist (VA-085).
+    fn built(&self, shard: &str) -> bool {
+        self.shards
+            .iter()
+            .any(|sh| sh.id == shard && !sh.pieces.is_empty())
+    }
+
     /// One `shard_provides_unbacked{module, task_id, shard, names}` per shard whose README promises
     /// a symbol no piece defines (DESIGN-SPLIT-V2 §3) — said at the merger's dispatch; the brief
     /// lists the same names under GAPS.
@@ -4367,6 +4377,7 @@ impl MergeDossier {
             "pieces": self.shards.iter().map(|s| s.pieces.len()).sum::<usize>(),
             "pieces_with_parse_errors": self.shards.iter().flat_map(|s| s.pieces.iter()).filter(|(_, v, _)| v.as_deref().is_some_and(|e| !e.contains("unchecked"))).count(),
             "readmes_missing": self.shards.iter().filter(|s| s.note.is_none()).map(|s| s.id.clone()).collect::<Vec<_>>(),
+            "pieces_absent": self.shards.iter().filter(|s| s.note.is_some() && s.pieces.is_empty()).map(|s| s.id.clone()).collect::<Vec<_>>(),
             "duplicates": self.duplicates.iter().map(|(n, o)| serde_json::json!({"symbol": n, "shards": o})).collect::<Vec<_>>(),
             "declared_missing": self.declared_missing,
             "signature_disagreements": self.signature_disagreements.iter().map(|(n, d, f, s)| serde_json::json!({"symbol": n, "declared": d, "found_params": f, "shard": s})).collect::<Vec<_>>(),
@@ -4410,10 +4421,27 @@ impl MergeDossier {
                 .collect::<Vec<_>>()
                 .join("; ")
         };
+        let built = self
+            .shards
+            .iter()
+            .filter(|sh| !sh.pieces.is_empty())
+            .count();
+        // A shard with no piece file is counted here and NAMED only by the dispatch paragraph
+        // (`merge_holes::gap_paragraph`) — the brief and the assembly agree on which pieces exist.
+        let absent = match self.shards.len() - built {
+            0 => String::new(),
+            k => format!(
+                " {k} more shard{plural} delivered NO piece file — nothing of {it} is in THE PIECES below{asm}; \
+                 CODE names {it} by id and folder under the dispatch GAPS at the end of this brief.",
+                plural = if k == 1 { "" } else { "s" },
+                it = if k == 1 { "it" } else { "them" },
+                asm = if assembly.is_some() { " or the assembled file" } else { "" },
+            ),
+        };
         let mut s = match assembly {
             Some(a) => format!(
                 "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
-                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk}. CODE HAS ALREADY ASSEMBLED their \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk}.{absent} CODE HAS ALREADY ASSEMBLED their \
                  definitions into `{cwd}/{asm}`: {defs} definition block(s) from {pieces} piece(s) — {by_if} \
                  placed in the declared interface's order, {unk} appended after it because no export names \
                  them — with {imports} import line(s) first and {stmts} top-level statement(s) (state, \
@@ -4425,7 +4453,7 @@ impl MergeDossier {
                  definition is FORBIDDEN and is a defect (a retyped definition is where pieces get dropped \
                  and signatures drift); change a definition's body only where a numbered task says so.\n\n",
                 module = self.module,
-                n = self.shards.len(),
+                n = built,
                 dir = SHARDS_DIR,
                 asm = a.path,
                 defs = a.definitions,
@@ -4437,11 +4465,11 @@ impl MergeDossier {
             ),
             None => format!(
                 "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
-                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk}.{absent} You write {final_files} \
                  from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
                  fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
                 module = self.module,
-                n = self.shards.len(),
+                n = built,
                 dir = SHARDS_DIR,
             ),
         };
@@ -4453,7 +4481,7 @@ impl MergeDossier {
             ));
         }
         s.push_str("THE PIECES (path — parse — definitions):\n");
-        for sh in &self.shards {
+        for sh in self.shards.iter().filter(|sh| !sh.pieces.is_empty()) {
             s.push_str(&format!(
                 "shard `{}` — folder `{cwd}/{}`{}:\n",
                 sh.id,
@@ -4464,9 +4492,6 @@ impl MergeDossier {
                     " — NO README (its handoff is missing; read the pieces harder)"
                 }
             ));
-            if sh.pieces.is_empty() {
-                s.push_str("  (no piece files — this shard delivered nothing but its README)\n");
-            }
             for (path, verdict, symbols) in &sh.pieces {
                 let names: Vec<String> = symbols
                     .iter()
@@ -4574,12 +4599,19 @@ impl MergeDossier {
             ));
         }
         for (state, writers) in &self.shared_state_writers {
+            let writers: Vec<&String> = writers.iter().filter(|w| self.built(w)).collect();
+            if writers.len() < 2 {
+                continue;
+            }
             item(&mut s, format!(
                 "shared state `{state}` is WRITTEN by shards {} (their READMEs' WRITES) — the declaration names ONE writer per state; keep one shard's writes and route the other's through it (or the declared API), and say which under KEPT/DROPPED.",
                 writers.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(" and ")
             ));
         }
         for (shard, assumption) in &self.assumptions_unmet {
+            if !self.built(shard) {
+                continue;
+            }
             // Per NAME: the two names, the two shards, the rule — and the decision left to the
             // merger (VA-108; r6h's `gl` → `vizGL`, `uBrushActive` → `uBrush`).
             let names: Vec<String> = self
@@ -4604,7 +4636,7 @@ impl MergeDossier {
             ));
         }
         for sh in &self.shards {
-            if !sh.provides_unbacked.is_empty() {
+            if !sh.pieces.is_empty() && !sh.provides_unbacked.is_empty() {
                 item(&mut s, format!(
                     "shard `{}`'s README PROVIDES {} but no piece in `{cwd}/{}` DEFINES them — promises, not deliveries: they are GAPS. Write each yourself if it is small, else send it out (MERGE_GAP below); never list one under KEPT.",
                     sh.id,
@@ -4614,6 +4646,9 @@ impl MergeDossier {
             }
         }
         for (shard, u) in &self.unfinished {
+            if !self.built(shard) {
+                continue;
+            }
             item(&mut s, format!(
                 "shard `{shard}` left UNFINISHED: \"{u}\" — fill it yourself if it is small, else send it out (MERGE_GAP below); either way name it under FILLED or SENT_OUT."
             ));
@@ -4629,7 +4664,7 @@ impl MergeDossier {
                     }
                 }
             }
-            if !sh.readme_present {
+            if !sh.pieces.is_empty() && !sh.readme_present {
                 item(&mut s, format!("shard `{}` left no README — derive what it provides from its pieces and say so under KEPT.", sh.id));
             }
         }
@@ -6421,6 +6456,192 @@ mod merger_tests {
             a.glue_needed.contains(&"unbacked_provides".to_string()),
             "{:?}",
             a.glue_needed
+        );
+    }
+
+    /// VA-085: a shard that delivered its README and NO piece file is not a piece. THE PIECES
+    /// lists the shards that built (s1, s3) and nothing of s2; s2's promises, ASSUMES, UNFINISHED
+    /// and WRITES raise no numbered item (its whole part is the gap), so the ONE place the merger
+    /// reads its name is the dispatch paragraph swarm.rs appends last (`merge_holes::gap_paragraph`)
+    /// — the brief and the assembly agree on which pieces exist. The loud channels stay:
+    /// `merge_dossier.pieces_absent` names s2 and `shard_provides_unbacked` still fires for it.
+    #[tokio::test]
+    async fn a_readme_only_shard_is_named_once_as_a_gap_and_never_as_a_piece() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/s1", &[
+            ("s1.js", "function buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check s1.js\nWRITES: S.brush — Set<id>\n"),
+        ]);
+        mk(".swarm/shards/web-viz/s2", &[
+            ("README.md", "PROVIDES: drawBrush(ids)\n- initGL()\nASSUMES: initGL() has run before the overlay draws\nUNFINISHED: the brush overlay\nCHECKED_WITH: none\nWRITES: S.brush: the brushed ids\n"),
+        ]);
+        mk(".swarm/shards/web-viz/s3", &[
+            ("s3.js", "function updateLabels() {}\n"),
+            ("README.md", "PROVIDES: updateLabels()\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check s3.js\nWRITES: none\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec![
+                "web-viz-s1".into(),
+                "web-viz-s2".into(),
+                "web-viz-s3".into(),
+            ],
+            folders: vec![
+                ".swarm/shards/web-viz/s1".into(),
+                ".swarm/shards/web-viz/s2".into(),
+                ".swarm/shards/web-viz/s3".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        // The dossier keeps every fact of s2 — the skipping is the brief's, never the measurement's.
+        assert_eq!(
+            d.shards[1].provides_unbacked,
+            vec!["drawBrush(ids)", "initGL()"]
+        );
+        assert_eq!(
+            d.assumptions_unmet,
+            vec![(
+                "web-viz-s2".to_string(),
+                "initGL() has run before the overlay draws".to_string()
+            )]
+        );
+        assert_eq!(
+            d.unfinished,
+            vec![("web-viz-s2".to_string(), "the brush overlay".to_string())]
+        );
+        assert_eq!(
+            d.shared_state_writers,
+            vec![(
+                "S.brush".to_string(),
+                vec!["web-viz-s1".to_string(), "web-viz-s2".to_string()]
+            )]
+        );
+        let summary = d.summary_json();
+        assert_eq!(summary["pieces"], 2);
+        assert_eq!(summary["pieces_absent"], serde_json::json!(["web-viz-s2"]));
+        assert_eq!(summary["readmes_missing"], serde_json::json!([]));
+        assert_eq!(
+            d.provides_unbacked_events("web-viz")[0]["shard"],
+            "web-viz-s2"
+        );
+
+        let brief = d.merger_brief("/run", None);
+        let pieces_start = brief.find("THE PIECES (path").unwrap();
+        let pieces_end = brief.find("THE DECLARED INTERFACE").unwrap();
+        let pieces = &brief[pieces_start..pieces_end];
+        assert!(
+            pieces.contains("shard `web-viz-s1` — folder `/run/.swarm/shards/web-viz/s1`:\n  - `/run/.swarm/shards/web-viz/s1/s1.js` — "),
+            "{pieces}"
+        );
+        assert!(pieces.contains("shard `web-viz-s3` — folder"), "{pieces}");
+        assert!(
+            !pieces.contains("s2"),
+            "a README-only shard is not a piece: {pieces}"
+        );
+        assert!(
+            !brief.contains("delivered nothing but its README"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("; NOBODY has written `web/viz.js`. 1 more shard delivered NO piece file — nothing of it is in THE PIECES below; CODE names it by id and folder under the dispatch GAPS at the end of this brief. You write `web/viz.js` from their pieces"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("`web-viz`. 2 shards built its pieces"),
+            "{brief}"
+        );
+        assert!(
+            !brief.contains("web-viz-s2"),
+            "no numbered item names a shard with no code: {brief}"
+        );
+        assert!(
+            !brief.contains("shared state `S.brush` is WRITTEN"),
+            "one writer with code is no conflict: {brief}"
+        );
+        assert!(
+            brief.contains("`drawBrush` is DECLARED and defined by no shard"),
+            "the declared gap stands on its own: {brief}"
+        );
+
+        // The brief as swarm.rs composes it — the dossier's list, then the dispatch paragraph —
+        // names s2 exactly once, there.
+        let states = super::super::merge_holes::shard_folder_states(root, &merger);
+        let paragraph = super::super::merge_holes::gap_paragraph(&merger.module, &states).unwrap();
+        assert!(
+            paragraph.contains("shard `web-viz-s2` (folder `.swarm/shards/web-viz/s2`): README present but NO piece files"),
+            "{paragraph}"
+        );
+        let composed = format!("{brief}{paragraph}");
+        assert_eq!(composed.matches("`web-viz-s2`").count(), 1, "{composed}");
+    }
+
+    /// VA-085, the other no-piece shape: a bare folder (no README, no piece) is likewise out of
+    /// THE PIECES and raises no "left no README — derive what it provides from its pieces" item
+    /// (there are none). It is `readmes_missing`, not `pieces_absent` — the classing
+    /// `merge_holes::dispatch_gaps` uses — and the dispatch paragraph names it once.
+    #[tokio::test]
+    async fn a_bare_shard_folder_is_readmes_missing_not_pieces_absent_and_never_a_piece() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".swarm/shards/web-viz/s1")).unwrap();
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/s1/s1.js"),
+            "function buildScene(data) {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".swarm/shards/web-viz/s1/README.md"),
+            "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check s1.js\nWRITES: none\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".swarm/shards/web-viz/s2")).unwrap();
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-s1".into(), "web-viz-s2".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/s1".into(),
+                ".swarm/shards/web-viz/s2".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d =
+            build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
+        let summary = d.summary_json();
+        assert_eq!(summary["pieces_absent"], serde_json::json!([]));
+        assert_eq!(
+            summary["readmes_missing"],
+            serde_json::json!(["web-viz-s2"])
+        );
+        let brief = d.merger_brief("/run", None);
+        assert!(
+            brief.contains("`web-viz`. 1 shards built its pieces"),
+            "{brief}"
+        );
+        assert!(!brief.contains("web-viz-s2"), "{brief}");
+        assert!(!brief.contains("left no README"), "{brief}");
+        let states = super::super::merge_holes::shard_folder_states(root, &merger);
+        let paragraph = super::super::merge_holes::gap_paragraph(&merger.module, &states).unwrap();
+        assert!(
+            paragraph.contains("shard `web-viz-s2` (folder `.swarm/shards/web-viz/s2`): its README.md handoff is MISSING — and the folder holds NO piece files; nothing of its part exists."),
+            "{paragraph}"
+        );
+        assert_eq!(
+            format!("{brief}{paragraph}")
+                .matches("`web-viz-s2`")
+                .count(),
+            1
         );
     }
 
