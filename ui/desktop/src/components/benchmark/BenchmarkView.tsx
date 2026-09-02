@@ -29,11 +29,7 @@ import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
 import SamplingKnobs from '../swarm/SamplingKnobs';
 import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
-import {
-  loadSamplingDefaults,
-  sanitizeSampling,
-  type SamplingSettings,
-} from '../swarm/sampling';
+import { loadSamplingDefaults, sanitizeSampling, type SamplingSettings } from '../swarm/sampling';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import {
   Button,
@@ -43,6 +39,7 @@ import {
   KeyValue,
   PageHeader,
   Panel,
+  Segmented,
   StatusDot,
   DISABLED,
   FOCUS,
@@ -135,32 +132,6 @@ function fmtWhen(when: string | number | undefined | null): string | null {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-/**
- * The segmented strip the tier and node pickers share — the lz Segmented's exact class recipe on
- * plain buttons. Each toggle must stay a `button` carrying its own `title` and `aria-describedby`
- * (the locked-while-live reason the publish-form test pins); the primitive's radio options carry
- * neither, so the recipe is composed here from the same tokens.
- */
-const STRIP = cx(
-  'inline-flex items-center gap-0.5 bg-lz-surface p-0.5',
-  SURFACE.outline,
-  RADIUS.control
-);
-const SEGMENT =
-  'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[4px] px-2.5 text-[12px] font-lz-medium';
-function segmentClass(active: boolean): string {
-  return cx(
-    SEGMENT,
-    // A locked strip keeps its selection readable: the active segment stays the accent fill and
-    // the others take the solid disabled neutral — never an opacity.
-    active
-      ? cx(SURFACE.selected, 'disabled:pointer-events-none')
-      : cx('text-lz-ink-2 hover:text-lz-ink', SURFACE.hover, DISABLED),
-    FOCUS,
-    MOTION
-  );
 }
 
 /** A Studio text input: outline, radius 6, ink-4 placeholder, the err border when aria-invalid. */
@@ -349,11 +320,7 @@ function ShotLightbox({
               >
                 ‹ Prev
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onIndex((index + 1) % shots.length)}
-              >
+              <Button size="sm" variant="ghost" onClick={() => onIndex((index + 1) % shots.length)}>
                 Next ›
               </Button>
             </>
@@ -411,12 +378,7 @@ function ShotsStrip({ shots }: { shots: BenchShot[] }) {
         ))}
       </div>
       {open !== null && (
-        <ShotLightbox
-          shots={shots}
-          index={open}
-          onIndex={setOpen}
-          onClose={() => setOpen(null)}
-        />
+        <ShotLightbox shots={shots} index={open} onIndex={setOpen} onClose={() => setOpen(null)} />
       )}
     </>
   );
@@ -747,22 +709,21 @@ export default function BenchmarkView() {
             subtitle="Your fleet against frontier models on the same frozen build task, graded by running what it produces — not by asking a model what it thinks."
             actions={
               <>
-                <div role="group" aria-label="Benchmark tier" className={STRIP}>
-                  {TIERS.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setTier(t)}
-                      disabled={running}
-                      aria-pressed={tier === t}
-                      aria-describedby={running ? lockedId : undefined}
-                      title={`${TIER_BLURB[t]}${running ? `. ${lockedWhy}` : ''}`}
-                      className={segmentClass(tier === t)}
-                    >
-                      {TIER_SEGMENT_LABEL[t]}
-                    </button>
-                  ))}
-                </div>
+                {/* `buttons` mode: each toggle stays a button carrying its own title and
+                    aria-describedby — the locked-while-live reason the publish-form test pins. */}
+                <Segmented<BenchTier>
+                  as="buttons"
+                  aria-label="Benchmark tier"
+                  options={TIERS.map((t) => ({
+                    value: t,
+                    label: TIER_SEGMENT_LABEL[t],
+                    title: `${TIER_BLURB[t]}${running ? `. ${lockedWhy}` : ''}`,
+                    describedBy: running ? lockedId : undefined,
+                  }))}
+                  value={tier}
+                  onChange={setTier}
+                  disabled={running}
+                />
                 {running ? (
                   <Button
                     onClick={() => setConfirmCancel(true)}
@@ -800,22 +761,22 @@ export default function BenchmarkView() {
           <section aria-label="Run setup" className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <span className={TYPE.meta}>Nodes</span>
-              <div role="group" aria-label="Nodes" className={STRIP}>
-                {NODE_CHOICES.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setNodes(n)}
-                    disabled={running}
-                    aria-pressed={nodes === n}
-                    aria-describedby={running ? lockedId : undefined}
-                    title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
-                    className={cx(segmentClass(nodes === n), TNUM)}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                as="buttons"
+                aria-label="Nodes"
+                options={NODE_CHOICES.map((n) => ({
+                  value: String(n),
+                  label: <span className={TNUM}>{n}</span>,
+                  title: running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`,
+                  describedBy: running ? lockedId : undefined,
+                }))}
+                value={String(nodes)}
+                onChange={(v) => {
+                  const n = NODE_CHOICES.find((c) => String(c) === v);
+                  if (n != null) setNodes(n);
+                }}
+                disabled={running}
+              />
               {running && (
                 <span id={lockedId} className={TYPE.meta}>
                   locked while the run is live
@@ -940,7 +901,8 @@ export default function BenchmarkView() {
           <Panel title="Where the points went">
             <p className={cx('mb-3 max-w-[70ch]', TYPE.bodyMuted)}>
               {TIER_LABELS.A} · {TIER_LABELS.B} · {TIER_LABELS.C} · {TIER_LABELS.D}. A build can be
-              perfectly structured and still score nothing on behaviour — the split is the diagnosis.
+              perfectly structured and still score nothing on behaviour — the split is the
+              diagnosis.
             </p>
             <TierBreakdown rows={rows} />
           </Panel>
@@ -983,8 +945,8 @@ export default function BenchmarkView() {
               }
             >
               <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
-                Posts your score, the full check-by-check breakdown and the before/after
-                screenshots as{' '}
+                Posts your score, the full check-by-check breakdown and the before/after screenshots
+                as{' '}
                 <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>
                   {handle ?? 'your handle'}
                 </span>
@@ -1062,10 +1024,10 @@ export default function BenchmarkView() {
           )}
 
           <footer className={cx('border-t pt-4 text-lz-body text-lz-ink-2', SURFACE.hairline)}>
-            Baselines were captured on our own fleet against this exact frozen spec ({COMPARABLE_SCORER})
-            and ship with the app, so your run costs you nothing and every board is comparable.
-            Scores below 100 are expected: the finesse tier is graded against a theoretical optimum,
-            and a perfect score would mean the task had stopped measuring.
+            Baselines were captured on our own fleet against this exact frozen spec (
+            {COMPARABLE_SCORER}) and ship with the app, so your run costs you nothing and every
+            board is comparable. Scores below 100 are expected: the finesse tier is graded against a
+            theoretical optimum, and a perfect score would mean the task had stopped measuring.
           </footer>
         </div>
       </div>

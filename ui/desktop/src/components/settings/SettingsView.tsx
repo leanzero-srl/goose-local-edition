@@ -25,7 +25,15 @@ import { CONFIGURATION_ENABLED } from '../../updates';
 import { trackSettingsTabViewed } from '../../utils/analytics';
 import { useEdition } from '../../contexts/EditionContext';
 import { defineMessages, useIntl } from '../../i18n';
-import { FOCUS, MOTION, PageHeader, RADIUS, SectionHeader, SPACE, SURFACE, cx } from '../lz';
+import {
+  PageHeader,
+  SectionHeader,
+  Segmented,
+  SPACE,
+  SURFACE,
+  cx,
+  type SegmentedOption,
+} from '../lz';
 
 const i18n = defineMessages({
   title: {
@@ -63,28 +71,6 @@ export type SettingsViewOptions = {
   showEnvVars?: boolean;
   section?: string;
 };
-
-/**
- * The tab strip is the lz Segmented's class recipe on Radix tab triggers: the triggers keep the
- * tablist/tab/tabpanel semantics, the `settings-*-tab` test ids the e2e journey selects, and the
- * `data-state` the tab test pins — the primitive's radio options carry none of those, so the
- * strip is composed here from the same tokens.
- */
-const STRIP = cx(
-  'inline-flex max-w-full items-center gap-0.5 self-start overflow-x-auto bg-lz-surface p-0.5',
-  SURFACE.outline,
-  RADIUS.control
-);
-const SEGMENT =
-  'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[4px] px-2.5 text-[12px] font-lz-medium [&_svg]:size-3.5 [&_svg]:shrink-0';
-function segmentClass(active: boolean): string {
-  return cx(
-    SEGMENT,
-    active ? SURFACE.selected : cx('text-lz-ink-2 hover:text-lz-ink', SURFACE.hover),
-    FOCUS,
-    MOTION
-  );
-}
 
 const TAB_PANEL = 'outline-none pb-lz-page';
 
@@ -172,6 +158,28 @@ export default function SettingsView({
   const tabAuth = intl.formatMessage(i18n.tabAuth);
   const tabApp = intl.formatMessage(i18n.tabApp);
 
+  // The strip is the lz Segmented in `tabs` mode worn by a Radix Tabs.List through asChild: the
+  // triggers keep the tablist/tab/tabpanel semantics, the `settings-*-tab` test ids the e2e
+  // journey selects, and the `data-state` the tab test pins.
+  const tabs: SegmentedOption<string>[] = [
+    ...(isLocalEdition
+      ? [
+          {
+            value: 'import',
+            label: 'Import',
+            icon: <DownloadCloud />,
+            testId: 'settings-import-tab',
+          },
+        ]
+      : []),
+    { value: 'chat', label: tabChat, icon: <MessageSquare />, testId: 'settings-chat-tab' },
+    { value: 'sharing', label: tabSession, icon: <Share2 />, testId: 'settings-sharing-tab' },
+    { value: 'prompts', label: tabPrompts, icon: <FileText />, testId: 'settings-prompts-tab' },
+    { value: 'keyboard', label: tabKeyboard, icon: <Keyboard />, testId: 'settings-keyboard-tab' },
+    { value: 'auth', label: tabAuth, icon: <KeyRound />, testId: 'settings-auth-tab' },
+    { value: 'app', label: tabApp, icon: <Monitor />, testId: 'settings-app-tab' },
+  ];
+
   return (
     <>
       <MainPanelLayout>
@@ -186,65 +194,24 @@ export default function SettingsView({
               onValueChange={handleTabChange}
               className="flex h-full flex-col"
             >
-              <TabsPrimitive.List aria-label={intl.formatMessage(i18n.title)} className={STRIP}>
-                {isLocalEdition && (
-                  <TabsPrimitive.Trigger
-                    value="import"
-                    className={segmentClass(activeTab === 'import')}
-                    data-testid="settings-import-tab"
-                  >
-                    <DownloadCloud aria-hidden />
-                    Import
-                  </TabsPrimitive.Trigger>
-                )}
-                <TabsPrimitive.Trigger
-                  value="chat"
-                  className={segmentClass(activeTab === 'chat')}
-                  data-testid="settings-chat-tab"
-                >
-                  <MessageSquare aria-hidden />
-                  {tabChat}
-                </TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger
-                  value="sharing"
-                  className={segmentClass(activeTab === 'sharing')}
-                  data-testid="settings-sharing-tab"
-                >
-                  <Share2 aria-hidden />
-                  {tabSession}
-                </TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger
-                  value="prompts"
-                  className={segmentClass(activeTab === 'prompts')}
-                  data-testid="settings-prompts-tab"
-                >
-                  <FileText aria-hidden />
-                  {tabPrompts}
-                </TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger
-                  value="keyboard"
-                  className={segmentClass(activeTab === 'keyboard')}
-                  data-testid="settings-keyboard-tab"
-                >
-                  <Keyboard aria-hidden />
-                  {tabKeyboard}
-                </TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger
-                  value="auth"
-                  className={segmentClass(activeTab === 'auth')}
-                  data-testid="settings-auth-tab"
-                >
-                  <KeyRound aria-hidden />
-                  {tabAuth}
-                </TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger
-                  value="app"
-                  className={segmentClass(activeTab === 'app')}
-                  data-testid="settings-app-tab"
-                >
-                  <Monitor aria-hidden />
-                  {tabApp}
-                </TabsPrimitive.Trigger>
+              <TabsPrimitive.List asChild aria-label={intl.formatMessage(i18n.title)}>
+                <Segmented
+                  as="tabs"
+                  aria-label={intl.formatMessage(i18n.title)}
+                  options={tabs}
+                  value={activeTab}
+                  onChange={handleTabChange}
+                  className="max-w-full self-start overflow-x-auto"
+                  renderOption={({ option, className, content }) => (
+                    <TabsPrimitive.Trigger
+                      value={option.value}
+                      className={className}
+                      data-testid={option.testId}
+                    >
+                      {content}
+                    </TabsPrimitive.Trigger>
+                  )}
+                />
               </TabsPrimitive.List>
 
               <ScrollArea className="mt-4 flex-1">
