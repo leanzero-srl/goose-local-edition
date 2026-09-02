@@ -18,8 +18,9 @@
 //! every shard brief says what leads and why. It never gates, refuses or aborts. The green claim
 //! (`FindingProvenance::partition_criticals`, VA-006 / DESIGN-REPAIR-V2 §4) is the
 //! `engine_critical` wording PLUS the browser probe's app-unusable findings — no rows in a real
-//! browser, an uncaught exception in the advertised page's boot path — and `passed` further
-//! requires no render-class finding among the known active bugs. The sync_rows finding stays
+//! browser, an uncaught exception in the advertised page's boot path, and since VA-088 the
+//! spec-derived render check's page error and blank canvas (`post_probe::render_check`, §3) —
+//! and `passed` further requires no render-class finding among the known active bugs. The sync_rows finding stays
 //! repairable-never-blocking per its pinned test even though its authoring check ranks CRITICAL
 //! for ordering: it is not a render probe.
 //!
@@ -626,6 +627,19 @@ pub(super) enum FindingSource {
     RenderGateStyling,
     /// The css-coherence scan: stylesheet vocabulary and markup disagree.
     CssCoherenceScan,
+    /// VA-088's spec-derived render check (`post_probe::render_check`): an element id the spec
+    /// advertises is absent from the served page's live DOM.
+    RenderCheckElement,
+    /// The render check: a member of a global the spec advertises (`window.X.m()`) is not a
+    /// function in the served page.
+    RenderCheckApi,
+    /// The render check: the served page threw an UNCAUGHT exception (`pageerror`) while
+    /// loading — every statement after it never ran (r5's ReferenceError class, read from the
+    /// browser's own event instead of console text).
+    RenderCheckPageError,
+    /// The render check: a `<canvas>` on the served page never got a rendering context, or a
+    /// screenshot clipped to it is one flat colour — the scene the spec describes never drew.
+    RenderCheckCanvas,
 }
 
 impl FindingSource {
@@ -659,6 +673,10 @@ impl FindingSource {
             FindingSource::RenderGateRows
                 | FindingSource::RenderGateConsole
                 | FindingSource::RenderGateException
+                | FindingSource::RenderCheckElement
+                | FindingSource::RenderCheckApi
+                | FindingSource::RenderCheckPageError
+                | FindingSource::RenderCheckCanvas
         )
     }
 
@@ -676,11 +694,15 @@ impl FindingSource {
             | FindingSource::SyncAcquisition
             | FindingSource::RenderGateRows
             | FindingSource::RenderGateException
+            | FindingSource::RenderCheckPageError
+            | FindingSource::RenderCheckCanvas
             | FindingSource::RestartDurability => FindingSeverity::Critical,
             FindingSource::RenderGateConsole
             | FindingSource::ClientApiPaging
             | FindingSource::CrossModuleDrift
-            | FindingSource::DomIdScan => FindingSeverity::High,
+            | FindingSource::DomIdScan
+            | FindingSource::RenderCheckElement
+            | FindingSource::RenderCheckApi => FindingSeverity::High,
             FindingSource::EndpointContractProbe
             | FindingSource::AggregateTruth
             | FindingSource::HttpTimeoutScan
@@ -720,6 +742,10 @@ impl FindingSource {
             FindingSource::HttpTimeoutScan => "http timeout scan",
             FindingSource::RenderGateStyling => "render gate styling",
             FindingSource::CssCoherenceScan => "css coherence scan",
+            FindingSource::RenderCheckElement
+            | FindingSource::RenderCheckApi
+            | FindingSource::RenderCheckPageError
+            | FindingSource::RenderCheckCanvas => "render check",
         }
     }
 
@@ -747,6 +773,18 @@ impl FindingSource {
             FindingSource::HttpTimeoutScan => "http timeout scan",
             FindingSource::RenderGateStyling => "render gate styling (page unstyled)",
             FindingSource::CssCoherenceScan => "css coherence scan",
+            FindingSource::RenderCheckElement => {
+                "render check element (spec-advertised id absent from the live DOM)"
+            }
+            FindingSource::RenderCheckApi => {
+                "render check api (spec-advertised debug member is not a function)"
+            }
+            FindingSource::RenderCheckPageError => {
+                "render check page error (uncaught exception while the page loaded)"
+            }
+            FindingSource::RenderCheckCanvas => {
+                "render check canvas (no rendering context, or one flat colour)"
+            }
         }
     }
 }
@@ -1490,14 +1528,19 @@ mod tests {
             RenderGateRows,
             RenderGateException,
             RestartDurability,
+            RenderCheckPageError,
+            RenderCheckCanvas,
         ] {
             assert_eq!(s.severity(), FindingSeverity::Critical, "{s:?}");
+            assert!(s.probe() != "render check" || s.is_render_probe(), "{s:?}");
         }
         for s in [
             RenderGateConsole,
             ClientApiPaging,
             CrossModuleDrift,
             DomIdScan,
+            RenderCheckElement,
+            RenderCheckApi,
         ] {
             assert_eq!(s.severity(), FindingSeverity::High, "{s:?}");
         }
