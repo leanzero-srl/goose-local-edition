@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import FanInCard, { type NodeLane } from './FanInCard';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -63,5 +63,33 @@ describe('FanInCard', () => {
       allClasses(container).filter((c) => !c.startsWith('lucide'))
     );
     expect(missing).toEqual([]);
+  });
+});
+
+describe('FanInCard — a clipped action is a door to the whole line', () => {
+  const LONG =
+    'cargo test -p goose-swarm --test development_gates -- --nocapture 2>&1 | tee /tmp/gates.log && grep -c FAILED /tmp/gates.log';
+  it('titles the clipped action with the full command and reveals it with the node and status as chips', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 1000 });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 100 });
+    try {
+      const { getAllByTestId, getByRole, queryByRole, getByTestId } = render(
+        <FanInCard dispatch="dispatch" lanes={[{ device: 'm4-max', action: LONG, status: 'running' }]} />
+      );
+      const action = getAllByTestId('fan-in-action')[0];
+      expect(action).toHaveAttribute('data-clipped', 'true');
+      expect(action).toHaveAttribute('title', LONG);
+      fireEvent.click(action);
+      const dialog = getByRole('dialog');
+      expect(getByTestId('reveal-body')).toHaveTextContent(LONG);
+      expect(dialog).toHaveTextContent('running');
+      assertStudioClean(dialog);
+      expect(await missingUtilities(allClasses(dialog).filter((c) => !c.startsWith('lucide')))).toEqual([]);
+      fireEvent.click(getByTestId('reveal-close'));
+      expect(queryByRole('dialog')).toBeNull();
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    }
   });
 });

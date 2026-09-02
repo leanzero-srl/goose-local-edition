@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NodesStrip from './NodesStrip';
 import { IntlTestWrapper } from '../../i18n/test-utils';
@@ -177,4 +177,29 @@ describe('NodesStrip', () => {
     expect(classes.length).toBeGreaterThan(20);
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+});
+
+describe('NodesStrip — a clipped model id is a door to the whole id', () => {
+  it('titles the clipped id with the full model id and reveals it with the node as a chip', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 1000 });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 100 });
+    try {
+      mount();
+      const models = await screen.findAllByTestId('nodes-strip-model');
+      const mlx = models.find((m) => m.getAttribute('title') === 'workhorse-qwen3.5-9b-4bit-mlx');
+      expect(mlx).toBeDefined();
+      expect(mlx).toHaveAttribute('data-clipped', 'true');
+      fireEvent.click(mlx as HTMLElement);
+      const dialog = screen.getByRole('dialog');
+      expect(screen.getByTestId('reveal-body')).toHaveTextContent('workhorse-qwen3.5-9b-4bit-mlx');
+      expect(dialog).toHaveTextContent('workhorse-mlx');
+      assertStudioClean(dialog);
+      expect(await missingUtilities(allClasses(dialog).filter((c) => !c.startsWith('lucide')))).toEqual([]);
+      fireEvent.click(screen.getByTestId('reveal-close'));
+      expect(screen.queryByRole('dialog')).toBeNull();
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    }
+  });
 });
