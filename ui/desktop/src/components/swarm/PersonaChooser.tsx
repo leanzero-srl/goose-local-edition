@@ -1,12 +1,14 @@
 import { Code2, Bot } from 'lucide-react';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import { FOCUS, MOTION, RADIUS, SURFACE, WEIGHT, cx } from '../lz';
 
 /**
  * Goose Local Edition — persona chooser for the chat input bar. Two personas:
  *  - 'coding': interactive build-with-the-fleet (one brief → one build).
  *  - 'agent':  the autonomous implementation — runs a loop with a recipe + skills, iterating on its own.
- * Presentational only (value + onChange). Sharp, full-border, solid azure on the active option per the
- * hard UI rules (no left rail, no faded tints, no native <select>).
+ * Presentational only (value + onChange). The Studio segmented register by hand: the active option is
+ * the accent fill with white ink, the others the quiet ink with a solid hover step; segments are divided
+ * by the container's divide-x hairline, never a border-l on a button (no left rail, no faded tints, no
+ * native <select>). Kept a pressed-button group so the aria-pressed contract stays as it was.
  */
 
 export type Persona = 'coding' | 'agent';
@@ -27,12 +29,15 @@ export function PersonaChooser({
 }) {
   return (
     <div
-      className={`inline-flex border border-border-primary ${className}`}
-      style={{ borderRadius: CHIP_RADIUS }}
+      className={cx(
+        'inline-flex divide-x divide-lz-border-strong overflow-hidden border border-lz-border-strong',
+        RADIUS.control,
+        className
+      )}
       role="group"
       aria-label="Persona"
     >
-      {OPTIONS.map((opt, i) => {
+      {OPTIONS.map((opt) => {
         const active = opt.value === value;
         const Icon = opt.Icon;
         return (
@@ -46,10 +51,14 @@ export function PersonaChooser({
                 ? 'Autonomous — runs a loop with a recipe + skills'
                 : 'Interactive build with your fleet'
             }
-            className={`flex items-center gap-1 px-2 py-0.5 text-xs transition-colors ${
-              active ? 'font-semibold text-background-primary' : 'text-text-secondary hover:text-text-primary'
-            } ${i > 0 ? 'border-l border-border-primary' : ''}`}
-            style={{ backgroundColor: active ? SWARM_STATUS.action : 'transparent' }}
+            className={cx(
+              'flex items-center gap-1 px-2 py-0.5 text-lz-meta',
+              MOTION,
+              FOCUS,
+              active
+                ? cx(SURFACE.selected, WEIGHT.semibold)
+                : cx('text-lz-ink-3 hover:text-lz-ink', SURFACE.hover)
+            )}
           >
             <Icon className="h-3.5 w-3.5" />
             {opt.label}
