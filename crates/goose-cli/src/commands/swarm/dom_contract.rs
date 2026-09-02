@@ -683,11 +683,9 @@ pub(super) fn dom_id_scan_sources(files: &[(String, String)]) -> (usize, Vec<Str
 /// whose scope carries BOTH html and js — language-blind by design (the web/ files of a Python
 /// app are exactly the case that motivated it). Env `GOOSE_SWARM_DOM_ID_SCAN` opts out. An
 /// in-scope file the scan could not read marks the result `partial`, so "0 findings" and "did
-/// not look at everything" can never be confused.
-// dead_code: the two call sites (swarm.rs `complete_verify`'s DOM-ID CONTRACT block and
-// repair_waves.rs's preview re-run) still call swarm.rs's Python twin — another surgeon's files
-// at the time of VA-114; the allow goes when they call this one and the twin is deleted.
-#[allow(dead_code)]
+/// not look at everything" can never be confused. Called from swarm.rs `complete_verify`'s
+/// DOM-ID CONTRACT block and repair_waves.rs's `one_ruler_grade` (VA-149); the Python twin swarm.rs
+/// carried is deleted.
 pub(super) fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> super::DriftResult {
     if !super::swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true) {
         return super::DriftResult::default();

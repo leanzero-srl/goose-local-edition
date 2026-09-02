@@ -61,6 +61,7 @@ use goose_swarm::{DispatchRequest, EventSink, TaskDispatcher};
 
 use super::attribution::parse_handoffs;
 use super::decisions::BriefDecisions;
+use super::dom_contract::dom_id_scan;
 use super::findings::{
     dedupe_findings_exact, missing_deliverable_finding, parse_finding_verdicts, tag_require_tests,
     FileGroup, FindingCheck, FindingProvenance, FindingSource,
@@ -71,10 +72,10 @@ use super::ledger_writers::{write_repair_ledger, RepairLedgerRow};
 use super::transcripts::read_calls_capture;
 use super::{
     activity_digest_key, app_scope_py, copy_created_source_files, copy_tree_excluding,
-    cross_module_drift, css_coherence_scan, dom_id_scan, http_timeout_scan,
-    is_intentional_empty_marker, is_test_path, load_config, render_repair_history, run_smoke_gate,
-    run_spec_contract, smoke_fix_description, spawn_fix_progress_sampler, swarm_gate_cfg,
-    FixAttemptProgress, GooseAgentDispatcher, TargetLang,
+    cross_module_drift, css_coherence_scan, http_timeout_scan, is_intentional_empty_marker,
+    is_test_path, load_config, render_repair_history, run_smoke_gate, run_spec_contract,
+    smoke_fix_description, spawn_fix_progress_sampler, swarm_gate_cfg, FixAttemptProgress,
+    GooseAgentDispatcher, TargetLang,
 };
 
 /// One open finding and the shard that will work it.
@@ -1329,7 +1330,7 @@ pub(super) async fn one_ruler_grade(
     let timeouts = http_timeout_scan(root, lang, &app_scope_py(root, &app_only)).await;
     prov.tag(FindingSource::HttpTimeoutScan, &timeouts.findings);
     findings.extend(timeouts.findings);
-    let dom = dom_id_scan(root, all_files).await;
+    let dom = dom_id_scan(root, all_files);
     prov.tag(FindingSource::DomIdScan, &dom.findings);
     findings.extend(dom.findings);
     let css = css_coherence_scan(root, all_files).await;
