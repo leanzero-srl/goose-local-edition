@@ -1,18 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { defineMessages, useIntl } from '../../i18n';
-import {
-  Button,
-  DISABLED,
-  FOCUS,
-  MOTION,
-  Panel,
-  RADIUS,
-  StatusDot,
-  SURFACE,
-  TONE_FILL,
-  TYPE,
-  cx,
-} from '../lz';
+import { Button, Panel, StatusDot, SURFACE, TYPE, cx } from '../lz';
 import type { LiveRunRef } from '../../utils/closeGuard';
 
 /**
@@ -67,16 +55,6 @@ export interface ConfirmCloseRunDialogProps {
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-/** The lz Button has no err variant; this is its exact control geometry over the err fill. */
-const DESTRUCTIVE_BUTTON = cx(
-  'inline-flex h-8 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-lz-err-solid px-3 text-lz-body font-lz-medium',
-  TONE_FILL.err,
-  RADIUS.control,
-  DISABLED,
-  FOCUS,
-  MOTION
-);
 
 export function ConfirmCloseRunDialog({
   runs,
@@ -181,15 +159,14 @@ export function ConfirmCloseRunDialog({
             <Button variant="secondary" autoFocus disabled={stopping} onClick={onKeepRunning}>
               {intl.formatMessage(i18n.keepRunning)}
             </Button>
-            <button
-              type="button"
+            <Button
+              variant="destructive"
               data-testid="confirm-close-run-stop"
-              className={DESTRUCTIVE_BUTTON}
               disabled={stopping}
               onClick={stop}
             >
               {intl.formatMessage(stopping ? i18n.stopping : i18n.stopAndClose)}
-            </button>
+            </Button>
           </div>
         </Panel>
       </div>

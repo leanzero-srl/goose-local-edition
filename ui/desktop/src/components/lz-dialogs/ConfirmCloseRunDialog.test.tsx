@@ -46,9 +46,9 @@ describe('ConfirmCloseRunDialog', () => {
       'data-variant',
       'secondary'
     );
-    expect(screen.getByRole('button', { name: 'Stop run and close' }).className).toContain(
-      'bg-lz-err-solid'
-    );
+    const stop = screen.getByRole('button', { name: 'Stop run and close' });
+    expect(stop).toHaveAttribute('data-variant', 'destructive');
+    expect(stop.className).toContain('bg-lz-err-solid');
     assertStudioClean(container);
   });
 
