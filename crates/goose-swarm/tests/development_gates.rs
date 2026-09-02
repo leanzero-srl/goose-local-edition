@@ -430,7 +430,7 @@ fn swarm_rs_line_count_only_decreases() {
     // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
     // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
     // the baseline is the count AFTER all three, so each intermediate commit sits under it.
-    const SWARM_RS_LINE_BASELINE: usize = 34_287; // VA-103 dep_sources.rs extracted + VA-102 write-first briefs moved to briefs.rs: 34_344 → 34_287 (set to what the merged file IS)
+    const SWARM_RS_LINE_BASELINE: usize = 34_236; // VA-104 flat_plan_from_briefs moved to answer_routing.rs, paying for the routing wiring: 34_287 → 34_236
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
