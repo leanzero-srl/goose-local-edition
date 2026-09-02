@@ -470,7 +470,13 @@ fn swarm_rs_line_count_only_decreases() {
     // verdict site, `note_defect_steer` at the defect-steer emit, `owned_file_landed` at the
     // disk stat, `witness` on `judge_delivery_decided`/`judge_nudge`, `defect_steer_standing`
     // on `judge_drift_held`). Counter replica: `wc -l` = 33,049.
-    const SWARM_RS_LINE_BASELINE: usize = 33_049;
+    // Tightened to 33,015 (VA-149): the Python DOM-id twin (`DOM_ID_SCRIPT`, `parse_dom_id_scan`,
+    // the async `dom_id_scan`, 106 lines) is deleted — both call sites read
+    // `dom_contract::dom_id_scan` — paying for the general render check's wiring
+    // (`post_probe::render_check` after the tier probe's scenarios, `SpecContractResult.render_check`,
+    // the COMPLETE gate's `render_check` event) and VA-148's parked delivered-events + the judge's
+    // `rest_state_block`. Counter replica: `wc -l` = 33,015.
+    const SWARM_RS_LINE_BASELINE: usize = 33_015;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -531,7 +537,10 @@ fn do_everything_never_reaches_a_model() {
 // client that panics on first use if the TLS backend failed — is a match: `Err(e)` is a measured
 // `vendor_probe{ok:false, error: "http client: …"}`, the spec's build proceeds exactly as with a
 // dead vendor (vendor_probe.rs).
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 94;
+// To 93 (VA-149): swarm.rs's `parse_dom_id_scan` — whose `findings` array defaulted to empty when
+// the Python twin printed no array — is deleted with the twin; `dom_contract::dom_id_scan` reads
+// the files itself and marks an unreadable one `partial`. Counter replica over run_path_files: 93.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 93;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
