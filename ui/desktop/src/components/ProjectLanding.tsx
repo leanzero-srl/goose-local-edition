@@ -6,6 +6,7 @@ import { AppEvents } from '../constants/events';
 import { chooseAndAddProject, type ProjectsChangedDetail } from '../utils/addProjectFlow';
 import type { ProjectEntry } from '../utils/projectDirs';
 import { Button, EmptyState, KeyValue, Panel, SPACE, cx } from './lz';
+import { LEANZERO_MARK, LEANZERO_MARK_VIEWBOX } from './icons/leanzeroMark';
 
 const i18n = defineMessages({
   headline: {
@@ -59,23 +60,22 @@ const i18n = defineMessages({
 });
 
 /**
- * The LeanZero mark — three squares and one node, a swarm forming — drawn in currentColor so it
- * takes the ink of whatever accent block holds it (the sidebar brand square, the landing's
- * EmptyState block). Shared from here because the landing is the lighter module to import.
+ * The LeanZero mark — the "L" monogram cradling three geese in flight — drawn in currentColor so
+ * it takes the ink of whatever accent block holds it (the sidebar brand square, the landing's
+ * EmptyState block). ONE geometry for every surface: ../icons/leanzeroMark.
  */
 export function LeanZeroGlyph({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 24 24"
+      viewBox={LEANZERO_MARK_VIEWBOX}
       fill="currentColor"
       aria-hidden
       data-testid="leanzero-glyph"
       className={className}
     >
-      <rect x="3" y="3" width="8" height="8" rx="2" />
-      <rect x="13" y="3" width="8" height="8" rx="2" />
-      <rect x="3" y="13" width="8" height="8" rx="2" />
-      <rect x="13" y="13" width="8" height="8" rx="4" />
+      {LEANZERO_MARK.map((p, i) => (
+        <path key={i} d={p.d} transform={p.transform} />
+      ))}
     </svg>
   );
 }

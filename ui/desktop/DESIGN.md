@@ -166,3 +166,24 @@ headings/body/meta (28/22/16/13/11 with the same weights and tracking), `#6d28d9
 secondary emphasis per page, the status triad for any state colour, 1px hairlines and radius 6/10,
 hover as a solid step to `#f1f5f9`, and the same bans. The tables in this file are the source; the
 CSS variables in `main.css` are copy-ready.
+
+## The brand mark
+
+ONE geometry, `src/components/icons/leanzeroMark.ts`, drawn in `currentColor` — a bold "L" (the
+leanzero.net monogram language: sharp corners, one weight) cradling three geese climbing out of its
+crook. Owner brief, 2026-09-02: *"a big L encompassing them ... 2 or 3 geese flying ... black or
+maybe blue the same colour as leanzero"*.
+
+- `<LeanZero/>` (icons) and `<LeanZeroGlyph/>` (ProjectLanding, carries `data-testid`) render the
+  SAME path list. Never hand-copy the paths into a third component — that is how a mark drifts.
+- White on the accent square (sidebar brand, chat chip, landing EmptyState), LeanZero blue
+  (`--color-action-solid`) on a plain surface, black in a menu-bar template. The colour is never
+  baked into the mark.
+- **Smallest honest size is 20px.** Below that the three geese merge into texture. The sidebar
+  brand square is 28px with a 20px mark; the chat chip is 18px. If a new surface needs it under
+  20px, make the surface bigger rather than shrinking the mark.
+- The geese are mirror-symmetric BY CONSTRUCTION and fly at `rotate(52)`. Three earlier attempts
+  read as darts and swooshes purely because the halves were drawn freehand; keep the reflection.
+- App icon, tray template and Linux scalable icon (`src/images/icon.*`, `iconTemplate*.png`) are
+  rendered FROM this geometry — a solid `#1d4ed8` squircle (824 in a 1024 canvas, Apple's grid)
+  with the mark in white at 52%. Regenerate them together, never one alone.

@@ -103,7 +103,7 @@ export function SessionBrand({ isLocal }: { isLocal: boolean }) {
             <span
               data-testid="brand-mark"
               className={cx(
-                'inline-flex size-3.5 items-center justify-center rounded-[3px]',
+                'inline-flex size-[18px] items-center justify-center rounded-[4px]',
                 TONE_FILL.accent
               )}
             >
