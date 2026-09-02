@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   chatCompletionsUrl,
+  lmStudioApiToken,
   modelsUrl,
   postFleetChat,
   probeFleetModels,
@@ -105,6 +106,62 @@ describe('probeFleetModels — the models probe as main runs it', () => {
   it('reads a 2xx body without a data array as an empty fleet, not a crash', async () => {
     const r = await probeFleetModels(LAN, fetchReturning(jsonResponse({ object: 'list' })));
     expect(r).toMatchObject({ ok: true, data: [] });
+  });
+});
+
+/**
+ * LM Studio with "require API token" on (this Mac) answers 401 to a bare probe — the engine's probes
+ * 401ed the same way until they carried LMSTUDIO_API_KEY. Main reads the same key from its environment
+ * and sends it as a bearer; a 401 is the typed `http` error naming the key, never `unreachable`.
+ */
+describe('the LM Studio API token — the same LMSTUDIO_API_KEY the engine reads', () => {
+  const headersOf = (fetchImpl: { mock: ReturnType<typeof vi.fn>['mock'] }): Record<string, string> =>
+    (fetchImpl.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
+
+  it('sends `Authorization: Bearer <token>` when a token is given', async () => {
+    const fetchImpl = fetchReturning(jsonResponse({ data: [] }));
+    await probeFleetModels(LIVE, fetchImpl, 3000, 'lm-token-1');
+    expect(headersOf(fetchImpl)['Authorization']).toBe('Bearer lm-token-1');
+  });
+
+  it('sends NO Authorization header without one', async () => {
+    const fetchImpl = fetchReturning(jsonResponse({ data: [] }));
+    await probeFleetModels(LIVE, fetchImpl);
+    expect(headersOf(fetchImpl)).toEqual({});
+  });
+
+  it('the wizard chat POST carries the same bearer and keeps its Content-Type', async () => {
+    const fetchImpl = fetchReturning(jsonResponse({ choices: [] }));
+    await postFleetChat(LIVE, {}, fetchImpl, 1000, 'lm-token-1');
+    expect(headersOf(fetchImpl)).toEqual({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer lm-token-1',
+    });
+  });
+
+  it('a 401 is the typed `http` error with status 401 naming the missing key — never `unreachable`', async () => {
+    const bare = await probeFleetModels(LIVE, fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401)));
+    expect(bare).toEqual({
+      ok: false,
+      url: 'http://127.0.0.1:1234/api/v0/models',
+      error: 'http',
+      status: 401,
+      detail: 'fleet returned 401 — LM Studio wants an API token (set LMSTUDIO_API_KEY)',
+    });
+    const rejected = await probeFleetModels(LIVE, fetchReturning(jsonResponse({}, 401)), 3000, 'wrong');
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: 'http',
+      status: 401,
+      detail: 'fleet returned 401 — the LMSTUDIO_API_KEY it carried was rejected',
+    });
+    if (!rejected.ok) expect(rejected.detail).not.toContain('wrong');
+  });
+
+  it('lmStudioApiToken reads LMSTUDIO_API_KEY from the environment; blank or absent is null', () => {
+    expect(lmStudioApiToken({ LMSTUDIO_API_KEY: ' lm-token-1 ' })).toBe('lm-token-1');
+    expect(lmStudioApiToken({ LMSTUDIO_API_KEY: '   ' })).toBeNull();
+    expect(lmStudioApiToken({})).toBeNull();
   });
 });
 

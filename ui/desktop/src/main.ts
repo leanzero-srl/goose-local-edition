@@ -68,7 +68,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
-import { postFleetChat, probeFleetModels } from './utils/fleetProbe';
+import { FLEET_PROBE_TIMEOUT_MS, lmStudioApiToken, postFleetChat, probeFleetModels } from './utils/fleetProbe';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
@@ -1969,9 +1969,18 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
 // unreachable from a renderer fetch no matter what the header adds. `net.fetch` in main has no CSP.
 // `endpoint` is the configured host base; utils/fleetProbe.ts derives the routes and names every
 // failure (bad-endpoint / timeout / unreachable / http / bad-json) so the offline state is honest.
+// The probe carries LM Studio's API token when main's environment has LMSTUDIO_API_KEY — the key the
+// engine reads — so a server with "require API token" on answers instead of 401ing a bare probe; a
+// 401 still surfaces as the typed `http` error naming the key, never as unreachable. Env only: main has
+// no reader for goose's secret store, and the value is never logged.
 const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
 ipcMain.handle('fleet-probe', async (_event, endpoint: unknown) =>
-  probeFleetModels(typeof endpoint === 'string' ? endpoint : '', mainFetch)
+  probeFleetModels(
+    typeof endpoint === 'string' ? endpoint : '',
+    mainFetch,
+    FLEET_PROBE_TIMEOUT_MS,
+    lmStudioApiToken()
+  )
 );
 ipcMain.handle('fleet-chat', async (_event, endpoint: unknown, body: unknown) =>
   postFleetChat(typeof endpoint === 'string' ? endpoint : '', body, mainFetch)

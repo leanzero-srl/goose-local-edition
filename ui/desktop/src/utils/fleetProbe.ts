@@ -56,6 +56,19 @@ export type FleetChatResult =
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/** The key LM Studio's API token lives under — the SAME one the engine's probes and its chat path read
+ *  (swarm_engine.rs `LM_API_TOKEN_KEY`: the environment first, then goose's secret store through
+ *  `Config::get_secret`). Main has NO accessor for goose's secret store (no secrets.yaml / keyring reader
+ *  exists in main.ts), so here the token comes from the environment only; a token that lives only in
+ *  the store leaves the probe bare, and the server's 401 is NAMED below rather than read as offline. */
+export const LM_API_TOKEN_KEY = 'LMSTUDIO_API_KEY';
+
+/** The token as main can see it, or null when none is set (blank counts as none). Never logged. */
+export function lmStudioApiToken(env: Record<string, string | undefined> = process.env): string | null {
+  const t = env[LM_API_TOKEN_KEY]?.trim();
+  return t ? t : null;
+}
+
 /** The discovery probe's window — what the renderer used before the probe moved to main. */
 export const FLEET_PROBE_TIMEOUT_MS = 3000;
 /** The wizard's chat window — a weak local model drafting a recipe; what the renderer used before. */
@@ -71,18 +84,32 @@ function classify(err: unknown): { error: FleetProbeError; detail: string } {
   return { error: 'unreachable', detail };
 }
 
+/** A refusal names its cause the way the engine does (swarm_engine.rs `note_unauthorized`): the server
+ *  wants a token the probe did not carry, or rejected the one it did. Every other status is just itself. */
+function httpDetail(status: number, token: string | null): string {
+  if (status !== 401 && status !== 403) return `fleet returned ${status}`;
+  return token
+    ? `fleet returned ${status} — the ${LM_API_TOKEN_KEY} it carried was rejected`
+    : `fleet returned ${status} — LM Studio wants an API token (set ${LM_API_TOKEN_KEY})`;
+}
+
 async function fetchJson(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  token: string | null
 ): Promise<{ ok: true; body: unknown } | { ok: false; error: FleetProbeError; detail: string; status?: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers: Record<string, string> = {
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
   try {
-    const res = await fetchImpl(url, { ...init, signal: controller.signal });
+    const res = await fetchImpl(url, { ...init, headers, signal: controller.signal });
     if (!res.ok) {
-      return { ok: false, error: 'http', status: res.status, detail: `fleet returned ${res.status}` };
+      return { ok: false, error: 'http', status: res.status, detail: httpDetail(res.status, token) };
     }
     try {
       return { ok: true, body: await res.json() };
@@ -96,11 +123,14 @@ async function fetchJson(
   }
 }
 
-/** GET `<endpoint>/api/v0/models`; the `data` array as LM Studio sent it, or a named error. */
+/** GET `<endpoint>/api/v0/models`; the `data` array as LM Studio sent it, or a named error. `token`
+ *  rides as `Authorization: Bearer` when present — a server with "require API token" on answers 401 to
+ *  a bare probe, exactly as it did to the engine's until its probes carried the key. */
 export async function probeFleetModels(
   endpoint: string,
   fetchImpl: FetchLike,
-  timeoutMs = FLEET_PROBE_TIMEOUT_MS
+  timeoutMs = FLEET_PROBE_TIMEOUT_MS,
+  token: string | null = null
 ): Promise<FleetProbeResult> {
   let url: string;
   try {
@@ -113,7 +143,7 @@ export async function probeFleetModels(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
-  const r = await fetchJson(url, { method: 'GET' }, timeoutMs, fetchImpl);
+  const r = await fetchJson(url, { method: 'GET' }, timeoutMs, fetchImpl, token);
   if (!r.ok) return { url, ...r };
   const data = (r.body as { data?: unknown } | null)?.data;
   return { ok: true, url, data: Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [] };
@@ -124,7 +154,8 @@ export async function postFleetChat(
   endpoint: string,
   body: unknown,
   fetchImpl: FetchLike,
-  timeoutMs = FLEET_CHAT_TIMEOUT_MS
+  timeoutMs = FLEET_CHAT_TIMEOUT_MS,
+  token: string | null = null
 ): Promise<FleetChatResult> {
   let url: string;
   try {
@@ -141,7 +172,8 @@ export async function postFleetChat(
     url,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     timeoutMs,
-    fetchImpl
+    fetchImpl,
+    token
   );
   if (!r.ok) return { url, ...r };
   return { ok: true, url, body: r.body };
