@@ -12,7 +12,7 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineStatus: (...a: unknown[]) => mockMlxStatus(...a),
 }));
 
-import { useFleetCorroboration } from './useFleetCorroboration';
+import { localSidecarNames, useFleetCorroboration } from './useFleetCorroboration';
 
 const electron = () => (window as unknown as { electron: Record<string, unknown> }).electron;
 
@@ -31,6 +31,16 @@ const SIDECAR_CFG = {
   ],
 };
 const RUNNING = { state: 'running', servedModelId: 'workhorse-qwen3.5-9b-4bit-mlx', restartRequired: false };
+/** The run's pool map (`poolNodeMap`) for the mixed pool measured 2026-09-02 — engine 748084b97 names the
+ *  sidecar on the LM Studio host `workhorse-mlx`, a SECOND node beside `workhorse`. */
+const MIXED_NODES: Record<string, string> = {
+  'gabee-27b': 'gabee',
+  'gabee-qwen3.6-27b': 'gabee',
+  'workhorse-27b': 'workhorse',
+  'workhorse-qwen3.8-27b': 'workhorse',
+  'workhorse-mlx': 'workhorse-mlx',
+  'workhorse-qwen3.5-9b-4bit-mlx': 'workhorse-mlx',
+};
 
 /**
  * U-H2: the dead-lane corroboration must not depend on the showLmStudioFleet DISPLAY toggle, and a
@@ -122,6 +132,70 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
     const { result } = renderHook(() => useFleetCorroboration(10_000_000));
     await waitFor(() => expect(result.current.reportedNodes).toEqual(['gabee', 'mihai']));
     expect(mockMlxStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The mixed pool: the feeds key their rows by the run's canonical node names, so the sidecar and the LM
+ * Studio model on ONE host are two nodes with their own reported/busy facts — not one `workhorse` whose
+ * busy came from whichever feed answered last.
+ */
+describe('useFleetCorroboration × the run\'s pool map — the sidecar is `workhorse-mlx`', () => {
+  beforeEach(() => {
+    electron().fleetStatus = vi.fn(async () => ({
+      'gabee-qwen3.6-27b': 'idle',
+      'workhorse-qwen3.8-27b': 'generating',
+    }));
+    mockReadConfig.mockReset();
+    mockMlxStatus.mockReset();
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+  });
+  afterEach(() => {
+    delete electron().fleetStatus;
+  });
+
+  it('localSidecarNames: the map names the sidecar device; without it the prefix collides with LM Studio', () => {
+    const rows = [SIDECAR_CFG.devices[1]];
+    expect(localSidecarNames(rows, MIXED_NODES)).toEqual(['workhorse-mlx']);
+    expect(localSidecarNames(rows)).toEqual(['workhorse']);
+  });
+
+  it('LM Studio busy on `workhorse`, the sidecar idle: two rows, two answers', async () => {
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000, MIXED_NODES));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse-mlx']));
+    expect(result.current.reportedNodes).toEqual(['gabee', 'workhorse', 'workhorse-mlx']);
+    expect(result.current.busyNodes).toEqual(['workhorse']);
+    expect(result.current.nodeStatus).toEqual({ gabee: 'idle', workhorse: 'generating' });
+  });
+
+  it('the sidecar busy is filed under `workhorse-mlx`, never under LM Studio\'s `workhorse`', async () => {
+    electron().fleetStatus = vi.fn(async () => ({
+      'gabee-qwen3.6-27b': 'idle',
+      'workhorse-qwen3.8-27b': 'idle',
+    }));
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 2 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000, MIXED_NODES));
+    await waitFor(() => expect(result.current.busyNodes).toEqual(['workhorse-mlx']));
+    expect(result.current.reportedNodes).toEqual(['gabee', 'workhorse', 'workhorse-mlx']);
+  });
+
+  it('the map arriving after the config read (the first fold lands later) re-keys the sidecar', async () => {
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+    const { result, rerender } = renderHook(
+      ({ nodes }: { nodes?: Record<string, string> }) => useFleetCorroboration(10_000_000, nodes),
+      { initialProps: { nodes: undefined as Record<string, string> | undefined } }
+    );
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    rerender({ nodes: MIXED_NODES });
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse-mlx']));
+  });
+
+  it('without a map (no run open) the old collision is what it was: one `workhorse`', async () => {
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    expect(result.current.reportedNodes).toEqual(['gabee', 'workhorse']);
   });
 });
 

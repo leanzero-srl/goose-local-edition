@@ -28,7 +28,11 @@ import { deviceFromModelId, useFleetStatus } from './useFleet';
  *     alone (15 min for an open call) — rather than failing closed. A remote sidecar (`host` set) is not
  *     corroborated by the local engine and stays out — treated as cloud, never demoted.
  *
- * Names are the short node names deriveFleet's `lmsName` compares against (`deviceFromModelId`).
+ * Names are the engine's CANONICAL node names (`deviceFromModelId` joined on the run's `poolNodes`,
+ * the `{id | model_id → node}` map from run_started/pool_resolved since 748084b97) — what deriveFleet's
+ * `lmsName` compares against and what the FLEET rows are keyed by. Without a map (no run open yet, a
+ * log that predates `node`) the prefix before the first dash, which reads the sidecar on the LM Studio
+ * host and the LM Studio node as ONE name.
  */
 export interface FleetCorroboration {
   /** lms ps state by short node name — for surfaces that DISPLAY the LM Studio dot (gate those on the
@@ -45,34 +49,51 @@ export interface FleetCorroboration {
 
 const BUSY_STATES: ReadonlySet<string> = new Set(['generating', 'processingPrompt']);
 
-function localSidecarNames(cfg: SwarmConfig | null): string[] {
+function localSidecarRows(cfg: SwarmConfig | null): SwarmDeviceRow[] {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
-  const names = rows
-    .filter((d) => d.engine === 'mlx-sidecar' && d.enabled !== false && !d.host)
-    .map((d) => deviceFromModelId(d.model_id || d.id))
-    .filter(Boolean);
+  return rows.filter((d) => d.engine === 'mlx-sidecar' && d.enabled !== false && !d.host);
+}
+
+/** The configured local sidecar devices under the run's canonical node names — `workhorse-mlx` when
+ *  the pool map names the device, the model-id prefix (`workhorse`, colliding with LM Studio) without. */
+export function localSidecarNames(
+  rows: SwarmDeviceRow[],
+  poolNodes?: Record<string, string>
+): string[] {
+  const names = rows.map((d) => deviceFromModelId(d.model_id || d.id, poolNodes)).filter(Boolean);
   return Array.from(new Set(names)).sort();
 }
 
-export function useFleetCorroboration(pollMs = 1500): FleetCorroboration {
-  const nodeStatus = useFleetStatus(pollMs, true);
+export function useFleetCorroboration(
+  pollMs = 1500,
+  poolNodes?: Record<string, string>
+): FleetCorroboration {
+  const nodeStatus = useFleetStatus(pollMs, true, poolNodes);
 
   // The configured local sidecar devices, read once per mount: adding a device mid-run is a config
   // edit, and the next mount sees it. Unreadable config means no sidecar feed — no fabricated device.
-  const [sidecarNames, setSidecarNames] = useState<string[]>([]);
+  const [sidecarRows, setSidecarRows] = useState<SwarmDeviceRow[]>([]);
   useEffect(() => {
     let alive = true;
     void acpReadConfig('swarm', false)
       .then((raw) => {
-        if (alive) setSidecarNames(localSidecarNames((raw as SwarmConfig | null) ?? null));
+        if (alive) setSidecarRows(localSidecarRows((raw as SwarmConfig | null) ?? null));
       })
       .catch(() => {
-        if (alive) setSidecarNames([]);
+        if (alive) setSidecarRows([]);
       });
     return () => {
       alive = false;
     };
   }, []);
+  // The names are re-joined whenever the pool map arrives or changes (the first fold lands after the
+  // config read), but the fold hands a fresh map object every tick, so the ARRAY identity is pinned to
+  // its content: the memo below and the poll's `enabled` flag only move when a name actually does.
+  const sidecarNamesKey = localSidecarNames(sidecarRows, poolNodes).join('\n');
+  const sidecarNames = useMemo(
+    () => (sidecarNamesKey ? sidecarNamesKey.split('\n') : []),
+    [sidecarNamesKey]
+  );
 
   const { status: mlx } = useMlxEngineStatusPoll(sidecarNames.length > 0);
   const mlxReplied = mlx?.state === 'running' && !mlx.probeError;

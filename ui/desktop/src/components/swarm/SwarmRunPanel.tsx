@@ -5153,7 +5153,9 @@ export const SwarmRunPanel: React.FC<{
   // only the LM Studio DOT the fleet rows display; off, `nodeStatus` is `{}` and the rows read exactly
   // as when lms is unavailable.
   const lmStudioVisible = useLmStudioFleetVisible();
-  const corroboration = useFleetCorroboration(1500);
+  // The run's `{id | model_id → node}` map keys both feeds by the engine's canonical node names, so the
+  // sidecar beside LM Studio on one host (`workhorse-mlx`) is corroborated as ITS row, not as `workhorse`.
+  const corroboration = useFleetCorroboration(1500, run.poolNodes);
   const nodeStatus: Record<string, string> = lmStudioVisible ? corroboration.nodeStatus : {};
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';

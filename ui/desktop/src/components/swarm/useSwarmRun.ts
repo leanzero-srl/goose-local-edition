@@ -1334,8 +1334,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       case 'run_started': {
         const pool = arr(e['pool']).map((d) => {
           const rec = d as Record<string, unknown>;
-          // model_id's prefix is the node's real name; the raw id may be truncated ('…-fable-' -> 'fable').
-          return shortNode(str(rec['model_id'])) || nodeOf(str(rec['id']));
+          // The engine's own `node` per device first (748084b97: `workhorse-mlx` for the sidecar beside
+          // LM Studio's `workhorse`) — the same precedence resolvePool and absorbNodeCanon read, so the
+          // header's node list and the FLEET rows agree letter for letter. Without it, model_id's prefix
+          // is the node's real name; the raw id may be truncated ('…-fable-' -> 'fable').
+          return str(rec['node']) || shortNode(str(rec['model_id'])) || nodeOf(str(rec['id']));
         });
         // `gates` is now an OBJECT of per-gate booleans, so `!!e['gates']` was always true. Treat gates as on
         // when the assured bundle is on or ANY individual gate is enabled.
@@ -3692,10 +3695,17 @@ export function deriveFleet(args: {
   // refused /v1/status probe named in `activeRequestsError`) is reported-but-never-busy: for those
   // lanes the busy check above always passes and the demotion rests on the digest window alone — the
   // same exposure an LM Studio lane has mid-tool-call, when lms reports idle too.
-  // Membership uses the same shortName normalization the fleet cells apply to nodeStatus keys —
-  // deriveFleet's devices are canonical node names, nodeStatus keys are deviceFromModelId short
-  // names, and a raw compare misclassifies exactly where they differ.
-  const lmsName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
+  // Membership joins on the engine's CANONICAL node names. `args.pool` is the resolved pool as the
+  // engine names it (748084b97: `node` per device — `workhorse` for LM Studio, `workhorse-mlx` for
+  // the sidecar on the same host), and the corroboration feeds key their rows through the same map
+  // (`poolNodes` → deviceFromModelId), so a name the pool KNOWS is compared verbatim. Only a name the
+  // pool does not carry — a lane device or a feed key from a log that predates `node`, or a
+  // model-id-suffixed device — falls back to the prefix before the first dash. The old unconditional
+  // prefix rule re-collapsed `workhorse-mlx` to `workhorse` here, so the sidecar's busy corroborated
+  // the LM Studio lane and a dead sidecar lane was shielded by any LM Studio request.
+  const known = new Set(args.pool);
+  const lmsName = (device: string): string =>
+    known.has(device) ? device : (device.match(/^([^-]+)/)?.[1] ?? device);
   const reported = args.reportedNodes != null ? new Set(args.reportedNodes.map(lmsName)) : null;
   const busy = new Set((args.busyNodes ?? []).map(lmsName));
   const fleetReporting = reported != null ? reported.size > 0 : busy.size > 0;
