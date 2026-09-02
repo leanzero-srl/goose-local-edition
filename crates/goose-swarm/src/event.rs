@@ -5,6 +5,14 @@
 use crate::dispatch::ToolCallRecord;
 use serde::Serialize;
 
+/// One ready task as `DispatchOrder` ranked it.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct ReadyWeight {
+    pub task: String,
+    pub weight: u32,
+    pub chain_weight: u64,
+}
+
 #[derive(Serialize, Debug)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum SwarmEvent {
@@ -22,6 +30,24 @@ pub enum SwarmEvent {
         /// The task's planned difficulty ("easy"/"hard"). A2's registered check — no hard task on
         /// a busy device while another idles — was unanswerable from the log without it.
         difficulty: String,
+    },
+    /// WHY this task was the one claimed now (VA-113): the ready set it was chosen from, each
+    /// entry's plan weight and REMAINING CHAIN WEIGHT (own weight + the heaviest dependent chain
+    /// down to the join), and the device's speed facts. r6h's BUILD tail — `webhooks-workflow`
+    /// alone for 132 minutes beside two idle nodes — was a dispatch-ORDER defect (plan-alphabet
+    /// order put `console-page` ahead of the 10-section chain head at 03:58Z), and no event said
+    /// which ready tasks had been passed over or why. One per dispatch, emitted before its
+    /// `task_dispatched`.
+    DispatchOrder {
+        task_id: String,
+        weight: u32,
+        chain_weight: u64,
+        /// Every task still Ready at this choice (the chosen one included), heaviest chain first.
+        ready_set: Vec<ReadyWeight>,
+        device: String,
+        device_speed_weight: u32,
+        /// Observed mean ms per completed task on this device, once one has completed there.
+        device_avg_ms: Option<u64>,
     },
     TaskCompleted {
         task_id: String,
