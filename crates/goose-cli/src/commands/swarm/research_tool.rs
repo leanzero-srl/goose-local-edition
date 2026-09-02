@@ -16,8 +16,16 @@
 //! its RESULT carries the next section's full text (`research_section_handed`), so a stateless
 //! model never holds nine sections and re-sorts them across turns (r6j's api lane: 182k
 //! reasoning chars, 79 minutes, nothing landed). The final reply folds only the remainder.
+//!
+//! VA-132 (r6j tick 10): every call is also an ACTION in the lane's own record. The worker loop
+//! appends shell/tool calls to `<key>.calls.jsonl` from `call_records`, but a frontend tool is
+//! answered by the engine right here and never reaches that list — so r6j's core lane landed
+//! twelve answers (17:25:49Z–17:36:35Z) its calls record never showed: the desk read the
+//! reasoning between landings as `growth_without_acting`, and a reader of the lane's record
+//! could not see WHEN it landed. `ResearchCallRecord` appends one row per call through the
+//! shell rows' writer, in their shape, so the desk counts it and the reader sees the landing.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use goose::agents::ExtensionConfig;
 use goose::conversation::message::FrontendToolRequest;
@@ -28,7 +36,8 @@ use super::research::{
     research_answer_tool_schema, research_mini_name, section_in_hand_block, HandedSection,
     RelayTarget, ResearchLane, ResearchRow, ResearchToolCall, StrayAnswer, RESEARCH_ANSWER_TOOL,
 };
-use super::{EventSink, GooseAgentDispatcher};
+use super::transcripts::{append_calls_row, AppendErrs};
+use super::{activity_digest_key, tail_chars, EventSink, GooseAgentDispatcher};
 
 /// One research lane's landing state for the life of its call, keyed by the lane's activity key
 /// in `GooseAgentDispatcher::research_landing`: the slice the rows belong to, the model that
@@ -292,7 +301,176 @@ pub(super) fn hand_reply_text(hand: &HandReply) -> String {
     }
 }
 
+/// The tool's reply after a folded call: what landed (the mini's name, status, kind and the next
+/// index — or that the call carried no entry), then the hand's part (`hand_reply_text`). One
+/// function because the same text is the lane's next turn AND the `result_tail` of its calls row.
+pub(super) fn landed_reply_text(landed: &Landed) -> String {
+    let mut reply = match &landed.row {
+        Some(row) if row.question.is_empty() => format!(
+            "landed {}: {} builder_decides on an outcome row; q{} is the next index",
+            research_mini_name(&row.slice, row.q_index),
+            row.raised.len(),
+            row.q_index + 1,
+        ),
+        Some(row) => format!(
+            "landed {} ({}, kind {}); q{} is the next question you settle",
+            research_mini_name(&row.slice, row.q_index),
+            row.status,
+            row.kind,
+            row.q_index + 1,
+        ),
+        None => "nothing landed (no entry on this call)".to_string(),
+    };
+    reply.push_str(&hand_reply_text(&landed.hand));
+    reply
+}
+
+/// The tool's error reply for a stray: what the call must carry, and what this one carried.
+pub(super) fn stray_reply_text(stray: &StrayAnswer) -> String {
+    format!(
+        "nothing landed: {RESEARCH_ANSWER_TOOL} takes ONE JSON object with `question` (the \
+         question text), `kind` (design | external) and `answer` — or {{\"section_done\": \
+         true}} to close the section in hand; this call carried: {}",
+        stray.answer_head
+    )
+}
+
+/// The `outcome` a calls row names (VA-132): what ONE `research_answer` call did to the ledger
+/// and the hand. `landed` is the only outcome with a `q_index`.
+pub(super) const CALL_LANDED: &str = "landed";
+/// A bare `section_done` that dealt the next section or closed the last.
+pub(super) const CALL_SECTION_CLOSED: &str = "section_closed";
+/// `section_done` with nothing in hand (`research_section_done_past_end`).
+pub(super) const CALL_PAST_END: &str = "past_end";
+/// A call that carried neither an entry nor the section signal.
+pub(super) const CALL_EMPTY: &str = "empty";
+/// An answer with no question, or nothing parseable (`research_batch_stray_answer{via: tool}`).
+pub(super) const CALL_STRAY: &str = "stray";
+/// No landing open for the key (`research_answer_unopened`).
+pub(super) const CALL_UNOPENED: &str = "unopened";
+
+/// One `research_answer` call as the lane's own `<key>.calls.jsonl` records it (VA-132). The
+/// row rides the shell rows' shape (`append_calls_jsonl`: `ts`, `attempt`, `name`, `summary`,
+/// `ok`, `result_tail` — the desk's `ingest_calls_bytes` reads `name`/`summary`/`result_tail`
+/// as the repeat signature and counts every parseable row as the action that resets its
+/// growth-without-acting meter) plus the call's own facts, so a reader of the record sees what
+/// landed and when. `summary` names the q_index, so a run of landings is never a `repeat_run`.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ResearchCallRecord {
+    pub(super) outcome: &'static str,
+    /// Whether the tool replied success (the call was folded) or error (stray, unopened).
+    pub(super) ok: bool,
+    pub(super) q_index: Option<usize>,
+    pub(super) kind: Option<String>,
+    pub(super) chars: Option<usize>,
+    /// The call's own flag; None when the call could not be parsed (unknown, never defaulted).
+    pub(super) section_done: Option<bool>,
+    /// The reply the lane reads next — the row's `result_tail`.
+    pub(super) reply: String,
+}
+
+impl ResearchCallRecord {
+    /// The record of a call the landing folded (`ResearchLanding::land`'s Ok): a row landed at
+    /// its q_index; else what `section_done` did to the hand; else an empty call.
+    pub(super) fn folded(landed: &Landed, section_done: bool, reply: &str) -> Self {
+        let outcome = match (&landed.row, section_done, &landed.hand) {
+            (Some(_), _, _) => CALL_LANDED,
+            (None, false, _) => CALL_EMPTY,
+            (None, true, HandReply::Handed { .. } | HandReply::LastClosed { .. }) => {
+                CALL_SECTION_CLOSED
+            }
+            (None, true, HandReply::Exhausted { .. }) => CALL_PAST_END,
+            // `land` never leaves the section in hand on a section_done call.
+            (None, true, HandReply::InHand { .. }) => CALL_EMPTY,
+        };
+        Self {
+            outcome,
+            ok: true,
+            q_index: landed.row.as_ref().map(|r| r.q_index),
+            kind: landed.row.as_ref().map(|r| r.kind.clone()),
+            chars: landed.row.as_ref().map(|r| r.answer.chars().count()),
+            section_done: Some(section_done),
+            reply: reply.to_string(),
+        }
+    }
+
+    /// The record of a call that landed nothing and got an error reply: a stray or an unopened
+    /// lane.
+    pub(super) fn refused(outcome: &'static str, section_done: Option<bool>, reply: &str) -> Self {
+        Self {
+            outcome,
+            ok: false,
+            q_index: None,
+            kind: None,
+            chars: None,
+            section_done,
+            reply: reply.to_string(),
+        }
+    }
+
+    fn summary(&self) -> String {
+        let mut s = match (self.q_index, &self.kind, self.chars) {
+            (Some(q), Some(kind), Some(chars)) => {
+                format!("{} q{q} [{kind}] {chars} chars", self.outcome)
+            }
+            _ => self.outcome.to_string(),
+        };
+        if self.section_done == Some(true) {
+            s.push_str(", section_done");
+        }
+        s
+    }
+
+    pub(super) fn row(&self, attempt: u32) -> serde_json::Value {
+        serde_json::json!({
+            "ts": chrono::Utc::now().to_rfc3339(),
+            "attempt": attempt,
+            "name": RESEARCH_ANSWER_TOOL,
+            "tool": RESEARCH_ANSWER_TOOL,
+            "summary": self.summary(),
+            "ok": self.ok,
+            "result_tail": tail_chars(&self.reply, 2000),
+            "outcome": self.outcome,
+            "q_index": self.q_index,
+            "kind": self.kind,
+            "chars": self.chars,
+            "section_done": self.section_done,
+        })
+    }
+}
+
+/// The lane's activity path exactly as `run_agent_in` derives it for a normal call
+/// (`work_dir == self.working_dir`): `.swarm/activity/<activity_digest_key(key)>.json`; the
+/// calls sibling is the writer's `with_extension("calls.jsonl")`.
+pub(super) fn research_activity_path(root: &Path, key: &str) -> PathBuf {
+    root.join(".swarm")
+        .join("activity")
+        .join(format!("{}.json", activity_digest_key(key)))
+}
+
+/// One calls row through the shell rows' writer (`append_calls_row`), primary only: a research
+/// lane runs in the real tree, so `fix_shard_mirror_dir` is None for its key and there is no
+/// mirror to feed. The activity dir exists — the worker loop created it at the lane's dispatch,
+/// before any call could reach the tool. Errors are the caller's to name.
+pub(super) fn append_research_call_row(activity: &Path, row: &serde_json::Value) -> AppendErrs {
+    append_calls_row(activity, None, &row.to_string())
+}
+
 impl GooseAgentDispatcher {
+    /// VA-132: the call's row into the lane's own record; a failed write is the existing
+    /// `transcript_write_failed` event (`note_transcript_write_failure`, once per key and
+    /// kind), never silent — and never a stop, the reply still reaches the lane.
+    fn record_research_call(&self, key: &str, record: &ResearchCallRecord) {
+        let activity = research_activity_path(&self.working_dir, key);
+        // Every planner-side lane reaches `run_agent_in` through `run_agent_timed_at`, which
+        // passes attempt 0 ("planner-side calls never retry through the scheduler"), so the
+        // shell rows beside this one carry 0 too.
+        let row = record.row(0);
+        for (kind, e) in append_research_call_row(&activity, &row) {
+            self.note_transcript_write_failure(&activity, kind, &e);
+        }
+    }
+
     /// The tool's extension for THIS call: Some only for a lane whose landing the fan opened
     /// before dispatch (`research_fan`), so no other call ever holds a tool nothing answers.
     pub(super) fn research_answer_extension_for(&self, key: &str) -> Option<ExtensionConfig> {
@@ -337,7 +515,9 @@ impl GooseAgentDispatcher {
     /// never registered — `research_answer_unopened`) or an entry with no question text lands
     /// NO row: `research_batch_stray_answer{via: tool}` names it and the tool's error reply
     /// tells the lane what was missing, so its next call can carry it. MILD: an error reply is
-    /// information for the lane, never a stop.
+    /// information for the lane, never a stop. Every arm that has a lane also leaves the call's
+    /// row in the lane's `.calls.jsonl` (VA-132, `record_research_call`) — the reply text IS the
+    /// row's `result_tail`, so the record shows what the lane was told.
     pub(super) fn land_research_answer(
         &self,
         key: Option<&str>,
@@ -349,6 +529,10 @@ impl GooseAgentDispatcher {
             ))]);
         };
         let text = arguments.to_string();
+        // Parsed outside the landing lock (pure); None is the stray it always was. The flag is
+        // read here because a stray's row carries it too — unknown (None) when nothing parsed.
+        let parsed = ResearchToolCall::parse(&text);
+        let section_done = parsed.as_ref().map(ResearchToolCall::section_done);
         let landed = {
             let mut landing = self.research_landing.lock().unwrap();
             let Some(open) = landing.get_mut(key) else {
@@ -357,13 +541,18 @@ impl GooseAgentDispatcher {
                     "task": key,
                     "answer_head": text.chars().take(200).collect::<String>(),
                 }));
-                return CallToolResult::error(vec![Content::text(format!(
+                let reply = format!(
                     "{RESEARCH_ANSWER_TOOL} is not open for lane {key}: nothing landed; carry \
                      the entry in final_output"
-                ))]);
+                );
+                self.record_research_call(
+                    key,
+                    &ResearchCallRecord::refused(CALL_UNOPENED, section_done, &reply),
+                );
+                return CallToolResult::error(vec![Content::text(reply)]);
             };
             let slice = open.slice.clone();
-            match ResearchToolCall::parse(&text) {
+            match parsed {
                 Some(call) => open
                     .land(&self.working_dir, self.events.as_ref(), key, call)
                     .map_err(|stray| (slice, stray)),
@@ -377,29 +566,15 @@ impl GooseAgentDispatcher {
                 )),
             }
         };
-        match landed {
-            Ok(Landed { row, hand }) => {
-                let mut reply = match &row {
-                    Some(row) if row.question.is_empty() => format!(
-                        "landed {}: {} builder_decides on an outcome row; q{} is the next index",
-                        research_mini_name(&row.slice, row.q_index),
-                        row.raised.len(),
-                        row.q_index + 1,
-                    ),
-                    Some(row) => format!(
-                        "landed {} ({}, kind {}); q{} is the next question you settle",
-                        research_mini_name(&row.slice, row.q_index),
-                        row.status,
-                        row.kind,
-                        row.q_index + 1,
-                    ),
-                    None => "nothing landed (no entry on this call)".to_string(),
-                };
-                if let Some(row) = &row {
+        let (result, record) = match landed {
+            Ok(landed) => {
+                if let Some(row) = &landed.row {
                     self.queue_research_relay(row);
                 }
-                reply.push_str(&hand_reply_text(&hand));
-                CallToolResult::success(vec![Content::text(reply)])
+                let reply = landed_reply_text(&landed);
+                let record =
+                    ResearchCallRecord::folded(&landed, section_done == Some(true), &reply);
+                (CallToolResult::success(vec![Content::text(reply)]), record)
             }
             Err((slice, stray)) => {
                 self.events.write_value(serde_json::json!({
@@ -410,15 +585,13 @@ impl GooseAgentDispatcher {
                     "answer_head": stray.answer_head,
                     "via": "tool",
                 }));
-                CallToolResult::error(vec![Content::text(format!(
-                    "nothing landed: {RESEARCH_ANSWER_TOOL} takes ONE JSON object with \
-                     `question` (the question text), `kind` (design | external) and `answer` — \
-                     or {{\"section_done\": true}} to close the section in hand; this call \
-                     carried: {}",
-                    stray.answer_head
-                ))])
+                let reply = stray_reply_text(&stray);
+                let record = ResearchCallRecord::refused(CALL_STRAY, section_done, &reply);
+                (CallToolResult::error(vec![Content::text(reply)]), record)
             }
-        }
+        };
+        self.record_research_call(key, &record);
+        result
     }
 
     /// r6e E7: hand a just-landed mini to every still-running lane of its slice
@@ -819,5 +992,180 @@ mod tests {
         assert_eq!(ev[1]["text"], "debounce interval");
         assert_eq!(ev[3]["landed"], 0, "a choice is not a question row");
         assert_eq!(ev[4]["index"], 2);
+    }
+
+    /// VA-132: a `research_answer` call is an ACTION in the lane's own record. r6j's core lane
+    /// landed twelve answers whose only trace was run.jsonl — its `.calls.jsonl` held shell rows
+    /// alone, so the desk read the reasoning between landings as growth without acting. Two
+    /// landings and a stray each append one row at the lane's activity path through the shell
+    /// rows' writer, in the shell rows' shape (the desk's `name`/`summary`/`result_tail`
+    /// signature — distinct per landing, so a run of landings is never a `repeat_run`) plus the
+    /// call's own facts; the `result_tail` is the reply the lane read. This is the seam
+    /// `land_research_answer` walks minus the dispatcher's failure latch.
+    #[test]
+    fn a_landed_call_and_a_stray_each_leave_a_row_in_the_lanes_calls_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let key = "research-api";
+        let activity = research_activity_path(root, key);
+        assert_eq!(
+            activity,
+            root.join(".swarm")
+                .join("activity")
+                .join("research-api.json")
+        );
+        assert_eq!(
+            research_activity_path(root, "research-app/x")
+                .file_name()
+                .unwrap(),
+            "research-app~sx.json",
+            "the key flattens exactly as run_agent_in's activity_file does"
+        );
+        std::fs::create_dir_all(activity.parent().unwrap()).unwrap();
+        let sink = ValueSink::default();
+        let mut landing =
+            ResearchLanding::open(&lane_with_hand("api", &["Boot", "Endpoints"]), "m");
+        let entry = |q: &str| {
+            serde_json::json!({
+                "question": q,
+                "kind": "design",
+                "cite": "request.md:2",
+                "alternatives": ["8850", "8000"],
+                "open_because": "L2 names the vendor's port, not the app's",
+                "answer": "8850, from the boot table"
+            })
+        };
+        for q in ["which port", "which storage"] {
+            let landed = landing.land(root, &sink, key, call(entry(q))).unwrap();
+            let reply = landed_reply_text(&landed);
+            let record = ResearchCallRecord::folded(&landed, false, &reply);
+            assert!(append_research_call_row(&activity, &record.row(0)).is_empty());
+        }
+        let stray = landing
+            .land(
+                root,
+                &sink,
+                key,
+                call(serde_json::json!({"answer": "an answer with no question"})),
+            )
+            .unwrap_err();
+        let reply = stray_reply_text(&stray);
+        let record = ResearchCallRecord::refused(CALL_STRAY, Some(false), &reply);
+        assert!(append_research_call_row(&activity, &record.row(0)).is_empty());
+
+        let text = std::fs::read_to_string(activity.with_extension("calls.jsonl")).unwrap();
+        let rows: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("every row parses — the desk's contract"))
+            .collect();
+        assert_eq!(rows.len(), 3);
+        let r0 = &rows[0];
+        assert_eq!(
+            r0["name"], RESEARCH_ANSWER_TOOL,
+            "the desk's signature field"
+        );
+        assert_eq!(r0["tool"], RESEARCH_ANSWER_TOOL);
+        assert_eq!(r0["outcome"], CALL_LANDED);
+        assert_eq!(r0["q_index"], 0);
+        assert_eq!(r0["kind"], "design");
+        assert_eq!(r0["chars"], "8850, from the boot table".chars().count());
+        assert_eq!(r0["section_done"], false);
+        assert_eq!(r0["ok"], true);
+        assert_eq!(r0["attempt"], 0);
+        assert_eq!(r0["summary"], "landed q0 [design] 25 chars");
+        assert!(r0["ts"].as_str().is_some_and(|t| t.contains('T')));
+        let tail = r0["result_tail"].as_str().unwrap();
+        assert!(
+            tail.contains("landed research-api-q0.json (answered, kind design)")
+                && tail.contains("§1 of 2 `Boot` stays in hand"),
+            "the row carries the reply the lane read:\n{tail}"
+        );
+        assert_eq!(rows[1]["q_index"], 1);
+        let sig = |r: &serde_json::Value| {
+            (
+                r["name"].clone(),
+                r["summary"].clone(),
+                r["result_tail"].clone(),
+            )
+        };
+        assert_ne!(
+            sig(&rows[0]),
+            sig(&rows[1]),
+            "two landings never share the desk's repeat signature"
+        );
+        let r2 = &rows[2];
+        assert_eq!(r2["name"], RESEARCH_ANSWER_TOOL);
+        assert_eq!(r2["outcome"], CALL_STRAY);
+        assert_eq!(r2["ok"], false);
+        assert_eq!(r2["summary"], CALL_STRAY);
+        assert!(
+            r2["q_index"].is_null() && r2["kind"].is_null() && r2["chars"].is_null(),
+            "a stray burns no index and lands no facts"
+        );
+        assert_eq!(r2["section_done"], false);
+        assert!(r2["result_tail"]
+            .as_str()
+            .unwrap()
+            .starts_with("nothing landed:"));
+    }
+
+    /// VA-132: the outcomes with no row — a bare section_done that closes a section, one past
+    /// the end, a call carrying nothing, an unopened lane — each name themselves; an
+    /// unparseable call's `section_done` stays unknown (null), never a default.
+    #[test]
+    fn a_section_close_a_close_past_the_end_and_an_empty_call_name_their_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let key = "research-api";
+        let mut landing = ResearchLanding::open(&lane_with_hand("api", &["Boot"]), "m");
+        let closed = landing
+            .land(dir.path(), &sink, key, section_done())
+            .unwrap();
+        let record = ResearchCallRecord::folded(&closed, true, &landed_reply_text(&closed));
+        assert_eq!(
+            (
+                record.outcome,
+                record.ok,
+                record.q_index,
+                record.section_done
+            ),
+            (CALL_SECTION_CLOSED, true, None, Some(true))
+        );
+        assert_eq!(record.row(0)["summary"], "section_closed, section_done");
+        let past = landing
+            .land(dir.path(), &sink, key, section_done())
+            .unwrap();
+        assert_eq!(
+            ResearchCallRecord::folded(&past, true, &landed_reply_text(&past)).outcome,
+            CALL_PAST_END
+        );
+        let empty = landing
+            .land(dir.path(), &sink, key, call(serde_json::json!({})))
+            .unwrap();
+        assert!(empty.row.is_none());
+        assert_eq!(
+            ResearchCallRecord::folded(&empty, false, &landed_reply_text(&empty)).outcome,
+            CALL_EMPTY
+        );
+        let row = ResearchCallRecord::refused(CALL_UNOPENED, None, "not open").row(0);
+        assert_eq!(row["outcome"], CALL_UNOPENED);
+        assert_eq!(row["ok"], false);
+        assert!(
+            row["section_done"].is_null(),
+            "an unparseable call's flag is unknown, never defaulted"
+        );
+    }
+
+    /// VA-132: a failed row write is loud — the writer returns the `calls.jsonl` kind that
+    /// `note_transcript_write_failure` turns into `transcript_write_failed` (the GEN-6a class).
+    #[test]
+    fn a_failed_calls_row_write_reports_the_calls_jsonl_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let activity = research_activity_path(dir.path(), "research-api");
+        std::fs::create_dir_all(activity.with_extension("calls.jsonl")).unwrap();
+        let row = ResearchCallRecord::refused(CALL_STRAY, Some(false), "x").row(0);
+        let errs = append_research_call_row(&activity, &row);
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].0, "calls.jsonl");
     }
 }
