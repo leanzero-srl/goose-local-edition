@@ -3804,6 +3804,7 @@ mod tests {
         forming_preview, forming_tmp, FORMING_PREVIEW_MAX, FORMING_TAIL_KEEP,
     };
     use super::*;
+    use crate::commands::swarm_engine::fleet_slot_models;
     use crate::commands::swarm_engine::parse_lms_ps;
 
     /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
@@ -22555,43 +22556,6 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
     }
 }
 
-/// One entry per SLOT the fleet can actually run, not one per device.
-///
-/// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
-/// device to a single `model_id` silently caps every planning-phase fan at the DEVICE count. On this
-/// fleet that is 3 where EXECUTE runs 6: `pick_device` admits a task while `d.in_flight < d.weight`
-/// (baked default 2), so the plan phase was the only phase forbidden from using half the machine.
-///
-/// MEASURED from `detail_completed` spans in baseline-n3-r0: the detail fan spends its time at
-/// concurrency {1: 34.3s, 2: 95.7s, 3: 112.4s} with a makespan of 244s, and never sustains 4 — the
-/// same ceiling in every 3-node cell. On the 1-node arm it is worse: `swarm-1node-r0` detailed 17
-/// items strictly serially, 1743.1s of a 5842.9s run, on a device whose weight is 2.
-///
-/// This is the same node-vs-slot substitution `00563c6ea` fixed for the planner's width prompt, which
-/// the fan-outs were not fixed with.
-///
-/// ⚠ TAKES `DeviceCfg`, NOT `SwarmDevice`. Both carry a `weight` field and they are DIFFERENT
-/// TYPES: `SwarmDevice` (swarm.rs) is the config-file shape, `DeviceCfg` (scheduler.rs) is what the
-/// resolved runtime pool is built into and what every fan-out site actually holds. Writing this
-/// against the config type compiled fine in isolation and failed at all five call sites.
-///
-/// ⚠ THE SKELETON DRAFT VOTE IS DELIBERATELY NOT AFFECTED, and must stay that way. `draft_models`
-/// (see the dedup at the best-of-N site) folds this list through `HashSet::insert`, so duplicates
-/// collapse back to distinct models and the number of drafts is unchanged. That dedup exists because
-/// duplicate draft slots were MEASURED dying — 6 requested, exactly 3 survived, the duplicates
-/// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
-/// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
-/// concurrency change.
-///
-/// The LIVE-fleet variant every fan actually calls is `swarm_engine::live_fleet_slots` (per-engine
-/// residency, this snapshot as its fallback).
-pub(super) fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
-    devices
-        .iter()
-        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
-        .collect()
-}
-
 /// Run `items` across the fleet with at most ONE call in flight PER LIST ENTRY (work-stealing: each
 /// item grabs the next free entry and returns it on completion). Callers pass `fleet_slot_models`, so
 /// that bound is the per-device capacity the EXECUTE scheduler already honors — a weight-1 node still
@@ -25332,8 +25296,12 @@ async fn run_linear_plan(
     cwd_for_ask: &std::path::Path,
     ask_wait_secs: u64,
 ) -> Result<(String, Dag, PlanConf)> {
-    let worker_models: Vec<String> =
-        live_fleet_slots(devices, &dispatcher.engines, &dispatcher.engine_models);
+    let worker_models: Vec<String> = live_fleet_slots(
+        devices,
+        &dispatcher.engines,
+        &dispatcher.engine_models,
+        sink.as_ref(),
+    );
 
     // ---- OPEN -------------------------------------------------------------------------------
     phase_banner(
@@ -37953,7 +37921,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `fleet_slots` is what the fan-outs get, because their permit count IS the list length.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-    let fleet_slots: Vec<String> = live_fleet_slots(&devices, &engines, &dispatcher.engine_models);
+    let fleet_slots: Vec<String> =
+        live_fleet_slots(&devices, &engines, &dispatcher.engine_models, sink.as_ref());
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();
@@ -40310,6 +40279,7 @@ mod live_fleet_tests {
     /// live builder must agree on that or a refresh silently halves the fleet's concurrency.
     #[test]
     fn live_slots_preserve_weight_as_capacity() {
+        use crate::commands::swarm_engine::fleet_slot_models;
         let devices = vec![dev("a", "m-a", 2, false), dev("b", "m-b", 1, false)];
         assert_eq!(fleet_slot_models(&devices).len(), 3);
         let resident: std::collections::HashSet<String> =

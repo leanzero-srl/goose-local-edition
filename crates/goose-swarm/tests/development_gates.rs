@@ -204,9 +204,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 44,763 (S-H3 pool half): the sidecar-exclusion reporting (stderr line + run.jsonl
 /// event per exclusion) became swarm_engine::sidecar_exclusion_events, paying for the
 /// `sidecar-device-serves-other-alias` proven negative.
+/// Tightened to 44,733 (fleet-probe-failed): `fleet_slot_models` moved beside its live variant
+/// `live_fleet_slots` in swarm_engine.rs, paying for the run-sink threading that names a
+/// residency probe that errs.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_763;
+    const SWARM_RS_LINE_BASELINE: usize = 44_733;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
