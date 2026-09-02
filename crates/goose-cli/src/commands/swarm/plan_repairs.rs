@@ -19,6 +19,11 @@ pub(super) const UNOWNED_FILES_HEADER: &str = "FILES NAMED ABOVE THAT ANOTHER TA
 /// the unowned tail alone handed a repair shard the owner's ENTRY instruction as "decisions"
 /// (2a D11's independent refuter, 2026-09-01).
 pub(super) const ADVERTISED_SURFACE_HEADER: &str = "ADVERTISED SURFACE (engine-required)";
+/// The file the module/package collision repair rewrites a shadowed module INTO
+/// (`app/ledgerd.py` beside `app/ledgerd/` → `app/ledgerd/impl.py`, `repair_module_package_collisions`);
+/// `answer_routing` reads it back to recognise the module form the opener and the research lanes
+/// wrote before the repair ran.
+pub(super) const PACKAGE_IMPL_FILE: &str = "impl.py";
 use super::spec_surface::{path_token_named, spec_surface_rows, SpecSurface};
 use super::string_list;
 
