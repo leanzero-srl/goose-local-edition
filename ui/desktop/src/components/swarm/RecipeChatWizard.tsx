@@ -7,7 +7,20 @@ import { useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import {
+  Button,
+  DISABLED,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  StatusDot,
+  SURFACE,
+  TONE_FILL,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+} from '../lz';
 
 /**
  * Goose Local Edition — build a recipe by TALKING TO THE FLEET. A warm local model (LM Studio, the same
@@ -24,7 +37,12 @@ import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
  * draft is fully editable.
  */
 
-const AZURE = SWARM_STATUS.action;
+/** The Studio field recipe every input and textarea in this wizard shares. */
+const FIELD = cx(
+  'w-full border border-lz-border-strong bg-lz-surface px-2.5 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+  RADIUS.control,
+  FOCUS
+);
 
 // The conversation is an INTERVIEW only — the model asks questions and never writes the recipe or any
 // JSON. The recipe itself is produced by a separate, schema-constrained call (draftRecipe) so a weak local
@@ -253,33 +271,33 @@ export function RecipeChatWizard({
     }
   };
 
-  const inputClass =
-    'w-full bg-background-primary border border-border-primary px-2.5 py-1.5 text-sm text-text-primary focus:border-text-secondary outline-none';
-
   return (
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
       <div
-        className="bg-background-primary border border-border-primary shadow-lg w-[620px] max-h-[88vh] flex flex-col"
-        style={{ borderRadius: CHIP_RADIUS }}
+        className={cx('flex w-[620px] max-h-[88vh] flex-col', SURFACE.overlay)}
         data-testid="recipe-chat-wizard"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
+        <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="flex items-center justify-center h-6 w-6" style={{ backgroundColor: AZURE }}>
+            <span className={cx('flex h-6 w-6 items-center justify-center', RADIUS.control, TONE_FILL.accent)}>
               <LeanZero className="h-4 w-4 text-white" />
             </span>
-            <h3 className="text-sm font-semibold text-text-primary">Build a recipe with the fleet</h3>
+            <h3 className={TYPE.h2}>Build a recipe with the fleet</h3>
           </div>
           <div className="flex items-center gap-2">
             {fleet.online && fleet.models.length > 0 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
-                    className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border"
-                    style={{ borderRadius: CHIP_RADIUS, borderColor: AZURE, color: AZURE }}
+                    className={cx(
+                      'hidden sm:flex items-center gap-1 border border-lz-accent px-1.5 py-0.5 font-mono text-lz-mono text-lz-accent',
+                      RADIUS.control,
+                      MOTION,
+                      FOCUS
+                    )}
                     title={model ? `${model} — click to switch node` : 'pick a node'}
                   >
-                    <span className="h-1.5 w-1.5" style={{ backgroundColor: SWARM_STATUS.done, borderRadius: CHIP_RADIUS }} />
+                    <StatusDot tone="ok" label="fleet online" size={8} />
                     {model ? model.split('-')[0] : 'model'}
                     <ChevronDown className="h-3 w-3" />
                   </button>
@@ -287,7 +305,7 @@ export function RecipeChatWizard({
                 <DropdownMenuContent align="end">
                   {fleet.models.map((m) => (
                     <DropdownMenuItem key={m} onClick={() => setPicked(m)} className="text-xs font-mono">
-                      {m === model && <Check className="h-3 w-3 mr-1 shrink-0" style={{ color: AZURE }} />}
+                      {m === model && <Check className={cx('h-3 w-3 mr-1 shrink-0', TONE_TEXT.accent)} />}
                       {m}
                     </DropdownMenuItem>
                   ))}
@@ -295,45 +313,50 @@ export function RecipeChatWizard({
               </DropdownMenu>
             ) : (
               <span
-                className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border border-border-primary"
-                style={{ borderRadius: CHIP_RADIUS }}
+                className={cx(
+                  'hidden sm:flex items-center gap-1 border border-lz-border-strong px-1.5 py-0.5 font-mono text-lz-mono text-lz-ink-3',
+                  RADIUS.control
+                )}
               >
-                <span className="h-1.5 w-1.5" style={{ backgroundColor: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }} />
+                <StatusDot tone="err" label="fleet offline" size={8} />
                 offline
               </span>
             )}
-            <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
+            <button
+              onClick={onClose}
+              className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
+              aria-label="Close"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
         {/* Conversation */}
-        <div ref={scrollRef} className="px-4 py-3 overflow-y-auto space-y-3 flex-1 min-h-[220px]">
+        <div ref={scrollRef} className="min-h-[220px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
           {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={cx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div
-                className={`max-w-[80%] px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                  m.role === 'assistant' ? 'bg-background-secondary border border-border-primary' : ''
-                }`}
-                style={
+                className={cx(
+                  'max-w-[80%] whitespace-pre-wrap break-words px-3 py-2 text-lz-body',
+                  RADIUS.control,
                   m.role === 'user'
-                    ? { backgroundColor: AZURE, color: '#fff', borderRadius: CHIP_RADIUS }
-                    : { borderRadius: CHIP_RADIUS }
-                }
+                    ? TONE_FILL.accent
+                    : 'border border-lz-border bg-lz-surface-2 text-lz-ink'
+                )}
               >
                 {m.role === 'assistant' && (
-                  <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+                  <span className="mb-1 flex items-center gap-1 text-lz-zone uppercase text-lz-ink-3">
                     <Sparkles className="h-3 w-3" /> fleet
                   </span>
                 )}
-                <span className={m.role === 'assistant' ? 'text-text-primary' : ''}>{m.content}</span>
+                <span>{m.content}</span>
               </div>
             </div>
           ))}
           {busy && (
             <div className="flex justify-start">
-              <div className="flex items-center gap-2 text-xs text-text-secondary px-3 py-2">
+              <div className="flex items-center gap-2 px-3 py-2 text-lz-meta text-lz-ink-3">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> the fleet is thinking…
               </div>
             </div>
@@ -342,45 +365,42 @@ export function RecipeChatWizard({
 
         {/* Draft review card */}
         {draft && (
-          <div className="mx-4 mb-2 border border-border-primary" style={{ borderRadius: CHIP_RADIUS }}>
-            <div className="px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 text-white" style={{ backgroundColor: AZURE }}>
+          <div className={cx('mx-4 mb-2 overflow-hidden border border-lz-border', RADIUS.control)}>
+            <div className={cx('flex items-center gap-1.5 px-3 py-1.5 text-lz-meta', WEIGHT.semibold, TONE_FILL.accent)}>
               <Pencil className="h-3.5 w-3.5" /> Draft recipe — review &amp; edit before saving
             </div>
-            <div className="p-3 space-y-2">
+            <div className="space-y-2 p-3">
               <input
                 value={draft.title}
                 onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 placeholder="Title"
-                className={inputClass}
-                style={{ borderRadius: CHIP_RADIUS }}
+                className={FIELD}
               />
               <input
                 value={draft.description}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                 placeholder="One-line description"
-                className={inputClass}
-                style={{ borderRadius: CHIP_RADIUS }}
+                className={FIELD}
               />
               <textarea
                 value={draft.instructions}
                 onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
                 rows={5}
                 placeholder="Instructions the agent follows every run"
-                className={inputClass}
-                style={{ borderRadius: CHIP_RADIUS, resize: 'vertical' }}
+                className={cx(FIELD, 'resize-y')}
               />
             </div>
           </div>
         )}
 
         {error && (
-          <div className="mx-4 mb-2 text-xs px-3 py-2 border" style={{ borderColor: SWARM_STATUS.error, color: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }}>
+          <div className={cx('mx-4 mb-2 border border-lz-err px-3 py-2 text-lz-meta', TONE_TEXT.err, RADIUS.control)}>
             {error}
           </div>
         )}
 
         {/* Input + actions */}
-        <div className="px-4 py-3 border-t border-border-primary space-y-2">
+        <div className="space-y-2 border-t border-lz-border px-4 py-3">
           <div className="flex items-end gap-2">
             <textarea
               value={input}
@@ -393,32 +413,36 @@ export function RecipeChatWizard({
               }}
               rows={1}
               placeholder="Answer the fleet…  (Enter to send)"
-              className={`${inputClass} flex-1`}
-              style={{ borderRadius: CHIP_RADIUS, resize: 'none' }}
+              className={cx(FIELD, 'flex-1 resize-none')}
             />
-            <button
-              onClick={send}
-              disabled={busy || !input.trim()}
-              className="flex items-center gap-1 text-xs font-semibold px-3 py-2 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: AZURE, borderRadius: CHIP_RADIUS }}
-            >
-              <Send className="h-3.5 w-3.5" /> Send
-            </button>
+            <Button variant="primary" onClick={send} disabled={busy || !input.trim()} icon={<Send />}>
+              Send
+            </Button>
           </div>
           <div className="flex items-center justify-between">
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => void draftNow()}
               disabled={busy || messages.length < 2}
-              className="text-xs px-2.5 py-1 border border-border-primary text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1"
-              style={{ borderRadius: CHIP_RADIUS }}
+              icon={<Sparkles />}
             >
-              <Sparkles className="h-3.5 w-3.5" /> Draft the recipe now
-            </button>
+              Draft the recipe now
+            </Button>
+            {/* The ok fill once a draft exists (a status-tone action, like "Run agent now"); the solid
+                disabled state before that — never a hand-written grey, never an opacity. */}
             <button
               onClick={() => void save()}
               disabled={!draft || saving}
-              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-              style={{ backgroundColor: draft ? SWARM_STATUS.done : '#6b7280', borderRadius: CHIP_RADIUS }}
+              className={cx(
+                'flex items-center gap-1.5 border border-lz-ok-solid px-3 py-1.5 text-lz-meta',
+                WEIGHT.semibold,
+                TONE_FILL.ok,
+                RADIUS.control,
+                MOTION,
+                FOCUS,
+                DISABLED
+              )}
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               Save recipe
