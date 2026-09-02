@@ -48,6 +48,28 @@ pub enum SwarmEvent {
         device_speed_weight: u32,
         /// Observed mean ms per completed task on this device, once one has completed there.
         device_avg_ms: Option<u64>,
+        /// The plan's weight split at this choice, over EVERY task in the DAG (spliced shards
+        /// included), not only the ready set: tasks ranking by the plan's own `weight` against
+        /// tasks ranking by `derived_weight` (VA-120). A plan where nothing claimed a section reads
+        /// `weights_declared: 0` here instead of silently running r6h's files × difficulty order.
+        weights_declared: usize,
+        weights_derived: usize,
+    },
+    /// A task the plan never weighed (VA-120): its `weight` is `derived_weight` — owned files ×
+    /// difficulty rank — not a measured section count. The CLI writes `weight` only for a task that
+    /// claims spec sections (`plan_weighted`) and for a split's shards (their module's share), so
+    /// the skeleton and the join always take this path, and a plan where NOTHING claimed a section
+    /// would revert to r6h's order with no trace; this line is the trace. One per such task at DAG
+    /// build, and again for each shard the merger's gap door splices — the two doors into the DAG.
+    /// The arithmetic it reports is the one the order already used; nothing about the order moves.
+    PlanWeightDerived {
+        task_id: String,
+        weight: u32,
+        /// `no section claim` (the plan wrote no `weight`) or `plan weight 0 refused`.
+        reason: String,
+        /// Owned-file count, the derivation's volume term: `max(files, 1) × rank`.
+        files: usize,
+        difficulty: String,
     },
     TaskCompleted {
         task_id: String,
