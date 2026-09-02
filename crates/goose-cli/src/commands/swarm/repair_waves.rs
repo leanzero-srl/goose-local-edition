@@ -951,6 +951,7 @@ async fn run_finding_shard(
                 &f.owned,
                 &findings,
                 round as usize,
+                me.budgets.repair_history_chars,
             ),
         ),
         conflict_block,
@@ -1844,6 +1845,7 @@ mod tests {
             &["web/app.js".to_string()],
             &["POST /api/drafts's response does not carry the documented field(s)".to_string()],
             1,
+            super::super::ledger_block::REPAIR_HISTORY_CHARS,
         );
         assert!(
             text.contains("FINDING 1 FIXED — CLAIMED FIXED WITHOUT AN EDIT"),

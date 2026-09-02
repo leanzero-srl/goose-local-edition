@@ -82,6 +82,8 @@ pub(super) fn judge_delivery_block(
     defects: &[String],
     unowned_writes: &[String],
     shard_pieces: Option<&ShardPiecesView>,
+    excerpt_total_chars: usize,
+    excerpt_per_file_chars: usize,
 ) -> String {
     if owned.is_empty() {
         return String::new();
@@ -158,9 +160,7 @@ pub(super) fn judge_delivery_block(
             }
         )
     };
-    const OWNED_EXCERPT_TOTAL: usize = 2_400;
-    const OWNED_EXCERPT_PER_FILE: usize = 1_200;
-    let mut excerpt_budget = OWNED_EXCERPT_TOTAL;
+    let mut excerpt_budget = excerpt_total_chars;
     let mut excerpt_block = String::new();
     for f in owned {
         if excerpt_budget == 0 {
@@ -178,7 +178,7 @@ pub(super) fn judge_delivery_block(
         } else {
             (shaped.as_str(), "signatures + shape lines")
         };
-        let cap = excerpt_budget.min(OWNED_EXCERPT_PER_FILE);
+        let cap = excerpt_budget.min(excerpt_per_file_chars);
         let head: String = source.chars().take(cap).collect();
         let cut = if head.chars().count() < source.chars().count() {
             "\n  … (cut — an excerpt, not the whole file; never treat the cut as unfinished work)"
@@ -509,6 +509,13 @@ pub(super) fn lane_defect_view(
     out
 }
 
+/// Reference (262,144-window) budget of the judge's owned-file excerpts, all files — the live
+/// value is `budgets::ShownBudgets::owned_excerpt_total_chars`, passed to `judge_delivery_block`.
+pub(super) const OWNED_EXCERPT_TOTAL: usize = 2_400;
+/// Reference (262,144-window) budget of one file's excerpt — the live value is
+/// `budgets::ShownBudgets::owned_excerpt_per_file_chars`.
+pub(super) const OWNED_EXCERPT_PER_FILE: usize = 1_200;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,7 +657,15 @@ mod tests {
         std::fs::write(dir.path().join("app/store.py"), "def broken(:\n    pass\n").unwrap();
         let owned = vec!["app/store.py".to_string(), "app/api.py".to_string()];
         let defects = verify_owned_files(dir.path(), &owned);
-        let block = judge_delivery_block(dir.path(), &owned, &defects, &[], None);
+        let block = judge_delivery_block(
+            dir.path(),
+            &owned,
+            &defects,
+            &[],
+            None,
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
+        );
         assert!(
             block.contains("app/store.py — EXISTS,"),
             "census names what is on disk: {block}"
@@ -680,6 +695,8 @@ mod tests {
             ],
             &["viz_camera.js".to_string()],
             None,
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
         );
         assert!(
             block.contains("NO PLANNED TASK OWNS") && block.contains("viz_camera.js"),
@@ -692,7 +709,18 @@ mod tests {
 
         // A task owning nothing gets no block at all — planning lanes are covered by the
         // structured-reply block, and an empty census would misread them as undelivered builds.
-        assert_eq!(judge_delivery_block(dir.path(), &[], &[], &[], None), "");
+        assert_eq!(
+            judge_delivery_block(
+                dir.path(),
+                &[],
+                &[],
+                &[],
+                None,
+                OWNED_EXCERPT_TOTAL,
+                OWNED_EXCERPT_PER_FILE
+            ),
+            ""
+        );
     }
 
     /// N-7: the excerpt honours its budget and says when it cut — a file larger than the per-file
@@ -704,7 +732,15 @@ mod tests {
         let big = format!("SEED = 1\n{}", "x = 2\n".repeat(2_000));
         std::fs::write(dir.path().join("big.py"), &big).unwrap();
         let owned = vec!["big.py".to_string()];
-        let block = judge_delivery_block(dir.path(), &owned, &[], &[], None);
+        let block = judge_delivery_block(
+            dir.path(),
+            &owned,
+            &[],
+            &[],
+            None,
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
+        );
         assert!(
             block.contains("… (cut — an excerpt"),
             "a cut excerpt admits it: {block}"
@@ -743,7 +779,15 @@ mod tests {
                 ("notes.txt".into(), 12, Some("unchecked (txt)".into())),
             ],
         };
-        let block = judge_delivery_block(&d, &owned, &[], &[], Some(&view));
+        let block = judge_delivery_block(
+            &d,
+            &owned,
+            &[],
+            &[],
+            Some(&view),
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
+        );
         assert!(
             block.contains("THIS TASK IS SHARD `render` OF MODULE `web-viz`"),
             "{block}"
@@ -764,13 +808,29 @@ mod tests {
             pieces: vec![],
             ..view.clone()
         };
-        let block = judge_delivery_block(&d, &owned, &[], &[], Some(&empty));
+        let block = judge_delivery_block(
+            &d,
+            &owned,
+            &[],
+            &[],
+            Some(&empty),
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
+        );
         assert!(
             block.contains("no piece files yet — the README alone is not the part"),
             "{block}"
         );
         // A build lane that is no shard reads exactly as before.
-        let block = judge_delivery_block(&d, &owned, &[], &[], None);
+        let block = judge_delivery_block(
+            &d,
+            &owned,
+            &[],
+            &[],
+            None,
+            OWNED_EXCERPT_TOTAL,
+            OWNED_EXCERPT_PER_FILE,
+        );
         assert!(!block.contains("THIS TASK IS SHARD"), "{block}");
     }
 
