@@ -96,6 +96,14 @@ pub enum MeshError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error(
+        "cannot remove the stale auth-key file '{}' left by a dead writer: {source}",
+        path.display()
+    )]
+    StaleAuthKey {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to run {what} ('{program}'): {source}")]
     CliRun {
         what: &'static str,
@@ -566,32 +574,26 @@ impl MeshEngine {
     ///
     /// The key is written `0600` under the state dir (a `0700` directory) and handed to
     /// the CLI as `--auth-key=file:<path>`, so it never appears in `ps`; the file is
-    /// removed as soon as `up` returns, success or failure (R-L1).
+    /// removed as soon as `up` returns, success or failure (R-L1), and by
+    /// [`AuthKeyFile`]'s drop guard if this future is dropped before `up` returns (a
+    /// goosed exiting mid-join, a caller's abort).
     pub async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
         if auth_key.trim().is_empty() {
             return Err(MeshError::EmptyAuthKey);
         }
-        let key_path = self
-            .config
-            .state_dir
-            .join(format!("auth-key.{}", std::process::id()));
-        write_private(&key_path, auth_key.as_bytes()).map_err(|source| MeshError::AuthKeyFile {
-            path: key_path.clone(),
-            source,
-        })?;
+        let key_file = AuthKeyFile::create(
+            self.config
+                .state_dir
+                .join(format!("{AUTH_KEY_FILE_PREFIX}{}", std::process::id())),
+            auth_key.as_bytes(),
+        )?;
         let result = run_cli(
             "tailscale up",
-            self.config.up_argv(&key_path, hostname),
+            self.config.up_argv(key_file.path(), hostname),
             self.config.join_timeout + JOIN_WAIT_GRACE,
         )
         .await;
-        if let Err(err) = std::fs::remove_file(&key_path) {
-            tracing::error!(
-                path = %key_path.display(),
-                error = %err,
-                "could not remove the auth-key file after `tailscale up`"
-            );
-        }
+        key_file.remove();
         let output = result?;
         if !output.status.success() {
             return Err(MeshError::JoinFailed {
@@ -890,7 +892,80 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-fn prepare_state_dir(dir: &Path) -> Result<(), MeshError> {
+/// Name prefix of the private key file `join` writes: `auth-key.<writer pid>`.
+const AUTH_KEY_FILE_PREFIX: &str = "auth-key.";
+
+/// The private auth-key file `tailscale up` reads. [`Self::remove`] deletes it the
+/// moment `up` returns; if the join future is dropped before that (goosed exiting
+/// mid-`up`, a caller's abort or timeout), `Drop` deletes it instead — the key never
+/// outlives the join that wrote it, whichever way the join ends. Only a process that
+/// dies without unwinding (SIGKILL, a crash) can leave one behind, and
+/// [`prepare_state_dir`] sweeps those on the next start.
+struct AuthKeyFile {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl AuthKeyFile {
+    fn create(path: PathBuf, key: &[u8]) -> Result<Self, MeshError> {
+        if let Err(source) = write_private(&path, key) {
+            // A partial write may have created the file; never leave it.
+            remove_key_file(&path);
+            return Err(MeshError::AuthKeyFile { path, source });
+        }
+        Ok(Self { path, armed: true })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn remove(mut self) {
+        self.armed = false;
+        remove_key_file(&self.path);
+    }
+}
+
+impl Drop for AuthKeyFile {
+    fn drop(&mut self) {
+        if self.armed {
+            tracing::warn!(
+                path = %self.path.display(),
+                "join dropped before `tailscale up` returned; removing the auth-key file"
+            );
+            remove_key_file(&self.path);
+        }
+    }
+}
+
+fn remove_key_file(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(path = %path.display(), "auth-key file already absent");
+        }
+        Err(err) => tracing::error!(
+            path = %path.display(),
+            error = %err,
+            "could not remove the auth-key file"
+        ),
+    }
+}
+
+/// What [`prepare_state_dir`] found among `auth-key.<pid>` files. `removed`: the
+/// writer pid is gone — a goosed that died without unwinding, so its join's drop guard
+/// never ran. `kept_live`: the writer is a live process (a join in flight from another
+/// process on this state dir), so the file is left alone and reported.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AuthKeySweep {
+    removed: Vec<PathBuf>,
+    kept_live: Vec<(PathBuf, u32)>,
+}
+
+/// Create the `0700` state dir and sweep stale auth-key files. Every removal and every
+/// file deliberately kept is logged; a removal that fails is a typed error, because a
+/// credential file this crate wrote and cannot delete is a fault, not hygiene.
+fn prepare_state_dir(dir: &Path) -> Result<AuthKeySweep, MeshError> {
     std::fs::create_dir_all(dir).map_err(|source| MeshError::StateDir {
         path: dir.to_path_buf(),
         source,
@@ -905,7 +980,84 @@ fn prepare_state_dir(dir: &Path) -> Result<(), MeshError> {
             },
         )?;
     }
-    Ok(())
+    let sweep = sweep_stale_auth_keys(dir)?;
+    if !sweep.removed.is_empty() {
+        tracing::warn!(
+            count = sweep.removed.len(),
+            removed = ?sweep.removed,
+            "removed stale auth-key files left by a join that never unwound \
+             (a goosed killed mid-`tailscale up`)"
+        );
+    }
+    for (path, pid) in &sweep.kept_live {
+        tracing::warn!(
+            path = %path.display(),
+            writer_pid = pid,
+            "auth-key file left in place: its writer is a live process (a join in \
+             flight from another goosed on this state dir)"
+        );
+    }
+    Ok(sweep)
+}
+
+fn sweep_stale_auth_keys(dir: &Path) -> Result<AuthKeySweep, MeshError> {
+    let mut sweep = AuthKeySweep::default();
+    let entries = std::fs::read_dir(dir).map_err(|source| MeshError::StateDir {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| MeshError::StateDir {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let name = entry.file_name();
+        let Some(suffix) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix(AUTH_KEY_FILE_PREFIX))
+        else {
+            continue;
+        };
+        let path = entry.path();
+        if let Some(pid) = suffix
+            .parse::<u32>()
+            .ok()
+            .filter(|pid| process_exists(*pid))
+        {
+            sweep.kept_live.push((path, pid));
+            continue;
+        }
+        std::fs::remove_file(&path).map_err(|source| MeshError::StaleAuthKey {
+            path: path.clone(),
+            source,
+        })?;
+        sweep.removed.push(path);
+    }
+    sweep.removed.sort();
+    sweep.kept_live.sort();
+    Ok(sweep)
+}
+
+/// Does a process with this pid exist? `kill(pid, 0)` delivers nothing; ESRCH is the
+/// one answer that means "gone" (EPERM means it exists under another user). A pid that
+/// is 0, negative, or does not fit `pid_t` is never probed: those select a process
+/// GROUP (or every process) in `kill(2)`, and this crate never addresses a group.
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    match libc::pid_t::try_from(pid) {
+        Ok(pid) if pid > 0 => {
+            let rc = unsafe { libc::kill(pid, 0) };
+            rc == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        }
+        _ => false,
+    }
+}
+
+/// No liveness proof off unix: a key file is KEPT (and reported), never deleted on a
+/// guess.
+#[cfg(not(unix))]
+fn process_exists(_pid: u32) -> bool {
+    true
 }
 
 async fn run_cli(
@@ -985,7 +1137,63 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::is_connect_failure;
+    use super::{is_connect_failure, prepare_state_dir, AuthKeySweep};
+
+    /// A pid that certainly belonged to a process which has exited and been reaped.
+    fn reaped_pid() -> u32 {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn `true`");
+        let pid = child.id();
+        child.wait().expect("reap `true`");
+        pid
+    }
+
+    /// The sweep is pid-aware: a key file whose writer is gone is removed and reported;
+    /// one whose writer is alive (here: this very test process) is kept and reported;
+    /// a suffix that is not a pid is stale by construction; everything else in the dir
+    /// is untouched.
+    #[test]
+    fn prepare_state_dir_sweeps_dead_writers_keys_and_keeps_a_live_writers() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("state");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dead = dir.join(format!("auth-key.{}", reaped_pid()));
+        let junk = dir.join("auth-key.tmp");
+        let live = dir.join(format!("auth-key.{}", std::process::id()));
+        let state = dir.join("tailscaled.state");
+        for (path, body) in [
+            (&dead, "tskey-auth-stale"),
+            (&junk, "tskey-auth-junk"),
+            (&live, "tskey-auth-inflight"),
+            (&state, "not a key"),
+        ] {
+            std::fs::write(path, body).unwrap();
+        }
+
+        let sweep = prepare_state_dir(&dir).unwrap();
+
+        let mut expected_removed = vec![dead.clone(), junk.clone()];
+        expected_removed.sort();
+        assert_eq!(
+            sweep,
+            AuthKeySweep {
+                removed: expected_removed,
+                kept_live: vec![(live.clone(), std::process::id())],
+            }
+        );
+        assert!(!dead.exists(), "the dead writer's key is gone");
+        assert!(!junk.exists(), "a non-pid suffix is stale by construction");
+        assert!(live.exists(), "a live writer's key is never deleted");
+        assert!(state.exists(), "only auth-key files are touched");
+
+        let again = prepare_state_dir(&dir).unwrap();
+        assert!(
+            again.removed.is_empty(),
+            "a second start finds nothing stale"
+        );
+        assert_eq!(again.kept_live.len(), 1);
+    }
 
     const PROSE: &str = "failed to connect to local tailscaled (which appears to be running as \
         tailscaled, pid 323). Got error: Failed to connect to local Tailscale daemon for \

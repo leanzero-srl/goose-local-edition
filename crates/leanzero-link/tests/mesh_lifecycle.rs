@@ -6,6 +6,7 @@
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use leanzero_link::mesh::{BackendState, MeshConfig, MeshEngine, MeshError, DEFAULT_LOGIN_SERVER};
@@ -99,6 +100,13 @@ if "up" in args:
     if authkey != "tskey-auth-good":
         print("backend error: invalid key: unable to validate API key", file=sys.stderr)
         sys.exit(1)
+    # Test hook: with `<base>/slow-up` present, record this CLI's pid and park — lets
+    # the join future be dropped while `up` is still running.
+    if os.path.exists(os.path.join(base, "slow-up")):
+        with open(os.path.join(base, "up-pid"), "w") as f:
+            f.write(str(os.getpid()))
+        import time
+        time.sleep(600)
     with open(marker, "w") as f:
         f.write("joined")
     sys.exit(0)
@@ -347,6 +355,110 @@ async fn join_succeeds_then_logout_stops_the_daemon() {
         engine.config().state_dir.exists(),
         "logout keeps the state dir for fast re-login"
     );
+}
+
+/// Poll until `probe` holds or a deadline passes — the deadline is a test guard, not a
+/// property under test.
+async fn wait_for(what: &str, mut probe: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !probe() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// A pid that certainly belonged to a process which has exited and been reaped.
+fn reaped_pid() -> u32 {
+    let mut child = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn `true`");
+    let pid = child.id();
+    child.wait().expect("reap `true`");
+    pid
+}
+
+/// R-L1 residual: the join future is dropped while `tailscale up` is still running
+/// (goosed exiting mid-join, a caller's abort). The key file must not outlive the join:
+/// the drop guard removes it, the CLI child we spawned is killed per-pid, and the
+/// daemon — which the dropped join never owned — is untouched.
+#[tokio::test]
+async fn join_dropped_mid_up_removes_the_key_file_and_kills_only_the_cli() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Arc::new(MeshEngine::start(fake_config(root.path())).await.unwrap());
+    let state_dir = engine.config().state_dir.clone();
+    let daemon_pid = engine.pid().await.unwrap();
+    std::fs::write(state_dir.join("slow-up"), "1").unwrap();
+
+    let joining = {
+        let engine = Arc::clone(&engine);
+        tokio::spawn(async move { engine.join("tskey-auth-good", "lz-node-self").await })
+    };
+    let up_pid_file = state_dir.join("up-pid");
+    wait_for("the fake `up` to start and park", || up_pid_file.exists()).await;
+    let cli_pid: u32 = std::fs::read_to_string(&up_pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        leftover_key_files(&state_dir),
+        vec![format!("auth-key.{}", std::process::id())],
+        "while `up` runs the key file is on disk (0600, read by the CLI)"
+    );
+
+    joining.abort();
+    let err = joining.await.expect_err("the aborted join never completes");
+    assert!(err.is_cancelled());
+
+    assert!(
+        leftover_key_files(&state_dir).is_empty(),
+        "the drop guard removed the key the moment the join future was dropped: {:?}",
+        leftover_key_files(&state_dir)
+    );
+    wait_for(
+        "the parked `tailscale up` (our own child) to be killed",
+        || !process_alive(cli_pid),
+    )
+    .await;
+    assert!(
+        process_alive(daemon_pid),
+        "a dropped join never touches the daemon"
+    );
+    assert!(
+        !state_dir.join("joined").exists(),
+        "`up` never completed, so nothing joined"
+    );
+
+    engine.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!process_alive(daemon_pid));
+}
+
+/// R-L1 residual, the other half: a key file left by a goosed that died WITHOUT
+/// unwinding (no drop guard ran) is swept by the next `start`; a key whose writer is
+/// still alive is left alone — it may be a join in flight.
+#[tokio::test]
+async fn start_sweeps_a_dead_writers_stale_key_and_keeps_a_live_writers() {
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    let stale = config.state_dir.join(format!("auth-key.{}", reaped_pid()));
+    let live = config
+        .state_dir
+        .join(format!("auth-key.{}", std::process::id()));
+    std::fs::write(&stale, "tskey-auth-stale").unwrap();
+    std::fs::write(&live, "tskey-auth-inflight").unwrap();
+
+    let engine = MeshEngine::start(config).await.unwrap();
+    assert!(!stale.exists(), "the dead writer's key was swept at start");
+    assert!(
+        live.exists(),
+        "a live writer's key is never deleted at start"
+    );
+    engine.shutdown().await;
+    std::fs::remove_file(&live).unwrap();
 }
 
 #[tokio::test]
