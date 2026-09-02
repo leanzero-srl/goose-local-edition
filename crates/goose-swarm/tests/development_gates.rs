@@ -444,7 +444,11 @@ fn swarm_rs_line_count_only_decreases() {
     // `repair_module_package_collisions` moved to commands/swarm/plan_repairs.rs beside (a) and
     // (d)-(f), paying for `mod lang_arms;` (the run's language on the dispatcher) and the three
     // Python-only arms' `lang_unsupported` wiring (rule (c), the AST review, the pytest tail).
-    const SWARM_RS_LINE_BASELINE: usize = 33_508;
+    // Tightened to 33,281 (VA-137): the repeat breaker's constant, key hash and test moved to
+    // commands/swarm/repeat_break.rs beside the produced-chars floor that replaced its 60 s
+    // clock, paying for `mod repeat_break;`, the floor's three loop lines and the shadow desk's
+    // reach argument.
+    const SWARM_RS_LINE_BASELINE: usize = 33_281;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -760,7 +764,11 @@ fn the_value_gate_is_carried() {
 /// outside a `#[cfg(test)]` block in the run path is a typed absolute; the count may only DECREASE.
 /// A literal that is a RATIO of something the run produces or a MEASUREMENT carries `// ratio:` or
 /// `// measured:` on its line and is exempt — a reviewer reads the marker, the ratchet only counts.
-const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
+/// 28 → 27 (VA-137): `REPEAT_BREAK_MIN_SECS = 60` deleted — the repeat breaker's floor is the
+/// lane's own median produced chars between calls (`repeat_break::ProducedRhythm`); the
+/// recurrence reach moved from a desk.rs literal to `budgets::RECURRENCE_REACH_SHINGLES`, the
+/// reference numerator of a window ratio (count unchanged by the move).
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 27;
 
 fn is_numeric_const_literal(line: &str) -> bool {
     let s = line.trim_start();
