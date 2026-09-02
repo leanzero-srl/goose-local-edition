@@ -41,6 +41,18 @@ use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
 };
 
+/// How many CONSECUTIVE failed mesh-status looks drop a live connection whose daemon is
+/// alive but no longer answers (`tailscale status` erroring on every poll). A
+/// LOOK-COUNT, never a clock: one look is one `tailscale status --json` on our own
+/// socket (bounded only by the CLI transport timeout), and the poll loop sleeps
+/// `poll_interval` between looks. One failed look is what a loaded machine produces
+/// (the single transient probe failure mesh_lifecycle's `probe-fail-once` reproduces);
+/// a daemon EXIT is proven by `try_wait` and takes one look. Unresponsiveness is
+/// inferred, so it takes five unbroken looks — long enough that
+/// [`LinkState::mesh_poll_failures`] climbs visibly (1..4) before the connection is
+/// dropped. Any successful look in between resets the count.
+pub const MESH_POLL_FAILURE_LOOKS: u32 = 5;
+
 /// The abstract mesh the manager drives. [`MeshEngine`] is the production impl; tests
 /// supply a fake so `connect()` never spawns a daemon.
 #[async_trait::async_trait]
@@ -135,7 +147,9 @@ pub struct LinkState {
     pub node_count: u32,
     /// Consecutive failures of the connection's mesh-status poll (`tailscale status`
     /// reads that errored), reset to 0 by the next success and by a new connection.
-    /// A rising number is the UI's early warning before the daemon is declared dead.
+    /// A rising number is the UI's early warning: at [`MESH_POLL_FAILURE_LOOKS`] the
+    /// connection is dropped per-pid and auth returns to `LoggedIn` (the identity
+    /// kept). After that drop the count stays at the value that caused it.
     #[serde(default)]
     pub mesh_poll_failures: u32,
     pub last_error: Option<String>,
@@ -683,7 +697,13 @@ impl LinkManager {
                 last_error: persisted_error,
             },
             Err(err @ MeshError::DaemonExited { .. }) => {
-                drop_active_after_daemon_exit(&self.inner, generation, &err, false).await;
+                drop_active_after_daemon_fault(
+                    &self.inner,
+                    generation,
+                    DaemonFault::Exited(&err),
+                    false,
+                )
+                .await;
                 let inner = self.inner.lock().await;
                 LinkState {
                     auth: inner.auth.clone(),
@@ -1103,20 +1123,60 @@ async fn teardown_active(mut active: Active, mesh_logout: bool) -> Option<MeshEr
     None
 }
 
-/// The supervised tailscaled under a live connection has EXITED (the mesh reported
-/// [`MeshError::DaemonExited`]). Drop that connection per-pid, record why, and return
-/// auth to `LoggedIn { email }` so `connect()` re-arms — the identity on disk is NEVER
-/// touched: a daemon crash is not a credential problem, and the only path that clears
-/// the credential is the user's own logout (or a worker verdict on the token).
+/// Why a live connection's supervised tailscaled is being given up on.
+enum DaemonFault<'a> {
+    /// `try_wait` proved the daemon exited ([`MeshError::DaemonExited`]).
+    Exited(&'a MeshError),
+    /// The child is alive, but [`MESH_POLL_FAILURE_LOOKS`] consecutive status looks
+    /// failed — a daemon that cannot be talked to is wedged, not merely slow.
+    Unresponsive { looks: u32, last: &'a MeshError },
+}
+
+impl DaemonFault<'_> {
+    fn last_error(&self) -> String {
+        match self {
+            Self::Exited(err) => format!(
+                "mesh daemon died under the connection; dropped it per-pid and kept the \
+                 identity — reconnect to re-arm ({err})"
+            ),
+            Self::Unresponsive { looks, last } => format!(
+                "mesh daemon unresponsive: {looks} consecutive status failures; last: {last} \
+                 (connection dropped per-pid, identity kept; reconnect to re-arm)"
+            ),
+        }
+    }
+
+    fn log(&self) {
+        match self {
+            Self::Exited(err) => tracing::error!(
+                error = %err,
+                "leanzero-link: supervised tailscaled exited; connection dropped, auth back to LoggedIn"
+            ),
+            Self::Unresponsive { looks, last } => tracing::error!(
+                error = %last,
+                consecutive = looks,
+                "leanzero-link: supervised tailscaled is alive but unresponsive; connection \
+                 dropped per-pid (SIGTERM→grace→SIGKILL, our child only), auth back to LoggedIn"
+            ),
+        }
+    }
+}
+
+/// The supervised tailscaled under a live connection is at fault — EXITED, or alive but
+/// UNRESPONSIVE for [`MESH_POLL_FAILURE_LOOKS`] looks. Drop that connection per-pid
+/// (no `tailscale logout`: there is nothing to talk to), record why, and return auth to
+/// `LoggedIn { email }` so `connect()` re-arms — the identity on disk is NEVER touched:
+/// a daemon fault is not a credential problem, and the only path that clears the
+/// credential is the user's own logout (or a worker verdict on the token).
 ///
 /// Acts only if the connection in place is the one the caller observed (`generation`);
 /// a stale observer never tears down a newer connection. `from_poll_loop` skips
 /// aborting the poll task — the loop is the caller and returns right after. Returns
 /// whether it acted.
-async fn drop_active_after_daemon_exit(
+async fn drop_active_after_daemon_fault(
     inner: &Arc<Mutex<Inner>>,
     generation: u64,
-    err: &MeshError,
+    fault: DaemonFault<'_>,
     from_poll_loop: bool,
 ) -> bool {
     let active = {
@@ -1136,14 +1196,8 @@ async fn drop_active_after_daemon_exit(
         guard.auth = AuthState::LoggedIn {
             email: active.email.clone(),
         };
-        guard.last_error = Some(format!(
-            "mesh daemon died under the connection; dropped it per-pid and kept the \
-             identity — reconnect to re-arm ({err})"
-        ));
-        tracing::error!(
-            error = %err,
-            "leanzero-link: supervised tailscaled exited; connection dropped, auth back to LoggedIn"
-        );
+        guard.last_error = Some(fault.last_error());
+        fault.log();
         active
     };
     teardown_active(active, false).await;
@@ -1175,7 +1229,14 @@ async fn peer_sync_loop(
             Err(err @ MeshError::DaemonExited { .. }) => {
                 let Some(inner) = inner.upgrade() else { return };
                 inner.lock().await.mesh_poll_failures += 1;
-                if drop_active_after_daemon_exit(&inner, generation, &err, true).await {
+                if drop_active_after_daemon_fault(
+                    &inner,
+                    generation,
+                    DaemonFault::Exited(&err),
+                    true,
+                )
+                .await
+                {
                     return;
                 }
                 // Our `Active` is not installed yet (connect() has not finished its Ok
@@ -1190,7 +1251,34 @@ async fn peer_sync_loop(
                     guard.mesh_poll_failures += 1;
                     guard.mesh_poll_failures
                 };
-                tracing::warn!(error = %err, consecutive = failures, "mesh status poll failed; will retry");
+                if failures < MESH_POLL_FAILURE_LOOKS {
+                    tracing::warn!(
+                        error = %err,
+                        consecutive = failures,
+                        threshold = MESH_POLL_FAILURE_LOOKS,
+                        "mesh status poll failed; will retry"
+                    );
+                } else if drop_active_after_daemon_fault(
+                    &inner,
+                    generation,
+                    DaemonFault::Unresponsive {
+                        looks: failures,
+                        last: &err,
+                    },
+                    true,
+                )
+                .await
+                {
+                    return;
+                } else {
+                    // Our `Active` is not installed yet — keep looking; the count keeps
+                    // climbing, so the next look past the threshold drops it.
+                    tracing::warn!(
+                        error = %err,
+                        consecutive = failures,
+                        "tailscaled unresponsive before the connection was installed; retrying"
+                    );
+                }
             }
         }
         tokio::time::sleep(interval).await;
