@@ -44,9 +44,10 @@ mod levers;
 use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
     escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
-    produced_since_look, restream_seed, steer_note, stream_woke, tail_shingle_set, tails_recur,
-    write_progress, wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts,
-    DIGEST_IO_CADENCE, JUDGE_WAKE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
+    produced_since_look, restream_seed, since_steer_block, since_steer_span, split_steer_followed,
+    steer_followed_ask, steer_note, stream_woke, tail_shingle_set, tails_recur, write_progress,
+    wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts, DIGEST_IO_CADENCE, JUDGE_WAKE,
+    LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
 };
 mod ask_floor;
 use ask_floor::{ask_floor_weak_bump, model_active_params_b};
@@ -12741,6 +12742,11 @@ impl GooseAgentDispatcher {
         // resets it with the rest of the ladder) — the owned-file half of the ladder's
         // write-progress obedience signal (`ladder::write_progress`).
         let mut owned_bytes_at_last_nudge: Option<u64> = None;
+        // VA-117: the durable `<task>.think.log` length when the last steer was delivered — the
+        // start of the SINCE-STEER span the judge answers `STEER_FOLLOWED` over (`ladder::
+        // since_steer_span`); reset with the ladder at the restream seam. The in-memory
+        // `last_thinking` is a 2,400-char window and cannot hold that span; the durable log can.
+        let mut durable_think_at_last_nudge: Option<u64> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -13305,6 +13311,10 @@ impl GooseAgentDispatcher {
                     .get(activity_key.unwrap_or(""))
                     .cloned()
                     .unwrap_or_default();
+                // VA-117: the since-steer span and its char count, filled when a steer was
+                // delivered to THIS attempt; the count rides `judge_delivery_decided` below.
+                let mut since_steer_chars: Option<usize> = None;
+                let mut since_steer_block_text = String::new();
                 if history.nudges_used > 0 {
                     let (nudges_used, last_direction) =
                         (history.nudges_used, history.last_direction.as_str());
@@ -13352,6 +13362,21 @@ impl GooseAgentDispatcher {
                          and make NEXT a MEASUREMENT that would prove you wrong — a command whose output \
                          separates your old theory from the new one."
                     ));
+                    // THE READER ANSWERS OVER THE SINCE-STEER SPAN (VA-117, r6i OPEN look 3): the
+                    // judge is handed every character the call reasoned after the steer landed —
+                    // from the durable offset recorded at delivery to now, never a fixed tail —
+                    // and asked one explicit line, `STEER_FOLLOWED: yes|no|unclear`. That answer,
+                    // not the recurrence meter, decides delivery (`ladder::nudge_delivery`).
+                    // Absent on a fresh attempt (the seam resets the offset): no steer has
+                    // reached it, so there is nothing to ask about.
+                    if let Some(from) = durable_think_at_last_nudge {
+                        let span = activity_file
+                            .as_ref()
+                            .and_then(|p| since_steer_span(&p.with_extension("think.log"), from));
+                        since_steer_chars = span.as_ref().map(|s| s.chars().count());
+                        since_steer_block_text = since_steer_block(span.as_deref());
+                        sys.push_str(steer_followed_ask());
+                    }
                     // VERDICT CONTINUITY ON AN IGNORED STEER (r5, reader 5). Only a second DRIFTING
                     // re-arms delivery; skeleton's 11:05 steer went unescalated for 42 minutes/63k
                     // chars because looks 4-8 oscillated looping/drifting — while open's look 12
@@ -13604,7 +13629,7 @@ impl GooseAgentDispatcher {
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
                      It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}\
-                     \n\nMost recent reasoning:\n{tail}\n\n\
+                     \n\nMost recent reasoning:\n{tail}{since_steer_block_text}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
                      the defect you suspect, YOUR DIAGNOSIS IS WRONG and repeating it more forcefully \
@@ -14001,9 +14026,12 @@ impl GooseAgentDispatcher {
                     // invisible for a whole run — five hours of "is the judge even watching?" with
                     // no way to answer from the artifacts. Its verdict and the measured recurrence
                     // now land in run.jsonl where every other decision lives.
-                    let omni_outcome = parse_judge_reply(&o.text);
+                    // VA-117: the reader's `STEER_FOLLOWED` line is read and STRIPPED first, so the
+                    // lenient four-field parse cannot fold it into NEXT (the ETA-token leak class).
+                    let (judge_says_followed, judge_text) = split_steer_followed(&o.text);
+                    let omni_outcome = parse_judge_reply(&judge_text);
                     history.record_established(&omni_outcome.established);
-                    let judge_eta_mins = parse_judge_eta_mins(&o.text);
+                    let judge_eta_mins = parse_judge_eta_mins(&judge_text);
                     let omni_hint = {
                         let h = omni_outcome.next_action.trim();
                         if h.is_empty() {
@@ -14075,7 +14103,7 @@ impl GooseAgentDispatcher {
                         "thinking_chars": thinking_chars,
                         "recur_rate": recur.rate(),
                         "recur_span": recur.span(),
-                        "looping": omni_judge_says_looping(&o.text),
+                        "looping": omni_judge_says_looping(&judge_text),
                         // The judge's OWN WORDS in the log. Without these a run tells you the judge fired
                         // but not whether it was any good, which is the only question that matters once it
                         // is the thing deciding when a call has stopped progressing.
@@ -14083,7 +14111,7 @@ impl GooseAgentDispatcher {
                         "established": omni_outcome.established,
                         "next": omni_outcome.next_action,
                     }));
-                    if omni_judge_says_looping(&o.text) {
+                    if omni_judge_says_looping(&judge_text) {
                         // #F924: corroborate against ANY earlier look, and treat a measured
                         // recurrence as corroboration in its own right — a long-period loop
                         // presents DIFFERENT windows on consecutive looks by construction, which
@@ -14323,14 +14351,41 @@ impl GooseAgentDispatcher {
                         omni_drift_streak,
                         calls_since_nudge(tool_calls_at_last_nudge, call_records.len()),
                     );
+                    // VA-117: the METER SUMMONS, THE READER DECIDES. `advancing` (the meter's
+                    // reading) no longer enters the ladder — r6i look 3's meter read 0.2986 over
+                    // 65,536 as "stopped advancing" while the judge's own text said "This is
+                    // advancing, not looping … in final section-to-slice assignment phase", and
+                    // the wipe abandoned 82,872 chars with the emit 16k chars into composition.
+                    // The judge's `STEER_FOLLOWED` answer over the since-steer span decides;
+                    // the meter's reading rides the decision event beside it as evidence.
                     let delivery = nudge_delivery(
                         pending.is_empty(),
                         write_progress_since_nudge,
                         &omni_outcome.verdict,
-                        advancing,
+                        judge_says_followed,
                         wrong_channel,
                         promise_due,
                     );
+                    if nudge_wanted {
+                        let (delivery_kind, decided_reason) = match delivery {
+                            NudgeDelivery::Steer(r) => ("steer", r),
+                            NudgeDelivery::Restream(r) => ("restream", r),
+                            NudgeDelivery::Hold(r) => ("hold", r),
+                        };
+                        self.events.write_value(serde_json::json!({
+                            "event": "judge_delivery_decided",
+                            "task_id": activity_key,
+                            "look": omni_looks,
+                            "judge_says_followed": judge_says_followed.map(|s| s.as_str()),
+                            "meter_recurring": recur.recurring(),
+                            "meter_advancing": advancing,
+                            "write_progress": write_progress_since_nudge,
+                            "since_steer_chars": since_steer_chars,
+                            "verdict": omni_outcome.verdict.as_str(),
+                            "delivery": delivery_kind,
+                            "reason": decided_reason,
+                        }));
+                    }
                     // A RESTREAM IS RE-CHECKED AGAINST THE STREAM AS IT IS AT THE WIPE, not as the
                     // probe's input described it (r6c web-viz look 14 — the measured walk is on
                     // `ladder::stream_woke`). Every other ladder input is a fact about FINISHED
@@ -14636,6 +14691,13 @@ impl GooseAgentDispatcher {
                         tool_calls_at_last_nudge = Some(call_records.len());
                         answer_chars_at_last_nudge = Some(answer_chars_now);
                         owned_bytes_at_last_nudge = Some(owned_bytes_now);
+                        // VA-117: where the since-steer span starts. No durable transcript stat
+                        // (`None`) means "from the transcript's start" — and the span read itself
+                        // reports an unreadable file to the judge as UNAVAILABLE, never as empty.
+                        // The unflushed think buffer (one DIGEST_IO_CADENCE of tokens) lands
+                        // after this offset, so the span may open a few hundred pre-steer chars
+                        // early; it never misses post-steer reasoning.
+                        durable_think_at_last_nudge = Some(durable_think_now.unwrap_or(0));
 
                         if can_steer {
                             // Queued into the SAME running session. The in-flight turn is not burned and
@@ -14792,6 +14854,7 @@ impl GooseAgentDispatcher {
                             tool_calls_at_last_nudge = None;
                             answer_chars_at_last_nudge = None;
                             owned_bytes_at_last_nudge = None;
+                            durable_think_at_last_nudge = None;
                             omni_drift_streak = 0;
                             omni_quiet_secs = 0;
                             omni_last_look_at = tokio::time::Instant::now();
@@ -21010,6 +21073,22 @@ impl GooseAgentDispatcher {
         }
         announce_research_phase(self.events.as_ref());
         let lanes = research_fan_lanes(worker_models);
+        // HEAVIEST FIRST, TO THE FASTEST FREE HOST (VA-113, r6i: ledgerd's 17-section lane was
+        // dispatched last, at 11:28:37Z, to the slowest node, and ran alone from 11:32 while two
+        // nodes idled ≥ 49 minutes). The fan starts items in list order onto a fastest-first
+        // device queue (`fanout_over_fleet`), so ordering the lanes by section count is the
+        // whole mechanism; `rank` is the position in that order and rides the dispatch event
+        // with the host's resolved speed weight — the same number `pool_resolved.devices[]
+        // .speed_weight` carries — so the pairing is auditable per lane. MILD: an order, never a
+        // cap; a lane is never held back for a heavier one.
+        let ordered = order_heaviest_first(lanes_to_run, |(sections, _)| *sections);
+        let host_speed: Arc<std::collections::HashMap<String, u32>> =
+            Arc::new(resolved_fleet_speed_weights(&load_config()));
+        let lanes_to_run: Vec<(usize, usize, ResearchLane)> = ordered
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (sections, lane))| (rank, sections, lane))
+            .collect();
         // A panicked lane's Err arrives positionally; its slice and (for the decisions lane) its
         // questions fold into terminal rows below.
         let lane_specs: Vec<(String, Vec<ResearchQuestion>)> = lanes_to_run
@@ -21024,6 +21103,7 @@ impl GooseAgentDispatcher {
             lanes_to_run,
             move |(rank, sections, lane): (usize, usize, ResearchLane), model: String| {
                 let me = me.clone();
+                let host_speed = host_speed.clone();
                 async move {
                     // One activity digest, one transcript, one judge lane per slice.
                     let key = format!("research-{}", lane.slice);
@@ -21032,6 +21112,16 @@ impl GooseAgentDispatcher {
                         .lock()
                         .unwrap()
                         .insert(key.clone(), lane.relay_target());
+                    me.events.write_value(serde_json::json!({
+                        "event": "research_dispatch_order",
+                        "slice": lane.slice,
+                        "sections": sections,
+                        "rank": rank,
+                        "host": model,
+                        // null = the resolver never saw this model (a pool outside the config);
+                        // `pool_resolved.speed_weight_unmatched_patterns` names that case.
+                        "host_speed": host_speed.get(&model),
+                    }));
                     me.events.write_value(serde_json::json!({
                         "event": "research_dispatched",
                         "slice": lane.slice,
@@ -21073,22 +21163,6 @@ impl GooseAgentDispatcher {
                             &me.worker_extensions,
                             None,
                             Some(&key),
-        // HEAVIEST FIRST, TO THE FASTEST FREE HOST (VA-113, r6i: ledgerd's 17-section lane was
-        // dispatched last, at 11:28:37Z, to the slowest node, and ran alone from 11:32 while two
-        // nodes idled ≥ 49 minutes). The fan starts items in list order onto a fastest-first
-        // device queue (`fanout_over_fleet`), so ordering the lanes by section count is the
-        // whole mechanism; `rank` is the position in that order and rides the dispatch event
-        // with the host's resolved speed weight — the same number `pool_resolved.devices[]
-        // .speed_weight` carries — so the pairing is auditable per lane. MILD: an order, never a
-        // cap; a lane is never held back for a heavier one.
-        let ordered = order_heaviest_first(lanes_to_run, |(sections, _)| *sections);
-        let host_speed: Arc<std::collections::HashMap<String, u32>> =
-            Arc::new(resolved_fleet_speed_weights(&load_config()));
-        let lanes_to_run: Vec<(usize, usize, ResearchLane)> = ordered
-            .into_iter()
-            .enumerate()
-            .map(|(rank, (sections, lane))| (rank, sections, lane))
-            .collect();
                             true, // read_only: the II-12 research-write quarantine
                             true, // may_terminate: a lost lane costs one slice's answers, never a phase
                         )
@@ -21103,7 +21177,6 @@ impl GooseAgentDispatcher {
                     // batch (`fold_research_batch`, one row per decision). An entry the fold
                     // cannot attribute is named, never silently dropped.
                     let (lane_rows, strays) = if lane.derives() {
-                let host_speed = host_speed.clone();
                         research::fold_research_lane(&lane.slice, &model, secs, folded)
                     } else {
                         research::fold_research_batch(&lane.questions, &model, secs, folded)
@@ -21112,16 +21185,6 @@ impl GooseAgentDispatcher {
                         me.events.write_value(serde_json::json!({
                             "event": "research_batch_stray_answer",
                             "task": key,
-                    me.events.write_value(serde_json::json!({
-                        "event": "research_dispatch_order",
-                        "slice": lane.slice,
-                        "sections": sections,
-                        "rank": rank,
-                        "host": model,
-                        // null = the resolver never saw this model (a pool outside the config);
-                        // `pool_resolved.speed_weight_unmatched_patterns` names that case.
-                        "host_speed": host_speed.get(&model),
-                    }));
                             "slice": lane.slice,
                             "question_index": s.question_index,
                             "answer_head": s.answer_head,
