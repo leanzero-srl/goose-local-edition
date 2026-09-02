@@ -561,6 +561,29 @@ pub(super) fn append_lane_note(
     errs
 }
 
+/// VA-125: the lane's FULL dispatch text — system prompt and user text, 10–30k chars — written
+/// ONCE at dispatch to `<activity>.brief.md` beside the durable transcripts. The dispatch events
+/// (`research_dispatched`, `research_context`) carry counts and names; a gate-7 reader diagnosing
+/// a lane needs the WORDS it was told beside the words it said, and r6j's readers had only the
+/// engine's summary of the brief. A whole-file write (nothing polls it, so no tmp+rename); the
+/// error is returned for `note_transcript_write_failure`, never raised.
+pub(super) fn write_lane_brief(activity_path: &Path, system: &str, user: &str) -> Option<String> {
+    let path = activity_path.with_extension("brief.md");
+    let body = format!(
+        "# dispatch brief — written {}\n\n## SYSTEM ({} chars)\n\n{system}\n\n## USER ({} chars)\n\n{user}\n",
+        chrono::Utc::now().to_rfc3339(),
+        system.chars().count(),
+        user.chars().count()
+    );
+    let made = match path.parent() {
+        Some(dir) => std::fs::create_dir_all(dir),
+        None => Ok(()),
+    };
+    made.and_then(|_| std::fs::write(&path, body))
+        .err()
+        .map(|e| e.to_string())
+}
+
 /// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
 /// occupy every dependent's "relevant context" slot when a worker finished with no final text.
 /// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest

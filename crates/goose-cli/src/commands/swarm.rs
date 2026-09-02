@@ -134,7 +134,7 @@ use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_lane_note,
     append_reasoning_transcript, append_thinking_transcript, build_task_ledger_row,
     inflight_args_preview, inflight_rows, read_calls_capture, render_completed_output_from_ledger,
-    render_previous_attempt_block, InflightCall,
+    render_previous_attempt_block, write_lane_brief, InflightCall,
 };
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
@@ -20993,6 +20993,19 @@ impl GooseAgentDispatcher {
                         &key,
                         index_sections,
                     );
+                    // VA-125: the lane's FULL dispatch text (system + user) as a file beside its
+                    // transcripts — `.swarm/activity/<key>.brief.md` — so a gate-7 reader can
+                    // quote what the lane was TOLD next to what it said; the events carry counts,
+                    // never the words. A failed write is loud through the transcript channel.
+                    let system_text = research_system_text(&lane);
+                    let brief_path = me
+                        .working_dir
+                        .join(".swarm")
+                        .join("activity")
+                        .join(format!("{}.json", activity_digest_key(&key)));
+                    if let Some(e) = write_lane_brief(&brief_path, &system_text, &user_text) {
+                        me.note_transcript_write_failure(&brief_path, "brief.md", &e);
+                    }
                     let schema = if lane.derives() {
                         research::research_derived_schema()
                     } else {
@@ -21009,7 +21022,7 @@ impl GooseAgentDispatcher {
                     let out = me
                         .run_agent_timed_at(
                             &model,
-                            research_system_text(&lane),
+                            system_text,
                             user_text,
                             // A1: the structured deliverable arms wants_structured_reply and,
                             // with may_terminate below, the judge_out_of_moves ending.
