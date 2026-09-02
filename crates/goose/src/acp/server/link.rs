@@ -580,6 +580,13 @@ impl MeshBinaries {
     }
 }
 
+/// Whether a fresh discovery verdict differs from the one a manager was built with: the
+/// paths (or the refusal text) are what the manager's mesh config and the status DTO
+/// carry, so equality means nothing on disk moved.
+fn mesh_binaries_changed(held: &MeshBinaries, fresh: &MeshBinaries) -> bool {
+    held.paths() != fresh.paths()
+}
+
 // ---------------------------------------------------------------------------
 // The process-wide LinkManager (lazily built, rebuilt when its build key changes).
 // ---------------------------------------------------------------------------
@@ -990,6 +997,48 @@ impl GooseAcpAgent {
         Ok(guard.manager.clone())
     }
 
+    /// Re-run binary discovery right before a connect, so the refusal and the status DTO
+    /// reflect the filesystem NOW. Discovery otherwise runs only when the holder is built
+    /// or rebuilt (a key change), so a `tailscaled` installed or chmod-ed AFTER launch
+    /// kept its stale `missing` verdict — and every retry of Connect re-read it — until a
+    /// key change or an app restart. A few stat calls per click. When the paths differ
+    /// from what the manager was built with, the manager is rebuilt so its mesh config
+    /// carries the found paths instead of the empty template — never while
+    /// Connecting/Connected, the same rule the key-change rebuild follows (a live mesh
+    /// keeps its binaries; the fresh verdict applies at its next connect).
+    async fn refresh_mesh_binaries(
+        &self,
+        current: Arc<LinkManager>,
+    ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+        let holder = LINK
+            .get()
+            .expect("refresh_mesh_binaries runs after link_manager() built the holder");
+        let fresh = MeshBinaries::discover();
+        let key = {
+            let guard = holder.lock().unwrap();
+            if !mesh_binaries_changed(&guard.mesh_binaries, &fresh) {
+                return Ok(current);
+            }
+            guard.key.clone()
+        };
+        if matches!(
+            current.status().await.auth,
+            AuthState::Connecting { .. } | AuthState::Connected { .. }
+        ) {
+            info!("leanzeroLink: mesh binaries changed under a live mesh; they apply at the next connect");
+            return Ok(current);
+        }
+        let rebuilt = self.build_link_manager(&key, &fresh)?;
+        let mut guard = holder.lock().unwrap();
+        info!(
+            binaries = ?fresh,
+            "leanzeroLink: mesh binaries changed since the manager was built; rebuilt for this connect"
+        );
+        guard.manager = rebuilt.clone();
+        guard.mesh_binaries = fresh;
+        Ok(rebuilt)
+    }
+
     /// The status DTO for a manager obtained from [`Self::link_manager`].
     async fn status_response(&self, manager: &LinkManager) -> LeanzeroLinkStateResponse {
         link_state_to_dto(manager.status().await, &holder_view())
@@ -1042,6 +1091,7 @@ impl GooseAcpAgent {
         _req: LeanzeroLinkConnectRequest,
     ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
+        let manager = self.refresh_mesh_binaries(manager).await?;
         // Missing mesh binaries refuse the connect HERE, with discovery's full
         // searched-list text, before the manager would try to spawn an empty path. The
         // refusal is recorded so `status.lastError` carries it until a connect gets
@@ -1391,6 +1441,33 @@ mod tests {
         assert!(
             dto.mlx_control_wired,
             "the DTO reads the injected mlx control"
+        );
+    }
+
+    /// A binary that appears (installed, chmod-ed) after the manager was built is a
+    /// changed verdict: Connect re-discovers and rebuilds instead of re-reading the stale
+    /// `missing`. An unchanged verdict — same paths, or the same refusal — is not.
+    #[test]
+    fn mesh_binaries_changed_tracks_the_paths_and_the_refusal_text() {
+        let missing = MeshBinaries {
+            tailscaled: Err("could not find 'tailscaled': searched …".to_string()),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        let found = MeshBinaries {
+            tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        assert!(mesh_binaries_changed(&missing, &found));
+        assert!(mesh_binaries_changed(&found, &missing));
+        assert!(!mesh_binaries_changed(&found, &found.clone()));
+        assert!(!mesh_binaries_changed(&missing, &missing.clone()));
+        let elsewhere = MeshBinaries {
+            tailscaled: Ok(PathBuf::from("/opt/other/tailscaled")),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        assert!(
+            mesh_binaries_changed(&found, &elsewhere),
+            "a binary that moved is a changed verdict too"
         );
     }
 
