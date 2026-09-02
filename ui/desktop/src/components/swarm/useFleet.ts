@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { acpReadConfig } from '../../acp/config';
 import type { FleetProbeResult } from '../../utils/fleetProbe';
 import { DEFAULTS, type SwarmConfig } from '../settings/swarm/golden';
@@ -92,8 +92,17 @@ export async function fetchSwarmContextLimit(endpoint?: string): Promise<number 
   }
 }
 
-/** Derive a node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-). */
-export function deviceFromModelId(id: string): string {
+/**
+ * The node/device name for an LM Link model id. With the run's pool map (`poolNodeMap` — the engine's
+ * own `node` per device since 748084b97) the id is joined on it, so the sidecar's
+ * `workhorse-qwen3.5-9b-4bit-mlx` names `workhorse-mlx` and LM Studio's `workhorse-qwen3.8-27b` names
+ * `workhorse` — two nodes on one host. Without a map, or for an id the map does not carry, the prefix
+ * before the first '-' (mihai-, workhorse-, gabee-), which has no engine to consult and reads both as
+ * `workhorse`.
+ */
+export function deviceFromModelId(id: string, poolNodes?: Record<string, string>): string {
+  const named = poolNodes?.[id];
+  if (named) return named;
   const bare = id.split('/').pop() || id; // strip any publisher/ prefix
   const dash = bare.indexOf('-');
   return dash > 0 ? bare.slice(0, dash) : bare;
@@ -101,12 +110,24 @@ export function deviceFromModelId(id: string): string {
 
 /**
  * LM Studio's OWN live per-node status via `lms ps --json` (through the main process) — the ground truth for
- * "is this node generating RIGHT NOW", which the REST /api/v0/models cannot report. Keyed by node short name
- * (gabee/mihai/workhorse via deviceFromModelId) so the panel can cross-check the goose digest against it.
+ * "is this node generating RIGHT NOW", which the REST /api/v0/models cannot report. Keyed by canonical node
+ * name (deviceFromModelId, joined on the run's `poolNodes` when the caller has one — without it the
+ * sidecar alias and the LM Studio model on one host collide on `workhorse` and the later row overwrites
+ * the earlier's status) so the panel can cross-check the goose digest against it.
  * Empty when LM Studio / lms is unavailable, so the caller degrades to the digest-only view.
+ * `poolNodes` is read at poll time through a ref: the fold hands a fresh object every tick, and an
+ * effect keyed on it would restart the interval (and respawn `lms ps`) on every render.
  */
-export function useFleetStatus(pollMs = 1500, enabled = true): Record<string, string> {
+export function useFleetStatus(
+  pollMs = 1500,
+  enabled = true,
+  poolNodes?: Record<string, string>
+): Record<string, string> {
   const [status, setStatus] = useState<Record<string, string>>({});
+  const poolNodesRef = useRef(poolNodes);
+  useEffect(() => {
+    poolNodesRef.current = poolNodes;
+  }, [poolNodes]);
   useEffect(() => {
     if (!enabled) {
       // LM Studio surfaces disabled (showLmStudioFleet, default off): no lms polling, no statuses —
@@ -121,7 +142,7 @@ export function useFleetStatus(pollMs = 1500, enabled = true): Record<string, st
         if (!alive) return;
         const byNode: Record<string, string> = {};
         for (const [id, st] of Object.entries(raw)) {
-          byNode[deviceFromModelId(id)] = st;
+          byNode[deviceFromModelId(id, poolNodesRef.current)] = st;
         }
         setStatus(byNode);
       } catch {

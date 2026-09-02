@@ -690,6 +690,9 @@ export interface SwarmRunState {
   /** The RESOLVED fleet as canonical node names (pool_resolved, falling back to run_started.pool) — the
    *  honest fleet size. Every pool node renders a fleet row, idle ones included. */
   pool: string[];
+  /** The pool's `{id | model_id → node}` join (poolNodeMap) for feeds keyed by LM Studio model ids —
+   *  `useFleetStatus`'s `lms ps` rows. Undefined before the first fold; `{}` for a log with no pool. */
+  poolNodes?: Record<string, string>;
   /** OPEN supervision spans (judge generations with no lane) — see foldSupervision. */
   supervision: SupervisionSpan[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
@@ -957,6 +960,19 @@ export function resolvePool(events: Array<Record<string, unknown>>): string[] {
   if (fromResolved.length > 0) return Array.from(new Set(fromResolved)).sort();
   const started = events.find((e) => e['event'] === 'run_started');
   return Array.from(new Set(fromList(started?.['pool']))).sort();
+}
+
+/**
+ * The pool's `{id | model_id → node}` join as a plain map — the SAME NodeCanon fold `nodeLabeler`
+ * runs, exposed so a feed keyed by LM Studio model ids (useFleet.ts `useFleetStatus`, the `lms ps`
+ * corroboration) can name the engine's canonical node instead of re-deriving the prefix, which
+ * cannot tell the sidecar's `workhorse-qwen3.5-9b-4bit-mlx` from LM Studio's `workhorse-qwen3.8-27b`.
+ * Empty for a log with no pool events; an id the map does not carry keeps the caller's own derivation.
+ */
+export function poolNodeMap(events: Array<Record<string, unknown>>): Record<string, string> {
+  const canon = emptyNodeCanon();
+  for (const e of events) absorbNodeCanon(canon, e);
+  return { ...canon.pool, ...canon.devices };
 }
 
 // The engine ships each task's FULL worker spec as `description` — a wall of markdown ("**Subtask: [id] Do X**
@@ -5033,6 +5049,7 @@ export function useSwarmRun(
           planningLanes,
           fixLanes,
           pool: resolvePool(data.events),
+          poolNodes: poolNodeMap(data.events),
           supervision: foldSupervision(data.events),
           phaseTodo,
           overview,

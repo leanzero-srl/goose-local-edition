@@ -6,6 +6,7 @@ import {
   fetchSwarmContextLimit,
   modelsUrl,
   useFleet,
+  useFleetStatus,
 } from './useFleet';
 import type { FleetProbeResult } from '../../utils/fleetProbe';
 
@@ -110,5 +111,48 @@ describe('deviceFromModelId', () => {
 
   it('returns the id unchanged when there is no dash', () => {
     expect(deviceFromModelId('llama3')).toBe('llama3');
+  });
+
+  it('joins on the run\'s node map (engine 748084b97): the sidecar alias on the LM Studio host is `workhorse-mlx`', () => {
+    expect(deviceFromModelId('workhorse-qwen3.5-9b-4bit-mlx', MIXED_NODES)).toBe('workhorse-mlx');
+    expect(deviceFromModelId('workhorse-qwen3.8-27b', MIXED_NODES)).toBe('workhorse');
+    expect(deviceFromModelId('workhorse-qwen3.5-9b-4bit-mlx')).toBe('workhorse');
+  });
+
+  it('an id the map does not carry keeps the prefix derivation', () => {
+    expect(deviceFromModelId('mihai-qwen3.6-27b', MIXED_NODES)).toBe('mihai');
+  });
+});
+
+/** The pool map for the mixed pool measured 2026-09-02 — `poolNodeMap`'s shape: both spellings of each
+ *  device (id and model_id) to the engine's canonical `node`. */
+const MIXED_NODES: Record<string, string> = {
+  'workhorse-27b': 'workhorse',
+  'workhorse-qwen3.8-27b': 'workhorse',
+  'workhorse-mlx': 'workhorse-mlx',
+  'workhorse-qwen3.5-9b-4bit-mlx': 'workhorse-mlx',
+};
+
+describe('useFleetStatus — `lms ps` rows keyed by the run\'s canonical node', () => {
+  beforeEach(() => {
+    electron().fleetStatus = vi.fn(async () => ({
+      'workhorse-qwen3.8-27b': 'generating',
+      'workhorse-qwen3.5-9b-4bit-mlx': 'idle',
+    }));
+  });
+  afterEach(() => {
+    delete electron().fleetStatus;
+  });
+
+  it('with the pool map the two workhorse feeds are two keys, each with its own status', async () => {
+    const { result } = renderHook(() => useFleetStatus(10_000_000, true, MIXED_NODES));
+    await waitFor(() => expect(Object.keys(result.current)).toHaveLength(2));
+    expect(result.current).toEqual({ workhorse: 'generating', 'workhorse-mlx': 'idle' });
+  });
+
+  it('without a map (older log, no run) both collapse to `workhorse` and the later row overwrites the earlier — the old behaviour, unchanged', async () => {
+    const { result } = renderHook(() => useFleetStatus(10_000_000, true));
+    await waitFor(() => expect(Object.keys(result.current)).toHaveLength(1));
+    expect(result.current).toEqual({ workhorse: 'idle' });
   });
 });
