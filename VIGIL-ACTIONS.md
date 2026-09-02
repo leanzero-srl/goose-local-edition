@@ -196,5 +196,6 @@ prompt · design · harness.
 
 
 
-| VA-145 | 09-02 | panel | CLAIMED 23:0x panel-surgeon in va145-feed (pnpm only) | VA-143 residues: the compact feed keeps `feed.slice(-30)` so early research landings scroll out (verbose keeps 200) — keep landings pinned per lane rather than in the rolling slice; `buildPhaseTodo`'s research rows do not show builder_decides (VA-138 pins the detail string); and VA-138/143 have not been seen in the running app (the live bundle predates both). |
+| VA-145 | 09-02 | panel | LANDED d0d28651e (va145-feed 4a4340914, 23:1x; panel only): a research lane's landings stay PINNED under its row (kind chip, chars · raised · secs, fold toggle) regardless of the rolling feed; phase rows read `landed N · builder_decides M`; 88 tests across 6 files, typecheck 0, lint 0. Running-app check waits on the 1.41.110 install | VA-143 residues: the compact feed keeps `feed.slice(-30)` so early research landings scroll out (verbose keeps 200) — keep landings pinned per lane rather than in the rolling slice; `buildPhaseTodo`'s research rows do not show builder_decides (VA-138 pins the detail string); and VA-138/143 have not been seen in the running app (the live bundle predates both). |
+
 
