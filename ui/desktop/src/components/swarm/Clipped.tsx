@@ -189,8 +189,10 @@ export const Clipped: React.FC<{
   className?: string;
   /** False when the row already shows a styled tooltip with the full text (a native title on top would double it). */
   hoverTitle?: boolean;
+  /** 'start' for a multi-line clamp, so the glyph sits on the first line rather than mid-block. */
+  align?: 'center' | 'start';
   testId?: string;
-}> = ({ text, full, label, context, mono, prefix, clamp, className, hoverTitle = true, testId }) => {
+}> = ({ text, full, label, context, mono, prefix, clamp, className, hoverTitle = true, align = 'center', testId }) => {
   const [open, setOpen] = useState(false);
   const spanRef = useRef<HTMLSpanElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -216,7 +218,12 @@ export const Clipped: React.FC<{
         title={clipped && hoverTitle ? fullText : undefined}
         data-testid={testId ?? 'clipped-text'}
         data-clipped={clipped ? 'true' : 'false'}
-        className={cx('inline-flex min-w-0 max-w-full items-center gap-1', className, clipped && OPENER)}
+        className={cx(
+          'inline-flex min-w-0 max-w-full gap-1',
+          align === 'start' ? 'items-start' : 'items-center',
+          className,
+          clipped && OPENER
+        )}
         onClick={clipped ? openReveal : undefined}
         onKeyDown={
           clipped
@@ -233,7 +240,7 @@ export const Clipped: React.FC<{
           {prefix}
           {text}
         </span>
-        {clipped ? <Maximize2 className={GLYPH} aria-hidden /> : null}
+        {clipped ? <Maximize2 className={cx(GLYPH, align === 'start' && 'mt-[3px]')} aria-hidden /> : null}
       </span>
       {open ? (
         <RevealDialog label={label} text={fullText} context={context} mono={mono} onClose={close} />

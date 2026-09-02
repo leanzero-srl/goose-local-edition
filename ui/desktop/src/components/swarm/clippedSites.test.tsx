@@ -185,3 +185,38 @@ describe('Planning — a checklist row detail is a door too', () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
   });
 });
+
+describe('Event log — a line’s sub-detail and the collapsed header’s last event', () => {
+  it('the dispatch line’s detail is a door, and the row’s own inline expand still works beside it', async () => {
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    // The default log mode is verbose: the log is open and every line wraps to a two-line clamp.
+    const subs = await screen.findAllByTestId('activity-sub');
+    const dispatch = subs.find((el) => el.getAttribute('title') === 'on gabee');
+    expect(dispatch).toBeDefined();
+    expect(dispatch).toHaveAttribute('data-clipped', 'true');
+    revealAndClose(dispatch as HTMLElement, 'on gabee');
+    fireEvent.click(dispatch as HTMLElement);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('dispatch');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    // The row still expands inline on a click that is not on the door.
+    const row = (dispatch as HTMLElement).parentElement as HTMLElement;
+    fireEvent.click(row);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const li = row.closest('li') as HTMLElement;
+    expect(li.textContent).toContain('on gabee');
+    expect(within(li).queryByTestId('activity-sub')).toBeNull();
+  });
+
+  it('the collapsed header’s last event reveals the line with its detail', async () => {
+    render(<SwarmRunPanel workingDir="/tmp/build" />);
+    const header = await screen.findByText('Event log');
+    fireEvent.click(header.closest('button') as HTMLElement);
+    const last = await screen.findByTestId('event-log-last');
+    expect(last).toHaveAttribute('data-clipped', 'true');
+    const full = last.getAttribute('title') ?? '';
+    expect(full.length).toBeGreaterThan(0);
+    revealAndClose(last, full);
+  });
+});

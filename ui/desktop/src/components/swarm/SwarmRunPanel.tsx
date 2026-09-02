@@ -835,6 +835,15 @@ const EVENT_LOG_GUTTER_CLOCK = 'w-16';
 // subordinate narrative record, never competing with the zones above it (quiet = solid ink-3, NOT an
 // opacity wash). Right-click reveals a menu — "Reveal in Finder" when the line references a file path,
 // plus Copy.
+/** The reveal's provenance chips for a feed line: the event's kind and the engine's clock on it (else its ordinal). */
+function activityContext(it: ActivityItem): RevealFact[] {
+  const clock = eventClock(it.at);
+  return [
+    { label: 'event', value: it.kind },
+    clock ? { label: 'at', value: clock } : { label: 'seq', value: String(it.seq) },
+  ];
+}
+
 const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string; gutter: string }> = ({
   it,
   wrap,
@@ -885,15 +894,21 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
           {it.text}
         </span>
         {it.sub && !open && (
-          <span
-            className={cx(
-              'text-lz-ink-3',
+          // The sub-detail's own door: the inline expand (a click anywhere else on the row) keeps
+          // working; clicking the clipped text itself brings the whole detail up with Copy.
+          <Clipped
+            text={it.sub}
+            prefix="— "
+            label={it.text}
+            context={activityContext(it)}
+            clamp={cx(
               wrap ? 'break-words' : 'truncate',
               it.kind === 'brief' ? 'line-clamp-3' : wrap ? 'line-clamp-2' : ''
             )}
-          >
-            — {it.sub}
-          </span>
+            align={wrap || it.kind === 'brief' ? 'start' : 'center'}
+            className="text-lz-ink-3"
+            testId="activity-sub"
+          />
         )}
         {expandable &&
           (open ? (
@@ -3152,7 +3167,14 @@ const EventLogZone: React.FC<{
         right={
           <>
             {!open && last ? (
-              <span className="max-w-[18rem] truncate text-lz-meta text-lz-ink-3">{last.text}</span>
+              <Clipped
+                text={last.text}
+                full={`${last.text}${last.sub ? ` — ${last.sub}` : ''}`}
+                label="Last event"
+                context={activityContext(last)}
+                className="max-w-[18rem] text-lz-meta text-lz-ink-3"
+                testId="event-log-last"
+              />
             ) : null}
             <span className={cx('shrink-0 text-lz-meta text-lz-ink-3', TNUM)}>
               {open && shownCount < items.length
