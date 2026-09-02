@@ -306,7 +306,7 @@ absolute sized for this model / language / API (24,000 chars, 200 s, `impl.py`, 
 defect; a fraction of the probed window, a multiple of the app's own median, a share of the lane's own
 output, an algorithm constant or a named policy ratio with its receipt may stay. HOW IT REFUSES:
 `development_gates.rs` ratchets the count of live numeric `const` literals outside `cfg(test)` (28 on
-2026-09-02) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
+2026-09-02, 21 after the VA-140/141 receipts) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
 
 **11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW, in a worktree; only cargo waits for
 a run.** Mihai, 2026-09-02, after VA-126 was parked "until after r6j": *"are you not doing anything
