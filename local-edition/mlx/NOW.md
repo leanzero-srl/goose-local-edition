@@ -307,3 +307,74 @@ Flock; every identifier a machine reads is unchanged, deliberately.
                      screen. `goose flock --help` and `goose swarm --help` resolve to the same
                      command. 1728/1728 desktop tests, clippy clean, development_gates 8/8.
   IF IT NEEDS UNDOING  the display/id split is documented at the top of ui/desktop/src/branding.ts.
+
+## 2026-09-02 — HANDOFF: continuing this on ANOTHER MACHINE
+
+Everything below travels in git. Branch `goose/mlx-inferencing`, in sync with origin. The last six
+commits are the Flock rename and four rounds of the brand mark; before them, the MLX/Link work.
+
+### Get to a working checkout
+
+```bash
+git clone git@github.com:leanzero-srl/goose-local-edition.git goose
+cd goose && git checkout goose/mlx-inferencing
+source bin/activate-hermit          # toolchain: node 24, pnpm 10.30, cargo, just, protoc, python 3.10, uv
+cargo build -p goose-cli            # ~3 min cold; proves the Rust side
+cd ui/desktop && pnpm install && pnpm run typecheck && pnpm test    # expect 204 files / 1728 tests green
+```
+
+If `pnpm` is only available through corepack, scripts that shell out to a bare `pnpm` (like
+`pnpm run package`) need a shim first: `printf '#!/bin/sh\nexec corepack pnpm@10.30.0 "$@"\n' >
+<dir>/pnpm && chmod +x <dir>/pnpm` with `<dir>` first on PATH.
+
+### The verify loop (compiling is NOT evidence — look at the running app)
+
+```bash
+just fetch-tailscale                # 35 MB of mesh binaries, gitignored, per-machine
+cd ui/desktop && pnpm run package
+open -n out/Goose-darwin-arm64/Goose.app --args --remote-debugging-port=9897
+node scripts/cdp-probe.mjs --eval "document.title"
+node scripts/cdp-probe.mjs --shot /tmp/nav.png --clip 0,40,250,130 --scale 5
+```
+
+`scripts/cdp-probe.mjs` is the tool for that rule; it takes `--eval`, `--shot`, `--clip`, `--scale`.
+Quit the app with `osascript -e 'tell application "Goose" to quit'` — that path runs the lease
+cleanup and the supervised teardown of tailscaled + the MLX engine. The in-app restart does not.
+
+### Changing the brand mark
+
+`ui/desktop/src/components/icons/leanzeroMark.tsx` is the ONLY geometry. After editing it run
+`node ui/desktop/scripts/build-brand-icons.mjs` — it regenerates icon.icns, the PNGs, the Linux SVG
+and both menu-bar templates FROM that file (needs Google Chrome as the rasteriser, macOS `sips` and
+`iconutil`). Never hand-edit `src/images/icon.*`. The rules that four owner rounds paid for are in
+`ui/desktop/DESIGN.md` › The brand mark — in particular: the goose is the upstream product's own
+path, and the pair MERGES (no mask, no halo gap between them).
+
+### What does NOT travel, and what to do about it
+
+- **The LeanZero Link control plane is LAN-bound to this Mac Studio.** Self-hosted Headscale on
+  127.0.0.1:8790 behind a Tailscale Funnel, launchd jobs `com.leanzero.headscale` and
+  `com.leanzero.link-auth`, secrets in `~/.leanzero/` (api-key.txt, link-worker.env). None of it is
+  in git and none of it should be. On another machine the app can still build and run; Link sign-in
+  will talk to THIS machine's control plane over the funnel URL, so it keeps working as long as this
+  Mac Studio is up. Moving the control plane is its own job, not a checkout step.
+- **The model fleet.** LM Studio / the MLX engine and `~/.goose/models` are per-machine. Note
+  `LMSTUDIO_API_KEY` is set nowhere on this workhorse, so its LM Studio answers 401 to every probe.
+- **`~/.config/goose/config.yaml`** carries the `swarm` key (the node pool) — per-machine, not in
+  git. Recreate with `goose flock pool`.
+- **The loop-state instruments** (`tick.py`, `bench_dispatch.mjs`, `first_tick_r1.sh`) live only on
+  the MacBook at `~/goose-builds/loop-state/`; the sync is one-way MacBook -> workhorse.
+- **Fetched/derived artifacts** are gitignored now, so `git status` is quiet on a fresh clone:
+  `ui/desktop/src/bin/tailscale{,d}`, `/main.js`, `/ui/desktop/dist/`, the screenshots-pass* dirs.
+- **Notarization** still needs Mihai's Apple Developer ID certificate in the login keychain;
+  `just release-notarized <version>` is wired and waiting on it.
+
+### Open queue (nothing here blocks the branch)
+
+- ipcMain `restart-app` calls `app.exit(0)` and skips the lease cleanup, so an in-app restart still
+  leaks tailscaled + the MLX engine. Quitting normally is safe. Route it through the same teardown.
+- `LMSTUDIO_API_KEY` unset on the workhorse (above).
+- Fleet-card offline text lacks the reason; deriveFleet keys a laneless sidecar digest to the LM row;
+  `studio.tsx` primitives want promoting into `lz/`; FLEET/nodes/peers want the DataTable;
+  meshPollFailures/lastPollError are not in the status DTO; two benign zod eval CSP violations.
+- `icon.ico` (Windows) is still the old goose art — deliberate, Windows is not a target.
