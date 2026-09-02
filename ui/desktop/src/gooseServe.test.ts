@@ -8,6 +8,7 @@ import {
   findGooseBinaryPath,
   GOOSED_SIGKILL_AFTER_MS,
   startGooseServe,
+  withSystemSbin,
 } from './gooseServe';
 
 const binaryName = process.platform === 'win32' ? 'goose.exe' : 'goose';
@@ -339,5 +340,36 @@ describe('stop — the SIGKILL fallback covers goosed\'s own teardown', () => {
     const engineCeiling = 2 * perPidGraceMs;
     const probeCeiling = 5000;
     expect(GOOSED_SIGKILL_AFTER_MS).toBeGreaterThanOrEqual(meshCeiling + engineCeiling + probeCeiling);
+  });
+});
+
+describe('withSystemSbin — goosed can reach lsof from its PATH', () => {
+  it('appends /usr/sbin and /sbin when the PATH lacks them, keeping the existing order', () => {
+    expect(withSystemSbin('/app/bin:/usr/bin:/bin', 'darwin')).toBe('/app/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+  });
+
+  it('adds only the one that is missing', () => {
+    expect(withSystemSbin('/app/bin:/usr/sbin:/usr/bin', 'darwin')).toBe('/app/bin:/usr/sbin:/usr/bin:/sbin');
+  });
+
+  it('leaves a PATH that already carries both untouched', () => {
+    const value = '/app/bin:/usr/sbin:/sbin:/usr/bin:/bin';
+    expect(withSystemSbin(value, 'linux')).toBe(value);
+  });
+
+  it('does nothing on Windows', () => {
+    expect(withSystemSbin('C:\\app\\bin;C:\\Windows', 'win32')).toBe('C:\\app\\bin;C:\\Windows');
+  });
+
+  it.skipIf(process.platform === 'win32')('buildGooseServeEnv hands goosed a PATH with /usr/sbin', () => {
+    vi.stubEnv('PATH', '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin');
+    const dir = makeTempDir();
+    const goose = path.join(dir, binaryName);
+    fs.writeFileSync(goose, 'x');
+    const env = buildGooseServeEnv('secret', goose, {});
+    const entries = (env.PATH ?? '').split(path.delimiter);
+    expect(entries[0]).toBe(dir);
+    expect(entries).toContain('/usr/sbin');
+    expect(entries).toContain('/sbin');
   });
 });

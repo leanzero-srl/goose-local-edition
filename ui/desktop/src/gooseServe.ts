@@ -328,6 +328,25 @@ const withStartupDiagnosticsPath = (
   return `${message} Startup diagnostics: ${startupDiagnosticsPath}`;
 };
 
+// goosed reclaims an orphaned engine port through `lsof`, which macOS keeps in /usr/sbin — a
+// directory the packaged app's PATH lacked (measured 2026-09-02:
+// `…/Resources/bin:…:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`), so the bare-name spawn
+// ENOENTed and every reclaim logged "lsof unavailable; port left occupied". goosed now resolves
+// lsof from its known locations first; this keeps the PATH it inherits honest as well.
+const SYSTEM_SBIN_DIRS = ['/usr/sbin', '/sbin'];
+
+export const withSystemSbin = (
+  pathValue: string,
+  platform: NodeJS.Platform = process.platform
+): string => {
+  if (platform === 'win32') {
+    return pathValue;
+  }
+  const entries = pathValue.split(path.delimiter);
+  const missing = SYSTEM_SBIN_DIRS.filter((dir) => !entries.includes(dir));
+  return missing.length === 0 ? pathValue : [pathValue, ...missing].join(path.delimiter);
+};
+
 export const buildGooseServeEnv = (
   serverSecret: string,
   binaryPath: string,
@@ -340,7 +359,7 @@ export const buildGooseServeEnv = (
   const env: Record<string, string | undefined> = {
     ...process.env,
     HOME: homeDir,
-    [pathKey]: `${path.dirname(binaryPath)}${path.delimiter}${currentPath}`,
+    [pathKey]: withSystemSbin(`${path.dirname(binaryPath)}${path.delimiter}${currentPath}`),
   };
 
   if (process.platform === 'win32') {
