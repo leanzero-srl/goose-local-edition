@@ -73,3 +73,46 @@ reality disagreeing — and it is the strongest argument yet that `passed` must 
 the app) all did what they claimed; they bought TIME and structure, not correctness. The 3-shard split is not exonerated either:
 a single-lane web-viz scored 0.69 on T in r6h, three shards + a merger scored 0.000. That is the one measurement that should
 decide whether the split survives, and it needs a second run to separate "the split broke it" from "this model drew badly tonight".
+
+## EVERY REGRESSION vs r6h — the full check-level diff (91 checks scored in both runs)
+
+**37 checks worse, 2 better, 0 unique to either run.** The tier table above is the shape; these are the behaviours.
+
+**Collapsed from a perfect 1.000 to 0.000 (17 checks).** The 3D field: `t_layout_basis`, `t_draw_budget`, `t_pick_real_pass`,
+`t_coast_identity`, `t_coast_reality`. Money: `x_l2_per_key_order`, `x_l4_convergence`, `x_conservation_residual`, `x_no_lost_write`.
+Performance: `p_drag_frames`, `p_idle_flatness`, `p_under_stream`, `p_api_latency`. Excellence: `e_frames_under_drag`,
+`e_under_load_latency`. API surface: `b_events_log` (the event log endpoint), `c_paged_walk` (cursor paging).
+
+**The rest of the 3D tier fell from partial to zero**: `t_labels_culling` 0.900, `t_camera_math` 0.857, `t_context_real` 0.750,
+`t_click_semantics` 0.667, `t_pick_buffer` 0.600, `t_stream_diff` 0.500, `t_height_pixels` 0.333, `t_brush_link` 0.333,
+`t_scene_binding` 0.214, `t_vs7dbg_truth` 0.200 — all → 0.000. TWELVE of them hang off `t_vs7dbg_truth` by the scorer's own
+`root_causes`, so the debug surface is the single upstream failure.
+
+**Degraded but alive:** `c_conditional_resync` 1.000→0.584, `c_b1_drop_resume` and `c_b2_retry_after` 1.000→0.667,
+`c_webhook_discipline` 1.000→0.722, `x_m3_terminal_conservation` 1.000→0.825, `b_viz_records` 1.000→0.806,
+`r_b7_partition` 1.000→0.800, `j_sync_journey` 1.000→0.500, `j_error_state` 0.300→0.000, `e_mastery` 0.441→0.220.
+
+**BETTER in r6j (only 2):** `j_first_use` 0.250→1.000 (the first-use journey now works — web-page's doing) and
+`c_b5_generation_304` 0.667→1.000 (the generation/304 conditional path).
+
+## PROCESS DIFFERENCES vs r6h (same fleet, same spec)
+
+| | r6h | r6j |
+|---|---|---|
+| total wall | 507.3 min | 580.4 min (+73) |
+| OPEN | 65.6 | 52.2 |
+| RESEARCH | 8.2 | **144.3** |
+| SYNTHESIS (incl. split) | 31.6 | 50.3 |
+| BUILD | 319.1 | 295.9 |
+| INTEGRATE | 46.3 | 36.3 |
+| REPAIR + FIX | 1.4 + **35.2** | 1.3 + **0.0** |
+| tasks / retries / failures | 10 / 0 / 0 | 11 / 0 / 0 |
+| repair: verify rounds · repro · flips · promoted | 2 · 3 · 2 · **2** | 1 · 0 · 0 · **0** |
+
+**The two process regressions that matter:**
+1. **RESEARCH went 8.2 → 144.3 minutes.** r6h barely researched; r6j spent 2.4 hours, 131 of them on one lane holding its slice.
+   That is where the +73 minutes came from and more.
+2. **REPAIR DID NOTHING.** r6h ran two verify rounds, reproduced three findings, flipped two and PROMOTED TWO FIXES in a 35-minute
+   fix phase. r6j ran one verify round, found one finding (no tests), reproduced nothing, promoted nothing, and its fix phase was
+   0.0 minutes. r6h's repair is where two real defects got fixed — including the `viz-labels` DOM id — and r6j never entered it.
+   With three criticals live in the tree, a repair phase that exits immediately is the single worst behaviour of this run.
