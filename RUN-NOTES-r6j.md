@@ -37,3 +37,39 @@ declarator, VA-155 cross-shard references read as undefined.
 **Not done, deliberately.** No score was run and no r6k was launched: the standing order after the 429 was vigil + notes only.
 `r6k-staging` (25bf05c33 + the later merges) holds ~20 engine changes, pushed and UNPROVEN — no cargo has ever run against it.
 
+
+## SCORE (the harness's own auto-score, verdict.json, 04:37)
+
+**r6j 0.1112 (inner 0.5823, crit_mult 0.216) vs r6h 0.4616 (inner 0.8252, crit_mult 0.6). A REGRESSION of 0.35, and the engine's
+own `passed: true` did not see it.**
+
+| tier (weight) | r6h | r6j |
+|---|---|---|
+| T — the 3D field (0.14) | 0.690 | **0.000** |
+| X — money correctness (0.16) | 0.833 | 0.485 |
+| P — performance (0.08) | 0.833 | 0.200 |
+| E — excellence (0.12) | 0.359 | 0.019 |
+| C — endpoints (0.09) | 0.952 | 0.663 |
+| B (0.09) | 1.000 | 0.892 |
+| J — journeys (0.12) | 0.507 | 0.500 |
+| R (0.16) | 0.900 | 0.880 |
+| A / V / D | 1.0 / 1.0 / 0.8 | 1.0 / 1.0 / 0.8 |
+
+**Three criticals (r6h had one):** `j_workflow_journey` (approval cannot complete through the UI — r6h's too),
+`x_conservation_residual` (money created/destroyed), `x_no_lost_write` (an acknowledged mutation absent from final state).
+Each multiplies by 0.6: 0.6³ = 0.216.
+
+**The scorer's own root cause: `t_vs7dbg_truth`** — twelve T-tier checks (scene binding, layout basis, draw budget, pick buffer,
+pick real pass, click semantics, camera math, coast identity/reality, label culling, brush link, stream diff) all failed together
+off ONE debug-API truth check. The merged `web/viz.js` parses and the page renders, but the debug surface the grader drives it
+through does not answer truthfully — so every 3D check reads 0. r6h scored 0.69 there.
+
+**THE HONEST READING.** The split delivered a file that parses and a page that loads; it did NOT deliver a working 3D field.
+`passed: true` measured what the engine can see (criticals closed, no render-class findings) and the app's actual behaviour was
+worse than the golden run on 5 of 11 tiers. This is exactly the class VA-134 filed — the verdict's partition and the product's
+reality disagreeing — and it is the strongest argument yet that `passed` must not be reported without the score beside it.
+
+**What this does NOT say.** The engine changes measured earlier (dispatch order, mid-lane answers, the assembly, integrate booting
+the app) all did what they claimed; they bought TIME and structure, not correctness. The 3-shard split is not exonerated either:
+a single-lane web-viz scored 0.69 on T in r6h, three shards + a merger scored 0.000. That is the one measurement that should
+decide whether the split survives, and it needs a second run to separate "the split broke it" from "this model drew badly tonight".
