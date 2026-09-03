@@ -818,36 +818,37 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 ## swarm-3node-r0
 
 - **run_id**: swarm-20260902-153603606
-- **phases**: open → research
+- **phases**: open → research → synthesis → build → integrate → repair → fix
 - **started**: 15:36:04
-- **tasks**: 0
-- **files_planned**: 0
+- **tasks**: 11
+- **files_planned**: 27
 - **collisions**: none
-- **sink_owns**: NO SINK
-- **chain**: 0
-- **startable**: 0
-- **brief_median**: 0
-- **reasoning_chars**: 745586
-- **answer_chars**: 43913
-- **code_files**: 0
-- **code_bytes**: 0
-- **elapsed_min**: 130
-- **phase_split**: open 52m · research 77m
-- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 745,586 chars reasoned, 0 tasks completed, 0 retried.
-- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
-- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
-- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 5
+- **brief_median**: 48800
+- **reasoning_chars**: 2343535
+- **answer_chars**: 235061
+- **code_files**: 25
+- **code_bytes**: 279797
+- **elapsed_min**: 580
+- **phase_split**: open 52m · research 144m · synthesis 50m · build 295m · integrate 36m · repair 1m · fix 0m
+- **before_build_min**: 247 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 279,797B delivered, 2,343,535 chars reasoned, 11 tasks completed, 0 retried.
+- **python_parses**: 18 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 11/11 completed, 11 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: 051c94cb9f72e284
-- **plan_patched**: 0
-- **plan_loaded**: 0
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
 - **review_rounds**: none
-- **judge_looks**: 0
+- **judge_looks**: 1
 - **judge_nudges**: 0
 - **judge_ended**: 0
-- **drift_held**: 0
+- **drift_held**: 1
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
-- **ledger**: 20 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+- **repair**: delivery_defect_steer=1 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=1 complete_result=1
+- **ledger**: 56 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=13 delivered=1
 
