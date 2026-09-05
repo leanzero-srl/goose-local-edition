@@ -83,7 +83,7 @@ fn comment_prefix(lang: TargetLang) -> &'static str {
     }
 }
 
-pub(super) fn is_comment_line(t: &str, lang: TargetLang) -> bool {
+fn is_comment_line(t: &str, lang: TargetLang) -> bool {
     match lang {
         TargetLang::Python => t.starts_with('#'),
         _ => t.starts_with("//") || t.starts_with("/*") || t.starts_with('*'),
@@ -298,7 +298,7 @@ pub(crate) struct Assembly {
     pub(super) declared_missing: Vec<String>,
     pub(super) order_source: String,
     /// The glue classes the merger must write, measured: imports, shared_state_init, wiring,
-    /// duplicates, gaps, unbacked_provides, assumes, unfinished.
+    /// duplicates, gaps, unfinished.
     pub(super) glue_needed: Vec<String>,
     pub(super) bytes: usize,
     pub(super) lines: usize,
@@ -568,11 +568,6 @@ pub(super) fn assemble(root: &Path, dossier: &MergeDossier) -> AssemblyOutcome {
         .any(|s| !s.provides_unbacked.is_empty())
     {
         glue_needed.push("unbacked_provides".to_string());
-    }
-    // An ASSUMES naming what no shard defines is glue the merger writes — the alias or the
-    // rename the dossier's per-name items spell out (`assumes::resolve`, VA-108).
-    if !dossier.assumptions_unbacked.is_empty() {
-        glue_needed.push("assumes".to_string());
     }
     if !dossier.unfinished.is_empty() {
         glue_needed.push("unfinished".to_string());

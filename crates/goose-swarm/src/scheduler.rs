@@ -13,7 +13,7 @@ use crate::dag::{Dag, Difficulty, TaskId, TaskState};
 use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
-use crate::event::{EventSink, NullSink, ReadyWeight, SwarmEvent};
+use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::idle_jobs::PreReviewer;
 use crate::stub::skeleton_only;
 use anyhow::{bail, Result};
@@ -706,10 +706,7 @@ impl Drop for IdleSlotGuard {
     }
 }
 
-/// The READY SET. `pick_assignments` drains the whole heap on every pass and orders the tasks
-/// itself (remaining chain weight, fan-out, plan order — see there), so this `Ord` only fixes the
-/// order the drain hands them over in; `BinaryHeap` is a max-heap, so `Ord` returns Greater for
-/// higher priority.
+/// determinism. `BinaryHeap` is a max-heap, so `Ord` returns Greater for higher priority.
 #[derive(Eq, PartialEq)]
 struct Ranked {
     fan_out: usize,
@@ -1193,38 +1190,6 @@ impl State {
         })
     }
 
-    /// REMAINING CHAIN WEIGHT of every task: its own plan weight plus the heaviest chain among its
-    /// dependents, down to the join — the critical-path term of the dispatch order (VA-113). A
-    /// Done or Failed node contributes nothing of its own but its downstream still counts (the join
-    /// behind it is still to be run). Derived on every placement pass, never bookkept: the DAG is
-    /// tens of nodes, a pass runs once per completion, and a finished node leaves every chain by the
-    /// state test rather than by remembering to subtract it.
-    fn chain_weights(&self) -> HashMap<TaskId, u64> {
-        fn walk(dag: &Dag, id: &str, memo: &mut HashMap<TaskId, u64>) -> u64 {
-            if let Some(w) = memo.get(id) {
-                return *w;
-            }
-            let n = &dag.tasks[id];
-            let own = match n.state {
-                TaskState::Done | TaskState::Failed => 0,
-                _ => n.weight as u64,
-            };
-            let downstream = dag
-                .dependents
-                .get(id)
-                .map(|ds| ds.iter().map(|d| walk(dag, d, memo)).max().unwrap_or(0))
-                .unwrap_or(0);
-            let total = own + downstream;
-            memo.insert(id.to_string(), total);
-            total
-        }
-        let mut memo = HashMap::new();
-        for id in self.dag.tasks.keys() {
-            walk(&self.dag, id, &mut memo);
-        }
-        memo
-    }
-
     /// Claim as many ready tasks as can be placed right now (respecting weights + file holds).
     fn pick_assignments(&mut self) -> Vec<Assignment> {
         let mut out = Vec::new();
@@ -1232,43 +1197,30 @@ impl State {
         while let Some(r) = self.ready.pop() {
             ranked.push(r.id);
         }
-        // LONGEST REMAINING CHAIN FIRST (VA-113), fan-out next, then the PLAN's order.
+        // HEAVIEST FIRST WITHIN A FAN-OUT TIER, so simultaneously-ready fat tasks reach DISTINCT
+        // nodes instead of racing for the same second slot.
         //
-        // MEASURED (r6h, 2026-09-02): BUILD ran 319 min on 3 nodes with 265 of 957 node-minutes
-        // idle, 264 of them the single-lane tail — `webhooks-workflow` alone for 132 min beside two
-        // idle hosts. The order that produced it was fan-out, then hard-before-easy, then the
-        // ALPHABET: at 03:58Z `ledgerd-core` finished and the ready set was {console-page,
-        // webhooks-workflow, notifierd}, all fan-out 1; `console-page` (5 sections, chain 7) took
-        // the freed fastest host by name order and the chain head `webhooks-workflow` (10 sections,
-        // 201.9 min as run) waited 12 min for the SLOWEST host, then finished 132 min after every
-        // other lane. Nothing the order read knew that one of the three tied tasks was the rest of
-        // the critical path.
+        // The heap pops fan-out-descending, id-ascending — a critical-path order that says nothing
+        // about SIZE. r6c's five leaves were all ready in the same instant and popped
+        // ledgerd-core(fan-out 2), notifierd, web-console, web-viz, decisions-doc: alphabetical
+        // inside the fan-out-1 tier put `web-viz` FOURTH, i.e. into the first doubled-up slot, and
+        // the two tasks that were 67% of all BUILD work (518.6 min and 431.2 min, 7.6x and 6.3x the
+        // median) landed on the same host at the same microsecond and stayed there for 431 minutes.
         //
-        // The key is the REMAINING CHAIN WEIGHT (`chain_weights`): the plan's own size signal for
-        // the task (spec sections when the plan measured them, files × difficulty otherwise —
-        // `Node::weight`) plus the heaviest chain below it. It subsumes what the two earlier keys
-        // bought: r6c's stacking fix (hard before easy inside a tier, so two fat leaves reach
-        // DISTINCT nodes) holds because a heavier task ranks higher, and fan-out — the breadth term
-        // a chain maximum cannot see — stays as the second key. The last key is the planner's
-        // sequence (`plan_index`), never the alphabet. `sort_by_key` is stable.
-        //
-        // SPEED MATCH falls out of this order: each task in turn takes `pick_device`'s best free
-        // slot, whose key ranks equal-load devices by `speed_weight`, so when several devices are
-        // free the heaviest chain lands on the fastest one and the next-heaviest on the next. No
-        // device is ever held for a heavier task — a free slot always takes the heaviest task that
-        // can run on it now — and a task whose files are held is skipped for the next in order,
-        // exactly as before.
-        let chains = self.chain_weights();
+        // `difficulty` is the plan's OWN size signal and the only one the DAG carries at claim time
+        // (a wall-clock estimate would be invented data, and description length measures the brief,
+        // not the job). Fan-out stays primary: it is the critical-path term, and demoting it would
+        // trade a measured stacking harm for an unmeasured serialization one. `sort_by_key` is
+        // stable, so the heap's id order survives inside each tier and placement stays deterministic.
         ranked.sort_by_key(|tid| {
             let n = &self.dag.tasks[tid];
             (
-                std::cmp::Reverse(chains[tid]),
                 std::cmp::Reverse(n.fan_out),
-                n.plan_index,
+                std::cmp::Reverse(matches!(n.spec.difficulty, Difficulty::Hard)),
             )
         });
         let mut leftover: Vec<TaskId> = Vec::new();
-        for tid in ranked.clone() {
+        for tid in ranked {
             if self.dag.tasks[&tid].state != TaskState::Ready {
                 continue; // defensive: stale heap entry
             }
@@ -1277,30 +1229,7 @@ impl State {
                 continue;
             }
             match self.pick_device(&tid) {
-                Some(dev) => {
-                    let ready_set: Vec<ReadyWeight> = ranked
-                        .iter()
-                        .filter(|t| self.dag.tasks[*t].state == TaskState::Ready)
-                        .map(|t| ReadyWeight {
-                            task: t.clone(),
-                            weight: self.dag.tasks[t].weight,
-                            chain_weight: chains[t],
-                        })
-                        .collect();
-                    self.sink.emit(&SwarmEvent::DispatchOrder {
-                        task_id: tid.clone(),
-                        weight: self.dag.tasks[&tid].weight,
-                        chain_weight: chains[&tid],
-                        ready_set,
-                        device: self.devices[dev].cfg.id.clone(),
-                        device_speed_weight: self.devices[dev].cfg.speed_weight,
-                        device_avg_ms: self
-                            .device_speed
-                            .get(&dev)
-                            .map(|(t, c)| t / (*c).max(1) as u64),
-                    });
-                    self.do_claim(tid, dev, &mut out)
-                }
+                Some(dev) => self.do_claim(tid, dev, &mut out),
                 None => leftover.push(tid),
             }
         }
