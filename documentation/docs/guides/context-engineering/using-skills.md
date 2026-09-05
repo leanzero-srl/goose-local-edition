@@ -105,6 +105,10 @@ When reviewing code, check each of these areas:
 
 Skills can also come from installed [plugins](/docs/guides/context-engineering/plugins). Plugin-provided skills are discovered at session startup and work like other skills. For Open Plugins, skill names are namespaced with the plugin name, such as `my-plugin:review`. Use that full name when explicitly loading a plugin-provided skill.
 
+## Automatic Suggestions
+
+When your request's words match a skill's name or description, goose adds a `<relevant-skills>` block to that turn's context naming up to three skills to load — the `recall` extension does this on every request, so a model that would not think to call `load_skill` still hears about the skill that fits. Disable `recall` to turn it off.
+
 ## Supporting Files
 
 Skills can include supporting files like scripts, templates, or configuration files. Place them in the skill directory:
@@ -133,6 +137,8 @@ description: Set up API integration with configuration and helper scripts
 # API Setup
 
 This skill helps you set up a new API integration with our standard configuration.
+
+A supporting file larger than `GOOSE_MAX_TOOL_RESPONSE_SIZE` characters is cut at that size and the result says so, so one large file cannot fill a small context window; read the rest with a file tool.
 
 ## Steps
 

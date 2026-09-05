@@ -59,12 +59,16 @@ Memories are stored as files on disk in one of two locations:
 
 At the start of a session goose loads an **index** of your memories into the prompt — one line per entry, `category [tags]: headline` — for both scopes. Only the headlines are loaded; a memory's full text reaches the model when it calls `retrieve_memories` for that category or `search_memories` for a topic. The index costs a few tokens per memory, so hundreds of memories no longer crowd out the conversation (a 171-entry global store measured 344 KB when everything was injected; the index of the same store is 39 KB, an 89% cut).
 
+## Automatic Recall
+
+You do not have to ask goose to look things up. On every request, the `recall` extension (on by default) takes the words of your message, searches both memory scopes, and adds the matching memories in full to that turn's context in a `<recalled-memories>` block — a memory qualifies when it shares two words with the request or carries one of them in its category, tags or headline, and at most three ride along. The same pass names skills whose description matches, in a `<relevant-skills>` block, so the model knows which skill to load. Nothing matching means nothing is added. Disable the `recall` extension to turn this off.
+
 ## Tool Reference
 
 | Tool | What it does |
 |------|-------------|
-| `remember_memory(category, data, tags, is_global)` | Store information with a category, optional tags, and scope (local/global) |
-| `retrieve_memories(category, is_global)` | Load the full text of every memory in a category. Use `"*"` to load all. |
+| `remember_memory(category, data, tags, is_global?)` | Store information with a category, tags (kind first: user/feedback/project/reference) and scope (`is_global` omitted = this project). The first line of `data` is the headline the index shows. Saving data whose first line matches an existing memory's headline updates that memory in place; an identical save changes nothing. |
+| `retrieve_memories(category, is_global?)` | Load the full text of every memory in a category. Use `"*"` to load all; omit `is_global` to read both scopes. |
 | `search_memories(query, is_global?, limit?)` | Keyword search over category, tags and content; returns the best-matching entries in full, most terms matched first. Omit `is_global` to search both scopes. goose is told to search before it remembers, so a corrected fact replaces the old one instead of duplicating it. |
 | `remove_memory_category(category, is_global)` | Remove all memories in a category. Use `"*"` to clear all. |
 | `remove_specific_memory(category, memory_content, is_global)` | Remove a single memory by matching its content within a category |
