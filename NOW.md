@@ -1,5 +1,14 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-05 evening — THE ENGINE IS THE r6h GOLDEN, AND ONLY THAT.** Mihai: "the engine is the one that had the golden formula, the
+> score of 0.46. That is the one we need to keep — everything that might modify that needs to be deleted." Measured: local-edition's tip
+> (d8202bc89) carried 42 engine commits PAST the golden 393a99351 (VA-089 research fan v3, VA-100..118, VA-113 dispatch order, r6i-staging
+> merges) — r6i and r6j ran on them and REGRESSED (r6j 0.1112). main's engine is being restored to 393a99351 + the multi-engine layer only
+> (branch restore/golden-engine → main). Every other branch on origin is DELETED; their tips survive as `archive/*` tags (r6k-staging, the
+> va-* WIP, the codex salvage lines — the cloud sb-7 harness from codex/salvage-benchmarks is archived under evals/swarm-bench/archive/).
+> RULE: an engine change lands on main only with a Benchmark-view sb-7 run ≥ 0.4616. The 2.0.2 notarized build (post-golden engine) was
+> retired unpublished; the first release is 2.0.3 from the restored engine.
+
 > **2026-09-05 — MAIN IS THE SINGLE SOURCE OF TRUTH.** `origin/local-edition` (the MacBook vigil line: r6h golden 0.4616, VA-0xx–156,
 > gates 9–11, research fan v3, 825 commits since the 08-30 fork) is MERGED into `main` on top of the `goose/mlx-inferencing` line (the MLX
 > sidecar + multi-engine layer, LeanZero Link mesh, the Goose Swarm remake, the provider allow-list, the Swarm provider's idle-node router).
