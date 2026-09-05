@@ -76,3 +76,27 @@ keychain, so you cannot accidentally ship an un-notarized build. It ends by runn
   Intel or Windows path by design.
 - The first notarization submission can take a few minutes (Apple-side); `--wait` blocks until it
   finishes and prints the log URL if it is ever rejected.
+
+## LeanZero setup (2026-09-05) — how our Macs actually sign and notarize
+
+Everything below is DONE on the workhorse (Mac Studio) and is the source for every other Mac.
+
+- **Identity:** `Developer ID Application: Mihai Perdum (ZZ8MTZ6NRZ)`, G2 Sub-CA, valid to 2031-09-06.
+  Created from a CSR generated on the workhorse; the private key never left it.
+- **Bundle, never in git:** `~/.leanzero/apple/` — `goose-developer-id.p12` (cert + key), `p12-password.txt`,
+  `notary.env` (`APPLE_TEAM_ID` / `APPLE_ID` / `APPLE_ID_PASSWORD` = an app-specific password),
+  `DeveloperIDG2CA.cer`, and the CSR/key/cer the p12 was built from.
+- **Keychain:** a DEDICATED `goose-signing` keychain (password in `signing-keychain-password.txt`), the identity
+  imported with `codesign` in its ACL and the `apple-tool:,apple:,codesign:` partition set, first in the user
+  search list. Result: `codesign`, forge's osx-sign and notarytool never prompt and never need a login password.
+  (The login keychain was NOT the right place: `set-key-partition-list` there needs the user's password.)
+- **One command per release:** `just release-notarized <version>` — the recipe sources `notary.env`, unlocks
+  `goose-signing`, builds goosed, signs the whole bundle with hardened runtime, notarizes + staples the app,
+  builds and notarizes + staples the DMG, verifies with `stapler validate` and `spctl`, and rebuilds the
+  auto-update zip + manifest. Under hermit, put the corepack pnpm shim first on PATH (hermit's own pnpm is broken).
+- **Any other Mac (the MacBook):** `bash ui/desktop/scripts/bootstrap-signing.sh` — pulls the bundle over the
+  `workhorse` SSH alias if it is not already in `~/.leanzero/apple`, creates the same keychain, imports the
+  identity, and PROVES it: signs a scratch binary and reads back `Authority=Developer ID Application`, then
+  authenticates to Apple with `notarytool history`. Idempotent. After it, `just release-notarized` works there.
+- **Proof that this works end to end:** the 2.0.2 build on 2026-09-05 (see local-edition/mlx/NOW.md for the
+  `spctl` verdict of that run).

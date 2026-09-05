@@ -287,32 +287,47 @@ release-fork version:
 #   APPLE_ID_PASSWORD=abcd-efgh-ijkl-mnop \
 #   just release-notarized 2.0.5
 # See ui/desktop/NOTARIZATION.md for the full walkthrough.
+# LeanZero setup (2026-09-05): the three vars live in ~/.leanzero/apple/notary.env and the
+# Developer ID identity in the dedicated `goose-signing` keychain — both created by
+# ui/desktop/scripts/bootstrap-signing.sh (pulls the bundle from the workhorse on a new Mac).
+# This recipe sources the env itself and unlocks that keychain, so a release is ONE command:
+#   just release-notarized 2.0.3
 release-notarized version:
-    @if [ -z "${APPLE_TEAM_ID:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_ID_PASSWORD:-}" ]; then echo "release-notarized: REFUSED — set APPLE_TEAM_ID, APPLE_ID and APPLE_ID_PASSWORD first (see the recipe comment / ui/desktop/NOTARIZATION.md)."; exit 1; fi
-    @if ! security find-identity -p codesigning -v | grep -q "Developer ID Application"; then echo "release-notarized: REFUSED — no 'Developer ID Application' certificate in the keychain. Install one (see NOTARIZATION.md step 2)."; exit 1; fi
-    @if [ "$(echo '{{version}}' | cut -d. -f1)" -lt 2 ] 2>/dev/null || ! echo '{{version}}' | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then echo "release-notarized: REFUSED — version '{{version}}' is below the 2.0.0 own-version floor (or not a plain semver)."; exit 1; fi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # One shell for the whole recipe (a shebang recipe), so the sourced env and the unlocked
+    # keychain are visible to every step below — a plain recipe runs each line in its own shell.
+    if [ -z "${APPLE_TEAM_ID:-}" ] && [ -s "$HOME/.leanzero/apple/notary.env" ]; then
+        echo "release-notarized: sourcing ~/.leanzero/apple/notary.env"
+        set -a; . "$HOME/.leanzero/apple/notary.env"; set +a
+    fi
+    if [ -f "$HOME/Library/Keychains/goose-signing.keychain-db" ] && [ -s "$HOME/.leanzero/apple/signing-keychain-password.txt" ]; then
+        security unlock-keychain -p "$(cat "$HOME/.leanzero/apple/signing-keychain-password.txt")" "$HOME/Library/Keychains/goose-signing.keychain-db"
+        echo "release-notarized: goose-signing keychain unlocked"
+    fi
+    if [ -z "${APPLE_TEAM_ID:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_ID_PASSWORD:-}" ]; then echo "release-notarized: REFUSED — set APPLE_TEAM_ID, APPLE_ID and APPLE_ID_PASSWORD, or run ui/desktop/scripts/bootstrap-signing.sh to install ~/.leanzero/apple/notary.env."; exit 1; fi
+    if ! security find-identity -p codesigning -v | grep -q "Developer ID Application"; then echo "release-notarized: REFUSED — no 'Developer ID Application' certificate in the keychain search list. Run ui/desktop/scripts/bootstrap-signing.sh (see NOTARIZATION.md)."; exit 1; fi
+    if [ "$(echo '{{version}}' | cut -d. -f1)" -lt 2 ] 2>/dev/null || ! echo '{{version}}' | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then echo "release-notarized: REFUSED — version '{{version}}' is below the 2.0.0 own-version floor (or not a plain semver)."; exit 1; fi
+    export APPLE_TEAM_ID APPLE_ID APPLE_ID_PASSWORD
     GOOSE_BUILD_VERSION={{version}} GOOSE_BUILD_SHA=$(git rev-parse --short HEAD) just release-binary
-    @echo "Bumping ui/desktop version to {{version}}..."
-    cd ui/desktop && node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
-    @echo "electron-forge make — @electron/osx-sign signs the WHOLE bundle with your Developer ID +"
-    @echo "  hardened runtime + entitlements.plist (goosed, tailscaled, tailscale, node, uvx in"
-    @echo "  Resources/bin included), then @electron/notarize submits + STAPLES the .app. APPLE_TEAM_ID"
-    @echo "  is set, so forge.config.ts takes the Developer-ID branch — NO local self-signed re-sign."
-    cd ui/desktop && pnpm run make
-    @echo "Building the DMG from the notarized, stapled app..."
-    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
-    @echo "Notarizing + stapling the DMG itself (the artifact people download)..."
-    cd ui/desktop && xcrun notarytool submit out/make/Goose-{{version}}.dmg --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-    cd ui/desktop && xcrun stapler staple out/make/Goose-{{version}}.dmg
-    @echo "Verifying Gatekeeper acceptance (must say 'accepted' / 'Notarized Developer ID')..."
-    cd ui/desktop && xcrun stapler validate out/make/Goose-{{version}}.dmg
-    cd ui/desktop && /usr/sbin/spctl -a -vvv -t exec out/Goose-darwin-arm64/Goose.app
-    @echo "Re-zipping the Developer-ID-signed, stapled app for the auto-update feed + manifest..."
-    cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
-    cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
-    @echo ""
-    @echo ">>> DONE. Notarized DMG: ui/desktop/out/make/Goose-{{version}}.dmg — drag-installs on ANY Mac, no Gatekeeper prompt."
-    @echo "    Auto-update artifacts (Developer-ID signed): ui/desktop/out/Goose-darwin-arm64/{Goose.zip,latest-mac.yml}"
+    echo "Bumping ui/desktop version to {{version}}..."
+    cd ui/desktop && node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' && cd ../..
+    echo "electron-forge make — @electron/osx-sign signs the WHOLE bundle with your Developer ID +"
+    echo "  hardened runtime + entitlements.plist (goosed, tailscaled, tailscale, node, uvx in"
+    echo "  Resources/bin included), then @electron/notarize submits + STAPLES the .app. APPLE_TEAM_ID"
+    echo "  is set, so forge.config.ts takes the Developer-ID branch — NO local self-signed re-sign."
+    cd ui/desktop && pnpm run make && cd ../..
+    echo "Building the DMG from the notarized, stapled app..."
+    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg && cd ../..
+    echo "Notarizing + stapling the DMG itself (the artifact people download)..."
+    cd ui/desktop && xcrun notarytool submit out/make/Goose-{{version}}.dmg --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait && xcrun stapler staple out/make/Goose-{{version}}.dmg && cd ../..
+    echo "Verifying Gatekeeper acceptance (must say 'accepted' / 'Notarized Developer ID')..."
+    cd ui/desktop && xcrun stapler validate out/make/Goose-{{version}}.dmg && /usr/sbin/spctl -a -vvv -t exec out/Goose-darwin-arm64/Goose.app && cd ../..
+    echo "Re-zipping the Developer-ID-signed, stapled app for the auto-update feed + manifest..."
+    cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64 && cd ../..
+    echo ""
+    echo ">>> DONE. Notarized DMG: ui/desktop/out/make/Goose-{{version}}.dmg — drag-installs on ANY Mac, no Gatekeeper prompt."
+    echo "    Auto-update artifacts (Developer-ID signed): ui/desktop/out/Goose-darwin-arm64/{Goose.zip,latest-mac.yml}"
 
 # Run UI with latest (Windows version)
 run-ui-windows:
