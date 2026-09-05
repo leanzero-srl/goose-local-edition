@@ -8,9 +8,9 @@
 //! declarative `omlx` provider) — constructed ONLY when the config declares `mlx_engine` settings
 //! AND a pool device is tagged for it, so an untagged pool stays byte-identical.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
-use goose_swarm::{DeviceCfg, EventSink};
+use goose_swarm::{DeviceCfg, DispatchRequest, EventSink};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Command as ProcCommand;
@@ -101,7 +101,13 @@ pub trait SwarmEngine: Send + Sync {
     /// Currently-loaded instance count for a model across the fleet.
     fn loaded_instance_count(&self, model_id: &str) -> usize;
     /// JIT warm-up: ensure up to `instances` copies are loaded, never more than already present.
-    fn ensure_loaded(&self, model_id: &str, instances: u32);
+    /// `Err` = the ENGINE ITSELF says the model cannot be mounted this run (the sidecar's mount
+    /// failed, its model dir is unconfigured, or the engine call could not be driven) — a proven
+    /// negative on the device's own engine, which `prewarm_pool` returns for the caller to name
+    /// and exclude. LM Studio's `lms load` failing is NOT one (LM Link may hold the model on
+    /// another node; `loaded_instance_count` is fleet-wide) — it is a named absence
+    /// (`lms-load-failed`) and `Ok`.
+    fn ensure_loaded(&self, model_id: &str, instances: u32) -> Result<()>;
     /// Resident-model state through the engine's own probe chain (for LM Studio: `lms ps`
     /// primary — richest, carries DEVICE + PARALLEL — with the native HTTP catalog as fallback).
     fn resident_processes(&self) -> Result<Vec<LmsProcess>>;
@@ -457,10 +463,12 @@ pub(super) fn live_fleet_slots(
     // One residency probe per engine KIND in the pool. `None` = that engine proved nothing: its
     // probe errored, answered nothing, or no engine is registered for the kind (an unregistered
     // kind never reaches engine_models, so that arm is the honest spelling of "nobody to ask").
-    // An `Err` is NOT folded quietly with the other two: it is the probe saying WHY it could not
-    // answer (curl missing, the server refusing or unreachable), and that reason reaches
-    // run.jsonl as `fleet-probe-failed{engine, error}` — once per fan, since each fan probes each
-    // kind once. The slot arithmetic is unchanged: an errored kind keeps its snapshot entries.
+    // Neither failure shape is folded quietly: an `Err` is the probe saying WHY it could not
+    // answer (curl missing, the server refusing or unreachable) and reaches run.jsonl as
+    // `fleet-probe-failed{engine, error}`; an answered-EMPTY catalog is a proven negative the
+    // arithmetic still treats as unproven (a fan on the snapshot beats a fan on nothing) and is
+    // named `fleet-residency-empty{engine}`. Both once per fan, since each fan probes each kind
+    // once. The slot arithmetic is unchanged: both kinds keep their snapshot entries.
     let mut proven: HashMap<EngineKind, Option<HashSet<String>>> = HashMap::new();
     for d in devices.iter().filter(|d| !d.is_cloud) {
         let kind = kind_of(d);
@@ -468,6 +476,13 @@ pub(super) fn live_fleet_slots(
             match engines.for_kind(kind).map(|e| e.resident_processes()) {
                 Some(Ok(procs)) if !procs.is_empty() => {
                     Some(procs.into_iter().map(|p| p.identifier).collect())
+                }
+                Some(Ok(_)) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "fleet-residency-empty",
+                        "engine": kind.name(),
+                    }));
+                    None
                 }
                 Some(Err(e)) => {
                     sink.write_value(serde_json::json!({
@@ -477,7 +492,7 @@ pub(super) fn live_fleet_slots(
                     }));
                     None
                 }
-                _ => None,
+                None => None,
             }
         });
     }
@@ -498,6 +513,16 @@ pub(super) fn live_fleet_slots(
         .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
         .collect();
     if live.is_empty() {
+        // The fan runs on the stale snapshot rather than on nothing — said, not silent.
+        sink.write_value(serde_json::json!({
+            "event": "fleet-slots-snapshot-fallback",
+            "reason": if devices.is_empty() {
+                "the pool has no devices"
+            } else {
+                "every device's model is absent from its engine's answered catalog"
+            },
+            "snapshot_len": snapshot.len(),
+        }));
         snapshot
     } else {
         live
@@ -567,6 +592,9 @@ pub(super) fn local_request_params(
 #[derive(Default)]
 pub struct LmStudioEngine {
     unauthorized_said: AtomicBool,
+    /// Models whose `lms load` failure was already named this run (`lms-load-failed` is said
+    /// once per model per engine object).
+    lms_load_failed_said: Mutex<HashSet<String>>,
     absences: Mutex<Vec<serde_json::Value>>,
 }
 
@@ -590,8 +618,9 @@ impl SwarmEngine for LmStudioEngine {
     fn loaded_instance_count(&self, model_id: &str) -> usize {
         loaded_instance_count(model_id)
     }
-    fn ensure_loaded(&self, model_id: &str, instances: u32) {
-        ensure_loaded(model_id, instances)
+    fn ensure_loaded(&self, model_id: &str, instances: u32) -> Result<()> {
+        self.ensure_loaded_lms(model_id, instances);
+        Ok(())
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
         self.probe_lms_processes()
@@ -966,16 +995,76 @@ fn loaded_instance_count(model_id: &str) -> usize {
     }
 }
 
-/// Ensure up to `instances` copies of a model are loaded — and NEVER more than already present, so
-/// repeated runs / pre-warms don't stack duplicate instances (the cause of "3 instances on one box").
-/// Default `instances` is 1, so goose never spins up extras unless the user raises it.
-fn ensure_loaded(model_id: &str, instances: u32) {
-    let want = instances.max(1) as usize;
-    let have = loaded_instance_count(model_id);
-    for _ in have..want {
-        let _ = ProcCommand::new(resolve_lms())
-            .args(["load", model_id, "-y", "--ttl", "3600"])
-            .output();
+/// `exit N: <first 200 chars of stderr>` for a subprocess that ran and failed — the fact a caller
+/// names instead of discarding the `Output`.
+fn subprocess_failure(out: &std::process::Output) -> String {
+    let code = out
+        .status
+        .code()
+        .map_or_else(|| "killed by a signal".to_string(), |c| format!("exit {c}"));
+    let stderr: String = String::from_utf8_lossy(&out.stderr)
+        .trim()
+        .chars()
+        .take(200)
+        .collect();
+    if stderr.is_empty() {
+        code
+    } else {
+        format!("{code}: {stderr}")
+    }
+}
+
+impl LmStudioEngine {
+    /// Ensure up to `instances` copies of a model are loaded — and NEVER more than already
+    /// present, so repeated runs / pre-warms don't stack duplicate instances (the cause of "3
+    /// instances on one box"). Default `instances` is 1, so goose never spins up extras unless the
+    /// user raises it. A `lms load` that cannot run or exits non-zero used to be discarded; it is
+    /// now a named absence (`lms-load-failed{model, error}`, once per model) — the loop itself is
+    /// unchanged, every wanted copy is still attempted.
+    fn ensure_loaded_lms(&self, model_id: &str, instances: u32) {
+        let want = instances.max(1) as usize;
+        let have = loaded_instance_count(model_id);
+        for _ in have..want {
+            let failure = match ProcCommand::new(resolve_lms())
+                .args(["load", model_id, "-y", "--ttl", "3600"])
+                .output()
+            {
+                Ok(out) if out.status.success() => None,
+                Ok(out) => Some(format!("lms load {}", subprocess_failure(&out))),
+                Err(e) => Some(format!("lms could not run: {e}")),
+            };
+            if let Some(error) = failure {
+                self.note_lms_load_failed(model_id, &error);
+            }
+        }
+    }
+
+    /// The named absence for a failed warm-up, said ONCE per model per engine object: a yellow
+    /// stderr line and an `lms-load-failed{model, error}` event drained into run.jsonl with the
+    /// other probe absences. Repeats for the same model (the re-warm on a transient) stay quiet.
+    fn note_lms_load_failed(&self, model_id: &str, error: &str) {
+        if !self
+            .lms_load_failed_said
+            .lock()
+            .unwrap()
+            .insert(model_id.to_string())
+        {
+            return;
+        }
+        eprintln!(
+            "{}",
+            style(format!(
+                "lms-load-failed: `lms load {model_id}` failed ({error}) — the model is not \
+                 warmed by goose this run; its devices dispatch against whatever LM Studio holds"
+            ))
+            .yellow()
+            .bold()
+        );
+        self.absences.lock().unwrap().push(serde_json::json!({
+            "event": "lms-load-failed",
+            "model": model_id,
+            "error": error,
+        }));
     }
 }
 
@@ -1037,39 +1126,119 @@ fn block_on_engine<F: std::future::Future>(fut: F) -> Result<F::Output, EngineCa
 pub struct SidecarEngine {
     manager: Arc<MlxEngineManager>,
     base_url: String,
+    /// The catalog probe's failure, said ONCE per engine object on the paths that must read it
+    /// as "cannot answer" (see `note_probe_failure`).
+    probe_failed_said: AtomicBool,
+    absences: Mutex<Vec<serde_json::Value>>,
+}
+
+/// One `curl -sS --max-time 6 <url>` run against the sidecar's `/v1/models`, classified into the
+/// fact it is: `Err` names WHY the catalog could not answer — curl exited non-zero (exit 7 is a
+/// refused connection = the engine is not listening; exit 28 a timeout), an empty body, or a body
+/// that is not JSON (a 503/404 HTML page) — each with the first 200 chars of what curl said. A
+/// body that PARSES is `Ok` whatever it holds: `{"data":[]}` or a JSON error object is the engine
+/// answering, a proven negative for the callers to read, never an error.
+fn classify_v1_models_output(url: &str, out: &std::process::Output) -> Result<serde_json::Value> {
+    if !out.status.success() {
+        let meaning = match out.status.code() {
+            Some(7) => " (connection refused — nothing is listening; the engine is down)",
+            Some(28) => " (timed out — the engine did not answer)",
+            _ => "",
+        };
+        bail!("{url}: curl {}{meaning}", subprocess_failure(out));
+    }
+    if out.stdout.iter().all(u8::is_ascii_whitespace) {
+        bail!("{url}: curl exited 0 with an empty body");
+    }
+    serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| {
+        let head: String = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .chars()
+            .take(200)
+            .collect();
+        anyhow!("{url}: body was not JSON ({e}): {head}")
+    })
 }
 
 impl SidecarEngine {
     pub fn new(manager: Arc<MlxEngineManager>) -> Self {
         let base_url = format!("http://127.0.0.1:{}", manager.settings().port);
-        Self { manager, base_url }
+        Self {
+            manager,
+            base_url,
+            probe_failed_said: AtomicBool::new(false),
+            absences: Mutex::new(Vec::new()),
+        }
     }
 
     /// GET {base_url}/v1/models via curl — the same subprocess idiom as the LM Studio probes
-    /// (a blocking HTTP client inside the async runtime is the trap both avoid).
-    fn v1_models(&self) -> Option<serde_json::Value> {
+    /// (a blocking HTTP client inside the async runtime is the trap both avoid). `Err` carries
+    /// the named reason the catalog could not answer (`classify_v1_models_output`).
+    fn v1_models(&self) -> Result<serde_json::Value> {
         let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
         let out = ProcCommand::new("curl")
-            .args(["-s", "--max-time", "6", &url])
+            .args(["-sS", "--max-time", "6", &url])
             .output()
-            .ok()?;
-        serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()
+            .with_context(|| format!("spawning curl for {url}"))?;
+        classify_v1_models_output(&url, &out)
     }
 
-    /// (served id, context_window) per catalog entry; empty when the engine is down/unreachable.
-    fn served_entries(&self) -> Vec<(String, Option<u64>)> {
-        let Some(json) = self.v1_models() else {
-            return Vec::new();
-        };
+    /// (served id, context_window) per catalog entry. `Ok(empty)` = the engine ANSWERED and serves
+    /// nothing (or its answer carries no `data` list) — a proven negative; `Err` = it could not
+    /// answer, with the reason.
+    fn served_entries(&self) -> Result<Vec<(String, Option<u64>)>> {
+        let json = self.v1_models()?;
         let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        arr.iter()
+        Ok(arr
+            .iter()
             .filter_map(|m| {
                 let id = m.get("id").and_then(|v| v.as_str())?.to_string();
                 Some((id, m.get("context_window").and_then(|v| v.as_u64())))
             })
-            .collect()
+            .collect())
+    }
+
+    /// `served_entries` for the callers whose contract has no Err arm (servability, the instance
+    /// count, the pre-warm fast path): a failure reads as `None` = "cannot answer" — exactly the
+    /// unproven outcome those callers produced when the failure was folded into an empty list —
+    /// and the reason is said once (`note_probe_failure`) instead of vanishing.
+    fn served_entries_or_note(&self) -> Option<Vec<(String, Option<u64>)>> {
+        match self.served_entries() {
+            Ok(entries) => Some(entries),
+            Err(e) => {
+                self.note_probe_failure(&e);
+                None
+            }
+        }
+    }
+
+    /// The named absence for a catalog probe that could not answer, said ONCE per engine object:
+    /// the yellow stderr line and a `sidecar-probe-failed{host, error}` event for run.jsonl (drained
+    /// through `take_probe_absences` at the pool build and at every fan). `catalog_probe` does NOT
+    /// route through here — it propagates the Err, and `live_fleet_slots` names each failed probe
+    /// as `fleet-probe-failed{engine, error}`.
+    fn note_probe_failure(&self, e: &anyhow::Error) {
+        if self.probe_failed_said.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        eprintln!(
+            "{}",
+            style(format!(
+                "sidecar-probe-failed: the mlx-sidecar catalog at {} could not answer ({e:#}) — \
+                 every mlx-sidecar device stays UNPROVEN (never dropped, never proven servable) \
+                 until it does",
+                self.base_url
+            ))
+            .yellow()
+            .bold()
+        );
+        self.absences.lock().unwrap().push(serde_json::json!({
+            "event": "sidecar-probe-failed",
+            "host": self.base_url,
+            "error": format!("{e:#}"),
+        }));
     }
 }
 
@@ -1081,10 +1250,10 @@ impl SwarmEngine for SidecarEngine {
         self.base_url.clone()
     }
     fn catalog_probe(&self) -> Result<Vec<LmsProcess>> {
-        // `served_entries` collapses an unreachable/unparseable catalog to empty (its own
-        // documented semantics, unchanged here), so this arm never errs.
+        // `Err` = the catalog could not answer, with the reason — `live_fleet_slots` writes it as
+        // `fleet-probe-failed{engine: "mlx-sidecar", error}`; `Ok(empty)` = it answered nothing.
         Ok(self
-            .served_entries()
+            .served_entries()?
             .into_iter()
             .map(|(id, context_window)| LmsProcess {
                 // The sidecar's own feed, named apart from LM Studio's on the same host.
@@ -1100,9 +1269,10 @@ impl SwarmEngine for SidecarEngine {
     }
     fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
         // Identical None semantics to LM Studio's probe: empty/unreachable is "cannot answer",
-        // never "no models" — the per-engine guard treats it as unproven.
+        // never "no models" — the per-engine guard treats it as unproven. The unreachable case
+        // now says why, once (`note_probe_failure`).
         let ids: HashSet<String> = self
-            .served_entries()
+            .served_entries_or_note()?
             .into_iter()
             .map(|(id, _)| id)
             .collect();
@@ -1112,25 +1282,30 @@ impl SwarmEngine for SidecarEngine {
         Some(ids)
     }
     fn loaded_instance_count(&self, model_id: &str) -> usize {
-        // One supervised process serves one mounted model: 1 iff the live catalog serves it.
-        usize::from(self.served_entries().iter().any(|(id, _)| id == model_id))
+        // One supervised process serves one mounted model: 1 iff the live catalog serves it; a
+        // catalog that cannot answer counts 0, as before, and is named once.
+        usize::from(
+            self.served_entries_or_note()
+                .is_some_and(|entries| entries.iter().any(|(id, _)| id == model_id)),
+        )
     }
-    fn ensure_loaded(&self, model_id: &str, _instances: u32) {
+    fn ensure_loaded(&self, model_id: &str, _instances: u32) -> Result<()> {
         // Fast path: the live catalog already serves it — possibly mounted by ANOTHER process's
         // manager (the desktop window); mounting again would fight over the port.
         if self.loaded_instance_count(model_id) > 0 {
-            return;
+            return Ok(());
         }
         // `instances` is accepted-and-ignored: the supervisor owns one process serving one model.
         // TTL likewise — the supervisor owns the engine's lifetime, and rapid-mlx has its own
         // --resident-model-idle-ttl if that lever is ever wanted.
         let mut settings = self.manager.settings();
         let Some(hf_dir) = settings.model_id.clone() else {
-            eprintln!(
+            let why = format!(
                 "engine-config-absent: mlx_engine.model_id is not set — cannot mount \
                  '{model_id}' (set the HF model directory id under config key \"mlx_engine\")"
             );
-            return;
+            eprintln!("{why}");
+            bail!(why);
         };
         // The swarm-facing alias: the server advertises the requested pool model_id, so the
         // fleet's node-prefix identity convention needs zero goose changes.
@@ -1157,10 +1332,23 @@ impl SwarmEngine for SidecarEngine {
                 }
             }
         });
+        // The stderr lines are unchanged; the SAME fact now also returns to the caller, so the
+        // pre-warm seam can write it to run.jsonl and exclude the device (it was stderr-only, and
+        // with loading ON nothing else excludes a sidecar device — `exclude_unmountable_sidecar_
+        // devices` stands down — so a failed mount left the device pinned and every call to it
+        // hit the refused port).
         match result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("engine-mount-failed: {e:#}"),
-            Err(e) => eprintln!("engine-call-unavailable: cannot mount '{model_id}' — {e}"),
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                eprintln!("engine-mount-failed: {e:#}");
+                Err(anyhow!("engine-mount-failed: {e:#}"))
+            }
+            Err(e) => {
+                eprintln!("engine-call-unavailable: cannot mount '{model_id}' — {e}");
+                Err(anyhow!(
+                    "engine-call-unavailable: cannot mount '{model_id}' — {e}"
+                ))
+            }
         }
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
@@ -1181,12 +1369,20 @@ impl SwarmEngine for SidecarEngine {
             Err(e) => println!("  state: (unavailable — {e})"),
         }
         println!("  port: {}", self.manager.settings().port);
-        for (id, ctx) in self.served_entries() {
-            match ctx {
-                Some(c) => println!("  serves: {id} (context {c})"),
-                None => println!("  serves: {id}"),
+        match self.served_entries() {
+            Ok(entries) => {
+                for (id, ctx) in entries {
+                    match ctx {
+                        Some(c) => println!("  serves: {id} (context {c})"),
+                        None => println!("  serves: {id}"),
+                    }
+                }
             }
+            Err(e) => println!("  serves: (catalog probe failed: {e:#})"),
         }
+    }
+    fn take_probe_absences(&self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut *self.absences.lock().unwrap())
     }
 }
 
@@ -1224,12 +1420,42 @@ pub(super) fn engines_for_run(devices: &[SwarmDevice]) -> Engines {
     engines
 }
 
+/// One pool device whose engine REFUSED to mount its model during the pre-warm — the proven
+/// negative `prewarm_pool` hands back for the caller to name in run.jsonl and exclude.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct MountFailure {
+    pub device_id: String,
+    pub model_id: String,
+    pub engine: EngineKind,
+    pub error: String,
+}
+
 /// JIT pre-warm for the resolved pool: each model warms through ITS OWN engine. The planner
 /// warms through the engine of the POOL DEVICE that carries it — the LM-pinned planner arm this
 /// replaces fired a doomed `lms load <sidecar-alias>` and could never mount the sidecar. A
 /// planner carried by no pool device keeps the historical LM Studio warm-up byte-identically
 /// (a sidecar planner outside the pool has no device to name its engine — left unresolved).
-pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_model: &str) {
+/// Returns every device whose engine refused the mount (`SwarmEngine::ensure_loaded` Err), one
+/// entry per device — the planner warm and the device loop touch the same device, and a device
+/// that fails once has failed. Empty on every happy path.
+pub(super) fn prewarm_pool(
+    engines: &Engines,
+    enabled: &[SwarmDevice],
+    planner_model: &str,
+) -> Vec<MountFailure> {
+    let mut failures: Vec<MountFailure> = Vec::new();
+    let mut note = |d: &SwarmDevice, outcome: Result<()>| {
+        if let Err(e) = outcome {
+            if !failures.iter().any(|f| f.device_id == d.id) {
+                failures.push(MountFailure {
+                    device_id: d.id.clone(),
+                    model_id: d.model_id.clone(),
+                    engine: device_engine_kind(d),
+                    error: format!("{e:#}"),
+                });
+            }
+        }
+    };
     if !enabled
         .iter()
         .any(|d| d.is_cloud() && d.model_id == planner_model)
@@ -1239,7 +1465,7 @@ pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_m
             .find(|d| !d.is_cloud() && d.model_id == planner_model)
         {
             Some(d) => match engines.engine_for_device(d) {
-                Some(e) => e.ensure_loaded(planner_model, 1),
+                Some(e) => note(d, e.ensure_loaded(planner_model, 1)),
                 None => eprintln!(
                     "engine-absent: planner '{planner_model}' is carried by device '{}' on engine \
                      '{:?}' but no such engine is registered — not warmed",
@@ -1247,18 +1473,172 @@ pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_m
                     device_engine_kind(d)
                 ),
             },
-            None => engines.lmstudio().ensure_loaded(planner_model, 1),
+            // LM Studio's warm-up never errs (its `lms load` failure is a named absence); the
+            // discarded Ok keeps this arm byte-identical.
+            None => {
+                let _ = engines.lmstudio().ensure_loaded(planner_model, 1);
+            }
         }
     }
     for d in enabled.iter().filter(|d| !d.is_cloud()) {
         match engines.engine_for_device(d) {
-            Some(e) => e.ensure_loaded(&d.model_id, d.instances),
+            Some(e) => note(d, e.ensure_loaded(&d.model_id, d.instances)),
             None => eprintln!(
                 "engine-absent: device '{}' names engine '{:?}' but no such engine is registered \
                  — not warmed",
                 d.id,
                 device_engine_kind(d)
             ),
+        }
+    }
+    failures
+}
+
+/// A device whose mount FAILED during the pre-warm leaves the pool by name, through the same
+/// shape as the S-M6 exclusion (`sidecar-device-excluded{id, reason}`), preceded by the failure
+/// itself (`engine-mount-failed{device, model_id, engine, error}`). Mild: only the named device
+/// goes; the caller decides what an emptied pool means. Returns the run.jsonl events in order.
+pub(super) fn exclude_mount_failed_devices(
+    pool: &mut Vec<SwarmDevice>,
+    failures: &[MountFailure],
+) -> Vec<serde_json::Value> {
+    let mut events = Vec::new();
+    for f in failures {
+        eprintln!(
+            "{}",
+            style(format!(
+                "sidecar-device-excluded: '{}' — its engine ({}) refused to mount '{}' during \
+                 the pre-warm ({}); nothing will serve it this run",
+                f.device_id,
+                f.engine.name(),
+                f.model_id,
+                f.error
+            ))
+            .yellow()
+            .bold()
+        );
+        events.push(serde_json::json!({
+            "event": "engine-mount-failed",
+            "device": f.device_id,
+            "model_id": f.model_id,
+            "engine": f.engine.name(),
+            "error": f.error,
+        }));
+        events.push(serde_json::json!({
+            "event": "sidecar-device-excluded",
+            "id": f.device_id,
+            "reason": format!("mount-failed: {}", f.error),
+        }));
+        pool.retain(|d| d.id != f.device_id);
+    }
+    events
+}
+
+/// The pre-warm SEAM of run_swarm (loading ON): warm the pool, then settle what the engines said.
+/// A device whose engine REFUSED the mount is a proven negative on its own engine — with loading
+/// ON `exclude_unmountable_sidecar_devices` stands down (the pre-warm IS the mount path), so
+/// until this a failed mount was a stderr line and the device stayed: on a one-device sidecar
+/// pool it stayed pinned as planner and every planning call hit the refused port. Now the failure
+/// is named in run.jsonl (`exclude_mount_failed_devices`), the device leaves by name, a planner it
+/// carried moves to the first remaining device (`planner-fallback{from, to, reason}`), and an
+/// EMPTIED pool is a named refusal — never a dispatch into a dead port. Mild: only the failed
+/// device leaves; no failures → the pool returns unchanged, byte for byte.
+pub(super) fn settle_prewarm(
+    engines: &Engines,
+    enabled: Vec<SwarmDevice>,
+    planner_model: &mut String,
+    sink: &dyn EventSink,
+) -> Result<Vec<SwarmDevice>> {
+    let failures = prewarm_pool(engines, &enabled, planner_model);
+    let mut pool = enabled;
+    for ev in exclude_mount_failed_devices(&mut pool, &failures) {
+        sink.write_value(ev);
+    }
+    if failures.is_empty() {
+        return Ok(pool);
+    }
+    if pool.is_empty() {
+        let named: Vec<String> = failures
+            .iter()
+            .map(|f| format!("{} ({})", f.device_id, f.error))
+            .collect();
+        bail!(
+            "Every device in the pool refused to mount during the pre-warm — [{}] — so NONE of the \
+             pool is servable; dispatching now would fail every call into a refused port. Start the \
+             engine (or fix its mount), then re-run.",
+            named.join("; ")
+        );
+    }
+    if let Some(f) = failures.iter().find(|f| f.model_id == *planner_model) {
+        let alt = pool[0].model_id.clone();
+        eprintln!(
+            "{}",
+            style(format!(
+                "planner '{planner_model}' is NOT servable by {} — its device '{}' refused to \
+                 mount; falling back to '{alt}'",
+                f.engine.name(),
+                f.device_id
+            ))
+            .yellow()
+            .bold()
+        );
+        sink.write_value(serde_json::json!({
+            "event": "planner-fallback",
+            "from": planner_model.clone(),
+            "to": alt,
+            "reason": format!("mount-failed: {}", f.error),
+        }));
+        *planner_model = alt;
+    }
+    Ok(pool)
+}
+
+/// The dispatcher's best-effort re-warm before a transient re-dispatch, routed through the
+/// model's OWN engine — `lms load` on an mlx-sidecar model would warm the wrong runtime. Absent
+/// from `engine_models` = the default LM Studio engine, definitionally. An engine that refuses
+/// the mount is `engine-mount-failed{…, task_id, attempt, site}` in run.jsonl — recorded, never
+/// acted on here (the scheduler alone decides retry/fail). The `None` arm is a NET by
+/// construction: `engine_models` only names kinds with a registered engine and the LM Studio slot
+/// is always filled — the same absence `prewarm_pool` names.
+pub(super) fn rewarm_on_transient(
+    engines: &Engines,
+    engine_models: &HashMap<String, EngineKind>,
+    events: &dyn EventSink,
+    req: &DispatchRequest,
+) {
+    let kind = engine_models
+        .get(&req.model_id)
+        .copied()
+        .unwrap_or(EngineKind::LmStudio);
+    match engines.for_kind(kind) {
+        Some(engine) => {
+            if let Err(e) = engine.ensure_loaded(&req.model_id, 1) {
+                events.write_value(serde_json::json!({
+                    "event": "engine-mount-failed",
+                    "device": req.device_id,
+                    "model_id": req.model_id,
+                    "engine": kind.name(),
+                    "error": format!("{e:#}"),
+                    "task_id": req.task_id,
+                    "attempt": req.attempt,
+                    "site": "re-warm on transient",
+                }));
+            }
+        }
+        None => {
+            eprintln!(
+                "engine-absent: model '{}' names engine '{:?}' but no such engine is registered \
+                 — not re-warmed",
+                req.model_id, kind
+            );
+            events.write_value(serde_json::json!({
+                "event": "engine-absent",
+                "model_id": req.model_id,
+                "engine": kind.name(),
+                "task_id": req.task_id,
+                "attempt": req.attempt,
+                "site": "re-warm on transient",
+            }));
         }
     }
 }
@@ -2144,7 +2524,10 @@ mod tests {
         assert_eq!(procs[0].loaded_context_length, Some(262_144));
     }
 
-    /// A dead sidecar answers None — the identical "cannot answer" semantics of the LM probe.
+    /// A dead sidecar answers None — the identical "cannot answer" semantics of the LM probe —
+    /// and now SAYS so once: `sidecar-probe-failed{host, error}` through the probe-absence
+    /// channel (the consumer is the run's drain into run.jsonl), while `catalog_probe` carries
+    /// the same reason as an Err for `live_fleet_slots` to name per fan.
     #[test]
     fn sidecar_probe_failure_is_none_never_empty() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -2153,6 +2536,81 @@ mod tests {
         let eng = sidecar_on(port);
         assert_eq!(eng.servable_model_ids(), None);
         assert_eq!(eng.loaded_instance_count("anything"), 0);
+        let err = eng
+            .resident_processes()
+            .expect_err("a refused connection is an Err, never an empty catalog");
+        assert!(
+            format!("{err:#}").contains("exit 7"),
+            "the curl exit is named: {err:#}"
+        );
+        let absences = eng.take_probe_absences();
+        assert_eq!(
+            absences.len(),
+            1,
+            "said once per engine object: {absences:?}"
+        );
+        assert_eq!(absences[0]["event"], "sidecar-probe-failed");
+        assert_eq!(absences[0]["host"], format!("http://127.0.0.1:{port}"));
+        assert!(
+            absences[0]["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("exit 7")),
+            "the reason rides with the event: {absences:?}"
+        );
+        assert!(eng.take_probe_absences().is_empty(), "drained");
+    }
+
+    fn curl_output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    /// The pure classification behind `v1_models`: a refused connection names curl's exit, an
+    /// answered `{"data":[]}` is Ok (a proven negative), a non-JSON body names itself, an empty
+    /// body is named as such.
+    #[test]
+    fn v1_models_output_is_classified_by_name() {
+        let url = "http://127.0.0.1:8090/v1/models";
+        let refused = classify_v1_models_output(
+            url,
+            &curl_output(
+                7,
+                "",
+                "curl: (7) Failed to connect to 127.0.0.1 port 8090 after 0 ms: Couldn't connect to server",
+            ),
+        )
+        .expect_err("exit 7 is a failure");
+        let text = format!("{refused:#}");
+        assert!(text.contains("exit 7"), "{text}");
+        assert!(text.contains("connection refused"), "{text}");
+        assert!(
+            text.contains("Failed to connect"),
+            "stderr rides along: {text}"
+        );
+
+        let empty = classify_v1_models_output(url, &curl_output(0, r#"{"data":[]}"#, ""))
+            .expect("an answered empty catalog is Ok");
+        assert_eq!(empty["data"].as_array().map(Vec::len), Some(0));
+
+        let garbage = classify_v1_models_output(
+            url,
+            &curl_output(0, "<html><body>503 Service Unavailable</body></html>", ""),
+        )
+        .expect_err("HTML is not a catalog");
+        let text = format!("{garbage:#}");
+        assert!(text.contains("not JSON"), "{text}");
+        assert!(
+            text.contains("503 Service Unavailable"),
+            "the body head is quoted: {text}"
+        );
+
+        let blank = classify_v1_models_output(url, &curl_output(0, "  \n", ""))
+            .expect_err("no body is not an answer");
+        assert!(format!("{blank:#}").contains("empty body"));
     }
 
     /// ensure_loaded's fast path: already-served means NO mount attempt (the engine may belong
@@ -2162,7 +2620,8 @@ mod tests {
     fn sidecar_ensure_loaded_fast_paths_when_already_served() {
         let port = serve_stub(GOLDEN_V1_MODELS);
         let eng = sidecar_on(port);
-        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1);
+        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1)
+            .expect("already served is Ok");
         let status = tokio::runtime::Runtime::new()
             .expect("test runtime")
             .block_on(eng.manager.status());
@@ -2186,7 +2645,13 @@ mod tests {
         drop(listener);
         let eng = sidecar_on(port);
         assert_eq!(eng.manager.settings().model_id, None, "precondition");
-        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1);
+        let err = eng
+            .ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1)
+            .expect_err("an unconfigured model dir is a refused mount");
+        assert!(
+            format!("{err:#}").contains("engine-config-absent"),
+            "the refusal is named for the caller: {err:#}"
+        );
         let status = tokio::runtime::Runtime::new()
             .expect("test runtime")
             .block_on(eng.manager.status());
@@ -2203,6 +2668,8 @@ mod tests {
         host: &'static str,
         /// What `resident_processes` answers — empty = the probe proved nothing.
         resident: Vec<&'static str>,
+        /// Models whose `ensure_loaded` the double REFUSES (an engine that cannot mount them).
+        refuse_mount: Vec<&'static str>,
         calls: std::sync::Mutex<Vec<(String, u32)>>,
     }
     impl RecordingEngine {
@@ -2217,6 +2684,16 @@ mod tests {
                 name,
                 host,
                 resident: resident.to_vec(),
+                refuse_mount: Vec::new(),
+                calls: std::sync::Mutex::new(Vec::new()),
+            })
+        }
+        fn refusing(name: &'static str, refuse_mount: &[&'static str]) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                host: "",
+                resident: Vec::new(),
+                refuse_mount: refuse_mount.to_vec(),
                 calls: std::sync::Mutex::new(Vec::new()),
             })
         }
@@ -2240,11 +2717,17 @@ mod tests {
         fn loaded_instance_count(&self, _model_id: &str) -> usize {
             0
         }
-        fn ensure_loaded(&self, model_id: &str, instances: u32) {
+        fn ensure_loaded(&self, model_id: &str, instances: u32) -> Result<()> {
             self.calls
                 .lock()
                 .expect("calls lock")
                 .push((model_id.to_string(), instances));
+            if self.refuse_mount.contains(&model_id) {
+                bail!(
+                    "engine-mount-failed: mlx engine mount failed for '{model_id}': uvx not found"
+                );
+            }
+            Ok(())
         }
         fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
             Ok(self
@@ -2405,7 +2888,9 @@ mod tests {
         fn loaded_instance_count(&self, _model_id: &str) -> usize {
             0
         }
-        fn ensure_loaded(&self, _model_id: &str, _instances: u32) {}
+        fn ensure_loaded(&self, _model_id: &str, _instances: u32) -> Result<()> {
+            Ok(())
+        }
         fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
             self.catalog_probe()
         }
@@ -2469,11 +2954,166 @@ mod tests {
                 .is_some_and(|e| e.contains("401")),
             "the probe's own reason is carried: {events:?}"
         );
-        // A kind that answered empty or a kind nobody registered stays a quiet None, as before.
+        // A kind that answered EMPTY keeps its snapshot slots (unproven arithmetic, unchanged) and
+        // is named once per fan; a kind nobody registered stays a quiet None (nobody to ask).
         let quiet = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
         let sink = RecordingSink::default();
-        let _ = live_fleet_slots(&devices, &quiet, &engine_models, &sink);
-        assert!(sink.0.lock().expect("sink lock").is_empty());
+        let slots = live_fleet_slots(&devices, &quiet, &engine_models, &sink);
+        assert_eq!(
+            slots,
+            fleet_slot_models(&devices),
+            "nothing proven → snapshot"
+        );
+        let events = sink.0.lock().expect("sink lock").clone();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "fleet-residency-empty");
+        assert_eq!(events[0]["engine"], "lmstudio");
+    }
+
+    /// When every device is filtered by its own engine's answered catalog the fan falls back to
+    /// the whole snapshot — as before — and says so: `fleet-slots-snapshot-fallback{reason,
+    /// snapshot_len}`.
+    #[test]
+    fn the_snapshot_fallback_is_a_named_event() {
+        let engines = Engines::with_lmstudio_for_tests(RecordingEngine::serving(
+            "lmstudio",
+            "",
+            &["gabee-other-model"],
+        ));
+        let devices = vec![
+            dev_cfg("mac-gabee", "gabee-qwen3.8-27b", 2, false),
+            dev_cfg("works-workhorse", "workhorse-qwen3.8-27b", 1, false),
+        ];
+        let sink = RecordingSink::default();
+        let slots = live_fleet_slots(&devices, &engines, &HashMap::new(), &sink);
+        assert_eq!(slots, fleet_slot_models(&devices));
+        let events = sink.0.lock().expect("sink lock").clone();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "fleet-slots-snapshot-fallback");
+        assert_eq!(events[0]["snapshot_len"], 3);
+        assert!(events[0]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("absent from its engine")));
+    }
+
+    /// Item 7's shape: a sidecar device whose MOUNT FAILS during the pre-warm (engine down, uvx
+    /// missing) is returned by `prewarm_pool` once — planner warm and device loop hit the same
+    /// device — and `exclude_mount_failed_devices` names it (`engine-mount-failed`, then
+    /// `sidecar-device-excluded{reason: "mount-failed: …"}`) and removes ONLY that device; a pool
+    /// with no failures returns no events and is untouched (the happy path, byte-identical).
+    #[test]
+    fn a_failed_prewarm_mount_is_returned_named_and_excluded() {
+        let lm = RecordingEngine::new("lmstudio");
+        let sc = RecordingEngine::refusing("omlx", &["workhorse-alias-mlx"]);
+        let mut engines = Engines::with_lmstudio_for_tests(lm);
+        engines.register_sidecar("mlx-sidecar", sc);
+        let mut pool = vec![
+            dev(
+                "workhorse-mlx",
+                "workhorse-alias-mlx",
+                Some(EngineKind::MlxSidecar),
+            ),
+            dev("mac-gabee", "gabee-qwen", None),
+        ];
+        let failures = prewarm_pool(&engines, &pool, "workhorse-alias-mlx");
+        assert_eq!(failures.len(), 1, "one device, one failure: {failures:?}");
+        assert_eq!(failures[0].device_id, "workhorse-mlx");
+        assert_eq!(failures[0].engine, EngineKind::MlxSidecar);
+        assert!(failures[0].error.contains("uvx not found"));
+        let events = exclude_mount_failed_devices(&mut pool, &failures);
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert_eq!(events[0]["event"], "engine-mount-failed");
+        assert_eq!(events[0]["device"], "workhorse-mlx");
+        assert_eq!(events[0]["engine"], "mlx-sidecar");
+        assert_eq!(events[1]["event"], "sidecar-device-excluded");
+        assert_eq!(events[1]["id"], "workhorse-mlx");
+        assert!(events[1]["reason"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("mount-failed: ")));
+        assert_eq!(
+            pool.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            vec!["mac-gabee"],
+            "only the failed device leaves"
+        );
+        // The single-device shape of this machine: the pool empties — the caller refuses by name.
+        let mut solo = vec![dev(
+            "workhorse-mlx",
+            "workhorse-alias-mlx",
+            Some(EngineKind::MlxSidecar),
+        )];
+        let failures = prewarm_pool(&engines, &solo, "workhorse-alias-mlx");
+        let _ = exclude_mount_failed_devices(&mut solo, &failures);
+        assert!(solo.is_empty());
+        // Happy path: nothing refused → nothing returned, pool untouched.
+        let ok = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        let mut untouched = vec![dev("mac-gabee", "gabee-qwen", None)];
+        let failures = prewarm_pool(&ok, &untouched, "gabee-qwen");
+        assert!(failures.is_empty());
+        assert!(exclude_mount_failed_devices(&mut untouched, &failures).is_empty());
+        assert_eq!(untouched.len(), 1);
+    }
+
+    /// The seam itself: a mixed pool loses only the refused device and its planner moves
+    /// (`planner-fallback` at the sink); a one-device pool whose mount fails is a named Err; a
+    /// pool with no failures returns unchanged with an empty sink.
+    #[test]
+    fn settle_prewarm_excludes_moves_the_planner_and_refuses_an_emptied_pool() {
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar(
+            "mlx-sidecar",
+            RecordingEngine::refusing("omlx", &["workhorse-alias-mlx"]),
+        );
+        let mixed = vec![
+            dev(
+                "workhorse-mlx",
+                "workhorse-alias-mlx",
+                Some(EngineKind::MlxSidecar),
+            ),
+            dev("mac-gabee", "gabee-qwen", None),
+        ];
+        let mut planner = "workhorse-alias-mlx".to_string();
+        let sink = RecordingSink::default();
+        let pool = settle_prewarm(&engines, mixed.clone(), &mut planner, &sink)
+            .expect("mixed pool survives");
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].id, "mac-gabee");
+        assert_eq!(
+            planner, "gabee-qwen",
+            "the planner leaves the refused device"
+        );
+        let events = sink.0.lock().expect("sink lock").clone();
+        let names: Vec<&str> = events.iter().filter_map(|e| e["event"].as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "engine-mount-failed",
+                "sidecar-device-excluded",
+                "planner-fallback"
+            ]
+        );
+        assert_eq!(events[2]["from"], "workhorse-alias-mlx");
+        assert_eq!(events[2]["to"], "gabee-qwen");
+
+        let mut planner = "workhorse-alias-mlx".to_string();
+        let err = settle_prewarm(
+            &engines,
+            vec![mixed[0].clone()],
+            &mut planner,
+            &RecordingSink::default(),
+        )
+        .expect_err("an emptied pool is a named refusal");
+        assert!(format!("{err:#}").contains("refused to mount"), "{err:#}");
+
+        let mut planner = "gabee-qwen".to_string();
+        let sink = RecordingSink::default();
+        let pool = settle_prewarm(&engines, vec![mixed[1].clone()], &mut planner, &sink)
+            .expect("happy path");
+        assert_eq!(pool.len(), 1);
+        assert_eq!(planner, "gabee-qwen");
+        assert!(
+            sink.0.lock().expect("sink lock").is_empty(),
+            "no failures → no events"
+        );
     }
 
     #[test]

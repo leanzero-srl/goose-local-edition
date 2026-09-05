@@ -215,9 +215,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// said_kind_of, supervision_reply, is_stream_decode_interrupt + its test) became the sibling
 /// commands/swarm/provider_failures.rs beside the new admission-cap reader, paying for the
 /// dispatcher's `sidecar-admission-cap` Transient branch.
+/// Tightened to    44,649 (mount-failed exclusion): the pre-warm seam (`settle_prewarm`: warm,
+/// name `engine-mount-failed`, exclude by name, move the planner, refuse an emptied pool) and the
+/// dispatcher's transient re-warm (`rewarm_on_transient`) live whole in swarm_engine.rs; swarm.rs
+/// keeps one call at each site, paying for the named sidecar probe/mount absences.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_651;
+    const SWARM_RS_LINE_BASELINE: usize = 44_649;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
