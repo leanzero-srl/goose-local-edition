@@ -54,7 +54,10 @@ export function providerIsLocal(provider: string): boolean {
 /**
  * PURE resolver — all inputs supplied — mirroring the Rust `resolve_edition_from` precedence
  * (sans CLI flag / env var, which the desktop does not have): a recognized persisted value wins,
- * an unrecognized one falls through to provider derivation, and the default is standard.
+ * an unrecognized one falls through to provider derivation, and the DEFAULT IS LOCAL — this fork
+ * IS Goose Swarm (the owner removed the edition switcher on 2026-08-31), so a fresh install with
+ * nothing persisted and a cloud/absent provider must never boot into the upstream skin with the
+ * unfiltered provider catalog. `standard` exists only as an explicit persisted choice.
  */
 export function resolveEdition(
   persisted: unknown,
@@ -68,13 +71,13 @@ export function resolveEdition(
   if (activeProvider && providerIsLocal(activeProvider)) {
     return 'local';
   }
-  return 'standard';
+  return 'local';
 }
 
 /** Read the cached edition synchronously (for a pre-paint stamp that avoids a one-frame flash). */
 export function getCachedEdition(): Edition {
   try {
-    return localStorage.getItem(LOCAL_STORAGE_KEY) === 'local' ? 'local' : 'standard';
+    return localStorage.getItem(LOCAL_STORAGE_KEY) === 'standard' ? 'standard' : 'local';
   } catch {
     return 'standard';
   }
