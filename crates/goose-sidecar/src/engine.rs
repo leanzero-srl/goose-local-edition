@@ -21,6 +21,11 @@ use crate::{
     SidecarConfig, Verdict, GIB,
 };
 
+/// Rapid-MLX's `--max-concurrent-requests` is a HARD ADMISSION CAP, not a queue: the request past
+/// it is answered `503 Server is busy (max concurrent requests reached)`. One source for the serve
+/// argv and for every router that sizes a sidecar node's slots.
+pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request got 503 (MLX busy-signal agent, 2026-09-02)
+
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
@@ -212,7 +217,7 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
         served_model_id(settings, model_id),
         "--enable-prefix-cache".to_string(),
         "--max-concurrent-requests".to_string(),
-        "8".to_string(),
+        MAX_CONCURRENT_REQUESTS.to_string(),
     ]);
     let default_profile = ModelProfile::default();
     let profile = settings

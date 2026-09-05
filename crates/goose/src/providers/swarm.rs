@@ -1,17 +1,29 @@
-//! The `swarm` provider — makes the local model swarm a selectable "model" in goose.
+//! The `swarm` provider — makes the local model swarm a selectable "model" in goose, two ways.
 //!
-//! The swarm is task ORCHESTRATION (a minutes-long, file-writing multi-agent build), not a per-turn chat
-//! completion. So this provider does NOT pretend to be a chat model: selecting it turns a chat turn into a
-//! "build run" — the user's message is the brief, and the provider spawns `goose swarm run` against the
-//! session's working directory, then returns the run's fan-in/report as the assistant message.
+//! **`swarm` (CHAT, the default model)** — one chat completion, served by an idle node of the configured
+//! pool. Choosing swarm taps into the nodes automatically: [`super::swarm_router`] is the idle guard —
+//! process-wide, so every session in one goosed shares the slot accounting — that picks a node with a free
+//! slot (sticky per conversation, then most-free), delegates the turn to that node's real provider
+//! (`lmstudio` / `omlx` / the cloud family's registry provider) and holds the slot until the stream ends.
+//! When every servable node is full the turn QUEUES until a slot frees; when no node can serve, the error
+//! names every device and why.
 //!
-//! It mirrors [`crate::providers::claude_code::ClaudeCodeProvider`]: a subprocess provider that spawns the
-//! `goose` CLI (avoiding the goose-cli → goose dependency cycle) and translates its `--output-format json`
-//! RunReport into a [`Message`]. `manages_own_context() = true` — the swarm manages its own context.
+//! **`swarm-build` (BUILD)** — task ORCHESTRATION, a minutes-long, file-writing multi-agent build. The
+//! user's message is the brief: the provider spawns `goose swarm run` against the session's working
+//! directory and returns the run's fan-in/report as the assistant message. It mirrors
+//! [`crate::providers::claude_code::ClaudeCodeProvider`]: a subprocess provider that spawns the `goose` CLI
+//! (avoiding the goose-cli → goose dependency cycle) and translates its `--output-format json` RunReport
+//! into a [`Message`]. Spawn-to-completion; live fan-in streaming and the cancellation/fleet-abort
+//! hardening are follow-ups (aborting a run must also unload in-flight remote generations, which is not
+//! guaranteed yet).
 //!
-//! First increment: spawn-to-completion (await the run, summarize the report). Live fan-in streaming and the
-//! cancellation/fleet-abort hardening are follow-ups (the cancellation path is the low-confidence seam —
-//! aborting a run must also unload in-flight remote generations, which is not guaranteed yet).
+//! Context management differs by route, and the route is only knowable from the `ModelConfig` each call
+//! carries — the registry constructs one instance per session with no model at all (`from_env` takes none).
+//! So the instance REMEMBERS the last route it was asked to serve (`get_context_limit` and `stream` both see
+//! the model name; goose calls the first before the first turn) and `manages_own_context()` answers from
+//! that: `true` for the build (the engine manages its own context), `false` for chat (a 9B node has a wall,
+//! and goose's own compaction must fire before it — using the POOL's smallest reported window as the limit).
+//! Before any call has named a model the answer is `false`: goose managing context is the safe side.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -33,7 +45,27 @@ use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 const SWARM_PROVIDER_NAME: &str = "swarm";
-const SWARM_DEFAULT_MODEL: &str = "swarm";
+/// CHAT: this turn goes to an idle node of the pool.
+const SWARM_CHAT_MODEL: &str = "swarm";
+/// BUILD: the brief becomes a `goose swarm run`.
+pub(crate) const SWARM_BUILD_MODEL: &str = "swarm-build";
+const SWARM_DEFAULT_MODEL: &str = SWARM_CHAT_MODEL;
+
+/// Which of the two paths a model id selects. Anything that is not the build id is chat — the
+/// default is the one the registry advertises first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    Chat,
+    Build,
+}
+
+fn route_for(model_name: &str) -> Route {
+    if model_name == SWARM_BUILD_MODEL {
+        Route::Build
+    } else {
+        Route::Chat
+    }
+}
 const SWARM_DOC_URL: &str = "https://leanzero.net/portfolio/goose-local-edition";
 
 /// A subprocess-backed swarm provider. Holds the `goose` binary path and the session working directory to
@@ -41,6 +73,8 @@ const SWARM_DOC_URL: &str = "https://leanzero.net/portfolio/goose-local-edition"
 /// files into an unpredictable directory).
 pub struct SwarmProvider {
     name: String,
+    /// The last route a call named (see the module doc). `Route::Build` ↔ `true`.
+    build_route_seen: std::sync::atomic::AtomicBool,
     /// Path/name of the `goose` CLI binary to spawn (resolved from `SWARM_COMMAND`, default `goose`).
     command: String,
     /// The directory a run scaffolds into. `None` → the goose process cwd.
@@ -304,11 +338,12 @@ impl goose_providers::base::ProviderDescriptor for SwarmProvider {
         ProviderMetadata::new(
             SWARM_PROVIDER_NAME,
             "Goose Swarm",
-            "Runs your local model fleet (LM Studio / LM Link) as a multi-agent build. A message is a build \
-             brief, not a chat turn — the swarm plans, fans out across your nodes, and writes files to this \
-             project. Configure the fleet + tunables in the Swarm settings.",
+            "Your local model fleet (LM Studio / LM Link / MLX) as one model. `swarm` chats through whichever \
+             node is idle — sessions share the nodes and queue when all are busy. `swarm-build` turns a \
+             message into a multi-agent build brief: the swarm plans, fans out across your nodes, and writes \
+             files to this project. Configure the fleet + tunables in the Swarm settings.",
             SWARM_DEFAULT_MODEL,
-            vec![SWARM_DEFAULT_MODEL],
+            vec![SWARM_CHAT_MODEL, SWARM_BUILD_MODEL],
             SWARM_DOC_URL,
             vec![ConfigKey::new(
                 "SWARM_COMMAND",
@@ -331,6 +366,7 @@ impl ProviderDef for SwarmProvider {
         Box::pin(async move {
             Ok(Self {
                 name: SWARM_PROVIDER_NAME.to_string(),
+                build_route_seen: std::sync::atomic::AtomicBool::new(false),
                 command: Self::resolve_command(),
                 working_dir: None,
             })
@@ -345,6 +381,7 @@ impl ProviderDef for SwarmProvider {
         Box::pin(async move {
             Ok(Self {
                 name: SWARM_PROVIDER_NAME.to_string(),
+                build_route_seen: std::sync::atomic::AtomicBool::new(false),
                 command: Self::resolve_command(),
                 working_dir: Some(working_dir),
             })
@@ -580,7 +617,20 @@ impl Provider for SwarmProvider {
     }
 
     fn manages_own_context(&self) -> bool {
-        true
+        self.build_route_seen
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Chat: the pool's smallest reported context window, once a pick has measured one — so goose's
+    /// compaction fires before the node's wall rather than at the default for an unknown model
+    /// "swarm". The first turn of a fresh goosed runs on the default (no pick has happened yet); every
+    /// later turn on the pool's. Build: the model config's own limit, unchanged.
+    async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
+        match self.observe_route(model_config) {
+            Route::Chat => Ok(super::swarm_router::pool_context_limit()
+                .unwrap_or_else(|| model_config.context_limit())),
+            Route::Build => Ok(model_config.context_limit()),
+        }
     }
 
     async fn stream(
@@ -588,8 +638,9 @@ impl Provider for SwarmProvider {
         model_config: &ModelConfig,
         system: &str,
         messages: &[Message],
-        _tools: &[Tool],
+        tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        let route = self.observe_route(model_config);
         // Incidental-completion guard: session titles, tool summaries, etc. must NOT spawn the fleet.
         if super::cli_common::is_session_description_request(system) {
             // #ai-session-names: title the session with a cheap local-planner call instead of the
@@ -608,6 +659,35 @@ impl Provider for SwarmProvider {
             return Ok(stream_from_single_message(message, usage));
         }
 
+        match route {
+            Route::Chat => {
+                super::swarm_router::route_chat(model_config, system, messages, tools).await
+            }
+            Route::Build => self.run_build(model_config, messages).await,
+        }
+    }
+}
+
+impl SwarmProvider {
+    /// Read the route off the call's model and remember it for the argument-less
+    /// `manages_own_context`.
+    fn observe_route(&self, model_config: &ModelConfig) -> Route {
+        let route = route_for(&model_config.model_name);
+        self.build_route_seen.store(
+            matches!(route, Route::Build),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        route
+    }
+
+    /// The BUILD path (`swarm-build`): the last user message is the brief, `goose swarm run` is spawned
+    /// against the session's working directory, and its report is the reply. Byte-identical to the
+    /// provider's one path before `swarm` became a routed chat model.
+    async fn run_build(
+        &self,
+        model_config: &ModelConfig,
+        messages: &[Message],
+    ) -> Result<MessageStream, ProviderError> {
         let brief = Self::extract_brief(messages);
         if brief.trim().is_empty() {
             let msg = Message::assistant().with_text(
@@ -936,12 +1016,89 @@ mod tests {
         );
     }
 
+    /// `swarm-build` is the build path and `swarm` (and anything else) is routed chat.
+    #[test]
+    fn the_build_id_selects_the_build_path_and_the_default_is_chat() {
+        assert_eq!(route_for(SWARM_BUILD_MODEL), Route::Build);
+        assert_eq!(route_for(SWARM_CHAT_MODEL), Route::Chat);
+        assert_eq!(route_for(SWARM_DEFAULT_MODEL), Route::Chat);
+        assert_eq!(route_for("swarm-anything-else"), Route::Chat);
+        let meta = <SwarmProvider as goose_providers::base::ProviderDescriptor>::metadata();
+        assert_eq!(meta.default_model, SWARM_CHAT_MODEL);
+    }
+
+    /// The build path with an empty brief answers without spawning anything — the pre-router behaviour,
+    /// now reached only through `swarm-build`.
+    #[tokio::test]
+    async fn swarm_build_with_no_brief_asks_for_one_and_spawns_nothing() {
+        let p = SwarmProvider {
+            name: "swarm".into(),
+            build_route_seen: std::sync::atomic::AtomicBool::new(false),
+            command: "/no/such/goose/binary".into(),
+            working_dir: None,
+        };
+        assert!(
+            !p.manages_own_context(),
+            "before any call, goose manages context"
+        );
+        let mut stream = p
+            .stream(
+                &ModelConfig::new(SWARM_BUILD_MODEL),
+                "You are goose.",
+                &[Message::user().with_text("   ")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let (message, usage) = futures::StreamExt::next(&mut stream)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(message
+            .unwrap()
+            .as_concat_text()
+            .contains("Give the swarm a build brief"));
+        assert_eq!(usage.unwrap().model, "swarm");
+        assert!(
+            p.manages_own_context(),
+            "the build route was named by the call"
+        );
+    }
+
+    /// The route is remembered from the call that named it: a chat model flips goose's context
+    /// management back on, and its limit is the model's own until the router has measured a pool.
+    #[tokio::test]
+    async fn context_management_follows_the_route_the_calls_name() {
+        let p = SwarmProvider {
+            name: "swarm".into(),
+            build_route_seen: std::sync::atomic::AtomicBool::new(true),
+            command: "/no/such/goose/binary".into(),
+            working_dir: None,
+        };
+        assert!(p.manages_own_context());
+        let chat = ModelConfig::new(SWARM_CHAT_MODEL);
+        let limit = p.get_context_limit(&chat).await.unwrap();
+        assert!(
+            !p.manages_own_context(),
+            "a chat call turns goose's context management on"
+        );
+        // No pick has measured a pool in this process → the model's own limit, unchanged.
+        assert_eq!(limit, chat.context_limit());
+        let build = ModelConfig::new(SWARM_BUILD_MODEL);
+        assert_eq!(
+            p.get_context_limit(&build).await.unwrap(),
+            build.context_limit()
+        );
+        assert!(p.manages_own_context());
+    }
+
     /// The whole point: the message must NOT be the engine's progress log. It answers what happened, how
     /// far it got, and where the files are — and never pastes phase banners or env-var hints.
     #[test]
     fn failure_summary_is_a_verdict_not_a_log_dump() {
         let p = SwarmProvider {
             name: "swarm".into(),
+            build_route_seen: std::sync::atomic::AtomicBool::new(false),
             command: "goose".into(),
             working_dir: Some(std::env::temp_dir().join("goose_no_such_run_dir")),
         };
