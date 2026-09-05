@@ -31,6 +31,8 @@ import SamplingKnobs from '../swarm/SamplingKnobs';
 import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
 import { loadSamplingDefaults, sanitizeSampling, type SamplingSettings } from '../swarm/sampling';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
+import { acpReadConfig } from '../../acp/config';
+import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 import {
   Button,
   Chip,
@@ -59,6 +61,21 @@ import {
 
 const NODE_CHOICES = [1, 2, 3] as const;
 type NodeChoice = (typeof NODE_CHOICES)[number];
+
+/**
+ * How many nodes the CONFIGURED pool can offer: the enabled swarm devices, floored at 1 and capped at
+ * the largest choice. A pool of one MLX sidecar (this machine, 2026-09-05) was offered 1/2/3 with 3
+ * preselected — a run asking for nodes the pool does not have. No/empty devices is the legacy LM
+ * Studio discovery pool and keeps every choice; with ≥3 devices nothing changes.
+ */
+export function nodeCapFor(cfg: SwarmConfig | null): NodeChoice {
+  const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
+  if (rows.length === 0) return NODE_CHOICES[NODE_CHOICES.length - 1];
+  const enabled = rows.filter((d) => d.enabled !== false).length;
+  const max = NODE_CHOICES[NODE_CHOICES.length - 1];
+  const capped = Math.max(1, Math.min(max, enabled));
+  return (NODE_CHOICES.find((n) => n === capped) ?? max) as NodeChoice;
+}
 
 const MODEL_MIN_CHARS = 8;
 const MODEL_MAX_CHARS = 120;
@@ -456,6 +473,24 @@ function boardColumns(mine: MineRow | null): DataTableColumn<BenchmarkRow>[] {
  */
 export default function BenchmarkView() {
   const [nodes, setNodes] = useState<NodeChoice>(3);
+  // The pool's size caps the offered node counts and is the default; read once per mount (a device
+  // edit is a config change, and the next mount sees it). Unreadable config keeps every choice.
+  const [nodeCap, setNodeCap] = useState<NodeChoice>(3);
+  useEffect(() => {
+    let alive = true;
+    void acpReadConfig('swarm', false)
+      .then((raw) => {
+        if (!alive) return;
+        const cap = nodeCapFor((raw as SwarmConfig | null) ?? null);
+        setNodeCap(cap);
+        setNodes((n) => (n > cap ? cap : n));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const nodeChoices = NODE_CHOICES.filter((n) => n <= nodeCap);
   const [tier, setTier] = useState<BenchTier>(DEFAULT_TIER);
   // The strip's editable values — what the NEXT run will use. Prefilled from the shared defaults
   // (localStorage `swarmSamplingDefaults`); passed into benchmarkRun where set knobs become env.
@@ -764,7 +799,7 @@ export default function BenchmarkView() {
               <Segmented
                 as="buttons"
                 aria-label="Nodes"
-                options={NODE_CHOICES.map((n) => ({
+                options={nodeChoices.map((n) => ({
                   value: String(n),
                   label: <span className={TNUM}>{n}</span>,
                   title: running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`,
@@ -772,7 +807,7 @@ export default function BenchmarkView() {
                 }))}
                 value={String(nodes)}
                 onChange={(v) => {
-                  const n = NODE_CHOICES.find((c) => String(c) === v);
+                  const n = nodeChoices.find((c) => String(c) === v);
                   if (n != null) setNodes(n);
                 }}
                 disabled={running}
