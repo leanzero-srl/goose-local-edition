@@ -51,6 +51,21 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   LmStudioEngine (verbatim), Engines registry with per-engine unservable partition; sidecar
   registration is the open step C (six decision points commented at their sites).
 
+## The Swarm provider and the provider surface (2026-09-05, owner's rule)
+- **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
+  families by REGISTRY id (aws_bedrock, zai, google, custom_deepseek). One allow-list, `LOCAL_EDITION_PROVIDER_IDS` in
+  `ui/desktop/src/components/leanzero-swarm/cloudProviders.ts`, derived from CLOUD_PROVIDERS so it cannot drift; applied to the
+  model picker, onboarding, /configure-providers and the hub's Cloud Providers tab. omlx/lmstudio stay REGISTERED in Rust (the
+  sidecar path needs omlx) but are never offered; an active omlx/lmstudio provider is migrated once, loudly, to swarm. The edition
+  defaults to LOCAL with nothing persisted — this fork IS Goose Swarm.
+- **`swarm` has two model ids:** `swarm` = CHAT — the turn is served by an idle node of the configured pool through
+  `crates/goose/src/providers/swarm_router.rs` (process-wide idle guard: pool re-read every turn; capacity = instances or the
+  sidecar admission cap `goose_sidecar::engine::MAX_CONCURRENT_REQUESTS`; free = cap − max(leases, live in-flight); sticky per
+  conversation, else most-free, else QUEUE with no timeout; zero servable → a named error; admission 503 → next node; the permit
+  rides the stream; context limit = the pool's minimum window). `swarm-build` = the brief → `goose swarm run` (the run panel path,
+  unchanged). A mesh PEER's sidecar is not a node (loopback-bound; the Link mlx proxy is the only door) — LM Link fans LM Studio
+  models across machines. Never add a clock to the queue (gate 5); never let a probe failure read as "idle".
+
 ## The evolution loop (this is the durable memory — update as you go)
 1. Every experiment/change lands as one row in `local-edition/mlx/experiments.jsonl`
    (`void_reason` string when not a pass, never a bare fail) AND a dated entry in `LEDGER.md`
