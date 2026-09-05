@@ -24,12 +24,7 @@ The register of this document is deliberate: it describes what was built, what w
 
 - [What the fork is](#what-the-fork-is)
 - [Architecture](#architecture)
-  - [Planning: drafts, agreement, and the ladder](#planning-drafts-agreement-and-the-ladder)
-  - [Frozen contracts](#frozen-contracts)
-  - [The dispatch DAG and the scheduler](#the-dispatch-dag-and-the-scheduler)
-  - [Supervision: the judge and pre-review](#supervision-the-judge-and-pre-review)
-  - [The check → block → repair chain](#the-check--block--repair-chain)
-  - [The detectors](#the-detectors)
+  - [The multi-engine layer](#the-multi-engine-layer)
 - [How quality is enforced](#how-quality-is-enforced)
 - [The benchmark product](#the-benchmark-product)
 - [The fleet](#the-fleet)
@@ -52,68 +47,26 @@ goose Local Edition is the sum of those mechanisms, built into goose's agent fra
 
 ## Architecture
 
-The swarm engine lives in two places: `crates/goose-swarm` (the scheduler, DAG, judge, pre-reviewer, replanner, event model, and the deterministic coherence primitives) and `crates/goose-cli/src/commands/swarm.rs` (the orchestration loop, the pool configuration, the phase pipeline, the completion gate, and the repair machinery). The desktop app drives the same engine through `ui/desktop/src/components/swarm` and exposes the benchmark through `ui/desktop/src/components/benchmark`.
+The engine that ships is the one that was measured: commit `393a99351` (tag `r6h-golden-0.4616`), the run that scored 0.4616 on sb-7 with three local nodes. It lives in `crates/goose-cli/src/commands/swarm.rs` with its modules under `commands/swarm/` (the orchestration loop, the pool, the phase pipeline, the completion gate, the repair machinery) and `crates/goose-swarm` (the scheduler, DAG, judge, event model). The desktop drives the same engine through `ui/desktop/src/components/swarm` and exposes the benchmark through `ui/desktop/src/components/benchmark`. Any change to these paths lands only with a new measured run that scores at least 0.4616.
 
-A run proceeds through named phases: RESEARCH → PLAN (drafting and agreement) → CONTRACTS → DETAIL → EXECUTE (the dispatch DAG) → COMPLETE (the verify/repair tail). Every phase emits structured events to a JSONL log; every claim in this document about what the engine does is checkable against those events.
+A run proceeds through these phases, each emitting structured events to `run.jsonl` that the run panel renders live:
 
-### Planning: drafts, agreement, and the ladder
+1. **OPEN** — one planner call slices the specification into balanced semantic slices, each owning its spec sections.
+2. **ASK** — only when the opener leaves open decisions: the user is asked once, up front; unanswered decisions ride the research fan and settle at plan time.
+3. **RESEARCH FAN** — one read-only lane per slice, in parallel across the fleet, answering the slice's design and external questions from the spec and the vendor's live API; answers snowball into a ledger and into every brief. A miss is a loud `research_unanswered`, never a block.
+4. **SYNTHESIS** — planning over answered material: tasks, owned files, dependencies, the integrate-verify join that owns no files.
+5. **Deterministic plan repairs** (`finalize_plan_before_dag`) — code, not a model, repairs the plan's structural defects: a task owning nothing, shared files, module/package shadows, the join's files, unowned entry points. A correction is a patch, never a re-emission.
+6. **THE SPLIT** — a task measured fat (above mean+σ of the plan and at least twice the median) is split by code into shards sized to the free hosts, with a merger task and a declared interface; every shard is verified at completion.
+7. **BUILD** — the dispatch DAG runs one call per fleet slot; every brief opens with one named write and carries the real dependency sources and the ledger, not stubs. No wall clock, turn ceiling or retry count bounds model work; terminators are progress-based.
+8. **INTEGRATE → REPAIR** — the join boots the application, probes it, and the repair tail reproduces each finding first and promotes a fix only on the finding's own flip. `passed` requires zero render-class known bugs.
 
-Planning on weak local models is the single most expensive phase to get wrong, and the fork treats it as a first-class engineering problem rather than a single model call.
+Two supervision principles run through all of it. **The judge nudges, it does not kill**: a lane is looked at on evidence only (a repeat, a degenerate answer, a forming-channel stall) and steered with the words it produced, never on a cadence. **A missing input never silently substitutes content**: every absence is a named event the operator can read, never a template or a quiet default.
 
-- **Research scouts.** Before planning, independent scout agents fan out across devices to look things up — vendor documentation, the existing tree in amend mode, tool availability. Grounding is measured: a run records whether scouts actually performed lookups (`grounded > 0`) rather than planning from the model's frozen weights. Scouts serialize on one node by construction, so this phase is one of the few that parallelizes cleanly (measured 2.65× across the fleet).
-- **Parallel draft plans.** The architect's plan skeleton is drafted best-of-N across devices, and the drafts are pushed toward one canonical decomposition by *convergence molding* — the proven agreement-raiser on this fleet, on by default and A/B-testable off.
-- **The agreement ladder.** When structural agreement between drafts stays below a threshold, the engine re-drafts. The ladder was measured as the largest planning tax in the engine (roughly 25 minutes per round when it fires), and one fully traced firing spent 756 seconds re-buying a plan structurally identical to the one it already held. Two shipped fixes govern it now: the redraft rung only fires when a draft that does not yet exist *can* exist (distinct-model headroom, not counter headroom), and `diverse_plan` enforces the same skip predicate the engine's own shadow counterfactual computes. The shadow — a free in-run measurement of "would enabling this lever have skipped the ladder?" — read true in 7 of 7 laddered runs before the lever was armed.
-- **Spec-sized plans.** The number of modules the architect is asked for derives from the specification, not the fleet: the same spec used to yield "6 to 12 modules" on three nodes and "2 to 4" on one, a fleet-scaled ask that only ever bound inflationary. Task existence is now the spec's property (`spec_sized_plan`, on by default).
+What was deleted, and why, is as much the design as what stayed. The LLM review round, the dynamic replanner, frozen contracts, the coverage pass and the research resplit were each measured across runs at hours of node time for output nothing downstream consumed, and were removed rather than capped. `EXPERIMENTS-LEDGER.md` and `REFUSED.md` hold the receipts so they are not tried twice.
 
-### Frozen contracts
+### The multi-engine layer
 
-After the plan is agreed, a CONTRACTS phase freezes a **signature-only interface per module** — function and method signatures with bodies removed, type and constant declarations kept verbatim — *before* any implementation is dispatched. Workers implementing different modules then code against each other's frozen contracts, not each other's files.
-
-Two deterministic primitives in `crates/goose-swarm/src/coherence.rs` make this cheap enough to use everywhere:
-
-- `extract_signatures` strips a built dependency's source to its declaration surface, so a consumer's prompt carries the exact API it must call instead of the dependency's whole body.
-- `scope_contract_bundle` scopes the global contract bundle to a worker's DAG neighbourhood (its dependencies, its consumers, itself), so per-worker context is proportional to the node's degree in the DAG, not to the total module count.
-
-Both are pure, model-free, and unit-tested. When the heuristic extractor recognizes nothing (unknown language, unusual style), the caller falls back to the original body — a mis-parse degrades to the old behaviour, never to a crash or an empty API. Contracts also enable a flat-fan backstop that flattens the architect's false-serialization dependency chains: modules that only *consume* a contract need not wait for its implementation.
-
-### The dispatch DAG and the scheduler
-
-The detailed plan becomes a dependency DAG of typed tasks (implementation, test-authoring, assets, docs, verification), executed by a weighted work-queue scheduler (`crates/goose-swarm/src/scheduler.rs`):
-
-- **Routing is by model identifier, weighted by measured host speed.** Each device carries a `speed_weight` (per-host throughput rank); dispatch counts are normalized by it, so a faster host accumulates proportionally more tasks before it is considered "even", and every equal-load tie goes to the fastest host. This is a repaired defect, not a design flourish: before the fix, index ties sent every ordinary task to the *slowest* host (measured task split 73/63/42, the exact inverse of the configured ranking).
-- **Fat tasks split.** A task whose brief bundles separable work is split into children that inherit the parent's external dependencies and rely on each other's frozen contracts — not on files. Splitting was measured to buy quality and cost time (split runs 0.7710 vs 0.7355, at 108 vs 93 minutes), so it is a lever, on by default in the product regime.
-- **Skeleton-first fill for hard modules.** A hard module can expand into a skeleton task plus parallel slot-fill tasks joined by an AST splice, gated on the stub actually parsing, with a byte-fence that refuses any foreign edit outside a fill's assigned slot. The fence has never let a foreign edit reach the real tree.
-- **E2E verification shards by job size, not fleet size.** The verify fan is cut from the command union of the spec, fleet-blind — an earlier fleet-sized cut made the same 4-command spec produce 4 shards on three nodes versus 2 on one, buying ~16 minutes of extra fleet task-time for a *longer* slowest shard.
-- **Failsafes are generous and re-route rather than kill.** Worker and planner timeouts default to 900 s and exist only to catch a genuine infinite stall on slow local hardware; a progress-based watchdog distinguishes "slow" from "dead", and a stalled stream exits early instead of burning the budget (the first live stall-exit saved ~25 minutes of a run).
-
-### Supervision: the judge and pre-review
-
-Redundant capacity is spent on judgment. This is the design's founding principle — the idle node is the point — and both supervision mechanisms are measured, not assumed:
-
-- **The judge** observes every phase of the run. When a worker loops, the judge redirects it *in-session* with a directional hint instead of killing it, and its verdicts cite deterministic instrument readings (failed tool calls, import health) rather than impressions. Its cost is controlled: an earlier defect had the judge hot-spinning 36,000 observe/skip cycles on a long single-node task; the fix took the same phase to 55 cycles and the trace from 38 MB to 0.16 MB.
-- **Pre-review** is the mechanism that actually scales with the fleet. Measured across the corpus, pre-review runs 2.0× per run at one node and 10.2× at three — a 5.1× scaling carried entirely by spare nodes. (The judge, by contrast, does not scale with node count at all — ~88 verdicts per run at one node against ~78 at three — and is treated as fixed overhead.)
-- **The tail is an orchestrator.** When the run narrows to a final long-running sink task, idle nodes are given real work: reviewing the tree, generating tests, and racing repair attempts, all scheduled rather than improvised.
-- **A running swarm answers questions.** Dropping a text file into a run's `.swarm/questions/` directory causes an idle node to answer it from the run's own state; measured end-to-end at 57 seconds from question to answer.
-
-### The check → block → repair chain
-
-The engine's completion gate is deterministic and adversarial toward its own run. Nothing advisory survives in it, because nothing advisory was ever observed to act.
-
-1. **Check.** At the completion boundary the gate runs the full battery: build, tests, entry-point probes, spec-contract probes against the running app, the render gate, the coherence scans. Every check produces findings with evidence.
-2. **Block.** Any standing finding blocks green. Failed tasks block green. A docs-only module gets no import gate (a README should not be import-checked), but everything executable is verified in its own language — the gates emit honest reds in every supported language, and a piped test invocation that hides its exit code (the `collected 0 items` false-green class) is itself a detected defect.
-3. **Repair.** Findings become *scheduled fix tasks* — disjoint per file, raced or fanned across the fleet, each fix verified in a shadow tree and promoted only when strictly better than the baseline. Repair budgets are run-derived, scaling with the size of the tree being repaired rather than hardcoded. Fix rounds are progress-based: a round that converts findings (3 → 2 → 1) continues; a flat round ends the loop honestly.
-4. **Ship best verified.** The run ends on the best tree any verify round measured — never on the last edit. This rail exists because a measured run served a working application mid-run and shipped a dead one: late fix rounds regressed the tree and nothing restored the best verified state. With the rail on, that class is closed.
-5. **Early close.** A repair wave whose findings reach zero closes early and cancels its sibling attempts; observed live on its first run, two waves early-closed (6 → 0 and 2 → 0) and the wall came in at 95 minutes against a comparable 116.
-
-### The detectors
-
-Each detector below exists because a specific measured failure class shipped past everything that came before it. Each was validated against the scorer before being trusted, and each feeds the repair loop as a blocking finding.
-
-- **Spec-contract probes.** Every endpoint the specification documents is probed on the running application — including error paths. The probe's history is instructive: its first version produced phantom findings by probing the vendor mock, and it now carries a standing rule that its findings are verified against ground truth before being believed.
-- **Vendor-truth POST checks.** Advertised mutating endpoints are exercised against the live vendor service, not just read paths. The first live firing of the POST probe caught the top two ranked defect classes of its day.
-- **DOM-id contract scan.** The frontend's JavaScript and its HTML are checked against each other: an element id the script queries must exist in the markup. This closes the class where three workers each build a plausible page that cannot possibly work together.
-- **CSS-coherence scan.** The class vocabulary used by the markup is checked against the stylesheet actually shipped. The motivating incident: a journey app shipped completely unstyled while every gate stayed green, because three workers used three class vocabularies with zero contract between them.
-- **The render gate.** The completion gate opens the built page in a real headless browser (a pluggable probe; `product_probe.mjs` in the harness) and asserts the journey basics: the page renders rows, the sync action works, error and empty states appear, no console errors. A blank frontend is a blocking, repairable finding. Before this gate existed, a run scored 0.514 with a page that rendered nothing — engine-green throughout. The gate was observed firing three times and blocking green three times in its first day. When the probe itself dies environmentally (missing browser on the scoring host), that death names itself instead of scoring the app down — a harness gap must never be punished as app quality.
+`commands/swarm_engine.rs` lets the pool mix engines: LM Studio nodes reached through one LM Link endpoint, an in-house MLX sidecar (`crates/goose-sidecar`, a supervised Rapid-MLX process the app mounts from its Goose Swarm hub), and cloud nodes. Each device is judged by its own engine's probe; a sidecar that cannot answer or cannot mount is named in `run.jsonl` and leaves the pool by name. On an all-LM-Studio pool this layer is inert, which is how the golden run's behaviour is preserved.
 
 ## How quality is enforced
 
@@ -146,6 +99,14 @@ The reference fleet is three Apple-silicon machines running [LM Studio](https://
 - **Imposed sampling.** The engine can impose sampling parameters on the fleet (`GOOSE_SWARM_TEMP`, plus top-p/top-k/min-p/repeat-penalty). The product regime runs single-sample paths (workers, detail, sink, judge) at temperature 0.2 — low temperature is correct for code — while plan drafts keep a higher draft temperature for diversity.
 
 ## Current results
+
+**sb-7** (the current specification: a payments sync from a vendor API into a local store, served on a web page, scored by execution across seven tiers). The golden run, engine `393a99351`, three local nodes:
+
+| entrant | score | wall | tasks |
+|---|---|---|---|
+| **3-node local fleet (r6h, the engine that ships)** | **0.4616** | 507 min | 10/10 done, 0 failed, 0 retries |
+
+Two later engine iterations (r6i, r6j) regressed to 0.1112 on the same specification and were removed from `main`; their commits live only under `archive/*` tags. sb-7 is a harder tier than the sb-5.x results below, so the numbers are not comparable across eras.
 
 The public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks) carries frozen Anthropic cloud baselines and the fleet's published entries, organized by scorer era — the board's selector defaults to the newest scorer and keeps every older era viewable as a frozen historic board.
 
