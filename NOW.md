@@ -1,5 +1,23 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-05 night — AUTOMATIC RECALL + RARITY SEARCH LANDED (memories and skills now reach the model without a tool
+> call).** New std-only crate `goose-memory-store` owns the on-disk format, index, search and `remember` (an identical save is
+> Unchanged, a save whose first line matches a stored headline REPLACES it, else Added; scopes optional so small models stop
+> failing the call). New platform extension `recall` (default on, no tools; swarm workers never get it — they carry only
+> `developer` + the swarm config's extensions): on every request turn it searches the memory store and the skill catalogue with
+> the user's words and contributes `<recalled-memories>` (entries in full) and `<relevant-skills>` to the turn context.
+> READ-THE-WORDS finding from the first live run: with matching COUNT, all three memory slots filled every time and two were
+> entries sharing six everyday words. Fixed by rarity weighting (ln((n+1)/(df+0.5)) per term, name terms twice, `rare_terms` =
+> matched terms in ≤ half the store); recall requires ≥1 rare term and ≥ half the top score. Measured on the built binary over
+> OpenRouter (haiku 4.5, cents): session 1 wrote a well-formed memory via remember_memory; session 2 answered the token and
+> port "from my recalled memories" with NO tool call, log `memories:1` (was 3); the store probe ranks the real entry 38.6 vs
+> 12.1 for the next; session 3 named note-bfc4a3, log `skills:2`. Skill supporting-file reads are cut at
+> GOOSE_MAX_TOOL_RESPONSE_SIZE with the cut announced. Tests 1476/86/10 green; clippy: goose-mcp + store clean, goose crate at
+> its 30 pre-existing sites, none new. Known limits: substring matching ("rest" ⊂ "research"), recall's memory slots still fill
+> on generic questions when several entries share the rare words (session 3: 3 memories on a Jira question) — the next lever is
+> a whole-word tokenizer, measured the same way. Not done: chatrecall stays default-off; the desktop Memories view has no
+> "why was this recalled" surface.
+
 > **2026-09-05 late — MEMORY INDEX + SEARCH LANDED, 13 UPSTREAM PICKS PORTED (no swarm engine file touched).** Research
 > first: the memory extension pasted every global memory into every system prompt — measured 171 entries / 344,605 bytes
 > (~86k tokens) per session on this machine, local memories never preloaded, retrieval only by exact category. Now
