@@ -501,7 +501,13 @@ fn swarm_rs_line_count_only_decreases() {
     // VA-113, the r6i-staging merges) are gone with their modules; the count rises from the
     // merge's 33,411 because those commits had also extracted golden code into modules that are
     // deleted with them.
-    const SWARM_RS_LINE_BASELINE: usize = 33_985;
+    // Tightened to 33,864 (VA-164 series, 2026-09-05): the app-under-test process-group cluster
+    // (`own_process_group`/`kill_app_tree`/`spawn_grouped`/`GroupedChild`/`ShellGroupReaper`/
+    // `boot_invocation`/`run_repro_once`/`smoke_output` + `boot_invocation_tests`, 474 lines) moved
+    // to commands/swarm/app_spawn.rs in the series' first commit, paying for the error-arm/loudness
+    // wiring the three commits after it add to the root (A1-A4, B1-B2, C1-C5); 33,864 is `wc -l`
+    // after the last of them, so the ratchet reads "tighten" on the earlier three and holds at C5.
+    const SWARM_RS_LINE_BASELINE: usize = 33_864;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
