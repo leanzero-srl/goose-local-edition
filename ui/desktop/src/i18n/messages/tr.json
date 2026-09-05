@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Özel Sağlayıcı Ekle"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "{providers} bağla"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Bir Sağlayıcıya Bağlan"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Yerel Bir Model Kullanın"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "{name} kullan"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Sohbet ve derlemeler kendi havuzunuzun düğümlerinde çalışır. API anahtarı gerekmez."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Sağlayıcı Yapılandırma Ayarları"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Düşünme modunu seçin"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "bir derlemeyi planlayıp havuza dağıt"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Derleme"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "sohbet — her tur havuzunuzdaki boş bir düğüme gider ya da biri boşalana kadar bekler"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Düşünme Bütçesi (jetonlar)"

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Bot, Cpu, ExternalLink, Loader2 } from 'lucide-react';
+import { Bot, ExternalLink } from 'lucide-react';
 import { defineMessages, useIntl } from '../../../../i18n';
 
 import {
@@ -29,13 +29,13 @@ import Model, {
 import { getPredefinedModelsFromEnv, shouldShowPredefinedModels } from '../predefinedModelsUtils';
 import type { ProviderDetails, ProviderType, ThinkingEffort } from '../../../../types/providers';
 import { trackModelChanged } from '../../../../utils/analytics';
-import { useFeatures } from '../../../../contexts/FeaturesContext';
-import { useMlxEngineStatusPoll } from '../../../leanzero-swarm/useMlxEngineStatus';
-import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
+import { useEdition } from '../../../../contexts/EditionContext';
+import { SWARM_DISPLAY_NAME, SWARM_PROVIDER_ID } from '../../../../branding';
 import {
-  keepProviderInLeanzeroSelector,
-  MLX_ENTRY_LABEL,
-  MLX_PROVIDER_ID,
+  isLocalEditionCloudProvider,
+  keepProviderInLocalEdition,
+  SWARM_BUILD_MODEL_ID,
+  SWARM_CHAT_MODEL_ID,
 } from '../leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
@@ -110,6 +110,18 @@ const i18n = defineMessages({
   useOtherProvider: {
     id: 'switchModelModal.useOtherProvider',
     defaultMessage: 'Use other provider',
+  },
+  swarmBuildLabel: {
+    id: 'switchModelModal.swarmBuildLabel',
+    defaultMessage: '{name} · Build',
+  },
+  swarmChatHelper: {
+    id: 'switchModelModal.swarmChatHelper',
+    defaultMessage: 'chat — each turn goes to an idle node of your pool, or waits for one',
+  },
+  swarmBuildHelper: {
+    id: 'switchModelModal.swarmBuildHelper',
+    defaultMessage: 'plan and fan out a build across the pool',
   },
   providerPlaceholder: {
     id: 'switchModelModal.providerPlaceholder',
@@ -246,92 +258,15 @@ function findPreferredModel(
   return validModels[0].value;
 }
 
-// Solid saturated palette for the Leanzero MLX entry — same language as the engine window.
-const MLX_GREEN = '#2ecc71';
-const MLX_AMBER = '#f5a623';
-const MLX_RED = '#e5484d';
-const MLX_SLATE = '#64748b';
-const MLX_AZURE = '#2e8bff';
-
-/**
- * The model area for the "Leanzero MLX" selector entry. There is no model list to pick
- * from here: chat rides whatever the engine actually serves, so this panel renders the
- * live engine truth — served model when running, the honest "no model mounted" otherwise —
- * and hands the user to the engine window for mounting.
- */
-function MlxEngineEntryPanel({
-  status,
-  statusError,
-  onOpenEngine,
-}: {
-  status: MlxEngineStatus | null;
-  statusError: string | null;
-  onOpenEngine: () => void;
-}) {
-  const state = statusError ? 'unreachable' : (status?.state ?? 'loading');
-  const chipColor =
-    state === 'running'
-      ? MLX_GREEN
-      : state === 'mounting'
-        ? MLX_AMBER
-        : state === 'failed' || state === 'unreachable'
-          ? MLX_RED
-          : MLX_SLATE;
-  const servedId = status?.servedModelId ?? status?.modelId ?? null;
-
-  return (
-    <div
-      className="border border-border-primary p-3 flex flex-col gap-2"
-      style={{ borderRadius: 3 }}
-      data-testid="mlx-entry-panel"
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <span
-          className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shrink-0 ${
-            state === 'mounting' ? 'animate-pulse' : ''
-          }`}
-          style={{ backgroundColor: chipColor, borderRadius: 3 }}
-        >
-          {state === 'mounting' && <Loader2 className="w-3 h-3 animate-spin" />}
-          {state}
-        </span>
-        {state === 'running' && servedId ? (
-          <span className="font-mono text-sm font-semibold text-text-primary truncate">
-            {servedId}
-          </span>
-        ) : state === 'mounting' && status?.modelId ? (
-          <span className="font-mono text-sm text-text-primary truncate">{status.modelId}</span>
-        ) : (
-          <span className="text-sm text-text-secondary">no model mounted</span>
-        )}
-      </div>
-      {statusError && (
-        <span className="text-xs font-semibold break-words" style={{ color: MLX_RED }}>
-          {statusError}
-        </span>
-      )}
-      {state === 'running' ? (
-        <span className="text-xs text-text-secondary">
-          Chat uses the model the engine serves — mount a different one from the engine window.
-        </span>
-      ) : state === 'mounting' ? (
-        <span className="text-xs text-text-secondary">
-          Mounting — selectable once the engine reports running.
-        </span>
-      ) : (
-        <Button
-          size="sm"
-          onClick={onOpenEngine}
-          className="self-start font-bold text-white hover:opacity-90"
-          style={{ backgroundColor: MLX_AZURE, borderRadius: 3 }}
-        >
-          <Cpu className="w-3.5 h-3.5" />
-          Open Leanzero MLX
-        </Button>
-      )}
-    </div>
-  );
-}
+/** A provider row of the selector. Goose Swarm rows carry the model they select and a helper
+ *  line; every other row selects a provider whose model list is fetched. */
+type ProviderOption = {
+  value: string;
+  label: string;
+  provider: string;
+  model?: string;
+  description?: string;
+};
 
 type SwitchModelModalProps = {
   sessionId: string | null;
@@ -368,14 +303,19 @@ export const SwitchModelModal = ({
     currentModel: configModel,
     currentProvider: configProvider,
   } = useModelAndProvider();
-  // Leanzero edition: with the MLX engine capability on, the selector shows cloud providers
-  // plus the dedicated engine entry; the entry's model area follows the LIVE engine status.
-  const { mlxEngine: mlxCapability } = useFeatures();
-  const { status: mlxStatus, error: mlxStatusError } = useMlxEngineStatusPoll(mlxCapability);
+  // Goose Swarm (local) edition: the selector offers EXACTLY the allow-list — the two Goose Swarm
+  // rows first, then the configured swarm cloud families. A provider outside it (an omlx/lmstudio
+  // session) is never preselected, so the only thing a user can submit is an allowed row.
+  const { isLocal } = useEdition();
+  const admit = useCallback(
+    (p: string | null | undefined): string | null =>
+      p ? (isLocal && !keepProviderInLocalEdition(p) ? null : p) : null,
+    [isLocal]
+  );
   // Use session-specific model/provider if available, otherwise fall back to config defaults
   const currentModel = sessionModel ?? configModel;
   const currentProvider = sessionProvider ?? configProvider;
-  const [providerOptions, setProviderOptions] = useState<{ value: string; label: string }[]>([]);
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
   type ModelOption = {
     value: string;
     label: string;
@@ -384,12 +324,17 @@ export const SwitchModelModal = ({
     reasoning?: boolean;
   };
   const [modelOptions, setModelOptions] = useState<{ options: ModelOption[] }[]>([]);
-  const [provider, setProvider] = useState<string | null>(
-    initialProvider || currentProvider || null
+  const [provider, setProvider] = useState<string | null>(() =>
+    admit(initialProvider || currentProvider)
   );
-  const [model, setModel] = useState<string>(
-    initialProvider && initialProvider !== currentProvider ? '' : currentModel || ''
+  const [model, setModel] = useState<string>(() =>
+    !admit(initialProvider || currentProvider) ||
+    (initialProvider && initialProvider !== currentProvider)
+      ? ''
+      : currentModel || ''
   );
+  // A Goose Swarm row fixes its model: no list to fetch, no reasoning to resolve, no auto-pick.
+  const isSwarmRow = isLocal && provider === SWARM_PROVIDER_ID;
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [validationErrors, setValidationErrors] = useState({
     provider: '',
@@ -438,8 +383,7 @@ export const SwitchModelModal = ({
 
   useEffect(() => {
     if (!provider || !model) return;
-    // The MLX entry serves local models — no thinking-effort metadata to resolve.
-    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
+    if (isSwarmRow) return;
 
     const selectedOption = modelOptions
       .flatMap((group) => group.options)
@@ -456,7 +400,7 @@ export const SwitchModelModal = ({
     }, 400);
 
     return () => clearTimeout(timeout);
-  }, [model, provider, modelOptions, resolveSelectedModelReasoning, mlxCapability]);
+  }, [model, provider, modelOptions, resolveSelectedModelReasoning, isSwarmRow]);
 
   // Validate form data
   const validateForm = useCallback(() => {
@@ -566,11 +510,13 @@ export const SwitchModelModal = ({
     if (usePredefinedModels || manualSyncDone.current) return;
     if (initialProvider && initialProvider !== currentProvider) return;
     if (currentModel && currentProvider) {
-      if (!provider) setProvider(currentProvider);
-      if (!model) setModel(currentModel);
+      if (admit(currentProvider)) {
+        if (!provider) setProvider(currentProvider);
+        if (!model) setModel(currentModel);
+      }
       manualSyncDone.current = true;
     }
-  }, [currentModel, currentProvider, usePredefinedModels, provider, model, initialProvider]);
+  }, [currentModel, currentProvider, usePredefinedModels, provider, model, initialProvider, admit]);
 
   useEffect(() => {
     if (usePredefinedModels) {
@@ -583,43 +529,59 @@ export const SwitchModelModal = ({
         const providersResponse = await acpListProviderDetails();
         const activeProviders = providersResponse.filter((provider) => provider.is_configured);
         setActiveProvidersList(activeProviders);
-        // Leanzero edition UI policy (presentation only — nothing is removed from code):
-        // capability on -> list the cloud providers plus one "Leanzero MLX" entry, and hide
-        // every other local provider row. Capability off -> the selector is exactly as before.
-        const listedProviders = mlxCapability
-          ? activeProviders.filter(({ name }) => keepProviderInLeanzeroSelector(name))
-          : activeProviders;
+        if (isLocal) {
+          // Owner's rule: only the defined cloud families and Swarm. Swarm needs no credentials,
+          // so its rows are always offered; a cloud family is offered once it is configured.
+          // No omlx row, no "use other provider" escape.
+          const swarmRows: ProviderOption[] = [
+            {
+              value: SWARM_PROVIDER_ID,
+              label: SWARM_DISPLAY_NAME,
+              provider: SWARM_PROVIDER_ID,
+              model: SWARM_CHAT_MODEL_ID,
+              description: intl.formatMessage(i18n.swarmChatHelper),
+            },
+            {
+              value: `${SWARM_PROVIDER_ID}:${SWARM_BUILD_MODEL_ID}`,
+              label: intl.formatMessage(i18n.swarmBuildLabel, { name: SWARM_DISPLAY_NAME }),
+              provider: SWARM_PROVIDER_ID,
+              model: SWARM_BUILD_MODEL_ID,
+              description: intl.formatMessage(i18n.swarmBuildHelper),
+            },
+          ];
+          setProviderOptions([
+            ...swarmRows,
+            ...activeProviders
+              .filter(({ name }) => isLocalEditionCloudProvider(name))
+              .map(({ metadata, name }) => ({
+                value: name,
+                label: metadata.display_name,
+                provider: name,
+              })),
+          ]);
+          return;
+        }
         setProviderOptions([
-          ...(mlxCapability ? [{ value: MLX_PROVIDER_ID, label: MLX_ENTRY_LABEL }] : []),
-          ...listedProviders.map(({ metadata, name }) => ({
+          ...activeProviders.map(({ metadata, name }) => ({
             value: name,
             label: metadata.display_name,
+            provider: name,
           })),
           {
             value: 'configure_providers',
             label: intl.formatMessage(i18n.useOtherProvider),
+            provider: 'configure_providers',
           },
         ]);
       } catch (error: unknown) {
         console.error('Failed to query providers:', error);
       }
     })();
-  }, [usePredefinedModels, intl, mlxCapability]);
-
-  // The Leanzero MLX entry binds the model to what the engine actually serves: running ->
-  // the served id, anything else -> empty (submit stays blocked; "no model mounted" is the
-  // honest signal). A user picking the entry never gets a stale or invented model id.
-  useEffect(() => {
-    if (!mlxCapability || provider !== MLX_PROVIDER_ID) return;
-    const served = mlxStatus?.state === 'running' ? (mlxStatus.servedModelId ?? '') : '';
-    setModel(served);
-    setIsCustomModel(false);
-  }, [mlxCapability, provider, mlxStatus?.state, mlxStatus?.servedModelId]);
+  }, [usePredefinedModels, intl, isLocal]);
 
   useEffect(() => {
     if (!provider || usePredefinedModels) return;
-    // The MLX entry has no model list to fetch — its panel renders the live status instead.
-    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
+    if (isSwarmRow) return;
     if (fetchedProviders.current.has(provider)) {
       setLoadingModels(false);
       return;
@@ -709,7 +671,7 @@ export const SwitchModelModal = ({
       cancelled = true;
       setLoadingModels(false);
     };
-  }, [provider, activeProvidersList, usePredefinedModels, intl, mlxCapability]);
+  }, [provider, activeProvidersList, usePredefinedModels, intl, isSwarmRow]);
 
   const filteredModelOptions = provider
     ? modelOptions.filter((group) => group.options[0]?.provider === provider)
@@ -718,8 +680,7 @@ export const SwitchModelModal = ({
   useEffect(() => {
     // Don't auto-select if user explicitly cleared the model
     if (!provider || loadingModels || model || isCustomModel || userClearedModel) return;
-    // The MLX entry's model comes from the live engine status only — never a saved/preferred pick.
-    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
+    if (isSwarmRow) return;
 
     // Use saved model from provider config if available
     const providerInfo = activeProvidersList.find((p) => p.name === provider);
@@ -746,7 +707,7 @@ export const SwitchModelModal = ({
     isCustomModel,
     userClearedModel,
     activeProvidersList,
-    mlxCapability,
+    isSwarmRow,
   ]);
 
   const handlePredefinedModelChange = (model: Model) => {
@@ -836,6 +797,13 @@ export const SwitchModelModal = ({
       setModelOptions(customOption);
     }
   };
+
+  // A Goose Swarm row is keyed by provider AND model; every other row by provider alone.
+  const selectedProviderOption =
+    providerOptions.find(
+      (option) =>
+        option.provider === provider && (option.model === undefined || option.model === model)
+    ) ?? null;
 
   const thinkingEffortControl = showThinkingControl && (
     <div className="mt-2">
@@ -936,16 +904,30 @@ export const SwitchModelModal = ({
               <div>
                 <Select
                   options={providerOptions}
-                  value={providerOptions.find((option) => option.value === provider) || null}
+                  value={selectedProviderOption}
+                  formatOptionLabel={(raw: unknown, meta: { context: 'menu' | 'value' }) => {
+                    const option = raw as ProviderOption;
+                    return (
+                      <span
+                        className="flex flex-col"
+                        data-testid={`provider-row-${option.value}`}
+                      >
+                        <span>{option.label}</span>
+                        {meta.context === 'menu' && option.description && (
+                          <span className="text-xs text-text-secondary">{option.description}</span>
+                        )}
+                      </span>
+                    );
+                  }}
                   onChange={(newValue: unknown) => {
-                    const option = newValue as { value: string; label: string } | null;
+                    const option = newValue as ProviderOption | null;
                     if (option?.value === 'configure_providers') {
                       // Navigate to ConfigureProviders view
                       setView('ConfigureProviders');
                       onClose(); // Close the current modal
                     } else {
-                      setProvider(option?.value || null);
-                      setModel('');
+                      setProvider(option?.provider || null);
+                      setModel(option?.model ?? '');
                       setIsCustomModel(false);
                       setUserClearedModel(false);
                     }
@@ -960,16 +942,16 @@ export const SwitchModelModal = ({
 
               {provider && (
                 <>
-                  {mlxCapability && provider === MLX_PROVIDER_ID ? (
-                    <div className="flex flex-col gap-1">
-                      <MlxEngineEntryPanel
-                        status={mlxStatus}
-                        statusError={mlxStatusError}
-                        onOpenEngine={() => {
-                          setView('mlxEngine');
-                          onClose();
-                        }}
-                      />
+                  {isSwarmRow ? (
+                    <div
+                      className="border border-border-primary p-3 flex flex-col gap-1"
+                      style={{ borderRadius: 3 }}
+                      data-testid="swarm-row-panel"
+                    >
+                      <span className="font-mono text-sm text-text-primary">{model}</span>
+                      <span className="text-xs text-text-secondary">
+                        {selectedProviderOption?.description}
+                      </span>
                       {attemptedSubmit && validationErrors.model && (
                         <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
                       )}

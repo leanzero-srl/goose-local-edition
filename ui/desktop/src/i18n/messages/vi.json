@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Thêm nhà cung cấp tùy chỉnh"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Kết nối {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Kết nối với nhà cung cấp"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Sử dụng mô hình cục bộ"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Dùng {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Trò chuyện và build chạy trên các node trong pool của chính bạn. Không cần khóa API."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Cài đặt cấu hình nhà cung cấp"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Chọn chế độ suy nghĩ"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "lập kế hoạch và phân phối một build trên toàn pool"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "trò chuyện — mỗi lượt được gửi đến một node đang rỗi trong pool của bạn, hoặc chờ đến khi có node rỗi"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Ngân sách suy nghĩ (token)"

@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "添加自定义提供商"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "连接 {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "连接提供商"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "使用本地模型"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "使用 {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "聊天和构建都在你自己的节点池上运行。无需 API 密钥。"
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "提供商配置项"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "选择思考模式"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "规划一次构建并分散到整个节点池执行"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · 构建"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "聊天 — 每一轮都会发送到你的节点池中的空闲节点，或等待节点空闲"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "思考预算（令牌）"

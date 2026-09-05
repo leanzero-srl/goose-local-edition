@@ -89,12 +89,14 @@ function ProviderCards({
   refreshProviders,
   setView,
   onModelSelected,
+  allowCustomProvider,
 }: {
   providers: ProviderDetails[];
   isOnboarding: boolean;
   refreshProviders?: () => void;
   setView?: (view: View) => void;
   onModelSelected?: (model?: string) => void;
+  allowCustomProvider: boolean;
 }) {
   const intl = useIntl();
   const [configuringProvider, setConfiguringProvider] = useState<ProviderDetails | null>(null);
@@ -249,12 +251,20 @@ function ProviderCards({
       />
     ));
 
-    cards.push(
-      <CustomProviderCard key="add-custom" onClick={() => setShowCustomProviderModal(true)} />
-    );
+    if (allowCustomProvider) {
+      cards.push(
+        <CustomProviderCard key="add-custom" onClick={() => setShowCustomProviderModal(true)} />
+      );
+    }
 
     return cards;
-  }, [providers, isOnboarding, configureProviderViaModal, handleProviderLaunchWithModelSelection]);
+  }, [
+    providers,
+    isOnboarding,
+    configureProviderViaModal,
+    handleProviderLaunchWithModelSelection,
+    allowCustomProvider,
+  ]);
 
   const initialData = editingProvider && {
     engine: editingProvider.config.engine,
@@ -322,12 +332,15 @@ export default function ProviderGrid({
   refreshProviders,
   setView,
   onModelSelected,
+  allowCustomProvider = true,
 }: {
   providers: ProviderDetails[];
   isOnboarding: boolean;
   refreshProviders?: () => void;
   setView?: (view: View) => void;
   onModelSelected?: (model?: string) => void;
+  /** The Goose Swarm edition offers only its defined providers — no "Add Provider" card. */
+  allowCustomProvider?: boolean;
 }) {
   return (
     <GridLayout>
@@ -337,6 +350,7 @@ export default function ProviderGrid({
         refreshProviders={refreshProviders}
         setView={setView}
         onModelSelected={onModelSelected}
+        allowCustomProvider={allowCustomProvider}
       />
     </GridLayout>
   );

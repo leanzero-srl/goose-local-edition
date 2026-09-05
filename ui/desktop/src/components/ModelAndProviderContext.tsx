@@ -15,6 +15,8 @@ import {
   getProviderDisplayName,
 } from './settings/models/predefinedModelsUtils';
 import { defineMessages, useIntl } from '../i18n';
+import { useEdition } from '../contexts/EditionContext';
+import { legacyProviderMigration } from './settings/models/leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   unknownProviderTitle: {
@@ -61,6 +63,14 @@ interface ModelAndProviderProviderProps {
 
 const ModelAndProviderContext = createContext<ModelAndProviderContextType | undefined>(undefined);
 
+/** Once per launch: the migration may fire only on the first qualifying (edition, provider) it
+ *  sees, never again while this renderer lives — a user who deliberately re-selects a legacy
+ *  session provider later is not yanked back. */
+let legacyMigrationRanThisLaunch = false;
+export function __resetLegacyProviderMigrationForTests(): void {
+  legacyMigrationRanThisLaunch = false;
+}
+
 export { i18n as modelAndProviderMessages };
 
 function patchAcpSessionProviderModel(
@@ -88,6 +98,7 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [currentProvider, setCurrentProvider] = useState<string | null>(null);
   const intl = useIntl();
+  const { edition } = useEdition();
 
   const changeModel = useCallback(
     async (sessionId: string | null, model: Model) => {
@@ -229,6 +240,37 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
   useEffect(() => {
     refreshCurrentModelAndProvider();
   }, [refreshCurrentModelAndProvider]);
+
+  // MIGRATION (2026-09-05): an install whose ACTIVE provider is still omlx or lmstudio moves to the
+  // Goose Swarm provider in the local edition — Swarm reaches the same engines through the pool, so
+  // nothing is lost, and the picker only offers the allow-list anyway. Loud on purpose: the
+  // before/after is printed so a support log shows exactly what moved. Sessions keep their own
+  // provider (the bottom bar stays truthful about an omlx session); only the default moves.
+  useEffect(() => {
+    if (legacyMigrationRanThisLaunch) return;
+    const target = legacyProviderMigration(edition, currentProvider);
+    if (!target) return;
+    legacyMigrationRanThisLaunch = true;
+    const before = { provider: currentProvider, model: currentModel };
+    void (async () => {
+      try {
+        await acpSaveDefaults(target.provider, target.model);
+        setCurrentProvider(target.provider);
+        setCurrentModel(target.model);
+        console.info('[provider-migration] active provider moved to Goose Swarm', {
+          before,
+          after: target,
+          edition,
+        });
+      } catch (error) {
+        console.error('[provider-migration] failed to move the active provider to Goose Swarm', {
+          before,
+          after: target,
+          error,
+        });
+      }
+    })();
+  }, [edition, currentProvider, currentModel]);
 
   const contextValue = useMemo(
     () => ({
