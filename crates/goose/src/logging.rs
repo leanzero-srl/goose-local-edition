@@ -39,6 +39,8 @@ fn build_env_filter(extra_directives: &[&str]) -> EnvFilter {
         // listening") are INFO in the leanzero_link crate; without this they never reach the
         // file (measured 2026-09-02: 0 hits after a real connect).
         .add_directive("leanzero_link=info".parse().unwrap())
+        // The Swarm provider's idle guard: which node served a turn, and every queue wait.
+        .add_directive("swarm_router=info".parse().unwrap())
         .add_directive(LevelFilter::WARN.into());
 
     for directive in extra_directives {
