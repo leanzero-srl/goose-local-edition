@@ -1,12 +1,18 @@
-# goose Local Edition
+# Goose Swarm
 
-goose Local Edition is a fork of [goose](https://github.com/aaif-goose/goose) (originally `block/goose`, now part of the Agentic AI Foundation at the Linux Foundation) adapted to answer one question: can several machines running the same local model, orchestrated correctly, build working software of measurably higher quality than one machine running that model alone?
+**Download the macOS app:** [Goose-2.0.2.dmg](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.2) — Developer-ID signed and notarized by Apple (Gatekeeper: "accepted, Notarized Developer ID"), Apple silicon. Drag to Applications; no right-click-to-open dance.
 
-The fork adds three things to upstream goose:
+
+Goose Swarm (the repository is still named goose-local-edition) is a fork of [goose](https://github.com/aaif-goose/goose) (originally `block/goose`, now part of the Agentic AI Foundation at the Linux Foundation) adapted to answer one question: can several machines running the same local model, orchestrated correctly, build working software of measurably higher quality than one machine running that model alone?
+
+The fork adds these things to upstream goose:
 
 1. **A swarm engine** (`crates/goose-swarm` and the `goose swarm` CLI command) that plans, dispatches, supervises, verifies and repairs a software build across a pool of LM Studio devices — one model, several machines.
 2. **A benchmark product** — a Benchmark page in the desktop app that runs the swarm against a frozen specification, scores the resulting application with an execution-based scorer (sb-5.3, 60 checks across seven tiers; older eras stay published under the board's scorer selector), and publishes the result to the public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks).
 3. **A measurement harness** (`evals/swarm-bench/`) — the scorer, its determinism and isolation controls, the run supervisor, and the findings ledger that recorded the entire campaign (873 numbered findings over roughly two and a half weeks).
+4. **An in-house MLX inference engine** (`crates/goose-sidecar`, a supervised [Rapid-MLX](https://github.com/leanzero-srl/Rapid-MLX) sidecar) that mounts a local model on Apple silicon next to LM Studio — the app's Goose Swarm hub mounts it, and the swarm treats it as one more node.
+5. **The Swarm provider** (`crates/goose/src/providers/swarm.rs`): choosing *Goose Swarm* in a chat routes each turn to an idle node of your pool through a process-wide idle guard (`swarm_router.rs`: sticky per conversation, then most free slots, then a real queue with no timeout); *Goose Swarm · Build* turns a message into a multi-agent build brief. The local edition offers exactly these providers plus the swarm's cloud families — nothing else.
+6. **LeanZero Link** (`crates/leanzero-link`): a self-hosted mesh (Headscale) so several Macs form one swarm, each account isolated.
 
 Everything upstream goose does — the desktop app, the CLI, providers, MCP extensions — continues to work. The fork point is upstream commit `a0aed81f3` (2026-07-03); the `local-edition` branch carries approximately 2,257 commits on top of it.
 
@@ -29,6 +35,7 @@ The register of this document is deliberate: it describes what was built, what w
 - [The fleet](#the-fleet)
 - [Current results](#current-results)
 - [Install and usage](#install-and-usage)
+- [Releases](#releases)
 - [Measurement discipline](#measurement-discipline)
 - [Relationship to upstream](#relationship-to-upstream)
 - [License](#license)
@@ -190,11 +197,14 @@ just release-binary           # release binary
 
 ### Desktop app
 
+Most people want the notarized build from the [Releases](https://github.com/leanzero-srl/goose-local-edition/releases) page. To build it yourself:
+
 ```bash
-just run-ui                   # development
-# or package:
-cd ui/desktop && pnpm install && pnpm run package
+cd ui/desktop && pnpm install && pnpm run package     # unsigned local package in ui/desktop/out/
+just release-notarized 2.0.3                          # Developer-ID signed + Apple-notarized DMG (see ui/desktop/NOTARIZATION.md)
 ```
+
+`just run-ui` (the Vite dev server) is broken in this fork; package and drive the app over CDP (`ui/desktop/scripts/cdp-probe.mjs`) instead.
 
 The packaged app lands in `ui/desktop/out/`. The Benchmark page is in the app's navigation; the swarm run panel shows planning, fleet, work and event-log zones live during a run.
 
@@ -243,6 +253,16 @@ The campaign that produced this fork is recorded in `evals/swarm-bench/nodeloop/
 - **A negative that authorises action must be proven on the same object.** Empty results, zero counts and dead probes are treated as claims about the instrument until shown otherwise — several of the campaign's worst errors were gates believing their own blindness.
 
 The harness enforcing this lives in `evals/swarm-bench/`: the sb-5.2 scorer and its controls (`bench/`), the run supervisor and rolling sweep (`nodeloop/`), the product contract shared with the website (`PRODUCT-CONTRACT.md`), and the product-tier design record (`nodeloop/PRODUCT-TIER.md`).
+
+## Releases
+
+Every macOS release is signed with the LeanZero Developer ID and notarized by Apple in one command (`just release-notarized <version>`); the procedure and the proof it prints live in `ui/desktop/NOTARIZATION.md`.
+
+| version | date | what |
+|---|---|---|
+| [v2.0.2](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.2) | 2026-09-05 | First notarized build. Goose Swarm naming; MLX sidecar on Rapid-MLX v0.13.4-lz.1 with the launcher migration; the Swarm provider's idle-node router and the provider allow-list; LeanZero Link mesh; the merged r6h engine line with the multi-engine layer. |
+
+The app updates itself from this repository's releases (`latest-mac.yml` + `Goose.zip` ride each release).
 
 ## Relationship to upstream
 
