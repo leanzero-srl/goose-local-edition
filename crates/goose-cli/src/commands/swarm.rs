@@ -35,9 +35,9 @@ use super::swarm_engine::{
     all_resident_unservable_per_engine, canonical_node_name, default_engine, device_engine_kind,
     drop_unservable_devices_per_engine, engine_kind_of_model, engines_for_run,
     exclude_unmountable_sidecar_devices, import_processes, live_fleet_slots, local_request_params,
-    merge_sidecar_devices, planner_fallback, prewarm_pool, print_import_summary,
-    reconcile_pool_with_fleet, require_servable, served_by_engine, sidecar_exclusion_events,
-    EngineKind, Engines,
+    merge_sidecar_devices, planner_fallback, print_import_summary, reconcile_pool_with_fleet,
+    require_servable, rewarm_on_transient, served_by_engine, settle_prewarm,
+    sidecar_exclusion_events, EngineKind, Engines,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -34761,17 +34761,12 @@ impl GooseAgentDispatcher {
                         && !self.cloud_models.contains_key(&req.model_id)
                         && (s.contains("Model is unloaded") || s.contains("connection"))
                     {
-                        // Route the re-warm through the model's OWN engine — `lms load` on an
-                        // mlx-sidecar model would warm the wrong runtime. Absent from
-                        // engine_models = the default LM Studio engine, definitionally.
-                        let kind = self
-                            .engine_models
-                            .get(&req.model_id)
-                            .copied()
-                            .unwrap_or(EngineKind::LmStudio);
-                        if let Some(engine) = self.engines.for_kind(kind) {
-                            engine.ensure_loaded(&req.model_id, 1);
-                        }
+                        rewarm_on_transient(
+                            &self.engines,
+                            &self.engine_models,
+                            self.events.as_ref(),
+                            &req,
+                        );
                     }
                     Err(DispatchError::Transient(s))
                 } else {
@@ -36638,16 +36633,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     // Optionally pre-warm the planner + enabled worker models so remote JIT-load doesn't race.
     // Gated by allow_model_load — OFF by default, so the swarm never spins up models on its own.
-    if cfg.allow_model_load {
+    let enabled: Vec<SwarmDevice> = if cfg.allow_model_load {
         eprintln!("pre-warming models (idempotent) ...");
-        prewarm_pool(&engines, &enabled, &cfg.planner_model);
+        // A refused mount is a proven negative: named, excluded, the planner moved off it, an
+        // emptied pool refused — see swarm_engine::settle_prewarm.
+        settle_prewarm(&engines, enabled, &mut cfg.planner_model, sink.as_ref())?
     } else {
         eprintln!(
             "{}",
             style("model loading off (allow_model_load=off) — using only resident models; enable via `goose swarm pool`")
                 .yellow()
         );
-    }
+        enabled
+    };
 
     let speed_weight_for = |id: &str| -> u32 { configured_speed_weight(&cfg.speed_weights, id) };
     let mut devices: Vec<DeviceCfg> = enabled
