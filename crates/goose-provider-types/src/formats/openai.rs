@@ -2907,6 +2907,7 @@ mod tests {
         usage: Option<ProviderUsage>,
         tool_calls: Vec<String>,
         has_text_content: bool,
+        text: String,
     }
 
     async fn run_streaming_test(response_lines: &str) -> anyhow::Result<StreamingUsageTestResult> {
@@ -2920,6 +2921,7 @@ mod tests {
             usage: None,
             tool_calls: Vec::new(),
             has_text_content: false,
+            text: String::new(),
         };
 
         while let Some(Ok((message, usage))) = messages.next().await {
@@ -2937,6 +2939,7 @@ mod tests {
                         }
                         MessageContent::Text(text) if !text.text.is_empty() => {
                             result.has_text_content = true;
+                            result.text.push_str(&text.text);
                         }
                         _ => {}
                     }
@@ -4559,7 +4562,7 @@ data: [DONE]"#;
             let (message, _usage) = result?;
             if let Some(msg) = message {
                 for content in &msg.content {
-                    if let MessageContentBlock::ToolRequest(req) = content {
+                    if let MessageContent::ToolRequest(req) = content {
                         if let Ok(call) = &req.tool_call {
                             tool_calls.push(call.clone());
                         }

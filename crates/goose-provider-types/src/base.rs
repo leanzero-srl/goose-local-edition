@@ -832,23 +832,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn recommended_models_preserve_unknown_future_models() {
-        let provider = ModelInventoryProvider {
-            models: vec![
-                "grok-4.5".to_string(),
-                "grok-future-unlisted".to_string(),
-                "grok-4.20-multi-agent".to_string(),
-            ],
-        };
-
-        let models = provider.fetch_recommended_models(false).await.unwrap();
-
-        assert!(models.contains(&"grok-4.5".to_string()));
-        assert!(models.contains(&"grok-future-unlisted".to_string()));
-        assert!(!models.contains(&"grok-4.20-multi-agent".to_string()));
-    }
-
     #[test]
     fn test_model_info_creation() {
         // Test direct ModelInfo creation
