@@ -24,6 +24,13 @@ error unchanged; the permit rides the stream and frees on drop; ProviderUsage.mo
 served. Out of scope, stated: a mesh PEER's sidecar (loopback-bound; reachable only through the Link mlx proxy) — LM Link
 already fans LM Studio models across machines.
 
+## 2026-09-05 13:32 — FINAL LIVE PROOF (package 13:31) + MERGE TO MAIN
+- Cross-process routing PROVEN: the app's goosed mounted the engine (hub → Mount, up in ~8 s); a SECOND process (`goose run
+  --provider swarm --model swarm`, release CLI) answered "router ok", the node counted the request (1 → 2), and the CLI's log
+  carries `swarm_router pick{node: workhorse-mlx, model: workhorse-qwen3.5-9b-4bit-mlx, free_slots: 8, queued_ms: 0}`.
+- Quit (osascript, the Cmd+Q door) tore down the engine and the lease both times today: rapid-mlx 0, goose serve 0, :8090 free.
+- Branch merged to origin/main (fast-forward) at the end of this session; origin/local-edition's 825 commits remain a separate job.
+
 ## 2026-09-05 13:xx — LIVE PASS on the packaged app (build 12:56, CDP 9897) — receipts
 - Brand: document.title "Goose Swarm", sidebar wordmark + nav row "Goose Swarm", hub title "Goose Swarm", tabs LeanZero MLX |
   Cloud Providers | Swarm Settings | LeanZero Link; body innerText has 0 "flock" matches.
