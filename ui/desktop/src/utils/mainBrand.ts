@@ -29,7 +29,9 @@ export function resolveBrandName(
   if (persistedEdition === 'local') return SWARM_BRAND;
   if (persistedEdition === 'standard') return STANDARD_BRAND;
   if (activeProvider && isLocalProviderName(activeProvider)) return SWARM_BRAND;
-  return STANDARD_BRAND;
+  // This fork IS Goose Swarm: with nothing persisted, the brand is Goose Swarm regardless of the
+  // provider (mirrors EditionContext.resolveEdition); "Goose" only by explicit persisted choice.
+  return SWARM_BRAND;
 }
 
 /**

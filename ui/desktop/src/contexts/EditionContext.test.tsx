@@ -86,25 +86,25 @@ describe('resolveEdition (Rust-resolver parity)', () => {
     expect(resolveEdition('local', 'openai')).toBe('local');
   });
 
-  it('defaults to standard for a cloud provider or none', () => {
-    expect(resolveEdition(undefined, 'anthropic')).toBe('standard');
-    expect(resolveEdition(undefined, null)).toBe('standard');
-    expect(resolveEdition(undefined, undefined)).toBe('standard');
+  it('defaults to local for a cloud provider or none — this fork IS Goose Swarm', () => {
+    expect(resolveEdition(undefined, 'anthropic')).toBe('local');
+    expect(resolveEdition(undefined, null)).toBe('local');
+    expect(resolveEdition(undefined, undefined)).toBe('local');
   });
 
-  it('an unrecognized persisted value falls through to derivation', () => {
+  it('an unrecognized persisted value falls through to the local default', () => {
     expect(resolveEdition('weird', 'ollama')).toBe('local');
-    expect(resolveEdition('weird', 'openai')).toBe('standard');
+    expect(resolveEdition('weird', 'openai')).toBe('local');
   });
 });
 
 describe('EditionContext', () => {
-  it('with no stored setting and no provider it stays standard with no .local-edition class', async () => {
+  it('with no stored setting and no provider it is local with the .local-edition class', async () => {
     const { getByTestId } = renderProvider();
     await settle();
-    expect(getByTestId('edition').textContent).toBe('standard');
-    expect(document.documentElement.classList.contains('local-edition')).toBe(false);
-    expect(document.title).toBe('Goose');
+    expect(getByTestId('edition').textContent).toBe('local');
+    expect(document.documentElement.classList.contains('local-edition')).toBe(true);
+    expect(document.title).toBe('Goose Swarm');
   });
 
   it('derives local from the active provider (omlx) when no setting is stored', async () => {
