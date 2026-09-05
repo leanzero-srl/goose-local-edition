@@ -1171,7 +1171,7 @@ async fn run_finding_shard(
             "said": said,
         }));
     }
-    if let Some(path) = write_repair_ledger(
+    match write_repair_ledger(
         cwd,
         RepairLedgerRow {
             round: round as usize,
@@ -1187,13 +1187,23 @@ async fn run_finding_shard(
             unreplayed: &unreplayed,
         },
     ) {
-        sink.write_value(serde_json::json!({
+        Ok(path) => sink.write_value(serde_json::json!({
             "event": "ledger_written",
             "kind": "repair",
             "round": round,
             "shard": f.file,
             "path": path.display().to_string(),
-        }));
+        })),
+        // A3 (gate 1): the repair ledger is the ONLY channel between rounds (the per-round
+        // Scheduler discards its SharedContext), so a row that never landed — or a roll-up
+        // that went stale — is the next round's NOT FIXED verdict lost; said, never silent.
+        Err(e) => sink.write_value(serde_json::json!({
+            "event": e.event_name(),
+            "kind": "repair",
+            "round": round,
+            "shard": f.file,
+            "error": e.to_string(),
+        })),
     }
     let handoff_files: Vec<String> = parse_handoffs(output, all_files, &f.owned)
         .into_iter()

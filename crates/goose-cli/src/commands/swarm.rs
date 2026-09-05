@@ -1754,7 +1754,7 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     // sink/shard prompt reproduces from an archived tree exactly as it would mid-run — the same
     // renderer over the same file, no live run required. Same round-0 slot every replay:
     // rewritten whole, so a second pass on an unchanged tree is a no-op.
-    if let Some(path) = write_gate_ledger(
+    match write_gate_ledger(
         &tree,
         0,
         "spec_contract_replay",
@@ -1762,7 +1762,11 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
         &r.inconclusive,
         serde_json::json!(r.verified),
     ) {
-        eprintln!("gate replay: ledger written to {}", path.display());
+        Ok(path) => eprintln!("gate replay: ledger written to {}", path.display()),
+        Err(e) => eprintln!(
+            "gate replay: {} — the tree's ledger does NOT carry this verdict: {e}",
+            e.event_name()
+        ),
     }
     if r.findings.is_empty() && r.verified > 0 {
         eprintln!(
@@ -10979,6 +10983,14 @@ struct JsonlSink {
     writer: Mutex<std::io::BufWriter<std::fs::File>>,
     run_id: String,
     seq: AtomicU64,
+    /// Where the sink lives — the `WRITE_FAILED` marker is written beside it.
+    path: PathBuf,
+    /// Lines that never reached disk (a serialize, write or flush Err). Every one of them is
+    /// an event the operator and tick.py will never see; `run_finished` carries the count.
+    write_failures: AtomicU64,
+    /// The failure kinds already announced on stderr — one line per kind, not per event, so a
+    /// full disk does not turn stderr into the log it could not write.
+    failures_announced: Mutex<std::collections::BTreeSet<&'static str>>,
 }
 
 impl JsonlSink {
@@ -10994,6 +11006,9 @@ impl JsonlSink {
             writer: Mutex::new(std::io::BufWriter::new(file)),
             run_id,
             seq: AtomicU64::new(0),
+            path: path.to_path_buf(),
+            write_failures: AtomicU64::new(0),
+            failures_announced: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 
@@ -11007,11 +11022,53 @@ impl JsonlSink {
             obj.insert("run_id".to_string(), serde_json::json!(self.run_id));
             obj.insert("seq".to_string(), serde_json::json!(seq));
         }
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = serde_json::to_writer(&mut *w, &value);
-            let _ = w.write_all(b"\n");
-            let _ = w.flush();
+        let outcome = match self.writer.lock() {
+            Ok(mut w) => serde_json::to_writer(&mut *w, &value)
+                .map_err(|e| ("serialize", e.to_string()))
+                .and_then(|_| w.write_all(b"\n").map_err(|e| ("write", e.to_string())))
+                .and_then(|_| w.flush().map_err(|e| ("flush", e.to_string()))),
+            Err(_) => Err(("lock", "writer mutex poisoned".to_string())),
+        };
+        if let Err((kind, error)) = outcome {
+            self.note_write_failure(kind, &error, seq);
         }
+    }
+
+    /// The sink is the run's memory; a line it drops is evidence gone with nothing saying so
+    /// (gate 1). Before this the three `let _ =` above swallowed every Err. Now each failure is
+    /// counted (`run_finished.sink_write_failures`), the first per kind is said once on stderr,
+    /// and a stat-able marker — `<sink>.WRITE_FAILED`, beside the log tick.py reads — carries the
+    /// error, so a run whose log stopped growing can be told apart from a run that went quiet.
+    /// The marker write is itself best-effort: the disk that refused the log may refuse this too,
+    /// and stderr is the last channel left.
+    fn note_write_failure(&self, kind: &'static str, error: &str, seq: u64) {
+        self.write_failures.fetch_add(1, Ordering::SeqCst);
+        let first_of_kind = self
+            .failures_announced
+            .lock()
+            .map(|mut set| set.insert(kind))
+            .unwrap_or(true);
+        if !first_of_kind {
+            return;
+        }
+        eprintln!(
+            "  {} run log WRITE FAILED ({kind}, seq {seq}) at {}: {error} — every later event of \
+             this run may be missing from the log; see the WRITE_FAILED marker beside it",
+            style("!").red().bold(),
+            self.path.display()
+        );
+        let marker = PathBuf::from(format!("{}.WRITE_FAILED", self.path.display()));
+        let _ = std::fs::write(
+            &marker,
+            format!(
+                "{}\t{kind}\tseq={seq}\t{error}\n",
+                chrono::Utc::now().to_rfc3339()
+            ),
+        );
+    }
+
+    fn write_failures(&self) -> u64 {
+        self.write_failures.load(Ordering::SeqCst)
     }
 }
 
@@ -23770,39 +23827,65 @@ async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
 
 const LEDGER_DIR: &str = ".swarm/ledger";
 
-/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
-/// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
-/// failure — the caller emits `ledger_written` only for a write that actually happened.
-fn write_ledger_mini(
-    root: &Path,
-    file_name: &str,
-    row: &serde_json::Value,
-) -> Option<std::path::PathBuf> {
-    write_ledger_mini_checked(root, file_name, row).ok()
+/// Why a ledger write did not land WHOLE (A2/A3, gate 1). `Mini`: the row itself never reached
+/// disk. `Rollup`: the row is on disk but `.swarm/ledger.json` was NOT rebuilt from it, so every
+/// consumer of the roll-up — the sink's read-before-act block, REPAIR's history, the desktop —
+/// reads a STALE ledger. Before this the rebuild's Option was discarded inside the funnel, the
+/// funnel returned Ok, and `ledger_written` fired over the stale file. One event name per arm
+/// (`event_name`), so tick.py can tell a row that never landed from a roll-up that went stale.
+#[derive(Debug)]
+enum LedgerWriteError {
+    Mini(String),
+    Rollup(String),
 }
 
-/// The same funnel with the failure NAMED (VA-030 D10-5, gate 1): the research fan's four writers
-/// emit `research_mini_write_failed` from this error instead of discarding an Option — a fact mini
-/// that failed to write was counted in `research_planned.facts` and rendered from memory while
-/// resume, cover and the snowball never saw it, with no event.
+impl LedgerWriteError {
+    fn event_name(&self) -> &'static str {
+        match self {
+            LedgerWriteError::Mini(_) => "ledger_write_failed",
+            LedgerWriteError::Rollup(_) => "ledger_rollup_write_failed",
+        }
+    }
+}
+
+impl std::fmt::Display for LedgerWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LedgerWriteError::Mini(e) => write!(f, "mini: {e}"),
+            LedgerWriteError::Rollup(e) => write!(f, "roll-up rebuild: {e}"),
+        }
+    }
+}
+
+/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
+/// here so the roll-up can never drift from its parts — and the failure is NAMED (VA-030 D10-5,
+/// gate 1): the research fan's writers emit `research_mini_write_failed` from this error, the
+/// task/gate/repair legs emit `error.event_name()` — never a discarded Option. A fact mini that
+/// failed to write was once counted in `research_planned.facts` and rendered from memory while
+/// resume, cover and the snowball never saw it, with no event; and a roll-up rebuild that failed
+/// was once invisible behind a `ledger_written` (A2). The caller emits `ledger_written` only for
+/// a write whose row AND roll-up both landed.
 fn write_ledger_mini_checked(
     root: &Path,
     file_name: &str,
     row: &serde_json::Value,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<std::path::PathBuf, LedgerWriteError> {
     let dir = root.join(LEDGER_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| LedgerWriteError::Mini(format!("create {}: {e}", dir.display())))?;
     let path = dir.join(file_name);
-    let bytes = serde_json::to_string_pretty(row).map_err(|e| format!("serialize: {e}"))?;
+    let bytes = serde_json::to_string_pretty(row)
+        .map_err(|e| LedgerWriteError::Mini(format!("serialize: {e}")))?;
     // Finding 9: an unchanged row is a byte-AND-mtime no-op, so a gate replay over an archived
     // tree leaves its ledger looking exactly as archived ("freshest 0s ago" was a replay
     // artifact, not run activity). The roll-up write below makes the same comparison.
     if std::fs::read_to_string(&path).is_ok_and(|old| old == bytes) {
-        rebuild_ledger_rollup(root);
+        rebuild_ledger_rollup(root).map_err(LedgerWriteError::Rollup)?;
         return Ok(path);
     }
-    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
-    rebuild_ledger_rollup(root);
+    std::fs::write(&path, &bytes)
+        .map_err(|e| LedgerWriteError::Mini(format!("write {}: {e}", path.display())))?;
+    rebuild_ledger_rollup(root).map_err(LedgerWriteError::Rollup)?;
     Ok(path)
 }
 
@@ -23811,7 +23894,10 @@ fn write_ledger_mini_checked(
 /// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
 /// (verify_tree_imports + each task's owned-file stat), so a defect fixed since its task
 /// completed vanishes instead of haunting every later prompt.
-fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
+/// Err names the step that failed (A2): the ledger dir unreadable, the roll-up unserializable,
+/// or the atomic write refused — each one leaves `.swarm/ledger.json` STALE, which the funnel
+/// turns into `LedgerWriteError::Rollup` and the writers into `ledger_rollup_write_failed`.
+fn rebuild_ledger_rollup(root: &Path) -> Result<serde_json::Value, String> {
     let dir = root.join(LEDGER_DIR);
     let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     let mut gates: Vec<serde_json::Value> = Vec::new();
@@ -23822,7 +23908,9 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     // in the roll-up itself; render_ledger_block states them and the writers emit
     // `ledger_row_unreadable`. Sorted for the roll-up's idempotence (read_dir order is not).
     let mut rows_dropped: Vec<serde_json::Value> = Vec::new();
-    for e in std::fs::read_dir(&dir).ok()?.flatten() {
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    for e in entries.flatten() {
         if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
         }
@@ -23965,14 +24053,16 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
         rollup["spec_set_exceeded"] = serde_json::Value::from(spec_set_exceeded);
     }
     let out_path = root.join(".swarm").join("ledger.json");
-    let bytes = serde_json::to_string_pretty(&rollup).ok()?;
-    // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
+    let bytes = serde_json::to_string_pretty(&rollup).map_err(|e| format!("serialize: {e}"))?;
+    // Finding 9: identical roll-up bytes keep the archived file's mtime (see
+    // write_ledger_mini_checked).
     if !std::fs::read_to_string(&out_path).is_ok_and(|old| old == bytes) {
         // tmp+rename (the forming capture's own atomic writer): the roll-up is read on a poll
         // by every dispatch's render and by the desktop, so a torn read must be impossible.
-        write_forming_atomic(&out_path, &bytes).ok()?;
+        write_forming_atomic(&out_path, &bytes)
+            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
     }
-    Some(rollup)
+    Ok(rollup)
 }
 
 /// The spec's own boot invocation for `pkg`, verbatim with its placeholders — the SHAPE of the
@@ -24184,6 +24274,9 @@ struct SinkBrief {
     /// What the ledger block's budget removed, `(section, chars)` — the caller emits one
     /// `ledger_block_section_dropped` per entry (VA-030 D11).
     ledger_sections_dropped: Vec<(&'static str, usize)>,
+    /// A4: the roll-up file exists and is unreadable/unparseable — `ledger_empty` is then a
+    /// corrupt ledger, not an absent one; the caller emits `ledger_unparseable{error}`.
+    ledger_unparseable: Option<String>,
 }
 
 fn sink_semantic_description(
@@ -24203,6 +24296,7 @@ fn sink_semantic_description(
         ledger_empty: block.text.is_empty(),
         spec_surface_empty,
         ledger_sections_dropped: block.dropped,
+        ledger_unparseable: block.unparseable,
     }
 }
 
@@ -24417,8 +24511,9 @@ impl GooseAgentDispatcher {
     /// is done (or fails) — the same free pass emit_delivery_defects rides. Speculative attempts
     /// are skipped on purpose: a shadow's bytes may be discarded at grade time, and recording
     /// them as tree state would put a lie in every later prompt; the repair leg
-    /// (write_repair_ledger) is the shadow world's recorder. Best-effort: a failed write emits
-    /// nothing and changes nothing.
+    /// (write_repair_ledger) is the shadow world's recorder. A failed write changes nothing in
+    /// the run and is SAID (A3, gate 1): `ledger_write_failed` when the row never landed,
+    /// `ledger_rollup_write_failed` when it landed but `.swarm/ledger.json` went stale.
     fn record_task_ledger(
         &self,
         req: &DispatchRequest,
@@ -24432,7 +24527,7 @@ impl GooseAgentDispatcher {
         if req.speculative {
             return;
         }
-        if let Some(path) = write_task_ledger(
+        let written = write_task_ledger(
             root,
             TaskLedgerWrite {
                 task_id: &req.task_id,
@@ -24443,26 +24538,36 @@ impl GooseAgentDispatcher {
                 calls_mirror_dir: self.fix_shard_mirror_dir(&req.task_id, root),
                 extra,
             },
-        ) {
-            self.events.write_value(serde_json::json!({
-                "event": "ledger_written",
+        );
+        match written {
+            Err(e) => self.events.write_value(serde_json::json!({
+                "event": e.event_name(),
                 "kind": "task",
                 "task_id": req.task_id,
                 "status": status,
-                "path": path.display().to_string(),
-            }));
-            // GEN-6a #3: the write just rebuilt the roll-up, so its dropped-row list is the
-            // freshest statement of what the ledger CANNOT read — put it in the event stream
-            // where tick.py counts absences, not only in the file.
-            if let Some(dropped) = read_ledger_rollup(root)
-                .and_then(|r| r.get("rows_dropped").cloned())
-                .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()))
-            {
+                "error": e.to_string(),
+            })),
+            Ok(path) => {
                 self.events.write_value(serde_json::json!({
-                    "event": "ledger_row_unreadable",
+                    "event": "ledger_written",
+                    "kind": "task",
                     "task_id": req.task_id,
-                    "rows": dropped,
+                    "status": status,
+                    "path": path.display().to_string(),
                 }));
+                // GEN-6a #3: the write just rebuilt the roll-up, so its dropped-row list is the
+                // freshest statement of what the ledger CANNOT read — put it in the event stream
+                // where tick.py counts absences, not only in the file.
+                if let Some(dropped) = read_ledger_rollup(root)
+                    .and_then(|r| r.get("rows_dropped").cloned())
+                    .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()))
+                {
+                    self.events.write_value(serde_json::json!({
+                        "event": "ledger_row_unreadable",
+                        "task_id": req.task_id,
+                        "rows": dropped,
+                    }));
+                }
             }
         }
     }
@@ -24551,24 +24656,35 @@ impl GooseAgentDispatcher {
             // (non-Python / no advertised surface returns in microseconds), so this adds seconds,
             // never a wall, and its absence from the ledger is a measured absence, not silence.
             let gate0 = run_spec_contract(&root, &spec, lang).await;
-            let ledger_path = write_gate_ledger(
+            match write_gate_ledger(
                 &root,
                 0,
                 "completion",
                 &gate0.findings,
                 &gate0.inconclusive,
                 serde_json::json!(gate0.verified),
-            );
-            self.events.write_value(serde_json::json!({
-                "event": "ledger_written",
-                "kind": "gate",
-                "round": 0,
-                "source": "completion",
-                "findings": gate0.findings.len(),
-                "inconclusive": gate0.inconclusive.len(),
-                "verified": gate0.verified,
-                "path": ledger_path.as_ref().map(|p| p.display().to_string()),
-            }));
+            ) {
+                Ok(ledger_path) => self.events.write_value(serde_json::json!({
+                    "event": "ledger_written",
+                    "kind": "gate",
+                    "round": 0,
+                    "source": "completion",
+                    "findings": gate0.findings.len(),
+                    "inconclusive": gate0.inconclusive.len(),
+                    "verified": gate0.verified,
+                    "path": ledger_path.display().to_string(),
+                })),
+                // A3: this event used to fire with `path: null` on a failed write — the one
+                // ledger row the sink's brief is built from, reported as written.
+                Err(e) => self.events.write_value(serde_json::json!({
+                    "event": e.event_name(),
+                    "kind": "gate",
+                    "round": 0,
+                    "source": "completion",
+                    "task_id": req.task_id,
+                    "error": e.to_string(),
+                })),
+            }
             let collect_only = collect_only_import_health(&root).await;
             let brief = sink_semantic_description(
                 &root,
@@ -24579,11 +24695,23 @@ impl GooseAgentDispatcher {
                 lang,
                 collect_only.as_deref(),
             );
+            // A4 (gate 1): a roll-up that EXISTS and cannot be parsed is not an empty ledger —
+            // said by name, with the parse error, before the empty-ledger event below.
+            if let Some(error) = &brief.ledger_unparseable {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_unparseable",
+                    "task_id": req.task_id,
+                    "path": root.join(".swarm").join("ledger.json").display().to_string(),
+                    "error": error,
+                }));
+            }
             if brief.ledger_empty {
                 // NEAR-UNREACHABLE BY CONSTRUCTION, kept deliberately: the gate-round-0 write
                 // just above guarantees a ledger row exists before the brief is built, so this
-                // fires only when that write itself FAILED (write_ledger_mini returning None on
-                // a degraded tree) — which is exactly when the operator needs to hear it.
+                // fires only when that write itself FAILED (write_ledger_mini_checked's Err,
+                // emitted as ledger_write_failed / ledger_rollup_write_failed above) or the
+                // roll-up file is unparseable (`ledger_unparseable`, A4) — which is exactly when
+                // the operator needs to hear it.
                 self.events.write_value(serde_json::json!({
                     "event": "ledger_empty_at_sink",
                     "task_id": req.task_id,
@@ -27257,14 +27385,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .join(format!("run-{run_id}.jsonl"))
         }))
     };
-    let sink: Arc<dyn EventSink> = match &log_path {
+    // The concrete sink is kept beside the trait object so `run_finished` can read how many
+    // lines it failed to write (A1, gate 1) — the trait carries no such counter.
+    let jsonl_sink: Option<Arc<JsonlSink>> = match &log_path {
         Some(p) => match JsonlSink::new(p, run_id.clone()) {
-            Ok(s) => Arc::new(s),
+            Ok(s) => Some(Arc::new(s)),
             Err(e) => {
                 eprintln!("(swarm log disabled: {e})");
-                Arc::new(NullSink)
+                None
             }
         },
+        None => None,
+    };
+    let sink: Arc<dyn EventSink> = match &jsonl_sink {
+        Some(s) => s.clone(),
         None => Arc::new(NullSink),
     };
 
@@ -29309,7 +29443,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // decided on. Round 0 belongs to the COMPLETION gate at the sink's dispatch (III-1's
             // hook), so the tail's rounds start at 1 — the ledger reads as one history:
             // gate-r0 = the tree the sink received, gate-rN = the tree after wave N-1.
-            if let Some(path) = write_gate_ledger(
+            match write_gate_ledger(
                 &cwd,
                 round as u64 + 1,
                 "smoke",
@@ -29317,12 +29451,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 &verdict.inconclusive,
                 serde_json::json!(verdict.established()),
             ) {
-                sink.write_value(serde_json::json!({
+                Ok(path) => sink.write_value(serde_json::json!({
                     "event": "ledger_written",
                     "kind": "gate",
                     "round": round + 1,
                     "path": path.display().to_string(),
-                }));
+                })),
+                Err(e) => sink.write_value(serde_json::json!({
+                    "event": e.event_name(),
+                    "kind": "gate",
+                    "round": round + 1,
+                    "error": e.to_string(),
+                })),
             }
             // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
             // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
@@ -30240,11 +30380,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             occ_execute, occ_run, fleet_size, busy_node_min
         );
     }
-    sink.write_value(serde_json::json!({
+    let mut run_finished = serde_json::json!({
         "event": "run_finished",
         "report": report_value,
         "phases": phases_value,
-    }));
+    });
+    // A1 (gate 1): the lines the log itself dropped. Absent when zero, so a run whose log held
+    // every event is byte-identical; when present, the number says how much of the record above
+    // is missing and the `<log>.WRITE_FAILED` marker beside the log says why.
+    let sink_write_failures = jsonl_sink.as_ref().map_or(0, |s| s.write_failures());
+    if sink_write_failures > 0 {
+        run_finished["sink_write_failures"] = serde_json::json!(sink_write_failures);
+        eprintln!(
+            "{} the run log dropped {sink_write_failures} event line(s) — the record is INCOMPLETE \
+             (see the WRITE_FAILED marker beside it)",
+            style("!").red().bold()
+        );
+    }
+    sink.write_value(run_finished);
 
     if json {
         println!(
@@ -32948,7 +33101,7 @@ mod audit_regressions {
         );
     }
 
-    /// The ledger round-trip: a research mini rides `write_ledger_mini`'s funnel into the
+    /// The ledger round-trip: a research mini rides `write_ledger_mini_checked`'s funnel into the
     /// rollup's new `research` arm (without which it would be silently invisible), renders as
     /// the FIRST-dropped droppable in the ledger block, and never outranks a gate finding.
     #[test]

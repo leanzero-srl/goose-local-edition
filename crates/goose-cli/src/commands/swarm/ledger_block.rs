@@ -18,6 +18,10 @@ use super::supervision::tail_chars;
 pub(super) struct LedgerBlock {
     pub(super) text: String,
     pub(super) dropped: Vec<(&'static str, usize)>,
+    /// A4: `.swarm/ledger.json` EXISTS but could not be read or parsed — the block is empty
+    /// because the ledger is corrupt, not because no rows exist. The sink's dispatch emits it
+    /// as `ledger_unparseable{error}` beside `ledger_empty_at_sink`.
+    pub(super) unparseable: Option<String>,
 }
 
 /// The block as a string — the tests' form; production reads `render_ledger_block_measured`.
@@ -33,11 +37,31 @@ pub(super) fn render_ledger_block(
     render_ledger_block_measured(root, task_id, deps, all_files, budget, collect_only).text
 }
 
-/// The roll-up as the renderers consume it. None (ledger absent/unreadable) must render as an
-/// EMPTY block downstream — the dispatch then proceeds byte-identical, never blocked.
+/// The roll-up read with its failure NAMED (A4, gate 1). `Ok(None)` is a roll-up that does not
+/// exist yet — a fresh run's first dispatch, where empty MEANS empty. `Err(error)` is a file that
+/// EXISTS and cannot be read or parsed: before this both folded into `None`, the block rendered
+/// empty, and `ledger_empty_at_sink` said "no rows existed" over a corrupt roll-up.
+pub(super) fn read_ledger_rollup_checked(
+    root: &Path,
+) -> Result<Option<serde_json::Value>, String> {
+    let path = root.join(".swarm").join("ledger.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+/// The roll-up as the pure renderers consume it. None (ledger absent OR unreadable) must render
+/// as an EMPTY block downstream — the dispatch then proceeds byte-identical, never blocked. The
+/// loud half lives in `render_ledger_block_measured` (`LedgerBlock::unparseable`), which the
+/// sink's dispatch emits as `ledger_unparseable`; the other consumers (handoff attribution,
+/// import health, repair history) are read-only over the same file and inherit that event.
 pub(super) fn read_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
-    serde_json::from_str(&std::fs::read_to_string(root.join(".swarm").join("ledger.json")).ok()?)
-        .ok()
+    read_ledger_rollup_checked(root).ok().flatten()
 }
 
 /// F196-style truncation for the ledger block: cut on a LINE boundary and say so. A block cut
@@ -73,8 +97,15 @@ pub(super) fn render_ledger_block_measured(
     budget: usize,
     collect_only: Option<&str>,
 ) -> LedgerBlock {
-    let Some(rollup) = read_ledger_rollup(root) else {
-        return LedgerBlock::default();
+    let rollup = match read_ledger_rollup_checked(root) {
+        Ok(Some(rollup)) => rollup,
+        Ok(None) => return LedgerBlock::default(),
+        Err(error) => {
+            return LedgerBlock {
+                unparseable: Some(error),
+                ..LedgerBlock::default()
+            }
+        }
     };
     let empty_map = serde_json::Map::new();
     let tasks = rollup
@@ -508,6 +539,7 @@ pub(super) fn render_ledger_block_measured(
     LedgerBlock {
         text: format!("{body}{decisions_section}"),
         dropped,
+        unparseable: None,
     }
 }
 
