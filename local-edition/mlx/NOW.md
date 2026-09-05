@@ -24,6 +24,15 @@ error unchanged; the permit rides the stream and frees on drop; ProviderUsage.mo
 served. Out of scope, stated: a mesh PEER's sidecar (loopback-bound; reachable only through the Link mlx proxy) — LM Link
 already fans LM Studio models across machines.
 
+## 2026-09-05 18:2x — local-edition MERGED INTO MAIN (e6523a625); live pass on the MERGED package
+- Merged app (built from the merge commit, cold release build): title/brand/nav "Goose Swarm", hub tabs LeanZero MLX | Cloud Providers |
+  Swarm Settings | LeanZero Link, spawn command on v0.13.4-lz.1, Mount → running in ~16 s. The merged CLI routed a turn through the
+  app-mounted node ("merge ok", node requests 1 → 2, `swarm_router pick{workhorse-mlx, free_slots 8}`); `goose swarm pool show` lists the
+  sidecar device (workhorse-mlx, weight 2, alias workhorse-qwen3.5-9b-4bit-mlx) under the merged engine. Quit tore everything down.
+- Resolution rule and every re-seat are in the merge commit message. Revert path: tags pre-merge-main-597ca826e /
+  pre-merge-local-edition-d8202bc89. main, local-edition and goose/mlx-inferencing all point at the merge commit — the MacBook works on
+  main from here. Still unmeasured: the merged engine's sb-7 score vs 0.4616 (Benchmark view, MacBook fleet).
+
 ## 2026-09-05 13:32 — FINAL LIVE PROOF (package 13:31) + MERGE TO MAIN
 - Cross-process routing PROVEN: the app's goosed mounted the engine (hub → Mount, up in ~8 s); a SECOND process (`goose run
   --provider swarm --model swarm`, release CLI) answered "router ok", the node counted the request (1 → 2), and the CLI's log
