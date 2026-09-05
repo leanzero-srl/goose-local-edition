@@ -10,6 +10,7 @@ import ChatInput from './ChatInput';
 import { ScrollArea, ScrollAreaHandle } from './ui/scroll-area';
 import { useFileDrop } from '../hooks/useFileDrop';
 import { useEdition } from '../contexts/EditionContext';
+import { useModelAndProvider } from './ModelAndProviderContext';
 import { ChatState } from '../types/chatState';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
@@ -348,6 +349,13 @@ export default function BaseChat({
   const sessionModel = session?.model_config?.model_name ?? null;
   const sessionProvider = session?.provider_name ?? null;
   const sessionLoaded = session !== undefined;
+  // A resumed session pinned to a provider this edition no longer offers (omlx/lmstudio in the
+  // local edition) is moved to swarm/swarm the moment its metadata lands; a no-op everywhere else.
+  const { migrateLegacySessionProvider } = useModelAndProvider();
+  useEffect(() => {
+    if (!sessionId || !sessionProvider) return;
+    void migrateLegacySessionProvider(sessionId, sessionProvider);
+  }, [sessionId, sessionProvider, migrateLegacySessionProvider]);
   const latestInference = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { toastError, toastSuccess } from '../toasts';
 import Model, { getProviderMetadata } from './settings/models/modelInterface';
-import type { ProviderMetadata } from '../types/providers';
+import type { ProviderMetadata, ThinkingEffort } from '../types/providers';
 import { acpChatSessionActions, acpChatSessionStore } from '../acp/chatSessionStore';
 import {
   acpReadDefaults,
@@ -49,6 +49,12 @@ interface ModelAndProviderContextType {
   currentModel: string | null;
   currentProvider: string | null;
   changeModel: (sessionId: string | null, model: Model) => Promise<boolean>;
+  /** Local edition: a resumed session still pinned to omlx/lmstudio is moved to swarm/swarm through
+   *  the same write the Switch-model dialog uses. Resolves true only when a write happened. */
+  migrateLegacySessionProvider: (
+    sessionId: string,
+    sessionProvider: string | null | undefined
+  ) => Promise<boolean>;
   getCurrentModelAndProvider: () => Promise<{ model: string; provider: string }>;
   getFallbackModelAndProvider: () => Promise<{ model: string; provider: string }>;
   getCurrentModelAndProviderForDisplay: () => Promise<{ model: string; provider: string }>;
@@ -67,8 +73,12 @@ const ModelAndProviderContext = createContext<ModelAndProviderContextType | unde
  *  sees, never again while this renderer lives — a user who deliberately re-selects a legacy
  *  session provider later is not yanked back. */
 let legacyMigrationRanThisLaunch = false;
+/** Sessions already moved (or attempted) this launch — a session is migrated once, so a user who
+ *  deliberately switches a session back to a legacy provider afterwards is not yanked again. */
+const legacySessionsMigratedThisLaunch = new Set<string>();
 export function __resetLegacyProviderMigrationForTests(): void {
   legacyMigrationRanThisLaunch = false;
+  legacySessionsMigratedThisLaunch.clear();
 }
 
 export { i18n as modelAndProviderMessages };
@@ -94,6 +104,20 @@ function patchAcpSessionProviderModel(
   });
 }
 
+/** THE one way a session's provider+model changes from the renderer: the ACP config-option writes,
+ *  then the store patched with what the agent actually applied. The Switch-model dialog
+ *  (`changeModel`) and the legacy-session migration both go through here. */
+async function applySessionProviderModel(
+  sessionId: string,
+  providerName: string,
+  modelName: string,
+  thinkingEffort: ThinkingEffort | null
+): Promise<AppliedSessionProviderModel> {
+  const applied = await acpSetSessionProviderModel(sessionId, providerName, modelName, thinkingEffort);
+  patchAcpSessionProviderModel(sessionId, applied);
+  return applied;
+}
+
 export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> = ({ children }) => {
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [currentProvider, setCurrentProvider] = useState<string | null>(null);
@@ -108,13 +132,12 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
 
       try {
         if (sessionId) {
-          const applied = await acpSetSessionProviderModel(
+          await applySessionProviderModel(
             sessionId,
             providerName,
             modelName,
             model.request_params?.thinking_effort ?? null
           );
-          patchAcpSessionProviderModel(sessionId, applied);
         }
 
         // Only update the global config default when there's no session
@@ -151,6 +174,33 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
       }
     },
     [intl]
+  );
+
+  // MIGRATION (2026-09-05, session half): sessions carry their own provider, so the default-provider
+  // move below leaves a resumed omlx/lmstudio session hitting an engine the edition no longer mounts
+  // (measured: session 20260831_2 failed on 127.0.0.1:8090 while the picker offered no omlx). The
+  // session is moved through the same write the Switch-model dialog uses; once per session per launch.
+  const migrateLegacySessionProvider = useCallback(
+    async (sessionId: string, sessionProvider: string | null | undefined) => {
+      const target = legacyProviderMigration(edition, sessionProvider);
+      if (!target || legacySessionsMigratedThisLaunch.has(sessionId)) return false;
+      legacySessionsMigratedThisLaunch.add(sessionId);
+      const before = `${sessionProvider}/${acpChatSessionStore.getSnapshot(sessionId)?.session?.model_config?.model_name ?? '-'}`;
+      try {
+        await applySessionProviderModel(sessionId, target.provider, target.model, null);
+        console.info(
+          `[provider-migration] session ${sessionId}: ${before} → ${target.provider}/${target.model}`
+        );
+        return true;
+      } catch (error) {
+        console.error(
+          `[provider-migration] session ${sessionId}: failed to move ${before} → ${target.provider}/${target.model}; the session keeps its provider`,
+          error
+        );
+        return false;
+      }
+    },
+    [edition]
   );
 
   const getFallbackModelAndProvider = useCallback(async () => {
@@ -277,6 +327,7 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
       currentModel,
       currentProvider,
       changeModel,
+      migrateLegacySessionProvider,
       getCurrentModelAndProvider,
       getFallbackModelAndProvider,
       getCurrentModelAndProviderForDisplay,
@@ -288,6 +339,7 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
       currentModel,
       currentProvider,
       changeModel,
+      migrateLegacySessionProvider,
       getCurrentModelAndProvider,
       getFallbackModelAndProvider,
       getCurrentModelAndProviderForDisplay,
