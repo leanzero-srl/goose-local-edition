@@ -66,6 +66,15 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   unchanged). A mesh PEER's sidecar is not a node (loopback-bound; the Link mlx proxy is the only door) — LM Link fans LM Studio
   models across machines. Never add a clock to the queue (gate 5); never let a probe failure read as "idle".
 
+## Releasing a notarized macOS build (2026-09-05 — every release is notarized, one command)
+- `just release-notarized <version>` (bump from ui/desktop/package.json's current version; the own-version floor is 2.0.0). It sources
+  `~/.leanzero/apple/notary.env`, unlocks the dedicated `goose-signing` keychain, builds, signs with the Developer ID (Mihai Perdum,
+  ZZ8MTZ6NRZ), notarizes + staples the app and the DMG, verifies with `spctl`, and rebuilds the auto-update zip + manifest. Run it under
+  hermit with the corepack pnpm shim FIRST on PATH; the DMG lands in ui/desktop/out/make/. Then commit the package.json bump.
+- New Mac: `bash ui/desktop/scripts/bootstrap-signing.sh` (pulls the bundle from `workhorse`, creates the keychain, proves signing and
+  the Apple login). Full setup notes: ui/desktop/NOTARIZATION.md → "LeanZero setup".
+- Never put the bundle in git; never use the login keychain for the identity (it prompts for the user's password).
+
 ## The evolution loop (this is the durable memory — update as you go)
 1. Every experiment/change lands as one row in `local-edition/mlx/experiments.jsonl`
    (`void_reason` string when not a pass, never a bare fail) AND a dated entry in `LEDGER.md`
