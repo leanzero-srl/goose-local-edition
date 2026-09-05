@@ -2501,3 +2501,107 @@ async fn a_failed_gap_shards_identical_request_is_refused_a_different_one_accept
         "sent out, relaxed past the failed gap, re-armed on the new gap, completed — no lap on the failed text"
     );
 }
+
+/// A dispatcher whose `run` PANICS for one task instead of returning — the `.expect("ephemeral
+/// bind")` class on the sink's own dispatch path. Every other task succeeds.
+struct PanickingDispatcher {
+    panics: String,
+}
+
+#[async_trait]
+impl TaskDispatcher for PanickingDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if req.task_id == self.panics {
+            panic!("ephemeral bind: address already in use (test payload)");
+        }
+        Ok(format!("output-of-{}", req.task_id).into())
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_worker_ends_terminal_loudly_and_the_run_returns() {
+    // Before the panic net the worker's JoinHandle was never awaited: a panic in `dispatcher.run`
+    // skipped `complete()`, the task stayed Claimed, the device's in_flight never dropped, and the
+    // loop slept its 86,400 s tick forever with NO event. Now: `lane_panicked` names it, the attempt
+    // completes as a Terminal like any other (task_completed{failed} carries the payload), the
+    // file-owning dependent cascades exactly as it does for a returned Terminal, the file-less
+    // dependent relaxes through, and the run RETURNS. The timeout is test scaffolding for a hang —
+    // a regression fails in seconds instead of parking the suite; it bounds no model work.
+    let specs = vec![
+        spec("p", &[], &["p_owned.rs"]),
+        spec("w", &["p"], &["w_owned.rs"]),
+        spec("v", &["p"], &[]),
+        spec("d", &[], &["d_owned.rs"]),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let events = Arc::new(EventLog::default());
+    let sched = Scheduler::new(vec![dev("d1", "m-1", 2)], 3).with_sink(events.clone());
+    let disp = Arc::new(PanickingDispatcher {
+        panics: "p".to_string(),
+    });
+    let report = tokio::time::timeout(Duration::from_secs(10), sched.run(dag, disp, String::new()))
+        .await
+        .expect(
+            "the run must RETURN after a worker panic — a hang here is the defect this test pins",
+        )
+        .unwrap();
+
+    let failed: HashSet<_> = report.failed.iter().cloned().collect();
+    assert_eq!(
+        failed,
+        HashSet::from(["p".to_string(), "w".to_string()]),
+        "the panicked task fails and its file-owning dependent cascades, as for any Terminal"
+    );
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert_eq!(
+        done,
+        HashSet::from(["v".to_string(), "d".to_string()]),
+        "the file-less dependent relaxes through; the independent task completes"
+    );
+
+    let panicked = events.named("lane_panicked");
+    assert_eq!(
+        panicked.len(),
+        1,
+        "exactly one loud panic row: {panicked:?}"
+    );
+    assert_eq!(panicked[0]["task_id"], "p");
+    assert_eq!(panicked[0]["attempt"], 0);
+    assert_eq!(panicked[0]["device"], "d1");
+    assert!(
+        panicked[0]["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("ephemeral bind")),
+        "the panic payload rides verbatim: {:?}",
+        panicked[0]["error"]
+    );
+    assert!(
+        panicked[0]["context"]
+            .as_str()
+            .is_some_and(|c| c.contains("worker p") && c.contains("d1")),
+        "the desktop's existing lane_panicked row reads `context`: {:?}",
+        panicked[0]["context"]
+    );
+
+    let completed: Vec<_> = events
+        .named("task_completed")
+        .into_iter()
+        .filter(|v| v["task_id"] == "p")
+        .collect();
+    assert_eq!(completed.len(), 1, "{completed:?}");
+    assert_eq!(completed[0]["status"], "failed");
+    assert_eq!(completed[0]["attempts"], 1);
+    assert!(
+        completed[0]["error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("worker panicked:") && e.contains("ephemeral bind")),
+        "task_completed.error names the panic, not a bare `failed`: {:?}",
+        completed[0]["error"]
+    );
+    assert_eq!(
+        report.dispatched_per_device.get("d1").copied(),
+        Some(3),
+        "p, d and the relaxed v dispatch once each; w cascades Failed undispatched and the \
+         panicked attempt is not retried"
+    );
+}

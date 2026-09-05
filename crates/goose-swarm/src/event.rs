@@ -141,6 +141,22 @@ pub enum SwarmEvent {
         dependency: String,
         detail: String,
     },
+    /// A WORKER FUTURE PANICKED instead of returning a result. Before this event the panic was
+    /// swallowed by an un-awaited `JoinHandle`: `complete()` never ran, the task stayed Claimed,
+    /// its device's `in_flight` never dropped, and the scheduler loop slept its whole tick forever
+    /// with nothing written — a hang indistinguishable from a slow model. The scheduler now
+    /// completes the attempt as a `Terminal` (`task_completed{status: failed}` follows, its `error`
+    /// carrying the same payload) and names the panic here first. Same event name and
+    /// `context`/`error` shape as the research fan's `lane_panicked`, so every reader that already
+    /// renders that row (the desktop's `case 'lane_panicked'`) shows this one unchanged; `task_id`,
+    /// `attempt` and `device` are the scheduler-side attribution the fan's row could not carry.
+    LanePanicked {
+        context: String,
+        task_id: String,
+        attempt: u32,
+        device: String,
+        error: String,
+    },
     /// A mid-run device offer was REFUSED, with why. Emitted rather than silently dropped: the
     /// whole point of admission is that a returning node stops being invisible, and a rejection is
     /// exactly as informative as an acceptance.
