@@ -49,6 +49,11 @@ pub struct TaskRunOutput {
     /// A stalled task that happens to have written its files is not the same event as a task that
     /// worked, and an engine that cannot tell them apart cannot be tuned on either.
     pub salvaged: bool,
+    /// THE SPLIT (2c S4): a MERGER's `MERGE_GAP` requests as fully-formed shard specs. The
+    /// scheduler splices them through the merge-gap door (its own ownership repair: same module,
+    /// files only under the module's shard folder, no deps) and re-arms the merger on them; the
+    /// merger is Done only when a completion carries none. Empty for every other task.
+    pub follow_ups: Vec<crate::dag::TaskSpec>,
 }
 
 impl From<String> for TaskRunOutput {
@@ -58,6 +63,7 @@ impl From<String> for TaskRunOutput {
             session_id: None,
             tool_calls: Vec::new(),
             salvaged: false,
+            follow_ups: Vec::new(),
         }
     }
 }
@@ -80,8 +86,9 @@ pub struct DispatchRequest {
     /// The full project file manifest (every task's owned files) so the worker uses the agreed layout
     /// for imports and never invents a divergent location.
     pub all_files: Vec<String>,
-    /// A corrective hint from the idle-model judge when this is a re-dispatch after the judge killed a
-    /// prior attempt (e.g. "you were looping/over-reading — WRITE now"). `None` on a normal attempt.
+    /// A corrective note carried onto a re-dispatch — the guided retry's content error, the tree
+    /// warden's findings, the sink's inherited supervisor notes (the idle-model judge that also wrote
+    /// here is deleted, 2c S6). `None` on a normal attempt.
     pub prior_hint: Option<String>,
     /// S3 i3 (GOOSE_SWARM_FILL_FAN): the task's contract-anchored parallel-fill slots, carried
     /// from TaskSpec.subsplit. Empty everywhere except a normal dispatch of a task whose spec
@@ -99,8 +106,8 @@ pub struct DispatchRequest {
     /// printed `✓ keeping this plan; clarifications injected into every worker via research findings and
     /// spec` — and BOTH named channels were false. `research_findings` is only ever passed to planner-side
     /// calls (it appears ZERO times in the dispatcher's run body), and the amended spec lives in
-    /// `Scheduler::goal`, whose only consumers are the replanner, the judge and the pre-reviewer. Worse, the
-    /// plan is drafted BEFORE the ask, and `ask_replan` defaults off, so `description` is a pre-answer
+    /// `Scheduler::goal`, whose only consumer is the judge (the replanner and the pre-reviewer that also
+    /// read it are deleted). Worse, the plan is drafted BEFORE the ask, so `description` is a pre-answer
     /// artifact too. The answers were structurally excluded from BOTH halves of the worker prompt, and only
     /// reached workers as a lossy planner-model paraphrase (pillars/contracts) — which is exactly the
     /// measured "asked for pipe-separated CSV, wrote comma-separated" failure.
@@ -120,6 +127,12 @@ pub struct DispatchRequest {
     /// full unscoped bundle, so a fix/sink/mock dispatch with no neighborhood is byte-identical to before
     /// this field existed.
     pub neighborhood: Vec<String>,
+    /// THE SPLIT (VA-021): this task is a SHARD of a split module — the dispatcher renders its
+    /// folder as the write surface, its README as the deliverable. `None` for every other task.
+    pub shard_of: Option<crate::dag::ShardOf>,
+    /// THE SPLIT (VA-021): this task is the MERGER of a split module — dispatched with the
+    /// code-built dossier over its shards' pieces and READMEs. `None` for every other task.
+    pub merger_of: Option<crate::dag::MergerOf>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
@@ -161,38 +174,4 @@ pub trait TaskDispatcher: Send + Sync {
     /// Drop a shadow workspace for `task_id` WITHOUT promoting it — a lost/errored speculative shard, so its
     /// edits never reach the real tree and the shadow does not leak. Default no-op.
     async fn discard_speculative(&self, _task_id: &str) {}
-
-    /// READ-ONLY correctness review of the produced `files` along ONE dimension, on a spare fleet model.
-    /// The model is given the files as text with NO tools (it physically cannot write), so N of these run
-    /// concurrently over one tree with no write-race. Returns advisory findings text, or None when clean /
-    /// nothing to review. `Err(error)` = the review call itself failed in transport (A-2): the caller logs
-    /// a failure, never a clean no-finding review. Default Ok(None) so mocks are unchanged.
-    async fn review_dimension(
-        &self,
-        _model_id: &str,
-        _dim_id: &str,
-        _dim_brief: &str,
-        _goal: &str,
-        _files: &[String],
-    ) -> Result<Option<String>, String> {
-        Ok(None)
-    }
-
-    /// ADVERSARIAL VERIFY (the three-vote core): hand ONE review finding to a skeptic model — a DIFFERENT
-    /// model than raised it — prompted to REFUTE it against the ACTUAL code (read-only, no tools). Returns
-    /// true only if the skeptic independently CONFIRMS the finding is a real defect with HIGH confidence, i.e.
-    /// it SURVIVES refutation. FAIL-CLOSED: default false, and any refute / low-confidence / parse-or-timeout
-    /// failure returns false — an unverified finding can never drive a fix. Read-only => no write-race.
-    /// `lane_idx` is the finding's index in its batch: the real impl runs these CONCURRENTLY and
-    /// keys each call's activity lane (`verify-<idx>`) with it.
-    async fn verify_finding(
-        &self,
-        _model_id: &str,
-        _finding: &str,
-        _goal: &str,
-        _files: &[String],
-        _lane_idx: usize,
-    ) -> bool {
-        false
-    }
 }

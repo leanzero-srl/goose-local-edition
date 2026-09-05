@@ -32,6 +32,7 @@ components before editing.
 (realfs push tests skipped only under vitest.integration.config.ts — plain `pnpm test` may show 0 skipped, and that is not a miss are expected — this machine's FSEvents is degraded). Every new feed
 line/state gets a fixture test (askTimeout.test.tsx is the template). Report = handoff: shas,
 components touched, tests added, unbriefed observations reported not fixed.
+- `cd ui/desktop && pnpm lint` at ZERO errors (VA-070: the build never runs eslint, so two errors shipped silently at HEAD; it carries `--fix`, so `git diff --stat` afterwards must name only your files).
 
 ## Sources & upkeep
 Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
@@ -47,3 +48,28 @@ and amends this file in the same turn a gap shows. Changelog:
 - Never `pnpm add` ad hoc (the reconcile removed 145 hoisted packages from ui/node_modules). One agent per file set — a file a sibling holds is not yours until it is freed. Targeted vitest per commit, the full suite ONCE per batch; no Electron launch per agent — one orchestrated screenshot pass after a wave lands.
 - The packaged renderer is a file:// document whose index.html carries a STATIC meta CSP (`connect-src 'self' http://127.0.0.1:* https: ws: wss:`); headers can only NARROW it → LAN/localhost probes and the wizard chat run in MAIN over IPC (`fleet-probe`/`fleet-chat`, utils/fleetProbe.ts), and `localhost:1234` is normalized to 127.0.0.1 — 949d3fa6e deleted that normalization and regressed every default install (tracer-refuted; fixed by 987889548/d1b683d32).
 - Renderer secrets are MASKED (acp config.rs mask_secret; /config/read masks) and main has no secret-store accessor while the keyring is on → no bearer reaches a probe through the renderer; LMSTUDIO_API_KEY comes from the app env or a main-side store reader — an owner decision, never a workaround.
+## Shared working tree — no whole-tree git operations (added 2026-09-01)
+
+Other surgeons edit `crates/` in the SAME working tree while you edit `ui/desktop`. Never run `git stash`,
+`git checkout .`, `git reset --hard`, `git clean` or any other whole-tree operation — a stash/pop on
+2026-09-01 briefly swept another surgeon's uncommitted files (it popped clean; it might not have). To
+compare against HEAD use `git show HEAD:<path> | prettier --stdin-filepath <path>`; to commit use
+`git commit --only <your paths>`; verify `git diff --cached --stat` names only your files.
+
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## Dispatch budget (added 2026-09-01 20:2x, after VA-048 + the split surface ran 60 tool uses / 234k tokens in one brief)
+
+One surface per dispatch. A brief that bundles "delete these pins" with "render this new event family" doubles the
+reading and the proof runs; the orchestrator briefs them separately and you may push back on a two-surface brief by
+doing the first and reporting the second as not started. Proof stays `pnpm run typecheck && pnpm test` once at the
+end — never per file — and a vitest timeout in an unrelated TLS test under cargo load is reported, not re-run five times.
+
+## Typecheck in a worktree (2026-09-02)
+
+A fresh worktree has no `node_modules`. Do NOT copy or install; symlink the main tree's gitignored dirs (`ui/desktop/node_modules`, `ui/node_modules`, and the sdk build output if `tsc` asks for it) into the same paths of the worktree — they are gitignored, so `git status` stays clean. Never add an untracked file or link outside gitignored paths; say what you linked in the return.

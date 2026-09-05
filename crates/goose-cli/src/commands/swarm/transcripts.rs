@@ -285,7 +285,7 @@ pub(super) fn build_task_ledger_row(
                 continue;
             }
             let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
-            let class = super::classify_command(cmd);
+            let class = classify_command(cmd);
             let ok = v.get("ok").and_then(|o| o.as_bool());
             let entry = classes.entry(class).or_default();
             entry.count += 1;
@@ -312,7 +312,7 @@ pub(super) fn build_task_ledger_row(
                 if !cmd.contains("::") {
                     last_pytest_filewide = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
                 }
-                if super::pytest_runs_whole_suite(cmd) {
+                if pytest_runs_whole_suite(cmd) {
                     last_full_suite = Some(serde_json::json!({
                         "cmd": cmd,
                         "summary": py,
@@ -405,6 +405,267 @@ pub(super) fn append_attempt_marker(
             let _ = append_bytes(&target.with_extension(ext), line.as_bytes());
         }
     }
+}
+
+/// II-8: the "previous attempt" block a re-dispatch carries, rendered from the II-1 pre-reset
+/// capture (`<task>.calls.jsonl` per-call rows + `attempt_end` fs_delta snapshots).
+///
+/// On r2, attempt 1 started blind TWICE after a transient drop: the sole cross-attempt channel
+/// was the generic `transient_retry_hint`, whose "any file you had written is still on disk" was
+/// UNTRUE for ledger-core-tests — attempt 0 wrote NOTHING (tests/test_ledger_core.py's mtime is
+/// attempt 1's), and the retry burned its opening turns re-deriving 12 minutes of dead work. The
+/// capture holds the facts, so the hint now states them instead of guessing: what the attempt
+/// actually wrote (including "nothing" — the case the generic text lied about), what it ran by
+/// class, its last pytest result, and its last failing command.
+///
+/// Pure over the capture text so the r2 shape renders in a unit test without a dispatcher.
+/// `None` when no row belongs to an earlier attempt — then there is nothing true to say, and the
+/// caller keeps the prompt exactly as it was. Data only: nothing here gates, retries or bounds.
+pub(super) fn render_previous_attempt_block(
+    calls_jsonl: &str,
+    current_attempt: u32,
+) -> Option<String> {
+    let mut wrote: std::collections::BTreeSet<String> = Default::default();
+    let mut classes: std::collections::BTreeMap<&'static str, (u64, Option<bool>)> =
+        Default::default();
+    let mut last_pytest: Option<(String, String)> = None;
+    let mut last_error: Option<(String, String)> = None;
+    let mut prior_attempt: u32 = 0;
+    let mut saw_prior_rows = false;
+    for line in calls_jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let att = v.get("attempt").and_then(|a| a.as_u64()).unwrap_or(0) as u32;
+        if att >= current_attempt {
+            continue;
+        }
+        saw_prior_rows = true;
+        prior_attempt = prior_attempt.max(att);
+        if v.get("kind").and_then(|k| k.as_str()) == Some("attempt_end") {
+            if let Some(d) = v.get("fs_delta") {
+                for key in ["appeared", "changed"] {
+                    for p in d.get(key).and_then(|x| x.as_array()).unwrap_or(&Vec::new()) {
+                        if let Some(s) = p.as_str() {
+                            wrote.insert(s.to_string());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if v.get("name").and_then(|n| n.as_str()) != Some("shell") {
+            continue;
+        }
+        let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+        let ok = v.get("ok").and_then(|o| o.as_bool());
+        let entry = classes.entry(classify_command(cmd)).or_insert((0, None));
+        entry.0 += 1;
+        entry.1 = ok;
+        if let Some(py) = v.get("pytest") {
+            let n = |k: &str| py.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            let summary = if py
+                .get("collect_error")
+                .and_then(|c| c.as_bool())
+                .unwrap_or(false)
+            {
+                "COLLECTION ERROR — the suite never ran".to_string()
+            } else {
+                format!(
+                    "{} failed, {} passed{}",
+                    n("failed"),
+                    n("passed"),
+                    if n("errors") > 0 {
+                        format!(", {} errors", n("errors"))
+                    } else {
+                        String::new()
+                    }
+                )
+            };
+            last_pytest = Some((cmd.to_string(), summary));
+        }
+        if ok == Some(false) {
+            let tail = v.get("result_tail").and_then(|r| r.as_str()).unwrap_or("");
+            last_error = Some((cmd.to_string(), super::tail_chars(tail, 300)));
+        }
+    }
+    if !saw_prior_rows {
+        return None;
+    }
+    let wrote_line = if wrote.is_empty() {
+        // The line that corrects the generic hint's lie: an attempt that wrote nothing must be
+        // SAID to have written nothing, or the retry reads files into existence.
+        "NOTHING — it wrote or changed no files, so do NOT assume any of its work is on disk"
+            .to_string()
+    } else {
+        wrote.iter().cloned().collect::<Vec<_>>().join(", ")
+    };
+    let ran_line = if classes.is_empty() {
+        "no shell commands".to_string()
+    } else {
+        classes
+            .iter()
+            .map(|(class, (count, ok))| {
+                format!(
+                    "{class} ×{count} (last: {})",
+                    match ok {
+                        Some(true) => "ok",
+                        Some(false) => "FAILED",
+                        None => "unknown",
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut block = format!(
+        "WHAT YOUR PREVIOUS ATTEMPT (attempt {prior_attempt}) ACTUALLY DID — read from its \
+         recorded calls, facts not guesses:\n\
+         - files it wrote or changed: {wrote_line}\n\
+         - commands it ran: {ran_line}"
+    );
+    if let Some((cmd, summary)) = last_pytest {
+        block.push_str(&format!("\n- last pytest result: `{cmd}` → {summary}"));
+    }
+    if let Some((cmd, tail)) = last_error {
+        block.push_str(&format!("\n- last failing command: `{cmd}` → {tail}"));
+    }
+    block.push_str(
+        "\nKEEP what is already correct, fix what failed, and do not re-derive work this record \
+         shows was done.",
+    );
+    Some(block)
+}
+
+/// VA-081: one line of ENGINE-side narration into `<task>.log` (primary AND mirror), stamped so
+/// it is never mistaken for the model's own words. The reply loop speaks about context management
+/// only through `SystemNotification`s and `HistoryReplaced`; without this line a compaction that
+/// runs mid-lane (r6f's opener: ~7 minutes of GENERATING after its final_output was collected)
+/// leaves no trace in the durable log a reader opens first. Same contract as the appenders above:
+/// errors returned, never raised; the same bytes offered to both targets.
+pub(super) fn append_lane_note(
+    activity_path: &Path,
+    mirror: Option<&Path>,
+    note: &str,
+) -> AppendErrs {
+    let line = format!("\n[engine {}] {note}\n", chrono::Utc::now().to_rfc3339());
+    let mut errs = Vec::new();
+    if let Some(e) = append_bytes(&activity_path.with_extension("log"), line.as_bytes()) {
+        errs.push(("log", e));
+    }
+    if let Some(m) = mirror {
+        if let Some(e) = append_bytes(&m.with_extension("log"), line.as_bytes()) {
+            errs.push(("log.mirror", e));
+        }
+    }
+    errs
+}
+
+/// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
+/// occupy every dependent's "relevant context" slot when a worker finished with no final text.
+/// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest
+/// truth `build_task_ledger_row` reads — so render THAT: the files it wrote and its last pytest
+/// outcome. `None` when the capture holds neither fact; the caller then hands dependents an
+/// honest EMPTY (nothing at all beats a contentless stub) and emits `dependency_context_empty`.
+pub(super) fn render_completed_output_from_ledger(
+    root: &Path,
+    task_id: &str,
+    owned_files: &[String],
+    attempt: u32,
+    calls_mirror_dir: Option<PathBuf>,
+) -> Option<String> {
+    let row = build_task_ledger_row(
+        root,
+        task_id,
+        "done",
+        false,
+        owned_files,
+        attempt,
+        calls_mirror_dir,
+    );
+    let mut wrote: Vec<String> = Vec::new();
+    for key in ["appeared", "changed"] {
+        for p in row
+            .pointer(&format!("/fs_delta/{key}"))
+            .and_then(|x| x.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            if let Some(s) = p.as_str() {
+                if !wrote.iter().any(|w| w == s) {
+                    wrote.push(s.to_string());
+                }
+            }
+        }
+    }
+    let pytest = row.get("last_pytest").filter(|v| !v.is_null()).map(|v| {
+        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("pytest");
+        let n = |k: &str| {
+            v.pointer(&format!("/summary/{k}"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0)
+        };
+        if v.pointer("/summary/collect_error")
+            .and_then(|c| c.as_bool())
+            .unwrap_or(false)
+        {
+            format!("`{cmd}` → COLLECTION ERROR — the suite never ran")
+        } else {
+            format!(
+                "`{cmd}` → {} failed, {} passed{}",
+                n("failed"),
+                n("passed"),
+                if n("errors") > 0 {
+                    format!(", {} errors", n("errors"))
+                } else {
+                    String::new()
+                }
+            )
+        }
+    });
+    if wrote.is_empty() && pytest.is_none() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    if !wrote.is_empty() {
+        lines.push(format!("wrote: {}", wrote.join(", ")));
+    }
+    if let Some(p) = pytest {
+        lines.push(format!("last pytest: {p}"));
+    }
+    Some(lines.join("\n"))
+}
+
+/// Class a shell command for the ledger's `commands` table. Four classes because they are the
+/// four questions a later dispatch actually asks: did the tests run (and how often), does the
+/// tree import, was the app booted, anything else. `import` is checked before `test` because a
+/// `pytest --collect-only` is an import probe that happens to be spelled with pytest.
+pub(super) fn classify_command(cmd: &str) -> &'static str {
+    let c = cmd.trim();
+    if c.contains("--collect-only") || (c.contains(" -c ") && c.contains("import")) {
+        return "import";
+    }
+    if c.contains("pytest") || c.contains("cargo test") || c.contains("go test") {
+        return "test";
+    }
+    if c.contains("--help")
+        || c.contains("cargo run")
+        || c.contains("go run")
+        || super::spec_python_entry(c).is_some()
+    {
+        return "boot";
+    }
+    "other"
+}
+
+/// Does a pytest invocation run the WHOLE suite? A command that names an individual test file or
+/// a `::` node id is a targeted re-run; anything else (bare `pytest`, `pytest -q`, `pytest
+/// tests/`) exercises the suite. The roll-up's "last whole-suite outcome" — the one number the
+/// r2 sink paid 3 full re-runs to learn — keys off this.
+pub(super) fn pytest_runs_whole_suite(cmd: &str) -> bool {
+    !cmd.contains("::")
+        && !cmd
+            .split_whitespace()
+            .any(|t| t.trim_matches('"').ends_with(".py"))
 }
 
 #[cfg(test)]
@@ -683,7 +944,7 @@ mod tests {
         assert_eq!(bare["commands"], serde_json::json!({}));
         assert_eq!(bare["fs_delta"]["changed"], serde_json::json!([]));
         // And through the one live shadow-rooted caller: the GEN-3 completion facts.
-        let facts = crate::commands::swarm::render_completed_output_from_ledger(
+        let facts = render_completed_output_from_ledger(
             shadow.path(),
             "complete-fix::app/sync.py",
             &owned,
@@ -693,7 +954,7 @@ mod tests {
         .expect("mirror-only rows render the wrote-line");
         assert!(facts.contains("wrote: app/sync.py"), "{facts}");
         assert!(
-            crate::commands::swarm::render_completed_output_from_ledger(
+            render_completed_output_from_ledger(
                 shadow.path(),
                 "complete-fix::app/sync.py",
                 &owned,
@@ -746,4 +1007,174 @@ mod tests {
             "a non-empty primary is read alone; the mirror's boot row must not leak in"
         );
     }
+
+    /// II-8, the r2 ledger-core-tests shape (synthetic — r2 ran on a pre-II-1 binary, so no
+    /// archived capture exists): attempt 0 ran the suite, hit an ImportError, and wrote NOTHING.
+    /// The re-dispatch block must say all three — above all that nothing is on disk, because the
+    /// generic transient hint told r2's attempt 1 the opposite and it started blind, twice.
+    #[test]
+    fn the_previous_attempt_block_carries_attempt_zeros_facts_not_guesses() {
+        let rows = [
+            serde_json::json!({"ts":"2026-08-29T20:00:01Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest tests/ -v 2>&1 | tail -30","ok":true,
+                "result_tail":"=== 32 failed, 46 passed in 41.07s ===",
+                "pytest":{"failed":32,"passed":46,"errors":0,"collect_error":false,"failures":[]}}),
+            serde_json::json!({"ts":"2026-08-29T20:04:11Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest --collect-only -q","ok":false,
+                "result_tail":"ImportError: cannot import name 'Ledger' from 'app.ledger_core'"}),
+            serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:12:00Z","attempt":0,
+                "elapsed_secs":720,
+                "fs_delta":{"appeared":[],"changed":[],"outside_manifest":[]}}),
+        ];
+        let text: String = rows.iter().map(|r| format!("{r}\n")).collect();
+
+        let block = render_previous_attempt_block(&text, 1).expect("attempt 0 left rows");
+        assert!(
+            block.contains("NOTHING"),
+            "an attempt that wrote no files must be SAID to have written none — the generic \
+             hint's 'still on disk' was the r2 lie: {block}"
+        );
+        assert!(
+            block.contains("32 failed, 46 passed"),
+            "the last pytest result is the fact the retry needs first: {block}"
+        );
+        assert!(
+            block.contains("test ×1") && block.contains("import ×1"),
+            "attempt 0's real call classes: {block}"
+        );
+        assert!(
+            block.contains("ImportError") && block.contains("--collect-only"),
+            "the last failing command and its error travel verbatim: {block}"
+        );
+
+        // Attempt 0 itself has no predecessor: nothing to render, prompt unchanged.
+        assert!(render_previous_attempt_block(&text, 0).is_none());
+        // An empty capture renders nothing rather than an empty scaffold.
+        assert!(render_previous_attempt_block("", 1).is_none());
+
+        // And when the attempt DID write, the files are named instead.
+        let wrote = serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:12:00Z",
+            "attempt":0,
+            "fs_delta":{"appeared":["tests/test_ledger_core.py"],"changed":["app/ledger_core.py"],
+                        "outside_manifest":[]}});
+        let block = render_previous_attempt_block(&format!("{wrote}\n"), 1).unwrap();
+        assert!(block.contains("tests/test_ledger_core.py"), "{block}");
+        assert!(block.contains("app/ledger_core.py"), "{block}");
+        assert!(!block.contains("NOTHING"), "{block}");
+    }
+
+    /// II-2: command classes are the four questions a later dispatch asks. Import beats test for
+    /// collect-only (an import probe spelled with pytest); the boot class recognises the
+    /// spec-entry idiom, not a hardcoded package name.
+    #[test]
+    fn classify_command_answers_the_four_questions() {
+        assert_eq!(
+            classify_command("python3 -m pytest tests/ -v 2>&1 | tail -30"),
+            "test"
+        );
+        assert_eq!(
+            classify_command("python3 -m pytest --collect-only -q"),
+            "import"
+        );
+        assert_eq!(classify_command("python3 -c 'import app.api'"), "import");
+        assert_eq!(classify_command("python3 -m app --help 2>&1"), "boot");
+        assert_eq!(
+            classify_command("python3 -m app --db-dir /tmp/d --ledger-port 9907"),
+            "boot"
+        );
+        assert_eq!(classify_command("ls -la"), "other");
+        // Whole-suite detection: a named file or node id is a targeted re-run.
+        assert!(pytest_runs_whole_suite("python3 -m pytest -q"));
+        assert!(pytest_runs_whole_suite("python3 -m pytest tests/ -v"));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_ledger_core.py -v"
+        ));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_x.py::TestA::test_b"
+        ));
+    }
+}
+
+// The in-flight tool-request cluster (the struct the worker loop's `pending` map holds, and its
+// two digest renderers) — moved verbatim from swarm.rs under the incremental-split law, paying
+// for r6e E7's relay wiring.
+/// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
+/// request id the stream will answer with.
+#[derive(Clone, Debug)]
+pub(super) struct InflightCall {
+    pub(super) name: String,
+    pub(super) is_mcp: bool,
+    pub(super) fetched_external: bool,
+    pub(super) summary: String,
+    pub(super) args_preview: String,
+    pub(super) since: String,
+}
+
+pub(super) const INFLIGHT_PREVIEW_MAX: usize = 240;
+
+/// What a tool request is ABOUT, readable before its result exists: the path and size of a write,
+/// the shape of an edit, the head of a shell line. Mihai, watching the inspector's WORK pane: *"the
+/// tool calls the writing, reading whatnot in the work is not displayed realtime how they're forming
+/// and what is happening. they're appearing as items only after they're complete."* The engine has
+/// the arguments the instant the request enters the stream; this is the bounded rendering of them.
+/// Content itself is never carried — a write's `content` is the file, and the digest is rewritten on a
+/// hot timer — so sizes stand in for it.
+pub(super) fn inflight_args_preview(name: &str, args: &serde_json::Value) -> String {
+    let obj = args.as_object();
+    let get = |k: &str| obj.and_then(|o| o.get(k)).and_then(|v| v.as_str());
+    let count = |s: &str| (s.lines().count(), s.len());
+    let raw = match (get("path"), get("command")) {
+        (Some(path), _) if name == "write" || name.ends_with("__write") => match get("content") {
+            Some(content) => {
+                let (lines, bytes) = count(content);
+                format!("write {path} ({lines} lines, {bytes} bytes)")
+            }
+            None => format!("write {path}"),
+        },
+        (Some(path), _) if name == "edit" || name.ends_with("__edit") => {
+            match (get("before"), get("after")) {
+                (Some(before), Some(after)) => format!(
+                    "edit {path} ({} lines → {} lines)",
+                    count(before).0,
+                    count(after).0
+                ),
+                _ => format!("edit {path}"),
+            }
+        }
+        // developer__text_editor shape: `command` is the verb and `path` the target.
+        (Some(path), Some(verb)) => format!("{verb} {path}"),
+        (Some(path), None) => format!("{name} {path}"),
+        (None, Some(command)) => format!("{name}: {}", command.trim()),
+        (None, None) => format!("{name} {}", super::summarize_tool_call(name, args)),
+    };
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > INFLIGHT_PREVIEW_MAX {
+        format!(
+            "{}…",
+            flat.chars()
+                .take(INFLIGHT_PREVIEW_MAX - 1)
+                .collect::<String>()
+        )
+    } else {
+        flat
+    }
+}
+
+/// The `inflight` rows of a digest: one per request without a result, oldest first. The map is
+/// unordered, so sort by arrival or the panel would reshuffle rows on every rewrite.
+pub(super) fn inflight_rows(
+    pending: &std::collections::HashMap<String, InflightCall>,
+) -> Vec<serde_json::Value> {
+    let mut rows: Vec<(&String, &InflightCall)> = pending.iter().collect();
+    rows.sort_by(|a, b| a.1.since.cmp(&b.1.since).then_with(|| a.0.cmp(b.0)));
+    rows.into_iter()
+        .map(|(id, c)| {
+            serde_json::json!({
+                "id": id,
+                "tool": c.name,
+                "args": c.args_preview,
+                "since": c.since,
+            })
+        })
+        .collect()
 }

@@ -21,6 +21,7 @@ export type RunPhase =
   | 'synthesize'
   | 'review'
   | 'contracts'
+  | 'split'
   | 'build'
   | 'integrate'
   | 'repair'
@@ -50,12 +51,17 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
   {
     key: 'review',
     label: 'Review',
-    tip: 'An idle node reads the ORIGINAL request against the plan and patches what is missing. It stops when it asks for no change.',
+    tip: 'RETIRED (2447d145c): one model round read the ORIGINAL request against the plan and patched it. Deleted after three runs produced zero effective patches — the plan repairs are deterministic now. Shown only for an archived run that ran it.',
   },
   {
     key: 'contracts',
     label: 'Contracts',
     tip: 'Every node freezes a signature-only interface for one module, so the builders code against the same contract before anything is written.',
+  },
+  {
+    key: 'split',
+    label: 'Split',
+    tip: 'A task measured FAT (spec sections per owned file above the plan’s threshold) is declared into shards by one planner call, then sized to the free hosts — it runs AFTER synthesis, and it is its own step because r6j showed Synthesize for 35 minutes while synthesis took 12 and this call took 23. No phase event: derived from plan_flag{fat_task} → split_sized / plan_patched{split}.',
   },
   { key: 'build', label: 'Build', tip: 'Worker nodes build the planned tasks across the fleet.' },
   {
@@ -73,23 +79,37 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
 
 export type FormationPhaseState = 'complete' | 'active' | 'upcoming' | 'skipped';
 
-/** Phases DELETED from the engine. Retired, not erased: archived run.jsonl files still carry their
- *  `phase` events, so a run with EVIDENCE of one renders it as a historical step — but a new run must
- *  not be offered a chip for a stage the engine can no longer reach (it would sit permanently
- *  "skipped", claiming a route that does not exist). CONTRACTS stays retired (P1-4). RESEARCH left
- *  this list when the v2 fan shipped: the engine researches again (the opener's own questions, fanned
- *  read-only between ASK and SYNTHESIS), so the chip is a live stage — it emits no `phase` event, and
- *  foldRunPhase derives it from the fan's research_* events instead. */
-export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['contracts'];
+/** Phases the ribbon offers ONLY on the run's own evidence. Two classes share the rule:
+ *
+ *  RETIRED — deleted from the engine. Archived run.jsonl files still carry their `phase` events, so a
+ *  run with EVIDENCE of one renders it as a historical step, but a new run must not be offered a chip
+ *  for a stage the engine can no longer reach (it would sit permanently "skipped", claiming a route
+ *  that does not exist). CONTRACTS (P1-4) and REVIEW (2447d145c, VA-014): without this entry
+ *  formationPhaseState read EVERY new run as "Review — skipped" the moment Build lit.
+ *
+ *  CONDITIONAL — live, but only some runs walk them (VA-138: "the step list is DERIVED from events
+ *  seen, never a fixed array"). ASK runs only when the opener leaves open decisions; SPLIT only when a
+ *  task measures fat. Offering either up front painted a chip for a stage the run may never reach, and
+ *  the r6j run (no open decision, one fat task) read "Ask — skipped" beside NO Split at all while the
+ *  split lane ran 23 minutes under a "Synthesize" chip. A run that asked shows Ask; a run that split
+ *  shows Split; a run that did neither shows neither.
+ *
+ *  Retired/conditional means "absent is not skipped", never "hidden": the archived r0 fixture still
+ *  renders its Review chip off its own evidence. RESEARCH left this list when the v2 fan shipped: the
+ *  engine researches on every run (one lane per slice), so the chip is always offered — it emits a
+ *  `phase` event again since VA-089, and foldRunPhase also derives it from the fan's research_* events. */
+export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['review', 'contracts'];
+export const CONDITIONAL_PHASES: ReadonlyArray<RunPhase> = ['ask', 'split'];
+const EVIDENCE_ONLY_PHASES: ReadonlyArray<RunPhase> = [...RETIRED_PHASES, ...CONDITIONAL_PHASES];
 
-/** The steps the ribbon actually draws for THIS run: the live pipeline, plus any retired phase the
- *  run's own events prove it ran. Evidence is set the moment a phase event is seen (foldRunPhase), so
- *  an archived run mid-research still carries its step. */
+/** The steps the ribbon actually draws for THIS run: the unconditional pipeline, plus any retired or
+ *  conditional phase the run's own events prove it ran. Evidence is set the moment a phase event is
+ *  seen (foldRunPhase), so an archived run mid-research still carries its step. */
 export function formationPhasesFor(
   evidence?: FormationEvidence
 ): ReadonlyArray<{ key: RunPhase; label: string; tip: string }> {
   return FORMATION_PHASES.filter(
-    (step) => !RETIRED_PHASES.includes(step.key) || evidence?.[step.key] === true
+    (step) => !EVIDENCE_ONLY_PHASES.includes(step.key) || evidence?.[step.key] === true
   );
 }
 
@@ -97,6 +117,64 @@ export function formationPhasesFor(
  *  'skipped' — the ribbon never back-fills a stage the run did not run (Integrate and Repair are both
  *  conditional, and a resumed run can start past Open). */
 export type FormationEvidence = Partial<Record<RunPhase, boolean>>;
+
+/** One phase's time on the clock, from the EVENT TIMESTAMPS (VA-138): `start` is the first entry
+ *  (epoch ms), `ms` the closed time accumulated across every segment the run spent in it, and `since`
+ *  the open segment's start while the run is still in it (null once it has left). A phase the run
+ *  re-enters (Integrate → Repair → Integrate on a second verify round) keeps counting only its own
+ *  segments — never the sibling's. */
+export interface PhaseSpan {
+  start: number;
+  /** The newest exit (epoch ms); null while the run has never left it, or is back in it. */
+  end: number | null;
+  ms: number;
+  since: number | null;
+}
+
+/** Every phase's span, plus the newest event timestamp — the clock a run that is no longer live
+ *  (finished, killed, or its engine silent) reads its open phase against, so a dead run's active
+ *  chip never keeps ticking. Built by foldRunPhase from the same `enter` calls that set the evidence. */
+export interface PhaseSpans {
+  phases: Partial<Record<RunPhase, PhaseSpan>>;
+  lastTs: number | null;
+}
+
+export const EMPTY_PHASE_SPANS: PhaseSpans = { phases: {}, lastTs: null };
+
+/** Milliseconds the run has spent in `key`, or null when the run never entered it (or its events carry
+ *  no timestamps — fixtures and pre-ts archives). `now` is the live clock for an open segment; absent,
+ *  the newest event timestamp stands in, which is what a finished or dead run must read. */
+export function phaseDurationMs(
+  spans: PhaseSpans | undefined,
+  key: RunPhase,
+  now?: number
+): number | null {
+  const span = spans?.phases[key];
+  if (!span) return null;
+  if (span.since == null) return span.ms;
+  const clock = now ?? spans?.lastTs ?? span.since;
+  return span.ms + Math.max(0, clock - span.since);
+}
+
+/** "52m", "2h 24m", "45s" — the chip's figure. Nearest minute past the first (r6j's synthesis was
+ *  11m58s, and "12m" is the number a person watching the clock says): a phase measured in hours does
+ *  not need its seconds, and the tooltip carries the exact clock range. */
+export function fmtPhaseDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  const totalMin = Math.round(totalSec / 60);
+  if (totalMin >= 60) return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
+  if (totalMin >= 1) return `${totalMin}m`;
+  return `${totalSec}s`;
+}
+
+/** The wall-clock range a chip's tooltip states beside its duration: "18:52 → 19:04" in the reader's
+ *  local time, open-ended while the phase is still running. */
+export function fmtPhaseClock(span: PhaseSpan, now?: number): string {
+  const hhmm = (t: number) =>
+    new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (span.since != null) return `${hhmm(span.start)} → ${now == null ? '…' : 'now'}`;
+  return `${hhmm(span.start)} → ${span.end == null ? '…' : hhmm(span.end)}`;
+}
 
 /** The node-identity ramp: six solid, distinct hues so two adjacent node chips are never confusable. The
  *  var() carries the theme swap; the fallback is the light-theme LeanZero value. */

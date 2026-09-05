@@ -10,7 +10,7 @@ surrounding functions whole, follow every changed value to its consumers before 
 
 ## Invariants
 - ONE DOOR: nothing enters the live DAG except through the same ownership repairs the plan walked —
-  `repair_replan_specs` stands between the replanner's answer and `splice_specs` (a gate test reads
+  THE REPLANNER IS DELETED (83e8089a5, 2026-09-01: 248 node-min on r6c for files nothing imported). `repair_replan_specs` is gone with it; the ONE remaining task-adding path is `apply_split` → `splice_specs`, and the gate-6 test ratchets `.splice_specs(` sites to exactly one (a gate test reads
   that window; keep the call inside it). The replanner is summoned only after ≥1 task COMPLETED.
 - The sink `"integrate-verify"` is exact-equality in ~34 sites here; it owns NO files — the
   upstream-failure relax fires only on `owned_files.is_empty()`.
@@ -21,7 +21,7 @@ surrounding functions whole, follow every changed value to its consumers before 
   literal may decide model work (connect timeouts are transport; judge cadence throttles the JUDGE,
   never the worker).
 - Census/report code must distinguish FAILED from stopped from declined — a transport Err is never
-  laundered into an empty-plan "decision" (`Replanned.reason` carries three arms).
+  laundered into an empty-plan "decision" (historical: `Replanned.reason` carried three arms before the replanner was deleted).
 - Comments in this crate have been WRONG (three in one review). Verify against the expression, not
   the prose; fix the comment in the same commit when they disagree.
 
@@ -39,3 +39,10 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).

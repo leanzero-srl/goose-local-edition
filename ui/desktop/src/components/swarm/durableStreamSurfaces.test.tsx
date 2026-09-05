@@ -4,6 +4,7 @@ import {
   INLINE_TAIL_CHARS,
   MAX_REVEAL_BACKLOG_CHARS,
   fleetExpandText,
+  inspectorOutputText,
   isClippedTail,
   laneLiveLine,
   laneNarrative,
@@ -25,7 +26,7 @@ const rolling = {
   lastText: 'the rolling answer view',
   lastThinking: 'the tail of the reasoning',
   thinkingChars: 900,
-  fullReasoning: 'the 24,000-char clip of the answer channel',
+  answerWindow: 'the 24,000-char window over the answer channel',
 };
 
 describe('the fleet strip reads the durable log, not the rolling window', () => {
@@ -77,39 +78,59 @@ describe('the fleet strip reads the durable log, not the rolling window', () => 
 describe('a row body prefers the durable transcript', () => {
   it('reads the log before the 24k clip, the digest and the rolling answer', () => {
     expect(laneNarrative({ ...rolling, fullTranscript: 'the log' })).toBe('the log');
-    expect(laneNarrative(rolling)).toBe(rolling.fullReasoning);
+    expect(laneNarrative(rolling)).toBe(rolling.answerWindow);
     expect(laneNarrative({ lastText: 'only the rolling answer' })).toBe('only the rolling answer');
   });
 });
 
+describe('the inspector OUTPUT pane owns the answer window (agenda item V, UI half)', () => {
+  it('reads the durable log, then the window, then the 400-char rolling answer', () => {
+    expect(
+      inspectorOutputText({
+        fullTranscript: 'the log',
+        answerWindow: 'the window',
+        lastText: 'rolling',
+      })
+    ).toBe('the log');
+    expect(inspectorOutputText({ answerWindow: 'the window', lastText: 'rolling' })).toBe(
+      'the window'
+    );
+    expect(inspectorOutputText({ lastText: 'rolling' })).toBe('rolling');
+    expect(inspectorOutputText({})).toBe('');
+  });
+});
+
+// The card reads a LANE — joined once in the hook — not a raw digest it maps by hand (VA-025: that mapper
+// was a second copy of `digestStreamFields`). Lane-shaped inputs here, the same shape every other surface
+// in this file takes.
 describe('the live-generation card no longer shows the 24k clip', () => {
-  it('prefers the durable thinking log over full_reasoning', () => {
+  it('prefers the durable thinking log over the answer window', () => {
     const text = taskGenReasoning({
-      full_thinking: 'the durable think.log',
-      full_reasoning: 'the 24,000-char tail clip',
+      fullThinking: 'the durable think.log',
+      answerWindow: 'the 24,000-char tail clip',
       reasoning: 'a digest chunk',
-      last_thinking: 'the window',
-      last_text: 'the rolling answer',
+      lastThinking: 'the window',
+      lastText: 'the rolling answer',
     });
     expect(text).toBe('the durable think.log');
   });
 
   it('falls back to the durable transcript before any clipped digest field', () => {
     const text = taskGenReasoning({
-      full_transcript: 'the durable task.log',
-      full_reasoning: 'the 24,000-char tail clip',
+      fullTranscript: 'the durable task.log',
+      answerWindow: 'the 24,000-char tail clip',
     });
     expect(text).toBe('the durable task.log');
   });
 
-  it('keeps the old chain for a digest with no durable log at all', () => {
-    expect(taskGenReasoning({ last_text: 'only this' })).toBe('only this');
+  it('keeps the old chain for a lane with no durable log at all', () => {
+    expect(taskGenReasoning({ lastText: 'only this' })).toBe('only this');
     expect(taskGenReasoning({})).toBe('');
   });
 
   it('bounds the card, keeping the newest end', () => {
     const log = `${'y'.repeat(CARD_TAIL_CHARS * 2)}the end of the reasoning`;
-    const text = taskGenReasoning({ full_thinking: log });
+    const text = taskGenReasoning({ fullThinking: log });
     expect(text.length).toBe(CARD_TAIL_CHARS);
     expect(text.endsWith('the end of the reasoning')).toBe(true);
   });

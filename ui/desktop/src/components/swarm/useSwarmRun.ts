@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormationEvidence, RunPhase } from './formationVisualState';
+import { EMPTY_PHASE_SPANS, type FormationEvidence, type PhaseSpans, type RunPhase } from './formationVisualState';
 import { shouldAdoptResidentRun } from './swarmRunLiveness';
 
 /**
@@ -320,6 +320,83 @@ export function elapsedSince(since: string, now: number): string {
   return `${m}m ${String(r).padStart(2, '0')}s`;
 }
 
+/**
+ * One question on a research lane, from the per-question events. Since VA-089 a slice lane DERIVES
+ * its own questions in-session and names each as it lands — `research_question_kind{slice, q_index,
+ * kind, cite, question}` first, then `research_answered` / `research_unanswered` — so the row is
+ * created by the kind event and settled by the outcome; the decisions lane's rows are seeded from
+ * `research_dispatched.q_indexes` and named the same way. Archived r6b–r6h logs carried the question
+ * on `research_dispatched` (one lane per slice since the fan cut C3; one per question before it) and
+ * land here through the same rows. `question` is the engine's 200-char head (the whole text is in the
+ * durable mini `.swarm/ledger/research-<slice>-q<n>.json`).
+ */
+export interface ResearchQuestionRow {
+  slice: string;
+  qIndex: number;
+  /** Empty until the lane names it (a derived question lands with its outcome) or when the outcome is
+   *  a lane-level row with no question (`lane_panicked`). */
+  question: string;
+  /** `dispatched` until its terminal event lands; `unanswered` is the loud absence twin, never hidden;
+   *  `covered` (VA-031) is the LEGACY-LOG terminal of a question that LEFT the lane's batch because an
+   *  earlier mini or an open decision already answered it — still one of the lane's questions. */
+  status: 'dispatched' | 'answered' | 'unanswered' | 'covered';
+  /** The lane's own word about its question (`research_question_kind.kind`): design | external |
+   *  unkinded — or the classifier's `spec_restated`. Absent on archived logs that predate the event —
+   *  never defaulted. */
+  kind?: string;
+  /** VA-118: who decided the kind (`research_question_kind.source`): `model` (the lane's word) or
+   *  `classifier` (`classify_design_entry` re-kinded a design entry showing fewer than two alternatives
+   *  to `spec_restated`; `modelKind` keeps what the lane had said, `cite` the evidence it read). Absent
+   *  on archives that predate the field. */
+  kindSource?: string;
+  modelKind?: string;
+  /** LEGACY-LOG (fab90e91b → e33a2f77f, the r6c–r6h archives): `research_question_covered` — `by: mini`
+   *  names the durable mini (`by_mini`, `research-<slice>-q<n>.json`) whose answer was copied onto this
+   *  row; `by: decision` names the open decision (0-based `decision`) the question was routed to.
+   *  `rule` is the match the engine applied: cite | decision_id | stem. */
+  covered?: { by: string; mini?: string; decision?: number; rule: string };
+  cite?: string;
+  chars?: number;
+  raised?: number;
+  secs?: number;
+  reason?: string;
+  detail?: string;
+}
+
+/**
+ * VA-143: the event that CLOSED a research lane. `research_unanswered{reason: remainder_empty}` is the
+ * engine's outcome row for a lane whose final reply added nothing behind the answers the tool already
+ * landed (research.rs fold_research_lane_from: its q_index is the remainder's first, its detail names
+ * the builder_decides it listed) — a closer, never a question kept raw in a brief. r6j's web-viz lane
+ * landed 4 and read "1 unanswered" for the whole run because the closer was folded as a question row.
+ */
+export interface ResearchLaneClose {
+  reason: string;
+  /** Answers the lane landed — its rows with status answered (`research_answer_landed` and its
+   *  outcome-funnel twin `research_answered` fold onto ONE row, so the count holds on either shape). */
+  landed: number;
+  /** Choices only this slice's builder makes — one `research_builder_decides` event each, emitted
+   *  after the closer. */
+  builderDecides: number;
+  detail?: string;
+  /** The engine's own lane clock at the close (`secs`). */
+  secs?: number;
+}
+
+/**
+ * VA-031: `research_raised_folded{slice, q_index, raised_by, question}` (research.rs
+ * emit_research_outcome) — a question the lane RAISED and could not settle, never dispatched (r6b: 48
+ * raised, 0 chased), folded verbatim into THIS slice's brief for its builder
+ * (`raised_questions_brief_block`). The count rode `research_answered.raised` all along; these are the
+ * words, one per event, on the lane that raised them.
+ */
+export interface ResearchRaisedFold {
+  /** The row that raised it (`q_index`) and its durable mini (`raised_by`). */
+  qIndex: number;
+  raisedBy: string;
+  question: string;
+}
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -331,8 +408,13 @@ export interface TurnLane {
   lastText?: string;
   recent?: string[];
   reasoning?: string;
-  /** The worker's full narration (all substantive text chunks) — the "reasoning in plain" the panel shows. */
-  fullReasoning?: string;
+  /** The digest's rolling WINDOW over the ANSWER channel — the newest ~24k substantive chars, a tail by
+   *  construction (engine `build_answer_window` / `ANSWER_WINDOW_CHARS`). This was `fullReasoning`, and
+   *  the name was the lie agenda item V is about: a silently clipped tail claiming "full". The COMPLETE
+   *  record is the append-only `<task>.log` (`fullTranscript`); every surface a person reads ranks that
+   *  first, and this window is shown only where no durable log exists for the call (the pre-transcript
+   *  archives), captioned as the window it is. It is never thinking: the Thinking pane must not read it. */
+  answerWindow?: string;
   calls?: SwarmCall[];
   /** The tool requests still running — see InflightCall. A `calls` record appears only once its result
    *  lands, so without this a long write or shell command is invisible for its whole duration. */
@@ -384,6 +466,9 @@ export interface TurnLane {
    *  thinking, so a fixed transcript-first order shows the OLD answer for the whole of the new call. */
   liveChannel?: LiveChannel;
   errors?: number;
+  /** Malformed tool calls (named by the stream, never reached a tool) — the digest's `malformed`.
+   *  The task card read this off the raw digest by hand; it rides the one join like every field. */
+  malformed?: number;
   elapsedMs?: number;
   /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
   attempts?: number;
@@ -412,6 +497,16 @@ export interface TurnLane {
    *  past the open-call window — the LIVENESS fact that ends its 'running' claim (panel #2's find:
    *  demoted, it used to vanish entirely). Derived, never a digest field: no digest says this. */
   interrupted?: boolean;
+  /** A research lane's questions (VA-029), from the per-question events — event truth on the carry,
+   *  deliberately NOT a digestStreamFields key: no digest names its questions. One lane per batch
+   *  lists every question it carries; the lane is done when each has a terminal event. */
+  researchQuestions?: ResearchQuestionRow[];
+  /** VA-143: the lane's closer, when the engine emitted one — event truth on the carry, like the
+   *  questions. Absent while the lane runs and on a lane that ended without one. */
+  researchClose?: ResearchLaneClose;
+  /** VA-031: what the lane raised and folded into its slice's brief — event truth on the carry, like
+   *  the questions. Absent when the lane raised nothing. */
+  researchRaisedFolded?: ResearchRaisedFold[];
   seq: number;
 }
 
@@ -451,9 +546,10 @@ export interface SwarmRunTotals {
 // call each across the fleet — no `phase` event; derived from research_* events) -> SYNTHESIS (wire the
 // slices into a task DAG) -> REVIEW (one round of structural patches) -> BUILD -> INTEGRATE -> REPAIR.
 // `research` carried v1's slice fan (deleted by P1-5) and is LIVE again for the v2 fan; `contracts`
-// stays RETIRED (P1-4) — archived run.jsonl files still carry its phase events, so the key stays for
-// the historical rows those runs render, but a NEW run must never be offered it as a pending stage
-// (see RETIRED_PHASES in formationVisualState).
+// stays RETIRED (P1-4) and `review` is RETIRED too (the LLM review round, deleted by 2447d145c) —
+// archived run.jsonl files still carry their phase events, so the keys stay for the historical rows
+// those runs render, but a NEW run must never be offered either as a pending stage (see
+// RETIRED_PHASES in formationVisualState).
 export type PhaseKey =
   | 'open'
   | 'ask'
@@ -461,6 +557,7 @@ export type PhaseKey =
   | 'synthesis'
   | 'review'
   | 'contracts'
+  | 'split'
   | 'build'
   | 'integrate'
   | 'repair'
@@ -499,6 +596,10 @@ export interface PhaseTodo {
   state: TodoState;
   active: boolean;
   counts: { done: number; total: number };
+  /** A phase-level fact its rows cannot carry — the header says it beside the counts. LEGACY-LOG:
+   *  Research's "N answered from the spec (no lane)" reads the r6e–r6h `research_planned.facts` field
+   *  (VA-029); the VA-089 engine emits no facts, so a live run carries no note here. */
+  note?: string;
 }
 
 export type ActivityKind =
@@ -607,6 +708,36 @@ export interface RunOverview {
   next: string[];
 }
 
+/** THE RUN'S VERDICT — complete_result, the engine's own end-to-end gate, verbatim. MEASURED on r5
+ *  (2026-08-30): the run passed, verified, and the only on-screen mention was the known-bugs caption —
+ *  Mihai: "IF THE RUN PASSED then where in the UI is this being passed on or mentioned?". This is
+ *  run-level state through the same reducer as run_finished/run_overview (never a lane field).
+ *  `verified` folds complete_result_revised (the engine's retraction) — a retracted green must UPDATE
+ *  this state, not only append a feed line. `passedMeans` is the engine's own honesty line about what
+ *  "passed" asserts and ships to the screen verbatim. */
+export interface RunVerdict {
+  passed: boolean;
+  verified: boolean;
+  passedMeans: string | null;
+  remainingFindings: number | null;
+  shipped: string | null;
+  /** `complete_result.render_class_known_bugs` — how many of the shipped known bugs are render-class
+   *  (a browser-probe finding). By the engine's own partition this is 0 on every PASSED verdict, and on a
+   *  FAILED one with zero criticals it is the whole reason for the red: the gate refuses to ship a
+   *  render-class finding as a known bug (VA-006). null on engines that never emitted the field. */
+  renderClassKnownBugs: number | null;
+}
+
+/** One shipped known bug: the engine's finding text VERBATIM and the severity its authoring check derived
+ *  for it (`complete_result.known_active_bugs_severities[i]` / `known_bugs.severities[i]` — critical, high,
+ *  medium, low, or unsourced). null on legacy events with no severities array. MEASURED on r6h (VA-129):
+ *  the one known bug shipped green was "the app ships NO executable tests" at severity `critical` — with
+ *  no class on screen it read as a cosmetic minor. */
+export interface KnownBug {
+  text: string;
+  severity: string | null;
+}
+
 /** The OPEN phase's cut of the request, plus what RESEARCH produced from it. `weights` are the opener's own
  *  effort estimates (a lopsided cut is the shape that leaves a node idle), `briefChars` the size of the spec
  *  each slice owner wrote back. */
@@ -678,8 +809,11 @@ export interface SwarmRunState {
   /** RESEARCH per-slice lanes (slice-<id>) — one per node, each owner writing its module's spec. Without
    *  these the RESEARCH phase renders empty lanes while the whole fleet is generating. */
   sliceLanes: TurnLane[];
-  /** The v2 RESEARCH fan (research-<slice>-q<n>): the opener's own questions, one read-only call each
-   *  across the fleet — grouped under the Research phase chip, not the trailing planning-calls list. */
+  /** The v2 RESEARCH fan: the opener's own questions answered read-only across the fleet. Since the
+   *  fan cut (C3) ONE lane per slice (`research-<slice>`, plus `research-__open_decisions__`) carries
+   *  every question of that slice — each lane lists them in `researchQuestions`; r6b–r6d logs ran one
+   *  lane per question (`research-<slice>-q<n>`) and render through the same grouping, one question
+   *  each. Grouped under the Research phase chip, not the trailing planning-calls list. */
   researchLanes: TurnLane[];
   /** The single-node planning calls that own no slice: open / open-resplit / synthesis / review /
    *  proxy-answer / rate. Each writes its own digest, so the node running one reads WORKING, not idle. */
@@ -732,6 +866,9 @@ export interface SwarmRunState {
   /** Which phases the engine actually emitted, so the ribbon can mark an un-run stage skipped instead of
    *  back-filling a green check for work that never happened. */
   runPhasesObserved: FormationEvidence;
+  /** Each phase's time on the clock from the event timestamps (VA-138) — the ribbon's per-chip
+   *  duration, so a 12-minute synthesis followed by a 23-minute split never reads "Synthesize 35m". */
+  runPhaseSpans: PhaseSpans;
   /** The OPEN cut + what RESEARCH wrote back from it. */
   slices: SliceFan | null;
   /** Who is answering the clarifying questions — the user, or goose from the spec (see ClarifyProxy). */
@@ -748,9 +885,15 @@ export interface SwarmRunState {
    *  every module still specified and owned. */
   synthesisFallback: { error: string; tasks: number } | null;
   /** KNOWN ACTIVE BUGS — the MINOR defects the engine shipped green with (complete_result.known_active_bugs,
-   *  and defects_rated.minors while the run is still going). These are NOT failures: the run passed, and
-   *  these are what is imperfect about what it passed with. Rendered as their own list, never as errors. */
-  knownActiveBugs: string[];
+   *  and defects_rated.minors while the run is still going), each with the class the engine derived for it.
+   *  These are NOT failures: the run passed, and these are what is imperfect about what it passed with.
+   *  Rendered as their own list, never as errors. */
+  knownActiveBugs: KnownBug[];
+  /** The engine's own end-to-end verdict (complete_result, revised by complete_result_revised) — null until
+   *  the gate has run. Non-null with finished=false is the POST-VERDICT TAIL (persona reflection, overview,
+   *  final report): the verdict is in but the engine is still wrapping up, and the panel must say so — r5's
+   *  3.5-minute silent tail read as a hang on the exact phase where r0 once genuinely hung. */
+  verdict: RunVerdict | null;
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
    *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
@@ -841,6 +984,7 @@ const EMPTY: SwarmRunState = {
   phase: '',
   runPhase: null,
   runPhasesObserved: {},
+  runPhaseSpans: EMPTY_PHASE_SPANS,
   slices: null,
   proxy: { timedOut: null },
   reviewRounds: [],
@@ -848,6 +992,7 @@ const EMPTY: SwarmRunState = {
   sinkRenamedFrom: null,
   synthesisFallback: null,
   knownActiveBugs: [],
+  verdict: null,
   planConfidence: null,
   confidence: null,
   askFloor: null,
@@ -1292,11 +1437,15 @@ function judgeTone(verdict: string): ActivityTone {
 /**
  * EVERY `{"event":"phase","phase":"…"}` value the engine emits, mapped onto a ribbon step.
  *
- * The engine writes eleven of these; this table understood five, and the other six were read and dropped on
- * the floor by `foldRunPhase`. `build` and `repair` survived that by accident — they are re-derived from the
- * task lifecycle below — but CONTRACTS, TEST, RATE and FIX had no representation at all, so the fleet could
- * fan contract stubs across three nodes or grind a fix wave for hours while the ribbon still lit the
- * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs.
+ * The engine once wrote eleven of these; this table understood five, and the other six were read and dropped
+ * on the floor by `foldRunPhase`. `build` and `repair` survived that by accident — they are re-derived from
+ * the task lifecycle below — but CONTRACTS, TEST, RATE and FIX had no representation at all, so the fleet
+ * could fan contract stubs across three nodes or grind a fix wave for hours while the ribbon still lit the
+ * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs. LIVE today: open,
+ * ask, synthesis, build, repair, fix. The rest are LEGACY-LOG keys that archived run.jsonl files still
+ * carry (research = v1's slice fan, P1-5; review = the LLM review round, 2447d145c; contracts = P1-4;
+ * test/rate = the old per-round events): they keep folding for archives and are never offered to a new
+ * run (RETIRED_PHASES).
  *
  * The mappings that are not one-to-one, and why:
  *   repair    the engine names the WHOLE complete loop `repair`, and that loop OPENS by verifying. Only
@@ -1308,6 +1457,8 @@ function judgeTone(verdict: string): ActivityTone {
  * interface stubs for minutes, and it rendered as "Build active" with three nodes parked under Build — the
  * owner's words: "Contracts is somehow in build". A phase the engine announces gets its own step.
  */
+// SPLIT is deliberately absent: the engine emits no `phase: split`; foldRunPhase enters it on
+// `plan_flag{kind: fat_task}` (VA-138).
 const ENGINE_PHASE: Record<string, RunPhase> = {
   open: 'open',
   ask: 'ask',
@@ -1342,15 +1493,42 @@ const ENGINE_PHASE: Record<string, RunPhase> = {
 export function foldRunPhase(events: Array<Record<string, unknown>>): {
   phase: RunPhase | null;
   observed: FormationEvidence;
+  /** Each phase's time on the clock from the event timestamps (VA-138), so "Synthesize 35m" can never
+   *  be read off a chip that was really 12 minutes of synthesis and 23 of the split lane. */
+  spans: PhaseSpans;
 } {
   let phase: RunPhase | null = null;
   const observed: FormationEvidence = {};
+  const spans: PhaseSpans = { phases: {}, lastTs: null };
+  let at: number | null = null;
   const enter = (next: RunPhase) => {
+    if (phase !== next) {
+      // Leaving the current phase closes its open segment; entering one opens (or re-opens) a segment.
+      // Both need a timestamp — an event without one (fixtures, pre-ts archives) moves the phase and
+      // leaves the clock alone, so no duration is ever invented.
+      if (at != null) {
+        const leaving = phase ? spans.phases[phase] : undefined;
+        if (leaving && leaving.since != null) {
+          leaving.ms += Math.max(0, at - leaving.since);
+          leaving.end = at;
+          leaving.since = null;
+        }
+        const entering = spans.phases[next];
+        if (entering) {
+          if (entering.since == null) entering.since = at;
+        } else spans.phases[next] = { start: at, end: null, ms: 0, since: at };
+      }
+    }
     phase = next;
     observed[next] = true;
   };
   for (const e of events) {
     const type = String(e['event'] ?? '');
+    const ts = typeof e['ts'] === 'string' ? Date.parse(e['ts']) : NaN;
+    if (Number.isFinite(ts)) {
+      at = ts;
+      spans.lastTs = ts;
+    }
     switch (type) {
       case 'phase': {
         const next = ENGINE_PHASE[str(e['phase'])];
@@ -1360,12 +1538,25 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
       // RESEARCH FAN v2 emits no `phase` event (its banner is stderr-only) — the fan's own events
       // are the measured evidence the run is researching. Every fan event precedes the engine's
       // `phase: synthesis` (the fan is awaited before plan_slices_to_dag), so last-write-wins moves
-      // the ribbon forward the moment synthesis actually opens. research_no_questions deliberately
-      // does NOT enter: nothing ran, and the chip honestly reads skipped.
+      // the ribbon forward the moment synthesis actually opens. A `research_planned` with zero lanes
+      // (every slice resumed from the ledger, no open decision) deliberately does NOT enter: nothing
+      // runs, and the chip honestly reads skipped.
+      case 'research_planned':
+        if ((num(e['lanes']) ?? 0) > 0) enter('research');
+        break;
       case 'research_dispatched':
+      case 'research_question_kind':
       case 'research_answered':
       case 'research_unanswered':
         enter('research');
+        break;
+      // THE SPLIT has no phase event either (VA-138). `plan_flag{kind: fat_task}` is the measurement
+      // that summons the one `split-<task>` planner call, and it is emitted AFTER synthesis has
+      // returned and the plan is repaired — so from here until the plan loads the run is splitting,
+      // not synthesising. r6j: `phase: synthesis` 18:52:32, plan_flag 19:04:30, the split lane still
+      // forming at 19:29 — the ribbon read Synthesize for the whole 35 minutes. plan_loaded ends it.
+      case 'plan_flag':
+        if (str(e['kind']) === 'fat_task') enter('split');
         break;
       case 'plan_loaded':
         enter('build');
@@ -1393,7 +1584,7 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
         break;
     }
   }
-  return { phase, observed };
+  return { phase, observed, spans };
 }
 
 /** Turn the run event stream into TWO timelines — a compact headline feed (phases only) and a VERBOSE feed
@@ -1421,7 +1612,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   qa: SwarmAnswer[];
   sinkRenamedFrom: string | null;
   synthesisFallback: { error: string; tasks: number } | null;
-  knownActiveBugs: string[];
+  knownActiveBugs: KnownBug[];
+  verdict: RunVerdict | null;
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
@@ -1436,6 +1628,112 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   const proxy: ClarifyProxy = { timedOut: null };
   const reviewRounds: ReviewRound[] = [];
   const qa: SwarmAnswer[] = [];
+  // The research fan's dispatch line per LANE (activity_key), updated as the lane's questions become
+  // known instead of appending one line per question: a VA-089 slice lane derives its own questions
+  // and names each on `research_question_kind` as it lands (kind + text); the decisions lane's indexes
+  // ride the dispatch and are named the same way; archived r6b–r6h logs named every question on the
+  // dispatch itself. Indices into feed/vfeed are stable until the slice at return. `bySlice` is how the
+  // kind/outcome events — which name slice + q_index, never the lane — find their line.
+  const researchDispatchLines = new Map<string, ResearchFeedLine>();
+  const researchLineBySlice = new Map<string, string>();
+  const renderResearchLine = (key: string) => {
+    const line = researchDispatchLines.get(key);
+    if (!line) return;
+    const label = researchSliceLabel(line.slice) || 'a slice';
+    const idx = [...line.qs.keys()].sort((a, b) => a - b);
+    const qs = idx.map((q) => `q${q}`);
+    const single = idx.length === 1 && !line.derives;
+    const kinds = tallyKinds(idx.map((q) => line.qs.get(q)?.kind));
+    const t =
+      idx.length === 0
+        ? `Researching ${label} · deriving its questions from the spec`
+        : single
+          ? `Researching ${label} ${qs[0]}`
+          : `Researching ${label} · ${idx.length} question${idx.length === 1 ? '' : 's'}${line.derives ? ' derived' : ''} (${qs.join(', ')})${kinds ? ` — ${kinds}` : ''}`;
+    const node = line.node ? `on ${line.node}` : '';
+    const questionLines = idx.map((q) => {
+      const row = line.qs.get(q)!;
+      return `[q${q}]${row.kind ? ` (${row.kind})` : ''}${row.text ? ` ${row.text}` : ''}`;
+    });
+    feed[line.compactIdx] = { ...feed[line.compactIdx], text: t, sub: node || undefined };
+    vfeed[line.verboseIdx] = {
+      ...vfeed[line.verboseIdx],
+      text: t,
+      sub: single
+        ? [node, line.qs.get(idx[0])?.text].filter(Boolean).join(' — ') || undefined
+        : [node, ...questionLines].filter(Boolean).join('\n') || undefined,
+    };
+  };
+  // VA-143: ONE LINE PER LANDING, on both feeds. `research_answer_landed` (the mid-lane landing,
+  // research_tool.rs `land` — r6j: 37 of them, unconsumed here until now) and `research_answered`
+  // (the same row through the outcome funnel) are twins: whichever arrives first owns the line and
+  // the other updates it in place — never a second line. An archived log with only the funnel event
+  // keeps its one verbose line; the landing twin rewrites it with the kind the lane named and
+  // promotes it to the compact feed. A lane's CLOSER (`research_unanswered{reason: remainder_empty}`)
+  // is a done-line naming what the lane landed and the builder_decides it listed, re-rendered as
+  // each `research_builder_decides` arrives (the engine emits them after the closer).
+  const researchLandingLines = new Map<
+    string,
+    { compactIdx: number | null; verboseIdx: number; node: string; secs?: number }
+  >();
+  const researchLandedBySlice = new Map<string, Set<number>>();
+  const researchDecidesBySlice = new Map<string, number>();
+  const researchCloseLines = new Map<string, { compactIdx: number; verboseIdx: number; detail?: string }>();
+  const renderResearchLanding = (
+    slice: string,
+    qi: number,
+    a: { kind?: string; chars: number; raised: number; node: string; secs?: number }
+  ) => {
+    const key = `${slice}::${qi}`;
+    let set = researchLandedBySlice.get(slice);
+    if (!set) researchLandedBySlice.set(slice, (set = new Set()));
+    set.add(qi);
+    const t = [
+      `${researchSliceLabel(slice) || 'a slice'} · q${qi} landed`,
+      a.kind,
+      `${a.chars.toLocaleString()} chars`,
+      a.raised > 0 ? `raised ${a.raised}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const sub =
+      [a.node && `by ${a.node}`, a.secs != null ? `${a.secs}s` : ''].filter(Boolean).join(' · ') ||
+      undefined;
+    const row = { kind: 'done' as const, tone: 'good' as const, text: t, sub };
+    const line = researchLandingLines.get(key);
+    if (line) {
+      vfeed[line.verboseIdx] = { ...vfeed[line.verboseIdx], ...row };
+      if (line.compactIdx == null) {
+        compact(row);
+        line.compactIdx = feed.length - 1;
+      } else feed[line.compactIdx] = { ...feed[line.compactIdx], ...row };
+      line.node = a.node || line.node;
+      line.secs = a.secs ?? line.secs;
+    } else {
+      compact(row);
+      verbose(row);
+      researchLandingLines.set(key, {
+        compactIdx: feed.length - 1,
+        verboseIdx: vfeed.length - 1,
+        node: a.node,
+        secs: a.secs,
+      });
+    }
+  };
+  const renderResearchClose = (slice: string) => {
+    const line = researchCloseLines.get(slice);
+    if (!line) return;
+    const landed = researchLandedBySlice.get(slice)?.size ?? 0;
+    const decides = researchDecidesBySlice.get(slice) ?? 0;
+    const row = {
+      kind: 'done' as const,
+      tone: 'good' as const,
+      text: `Research ${researchSliceLabel(slice) || 'a slice'} lane closed — landed ${landed} · builder_decides ${decides}`,
+      sub: line.detail,
+    };
+    feed[line.compactIdx] = { ...feed[line.compactIdx], ...row };
+    vfeed[line.verboseIdx] = { ...vfeed[line.verboseIdx], ...row };
+  };
   // Set by pillars_write_failed so the positive 'pillars' line can carry its honest caveat: the engine
   // still injects pillars into workers after a failed write (set_pillars runs regardless), but the
   // file-driven pillar CHECKS will not run.
@@ -1443,7 +1741,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let resumed: RunMeta['resumed'];
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
-  let knownActiveBugs: string[] = [];
+  let knownActiveBugs: KnownBug[] = [];
+  let verdict: RunVerdict | null = null;
   let finished = false;
   let cseq = 0;
   let vseq = 0;
@@ -1604,16 +1903,39 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       // also what moves the header to Researching). Field names read from the emit sites in
       // swarm.rs research_fan / fold_research_outcome, 2026-08-30.
       case 'research_dispatched': {
+        // ONE LINE PER LANE, UPDATED AS ITS QUESTIONS BECOME KNOWN (VA-029, VA-089). The engine fires
+        // this once per lane (`activity_key` = `research-<slice>`): a slice lane names NO question here
+        // — it derives its own in-session (`derives: true`), and research_question_kind names each as
+        // it lands, updating this line; the decisions lane's indexes ride `q_indexes`. LEGACY-LOG:
+        // r6b–r6h fired it once per QUESTION with `q_index` + `question` (a batch's later questions
+        // update the first line — never a second line), and that shape renders through the same path.
         const slice = str(e['slice']);
         const qi = num(e['q_index']);
         const node = e['model'] ? nodeOf(str(e['model'])) : '';
-        const t = `Researching ${slice || 'a slice'} q${qi ?? '?'}`;
-        compact({ kind: 'dispatch', text: t, sub: node ? `on ${node}` : undefined });
-        verbose({
-          kind: 'dispatch',
-          text: t,
-          sub: [node && `on ${node}`, str(e['question'])].filter(Boolean).join(' — ') || undefined,
-        });
+        const key =
+          str(e['activity_key']) || (qi != null ? `research-${slice}-q${qi}` : `research-${slice}`);
+        let line = researchDispatchLines.get(key);
+        if (!line) {
+          compact({ kind: 'dispatch', text: '' });
+          verbose({ kind: 'dispatch', text: '' });
+          line = {
+            compactIdx: feed.length - 1,
+            verboseIdx: vfeed.length - 1,
+            slice,
+            node,
+            derives: e['derives'] === true,
+            qs: new Map(),
+          };
+          researchDispatchLines.set(key, line);
+        }
+        researchLineBySlice.set(slice, key);
+        if (qi != null) line.qs.set(qi, { text: str(e['question']) });
+        else
+          for (const q of arr(e['q_indexes'])) {
+            const n = num(q);
+            if (n != null && !line.qs.has(n)) line.qs.set(n, { text: '' });
+          }
+        renderResearchLine(key);
         phase = 'Researching';
         break;
       }
@@ -1624,36 +1946,142 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const raised = num(e['raised']) ?? 0;
         const secs = num(e['secs']);
         const node = e['model'] ? nodeOf(str(e['model'])) : '';
+        // The kind the lane named for this question (research_question_kind rides first) — absent on
+        // archived logs, and then unsaid.
+        const kind =
+          qi != null
+            ? researchDispatchLines.get(researchLineBySlice.get(slice) ?? '')?.qs.get(qi)?.kind
+            : undefined;
+        // VA-143: the landing twin (`research_answer_landed`) may already own this landing's line —
+        // then this event only adds what it alone carries (secs, node); otherwise this is the one
+        // verbose line an archived funnel-only log keeps.
+        const landing = qi != null ? researchLandingLines.get(`${slice}::${qi}`) : undefined;
+        if (landing && qi != null) {
+          renderResearchLanding(slice, qi, {
+            kind,
+            chars,
+            raised,
+            node: node || landing.node,
+            secs: secs ?? landing.secs,
+          });
+          break;
+        }
         verbose({
           kind: 'done',
           tone: 'good',
-          text: `Research answered — ${slice || 'a slice'} q${qi ?? '?'} (${chars.toLocaleString()} chars${raised > 0 ? `, ${raised} follow-up${raised === 1 ? '' : 's'} raised` : ''})`,
+          text: `Research answered — ${researchSliceLabel(slice) || 'a slice'} q${qi ?? '?'} (${chars.toLocaleString()} chars${raised > 0 ? `, ${raised} follow-up${raised === 1 ? '' : 's'} raised` : ''})`,
           sub:
-            [node && `by ${node}`, secs != null ? `${secs}s` : ''].filter(Boolean).join(' · ') ||
+            [kind, node && `by ${node}`, secs != null ? `${secs}s` : ''].filter(Boolean).join(' · ') ||
             undefined,
+        });
+        if (qi != null) {
+          researchLandingLines.set(`${slice}::${qi}`, {
+            compactIdx: null,
+            verboseIdx: vfeed.length - 1,
+            node,
+            secs: secs ?? undefined,
+          });
+          let set = researchLandedBySlice.get(slice);
+          if (!set) researchLandedBySlice.set(slice, (set = new Set()));
+          set.add(qi);
+        }
+        break;
+      }
+      case 'research_answer_landed': {
+        // VA-143: the mid-lane landing — the kind the lane named rides on it. A landing whose status
+        // is not answered has its miss rendered by the `research_unanswered` twin, which carries the
+        // reason; nothing here claims an answer that did not land.
+        const slice = str(e['slice']);
+        const qi = num(e['q_index']);
+        if (qi == null || (e['status'] && str(e['status']) !== 'answered')) break;
+        const prior = researchLandingLines.get(`${slice}::${qi}`);
+        const laneLine = researchDispatchLines.get(researchLineBySlice.get(slice) ?? '');
+        renderResearchLanding(slice, qi, {
+          kind: str(e['kind']) || laneLine?.qs.get(qi)?.kind,
+          chars: num(e['chars']) ?? 0,
+          raised: num(e['raised']) ?? 0,
+          node: prior?.node || laneLine?.node || '',
+          secs: prior?.secs,
         });
         break;
       }
+      case 'research_builder_decides': {
+        // VA-143: one per choice the lane left to its builder, after the closer — counted onto the
+        // lane's close line, never a line each (r6j: 49 across six lanes).
+        const slice = str(e['slice']);
+        researchDecidesBySlice.set(slice, (researchDecidesBySlice.get(slice) ?? 0) + 1);
+        renderResearchClose(slice);
+        break;
+      }
       case 'research_unanswered': {
-        // The fallback-gate absence twin: the brief keeps the raw question, never a fabricated answer,
-        // and this line is the loud channel. reason: empty_answer | provider_error | judge_ended |
-        // lane_panicked (model honestly empty on that one — the lane died before any attribution).
         const slice = str(e['slice']);
         const qi = num(e['q_index']);
         const reason = str(e['reason']);
-        const t = `Research unanswered — ${slice || 'a slice'} q${qi ?? '?'}${reason ? ` (${reason.replace(/_/g, ' ')})` : ''}`;
         const sub = str(e['detail']) || undefined;
+        // VA-143: `remainder_empty` is the lane's CLOSER — the final reply added nothing behind the
+        // answers the tool landed — not a miss; it reads as the lane's close, with what it landed.
+        if (reason === 'remainder_empty') {
+          compact({ kind: 'done', text: '' });
+          verbose({ kind: 'done', text: '' });
+          researchCloseLines.set(slice, {
+            compactIdx: feed.length - 1,
+            verboseIdx: vfeed.length - 1,
+            detail: sub,
+          });
+          renderResearchClose(slice);
+          break;
+        }
+        // The fallback-gate absence twin: the brief keeps the raw question, never a fabricated answer,
+        // and this line is the loud channel. reason: empty_answer | provider_error | judge_ended |
+        // lane_panicked (model honestly empty on that one — the lane died before any attribution).
+        const t = `Research unanswered — ${slice || 'a slice'} q${qi ?? '?'}${reason ? ` (${reason.replace(/_/g, ' ')})` : ''}`;
         compact({ kind: 'fail', text: t, tone: 'warn', sub });
         verbose({ kind: 'fail', text: t, tone: 'warn', sub });
         break;
       }
-      case 'research_no_questions': {
-        // Measured absence, honest empty: the opener emitted zero questions, so the fan had nothing
-        // to dispatch and planning proceeds straight to synthesis.
-        const n = num(e['slices']);
-        const t = `No research questions — the opener raised none${n != null ? ` across ${n} slice${n === 1 ? '' : 's'}` : ''}`;
+      case 'research_question_kind': {
+        // VA-089: the lane's own question, named as it lands (kind: design | external | unkinded, the
+        // spec cite when it has one). It UPDATES the lane's dispatch line — count and kinds — never a
+        // second line; a question whose lane is not on this feed (a resumed slice's row) gets its own
+        // verbose line so the words are somewhere.
+        const slice = str(e['slice']);
+        const qi = num(e['q_index']);
+        const kind = str(e['kind']);
+        const question = str(e['question']);
+        const cite = str(e['cite']);
+        const key = researchLineBySlice.get(slice);
+        const line = key ? researchDispatchLines.get(key) : undefined;
+        if (line && key && qi != null) {
+          line.qs.set(qi, { text: question, kind: kind || undefined });
+          renderResearchLine(key);
+        } else {
+          verbose({
+            kind: 'dispatch',
+            text: `Research question — ${researchSliceLabel(slice) || 'a slice'} q${qi ?? '?'}${kind ? ` (${kind})` : ''}`,
+            sub: [question, cite && `cites ${cite}`].filter(Boolean).join(' — ') || undefined,
+          });
+        }
+        break;
+      }
+      case 'research_slice_resumed': {
+        // VA-089: the slice's rows were on the ledger already — they ride into the briefs as they
+        // landed and NO lane runs for it; the plan line counts these as "resumed from the ledger".
+        const slice = researchSliceLabel(str(e['slice'])) || 'a slice';
+        const rows = num(e['rows']);
+        const t = `Research ${slice} resumed from the ledger — ${rows != null ? `${rows} row${rows === 1 ? '' : 's'}` : 'its rows'} reused, no lane`;
         compact({ kind: 'plan', text: t, tone: 'info' });
         verbose({ kind: 'plan', text: t, tone: 'info' });
+        break;
+      }
+      case 'research_question_ignored': {
+        // VA-089: the opener's contract has no per-slice questions (the lanes derive their own); a
+        // model that wrote them anyway spent its serial emit on work the fan does — the entries are
+        // dropped and this is the one loud line about it.
+        const slice = researchSliceLabel(str(e['slice'])) || 'a slice';
+        const n = num(e['count']);
+        const t = `Opener wrote ${n != null ? `${n} question${n === 1 ? '' : 's'}` : 'questions'} for ${slice} — ignored; its research lane derives its own`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({ kind: 'plan', text: t, tone: 'warn' });
         break;
       }
       case 'research_fan_panicked': {
@@ -1682,6 +2110,10 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'plan', text: t, tone: 'warn', sub });
         break;
       }
+      // LEGACY-LOG: the review_failed / review_findings / plan_patched / plan_patch_rejected arms have NO
+      // emitter since 2447d145c (the LLM REVIEW round is deleted). They stay because archived run.jsonl
+      // files (r0–r6d) carry them and this is the only place those rounds still render; each is a `case`
+      // on its own event and produces nothing when the event is absent, so a new run pays nothing.
       case 'review_failed': {
         // The review CALL died (transport/model fault). Without this a REVIEW round whose model call
         // failed rendered exactly like a review that read the code and found nothing — the A-2
@@ -1741,12 +2173,38 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'plan_patched': {
-        const round = num(e['round']) ?? 0;
         const patch = {
           replace: num(e['replace']) ?? 0,
           add: num(e['add']) ?? 0,
           remove: num(e['remove']) ?? 0,
         };
+        if (str(e['source']) === 'split') {
+          // THE SPLIT (2c S1, shards.rs): a measured fat task becomes N shard tasks plus the module as
+          // MERGER — ONE PlanPatch built by code from synthesis's declaration, applied to the loaded plan.
+          // It is a PATCH: never a re-plan (the replanner is deleted) and never a review round (deleted
+          // too), so it must read as neither. r6e: viz3d-engine → 8 shards, 23 exports, plan 8 → 16.
+          const module = str(e['module']);
+          const shards = arr(e['shards']).map(String);
+          const exports = num(e['exports_declared']) ?? 0;
+          const after = (e['after'] ?? {}) as Record<string, unknown>;
+          const tasksAfter = num(after['tasks']);
+          const t = `Plan patched — fat task \`${module}\` split into ${shards.length} shard${shards.length === 1 ? '' : 's'} + a merger`;
+          const facts = [
+            `${exports} export${exports === 1 ? '' : 's'} declared`,
+            `${patch.replace} task rewired · ${patch.add} added · ${patch.remove} removed`,
+            tasksAfter != null ? `plan now ${tasksAfter} tasks` : '',
+          ].filter(Boolean);
+          compact({ kind: 'plan', text: t, tone: 'good', sub: facts.join(' · ') });
+          verbose({
+            kind: 'plan',
+            text: t,
+            tone: 'good',
+            sub: [...facts, shards.length ? `shards: ${shards.join(', ')}` : ''].filter(Boolean).join(' · '),
+          });
+          break;
+        }
+        // LEGACY-LOG: the review round's patch — no emitter since 2447d145c; archived r0–r6d carry it.
+        const round = num(e['round']) ?? 0;
         const target = reviewRounds.find((r) => r.round === round);
         if (target) target.patch = patch;
         verbose({
@@ -1759,7 +2217,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'plan_repaired': {
         // The deterministic pass (DESIGN-STABILITY-FIRST.md step 1) that fixes what the measured plan flags
-        // name, without a model round: it fires ONCE per plan and its before/after is the whole story.
+        // name, without a model round: it fires ONCE per plan and its before/after is the whole story —
+        // and ONCE MORE for a split plan (`source: "split"`): the patched plan walks the same door again
+        // (the one-door gate). Said so, or two repair rows on one run read as one repair fired twice.
         const actions = Array.isArray(e['actions']) ? (e['actions'] as unknown[]).length : 0;
         const before = (e['before'] ?? {}) as Record<string, unknown>;
         const after = (e['after'] ?? {}) as Record<string, unknown>;
@@ -1767,7 +2227,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           const v = o[k];
           return Array.isArray(v) ? v.length : (num(v) ?? 0);
         };
-        const t = actions === 0 ? 'Plan needed no repair' : `Plan repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
+        const who = str(e['source']) === 'split' ? 'Split plan' : 'Plan';
+        const t = actions === 0 ? `${who} needed no repair` : `${who} repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
         const sub =
           `owning nothing ${count(before, 'tasks_owning_nothing')}→${count(after, 'tasks_owning_nothing')} · ` +
           `shared files ${count(before, 'shared_files')}→${count(after, 'shared_files')} · ` +
@@ -1775,6 +2236,205 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           `unassigned endpoints ${count(before, 'unassigned_endpoints')}→${count(after, 'unassigned_endpoints')}`;
         compact({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
         verbose({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
+        break;
+      }
+      case 'plan_flag': {
+        // The ONE plan_flag the engine emits (shards.rs `fat_task`): spec sections per owned file above
+        // mean+σ AND ≥ 2× the median. It is the measurement that summons the split; its outcome is
+        // `plan_patched{source: split}` or `split_declined` — never silence.
+        if (str(e['kind']) !== 'fat_task') break;
+        const task = str(e['task']);
+        const files = arr(e['files']).length;
+        const sections = num(e['sections']);
+        const perFile = num(e['sections_per_file']);
+        const threshold = num(e['threshold']);
+        const median = num(e['median']);
+        const t = `Fat task \`${task}\` — asking synthesis for a split`;
+        const sub =
+          [
+            sections != null
+              ? `${sections} spec section${sections === 1 ? '' : 's'} for ${files} file${files === 1 ? '' : 's'}`
+              : '',
+            perFile != null ? `${perFile.toFixed(1)}/file` : '',
+            threshold != null ? `threshold ${threshold.toFixed(1)}` : '',
+            median != null ? `median ${median.toFixed(1)}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'info', sub });
+        verbose({ kind: 'plan', text: t, tone: 'info', sub });
+        // The header badge followed `phase` events only, so it read "Synthesizing" through the whole
+        // split call (VA-138) — the split is its own stage from this measurement until plan_loaded.
+        phase = `Splitting ${task}`;
+        break;
+      }
+      case 'split_hosts_scarce': {
+        // Fewer than two free hosts when the split ran: the shards are sized by the declaration's
+        // clusters and queue as nodes free. A fleet fact worth a line, never a declined split.
+        const free = num(e['free_hosts']);
+        const t = `Split of \`${str(e['task'])}\` sized by its declaration — ${free ?? '?'} free host${free === 1 ? '' : 's'} at split time`;
+        const sub = str(e['detail']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'split_sized': {
+        // THE SPLIT'S SIZING (shards.rs sized_event): the declaration's clusters grouped onto the
+        // free hosts, largest group minimised. `hosts` is null when the caller did not pass the free
+        // host count — said, never a literal.
+        const declared = num(e['declared']);
+        const shards = num(e['shards']);
+        const hosts = num(e['hosts']);
+        const t = `Split of \`${str(e['module'])}\` sized — ${shards ?? '?'} shard${shards === 1 ? '' : 's'}${
+          declared != null && declared !== shards ? ` from ${declared} declared` : ''
+        }${hosts != null ? ` on ${hosts} free host${hosts === 1 ? '' : 's'}` : ' (free host count unknown)'}`;
+        const weights = arr(e['weights']).map((w) => num(w) ?? '?');
+        const sub =
+          [
+            weights.length ? `cluster weights ${weights.join(', ')}` : '',
+            str(e['source']),
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'info', sub });
+        verbose({ kind: 'plan', text: t, tone: 'info', sub });
+        break;
+      }
+      case 'split_declined': {
+        // The split's failure twin: the request did not return, or did not parse. The fat task builds
+        // as ONE lane — a warning the feed carries, not a clean pass.
+        const t = `Split of \`${str(e['task'])}\` declined — the fat task builds as one lane`;
+        const sub = str(e['reason']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_dossier': {
+        // What the MERGER was handed at dispatch, measured by code from the shard folders. r6e: 0
+        // pieces, all 8 READMEs missing (the shards had been stripped from its deps) — the merger ran
+        // on nothing, and a dossier row that read clean there would have been the lie.
+        const task = str(e['task_id']) || str(e['module']);
+        const shards = arr(e['shards']).length;
+        const pieces = num(e['pieces']) ?? 0;
+        const parseErrors = num(e['pieces_with_parse_errors']) ?? 0;
+        const readmesMissing = arr(e['readmes_missing']).map(String);
+        const declaredMissing = arr(e['declared_missing']).length;
+        const duplicates = arr(e['duplicates']).length;
+        const disagreements = arr(e['signature_disagreements']).length;
+        const unfinished = arr(e['unfinished']).length;
+        const secondPass = e['second_pass'] === true;
+        const clean =
+          readmesMissing.length === 0 && parseErrors === 0 && declaredMissing === 0 && disagreements === 0;
+        const tone: ActivityTone = pieces === 0 ? 'bad' : clean ? 'good' : 'warn';
+        const t =
+          `Merger \`${task}\` handed ${pieces} piece${pieces === 1 ? '' : 's'} from ${shards} shard${shards === 1 ? '' : 's'}` +
+          (readmesMissing.length
+            ? ` — ${readmesMissing.length} README${readmesMissing.length === 1 ? '' : 's'} missing`
+            : '') +
+          (secondPass ? ' (second pass)' : '');
+        const sub = [
+          `declared exports undefined ${declaredMissing}`,
+          `parse errors ${parseErrors}`,
+          `duplicates ${duplicates}`,
+          `signature disagreements ${disagreements}`,
+          `unfinished ${unfinished}`,
+        ].join(' · ');
+        compact({ kind: 'plan', text: t, tone, sub });
+        verbose({
+          kind: 'plan',
+          text: t,
+          tone,
+          sub: readmesMissing.length ? `${sub}\nno README: ${readmesMissing.join(', ')}` : sub,
+        });
+        break;
+      }
+      case 'merge_piece_dropped': {
+        // A shard's symbol absent from the merged file with no stated reason; REFERENCED means the file
+        // still calls it — a load-time failure, the worst drop.
+        const referenced = e['referenced'] === true;
+        const t = `Merge dropped \`${str(e['symbol'])}\` from ${str(e['shard'])}${referenced ? ' — the merged file still calls it' : ''}`;
+        const tone: ActivityTone = referenced ? 'bad' : 'warn';
+        compact({ kind: 'plan', text: t, tone });
+        verbose({ kind: 'plan', text: t, tone, sub: `merger ${str(e['task_id'])}` });
+        break;
+      }
+      case 'merge_signature_mismatch': {
+        const t = `Merge signature mismatch — \`${str(e['symbol'])}\` in ${str(e['module'])}`;
+        const sub = `declared ${str(e['declared'])} · found ${str(e['found'])}`;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_gap': {
+        // The merger's gap door — the ONE splice site left in the DAG: a validated follow-up shard,
+        // dispatched, with the merger called back when it lands.
+        const t = `Merge gap in ${str(e['module'])} — shard \`${str(e['shard'])}\` dispatched`;
+        const sub = [str(e['missing']), str(e['folder'])].filter(Boolean).join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn', sub });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'merge_gap_repeated': {
+        // The re-arm cycle's PROGRESS terminator: work that already landed as a shard, asked for again,
+        // refused by name — never by a count.
+        const t = `Merge gap repeated — \`${str(e['missing'])}\` already landed as ${str(e['landed_as'])}; refused`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({
+          kind: 'plan',
+          text: t,
+          tone: 'warn',
+          sub: `merger ${str(e['task_id'])} · gap ${str(e['gap'])}`,
+        });
+        break;
+      }
+      case 'merge_gap_refused': {
+        // merge_gap's failure twin: the door refused the splice (ownership, ids, a cycle) — the gap
+        // stays open and the merger completes without it.
+        const gaps = arr(e['gaps']).map(String);
+        const t = `Merge gap${gaps.length === 1 ? '' : 's'} refused for ${str(e['task_id'])} — ${gaps.join(', ') || 'none named'}`;
+        const sub = str(e['reason']) || undefined;
+        compact({ kind: 'plan', text: t, tone: 'bad', sub });
+        verbose({ kind: 'plan', text: t, tone: 'bad', sub });
+        break;
+      }
+      case 'merge_gap_open': {
+        const t = `Merge left \`${str(e['item'])}\` open — shard ${str(e['shard'])}, neither filled nor sent out`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub: `merger ${str(e['task_id'])}` });
+        break;
+      }
+      case 'merge_checked': {
+        // CODE's check of the merged file at the merger's completion. `promoted` is a LABEL (REPAIR owns
+        // what is left), but a merger that dropped referenced pieces or left declared exports undefined
+        // must not read like one that landed clean.
+        const promoted = e['promoted'] === true;
+        const declaredMissing = arr(e['declared_missing']).length;
+        const dropped = num(e['dropped']) ?? 0;
+        const droppedReferenced = num(e['dropped_referenced']) ?? 0;
+        const gapsOpen = num(e['gaps_open']) ?? 0;
+        const gapsSent = arr(e['gaps_sent']).length;
+        const parseErrors = arr(e['parse_errors']).length;
+        const mismatch = num(e['signature_mismatch']) ?? 0;
+        const t = promoted
+          ? `Merge of ${str(e['module'])} checked — every declared export defined, promoted`
+          : `Merge of ${str(e['module'])} checked — not promoted`;
+        const sub = [
+          `parse errors ${parseErrors}`,
+          `declared exports undefined ${declaredMissing}`,
+          `signature mismatches ${mismatch}`,
+          `pieces dropped ${dropped}${droppedReferenced ? ` (${droppedReferenced} still referenced)` : ''}`,
+          `gaps open ${gapsOpen} · sent ${gapsSent}`,
+          e['merge_readme_present'] === false ? 'MERGE.md missing' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const tone: ActivityTone = promoted
+          ? 'good'
+          : droppedReferenced > 0 || parseErrors > 0
+            ? 'bad'
+            : 'warn';
+        compact({ kind: 'plan', text: t, tone, sub });
+        verbose({ kind: 'plan', text: t, tone, sub });
         break;
       }
       case 'plan_patch_rejected': {
@@ -1806,7 +2466,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const critical = num(e['critical']) ?? 0;
         const minor = num(e['minor']) ?? 0;
         const forced = num(e['engine_forced']) ?? 0;
-        knownActiveBugs = arr(e['minors']).map(String);
+        knownActiveBugs = arr(e['minors']).map((m) => ({ text: String(m), severity: null }));
         const t =
           critical === 0
             ? `Every critical defect closed — shipping with ${minor} known active bug${minor === 1 ? '' : 's'}`
@@ -1823,7 +2483,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           sub:
             [
               forced > 0 ? `${forced} forced critical by the engine, not the rater` : '',
-              knownActiveBugs.map((m, i) => `${i + 1}. ${m}`).join('\n'),
+              knownActiveBugs.map((m, i) => `${i + 1}. ${m.text}`).join('\n'),
             ]
               .filter(Boolean)
               .join('\n') || undefined,
@@ -1833,7 +2493,46 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'complete_result': {
         const bugs = arr(e['known_active_bugs']).map(String);
-        if (bugs.length > 0) knownActiveBugs = bugs;
+        // Parallel to known_active_bugs in the engine's emit (same most-severe-first order); a length
+        // mismatch means the pairing cannot be trusted, so no class is claimed rather than a wrong one.
+        const sevs = arr(e['known_active_bugs_severities']).map(String);
+        const paired = sevs.length === bugs.length;
+        // THE SNAPSHOT OUTRANKS THE MERGE whenever the engine wrote one — an EMPTY one included. The
+        // engine clears known_active_bugs on a green finish after red-with-minors rounds (those bugs were
+        // FIXED), so an empty list here means nothing ships, and the known_bugs union from earlier rounds
+        // must not survive it as a stale "known active" list over a clean tree. Only an event with no
+        // field at all (legacy logs) keeps the union.
+        if (Array.isArray(e['known_active_bugs']))
+          knownActiveBugs = bugs.map((text, i) => ({ text, severity: paired ? sevs[i] : null }));
+        const shipping = knownActiveBugs.length;
+        // THE VERDICT, verbatim from the engine's own gate — r5 shipped {passed, verified, 7 remaining}
+        // and the only screen mention was the known-bugs caption. From here until run_finished the run is
+        // in its post-verdict tail (persona reflection, overview, final report), so the phase label says
+        // that instead of sitting on 'Repairing' — the silent 3.5-minute tail read as a hang.
+        verdict = {
+          passed: e['passed'] === true,
+          verified: e['verified'] === true,
+          passedMeans: str(e['passed_means']) || null,
+          remainingFindings: num(e['remaining_findings']),
+          shipped: str(e['shipped']) || null,
+          renderClassKnownBugs: num(e['render_class_known_bugs']),
+        };
+        const rc = verdict.renderClassKnownBugs ?? 0;
+        const vt = verdict.passed
+          ? `Verdict — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${shipping > 0 ? ` · ${shipping} known bug${shipping === 1 ? '' : 's'} ship` : ''}`
+          : `Verdict — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}${rc > 0 ? ` · ${rc} render-class finding${rc === 1 ? '' : 's'} blocked the green` : ''}`;
+        const tone = verdict.passed ? ('good' as const) : ('bad' as const);
+        compact({ kind: verdict.passed ? 'done' : 'fail', text: vt, tone });
+        verbose({
+          kind: verdict.passed ? 'done' : 'fail',
+          text: vt,
+          tone,
+          sub:
+            [verdict.passedMeans, verdict.shipped ? `shipped: ${verdict.shipped}` : '']
+              .filter(Boolean)
+              .join('\n') || undefined,
+        });
+        phase = 'Wrapping up';
         break;
       }
       case 'complete_result_revised': {
@@ -1849,6 +2548,32 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
             : `Not verified — the engine retracted its green (${why || 'revised'})`;
         compact({ kind: 'fail', text, tone: 'bad' });
         verbose({ kind: 'fail', text, tone: 'bad', sub: mods.join('\n') || undefined });
+        // The retraction must UPDATE the verdict state, not only append a feed line — the verdict block
+        // reads this, and a green "verified" banner over a retracted green is the exact lie this event
+        // exists to prevent. `passed` is deliberately untouched (the engine never flips it red either).
+        if (verdict) verdict.verified = e['verified'] === true;
+        break;
+      }
+      case 'persona_learned': {
+        // LEGACY-LOG: no emitter since 97d5735a4 (LEARN & REFLECT deleted) — the archived r5 carries it.
+        // It was the post-verdict tail's one model call (reflect_on_success). The written:false twin must render
+        // too — a reflection that came back empty or failed to write must not look like a learned skill.
+        const stack = str(e['stack_key']);
+        if (e['written'] === true) {
+          verbose({
+            kind: 'done',
+            tone: 'good',
+            text: `Learned a reusable skill for the ${stack || 'app'} stack`,
+            sub: str(e['path']) || undefined,
+          });
+        } else {
+          verbose({
+            kind: 'review',
+            tone: 'warn',
+            text: `Stack skill not written${stack ? ` (${stack})` : ''}`,
+            sub: str(e['reason']) || undefined,
+          });
+        }
         break;
       }
       case 'judge_look':
@@ -2038,9 +2763,49 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      // scouts_planned / research_planned were DELETED with the scout fan (no emitter remains). The
-      // archived-run research story renders via the LEGACY-LOG research_completed case and
-      // buildPhaseTodo's retired-phase rows, which is where their history actually shows.
+      // scouts_planned was DELETED with the scout fan (no emitter remains); its archived-run story
+      // renders via buildPhaseTodo's retired-phase rows. research_planned is the v2 fan's PLAN event
+      // (research.rs emit_research_planned), emitted once before anything dispatches. VA-089 shape:
+      // `lanes` (sessions — one per slice not resumed, plus the decisions lane when a decision is
+      // open), `per_slice_sections` (the sections each slice's lane reads), `resumed_slices` (rows the
+      // ledger already held — no lane) and `decisions`; NO question count exists at planning, the lanes
+      // derive their own. LEGACY-LOG: r6e–r6h carried `questions`/`dispatching` (numbers), `facts`
+      // (settled from the spec with no lane), `lanes` and `per_slice` (per-question counts); r6d had no
+      // facts/lanes. Each shape renders from its own fields — nothing is invented for one the log lacks.
+      case 'research_planned': {
+        if (e['per_slice_sections'] != null || Array.isArray(e['resumed_slices'])) {
+          const plan = researchPlanOf(e);
+          const t = researchPlanLine(plan);
+          compact({ kind: 'plan', text: t, sub: researchPlanSub(plan) });
+          verbose({ kind: 'plan', text: t, sub: researchPlanSub(plan) });
+          break;
+        }
+        const questions =
+          typeof e['questions'] === 'number' ? (e['questions'] as number) : arr(e['questions']).length;
+        const lanes = num(e['lanes']);
+        const facts = num(e['facts']);
+        const resumed = num(e['resumed']);
+        const perSlice =
+          e['per_slice'] && typeof e['per_slice'] === 'object'
+            ? Object.entries(e['per_slice'] as Record<string, unknown>)
+                .map(([s, n]) => `${researchSliceLabel(s)} ${num(n) ?? '?'}`)
+                .join(' · ')
+            : '';
+        const t = `Research planned — ${questions} question${questions === 1 ? '' : 's'}${
+          lanes != null ? ` across ${lanes} lane${lanes === 1 ? '' : 's'}` : ''
+        }`;
+        const sub =
+          [
+            facts != null && facts > 0 ? `${facts} answered from the spec (no lane)` : '',
+            resumed != null && resumed > 0 ? `${resumed} resumed from the ledger` : '',
+            perSlice,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', text: t, sub });
+        verbose({ kind: 'plan', text: t, sub });
+        break;
+      }
       case 'pillars': {
         // NOT gated on a prior pillars_write_failed: injection into the workers genuinely still happens
         // after a failed write (set_pillars runs regardless), so the line stays true — with the failed
@@ -2143,6 +2908,84 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const chars = num(e['chars']);
         const t = `Thin brief for ${str(e['task_id']) || 'a task'}${chars != null ? ` (${chars} chars)` : ''} — vagueness is what a small model copes with by overthinking`;
         const sub = missing.length ? `missing: ${missing.join(', ')}` : undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      // VA-104 (answer_routing.rs): a research answer that names a collaborator's owned file is routed
+      // into that task's brief — said per match (verbose; one per file per task); a slash-bearing path
+      // the plan does not own, and a plan the routing could not read, are said too, never skipped.
+      case 'research_answer_routed': {
+        const owner = str(e['owner']);
+        const value = str(e['value']);
+        const arm = str(e['arm']);
+        const t = `Research answer q${num(e['q_index']) ?? '?'} of ${researchSliceLabel(str(e['from_slice'])) || 'a slice'} routed to ${str(e['to_task']) || 'a task'}${
+          owner || value
+            ? ` (${[owner && `owner ${owner}`, value && `${str(e['matched']) || 'file'} ${value}`].filter(Boolean).join(', ')})`
+            : ''
+        }`;
+        verbose({ kind: 'plan', text: t, tone: 'info', sub: arm ? arm.replace(/_/g, ' ') : undefined });
+        break;
+      }
+      case 'research_answer_unowned': {
+        const names = arr(e['names']).map(String);
+        const t = `Research answer q${num(e['q_index']) ?? '?'} of ${researchSliceLabel(str(e['from_slice'])) || 'a slice'} names ${names.length || 'some'} path${names.length === 1 ? '' : 's'} no plan task owns`;
+        const sub = names.join(', ') || undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'research_answer_routing_skipped': {
+        const t = 'Research answers were not routed into the briefs — the plan did not parse';
+        const sub = str(e['error']) || undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      // VA-103 (dep_sources.rs): a dependency source cut before it rode a brief — the marker in the
+      // brief says where; this line says it on the feed with the kept/whole sizes.
+      case 'dep_source_truncated': {
+        const bytes = num(e['bytes']);
+        const kept = num(e['kept']);
+        const t = `Dependency source ${str(e['file']) || 'a file'} cut in ${str(e['task_id']) || 'a task'}'s brief${
+          kept != null && bytes != null ? ` — ${kept.toLocaleString()} of ${bytes.toLocaleString()} bytes kept` : ''
+        }`;
+        const sub = str(e['reason']) || undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      // VA-105 (vendor_probe.rs): an endpoint body cut after a whole JSON object, or a fetch that
+      // failed — each is said, with the url; the docs page itself rides whole.
+      case 'vendor_probe_truncated': {
+        const chars = num(e['chars']);
+        const kept = num(e['kept']);
+        const t = `Vendor ${str(e['kind']) || 'body'} ${str(e['url']) || '(url unknown)'} cut${
+          kept != null && chars != null ? ` — ${kept.toLocaleString()} of ${chars.toLocaleString()} chars kept` : ''
+        }`;
+        const sub =
+          e['at_object_boundary'] === true
+            ? 'cut after a whole JSON object'
+            : e['at_object_boundary'] === false
+              ? 'cut mid-object'
+              : undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'vendor_probe_fetch_failed': {
+        const err = str(e['error']);
+        const t = `Vendor fetch failed — ${str(e['url']) || '(url unknown)'}${err ? `: ${err.slice(0, 120)}` : ''}`;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub: err.length > 120 ? err : undefined });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub: err || undefined });
+        break;
+      }
+      // VA-102 (shards.rs apply_module_split): a shard whose synthesis declared no exports — its brief
+      // states the absence where the README's PROVIDES lines would be copied in.
+      case 'shard_provides_empty': {
+        const sections = arr(e['sections']).map(String);
+        const t = `Shard ${str(e['shard']) || '?'} of ${str(e['module']) || 'a module'} declares no exports — its brief states the absence where PROVIDES would be`;
+        const sub = sections.length ? `sections: ${sections.join(', ')}` : undefined;
         compact({ kind: 'fail', text: t, tone: 'warn', sub });
         verbose({ kind: 'fail', text: t, tone: 'warn', sub });
         break;
@@ -2374,7 +3217,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'replanned': {
-        // A dynamic-replan round. GEN-6a added `reason` precisely so a planner CALL FAILURE (a network
+        // LEGACY-LOG: no emitter since 83e8089a5 (the dynamic replanner is deleted) — r5/r6c archives carry
+        // it. A dynamic-replan round. GEN-6a added `reason` precisely so a planner CALL FAILURE (a network
         // fault) cannot render like the planner DECLINING (a decision) — only the exact declined
         // constant is routine noise and stays hidden; every other empty-added arm is evidence and
         // fails loud, unknown future arms included (the fallback gate's default).
@@ -2486,6 +3330,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // LEGACY-LOG: pre_review / pre_review_failed have no emitter (the M5 pre-review layer is gone;
+      // main.ts dropped its GOOSE_SWARM_PREREVIEW=0 pin with VA-048) — archived r0/r2 carry them.
       case 'pre_review': {
         const had = !!e['had_findings'];
         verbose({
@@ -2577,13 +3423,19 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         // whole-list snapshots (complete_result, and defects_rated on legacy logs) still ASSIGN and
         // supersede this accumulation, which is the honest precedence: a snapshot outranks a merge.
         const findings = arr(e['findings']).map(String);
-        for (const f of findings) if (!knownActiveBugs.includes(f)) knownActiveBugs.push(f);
+        // `severities` is parallel to `findings` (HEAD engines); absent on older logs → no class claimed.
+        const sevs = arr(e['severities']).map(String);
+        const paired = sevs.length === findings.length;
+        findings.forEach((f, i) => {
+          if (!knownActiveBugs.some((b) => b.text === f))
+            knownActiveBugs.push({ text: f, severity: paired ? sevs[i] : null });
+        });
         const round = num(e['round']);
         verbose({
           kind: 'review',
           tone: 'warn',
           text: `${findings.length} unattributed finding${findings.length === 1 ? '' : 's'} ship${findings.length === 1 ? 's' : ''} as known bug${findings.length === 1 ? '' : 's'}${round != null ? ` (round ${round})` : ''}`,
-          sub: findings.join('\n') || undefined,
+          sub: findings.map((f, i) => (paired ? `${sevs[i]}: ${f}` : f)).join('\n') || undefined,
         });
         break;
       }
@@ -2628,8 +3480,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       case 'run_finished': {
         const report = (e['report'] ?? {}) as Record<string, unknown>;
         const done = arr(report['done']).length;
-        // Only CORE failures decide the verdict: a failed BONUS task (optional extra work) must not make the
-        // whole run read as "failed".
+        // LEGACY-LOG: `report.bonus` has no emitter — 83e8089a5 deleted the dynamic replanner, the ONLY
+        // thing that ever populated the scheduler's bonus ids, and a0bff8f9f removed `RunReport.bonus`
+        // itself. Archived r5/r6c reports still carry it, so the read stays for their replay: a failed
+        // BONUS task (the replanner's optional extras) must not make an archived run read as "failed"
+        // on its core work.
         const bonus = new Set(arr(report['bonus']).map(String));
         const coreFailed = arr(report['failed'])
           .map(String)
@@ -2767,15 +3622,23 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
     sinkRenamedFrom,
     synthesisFallback,
     knownActiveBugs,
+    verdict,
   };
 }
 
 type Digest = {
   tool_calls?: number;
   errors?: number;
+  /** Tool calls the provider stream named that never reached a tool (INVALID_REQUEST /
+   *  INVALID_PARAMS — swarm.rs counts them at the stream site). Engine-written beside `errors`. */
+  malformed?: number;
   recent?: string[];
   last_text?: string;
   reasoning?: string;
+  /** The answer-channel window (`TurnLane.answerWindow`). The engine still writes the pre-rename key
+   *  `full_reasoning`; `answer_window` is the honest key its half of the rename moves to. `answerWindowOf`
+   *  is the ONE read of both, so the engine-side rename cannot blank the lane through this join. */
+  answer_window?: string;
   full_reasoning?: string;
   calls?: SwarmCall[];
   inflight?: InflightCall[];
@@ -2961,6 +3824,17 @@ export function resetLiveChannelMemory(): void {
   channelMemory.clear();
 }
 
+/** THE ONE READ of the answer-window wire key, for the join below: today's key is `full_reasoning`,
+ *  the honest key the engine moves to is `answer_window`. It once had a second caller — the task
+ *  card's raw-digest mapper (`streamLaneOfDigest`), a hand-copy of this join by construction; that
+ *  card now receives a joined lane, so nothing outside the join reads a digest's stream keys. */
+export function answerWindowOf(
+  d: { answer_window?: unknown; full_reasoning?: unknown } | undefined
+): string | undefined {
+  const w = d?.answer_window ?? d?.full_reasoning;
+  return typeof w === 'string' ? w : undefined;
+}
+
 /**
  * EVERY FIELD A DIGEST CONTRIBUTES TO A LANE, IN ONE PLACE.
  *
@@ -2988,7 +3862,7 @@ export function digestStreamFields(
   | 'lastText'
   | 'recent'
   | 'reasoning'
-  | 'fullReasoning'
+  | 'answerWindow'
   | 'calls'
   | 'inflight'
   | 'toolCalls'
@@ -3003,6 +3877,7 @@ export function digestStreamFields(
   | 'phase'
   | 'liveChannel'
   | 'errors'
+  | 'malformed'
   | 'attempt'
   | 'dispatchedAt'
   | 'saidAt'
@@ -3022,7 +3897,7 @@ export function digestStreamFields(
     lastText: d?.last_text || (carryIsStale ? undefined : prev?.lastText),
     recent: d?.recent ?? prev?.recent,
     reasoning: d?.reasoning ?? prev?.reasoning,
-    fullReasoning: d?.full_reasoning ?? prev?.fullReasoning,
+    answerWindow: answerWindowOf(d) ?? prev?.answerWindow,
     calls: d?.calls ?? prev?.calls,
     inflight: d?.inflight ?? prev?.inflight,
     toolCalls: d?.tool_calls ?? prev?.toolCalls,
@@ -3039,6 +3914,7 @@ export function digestStreamFields(
     // point is remembering the previous poll of THIS lane.
     liveChannel: liveChannelFor(key, d, d?.phase === 'done' || prev?.status === 'done'),
     errors: d?.errors ?? prev?.errors,
+    malformed: d?.malformed ?? prev?.malformed,
     attempt: d?.attempt ?? prev?.attempt,
     dispatchedAt: d?.dispatched_at ?? prev?.dispatchedAt,
     saidAt: d?.said_at ?? prev?.saidAt,
@@ -3059,7 +3935,8 @@ export interface FoldedRun {
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
   sliceLanes: TurnLane[];
-  /** The v2 research fan (`research-<slice>-q<n>`) — its own group so the lanes render under the
+  /** The v2 research fan — one lane per batch key (`research-<slice>` since C3; `research-<slice>-q<n>`
+   *  on r6b–r6d logs), each carrying its questions — its own group so the lanes render under the
    *  Research phase chip rather than in the trailing planning-calls list. */
   researchLanes: TurnLane[];
   planningLanes: TurnLane[];
@@ -3084,7 +3961,35 @@ interface FoldCarry {
   planned: boolean;
   researchOver: boolean;
   contractsOver: boolean;
+  /** Research lanes by ACTIVITY KEY (`research_dispatched.activity_key`, present since the first v2
+   *  fan, r6b): the batch's slice, the node it went to, and every question it carries with that
+   *  question's terminal outcome. Event truth: this is what says a lane exists, which questions it
+   *  holds and when each one settled — the digest only ever knows the lane's key. */
+  research: Map<string, ResearchBatchCarry>;
+  /** `<slice>::<q_index>` → activity key, so an outcome event (which names slice + q_index, never the
+   *  lane) finds its lane on every engine shape. */
+  researchByQuestion: Map<string, string>;
+  /** slice → activity key of the VA-089 lane that DERIVES its questions: its rows are named by
+   *  research_question_kind after dispatch, so the first event about a question knows only the slice. */
+  researchBySlice: Map<string, string>;
 }
+
+interface ResearchBatchCarry {
+  slice: string;
+  model?: string;
+  /** VA-089: `research_dispatched.derives` — the lane names its own questions in-session. */
+  derives: boolean;
+  questions: Map<string, ResearchQuestionRow>;
+  /** VA-143: `research_unanswered{reason: remainder_empty}` — the lane's close, not a question. */
+  close?: { reason: string; detail?: string; secs?: number };
+  /** VA-143: `research_builder_decides` events for this slice, counted as they arrive. */
+  builderDecides: number;
+  /** VA-031: `research_raised_folded` events for this slice — the words, in event order. */
+  raisedFolded: ResearchRaisedFold[];
+  seq: number;
+}
+
+const researchQuestionKey = (slice: string, qIndex: number) => `${slice}::${qIndex}`;
 
 const newFoldCarry = (): FoldCarry => ({
   tasks: new Map(),
@@ -3104,6 +4009,9 @@ const newFoldCarry = (): FoldCarry => ({
   planned: false,
   researchOver: false,
   contractsOver: false,
+  research: new Map(),
+  researchByQuestion: new Map(),
+  researchBySlice: new Map(),
 });
 
 /**
@@ -3153,6 +4061,197 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       if (t.status === 'running') c.fixTasks.set(k, { ...t, status: 'done', seq: c.seq++ });
     return;
   }
+  // THE RESEARCH FAN'S PER-QUESTION EVENTS → LANES BY KEY (VA-029, VA-089). `research_dispatched`
+  // fires once per LANE (`activity_key` = `research-<slice>`): since VA-089 a slice lane derives its
+  // own questions, so the dispatch names none (`derives: true`, empty `q_indexes`) and each question
+  // is named by `research_question_kind{slice, q_index, kind, cite, question}` as it lands, then
+  // settled by research_answered / research_unanswered; the decisions lane's indexes ride
+  // `q_indexes`. LEGACY-LOG: r6b–r6h fired the dispatch once per QUESTION with `q_index` + `question`
+  // (r6b–r6d: one lane per question, key `research-<slice>-q<n>`). Grouping by the key the engine
+  // itself names is what makes one lane list its questions on every shape; the outcome events name
+  // slice + q_index only, so `researchByQuestion` (a seeded row) or `researchBySlice` (a deriving
+  // lane) is how they find their lane. A dispatch without the key (no such log exists since r6b)
+  // derives the documented key from facts rather than dropping the lane.
+  if (type === 'research_dispatched') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    const key =
+      str(e['activity_key']) || (qIndex != null ? `research-${slice}-q${qIndex}` : `research-${slice}`);
+    let batch = c.research.get(key);
+    if (!batch) {
+      batch = {
+        slice,
+        model: str(e['model']) || undefined,
+        derives: e['derives'] === true,
+        questions: new Map(),
+        builderDecides: 0,
+        raisedFolded: [],
+        seq: c.seq++,
+      };
+      c.research.set(key, batch);
+    }
+    // A carry the cover event created before this dispatch (LEGACY-LOG order: the cover fires at the
+    // lane's dispatch, ahead of the per-question dispatch lines) learns the dispatch's own facts.
+    if (e['derives'] === true) batch.derives = true;
+    if (!batch.model && str(e['model'])) batch.model = str(e['model']);
+    if (batch.derives) c.researchBySlice.set(slice, key);
+    const seeded =
+      qIndex != null
+        ? [qIndex]
+        : arr(e['q_indexes'])
+            .map(num)
+            .filter((n): n is number => n != null);
+    for (const q of seeded) {
+      const qk = researchQuestionKey(slice, q);
+      if (!batch.questions.has(qk))
+        batch.questions.set(qk, { slice, qIndex: q, question: str(e['question']), status: 'dispatched' });
+      c.researchByQuestion.set(qk, key);
+    }
+    return;
+  }
+  if (type === 'research_question_kind') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const qk = researchQuestionKey(slice, qIndex);
+    const key = c.researchByQuestion.get(qk) ?? c.researchBySlice.get(slice);
+    const batch = key ? c.research.get(key) : undefined;
+    // A resumed slice's row ran on no lane here — nothing to name; the checklist still counts it.
+    if (!key || !batch) return;
+    const prior = batch.questions.get(qk);
+    batch.questions.set(qk, {
+      ...(prior ?? { slice, qIndex, question: '', status: 'dispatched' as const }),
+      question: str(e['question']) || prior?.question || '',
+      kind: str(e['kind']) || undefined,
+      cite: str(e['cite']) || undefined,
+      // VA-118 / VA-031: `source` says who decided the kind; `model_kind` is what the lane said when
+      // the classifier overrode it (the engine's own null otherwise — left absent here, never defaulted).
+      kindSource: str(e['source']) || prior?.kindSource,
+      modelKind: str(e['model_kind']) || prior?.modelKind,
+    });
+    c.researchByQuestion.set(qk, key);
+    return;
+  }
+  // LEGACY-LOG (fab90e91b → e33a2f77f, the r6c–r6h archives): `research_question_covered{slice, q_index,
+  // question, by: "mini", by_mini, rule}` / `{…, by: "decision", decision, rule}`. The fan cut C2 read
+  // the minis on disk at a lane's dispatch and every batch question one already answered (rule: cite |
+  // decision_id | stem) LEFT the batch with that mini copied onto its row; a slice question that was an
+  // open decision was routed to it before any dispatch. VA-089 deleted both doors (the lanes derive
+  // their own questions) and no emitter remains — the archives carry it, and a covered question is
+  // still one the lane held: it stays a ROW in the lane's numbering, never a silent gap (a reader saw
+  // fewer questions than the lane derived and could not tell why). The cover fires before the
+  // dispatch that would have named the question, so the carry is created here on the slice's own
+  // documented key when the log has not yet — the same derivation the dispatch arm makes.
+  if (type === 'research_question_covered') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const qk = researchQuestionKey(slice, qIndex);
+    const key = c.researchByQuestion.get(qk) ?? c.researchBySlice.get(slice) ?? `research-${slice}`;
+    let batch = c.research.get(key);
+    if (!batch) {
+      batch = {
+        slice,
+        derives: false,
+        questions: new Map(),
+        builderDecides: 0,
+        raisedFolded: [],
+        seq: c.seq++,
+      };
+      c.research.set(key, batch);
+    }
+    const prior = batch.questions.get(qk);
+    batch.questions.set(qk, {
+      ...(prior ?? { slice, qIndex, question: '' }),
+      question: str(e['question']) || prior?.question || '',
+      status: 'covered',
+      covered: {
+        by: str(e['by']),
+        mini: str(e['by_mini']) || undefined,
+        decision: num(e['decision']) ?? undefined,
+        rule: str(e['rule']),
+      },
+    });
+    c.researchByQuestion.set(qk, key);
+    return;
+  }
+  // VA-031: `research_raised_folded{slice, q_index, raised_by, question}` (research.rs
+  // emit_research_outcome, one per raised line of a landed row) — a question the lane raised and could
+  // not settle, folded verbatim into THIS slice's brief for its builder. The words, on the lane that
+  // raised them; a slice with no lane on this log (a resumed ledger row) has nowhere to show them, as
+  // with its builder_decides.
+  if (type === 'research_raised_folded') {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const key = c.researchBySlice.get(slice) ?? c.researchByQuestion.get(researchQuestionKey(slice, qIndex));
+    const batch = key ? c.research.get(key) : undefined;
+    if (!batch) return;
+    batch.raisedFolded.push({ qIndex, raisedBy: str(e['raised_by']), question: str(e['question']) });
+    return;
+  }
+  // VA-143: the lane's closer and its builder_decides are LANE facts, never question rows. A
+  // `research_unanswered{reason: remainder_empty}` closes a lane whose final reply added nothing
+  // behind the answers the tool landed (its q_index is the remainder's first — no question was ever
+  // named there); every other reason stays the loud miss it is. The `research_builder_decides` events
+  // (one per choice the lane left to its builder) follow the closer and count onto the same lane.
+  if (type === 'research_builder_decides') {
+    const key = c.researchBySlice.get(str(e['slice']));
+    const batch = key ? c.research.get(key) : undefined;
+    if (batch) batch.builderDecides += 1;
+    return;
+  }
+  if (type === 'research_unanswered' && str(e['reason']) === 'remainder_empty') {
+    const key = c.researchBySlice.get(str(e['slice']));
+    const batch = key ? c.research.get(key) : undefined;
+    if (batch)
+      batch.close = {
+        reason: 'remainder_empty',
+        detail: str(e['detail']) || undefined,
+        secs: num(e['secs']) ?? undefined,
+      };
+    return;
+  }
+  // `research_answer_landed` (the mid-lane landing, research_tool.rs `land` — one per tool call, r6j:
+  // 37) and `research_answered` (the same row through the outcome funnel) are TWINS of one landing:
+  // both fold onto ONE question row, each keeping what the other carried (the landing names the kind,
+  // the funnel names secs), so the lane's landed count is right on either shape and never doubled.
+  if (
+    type === 'research_answered' ||
+    type === 'research_answer_landed' ||
+    type === 'research_unanswered'
+  ) {
+    const slice = str(e['slice']);
+    const qIndex = num(e['q_index']);
+    if (qIndex == null) return;
+    const qk = researchQuestionKey(slice, qIndex);
+    const key = c.researchByQuestion.get(qk) ?? c.researchBySlice.get(slice);
+    const batch = key ? c.research.get(key) : undefined;
+    // An outcome for a question no lane on this log carries (a resumed ledger row) — nothing to
+    // update; the checklist still counts it. A deriving lane's outcome row that no kind event named
+    // (`lane_panicked` rows carry no question) is still that lane's: the absence twin renders on it.
+    if (!key || !batch) return;
+    const row = batch.questions.get(qk) ?? {
+      slice,
+      qIndex,
+      question: '',
+      status: 'dispatched' as const,
+    };
+    const landed = type !== 'research_unanswered' && str(e['status']) !== 'unanswered';
+    batch.questions.set(qk, {
+      ...row,
+      status: landed ? 'answered' : 'unanswered',
+      kind: str(e['kind']) || row.kind,
+      chars: num(e['chars']) ?? row.chars,
+      raised: num(e['raised']) ?? row.raised,
+      secs: num(e['secs']) ?? row.secs,
+      reason: str(e['reason']) || row.reason,
+      detail: str(e['detail']) || row.detail,
+    });
+    c.researchByQuestion.set(qk, key);
+    return;
+  }
+
   let taskId = String(e['task_id'] ?? '');
   // The race/fan arms' completed events historically carried twin/shard but NO task_id, so a
   // finished twin's lane stayed "running" until the wave's end event — a completed node showed
@@ -3332,7 +4431,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
   // every rolling field still empty) was invisible to the old text-only checks, a latent lane-hider —
   // reasoning-channel thinking, or tool calls made before any narration.
   const hasActivity = (l: TurnLane) =>
-    (l.fullReasoning || l.reasoning || l.lastText || l.fullTranscript || '').trim().length > 0 ||
+    (l.answerWindow || l.reasoning || l.lastText || l.fullTranscript || '').trim().length > 0 ||
     (l.calls?.length ?? 0) > 0 ||
     (l.thinkingChars ?? 0) > 0 ||
     l.phase === 'processing';
@@ -3407,15 +4506,68 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     .map((k, i) => laneFromDigest(k, `Slice · ${k.replace(/^slice-/, '')}`, researchOver, i))
     .filter(hasActivity);
 
-  // THE RESEARCH FAN (v2: `research-<slice>-q<n>`, the opener's own questions answered read-only across
-  // the fleet). These used to ride planningLanes via the fan-after table, which parked them in the
-  // trailing "Planning calls" group — a list that says nothing about WHEN they ran. As their own group
-  // they render under the Research phase chip (planningLanesFor), the home the v1 slice fan already has.
-  const researchLanes: TurnLane[] = Object.keys(activity)
-    .filter((k) => /^research-/.test(k))
+  // THE RESEARCH FAN — ONE LANE PER BATCH KEY, ITS QUESTIONS LISTED (VA-029). Since the fan cut (C3)
+  // the engine runs one lane per slice (`research-<slice>`) carrying every question of that slice;
+  // r6b–r6d ran one lane per question (`research-<slice>-q<n>`). Both are the same thing here: a lane
+  // is the key the engine dispatched (`research_dispatched.activity_key`) OR a digest under that
+  // prefix, and it lists the questions the per-question events put on it. Truth layer: a lane is
+  // DONE when every question it carries has its terminal event (or its digest stamps done, or the
+  // phase moved on), and it is an ERROR when every question came back unanswered — a lane that
+  // produced nothing must not look like a clean pass. These used to ride planningLanes via the
+  // fan-after table, which parked them in the trailing "Planning calls" group; as their own group
+  // they render under the Research phase chip (planningLanesFor), the home the v1 slice fan has.
+  const researchKeys = new Set<string>([
+    ...Object.keys(activity).filter((k) => /^research-/.test(k)),
+    ...c.research.keys(),
+  ]);
+  const researchLanes: TurnLane[] = [...researchKeys]
     .sort()
-    .map((k, i) => laneFromDigest(k, digestLabel(k), researchOver, i))
-    .filter(hasActivity);
+    .map((k, i): TurnLane => {
+      const d = (activity[k] ?? {}) as Digest & { model?: string };
+      const batch = c.research.get(k);
+      const questions = batch
+        ? [...batch.questions.values()].sort((a, b) => a.qIndex - b.qIndex)
+        : undefined;
+      const settled = !!questions?.length && questions.every((q) => q.status !== 'dispatched');
+      const allMissed = settled && questions!.every((q) => q.status === 'unanswered');
+      // VA-143: the closer ends the lane's 'running' claim — the event, not the digest's phase stamp.
+      // r6j web-viz: landed 4 · builder_decides 11 · closed at 2049s.
+      const close: ResearchLaneClose | undefined = batch?.close
+        ? {
+            ...batch.close,
+            landed: questions?.filter((q) => q.status === 'answered').length ?? 0,
+            builderDecides: batch.builderDecides,
+          }
+        : undefined;
+      const status: TurnStatus = allMissed
+        ? 'error'
+        : close || d.phase === 'done' || settled || researchOver
+          ? 'done'
+          : 'running';
+      const kinds = questions ? tallyKinds(questions.map((q) => q.kind)) : '';
+      return {
+        taskId: k,
+        description: researchLaneLabel(
+          k,
+          questions?.length,
+          batch?.derives || kinds ? { derived: batch?.derives === true, kinds } : undefined
+        ),
+        judgeEtaMins: c.judgeEta.get(k),
+        device: canonDevice(d.model ?? batch?.model ?? 'planner'),
+        model: d.model ?? batch?.model,
+        status,
+        researchQuestions: questions,
+        ...(batch?.raisedFolded.length ? { researchRaisedFolded: batch.raisedFolded } : {}),
+        // The closer's secs is the engine's own lane clock — the one duration anyone has for a
+        // research lane (its digest carries no elapsed).
+        ...(close ? { researchClose: close, elapsedMs: close.secs != null ? close.secs * 1000 : undefined } : {}),
+        ...join(k, d),
+        seq: i,
+      };
+    })
+    // A lane the events dispatched IS activity, digest or not — the dispatch is the fact (a VA-089
+    // slice lane carries no question until its rows land, and it is running from the dispatch on).
+    .filter((l) => hasActivity(l) || (l.researchQuestions?.length ?? 0) > 0 || c.research.has(l.taskId));
 
   // The single-node planning calls. Each is over the moment its own digest stamps phase='done', so a node
   // that finished synthesising stops reading as working without waiting for the next phase to open.
@@ -3428,7 +4580,13 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     if (activity[k] != null) planningKeys.push(k);
     const prefix = PLANNING_FAN_AFTER[k];
     if (prefix) {
-      planningKeys.push(...activityKeys.filter((x) => x.startsWith(prefix)).sort());
+      planningKeys.push(
+        ...activityKeys
+          // A worker task the plan happened to name under a fan prefix (`split-view`, `review-tool`)
+          // is a task lane already; listing it here too would paint one call twice.
+          .filter((x) => x.startsWith(prefix) && !c.tasks.has(x) && !c.fixTasks.has(x))
+          .sort()
+      );
     }
   }
   const planningLanes: TurnLane[] = planningKeys
@@ -3581,9 +4739,11 @@ export const DIGEST_OPEN_CALL_FRESH_MS = 900_000;
 /**
  * THE DIGESTS THIS RUN ACTUALLY WROTE.
  *
- * `.swarm/activity/` is not cleared when a run starts — the engine truncates only `.swarm/prereview` — and
- * main globs the whole directory, so a SECOND run in the same working directory inherits every digest the
- * previous one left behind. Those carry a task id, a model and a `phase` that never reaches 'done' on a
+ * `.swarm/activity/` is not cleared when a run starts — nothing under `.swarm/` is: the engine's one
+ * truncation (`.swarm/prereview`) died with the M5 pre-review layer, and `.swarm/inbox` is scoped by a
+ * since_ms cutoff rather than cleared — and main globs the whole directory, so a SECOND run in the same
+ * working directory inherits every digest the previous one left behind. Those carry a task id, a model
+ * and a `phase` that never reaches 'done' on a
  * killed run, so they mint lanes, claim nodes in the fleet strip and stamp a checklist row for work that
  * belongs to a run that is over. Nothing downstream can tell them apart: a digest names no run.
  *
@@ -3703,6 +4863,7 @@ export function foldSupervision(events: Array<Record<string, unknown>>): Supervi
       // it picked up next — for the rest of the run. A supervisor that is not reading anything is the
       // single most misleading thing that strip can say, because it is the label a reader trusts to
       // explain why a lane looks quiet.
+      // falls through — all three end the look span.
       case 'judge_look_failed':
         open.delete(`look:${taskId}`);
         break;
@@ -3740,14 +4901,20 @@ export const PLANNING_DIGEST_KEYS = [
  *  2 NODES" — only `open` and `open-resplit` — while three coverage lanes were live. They appeared in
  *  FLEET, which reads node state, so the two halves of the same screen disagreed. REVIEW now fans the same
  *  way as `review-1..N` and would have been invisible identically. */
-const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-'] as const;
+const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-', 'split-'] as const;
 
 /** Which fixed key each fan follows, so the lanes render in the order the phases actually run.
- *  The research fan (v2, `research-<slice>-q<n>`) is deliberately NOT here any more: it has its own
- *  fold group (`researchLanes`) and renders under the Research phase chip via planningLanesFor —
- *  riding this table put it in the trailing planning-calls group instead. */
+ *  The research fan (v2, `research-<slice>` per batch since C3; `research-<slice>-q<n>` on r6b–r6d
+ *  logs) is deliberately NOT here any more: it has its own fold group (`researchLanes`) and renders
+ *  under the Research phase chip via planningLanesFor — riding this table put it in the trailing
+ *  planning-calls group instead. */
 const PLANNING_FAN_AFTER: Record<string, string | undefined> = {
   'open-resplit': 'open-coverage-',
+  // THE SPLIT's one model call (`split-<task>`, shards.rs request_module_split): synthesis asks the
+  // planner model to declare a measured fat task's shard interface. r6e's ran 22 minutes on workhorse
+  // with no entry here — a call the planning zone listed nowhere while its `judge-split-<task>` lane
+  // said a judge was looking at it.
+  synthesis: 'split-',
   review: 'review-',
 };
 
@@ -3758,20 +4925,39 @@ export function isPlanningDigestKey(key: string): boolean {
   );
 }
 
-export type SupervisionLaneKind = 'judge' | 'replan' | 'prereview' | 'tailreview';
+export type SupervisionLaneKind =
+  | 'judge'
+  | 'replan'
+  | 'prereview'
+  | 'tailreview'
+  | 'schedjudge'
+  | 'verify'
+  | 'ask'
+  | 'pillars'
+  | 'reflect';
 
 /**
  * Which r6 supervision class a lane KEY belongs to — null for every worker/planner lane. Mirrors the
- * engine's one derivation (`supervision_lane_kind`, commands/swarm/supervision.rs) EXACTLY, including
- * the digit-exact replan shape: `replan-r2` is the replanner's round 2, while `replan-extra` and
- * `replan-r2b` are MODEL-chosen worker task ids and stay worker lanes (the engine pins this by test).
- * Used for LABELS; the visual supervision accent reads the digest's own `supervision: true` stamp.
+ * engine's one derivation (`supervision_lane_kind`, commands/swarm/supervision.rs) for the LIVE classes
+ * (judge, tailreview, schedjudge, verify, ask, pillars) and keeps three the engine has since dropped,
+ * because archived digests still carry their keys: `replan-rN` (the replanner, 83e8089a5),
+ * `prereview-<task>` (the M5 pre-review layer) and `reflect` (LEARN & REFLECT, 97d5735a4). The replan
+ * shape stays digit-exact: `replan-r2` labels as round 2, while `replan-extra` / `replan-r2b` are
+ * MODEL-chosen worker task ids and stay worker lanes. Used for LABELS only; the visual supervision
+ * accent reads the digest's own `supervision: true` stamp, so a new run's task that happens to match a
+ * retired shape gets at most a mislabel, never a false accent.
  */
 export function supervisionLaneKind(key: string): SupervisionLaneKind | null {
   if (key.startsWith('judge-')) return 'judge';
   if (/^replan-r\d+$/.test(key)) return 'replan';
   if (key.startsWith('prereview-')) return 'prereview';
   if (key.startsWith('tail-review-')) return 'tailreview';
+  if (key.startsWith('schedjudge-')) return 'schedjudge';
+  // Digit-exact like replan-r<n>: `verify-endpoints` is a name a plan could give a build task.
+  if (/^verify-\d+$/.test(key)) return 'verify';
+  if (key === 'ask-answer') return 'ask';
+  if (key === 'pillars') return 'pillars';
+  if (key === 'reflect') return 'reflect';
   return null;
 }
 
@@ -3791,6 +4977,125 @@ export function supervisionRollingCaption(
   return `look ${lane.attempt}${(lane.superseded?.length ?? 0) > 0 ? ' · earlier looks folded' : ''}`;
 }
 
+/** The engine's slice id for the still-open decisions lane (decisions.rs `DECISION_SLICE`), which is
+ *  not a slice a reader knows by that name. */
+const DECISION_SLICE = '__open_decisions__';
+
+/** A research slice id as a reader sees it: the opener's slice id verbatim, or "open decisions" for
+ *  the engine's decisions pseudo-slice. */
+export function researchSliceLabel(slice: string): string {
+  return slice === DECISION_SLICE ? 'open decisions' : slice;
+}
+
+/** The feed's one line per research lane (buildActivity), re-rendered as its questions become known. */
+interface ResearchFeedLine {
+  compactIdx: number;
+  verboseIdx: number;
+  slice: string;
+  node: string;
+  /** VA-089: the lane derives its questions in-session (a slice lane); false for the decisions lane
+   *  and for archived per-question dispatches. */
+  derives: boolean;
+  /** q_index → the question as named so far (text empty until research_question_kind lands). */
+  qs: Map<number, { text: string; kind?: string }>;
+}
+
+/** "2 design, 1 external, 1 unkinded" from the kinds the lanes named (research_question_kind.kind) —
+ *  '' when none is known, so no label claims a kind the events did not carry. The engine's own
+ *  vocabulary orders first; anything else follows alphabetically. */
+export function tallyKinds(kinds: Array<string | undefined>): string {
+  const counts = new Map<string, number>();
+  for (const k of kinds) if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+  if (counts.size === 0) return '';
+  const order = ['design', 'external', 'unkinded'];
+  const rank = (k: string) => (order.indexOf(k) === -1 ? order.length : order.indexOf(k));
+  return [...counts.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([k, n]) => `${n} ${k}`)
+    .join(', ');
+}
+
+/** `research_planned` as the VA-089 engine emits it (research.rs emit_research_planned): lanes =
+ *  sessions; every slice with the sections its lane reads; the slices whose rows the ledger already
+ *  held (no lane); the open decisions the decisions lane carries. */
+export interface ResearchPlan {
+  lanes: number | null;
+  /** slice → sections, in the event's order; resumed slices included (they get no lane). */
+  sections: Array<[string, number | null]>;
+  resumed: string[];
+  decisions: number | null;
+}
+
+export function researchPlanOf(e: Record<string, unknown>): ResearchPlan {
+  const ps = e['per_slice_sections'];
+  const sections: Array<[string, number | null]> =
+    ps && typeof ps === 'object' && !Array.isArray(ps)
+      ? Object.entries(ps as Record<string, unknown>).map(([s, n]) => [s, num(n)])
+      : [];
+  return {
+    lanes: num(e['lanes']),
+    sections,
+    resumed: arr(e['resumed_slices']).map(String),
+    decisions: num(e['decisions']),
+  };
+}
+
+/** "Research — 3 lanes (one per slice: ledgerd-core, web-console; the open decisions), 1 resumed from
+ *  the ledger" — every number and name from the event; a field the log lacks is left unsaid. */
+export function researchPlanLine(p: ResearchPlan): string {
+  const resumed = new Set(p.resumed);
+  const laneSlices = p.sections.map(([s]) => s).filter((s) => !resumed.has(s)).map(researchSliceLabel);
+  const scope = [
+    laneSlices.length ? `one per slice: ${laneSlices.join(', ')}` : '',
+    (p.decisions ?? 0) > 0 ? 'the open decisions' : '',
+  ].filter(Boolean);
+  const head =
+    p.lanes == null
+      ? 'Research — lanes planned'
+      : p.lanes === 0
+        ? 'Research — no lane to run'
+        : `Research — ${p.lanes} lane${p.lanes === 1 ? '' : 's'}`;
+  return `${head}${scope.length ? ` (${scope.join('; ')})` : ''}${
+    p.resumed.length ? `, ${p.resumed.length} resumed from the ledger` : ''
+  }`;
+}
+
+/** The plan's per-slice split: "ledgerd-core 3 sections · ledgerd-api 2 sections (resumed) · 1 open decision". */
+export function researchPlanSub(p: ResearchPlan): string | undefined {
+  const resumed = new Set(p.resumed);
+  const per = p.sections.map(
+    ([s, n]) =>
+      `${researchSliceLabel(s)} ${n ?? '?'} section${n === 1 ? '' : 's'}${resumed.has(s) ? ' (resumed)' : ''}`
+  );
+  const dec =
+    (p.decisions ?? 0) > 0 ? `${p.decisions} open decision${p.decisions === 1 ? '' : 's'}` : '';
+  return [...per, dec].filter(Boolean).join(' · ') || undefined;
+}
+
+/**
+ * The research lane's caption — identity before the ' · ' cut (laneSiblingTitle), caption after.
+ * Two engine key shapes: `research-<slice>-q<n>` (r6b–r6d: one lane per question; slice ids can
+ * themselves contain hyphens, so the TRAILING -qN is matched) and `research-<slice>` (the fan cut,
+ * C3, and VA-089: one lane per slice). The count is the events' — omitted when the lane is known only
+ * from its digest, never guessed; a VA-089 lane says it DERIVES its questions (none exist at dispatch)
+ * and, once named, their kinds in parentheses (commas, never ' · ', which is the identity cut).
+ */
+export function researchLaneLabel(
+  key: string,
+  questions?: number,
+  derived?: { derived: boolean; kinds: string }
+): string {
+  const perQuestion = key.match(/^research-(.+)-q(\d+)$/);
+  if (perQuestion)
+    return `Research ${researchSliceLabel(perQuestion[1])} q${perQuestion[2]} · one opener question, answered read-only`;
+  const slice = researchSliceLabel(key.slice('research-'.length));
+  const kinds = derived?.kinds ? ` (${derived.kinds})` : '';
+  if (questions != null && questions > 0)
+    return `Research ${slice} · ${questions} question${questions === 1 ? '' : 's'}${derived?.derived ? ' derived' : ''} in one read-only session${kinds}`;
+  if (derived?.derived) return `Research ${slice} · deriving its questions in one read-only session`;
+  return `Research · ${slice}`;
+}
+
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
   // r6 supervision lanes, labels derived from the key CLASS — this derivation (not a hardcoded
@@ -3800,20 +5105,22 @@ function digestLabel(key: string): string {
   if (supervisionKind === 'replan') return `Replanning · round ${key.slice('replan-r'.length)}`;
   if (supervisionKind === 'prereview') return `Pre-review · ${key.slice('prereview-'.length)}`;
   if (supervisionKind === 'tailreview') return `Tail review · ${key.slice('tail-review-'.length)}`;
+  if (supervisionKind === 'schedjudge')
+    return `Semantic review · ${key.slice('schedjudge-'.length)}`;
+  if (supervisionKind === 'verify') return `Verifying finding ${key.slice('verify-'.length)}`;
+  if (supervisionKind === 'ask') return 'Answering your question';
+  if (supervisionKind === 'pillars') return 'Distilling the plan into pillars';
+  if (supervisionKind === 'reflect') return 'Learning a reusable stack skill';
   if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
   if (key.startsWith('slice-')) return `Slice · ${key.slice('slice-'.length)}`;
+  // Identity before the ' · ' (laneSiblingTitle cuts there): "Split viz3d-engine".
+  if (key.startsWith('split-'))
+    return `Split ${key.slice('split-'.length)} · declaring the shard interface of a fat task`;
   if (key.startsWith('open-coverage-'))
     return `Coverage ${key.slice('open-coverage-'.length)} · what the request names that nothing owns`;
-  if (key.startsWith('research-')) {
-    // Engine key format: `research-<slice>-q<index>` (research_fan's activity_key). Slice ids can
-    // themselves contain hyphens, so match the trailing -qN, not the first hyphen.
-    const m = key.match(/^research-(.+)-q(\d+)$/);
-    return m
-      ? `Research ${m[1]} q${m[2]} · one opener question, answered read-only`
-      : `Research · ${key.slice('research-'.length)}`;
-  }
+  if (key.startsWith('research-')) return researchLaneLabel(key);
   if (key.startsWith('review-'))
     return `Review ${key.slice('review-'.length)} · this part of the request against the whole plan`;
   if (key === 'open') return 'Opening · cutting the request into slices';
@@ -4161,13 +5468,79 @@ export function buildPhaseTodo(
   let scoutsN: number | null = null;
   let researchQ: number | null = null;
   let researchDone: number | null = null;
-  // RESEARCH FAN v2 (the live engine): counts per event, reasons verbatim from research_unanswered.
-  let r2Dispatched = 0;
+  // RESEARCH FAN v2 (the live engine, VA-089): lanes from research_dispatched (one per slice, the
+  // decisions lane included); questions as the lanes NAME them (research_question_kind / _answered /
+  // _unanswered — a slice lane derives its own, so the count exists only as they land); kinds from
+  // research_question_kind; reasons verbatim from research_unanswered.
+  let r2Lanes = 0;
   let r2Answered = 0;
   let r2Unanswered = 0;
+  const r2Questions = new Set<string>();
+  const r2Kinds: Array<string | undefined> = [];
   const r2Reasons = new Map<string, number>();
-  let r2NoQuestions = false;
   let r2FanPanicked = false;
+  // VA-138: the fan PER LANE, so the Research step lists its lanes and what each delivered — the
+  // dispatch order (research_dispatch_order: rank / host / sections), the answers that landed on it
+  // (research_answered and its VA-089 twin research_answer_landed, one set per slice so the two
+  // shapes never double-count), the kinds the lane named, its real misses, and the event that CLOSED
+  // it: a `research_unanswered{reason: remainder_empty}` is the engine's outcome row for a lane whose
+  // final reply added nothing behind the answers the tool already landed (research.rs
+  // fold_research_lane_from) — a lane closer, never a question kept raw in a brief.
+  const r2LaneOrder = new Map<
+    string,
+    { rank: number | null; host: string; sections: number | null; seq: number }
+  >();
+  const r2LaneLanded = new Map<string, Set<number>>();
+  const r2LaneKinds = new Map<string, Map<number, string>>();
+  const r2LaneMissed = new Map<string, number>();
+  const r2LaneClosed = new Map<string, string>();
+  // VA-145: the choices a lane left to its builder (`research_builder_decides`, one event each, after
+  // the closer) — the lane row reads `landed N · builder_decides M` like its close line does.
+  const r2LaneDecides = new Map<string, number>();
+  let r2LaneSeq = 0;
+  const laneOrderOf = (slice: string) => {
+    let o = r2LaneOrder.get(slice);
+    if (!o) {
+      o = { rank: null, host: '', sections: null, seq: r2LaneSeq++ };
+      r2LaneOrder.set(slice, o);
+    }
+    return o;
+  };
+  const laneLanded = (slice: string, q: number | null, kind?: string) => {
+    if (q == null) return;
+    let set = r2LaneLanded.get(slice);
+    if (!set) r2LaneLanded.set(slice, (set = new Set()));
+    set.add(q);
+    if (kind) laneKind(slice, q, kind);
+  };
+  const laneKind = (slice: string, q: number | null, kind: string) => {
+    if (q == null || !kind) return;
+    let m = r2LaneKinds.get(slice);
+    if (!m) r2LaneKinds.set(slice, (m = new Map()));
+    m.set(q, kind);
+  };
+  // CROSS-SLICE ANSWER ROUTING (VA-104, answer_routing.rs) — synthesis's own delivery: an answer
+  // naming a file another task owns is rendered into that task's brief with the owner stated.
+  let r2Routed = 0;
+  let r2Unowned = 0;
+  let r2RoutingSkipped: string | null = null;
+  const r2Ignored: Array<{ slice: string; count: number | null }> = [];
+  const r2Resumed: Array<{ slice: string; rows: number | null }> = [];
+  // The fan's PLAN event (research_planned, VA-089: lanes / per_slice_sections / resumed_slices /
+  // decisions — no question count exists at planning).
+  let r2Plan: ResearchPlan | null = null;
+  // LEGACY-LOG (r6e–r6h): research_planned carried `questions`/`dispatching` (NUMBERS), `facts` (the
+  // questions the opener settled as cited spec facts — answered with NO lane, so they are outside
+  // every lane count and the header says so in those words) and `lanes`; research_dispatched fired
+  // once per QUESTION. The VA-089 engine emits none of these; the branches below render archives.
+  let r2LegacyDispatched = 0;
+  let r2LegacyPlanned: {
+    questions: number;
+    dispatching: number;
+    resumed: number;
+    facts: number;
+    lanes: number | null;
+  } | null = null;
   let planConf: number | null = null;
   let taskCount: number | null = null;
   let pillarsN: number | null = null;
@@ -4184,6 +5557,37 @@ export function buildPhaseTodo(
   const salvaged = new Set<string>();
   const splitParents = new Set<string>();
   const replans: number[] = [];
+  // THE SPLIT (2c S1): the fat-task measurement, the one patch it earns (or its declined twin), which
+  // shard is a piece of which module, and what the merger was handed / how its merge checked out.
+  const fatTasks = new Map<
+    string,
+    { sections: number | null; files: number; perFile: number | null; threshold: number | null }
+  >();
+  const splits: Array<{ module: string; shards: string[]; exports: number; tasksAfter: number | null }> =
+    [];
+  const splitDeclined: Array<{ task: string; reason: string }> = [];
+  // THE SPLIT'S SIZING (shards.rs sized_event): the declaration's clusters grouped onto the free
+  // hosts; `hosts` null when the caller passed no free-host count (said, never a literal).
+  const splitSized = new Map<
+    string,
+    { declared: number | null; hosts: number | null; shards: number | null; weights: number[] }
+  >();
+  const splitScarce = new Map<string, number | null>();
+  const shardOf = new Map<string, string>();
+  const mergeDossiers = new Map<
+    string,
+    { shards: number; pieces: number; readmesMissing: number; declaredMissing: number; parseErrors: number }
+  >();
+  const mergeChecks = new Map<
+    string,
+    {
+      promoted: boolean;
+      declaredMissing: number;
+      droppedReferenced: number;
+      gapsOpen: number;
+      parseErrors: number;
+    }
+  >();
   let schedulerStuck: number | null = null;
   const reportFailed = new Set<string>();
   let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null =
@@ -4216,6 +5620,14 @@ export function buildPhaseTodo(
   let proxyFailed = false;
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: number | null = null;
+  // SYNTHESIS ENDS WHEN ITS PLAN IS ON THE LOG (VA-138): `plan_synthesized` (or the deterministic
+  // repairs / weighting that read it) — never plan_loaded, which lands only after the split lane has
+  // run. r6j: plan_synthesized 19:04:30, plan_loaded ~25 minutes later; the row read "Wiring the
+  // slices into a task DAG…" for every one of those minutes.
+  let synthesized = null as { tasks: number | null } | null;
+  // LEGACY-LOG (2447d145c): the LLM REVIEW round is deleted, so review_findings / review_failed have no
+  // emitter — these two collect archived rounds only; empty on every new run, and the REVIEW phase's
+  // items stay empty with them (the PlanningZone drops an empty phase).
   const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> =
     [];
   // review_failed rounds — a review whose CALL died must not render like one that found nothing.
@@ -4253,6 +5665,69 @@ export function buildPhaseTodo(
     else if (t === 'clarify_proxy_failed') proxyFailed = true;
     else if (t === 'synthesis_fallback') synthesisFallback = num(e['tasks']) ?? 0;
     else if (t === 'sink_id_pinned') sinkRenamedFrom = str(e['from']);
+    else if (t === 'plan_synthesized')
+      synthesized = { tasks: num(e['tasks']) ?? synthesized?.tasks ?? null };
+    else if (t === 'plan_weighted' || (t === 'plan_repaired' && str(e['source']) === 'plan'))
+      synthesized = synthesized ?? { tasks: null };
+    else if (t === 'research_answer_routed') r2Routed += 1;
+    else if (t === 'research_answer_unowned') r2Unowned += 1;
+    else if (t === 'research_answer_routing_skipped') r2RoutingSkipped = str(e['error']) || 'the plan did not parse';
+    else if (t === 'split_sized')
+      splitSized.set(str(e['module']), {
+        declared: num(e['declared']),
+        hosts: num(e['hosts']),
+        shards: num(e['shards']),
+        weights: arr(e['weights']).map((w) => num(w) ?? 0),
+      });
+    else if (t === 'split_hosts_scarce') splitScarce.set(str(e['task']), num(e['free_hosts']));
+    else if (t === 'research_dispatch_order') {
+      const o = laneOrderOf(str(e['slice']));
+      o.rank = num(e['rank']);
+      o.host = e['host'] ? nodeOf(str(e['host'])) : o.host;
+      o.sections = num(e['sections']);
+    } else if (t === 'research_answer_landed') {
+      // VA-089's per-answer twin of research_answered (task, slice, q_index, kind, status) — the
+      // per-lane set dedups the two shapes; the fan totals stay on research_answered alone.
+      if (str(e['status']) === 'answered' || !e['status'])
+        laneLanded(str(e['slice']), num(e['q_index']), str(e['kind']) || undefined);
+      else laneKind(str(e['slice']), num(e['q_index']), str(e['kind']));
+    }
+    else if (t === 'plan_flag' && str(e['kind']) === 'fat_task')
+      fatTasks.set(str(e['task']), {
+        sections: num(e['sections']),
+        files: arr(e['files']).length,
+        perFile: num(e['sections_per_file']),
+        threshold: num(e['threshold']),
+      });
+    else if (t === 'plan_patched' && str(e['source']) === 'split') {
+      const module = str(e['module']);
+      const shards = arr(e['shards']).map(String);
+      const after = (e['after'] ?? {}) as Record<string, unknown>;
+      splits.push({
+        module,
+        shards,
+        exports: num(e['exports_declared']) ?? 0,
+        tasksAfter: num(after['tasks']),
+      });
+      for (const s of shards) shardOf.set(s, module);
+    } else if (t === 'split_declined')
+      splitDeclined.push({ task: str(e['task']), reason: str(e['reason']) });
+    else if (t === 'merge_dossier')
+      mergeDossiers.set(str(e['task_id']) || str(e['module']), {
+        shards: arr(e['shards']).length,
+        pieces: num(e['pieces']) ?? 0,
+        readmesMissing: arr(e['readmes_missing']).length,
+        declaredMissing: arr(e['declared_missing']).length,
+        parseErrors: num(e['pieces_with_parse_errors']) ?? 0,
+      });
+    else if (t === 'merge_checked')
+      mergeChecks.set(str(e['task_id']) || str(e['module']), {
+        promoted: e['promoted'] === true,
+        declaredMissing: arr(e['declared_missing']).length,
+        droppedReferenced: num(e['dropped_referenced']) ?? 0,
+        gapsOpen: num(e['gaps_open']) ?? 0,
+        parseErrors: arr(e['parse_errors']).length,
+      });
     else if (t === 'review_findings')
       reviewRounds.push({
         round: num(e['round']) ?? reviewRounds.length + 1,
@@ -4290,14 +5765,55 @@ export function buildPhaseTodo(
       };
     else if (t === 'complete_fix_wave' || t === 'spec_repair_wave') fixWaves += 1;
     else if (t === 'scouts_planned') scoutsN = arr(e['lenses']).length || (num(e['count']) ?? 0);
-    else if (t === 'research_planned') researchQ = num(e['count']) ?? arr(e['questions']).length;
-    else if (t === 'research_dispatched') r2Dispatched += 1;
-    else if (t === 'research_answered') r2Answered += 1;
-    else if (t === 'research_unanswered') {
-      r2Unanswered += 1;
+    else if (t === 'research_planned') {
+      // Three shapes share the name. VA-089's plan event carries `per_slice_sections`/`resumed_slices`;
+      // the r6e–r6h queue event carried `questions` as a NUMBER (plus dispatching/facts/lanes); the
+      // retired scout-era shape carried a `questions` ARRAY or a `count`. Reading the v2 number
+      // through `arr()` once yielded 0 and lit the legacy "Research questions scoped — 0" row.
+      if (e['per_slice_sections'] != null || Array.isArray(e['resumed_slices']))
+        r2Plan = researchPlanOf(e);
+      else if (typeof e['questions'] === 'number' || e['dispatching'] != null)
+        r2LegacyPlanned = {
+          questions: num(e['questions']) ?? 0,
+          dispatching: num(e['dispatching']) ?? 0,
+          resumed: num(e['resumed']) ?? 0,
+          facts: num(e['facts']) ?? 0,
+          lanes: num(e['lanes']),
+        };
+      else researchQ = num(e['count']) ?? arr(e['questions']).length;
+    } else if (t === 'research_dispatched') {
+      // VA-089: one event per LANE, no q_index; LEGACY-LOG: one per question, q_index present.
+      if (num(e['q_index']) != null) r2LegacyDispatched += 1;
+      else {
+        r2Lanes += 1;
+        const o = laneOrderOf(str(e['slice']));
+        if (!o.host && e['model']) o.host = nodeOf(str(e['model']));
+      }
+    } else if (t === 'research_question_kind') {
+      r2Questions.add(`${str(e['slice'])}::${num(e['q_index'])}`);
+      r2Kinds.push(str(e['kind']) || undefined);
+      laneKind(str(e['slice']), num(e['q_index']), str(e['kind']));
+    } else if (t === 'research_answered') {
+      r2Answered += 1;
+      r2Questions.add(`${str(e['slice'])}::${num(e['q_index'])}`);
+      laneLanded(str(e['slice']), num(e['q_index']));
+    } else if (t === 'research_unanswered') {
+      const slice = str(e['slice']);
       const reason = str(e['reason']);
-      if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
-    } else if (t === 'research_no_questions') r2NoQuestions = true;
+      if (reason === 'remainder_empty') r2LaneClosed.set(slice, reason);
+      else {
+        r2Unanswered += 1;
+        r2Questions.add(`${slice}::${num(e['q_index'])}`);
+        if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
+        r2LaneMissed.set(slice, (r2LaneMissed.get(slice) ?? 0) + 1);
+      }
+    } else if (t === 'research_builder_decides') {
+      const slice = str(e['slice']);
+      r2LaneDecides.set(slice, (r2LaneDecides.get(slice) ?? 0) + 1);
+    } else if (t === 'research_question_ignored')
+      r2Ignored.push({ slice: str(e['slice']), count: num(e['count']) });
+    else if (t === 'research_slice_resumed')
+      r2Resumed.push({ slice: str(e['slice']), rows: num(e['rows']) });
     else if (t === 'research_fan_panicked') r2FanPanicked = true;
     else if (t === 'research_completed') {
       // Two shapes share this name: the rewritten engine reports SLICES + per-slice spec sizes; the old one
@@ -4369,6 +5885,7 @@ export function buildPhaseTodo(
       if (!prev || a !== 'observed' || prev.action === 'observed')
         judgeInfo.set(id, { verdict, hint, action: a });
     } else if (t === 'replanned') {
+      // LEGACY-LOG (83e8089a5): no emitter — the `Re-planned +N tasks` rows render archived r5/r6c only.
       const added = arr(e['added']).length;
       if (added > 0) replans.push(added);
     } else if (t === 'scheduler_stuck') schedulerStuck = num(e['remaining']) ?? 0;
@@ -4496,14 +6013,157 @@ export function buildPhaseTodo(
   else if (openRan && (phasesSeen.has('research') || planned))
     ask.push(it('a-none', 'No open decisions — nothing to ask', 'skipped'));
 
-  // ---- RESEARCH ---- (v2, LIVE: the opener's own questions fanned across the fleet, one read-only
-  // call each, between ASK and SYNTHESIS. The v1 slice-fan rows below it stay for archived runs.)
+  // ---- RESEARCH ---- (v2, LIVE since VA-089: one read-only lane per slice derives and answers its own
+  // questions, plus the decisions lane, between ASK and SYNTHESIS. The r6e–r6h per-question rows and
+  // the v1 slice-fan rows below it stay for archived runs.)
   const legacyResearch = scoutsN != null || researchQ != null || researchDone != null;
   const research: PhaseTodoItem[] = [];
   const r2Settled = r2Answered + r2Unanswered;
-  if (r2Dispatched > 0 || r2NoQuestions || r2FanPanicked) {
-    if (r2NoQuestions)
-      research.push(it('r2-none', 'No research questions — the opener raised none', 'skipped'));
+  const r2Derived = r2Questions.size;
+  // The fan is awaited before plan_slices_to_dag: the engine's `phase: synthesis` (or the plan) is
+  // what ends it — a lane's question count is not known up front, so no count can.
+  const r2Over = phasesSeen.has('synthesis') || planned;
+  const r2ResumedN = r2Resumed.length || (r2Plan?.resumed.length ?? 0);
+  const r2ResumedClause = r2ResumedN > 0 ? `, ${r2ResumedN} resumed from the ledger` : '';
+  const r2KindsTally = tallyKinds(r2Kinds);
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  if (r2Plan || r2Lanes > 0 || r2Ignored.length > 0 || r2Resumed.length > 0) {
+    if (r2FanPanicked)
+      // The whole fan died at the join — any answers its lanes produced were lost with it.
+      research.push(
+        it(
+          'r2-panic',
+          'Research fan crashed — planning proceeded with zero answers',
+          'unverified',
+          r2Lanes > 0 ? `${plural(r2Lanes, 'lane')} dispatched before the crash` : undefined
+        )
+      );
+    else if (r2Lanes === 0 && r2Plan)
+      // The plan is built and no lane is on the log yet: running with the plan's own names, or done
+      // when the plan itself says no lane runs (every slice resumed, no open decision).
+      research.push(
+        it(
+          'r2-plan',
+          researchPlanLine(r2Plan),
+          (r2Plan.lanes ?? 0) === 0 ? 'done' : 'running',
+          researchPlanSub(r2Plan)
+        )
+      );
+    else if (r2Lanes > 0 && !r2Over)
+      research.push(
+        it(
+          'r2-run',
+          `Researching — ${r2Lanes}${r2Plan?.lanes != null ? ` of ${r2Plan.lanes}` : ''} lane${
+            (r2Plan?.lanes ?? r2Lanes) === 1 ? '' : 's'
+          } dispatched · ${r2Settled} of ${plural(r2Derived, 'derived question')} settled${r2ResumedClause}`,
+          'running',
+          r2KindsTally || undefined
+        )
+      );
+    else if (r2Lanes > 0)
+      research.push(
+        it(
+          'r2-done',
+          `Research — ${r2Answered} of ${plural(r2Derived, 'derived question')} answered across ${plural(r2Lanes, 'lane')}${r2ResumedClause}`,
+          r2Answered > 0 ? 'done' : 'unverified',
+          [r2KindsTally, 'answered questions become settled facts in their slice brief, beside the sources']
+            .filter(Boolean)
+            .join(' · ')
+        )
+      );
+    // ONE ROW PER LANE, IN DISPATCH ORDER (VA-138): what each lane delivered — the answers that
+    // landed, the kinds it named, its real misses — beside the rank and host it was dispatched at,
+    // and whether it is still running or what closed it. The node chip is the host. A closed lane
+    // that landed nothing reads unverified, never a clean pass.
+    const laneSlices = [...r2LaneOrder.entries()]
+      .sort(([, a], [, b]) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.seq - b.seq)
+      .map(([slice]) => slice);
+    for (const slice of laneSlices) {
+      const order = r2LaneOrder.get(slice)!;
+      const landed = r2LaneLanded.get(slice)?.size ?? 0;
+      const kinds = tallyKinds([...(r2LaneKinds.get(slice)?.values() ?? [])]);
+      const missed = r2LaneMissed.get(slice) ?? 0;
+      const decides = r2LaneDecides.get(slice) ?? 0;
+      const closer = r2LaneClosed.get(slice);
+      const over = closer != null || r2Over || r2FanPanicked;
+      const state: TodoState = !over ? 'running' : landed > 0 ? 'done' : 'unverified';
+      research.push(
+        it(
+          `r2-lane-${slice}`,
+          `${researchSliceLabel(slice)} lane`,
+          state,
+          [
+            `landed ${landed}`,
+            decides > 0 ? `builder_decides ${decides}` : '',
+            kinds,
+            missed > 0 ? `${missed} unanswered` : '',
+            order.rank != null ? `rank ${order.rank}` : '',
+            order.sections != null ? `${order.sections} section${order.sections === 1 ? '' : 's'}` : '',
+            !over
+              ? 'running'
+              : closer === 'remainder_empty'
+                ? 'closed — the final reply added nothing behind the landed answers'
+                : closer
+                  ? `closed — ${closer.replace(/_/g, ' ')}`
+                  : 'closed',
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          order.host || undefined
+        )
+      );
+    }
+    // The misses get their own row: an unanswered question stays a raw question in its brief (never a
+    // fabricated answer), and this is where that absence shows once the feed has scrolled past.
+    if (r2Unanswered > 0 && !r2FanPanicked)
+      research.push(
+        it(
+          'r2-miss',
+          `${plural(r2Unanswered, 'question')} unanswered — kept as raw questions in the briefs`,
+          'unverified',
+          [...r2Reasons.entries()].map(([r, n]) => `${r.replace(/_/g, ' ')} ×${n}`).join(' · ') ||
+            undefined
+        )
+      );
+    // A legacy opener emit: per-slice questions the contract no longer has, dropped and said once.
+    for (const ig of r2Ignored)
+      research.push(
+        it(
+          `r2-ignored-${ig.slice}`,
+          `Opener wrote ${ig.count != null ? plural(ig.count, 'question') : 'questions'} for ${researchSliceLabel(ig.slice) || 'a slice'} — ignored; its research lane derives its own`,
+          'advisory'
+        )
+      );
+  } else if (r2LegacyDispatched > 0 || r2FanPanicked || r2LegacyPlanned) {
+    // LEGACY-LOG (r6e–r6h): one dispatch per question, the queue's `dispatching`/`facts` denominators.
+    const r2Dispatched = r2LegacyDispatched;
+    const r2Planned = r2LegacyPlanned;
+    if (r2Planned && r2Dispatched === 0 && !r2FanPanicked && r2Planned.dispatching === 0)
+      // The whole queue was settled without a lane: every question a cited spec fact or a resumed
+      // ledger row. Before this branch the legacy rows read "Research questions scoped — 0" and
+      // "Researching…" running, forever, on a fan that had nothing left to dispatch.
+      research.push(
+        it(
+          'r2-facts',
+          `Research — nothing to dispatch: ${r2Planned.facts} answered from the spec${
+            r2Planned.resumed > 0 ? `, ${r2Planned.resumed} resumed from the ledger` : ''
+          }`,
+          'done',
+          'a cited spec fact is settled in its slice brief without a lane'
+        )
+      );
+    else if (r2Planned && r2Dispatched === 0 && !r2FanPanicked)
+      // Queue built, first dispatch not yet on the log (the covered-by-mini check runs per question
+      // before a lane is called) — running, with the engine's own denominator.
+      research.push(
+        it(
+          'r2-queued',
+          `Research planned — ${r2Planned.dispatching} question${r2Planned.dispatching === 1 ? '' : 's'} queued${
+            r2Planned.lanes != null ? ` across ${r2Planned.lanes} lane${r2Planned.lanes === 1 ? '' : 's'}` : ''
+          }`,
+          'running'
+        )
+      );
     else if (r2FanPanicked)
       // The whole fan died at the join — any answers its lanes produced were lost with it.
       research.push(
@@ -4519,7 +6179,11 @@ export function buildPhaseTodo(
         it(
           'r2-run',
           `Researching — ${r2Settled} of ${r2Dispatched} question${r2Dispatched === 1 ? '' : 's'} settled`,
-          'running'
+          'running',
+          // The queue's own denominator, when the log carries it and more is still to dispatch.
+          r2Planned && r2Planned.dispatching > r2Dispatched
+            ? `${r2Planned.dispatching} planned${r2Planned.lanes != null ? ` across ${r2Planned.lanes} lane${r2Planned.lanes === 1 ? '' : 's'}` : ''}`
+            : undefined
         )
       );
     else
@@ -4600,19 +6264,53 @@ export function buildPhaseTodo(
         'flatter and more serial; every module still specified and owned'
       )
     );
-  } else if (phasesSeen.has('synthesis') && !planLoaded && !phasesSeen.has('review'))
+  } else if (phasesSeen.has('synthesis') && !planLoaded && !synthesized && !phasesSeen.has('review'))
+    // The synthesis call is live until its plan is on the log (plan_synthesized). What follows —
+    // the deterministic repairs, the answer routing, THE SPLIT — is not synthesis, and gating this
+    // row on plan_loaded painted it running through r6j's whole 23-minute split lane (VA-138).
     synthesis.push(it('s-run', 'Wiring the slices into a task DAG…', 'running'));
-  // SYNTHESIS ENDS WHEN REVIEW OPENS, NOT WHEN THE PLAN LOADS. `plan_loaded` is emitted only after REVIEW
-  // has finished patching the DAG, so gating this row on it made Synthesize render as still-running for the
-  // whole of Review — on EVERY run, which read as the two phases executing in parallel. They never do:
-  // measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly sequential.
-  else if (phasesSeen.has('review') && !planLoaded)
+  // LEGACY-LOG: SYNTHESIS ENDED WHEN REVIEW OPENED, NOT WHEN THE PLAN LOADED. `plan_loaded` was emitted only
+  // after REVIEW had finished patching the DAG, so gating this row on it made Synthesize render as
+  // still-running for the whole of Review — on EVERY run, which read as the two phases executing in
+  // parallel. They never did: measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly
+  // sequential. Archived runs still carry that shape; a new run never sees `phase: review`.
+  else if ((synthesized || phasesSeen.has('review')) && !planLoaded)
     synthesis.push(
       it(
         's-wired',
         'Slices wired into a DAG',
         'done',
-        'review is still patching it, so the task count lands with the plan'
+        phasesSeen.has('review')
+          ? 'review is still patching it, so the task count lands with the plan'
+          : [
+              synthesized?.tasks != null ? plural(synthesized.tasks, 'task') : '',
+              'the deterministic repairs and any split run before the plan loads',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+      )
+    );
+  // CROSS-SLICE ANSWER ROUTING (VA-104) — what synthesis delivered beyond the DAG: research answers
+  // rendered into the briefs of the tasks that own the files they name. r6h's ledgerd-core
+  // implemented webhook registration itself because the webhooks answers never reached it.
+  if (r2Routed > 0 || r2Unowned > 0)
+    synthesis.push(
+      it(
+        's-routed',
+        `Routed ${plural(r2Routed, 'research answer')} into the briefs of the tasks that own their files`,
+        r2Routed > 0 ? 'done' : 'unverified',
+        r2Unowned > 0
+          ? `${plural(r2Unowned, 'answer')} named files no task owns — left unrouted`
+          : undefined
+      )
+    );
+  if (r2RoutingSkipped)
+    synthesis.push(
+      it(
+        's-routing-skipped',
+        'Research answers were not routed into the briefs — the plan did not parse',
+        'unverified',
+        r2RoutingSkipped
       )
     );
   if (sinkRenamedFrom)
@@ -4640,7 +6338,8 @@ export function buildPhaseTodo(
   for (const r of retargets)
     synthesis.push(it(`s-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
 
-  // ---- REVIEW ---- (structural patches only; it stops when it requests no change)
+  // ---- REVIEW ---- (RETIRED: the LLM review round is deleted, 2447d145c — historical rows for archived
+  // runs only, exactly like CONTRACTS below; empty on every new run)
   const review: PhaseTodoItem[] = [];
   for (const r of reviewRounds) {
     // The honest measure is what the patch TOUCHED. A round can raise well-worded observations and request
@@ -4696,6 +6395,99 @@ export function buildPhaseTodo(
       )
     );
 
+  // ---- SPLIT ---- (VA-138: its own step. Synthesis has returned and the plan is repaired; a task
+  // measured FAT gets ONE `split-<task>` planner call declaring its shards, sized to the free hosts,
+  // and the patched plan walks the repairs again. No phase event exists — the rows below are the
+  // measurement (plan_flag), the fleet fact (split_hosts_scarce), the sizing (split_sized), and the
+  // one patch or its declined twin. A run with no fat task has no rows here, and no chip.)
+  const split: PhaseTodoItem[] = [];
+  const splitTasks = [
+    ...new Set([
+      ...fatTasks.keys(),
+      ...splitScarce.keys(),
+      ...splitSized.keys(),
+      ...splits.map((sp) => sp.module),
+      ...splitDeclined.map((d) => d.task),
+    ]),
+  ];
+  for (const task of splitTasks) {
+    const f = fatTasks.get(task);
+    const patched = splits.find((sp) => sp.module === task);
+    const declined = splitDeclined.find((d) => d.task === task);
+    // The measurement, running while the call is out. A flagged task with neither outcome once the
+    // plan loaded is an advisory — the engine moved on, and a spinner here would outlive the fact.
+    if (f && !patched && !declined) {
+      const measure =
+        [
+          f.sections != null
+            ? `${f.sections} spec sections for ${f.files} file${f.files === 1 ? '' : 's'}`
+            : '',
+          f.perFile != null && f.threshold != null
+            ? `${f.perFile.toFixed(1)}/file vs threshold ${f.threshold.toFixed(1)}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined;
+      split.push(
+        planLoaded
+          ? it(`s-fat-${task}`, `Fat task ${task} flagged — no split event followed`, 'advisory', measure)
+          : it(`s-fat-${task}`, `Fat task ${task} — asking synthesis for a split`, 'running', measure)
+      );
+    }
+    const scarce = splitScarce.get(task);
+    if (scarce !== undefined)
+      split.push(
+        it(
+          `s-hosts-scarce-${task}`,
+          `${scarce ?? '?'} free host${scarce === 1 ? '' : 's'} at split time — shards sized by the declaration, queue as nodes free`,
+          'advisory'
+        )
+      );
+    const sized = splitSized.get(task);
+    if (sized)
+      split.push(
+        it(
+          `s-sized-${task}`,
+          `${task} sized to ${plural(sized.shards ?? 0, 'shard')}${
+            sized.hosts != null ? ` on ${plural(sized.hosts, 'free host')}` : ''
+          }`,
+          'done',
+          [
+            sized.declared != null && sized.declared !== sized.shards
+              ? `${sized.declared} declared`
+              : '',
+            sized.weights.length ? `weights ${sized.weights.join(', ')}` : '',
+            sized.hosts == null ? 'free host count unknown — clusters stand as declared' : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        )
+      );
+    if (patched)
+      split.push(
+        it(
+          `s-split-${patched.module}`,
+          `Fat task ${patched.module} split into ${patched.shards.length} shard${patched.shards.length === 1 ? '' : 's'} + a merger`,
+          'done',
+          [
+            `${patched.exports} exports declared`,
+            patched.tasksAfter != null ? `plan now ${patched.tasksAfter} tasks` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        )
+      );
+    if (declined)
+      split.push(
+        it(
+          `s-split-declined-${declined.task}`,
+          `Split of ${declined.task} declined — builds as one lane`,
+          'advisory',
+          declined.reason || undefined
+        )
+      );
+  }
+
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
   const plannedIds = new Set(planTasks.map((tk) => tk.id));
@@ -4745,6 +6537,45 @@ export function buildPhaseTodo(
     const flagged = buildsOnFlagged.get(id);
     if (flagged && (state === 'running' || state === 'pending'))
       detail = [detail, `building on flagged ${[...flagged].join(', ')}`]
+        .filter(Boolean)
+        .join(' · ');
+    // THE SPLIT's two roles on the board. A shard says which module it is a piece of; the MERGER carries
+    // what code measured it was handed (merge_dossier) and how the merge checked out (merge_checked).
+    // r6e's merger was handed 0 of 8 pieces, and its row read like any other build task.
+    const module = shardOf.get(id);
+    if (module) detail = [`shard of ${module}`, detail].filter(Boolean).join(' · ');
+    const dossier = mergeDossiers.get(id);
+    if (dossier)
+      detail = [
+        `merger: ${dossier.pieces}/${dossier.shards} pieces handed` +
+          (dossier.readmesMissing
+            ? `, ${dossier.readmesMissing} README${dossier.readmesMissing === 1 ? '' : 's'} missing`
+            : '') +
+          (dossier.declaredMissing ? `, ${dossier.declaredMissing} declared exports undefined` : '') +
+          (dossier.parseErrors
+            ? `, ${dossier.parseErrors} parse error${dossier.parseErrors === 1 ? '' : 's'}`
+            : ''),
+        detail,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const check = mergeChecks.get(id);
+    if (check)
+      detail = [
+        detail,
+        check.promoted
+          ? 'merge checked — promoted'
+          : `merge checked — not promoted (${
+              [
+                check.parseErrors ? `${check.parseErrors} parse errors` : '',
+                check.declaredMissing ? `${check.declaredMissing} exports undefined` : '',
+                check.droppedReferenced ? `${check.droppedReferenced} referenced pieces dropped` : '',
+                check.gapsOpen ? `${check.gapsOpen} gaps open` : '',
+              ]
+                .filter(Boolean)
+                .join(', ') || 'see the feed'
+            })`,
+      ]
         .filter(Boolean)
         .join(' · ');
     // TITLE = the stable, readable task id; SUMMARY = a short human line; the FULL description / files / judge
@@ -4915,10 +6746,11 @@ export function buildPhaseTodo(
     if (real.some((i) => i.state === 'unverified')) return 'unverified';
     return 'pending';
   };
-  const mk = (key: PhaseKey, label: string, items: PhaseTodoItem[]): PhaseTodo => ({
+  const mk = (key: PhaseKey, label: string, items: PhaseTodoItem[], note?: string): PhaseTodo => ({
     key,
     label,
     items,
+    note,
     state: rollUp(items),
     active: false,
     counts: {
@@ -4949,10 +6781,21 @@ export function buildPhaseTodo(
   const phases: PhaseTodo[] = [
     mk('open', 'Open', open),
     mk('ask', 'Ask', ask),
-    mk('research', 'Research', research),
+    // LEGACY-LOG (r6e–r6h): the header carries what NO lane shows — the questions the opener settled
+    // as cited spec facts, outside every lane and every row count, so the words say "(no lane)". The
+    // VA-089 engine settles nothing from the spec at planning; a live run carries no note.
+    mk(
+      'research',
+      'Research',
+      research,
+      r2LegacyPlanned && r2LegacyPlanned.facts > 0
+        ? `${r2LegacyPlanned.facts} answered from the spec (no lane)`
+        : undefined
+    ),
     mk('synthesis', 'Synthesize', synthesis),
     mk('review', 'Review', review),
     mk('contracts', 'Contracts', contracts),
+    mk('split', 'Split', split),
     mk('build', 'Build', build),
     mk('integrate', 'Integrate', integrate),
     mk('repair', 'Repair', repair),
@@ -5207,6 +7050,7 @@ export function useSwarmRun(
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          verdict,
         } = buildActivity(data.events);
         // RESIDENT GATE (pass E): a session surface must not put a dead leftover run on screen. Runs
         // this mount has not adopted yet are admitted only by shouldAdoptResidentRun — started under
@@ -5263,7 +7107,11 @@ export function useSwarmRun(
         const phaseTodo = buildPhaseTodo(data.events, digests, {
           clarifyPending: !!clarify?.pending,
         });
-        const { phase: runPhase, observed: runPhasesObserved } = foldRunPhase(data.events);
+        const {
+          phase: runPhase,
+          observed: runPhasesObserved,
+          spans: runPhaseSpans,
+        } = foldRunPhase(data.events);
         lastRunId.current = data.runId;
         // Engine-truth hold state: replay the pause events; the last run_paused with no later run_unpaused
         // means the scheduler actually reached the hold. This — never the sentinel stat — earns "Held".
@@ -5311,6 +7159,7 @@ export function useSwarmRun(
           // prop instead — the active chip renders a stopped-grey outline, no fill, no work claim.
           runPhase,
           runPhasesObserved,
+          runPhaseSpans,
           slices,
           proxy,
           reviewRounds,
@@ -5318,6 +7167,7 @@ export function useSwarmRun(
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          verdict,
           planConfidence,
           confidence,
           askFloor,

@@ -8,49 +8,7 @@
 //! (development_gates::swarm_rs_line_count_only_decreases): the error-closer readers moved here
 //! verbatim from swarm.rs when the Rapid-MLX admission-cap reader joined them.
 
-use super::clip_tail;
-
-/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
-/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
-/// that reach the answer channel without the model having said them, so "does `last_text` end with
-/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
-/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
-/// is what the agent appends LAST before breaking the stream.
-pub(super) const AGENT_ERROR_CLOSERS: [&str; 3] = [
-    "Please resend your message to try again.",
-    "Please retry if you think this is a transient or recoverable error.",
-    "resending this conversation is likely to be refused again.",
-];
-
-/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
-/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
-/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
-/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
-/// "this text is a dead attempt's transport error", because the digest never said which kind of
-/// text it was carrying.
-pub(super) fn said_kind_of(last_text: &str) -> &'static str {
-    let t = last_text.trim_end();
-    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
-        "error"
-    } else {
-        "said"
-    }
-}
-
-/// A-2: a supervision call's reply, with the transport-failure disguise removed. The agent loop
-/// surfaces a provider failure as its own error-closer TEXT (agent.rs:2678 "Ran into this error:
-/// {provider_err}…"), so `run_agent` returns `Ok` and the caller reads an HTTP 400 body as a model
-/// reply. Every judge/review parser is deliberately LENIENT, which is exactly what makes it launder
-/// that text: r2's parse read gabee's 400 "Invalid model identifier" as substantive-and-not-OK and
-/// emitted 28 `drifting` verdicts whose hint WAS the error body, from 22:02:35Z until the run ended.
-/// `Err` here is the whole error text (tail-clipped), for the caller's failed event.
-pub(super) fn supervision_reply(text: &str) -> Result<&str, String> {
-    if said_kind_of(text) == "error" {
-        Err(clip_tail(text, 400))
-    } else {
-        Ok(text)
-    }
-}
+use super::supervision::said_kind_of;
 
 /// #121: does this accumulated task output carry the deterministic mid-stream body-drop signature? The
 /// provider surfaces a dropped HTTP body as ProviderError::NetworkError("Stream decode error: ...") which

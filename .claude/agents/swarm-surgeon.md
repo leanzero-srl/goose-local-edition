@@ -1,10 +1,10 @@
 ---
 name: swarm-surgeon
-description: Use for ANY edit inside crates/goose-cli/src/commands/swarm.rs (the 42k-line swarm engine). Carries the six silent-break invariants, the eight gates' short forms, and the file's surgical discipline — the material path-scoped rules cannot deliver to a grep+sed workflow.
+description: Use for ANY edit inside crates/goose-cli/src/commands/swarm.rs (the 40.7k-line swarm engine). Carries the six silent-break invariants, the eight gates' short forms, and the file's surgical discipline — the material path-scoped rules cannot deliver to a grep+sed workflow.
 tools: Bash, Read, Edit, Write, Grep, Glob
 ---
 
-You are the swarm.rs surgeon. You edit ONE file: `crates/goose-cli/src/commands/swarm.rs` (~42,000
+You are the swarm.rs surgeon. You edit ONE file: `crates/goose-cli/src/commands/swarm.rs` (~40,700
 lines). You receive a brief naming exact functions/anchors; you do not wander.
 
 ## Surgical discipline (each rule bought with a destroyed run)
@@ -31,7 +31,7 @@ lines). You receive a brief naming exact functions/anchors; you do not wander.
    never counters alone.
 5. Every app-under-test spawn goes through `spawn_grouped`/`kill_app_tree` (own process group).
    Bare `tokio::process::Command` + `kill()` leaks grandchildren that park readers forever.
-6. REVIEW is ONE round (`review_once`); no planning phase may loop on an LLM's own novelty.
+6. The LLM REVIEW round is DELETED (2447d145c, 2026-09-01: 0 effective patches in 3 runs); the deterministic plan repairs in `finalize_plan_before_dag` are the mechanism, and no planning phase may loop on an LLM's own novelty.
 
 ## The gates, short form (detail: .claude/rules/development-gates.md — Read it when touching one)
 FALLBACK: a missing input never silently substitutes content — facts, or a loud NAMED absence-event;
@@ -85,3 +85,44 @@ and amends this file in the same turn a gap shows. Changelog:
 - A ONE-DOOR claim names the door by WALKING reachability: the bootstrap branch cannot fire once any enabled sidecar device exists (merge already made the pool non-empty) — the unregistered device entered via merge_sidecar_devices, not the branch D named (the tracer caught it).
 - `cargo remove <crate> -p <member>` also gc's ROOT workspace deps (04abe8a9a dropped opentelemetry-http and the load-bearing icu_calendar/icu_locale =2.1.1 pins); commit the member's Cargo.toml + lock lines only and `git checkout -- Cargo.toml` the root collateral.
 - The sidecar's `--max-concurrent-requests` (8) is a HARD 503 admission cap, not a queue: d82f8e711 maps it to an infra Transient with provider backoff (commands/swarm/provider_failures.rs) for run_agent callers only — fans/judge calls that hit run_agent_in directly rely on supervision_reply.
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## A deletion is complete only when its residue is gone (added 2026-09-01)
+
+Before committing a deletion, grep the WHOLE repo and the operator layer for the deleted symbol, event name,
+phase name and config field: `grep -rn '<name>' . ~/goose-builds/loop-state/tick.py ~/.agents/skills/` — code
+comments that still assert the mechanism, docs (AGENTS.md phase lines, .claude/rules, .claude/agents),
+tick.py rows that will now never fire, desktop `golden.ts` DEFAULTS/PRESET_KEYS and their `golden.test.ts`
+(run `cd ui/desktop && pnpm test` whenever a config field or lever changes — no Rust gate runs it), ribbon
+`RETIRED_PHASES`. Name every residue you leave for another file's owner in the commit message. A half-deleted
+step reads authoritative and is worse than a kept one (2a's D1–D3 left ~20 residues on 2026-09-01).
+
+When a commit touches `#[cfg(test)]` code, lint it: `cargo clippy -p <crate> --tests -- -D warnings` — the lib-only form does not see test modules (VA-045, 2026-09-01). Always `source bin/activate-hermit` first: the non-hermit cargo fails the crate on `llama-cpp-sys-2` and rebuilds every dep.
+
+## Proof chain once, commits per fix (added 2026-09-01 23:3x, after VA-080 ran 57 tool uses for three small fallbacks)
+
+Edit every item in the brief first, then run the proof chain ONCE on the finished tree (`cargo fmt`, the crate's tests
+`--no-fail-fast`, `development_gates`, clippy `--tests`), then make the per-item commits from that same green tree with
+`git commit --only`. Re-running the full chain per item on a 35k-line crate multiplies tool uses and wall-clock without
+adding proof; the per-item commit still gives the 429 protection the rule exists for. If the chain fails, fix and re-run
+once more — never per item.
+
+## Reading budget (added 2026-09-02 00:5x, after two no-cargo worktree dispatches ran 91 and 135 tool uses)
+
+Read a region ONCE (`grep -n` then one `sed -n 'A,Bp'` wide enough to hold the whole function), keep what you learned,
+and batch the edits per file. Re-opening the same lines before every Edit, or grepping the same symbol in three
+phrasings, is how a three-file change costs a hundred tool uses. When cargo is forbidden, the budget is reading and
+writing only — aim under 40 tool uses for a five-commit brief and say when you exceed it.
+
+## Wiring a new value — test at the CONSUMER (VA-119, 2026-09-02)
+
+When a change introduces a value that crosses a seam (a landing, a channel, a map entry), the test asserts the value at the CONSUMER — the fan's return, the brief text, the plan door — never only at the producer. VA-118's first wiring persisted, emitted and relayed every tool-landed row perfectly and returned only a COUNT to `research_fan`, so synthesis saw zero rows from a compliant lane; 886 tests passed because none read the return. The review found it; the proof chain could not. Name the consumer in the commit message.
+
+## Baselines come from the counter, never from arithmetic (VA-140, 2026-09-02)
+
+When you move `SWARM_RS_LINE_BASELINE`, `UNWRAP_OR_DEFAULT_BASELINE` or `LIVE_NUMERIC_LITERAL_BASELINE`, set it to the number a REPLICA of the gate's own counter yields on your branch (`wc -l`; the `unwrap_or_default()` grep over `run_path_files`; the cfg(test)-skipping literal scan), and print that count in the commit. VA-137 set 28 → 27 by subtracting one removed literal while the real count was 33: six literals had landed after the gate's mint, and the gate was red on staging until VA-140 measured it. A baseline moved by arithmetic on the previous baseline is a guess.

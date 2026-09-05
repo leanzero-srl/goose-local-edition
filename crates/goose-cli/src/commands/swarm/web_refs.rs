@@ -271,12 +271,27 @@ const KEYWORDS: &[&str] = &[
 enum Tok {
     Ident(String, u32),
     Punct(&'static str),
+    /// A numeric literal, whole. It exists ONLY so `regex_can_follow` can say no after one —
+    /// see the lexer's doc. Its value is never read.
+    Num,
 }
 
 /// A minimal JS lexer: identifiers and the punctuation this scan reasons about, with comments,
 /// strings, template literals and regex literals skipped. The division-vs-regex ambiguity is
 /// resolved with the standard previous-token heuristic; a template literal is skipped whole,
 /// interpolations included — a reference missed inside `${...}` is a safe false negative.
+///
+/// A NUMBER IS ONE TOKEN, AND A REGEX MAY NOT FOLLOW IT (r6c web-viz, look 16). Digits used to
+/// fall through to the punctuation arm as `Punct("op")` each, so `regex_can_follow` said yes after
+/// one and `const dOff = (D0 - 1) / 2` opened a PHANTOM regex that ran to the next `/` in the
+/// file — which is normally the first slash of a `//` comment, leaving the second slash to open
+/// another. MEASURED on the delivered web/viz.js: that chain swallowed lines 496-654 whole,
+/// deleting `function ensureSized` (499), `updateLabels` (558), `uploadSlotFloat` (599),
+/// `clearBrush` (622) and `buildScene` (636) from the DECLARED side while their call sites
+/// survived — and the judge was handed six "runtime ReferenceError" defects that were all false.
+/// The lane then spent a tool call (19:26:24Z, `sed -n '108,118p' web/viz.js; ...`) reading its
+/// own lines to refute them. A false line costs a model turn arguing with a measurement, which is
+/// the one thing this scan's own module doc says it must never do.
 fn lex(body: &str) -> Vec<Tok> {
     let mut toks: Vec<Tok> = Vec::new();
     let b: Vec<char> = body.chars().collect();
@@ -287,6 +302,8 @@ fn lex(body: &str) -> Vec<Tok> {
             None => true,
             Some(Tok::Punct(p)) => !matches!(*p, ")" | "]"),
             Some(Tok::Ident(w, _)) => KEYWORDS.contains(&w.as_str()),
+            // `1 / 2` is division. Nothing else in this lexer can tell it from a regex.
+            Some(Tok::Num) => false,
         }
     };
     while i < b.len() {
@@ -360,6 +377,35 @@ fn lex(body: &str) -> Vec<Tok> {
                 i += 1;
             }
             i += 1;
+            // THE FLAGS BELONG TO THE LITERAL. Without this the `g` of
+            // `String(...).replace(/\B(?=(\d{3})+(?!\d))/g, ',')` was lexed as a bare identifier
+            // sitting between `(` and `,` — bare-argument position — and shipped to the judge as
+            // "web/viz.js references `g` (line 113) ... a runtime ReferenceError" (r6c web-viz,
+            // look 16). A regex literal is never followed directly by an identifier character in
+            // valid JS, so consuming the run is unambiguous.
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            continue;
+        }
+        if c.is_ascii_digit() {
+            i += 1;
+            while i < b.len() {
+                let d = b[i];
+                if (d == 'e' || d == 'E')
+                    && b.get(i + 1).is_some_and(|n| *n == '+' || *n == '-')
+                    && b.get(i + 2).is_some_and(char::is_ascii_digit)
+                {
+                    i += 2; // the exponent's sign, then its digits on the next turns
+                } else if d.is_ascii_alphanumeric() || d == '_' {
+                    i += 1; // 0x1f, 1n, 1e3, 1_000 — every suffix form, none of them read
+                } else if d == '.' && b.get(i + 1).is_some_and(char::is_ascii_digit) {
+                    i += 1; // 0.5, but never the `.` of `(0.5).toFixed(2)`
+                } else {
+                    break;
+                }
+            }
+            toks.push(Tok::Num);
             continue;
         }
         if c.is_alphabetic() || c == '_' || c == '$' {
@@ -736,6 +782,133 @@ document.addEventListener("vs7dbg:brush-change", onBrushChange);
         assert!(
             browser_js_undefined_refs(&dir, "web/viz.js").is_empty(),
             "a registered handler that exists is silence"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// r6c web-viz, look 16 (19:00:48Z), DEFECT 1 OF 3 VERBATIM: the delivered web/viz.js line
+    /// 113 is `String(Math.floor(minor / p)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')`, and the scan
+    /// shipped "web/viz.js references `g` (line 113), which is not defined ... a runtime
+    /// ReferenceError". The regex literal was skipped but its FLAGS were not, so `g` was lexed as
+    /// a bare identifier between `(` and `,` — bare-argument position, the addEventListener shape.
+    #[test]
+    fn a_regex_literals_flags_are_never_a_bare_identifier() {
+        let dir = tmp("regexflags");
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        std::fs::write(
+            dir.join("web/viz.js"),
+            r#"(function () {
+  "use strict";
+  function expOf(cur) { return cur === 'JPY' ? 0 : 2; }
+  function fmtMoney(minor, cur) { // integer-based: no float drift in display
+    const e = expOf(cur);
+    const p = Math.pow(10, e);
+    let s = String(Math.floor(minor / p)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (e > 0) s += '.' + String(minor % p).padStart(e, '0');
+    return cur + ' ' + s;
+  }
+  document.addEventListener('DOMContentLoaded', function () { fmtMoney(1234567, 'USD'); });
+})();
+"#,
+        )
+        .unwrap();
+        assert!(
+            browser_js_undefined_refs(&dir, "web/viz.js").is_empty(),
+            "a regex flag is part of the literal, not a reference: {:?}",
+            browser_js_undefined_refs(&dir, "web/viz.js")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// r6c web-viz, look 16, DEFECTS 2-6: `ensureSized` (line 421), `updateLabels` (451),
+    /// `uploadSlotFloat` (751), `buildScene` (762), `clearBrush` (897) reported undefined while
+    /// every one of them is a plain `function NAME(...)` declaration in the same file (lines 499,
+    /// 558, 599, 636, 622).
+    ///
+    /// THE MECHANISM WAS NOT HOISTING — the declared-side pass already reads the whole token
+    /// stream, so position never mattered. It was the LEXER losing the declarations: digits fell
+    /// through to the punctuation arm, so `regex_can_follow` said yes after a number and
+    /// `Math.exp(-(now - coast.t0) / 1000 / TAU_S)` (viz.js:471) opened a phantom regex that ran
+    /// to the first slash of the next `//` comment — whose second slash opened another, and so on
+    /// until a real division closed the chain at viz.js:654. Lines 496-654 of the delivered file
+    /// were swallowed whole, taking all five declarations with them while their call sites, past
+    /// the chain's end, survived. This fixture is that cascade in miniature: the opener, a line
+    /// comment, the declarations, the division that closes it, then the uses.
+    #[test]
+    fn a_division_after_a_number_does_not_swallow_the_declarations_that_follow() {
+        let dir = tmp("phantomregex");
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        std::fs::write(
+            dir.join("web/viz.js"),
+            r#"(function () {
+  "use strict";
+  const TAU_S = 0.18, SPAN = 96;
+  function stepCoast(now, coast) {
+    const ey = Math.exp(-(now - coast.t0) / 1000 / TAU_S);
+    return ey;
+  }
+  // Demand rendering: draw only when dirty or coasting — 0 draws at rest.
+  function ensureSized() { return true; }
+  function updateLabels() { return true; }
+  const half = SPAN / 2;
+  function boot() {
+    stepCoast(0, { t0: half });
+    ensureSized();
+    updateLabels();
+    window.addEventListener('resize', updateLabels);
+  }
+  boot();
+})();
+"#,
+        )
+        .unwrap();
+        assert!(
+            browser_js_undefined_refs(&dir, "web/viz.js").is_empty(),
+            "declarations after a division must survive the lexer: {:?}",
+            browser_js_undefined_refs(&dir, "web/viz.js")
+        );
+        // And the scan still SEES a real one in the same shape — the fix widened nothing.
+        std::fs::write(
+            dir.join("web/viz.js"),
+            r#"(function () {
+  "use strict";
+  const SPAN = 96;
+  const half = SPAN / 2;
+  function updateLabels() { return half; }
+  window.addEventListener('resize', updateLabelsTracked);
+})();
+"#,
+        )
+        .unwrap();
+        let found = browser_js_undefined_refs(&dir, "web/viz.js");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("updateLabelsTracked"), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The brief's other suspect, pinned so it stays covered: a `function NAME` declared AFTER its
+    /// call site is DEFINED (JS hoists it, and `declared_names` is a whole-file pass, so position
+    /// never decided). It was never the r6c cause — the lexer was — but a future lexer change that
+    /// made the declared side positional would resurface the same six false defects.
+    #[test]
+    fn a_function_declared_after_its_call_site_is_defined() {
+        let dir = tmp("hoisting");
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        std::fs::write(
+            dir.join("web/viz.js"),
+            r#"(function () {
+  "use strict";
+  boot();
+  function boot() { render(); }
+  function render() { console.log('drawn'); }
+})();
+"#,
+        )
+        .unwrap();
+        assert!(
+            browser_js_undefined_refs(&dir, "web/viz.js").is_empty(),
+            "hoisted declarations are defined at their call site: {:?}",
+            browser_js_undefined_refs(&dir, "web/viz.js")
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

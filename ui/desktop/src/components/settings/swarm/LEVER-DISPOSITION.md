@@ -23,6 +23,41 @@ So: do not read "no evidence" as "no effect". Most of this panel is unmeasured, 
 
 ---
 
+## 0. RETIRED — the engine no longer carries the mechanism (audited 2026-09-01, ee4c73d15)
+
+`levers_resolved` used to echo these as `true`; since ee4c73d15 it names them under a top-level
+`retired_levers` object instead, each row `{reason, configured}` (since r6e E11: `configured` is the value a
+stale config.yaml/env pin still names, `null` when nothing does), because a resolved value for a mechanism
+that cannot run is a levers echo that lies (gate 1) — and a stale pin that is silently ignored is invisible
+the other way. The engine's reasons, verbatim:
+
+| Lever | Why it is retired |
+|---|---|
+| `split_fat` | `split_fat_modules` is `#[cfg(test)]` since b0dd68eac |
+| `fan_verify` | `fan_verify_split` is `#[cfg(test)]` since P1-4 |
+| `fan_e2e` | no consumer; it sharded the fan `fan_verify` no longer builds |
+| `straggler_stop` | `collect_drafts_with_straggler_stop` is `#[cfg(test)]` since P1-4 |
+| `straggler_stop_degrade` | same collector |
+| `straggler_grace_secs` | same collector |
+| `split` | scheduler.rs pins `let is_split = false`; `GOOSE_SWARM_SPLIT` was read by nothing but the echo |
+| `split_inherit_spec` | read only inside `apply_split`, which `is_split = false` never reaches |
+
+What this means on the desktop side:
+
+- `golden.generated.json` still lists these keys (`split_fat: true`, `fan_verify: true`, `straggler_stop:
+  true`, …). That file is a byte-exact dump of the Rust `SwarmConfig::default()` written by
+  `swarm_defaults_fixture_is_current`, and the struct fields survive for the config round-trip — so a `true`
+  there is a struct default, NOT a live lever. It cannot be hand-edited (the Rust test compares bytes) and
+  regenerating it changes nothing until the fields leave the struct.
+- The panel neither defaults nor resets any of them (`golden.test.ts`: "engine-retired levers never enter
+  DEFAULTS or PRESET_KEYS"), and a config.yaml still carrying one is written back untouched.
+- `main.ts` no longer env-pins `GOOSE_SWARM_SPLIT_FAT=1` (or `GOOSE_SWARM_FIX_SCHED=1`, whose scheduler died
+  in P1-9) at the benchmark spawn: the engine reads neither.
+- The measurement rows below that name these levers are kept as history and marked RETIRED; the
+  evidence was real when it was gathered, the mechanism is gone.
+
+---
+
 ## 1. BAKE — remove from the UI, make it how goose works
 
 ### Proven by measurement
@@ -31,7 +66,7 @@ So: do not read "no evidence" as "no effect". Most of this panel is unmeasured, 
 | `grounded_research_only` | Strongest evidence in the campaign — mechanism confirmed on 2 runs, 2 binaries, plus a code read |
 | `no_tools_means_ask` | Best-evidenced lever; the only one with a genuine before/after on the same spec |
 | `stream_decode_retry` | A real mid-stream body drop caught and recovered; observed again in arms 2/4/5 |
-| `straggler_stop`, `straggler_stop_degrade` | 4+ fires, both directions proven, zero panics |
+| `straggler_stop`, `straggler_stop_degrade` | RETIRED 2026-09-01 (§0) — the collector is `#[cfg(test)]`. History: 4+ fires, both directions proven, zero panics |
 | `backbone_skip_confident` | 29-run survey plus a same-spec before/after |
 
 ### Structurally correct — "off" is indefensible, not merely worse
@@ -39,7 +74,7 @@ So: do not read "no evidence" as "no effect". Most of this panel is unmeasured, 
 |---|---|
 | `require_tests` | An empty suite is not a passing suite. Off, "nothing was checked" and "everything passed" are the same value, and deleting a failing test becomes a way to go green. Corpus replay: 3 trees were green with zero tests, 0 spurious reds. |
 | `contract_validate` | It now DROPS a contract stub that does not parse. Freezing prose as an "interface" is how a worker ends up writing against nothing (measured: h1-treat-2 shipped with every command broken). |
-| `smoke`, `contracts`, `complete`, `split` | Force-set on every desktop run for months. They were never real choices, and their config keys were inert. Now defaults; parity with headless depends on them. |
+| `smoke`, `contracts`, `complete`, `split` | Force-set on every desktop run for months. They were never real choices, and their config keys were inert. Now defaults; parity with headless depends on them. `split` is RETIRED 2026-09-01 (§0): the scheduler pins `is_split = false`. |
 
 ### Already baked this session
 `omni_judge` (the only supervisor that can watch a `verify::` task), plus the four parity gates above.
@@ -53,8 +88,8 @@ Each needs its PRO and CON stated in the hint, so a user knows what they are buy
 | Lever | PRO — what it buys | CON — what it costs |
 |---|---|---|
 | `ask_floor` | goose asks instead of inventing your product. Measured: a run found 5 open decisions on the spec's own "do NOT guess" list. | Interrupts the build and waits on you. Set to 0 for unattended runs. (`ask_max_q` moved to DELETE: the truncation it configured is killed — see §3.) |
-| `fan_verify` | Per-module checks fan across the fleet instead of one serial sink. Pairs with `fan_e2e`. | Adds N tasks. On its own it does not touch the end-to-end run, which was the real bottleneck. |
-| `fan_e2e` | Shards the whole-app end-to-end check by COMMAND across the fleet. MEASURED h1-e2e-2 vs h1-treat-4 on the same spec: execute wall 65.9 -> 33.5 min, occupancy 28.8% -> 41.7%, biggest task 47% -> 21% of node-busy time, app still 9/9. | n=1. Needs `fan_verify`. A terminally-failed shard cascades into the join (see plan B6); not yet observed. |
+| `fan_verify` — RETIRED 2026-09-01 (§0) | History: per-module checks fanned across the fleet instead of one serial sink. Paired with `fan_e2e`. | `fan_verify_split` is `#[cfg(test)]` since P1-4; no run can arm it. |
+| `fan_e2e` — RETIRED 2026-09-01 (§0) | History: sharded the whole-app end-to-end check by COMMAND. MEASURED h1-e2e-2 vs h1-treat-4 on the same spec: execute wall 65.9 -> 33.5 min, occupancy 28.8% -> 41.7%, biggest task 47% -> 21% of node-busy time, app still 9/9. | No consumer since the fan it sharded stopped being built. |
 | `parallel_tests` | Tests start the moment their module lands, overlapping the build. | More subtasks on a slow fleet; unmeasured. |
 | `relax_contracted_deps` | Independent modules build simultaneously instead of chaining. | Relies on contracts being sound. If a contract is wrong, the modules diverge in parallel. |
 | `best_of_n_skeletons` | More drafts, better plan structure. | Each draft is a full planning call — directly buys quality with minutes. |
@@ -92,9 +127,9 @@ that are: `planner_model`, `planner_also_works`, `planner_weight`, `homogeneous_
 - **Tier 1 (default view, ~8 controls):** the live fleet, planner model, "ask when uncertain" + its two
   questions, research mode, run-panel detail.
 - **Tier 2 (Advanced, collapsed):** the two-sided levers in §2, each with its PRO/CON.
-- **Tier 3 (Experimental, collapsed + labelled unmeasured):** `fan_verify`, `parallel_tests`,
-  `relax_contracted_deps`, `dep_signatures`, `scoped_contracts`, `split_fat` — mechanism verified, effect
-  not.
+- **Tier 3 (Experimental, collapsed + labelled unmeasured):** `parallel_tests`, `relax_contracted_deps`,
+  `dep_signatures`, `scoped_contracts` — mechanism verified, effect not. (`fan_verify` and `split_fat` left
+  this tier when they were retired — §0.)
 - **Gone:** §1 (baked) and §3 (deleted).
 
 That is 76 → ~8 by default, with everything still reachable for someone tuning.

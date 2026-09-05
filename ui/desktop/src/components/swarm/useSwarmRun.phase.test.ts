@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { formationPhasesFor } from './formationVisualState';
 import { buildPhaseTodo, foldEvents, foldRunPhase, isPlanningDigestKey } from './useSwarmRun';
 
 /**
  * The rewritten engine's planning flow, folded from its ACTUAL event stream:
  *   OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW -> BUILD -> INTEGRATE -> REPAIR
- * Every shape below is the one swarm.rs emits.
+ * Every shape below is one swarm.rs emitted. Since batch 2a some are ARCHIVE-ONLY: `phase: review`,
+ * review_findings, plan_patched (2447d145c), `replanned` (83e8089a5), `phase: research` (v1, P1-5). The
+ * fold must keep reading them — archived run.jsonl files are opened in this panel — and a NEW run's
+ * stream (open -> ask -> synthesis -> plan_repaired -> plan_loaded) must never be offered a chip for them.
  */
 const OPEN = { event: 'phase', phase: 'open' };
 const SLICES = {
@@ -79,6 +83,29 @@ describe('foldRunPhase — the ribbon reads the engine, never a label', () => {
     // No sink was dispatched and nothing was repaired — neither may show a completed check.
     expect(observed.integrate).toBeUndefined();
     expect(observed.repair).toBeUndefined();
+  });
+
+  // THE DEFECT 2447d145c LEFT IN THE RIBBON: the engine stopped emitting `phase: review`, so on every new
+  // run `observed.review` is undefined — and a step behind the active one without evidence reads
+  // 'skipped'. Until 'review' was retired, Build lighting meant "Review — skipped" on a run that could
+  // never have reviewed. The stream here is the live engine's, verbatim in shape.
+  it('a post-2447d145c stream never observes review, and the ribbon is never offered it', () => {
+    const { phase, observed } = foldRunPhase([
+      OPEN,
+      SLICES,
+      ASK,
+      SYNTHESIS,
+      { event: 'plan_synthesized', tasks: 6 },
+      { event: 'plan_repaired', actions: [], before: {}, after: {} },
+      { event: 'plan_loaded', tasks: [] },
+    ]);
+    expect(phase).toBe('build');
+    expect(observed.review).toBeUndefined();
+    expect(formationPhasesFor(observed).map((s) => s.key)).not.toContain('review');
+    // An ARCHIVED stream that did review keeps its chip — retired is not hidden.
+    const archived = foldRunPhase([OPEN, SYNTHESIS, REVIEW, { event: 'plan_loaded', tasks: [] }]);
+    expect(archived.observed.review).toBe(true);
+    expect(formationPhasesFor(archived.observed).map((s) => s.key)).toContain('review');
   });
 });
 
@@ -155,10 +182,11 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
   });
 
   // MEASURED on swarm-3node-r0: `phase synthesis` 07:04:52 -> `phase review` 07:08:27, strictly sequential,
-  // and `plan_loaded` lands only after REVIEW has patched the DAG. Gating the Synthesize row on plan_loaded
+  // and `plan_loaded` landed only after REVIEW had patched the DAG. Gating the Synthesize row on plan_loaded
   // therefore rendered it as still-running for the whole of Review on EVERY run, which reads as two phases
-  // executing at once. The row must close when its own phase ends.
-  it('closes the synthesis row when review opens, not when the plan loads', () => {
+  // executing at once. The row must close when its own phase ends. ARCHIVED SHAPE since 2447d145c (no
+  // review round exists); on the live engine the row closes on plan_loaded, pinned two tests down.
+  it('closes the synthesis row when review opens, not when the plan loads (archived shape)', () => {
     const phase = todo([OPEN, SLICES, RESEARCH, RESEARCH_DONE, SYNTHESIS, REVIEW]).find(
       (p) => p.key === 'synthesis'
     )!;
@@ -171,6 +199,34 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
       (p) => p.key === 'synthesis'
     )!;
     expect(phase.items.some((i) => i.id === 's-run' && i.state === 'running')).toBe(true);
+  });
+
+  // The live engine's stream: no review round, and the REVIEW phase has no items at all (the
+  // PlanningZone drops an empty phase — nothing reads "review" on a new run). Synthesis CLOSES when
+  // its plan is on the log (plan_synthesized) — VA-138: gating it on plan_loaded painted "Wiring the
+  // slices into a task DAG…" through r6j's whole 23-minute split lane; the plan then loads.
+  it('on the live stream synthesis closes on plan_synthesized and REVIEW has nothing to show', () => {
+    const synthesising = [OPEN, SLICES, ASK, SYNTHESIS];
+    expect(
+      todo(synthesising).find((p) => p.key === 'synthesis')!.items.map((i) => `${i.id}:${i.state}`)
+    ).toEqual(['s-run:running']);
+    const live = [
+      ...synthesising,
+      { event: 'plan_synthesized', tasks: 6 },
+      { event: 'plan_repaired', actions: [], before: {}, after: {} },
+    ];
+    const running = todo(live);
+    const wired = running.find((p) => p.key === 'synthesis')!.items;
+    expect(wired.map((i) => `${i.id}:${i.state}`)).toEqual(['s-wired:done']);
+    expect(wired[0].detail).toBe(
+      '6 tasks · the deterministic repairs and any split run before the plan loads'
+    );
+    expect(running.find((p) => p.key === 'review')!.items).toHaveLength(0);
+    const loaded = todo([...live, { event: 'plan_loaded', tasks: [{ id: 'core', deps: [] }] }]);
+    const synthesis = loaded.find((p) => p.key === 'synthesis')!;
+    expect(synthesis.items.some((i) => i.state === 'running')).toBe(false);
+    expect(synthesis.items.some((i) => i.id === 's-done' && i.state === 'done')).toBe(true);
+    expect(loaded.find((p) => p.key === 'review')!.items).toHaveLength(0);
   });
 
   it('treats the synthesis fallback as a degraded plan, never a failure', () => {
@@ -416,10 +472,12 @@ describe("the judge's own ETA reaches the panel", () => {
 });
 
 /**
- * THE ENGINE EMITS ELEVEN PHASE EVENTS. The map understood five and dropped the rest on the floor, so a
+ * THE ENGINE EMITTED ELEVEN PHASE EVENTS. The map understood five and dropped the rest on the floor, so a
  * fleet fanning contract stubs, a three-node test fan and an hours-long fix wave all left the ribbon lit on
- * whichever stage happened to come before them. This list is the `{"event": "phase"}` sites in
- * crates/goose-cli/src/commands/swarm.rs, in the order a run emits them.
+ * whichever stage happened to come before them. This list is every `{"event": "phase"}` value a run.jsonl
+ * in the archive can carry, in emit order. LIVE at HEAD (swarm.rs `"event": "phase"` sites): open, ask,
+ * synthesis, build, repair, fix. research (v1), review (2447d145c), contracts (P1-4), test and rate are
+ * archive-only and must keep folding — a phase read and discarded is the bug this block pins.
  */
 const ENGINE_PHASE_EVENTS = [
   'open',

@@ -48,7 +48,7 @@ on — which is the only configuration we ever measure.
 ## `"integrate-verify"` is an exact-equality string test in five live places
 
 `patch.rs:254`, eight sites here, 34 in `scheduler.rs`, 16 in `useSwarmRun.ts`, plus the bench detectors.
-Renaming it, or letting a model name the join, breaks replan suppression with no compiler error.
+Renaming it, or letting a model name the join, breaks the sink gate (`sink_in_flight`) with no compiler error.
 **The sink must own NO files** — `scheduler.rs:2603` relaxes a dependent through an upstream failure only
 `if n.spec.owned_files.is_empty()`, so a file-owning join is cascaded-Failed by any build failure and the
 wire-and-boot step never runs. That is the "app never binds a port" class.
@@ -80,17 +80,57 @@ checks imports/owned files — so it can prove neither a hang nor a phantom endp
 
 CONTRACTS is deleted (the 2,527-char contract NARROWED r2's build — meridian/viz/static silently dropped),
 and so are RESEARCH, coverage, the resplit and the ASK proxy. `plan_slices_to_dag` is the injectable seam;
-its test pins the sequence open → synthesis → review(1) → plan_repaired. `dep_signatures` ships OFF; the ON
+its test pins the sequence open → synthesis → plan_repaired (the review round is deleted, below). `dep_signatures` ships OFF; the ON
 form is `shape_excerpt` (signatures + key-literal/route/return-dict lines). Unassigned gate findings
 attribute by endpoint-literal grep, else the entry file, else the `known_bugs` event — the `fix::rN::#join`
 residue task and the cross-file join twin are gone.
 
-## REVIEW is one round (`5173eab67`)
+## THE SPLIT — shards in temp folders, a merger owns the file (2c S1–S3, 2026-09-01)
 
-`review_once`; the loop, `review_oscillating`, `review_patch_stuck`, `RejectMemo` are deleted. The
-measured flags from `decomposition_of` are rendered by `review_must_fix_block` into the prompt. r1's
-three rounds (8 → 4 → 9 new, 51 min, 209k chars) are the reason; `review_dedupe_key` now de-dupes lane
-rephrasings WITHIN the round so `review_findings.new` counts distinct findings.
+`commands/swarm/shards.rs`. After the first `finalize_plan_before_dag`, fatness is MEASURED — spec sections
+claimed per owned file; FAT = above mean + one stddev of the plan's section-claiming tasks AND ≥ 2× their
+median (r6c web-viz 7.0/file vs threshold 4.73 / floor 3.0; r5 viz-field 11 vs 6.56 / 3.17; r6c WITHOUT web-viz:
+ledgerd-core 2.0 clears the 1.78 threshold but not the 2.17 floor — mean + stddev alone flags the maximum of
+almost any plan). A fat task gets ONE split request to synthesis (`plan_flag{kind: fat_task, median, floor,
+threshold, claimed_sections}`; the request lists the CLAIMED headings as the partition, the brief is context)
+→ `plan_patched{source: split}` or `split_declined{task, reason}` (the prompt's own ramp: ONE shard named
+`whole` carrying the reason; the plan stays byte-identical). A shard that writes the merger's file directly is
+`shard_wrote_final_file{module, shard, path}` at completion; its ledger row carries `wrote_final` and the
+merger's dossier lists the file as one more piece to reconcile (`final_on_disk`), never as the finished module. The patch adds N SHARD tasks owning only
+`.swarm/shards/<module>/<shard>/README.md`, `depends_on: []`, briefs carrying the DECLARED INTERFACE (exports,
+signatures, shared state, layout — plan text, never a stub file) and the module brief whole; the module task
+becomes the MERGER (keeps the final file, depends on every shard). At dispatch a shard's YOU OWN is its FOLDER
+(`SHARD_OWNED_HEADER`, `shard_owner_body`: pieces + README, parse-check, never the final file); at completion
+`record_shard_note` reads the README's five fields — `PROVIDES / WRITES / ASSUMES / UNFINISHED / CHECKED_WITH` (WRITES names the shared state this shard is the single writer of; split v2, 27f917b8d) — into
+`shard_note{…, source, pieces}` and the task's ledger row (`shard_note`, `handoffs` via `parse_handoffs`); a
+shard without one is a loud `merge_note_missing{module, shard, reason}` (the deliverable gate's own retry,
+no new count). `TaskSpec`/`DispatchRequest` carry `shard_of` / `merger_of`; the scheduler copies them at claim.
+
+THE MERGER (S4) is a JUDICIOUS MODEL with a SPECIFIC brief: at its dispatch CODE builds the dossier
+(`build_merge_dossier` — parse per piece, cross-shard symbol table: duplicates, signatures disagreeing with the
+declaration, declared names nobody defines; READMEs' ASSUMES no sibling provides; UNFINISHED items; the prior
+MERGE.md on a second pass) → `merge_dossier{…}` and a NUMBERED task list (`merger_brief`: "1. `x` is defined in
+shards a and b — keep ONE…", "…ASSEMBLE, DON'T RETYPE: `cat` the pieces in the declared order, then edit the
+glue"), never "merge the module". The merger writes the final file(s) and `.swarm/shards/<module>/MERGE.md`
+(`KEPT / DROPPED / FILLED / SENT_OUT`); a gap it judges too big is a `MERGE_GAP: …` line → `gap_specs` builds a
+new shard (`gap-<k>/`) and the scheduler's `splice_merge_gaps` door (its own ownership repair; enumerated in
+`every_dag_entry_walks_through_the_same_repairs`) splices it, emits `merge_gap`, and RE-ARMS the merger on it
+(`merge_rearmed`) — continuous, never a barrier. CODE checks after (`check_merge`): parse, every declared export
+present, `merge_piece_dropped{shard, symbol}` for a piece symbol absent without a DROPPED line, `merge_gap_open`
+for an UNFINISHED item neither filled nor sent; `merge_checked{…, promoted}` and `merge_promoted` when parse +
+conformance pass with no gap open. MILD: the task completes either way; REPAIR owns what is left.
+
+## The LLM REVIEW round is deleted (VA-014, 2026-09-01; was one round since `5173eab67`)
+
+`review_once`, `review_plan_fanned`/`review_plan_part`, `review_user_message`, `review_must_fix_block`,
+`review_patch_schema`, the request section cuts and the `review_merge` module (per-lane patch union) are
+gone, with their tests; no `phase: review`, `review_findings` or `review_failed` event is
+emitted (`plan_patched` is emitted again since 2c S1 — by THE SPLIT, `commands/swarm/shards.rs`, with
+`source: split`, never by a review). Measured over three runs the round produced zero effective patches (r5 52.6 wall-min / r6c
+28.1 / r6b+r6d one finding, zero patches; ≈84 node-min per run) — every flag it was aimed at is
+repaired deterministically by `repair_plan_flags` inside `finalize_plan_before_dag`, which is the whole
+of what remains between synthesis and the DAG. The measured flags still come from `decomposition_of`
+(now `commands/swarm/plan_shape.rs`) and ride `plan_synthesized` / `plan_repaired.before/after`.
 
 ## The deterministic gate probes ledgerd's OWN table (`0d5ac740d`)
 

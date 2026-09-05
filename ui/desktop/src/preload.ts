@@ -144,11 +144,52 @@ type ElectronAPI = {
   readFile: (directory: string) => Promise<FileResponse>;
   /** Read the last benchmark result from disk, or null on first run. */
   benchmarkRead: () => Promise<unknown | null>;
-  /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row.
-   *  Two-phase: 'benchmark-started' {workdir} fires immediately (subscribe via `on`), then
-   *  'benchmark-log' lines stream and 'benchmark-finished' closes the run. `sampling` pins this
-   *  run's knobs via env (temperature defaults to the shipped 0.2 pin; the rest ride only when set). */
-  benchmarkRun: (nodes: number, tier?: string, sampling?: SwarmSampling) => Promise<unknown>;
+  /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
+   *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
+   *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion, catalogMismatch?} fires
+   *  immediately (subscribe via `on`), then 'benchmark-log' lines stream and 'benchmark-finished'
+   *  closes the run. `sampling` pins this run's knobs via env (knobs ride only when set).
+   *  The legacy 3-arg call (nodes, tier, sampling) is accepted for one release; the tier is
+   *  IGNORED — the bridge strips it before invoke. */
+  benchmarkRun: ((nodes: number, sampling?: SwarmSampling) => Promise<unknown>) &
+    ((nodes: number, tierIgnored: string | undefined, sampling?: SwarmSampling) => Promise<unknown>);
+  /** Every benchmark run this app has launched, honest outcomes only: 'running' is asserted by
+   *  the live process (never by the index alone); a crash leftover is re-derived from where its
+   *  data lives and stamped. `publishable` = finished AND it is the stored latest result AND its
+   *  benchmark is not frozen per the cached catalog. */
+  benchmarkSessions: () => Promise<{
+    sessions: Array<{
+      runId: string | null;
+      scorerVersion: string;
+      startedAt: string;
+      endedAt?: string;
+      outcome: 'running' | 'finished' | 'did_not_finish' | 'did_not_start';
+      score?: number;
+      tiers?: Record<string, number>;
+      nodes?: number;
+      publishable: boolean;
+    }>;
+  }>;
+  /** Delete one session's data and its index row. Refuses the running session; never touches the
+   *  operator-renamed archive siblings beside the live-run slot. */
+  benchmarkDeleteSession: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** The site's benchmark catalog (current/frozen + baselines) — fetched by MAIN (renderer CSP
+   *  blocks leanzero.net) and cached to disk. A failed fetch serves the cache with stale:true;
+   *  no cache at all is the named absence {error:'catalog unreachable'}, never invented rows. */
+  benchmarkCatalog: () => Promise<{
+    ok?: boolean;
+    stale?: boolean;
+    fetchedAt?: string;
+    benchmarks?: Array<{
+      scorerVersion: string;
+      title: string;
+      current: boolean;
+      frozen: boolean;
+      baselines: Array<{ label: string; score: number; model: string; title?: string; url?: string }>;
+    }>;
+    error?: string;
+    detail?: string;
+  }>;
   /** Kill the active benchmark run — the runner's process group AND the detached engine. */
   benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
@@ -164,20 +205,26 @@ type ElectronAPI = {
     scored?: boolean;
     /** The newest harness output line, for the same re-attach. */
     lastLine?: string | null;
+    /** The engine's run id, null until .swarm/current-run.json appears in the workdir. */
+    runId?: string | null;
   }>;
-  /** Poster identity (~/.config/goose/benchmark/identity.json), created on first use. */
-  benchmarkIdentity: () => Promise<{ installId: string; handle: string }>;
   /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
   benchmarkShots: (
     workdir?: string
   ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
   /** Build + POST the v2 payload from the stored result. Must go through main: the renderer CSP
-   *  blocks external hosts. `model` is required (8..120 chars) — engine-truth prefilled, user
-   *  editable. Returns the server's own message on 422. */
-  benchmarkPublish: (args?: {
-    title?: string;
-    model?: string;
-  }) => Promise<{ ok: boolean; error?: string; status?: number }>;
+   *  blocks external hosts. `title` is REQUIRED (the user's name for the run); the model id is
+   *  engine truth read from the stored result — the renderer cannot send one. Returns the
+   *  server's own message on 4xx and the live card's url on success. */
+  benchmarkPublish: (args?: { title?: string }) => Promise<{
+    ok: boolean;
+    error?: string;
+    status?: number | string;
+    /** Server-shaped refusal text (e.g. the frozen-benchmark gate, answered from the cached
+     *  catalog without burning the POST — the server refuses too). */
+    message?: string;
+    url?: string;
+  }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -402,14 +449,21 @@ const electronAPI: ElectronAPI = {
     return () => ipcRenderer.removeListener('swarm:delta', handler);
   },
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
-  benchmarkRun: (nodes: number, tier?: string, sampling?: SwarmSampling) =>
-    ipcRenderer.invoke('benchmark-run', nodes, tier, sampling),
+  // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the
+  // dead tier choice: strip it so main's (nodes, sampling) contract holds for both call shapes.
+  benchmarkRun: (nodes: number, tierOrSampling?: SwarmSampling | string, legacy?: SwarmSampling) =>
+    ipcRenderer.invoke(
+      'benchmark-run',
+      nodes,
+      typeof tierOrSampling === 'string' ? legacy : tierOrSampling
+    ),
+  benchmarkSessions: () => ipcRenderer.invoke('benchmark-sessions'),
+  benchmarkDeleteSession: (runId: string) => ipcRenderer.invoke('benchmark-delete-session', runId),
+  benchmarkCatalog: () => ipcRenderer.invoke('benchmark-catalog'),
   benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
-  benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string; model?: string }) =>
-    ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
   fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),

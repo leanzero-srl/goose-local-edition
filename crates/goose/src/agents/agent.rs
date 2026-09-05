@@ -69,7 +69,11 @@ use tracing::{debug, error, info, instrument, warn};
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
 const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
-const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
+/// Public because the swarm's supervision seams must strip/recognize EXACTLY the sentence the loop
+/// emits (r6a seq 58: a judge probe's reply was ONLY this filler and the lenient verdict parser
+/// minted a DRIFTING from it). One constant at emit and matcher — the JUDGE_ENDED_NEEDLE pattern —
+/// so a rewording here moves the matcher with it instead of silently un-arming it.
+pub const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
 const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
@@ -280,6 +284,12 @@ pub struct Agent {
     /// so the turn is not wasted on a "missing field path" error. `None` (default) = no repair; every non-swarm
     /// and planner-side agent leaves this None → byte-identical behavior.
     swarm_single_owned_file: std::sync::RwLock<Option<String>>,
+    /// VA-107 (opt-in, set per lane by the swarm): the per-turn `<turn-context>` block carries the
+    /// measured `context: N of M tokens used (P%)` line — the two numbers the compaction guard
+    /// compares — in place of MOIM's threshold-relative "~Nk tokens remaining" figure, and a call
+    /// that reported no usage is announced to the caller. Default false → every non-swarm agent is
+    /// byte-identical.
+    swarm_measured_context: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Debug)]
@@ -414,6 +424,7 @@ impl Agent {
             pending_steers: Mutex::new(HashMap::new()),
             steer_arrived: Notify::new(),
             swarm_single_owned_file: std::sync::RwLock::new(None),
+            swarm_measured_context: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -423,6 +434,12 @@ impl Agent {
         if let Ok(mut g) = self.swarm_single_owned_file.write() {
             *g = path;
         }
+    }
+
+    /// SWARM: turn the measured per-turn context line on for this agent (see the field doc).
+    pub fn set_swarm_measured_context(&self, on: bool) {
+        self.swarm_measured_context
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// If `tool_call` is a developer `write`/`edit` that OMITS a non-empty `path` and a single owned file is
@@ -1975,6 +1992,9 @@ impl Agent {
         );
         let inner = Box::pin(async_stream::try_stream! {
             let mut turns_taken = 0u32;
+            // VA-107: what the LAST provider call said about its usage — picks the arm the measured
+            // context line renders (the session figure is stale when a call reported none).
+            let mut last_call_usage = crate::context_mgmt::context_line::LastCallUsage::NoCallYet;
             let max_turns = session_config.max_turns.unwrap_or_else(|| {
                 Config::global()
                     .get_param::<u32>("GOOSE_MAX_TURNS")
@@ -2070,13 +2090,31 @@ impl Agent {
                     break;
                 }
 
+                let measured_context = self
+                    .swarm_measured_context
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .then_some(last_call_usage);
                 let conversation_with_moim = super::moim::inject_moim(
                     &session_config.id,
                     conversation.clone(),
                     &self.extension_manager,
                     turns_taken,
                     max_turns,
+                    measured_context,
                 ).await;
+                // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
+                // into one `usage_unavailable{task, attempt, turn}` event per lane.
+                if measured_context
+                    == Some(crate::context_mgmt::context_line::LastCallUsage::NotReported)
+                {
+                    yield AgentEvent::Message(Message::assistant().with_system_notification(
+                        SystemNotificationType::InlineMessage,
+                        format!(
+                            "{} (turn {turns_taken})",
+                            crate::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE
+                        ),
+                    ));
+                }
 
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
@@ -2159,6 +2197,14 @@ impl Agent {
                     match next {
                         Ok((response, usage)) => {
                             compaction_attempts = 0;
+                            last_call_usage = if usage
+                                .as_ref()
+                                .is_some_and(|u| u.usage.total_tokens.is_some())
+                            {
+                                crate::context_mgmt::context_line::LastCallUsage::Reported
+                            } else {
+                                crate::context_mgmt::context_line::LastCallUsage::NotReported
+                            };
 
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
@@ -2743,6 +2789,16 @@ impl Agent {
                             // Continue from the compacted conversation instead of treating the
                             // provider error as a missing structured result.
                         }
+                        // A STEER-CUT TURN IS NOT A FORGOT-FINAL-OUTPUT TURN. The steer select
+                        // above stops the generation at a chunk boundary the moment a steer is
+                        // queued, so this turn ended with no tool call and no final output
+                        // BECAUSE a message is waiting — not because the model stopped short.
+                        // Nudging here paired every relayed note with a contradictory "call
+                        // final_output NOW" (measured: the swarm's r6d research-ledger-core-q5.log
+                        // shows the relay and the continuation message back to back). The steer
+                        // drains at the loop top and is the next user message; nothing else is
+                        // owed. Same shape as the `None if has_pending_steers` arm below.
+                        Some(None) if self.has_pending_steers(&session_config.id).await => {}
                         Some(None) => {
                             warn!("Final output tool has not been called yet. Continuing agent loop.");
                             let message = Message::user().with_text(FINAL_OUTPUT_CONTINUATION_MESSAGE);
@@ -2922,8 +2978,23 @@ impl Agent {
                 // summarization is already joined and session metrics were persisted synchronously above,
                 // so a fresh get_session reads the current token count. Mirrors the reactive block below
                 // but continues the loop (no break) since this is proactive, not error recovery.
+                //
+                // VA-076 (the swarm's r6f, killed at OPEN 77m): a structured `final_output` collected
+                // on THIS tool-calling turn is taken at the loop top and ends the reply, but
+                // `exit_chat` is only set on the no-tools path — so a turn that ended by calling
+                // final_output with the session past the threshold (r6f: 107,199 tokens) ran a full
+                // summarization call over a conversation that was already over, on the same node,
+                // invisible to the caller. Read the tool's collected state: once it is set, the
+                // conversation has no next turn to compact for.
+                let structured_output_collected = self
+                    .final_output_tool
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|fot| fot.final_output.is_some());
                 if !did_recovery_compact_this_iteration
                     && !exit_chat
+                    && !structured_output_collected
                     && !is_token_cancelled(&cancel_token)
                 {
                     if let Ok(check_session) =

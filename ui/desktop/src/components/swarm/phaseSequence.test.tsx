@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import FormationRibbon from './FormationRibbon';
-import { FORMATION_PHASES } from './formationVisualState';
+import { formationPhasesFor } from './formationVisualState';
 import { isPlanningPhase, planningLanesFor } from './phaseList';
 import { buildPhaseTodo, foldEvents, foldRunPhase } from './useSwarmRun';
 import fixture from './__fixtures__/r0PhaseSequence.json';
@@ -74,7 +74,10 @@ describe('every engine phase is a phase in the desktop app — the real r0 run',
       'Repair:upcoming',
       'Done:upcoming',
     ]);
-    expect(chips).toHaveLength(FORMATION_PHASES.length);
+    // Every step this run walked and every unconditional one ahead of it — never Split, which only
+    // a run with a measured fat task is offered (VA-138: the step list is derived, never fixed).
+    expect(chips).toHaveLength(formationPhasesFor(observed).length);
+    expect(chips.map((li) => li.textContent?.trim())).not.toContain('Split');
     const buildColumn = document.querySelector('[data-formation-phase="build"]')!;
     expect(within(buildColumn as HTMLElement).getAllByTestId('formation-node')).toHaveLength(3);
     expect(
@@ -91,12 +94,15 @@ describe('every engine phase is a phase in the desktop app — the real r0 run',
       'synthesis',
       'review',
       'contracts',
+      'split',
       'build',
       'integrate',
       'repair',
       'done',
     ]);
     const byKey = (key: string) => todo.find((p) => p.key === key)!;
+    // No fat task on this run: the Split phase has no rows, so the PlanningZone never shows it.
+    expect(byKey('split').items).toHaveLength(0);
     const ask = byKey('ask');
     expect(ask.state).toBe('done');
     // WHO answered is not asserted: this run armed the proxy in immediate mode and emitted no

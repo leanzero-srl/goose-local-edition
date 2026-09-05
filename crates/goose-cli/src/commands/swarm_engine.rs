@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use console::style;
 
-use super::swarm::{SamplingParams, SwarmConfig, SwarmDevice};
+use super::swarm::{fleet_slot_models, SamplingParams, SwarmConfig, SwarmDevice};
 
 /// One resident/served model row as an engine's probe reports it — the exchange type every
 /// catalog probe returns and the pool builder consumes.
@@ -384,43 +384,6 @@ pub(super) fn planner_fallback(
     }
     let alt = fleet_pool.first()?.model_id.clone();
     Some((engine.http_host(), alt))
-}
-
-/// One entry per SLOT the fleet can actually run, not one per device.
-///
-/// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
-/// device to a single `model_id` silently caps every planning-phase fan at the DEVICE count. On this
-/// fleet that is 3 where EXECUTE runs 6: `pick_device` admits a task while `d.in_flight < d.weight`
-/// (baked default 2), so the plan phase was the only phase forbidden from using half the machine.
-///
-/// MEASURED from `detail_completed` spans in baseline-n3-r0: the detail fan spends its time at
-/// concurrency {1: 34.3s, 2: 95.7s, 3: 112.4s} with a makespan of 244s, and never sustains 4 — the
-/// same ceiling in every 3-node cell. On the 1-node arm it is worse: `swarm-1node-r0` detailed 17
-/// items strictly serially, 1743.1s of a 5842.9s run, on a device whose weight is 2.
-///
-/// This is the same node-vs-slot substitution `00563c6ea` fixed for the planner's width prompt, which
-/// the fan-outs were not fixed with.
-///
-/// ⚠ TAKES `DeviceCfg`, NOT `SwarmDevice`. Both carry a `weight` field and they are DIFFERENT
-/// TYPES: `SwarmDevice` (swarm.rs) is the config-file shape, `DeviceCfg` (scheduler.rs) is what the
-/// resolved runtime pool is built into and what every fan-out site actually holds. Writing this
-/// against the config type compiled fine in isolation and failed at all five call sites.
-///
-/// ⚠ THE SKELETON DRAFT VOTE IS DELIBERATELY NOT AFFECTED, and must stay that way. `draft_models`
-/// (see the dedup at the best-of-N site) folds this list through `HashSet::insert`, so duplicates
-/// collapse back to distinct models and the number of drafts is unchanged. That dedup exists because
-/// duplicate draft slots were MEASURED dying — 6 requested, exactly 3 survived, the duplicates
-/// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
-/// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
-/// concurrency change.
-///
-/// The LIVE-fleet variant every fan actually calls is `swarm_engine::live_fleet_slots` (per-engine
-/// residency, this snapshot as its fallback).
-pub(super) fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
-    devices
-        .iter()
-        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
-        .collect()
 }
 
 /// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot — PER ENGINE.
@@ -1754,137 +1717,6 @@ pub(super) fn print_import_summary(s: &ImportSummary) {
             keep
         );
     }
-}
-
-/// "Auto-use what's loaded": build the worker pool from the models currently resident on the
-/// LM Studio fleet (`lms ps` through the engine's own probe chain) so the swarm runs on what's
-/// actually loaded, not (possibly stale) configured model_ids. LM-Studio-only BY CONSTRUCTION:
-/// sidecar devices are config-declared, not discovered — `merge_sidecar_devices` adds them.
-/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller
-/// bootstraps or bails). Weights: explicit device override, else speed_weight, else LM Studio
-/// PARALLEL, else 1.
-pub(super) fn reconcile_pool_with_fleet(
-    cfg: &SwarmConfig,
-    engines: &Engines,
-) -> (Vec<SwarmDevice>, Option<String>) {
-    let procs = match engines.lmstudio().resident_processes() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!(
-                "{}",
-                style(format!(
-                    "fleet-probe-failed: the LM Studio residency probe could not answer ({e:#}) \
-                     — no LM Studio device discovered this run; the pool falls to the configured \
-                     devices (allow_model_load) or the cloud nodes"
-                ))
-                .yellow()
-                .bold()
-            );
-            return (Vec::new(), None);
-        }
-    };
-    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
-    let mut seen = std::collections::HashSet::new();
-    let mut resident: Vec<&LmsProcess> = Vec::new();
-    for p in &procs {
-        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
-            resident.push(p);
-        }
-    }
-    if resident.is_empty() {
-        return (Vec::new(), None);
-    }
-    let pool: Vec<SwarmDevice> = resident
-        .iter()
-        .map(|p| SwarmDevice {
-            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
-            model_id: p.identifier.clone(),
-            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
-            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
-            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else the
-            // configured speed_weight for this host/model (so "a slower machine does less work" actually
-            // shapes DISPATCH, not just planner pick — backlog #6), else LM Studio's PARALLEL for this
-            // instance, else 1. K6: if an override EXCEEDS the probed PARALLEL we WARN but keep the value.
-            weight: {
-                let user_w = cfg
-                    .devices
-                    .iter()
-                    .find(|d| d.model_id == p.identifier)
-                    .map(|d| d.weight);
-                if let (Some(w), Some(par)) = (user_w, p.parallel) {
-                    if w > par {
-                        eprintln!(
-                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
-                            style("⚠").yellow(),
-                            p.identifier,
-                        );
-                    }
-                }
-                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
-                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
-                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
-                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
-                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
-                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
-                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
-                user_w.or(p.parallel).unwrap_or(1).max(1)
-            },
-            enabled: true,
-            instances: 1,
-            host: p.device.clone(),
-            provider: None,
-            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
-            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
-            // actually routes by.
-            speed_weight: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.speed_weight),
-            supervision: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.supervision),
-            // Discovered from the LM Studio fleet, so LM Studio by definition (None = LmStudio).
-            engine: None,
-        })
-        .collect();
-    // Planner: keep the configured planner if it is resident; else pick the best resident model for the
-    // hardest job (the architect skeleton). QUALITY outranks speed here: a low-quant model (q5/q4/q3/q2)
-    // fails the structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host
-    // (highest speed_weight). speed_weight keys match device+identifier (some identifiers omit the host).
-    let planner_rank = |p: &&LmsProcess| -> (u8, u32) {
-        let ident = p.identifier.to_lowercase();
-        let quant_ok = u8::from(
-            !(ident.contains("q2_")
-                || ident.contains("q3_")
-                || ident.contains("q4_")
-                || ident.contains("q5")),
-        );
-        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), ident);
-        let speed = cfg
-            .speed_weights
-            .iter()
-            .find(|(pat, _)| hay.contains(pat.as_str()))
-            .map(|(_, w)| *w)
-            .unwrap_or(1);
-        (quant_ok, speed)
-    };
-    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
-        Some(cfg.planner_model.clone())
-    } else {
-        resident
-            .iter()
-            .filter(|p| {
-                let n = p.identifier.to_lowercase();
-                n.contains("27b") || n.contains("dense") || n.contains("coder")
-            })
-            .max_by_key(|p| planner_rank(p))
-            .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
-            .map(|p| p.identifier.clone())
-    };
-    (pool, planner)
 }
 
 /// Config-declared sidecar devices join the pool ADDITIVELY: reconcile discovers only the LM

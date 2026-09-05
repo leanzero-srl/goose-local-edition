@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { deriveFleet, digestsFromThisRun, foldEvents, resetFoldCache } from './useSwarmRun';
+import {
+  answerWindowOf,
+  deriveFleet,
+  digestStreamFields,
+  digestsFromThisRun,
+  foldEvents,
+  resetFoldCache,
+} from './useSwarmRun';
 import type { TurnLane } from './useSwarmRun';
 
 /**
@@ -38,6 +45,7 @@ const DIGEST = {
     },
   ],
   errors: 2,
+  malformed: 1,
   // SAID provenance — the five fields the engine stamps together from its shared builder. A path
   // that drops any of them re-creates the r0 failure (a dead attempt's error shown as current with
   // no way to say whose text it is), so they ride this test like every other digest field.
@@ -61,7 +69,7 @@ const EXPECTED = {
   lastText: 'answer text',
   recent: ['ran a command'],
   reasoning: 'short digest reasoning',
-  fullReasoning: 'the 24k clip',
+  answerWindow: 'the 24k clip',
   calls: [],
   toolCalls: 7,
   thinkingChars: 4096,
@@ -84,6 +92,7 @@ const EXPECTED = {
   // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
   liveChannel: 'transcript',
   errors: 2,
+  malformed: 1,
   attempt: 1,
   dispatchedAt: '2026-08-29T23:31:02+00:00',
   saidAt: '2026-08-29T23:55:10+00:00',
@@ -160,6 +169,31 @@ describe('every lane-building path carries the whole digest', () => {
       now: 1000,
     });
     expect(joined(workingByDevice.get('mihai'))).toStrictEqual(EXPECTED);
+  });
+});
+
+/**
+ * THE ANSWER WINDOW'S WIRE KEY HAS ONE READER (agenda item V, UI half). The engine writes `full_reasoning`
+ * today and moves to the honest `answer_window`; an engine-side rename must not blank the lane through
+ * this join, and the task card's raw-digest mapper must not learn a different rule than the lanes.
+ */
+describe('the answer window rides one wire-key read', () => {
+  it("reads the engine's current key and the honest key it moves to", () => {
+    expect(answerWindowOf({ full_reasoning: 'today' })).toBe('today');
+    expect(answerWindowOf({ answer_window: 'after the rename' })).toBe('after the rename');
+    expect(answerWindowOf({ answer_window: 'new', full_reasoning: 'old' })).toBe('new');
+    expect(answerWindowOf({})).toBeUndefined();
+    expect(answerWindowOf(undefined)).toBeUndefined();
+    expect(answerWindowOf({ full_reasoning: 42 })).toBeUndefined();
+  });
+
+  it('lands on the lane as answerWindow from either key, through the join', () => {
+    expect(digestStreamFields('k1', { full_reasoning: 'today' } as never).answerWindow).toBe(
+      'today'
+    );
+    expect(digestStreamFields('k2', { answer_window: 'renamed' } as never).answerWindow).toBe(
+      'renamed'
+    );
   });
 });
 
