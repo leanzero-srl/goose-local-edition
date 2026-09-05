@@ -1,11 +1,12 @@
 //! App-under-test PROCESS GROUPS — invariant 5's mechanism, moved verbatim from swarm.rs under the
 //! incremental-split law (development_gates::swarm_rs_line_count_only_decreases), paying for the
-//! 2026-09-05 error-arm/loudness wiring the commits after this one add to the root (A1-A4 sink and
-//! ledger truth, B1-B2 shadow copy and question file, C1-C5 REPAIR tail truth and app spawns). Every
-//! spawn of the produced app runs as the leader of its OWN process group (`spawn_grouped`), is torn
+//! 2026-09-05 error-arm/loudness wiring in the root (A1-A4 sink+ledger truth, B1-B2 shadow copy and
+//! question file, C1-C5 REPAIR tail truth and app spawns). Every spawn of the produced app or of a
+//! smoke command runs as the leader of its OWN process group (`spawn_grouped_capturing`), is torn
 //! down whole (`kill_app_tree`) and releases its pipe readers on the GROUP's liveness, never on EOF
 //! (`kill_app_tree_and_drain` — the r0 park); `ShellGroupReaper` sweeps the groups a worker
-//! attempt's shell tool left behind; `smoke_output` is the smoke commands' bounded runner.
+//! attempt's shell tool left behind. `smoke_output` (C5) is the smoke commands' door into the same
+//! mechanism — `Command::output()` + `kill_on_drop` reached ONE pid.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,16 +15,26 @@ use console::style;
 
 /// Run a smoke subcommand with a HARD TIMEOUT + null stdin, so a produced server/REPL/daemon that ignores
 /// `--help` (or a build that waits on input) can never hang the whole run at the finish line. Returns None on
-/// spawn error OR timeout (inconclusive — never a finding); the child is killed on drop when the timeout fires.
+/// spawn error OR timeout (inconclusive — never a finding). The timeout is on a smoke command, not a model.
+///
+/// C5 (invariant 5): the command runs as the leader of its OWN process group via `spawn_grouped_capturing`
+/// and is torn down with `kill_app_tree` — `Command::output()` + `kill_on_drop` reached ONE pid, so a
+/// `go run`/`npm test`/`cargo run`/`pytest` whose child server outlived the timeout kept its port and its
+/// pipe write-ends (the r0 park). The output is captured WHOLE (never the 16 KiB tail the boot probes
+/// keep), so every parser over stdout/stderr sees exactly what `output()` gave it; a process that exits
+/// on its own is reaped by `wait()` and the group kill that follows is a no-op on a dead group.
 pub(super) async fn smoke_output(mut cmd: tokio::process::Command, secs: u64) -> Option<std::process::Output> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    match tokio::time::timeout(std::time::Duration::from_secs(secs), cmd.output()).await {
-        Ok(Ok(out)) => Some(out),
-        _ => None, // spawn error or timed out -> inconclusive
-    }
+    let mut app = spawn_grouped_capturing(&mut cmd, PipeCapture::Whole).ok()?;
+    let status = tokio::time::timeout(std::time::Duration::from_secs(secs), app.child.wait())
+        .await
+        .ok()
+        .and_then(|s| s.ok());
+    let (stdout, stderr) = app.kill_tree_split().await;
+    Some(std::process::Output {
+        status: status?,
+        stdout,
+        stderr,
+    })
 }
 
 /// Run ONE repro command in `cwd` with a hard timeout, capturing combined stdout+stderr and success. A
@@ -87,11 +98,23 @@ pub(super) async fn kill_app_tree(child: &mut tokio::process::Child, pgid: Optio
     let _ = child.wait().await;
 }
 
-/// Read one of a child's pipes on its own task, keeping the last 8-16 KiB in `buf`. The buffer
-/// is shared rather than returned so a reader aborted mid-stream still yields what it captured.
+/// How much of a child's pipe a `GroupedChild` keeps: the boot/repro probes want only the TAIL
+/// (the traceback is at the end; a chatty server must not grow memory for the whole poll), the
+/// smoke commands (C5) want the WHOLE output — `pytest --collect-only`'s item list and the
+/// parsers over `npm test` read more than the last 16 KiB, and `Command::output()` kept it all.
+#[derive(Clone, Copy)]
+enum PipeCapture {
+    Tail,
+    Whole,
+}
+
+/// Read one of a child's pipes on its own task into `buf` — the last 8-16 KiB for `Tail`, every
+/// byte for `Whole`. The buffer is shared rather than returned so a reader aborted mid-stream
+/// still yields what it captured.
 fn spawn_pipe_tail(
     stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
     buf: Arc<Mutex<Vec<u8>>>,
+    capture: PipeCapture,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         use tokio::io::AsyncReadExt;
@@ -105,16 +128,12 @@ fn spawn_pipe_tail(
             }
             let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
             b.extend_from_slice(&chunk[..n]);
-            if b.len() > 16384 {
+            if matches!(capture, PipeCapture::Tail) && b.len() > 16384 {
                 let cut = b.len() - 8192;
                 b.drain(..cut);
             }
         }
     })
-}
-
-fn captured(buf: &Mutex<Vec<u8>>) -> String {
-    String::from_utf8_lossy(&buf.lock().unwrap_or_else(|e| e.into_inner())).into_owned()
 }
 
 /// Kill the child's group, reap it, then release its pipe readers on the GROUP's liveness.
@@ -222,6 +241,17 @@ impl GroupedChild {
     /// Kill the group, reap the child, release the readers on group liveness, and hand back the
     /// combined stdout+stderr tail — whatever was captured, even if a reader had to be released.
     async fn kill_tree(self) -> String {
+        let (out, err) = self.kill_tree_split().await;
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(&err)
+        )
+    }
+
+    /// The same, with stdout and stderr kept apart (the `std::process::Output` shape the smoke
+    /// callers were written against).
+    async fn kill_tree_split(self) -> (Vec<u8>, Vec<u8>) {
         let GroupedChild {
             mut child,
             pgid,
@@ -230,7 +260,8 @@ impl GroupedChild {
             readers,
         } = self;
         kill_app_tree_and_drain(&mut child, pgid, readers).await;
-        format!("{}{}", captured(&out), captured(&err))
+        let take = |b: &Mutex<Vec<u8>>| b.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        (take(&out), take(&err))
     }
 }
 
@@ -238,6 +269,13 @@ impl GroupedChild {
 /// group. The one way to start anything that may fork: `Command::output()` reads to EOF, and
 /// EOF never comes while a grandchild holds the inherited write-end.
 fn spawn_grouped(cmd: &mut tokio::process::Command) -> std::io::Result<GroupedChild> {
+    spawn_grouped_capturing(cmd, PipeCapture::Tail)
+}
+
+fn spawn_grouped_capturing(
+    cmd: &mut tokio::process::Command,
+    capture: PipeCapture,
+) -> std::io::Result<GroupedChild> {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -248,8 +286,8 @@ fn spawn_grouped(cmd: &mut tokio::process::Command) -> std::io::Result<GroupedCh
     let out = Arc::new(Mutex::new(Vec::new()));
     let err = Arc::new(Mutex::new(Vec::new()));
     let readers = [
-        spawn_pipe_tail(child.stdout.take(), Arc::clone(&out)),
-        spawn_pipe_tail(child.stderr.take(), Arc::clone(&err)),
+        spawn_pipe_tail(child.stdout.take(), Arc::clone(&out), capture),
+        spawn_pipe_tail(child.stderr.take(), Arc::clone(&err), capture),
     ];
     Ok(GroupedChild {
         child,
