@@ -6,6 +6,7 @@ pub mod code_execution;
 pub mod developer;
 pub mod ext_manager;
 pub mod orchestrator;
+pub mod recall;
 pub mod summarize;
 pub mod summon;
 pub mod todo;
@@ -83,6 +84,20 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 unprefixed_tools: false,
                 hidden: false,
                 client_factory: |ctx| Box::new(chatrecall::ChatRecallClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            recall::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: recall::EXTENSION_NAME,
+                display_name: "Recall",
+                description:
+                    "Each turn, recalls the saved memories and names the skills whose words match the request",
+                default_enabled: true,
+                unprefixed_tools: false,
+                hidden: false,
+                client_factory: |ctx| Box::new(recall::RecallClient::new(ctx).unwrap()),
             },
         );
 

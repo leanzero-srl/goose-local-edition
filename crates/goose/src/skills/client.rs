@@ -56,6 +56,22 @@ impl SkillsClient {
     }
 }
 
+/// A supporting file is cut at the tool-response limit so one large file cannot fill a local model's
+/// window; the cut is announced in the result rather than hidden.
+fn bound_supporting_file(content: &str, max_chars: usize) -> (String, Option<String>) {
+    let total = content.chars().count();
+    if total <= max_chars {
+        return (content.to_string(), None);
+    }
+    let kept: String = content.chars().take(max_chars).collect();
+    (
+        kept,
+        Some(format!(
+            "TRUNCATED: showing {max_chars} of {total} characters (GOOSE_MAX_TOOL_RESPONSE_SIZE); read the rest with a file tool.\n"
+        )),
+    )
+}
+
 #[async_trait]
 impl McpClientTrait for SkillsClient {
     async fn list_tools(
@@ -132,6 +148,7 @@ impl McpClientTrait for SkillsClient {
         let skills = self.discover_skills();
 
         if let Some(skill) = skills.iter().find(|s| s.name == skill_name) {
+            tracing::info!(skill = %skill.name, chars = skill.content.len(), "skill loaded");
             return match loaded_skill_context_with_args(skill, args) {
                 Ok(rendered) => Ok(CallToolResult::success(vec![Content::text(rendered)])),
                 Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -165,9 +182,17 @@ impl McpClientTrait for SkillsClient {
                         Ok(canonical) if canonical.starts_with(&canonical_skill_dir) => {
                             match std::fs::read_to_string(&canonical) {
                                 Ok(content) => {
+                                    let (content, note) = bound_supporting_file(
+                                        &content,
+                                        crate::agents::large_response_handler::large_text_threshold(
+                                        ),
+                                    );
+                                    tracing::info!(file = %skill_name, chars = content.len(), truncated = note.is_some(), "skill file loaded");
                                     CallToolResult::success(vec![Content::text(format!(
-                                        "# Loaded: {}\n\n{}\n\n---\nFile loaded into context.",
-                                        skill_name, content
+                                        "# Loaded: {}\n\n{}\n\n---\n{}File loaded into context.",
+                                        skill_name,
+                                        content,
+                                        note.unwrap_or_default()
                                     ))])
                                 }
                                 Err(e) => CallToolResult::error(vec![Content::text(format!(

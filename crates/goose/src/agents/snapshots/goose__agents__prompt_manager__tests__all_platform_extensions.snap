@@ -104,6 +104,10 @@ When running Python scripts or commands, always use `python3` instead of `python
 
 ### Instructions
 Manage agent sessions: list, view, start, send messages, and interrupt agents.
+## recall
+
+### Instructions
+When a request's words match saved memories or a skill's description, the turn context carries a <recalled-memories> block (those memories in full) and a <relevant-skills> block (skill names to load with load_skill). goose adds them; use them when they apply and ignore them when they do not.
 ## skills
 
 ### Instructions
