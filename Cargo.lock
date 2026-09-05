@@ -4903,6 +4903,7 @@ dependencies = [
  "goose-acp-macros",
  "goose-download-manager",
  "goose-mcp",
+ "goose-memory-store",
  "goose-providers",
  "goose-sdk-types",
  "goose-sidecar",
@@ -5127,6 +5128,7 @@ dependencies = [
  "chrono",
  "docx-rs",
  "etcetera 0.11.0",
+ "goose-memory-store",
  "image 0.24.9",
  "include_dir",
  "indoc",
@@ -5146,6 +5148,13 @@ dependencies = [
  "tracing-subscriber",
  "umya-spreadsheet",
  "url",
+]
+
+[[package]]
+name = "goose-memory-store"
+version = "1.41.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

@@ -228,6 +228,7 @@ image = { version = "0.24.9", default-features = false, features = ["png", "jpeg
 subtle = { version = "2.5", default-features = false, features = ["std"] }
 gethostname = "1.1.0"
 leanzero-link = { version = "0.1.0", path = "../leanzero-link", features = ["rustls-tls"] }
+goose-memory-store = { path = "../goose-memory-store" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { workspace = true }

@@ -41,3 +41,4 @@ image = { version = "0.24.4", default-features = false, features = ["bmp", "dds"
 umya-spreadsheet = { version = "2", default-features = false }
 shell-words = { workspace = true }
 process-wrap = { version = "9", default-features = false, features = ["std"] }
+goose-memory-store = { path = "../goose-memory-store" }
