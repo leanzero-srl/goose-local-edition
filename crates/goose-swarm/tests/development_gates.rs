@@ -49,6 +49,30 @@ fn run_path_files() -> Vec<(String, String)> {
         let text = read(&rel);
         files.push((rel, text));
     }
+    // SPLIT v2 (3e99d570d) opened the first NESTED module directory (commands/swarm/shards/assembly.rs);
+    // a directory the scan did not descend into is a run-path file outside every ratchet, so one level
+    // of subdirectories is scanned the same way — "no new file enters unscanned" stays true.
+    let mut nested: Vec<_> = std::fs::read_dir(&split)
+        .unwrap_or_else(|e| panic!("{} unreadable: {e}", split.display()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .flat_map(|d| {
+            let dir_name = d.file_name().to_string_lossy().into_owned();
+            std::fs::read_dir(d.path())
+                .unwrap_or_else(|e| panic!("{} unreadable: {e}", d.path().display()))
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rs"))
+                .map(move |n| format!("{dir_name}/{n}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    nested.sort();
+    for n in nested {
+        let rel = format!("crates/goose-cli/src/commands/swarm/{n}");
+        let text = read(&rel);
+        files.push((rel, text));
+    }
     let src = root.join("crates/goose-swarm/src");
     let mut names: Vec<_> = std::fs::read_dir(&src)
         .unwrap_or_else(|e| panic!("{} unreadable: {e}", src.display()))
@@ -171,6 +195,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (the second and last root-relative calls-read, 0dc8c297f's RESIDUAL, now routes through the
 /// one mirror predicate); and `multifile_stub_note` to commands/swarm/briefs.rs with its test,
 /// paying for its `repairing` disarm (a repair shard's live files must never be stub-written).
+/// --- mlx-inferencing line (multi-engine layer), branched from 45,265 ---
 /// Tightened to 45,126: the LM Studio engine surface (`resolve_lms`, `lms_http_host`,
 /// `probe_lms_http`, `endpoint_model_ids`, `probe_fleet`, `loaded_instance_count`,
 /// `ensure_loaded`) moved verbatim to commands/swarm_engine.rs behind the `SwarmEngine` trait
@@ -219,9 +244,258 @@ fn the_banned_integrate_template_only_shrinks() {
 /// name `engine-mount-failed`, exclude by name, move the planner, refuse an emptied pool) and the
 /// dispatcher's transient re-warm (`rewarm_on_transient`) live whole in swarm_engine.rs; swarm.rs
 /// keeps one call at each site, paying for the named sidecar probe/mount absences.
+/// --- local-edition line (r6h golden), branched from 45,265 ---
+/// Tightened to 44,920: the contextual pitfall cluster (DOMAIN_PITFALLS, PITFALL_TRIGGERS,
+/// relevant_pitfalls, pitfall_items, two tests) moved to commands/swarm/pitfalls.rs (-345, +2
+/// wiring), paying for the two r5-measured lessons taught general there — the
+/// referenced-but-never-defined identifier that severs a browser boot function, and the handler
+/// whose response omits its route's documented fields.
+/// Tightened to 44,901: the SKELETON-FIRST note moved to commands/swarm/briefs.rs beside its
+/// sibling stub note and the entry-file rule unified into one `is_entry_file` (-19), paying for
+/// the note's `repairing` disarm — the skeleton write-first order reached an entry-file repair
+/// shard at both of its dispatches in the motivating run, beside the repair body's read-first
+/// rule.
+/// Tightened to 44,518: the fleet-ordering cluster (`configured_speed_weight`,
+/// `fleet_slot_models`, `live_fleet_slots`, `one_lane_per_host`, `order_fleet_by_speed` and
+/// their 8 tests) moved verbatim to commands/swarm/fleet_order.rs (-383), ahead of the r5
+/// repair-node-selection fix that resolves speed weights per device instead of matching the
+/// substring map against slot model ids.
+/// Tightened to 44,511: the r5 fix itself — `measured_rate_for` and its test moved to
+/// fleet_order.rs beside the new weight resolution (`config_speed_weights`,
+/// `publish_fleet_speed_weights`, `rank_fix_target`), paying for the publish call, the
+/// pool_resolved weight echo and the weight-primary re-rank wiring (-7 net).
+/// Tightened to 43,982: the finding cluster (`FileGroup`, `normalize_rel_path`,
+/// `extract_file_from_finding`, `finding_fingerprint`, `dedupe_findings_exact`,
+/// `engine_critical`, `group_findings_by_file` and their 9 tests, -677) moved verbatim to
+/// commands/swarm/findings.rs, paying for REPAIR priorities in the same commit: provenance
+/// tags at every authoring push site, the severity sort, the wave's severest-first group
+/// order, the shard fix-first note and the severity arrays on complete_verify / known_bugs /
+/// complete_result.
+/// Tightened to 43,933: `elide_middle` and its elision test moved verbatim to
+/// commands/swarm/findings.rs beside its primary consumers (`finding_texts` /
+/// `inconclusive_reasons`, whose 400-char head-cut defect motivated it), paying for the
+/// green-round clear of known_active_bugs(+severities) and handle_repair's
+/// PYTHONDONTWRITEBYTECODE guard.
+/// Tightened to 43,715: the nudge-ladder cluster (`produced_since_look`, `nudge_arm`,
+/// `calls_since_nudge`, `nudge_delivery`, `restream_seed` and their 5 tests, -280) moved to
+/// commands/swarm/ladder.rs, paying for the r6a fix in the same commit: `nudge_delivery`'s
+/// advancing HOLD (a restream may only take a stream that has stopped) and the restream seam's
+/// ladder reset (a fresh attempt starts at nudge 0 — the ignored-steer memory no longer outlives
+/// the stream it measured).
+/// Tightened to 43,684: the research fan's terminal-row emission (`emit_research_outcome`, one
+/// funnel for the two verbatim `research_unanswered` writers) and the panicked-lane row
+/// (`fold_research_panic`) moved to commands/swarm/research.rs (-31), paying for the fold of
+/// raised research questions into the owning slice's brief (`raised_questions_brief_block`) and
+/// the per-question `research_raised_folded` event — r6b's 48 raised questions had reached no
+/// builder and no tick.
+/// Tightened to 43,444: the spec-orientation cluster (`SpecSection`, `spec_sections`,
+/// `orientation_armed`, `spec_orientation`, `head_to_sentence_end`, `unclaimed_sections` and
+/// their sb-7 test) moved to commands/swarm/orientation.rs (-257), and the research prompt test
+/// moved with the prompt builders it exercises to research.rs, paying for the research fan's
+/// grounding wiring in the same commit (r6c: the request file, the snowball block at dispatch,
+/// `research_context`, `research_planned`, `phase: research`).
+/// Tightened to 43,423: `supervision_reply` and its test absorbed into
+/// commands/swarm/supervision.rs's `supervised_reply_text` (the one reply door, which also
+/// strips/refuses the agent loop's turn-cap filler — r6a seq 58's fabricated DRIFTING), paying
+/// for the omni-judge seam's filler classification wiring in the same commit.
+/// Tightened to 43,208: the resume cluster (ResumeState, resume_state_from_dir/_from_log, four
+/// tests) moved to commands/swarm/plan_store.rs, paying for the plan-sidecar wiring
+/// (`.swarm/plan.json` at the plan_synthesized seam, `.swarm/plan-loaded.json` at plan_loaded —
+/// r6c's 133k-char briefs were persisted nowhere the vigil could read during REVIEW).
+/// Tightened to 43,085: `review_dedupe_key` and its six tests moved to
+/// commands/swarm/review_merge.rs with the per-lane patch union (`union_lane_patches`, extracted
+/// from `review_plan_fanned`), paying for the r6c prose-rewrite wiring in
+/// `repair_module_package_collisions` and the `plan_patched.lanes` provenance in the same commit.
+/// Tightened to 42,764: the walking-skeleton cluster (SKELETON_ID, skeleton_invocation_files,
+/// skeleton_description, prepend_skeleton_task, three tests) moved to commands/swarm/skeleton.rs,
+/// paying for `refresh_skeleton_description`'s wiring in the repair chain (r6c: the skeleton's
+/// PLANNED MODULES block baked pre-repair paths and the live lane re-derived ownership from the
+/// engine-authored contradiction).
+/// Tightened to 42,747: `is_agent_loop_filler` and its test moved to commands/swarm/supervision.rs
+/// beside its one non-root caller (`supervised_reply_text`), paying for the wrong-channel wiring
+/// at the nudge-delivery seam (r6c: web-console poured 70,600 chars of its owned files' CSS/HTML
+/// into CHAT TEXT with 0 owned files on disk, and the chars-based `advancing` hold shielded it
+/// from the restream rung — `ladder::wrong_channel_stall`).
+/// Tightened to 42,741: `ledger_task_states` moved to commands/swarm/imports.rs beside the
+/// attribution vocabulary it feeds (`task_state_label`), paying for the lane-defect-view wiring
+/// at the judge seam (r6c seq 1954: the disk-measured defect list ordered web-console to fix
+/// web-viz's web/viz.js "at that exact path" — `judge_context::lane_defect_view` now reshapes a
+/// sibling-owned dangling ref into a do-not-write line naming the owner and its measured state).
+/// Raised to 42,746 (brief-authorized, r6e smalls): +5 lines of event/prompt fidelity in place —
+/// `wrong_channel` on `judge_restream_held`, OK-verdict ESTABLISHED, ETA own-line placement.
+/// Tightened to 42,692 (r6e lane-view extension): `emit_delivery_defects` routes through
+/// `lane_defect_view` (+15 wired), paid for by moving `owned_files_from_run_log` + its test to
+/// judge_context.rs (-69) per the split law.
+/// Tightened to 42,640 (r6c aux live-load routing): `reconcile_pool_with_fleet` moved to
+/// commands/swarm/fleet_order.rs (-111, its planner pick now calling the named
+/// `planner_grade`/`planner_rank` there), paying for the mid-run aux router wiring in the same
+/// commit — the `InflightGuard` door count in `run_agent_in_inner`, `aux_model_for_call`, the
+/// omni-look and replanner reroutes, and the `aux_routed` event.
+/// Tightened to 42,635 (r6c steer-delivery write-progress arms): the inline drift-streak rule
+/// and its test moved to commands/swarm/ladder.rs as `drift_streak_step` (with `write_progress`
+/// beside `wrong_channel_stall`), paying for the owned-bytes baselines and the write-progress
+/// wiring at the omni seam in the same commit.
+/// Tightened to 42,551 (r6c judge-input fidelity): `tail_shingle_set`/`tails_recur` and their
+/// shifting-loop test moved to commands/swarm/ladder.rs, paying for the escalation clause's
+/// write-progress facts (`ladder::escalation_moved` — the judge is told "read-only — no owned
+/// bytes written" instead of a raw action count) and the aux read path's poison recovery.
+/// Tightened to 42,548 (r6c promised-delivery): the steer's SUPERVISOR NOTE format moved to
+/// commands/swarm/ladder.rs as `steer_note`, paying for the `delivery_promise_due` wiring at
+/// the omni seam (a drift hold's promise on a zero-action files-owing lane now delivers by
+/// seeded restream instead of deferring behind think-advance forever).
+/// Tightened to 42,202 (r6c durable-clamp): the judge-reply parse cluster
+/// (`parse_judge_reply`/`parse_judge_eta_mins`/`omni_judge_says_looping`) and its four tests
+/// moved to commands/swarm/supervision.rs beside `supervised_reply_text` (the reply door that
+/// must run before the parse), paying for the verdict-site durable-transcript clamp
+/// (`ladder::durable_clamped_produced` — a look's produced claim the durable think.log does
+/// not back reads as zero, so a stream dead across a whole look cycle can no longer hold a
+/// drift verdict on "fresh content" that was backlog draining through the meter).
+/// Tightened to 41,872 (r6c repair brief): the THREE colliding repair-prompt blocks — the repair
+/// owner body, the current-content note and the fix directive's ownership bullet — moved to
+/// commands/swarm/briefs.rs as `repair_owner_body`/`current_content_block`/`fix_directive`, beside
+/// the asset-owner and write-granularity classifiers that now serve both the dispatch and the
+/// `rules_delivered` labels. The move paid for the repair arms of `stopping_rules` and
+/// `rules_sections` (a repair shard no longer reads "report DONE immediately", "STOP WHEN GREEN"
+/// and "you may edit ANY file" against its own order).
+/// Tightened to 40,765 (r6e header-named shape column): the endpoint-table parser
+/// (`SpecSurface`/`spec_surface_rows`/`heading_service_name`/`spec_advertised_surface`/
+/// `spec_post_endpoints`) and its two table tests moved to commands/swarm/spec_surface.rs,
+/// paying for the header-named expected-shape column (r6c's briefs read §5's ROLE column as the
+/// response shape: "POST /api/drafts -> EXPECT maker or checker").
+/// Tightened to 40,716 (r6e decision contract): `OpenSlice`/`OpenOutput`/`open_schema` moved to
+/// commands/swarm/opener.rs beside the new parse-time decision gate (`OpenOutputRaw::qualify`),
+/// paying for the opener prompt's open-decision contract (question + two options + citation) and
+/// the qualified parse at the OPEN call site.
+/// Tightened to 40,691 (r6e research-lane judge clause): `parse_json_lenient` /
+/// `extract_first_json_object` moved to commands/swarm/lenient_json.rs, paying for the judge
+/// contract's research-lane clause (NEXT names where to look or "emit what you have", never the
+/// answer — r6d's judge-research-ledger-core-q2 dictated the mini's content at look 1 and its
+/// opposite at look 4).
+/// Tightened to 39,696 (the fan cut, C1): `briefs_from_slices` and its four tests moved to
+/// commands/swarm/research.rs beside the rows it partitions (-312 net), paying for the opener's
+/// question contract at the OPEN call (request file + SOURCES before the opener runs, the
+/// kind/cite/fact paragraph) and the fan's cited-fact arm — r6d's 13 spec lookups, 201 lane-min.
+/// Held at 39,696 (the fan cut, C2): `files_from_objective` moved to research.rs beside its one
+/// caller (-42), paying for the decision routing call and the covered-mini check at the lane.
+/// Tightened to 39,588 (the fan cut, C3): `fanout_over_fleet` moved to commands/swarm/
+/// fleet_order.rs (-116) and the terminal-fold test to research.rs beside its fold, paying for
+/// the one-lane-per-slice fan (batches, per-question rows, strays named) and E7's second drain
+/// site inside the judge-probe select! (the loop-top drain was unreachable during a look).
+/// Tightened to 39,583: the dead `max_research_questions` lever retired (its default fn, the
+/// CLI printer/menu/editor arms and the live levers echo deleted; the field survives as
+/// `Option` for the config round-trip and is echoed under `retired_levers`).
+/// Tightened to 39,482 (VA-023 D0): `decomposition_of` and its two standalone tests moved to
+/// commands/swarm/plan_shape.rs, paying for the skeleton verdict rows flattened onto the sink in
+/// `finalize_plan_before_dag` (first-class `skeleton_dep_kept`/`skeleton_dep_relaxed` events) and
+/// the audit test's assertion flip (`web` owns `web/app.js` only and no longer waits on the skeleton).
+/// Tightened to 38,328 (VA-014, gate 9): the LLM REVIEW round deleted — `review_once`, the
+/// dispatcher's `review_plan`/`review_plan_fanned`/`review_plan_part`, `review_user_message`,
+/// `review_must_fix_block`, `review_patch_schema`, `cut_request_into_sections`/`_portions`,
+/// `slugify_slice_id`, the `review_fan` seam parameter and eleven tests; commands/swarm/review_merge.rs
+/// (the per-lane patch union) deleted with it. Measured: zero effective patches in three runs.
+/// Tightened to 38,043 (VA-014 D1, second half): the M5 completion-time pre-review deleted —
+/// `PreReviewer::pre_review`, `read_prereview_findings` and its sink injection, the `.swarm/prereview`
+/// channel, `prereview_dim`, the GOOSE_SWARM_PREREVIEW gate (the trait's other idle jobs attach
+/// unconditionally behind their own gates); scheduler.rs lost `pick_prereview_request`, the M5 loop
+/// arm and `pre_reviewed`; event.rs lost `PreReview`/`PreReviewFailed`. Zero `pre_review` events in
+/// r5/r6c/r6d — off in every measured run.
+/// Tightened to 37,822 (VA-015, gate 9): the dynamic replanner deleted — `impl Replanner for
+/// GooseAgentDispatcher` (the replan prompt, orientation and lane), `replan_schema`, the
+/// `dynamic_replan`/`max_replans` defaults, CLI flag, printer, menu and editor arms and the levers echo
+/// (the fields survive as `Option` under `retired_levers`); goose-swarm lost replan.rs, the scheduler's
+/// summon/splice/repair path, `Replanned` and their tests.
+/// Tightened to 37,819 (VA-030 / D10): the worker-channel copy of the research-settled decisions
+/// (`research_settled_worker_block` + `settled_decisions`) deleted — the brief carries them once, per
+/// slice and whole; `spec_documented_keys` gained its prose-shape consumer and the research prompt the
+/// plan-wide `consumed_spec_sections` inputs.
+/// Tightened to 37,655 (VA-016, gate 9): LEARN & REFLECT deleted — the persona read half
+/// (`persona_loaded`), the structural snapshot and the post-verdict write half (`reflect_on_success`,
+/// `persona_learned`), the `reflect` lane and the levers echo; commands/swarm/persona.rs (1,224 lines)
+/// deleted with it. `lessons: 0` on both runs that wrote a skill; `persona` survives as a retired field.
+/// Tightened to 37,649 (VA-013/VA-019 D4): the ASK-floor heuristics (`model_active_params_b`,
+/// `ask_floor_weak_bump`, their test) moved to commands/swarm/ask_floor.rs, paying for the judge's
+/// evidence-only summon on build lanes (`ladder::judge_summon_trigger`, the forming-stall sampler) and
+/// the `node` / `secs` / `forming_bytes` / `trigger` fields on the look events.
+/// Tightened to 37,561 (VA-009 D5): `repair_sink_files` and its test moved to
+/// commands/swarm/plan_repairs.rs beside the new rule (e) `repair_brief_file_mentions`, paying for the
+/// rule's wiring in `repair_plan_flags` / `PlanRepairs.mentions` / the finalize seam's
+/// `brief_names_unowned_file` fan-out.
+/// Tightened to 37,549 (VA-008 adjunct D6): `snapshot_tree_files` moved to commands/swarm/tree.rs,
+/// paying for the worker prompt's REQUEST_FILE line (the full request on disk, named once, absolute;
+/// `request_file_absent_at_dispatch` when it is not there).
+/// Tightened to 37,514 (VA-027 D7): the two inline rsync argument lists (best-tree snapshot and
+/// restore) collapsed into `tree::rsync_app_tree` over ONE exclusion list, paying for the write-once
+/// `.swarm/prefix-tree` snapshot at the INTEGRATE -> REPAIR handover (`prefix_tree_snapshot{ok, files}`).
+/// Tightened to 37,503 (VA-030 D10-5/6/7): `content_hash` and its test moved to commands/swarm/tree.rs,
+/// paying for `write_ledger_mini_checked` (the research fan's four writers emit
+/// `research_mini_write_failed` through `persist_research_row`) and the cover site's sink argument.
+/// Tightened to 37,501 (VA-034 D10-8): the opener's QUESTIONS rule moved out of the system prompt's head
+/// into `opener::opener_questions_rule`, rendered right after the SOURCES block; the schema requires a
+/// cite on every kind.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_649;
+    // Tightened to 37,117 (VA-030 D11a): the ledger block renderer moved to
+    // `commands/swarm/ledger_block.rs`, paying for the shard decisions channel's wiring.
+    // Tightened to 37,068 (D11b): the replanner's bonus-task green rule and report split deleted.
+    // Tightened to 37,001 (2c S7): rule (d) `repair_unassigned_endpoints` moved to plan_repairs.rs
+    // beside rules (e) and (f), paying for rule (f)'s wiring (`repair_sink_deps`, the join waits on
+    // every task) and the two-tail cut constant.
+    // Tightened to 36,793 (2c S1): the retired test-only `split_fat_modules` and its three tests
+    // deleted (the measured split is commands/swarm/shards.rs), paying for the split seam's wiring
+    // in `plan_slices_to_dag` / `run_linear_plan`.
+    // Tightened to 36,755 (2c S2/S3): the ledger mini writers (`write_task_ledger`,
+    // `write_gate_ledger`, `RepairLedgerRow`/`write_repair_ledger`) moved to
+    // commands/swarm/ledger_writers.rs, paying for the shard's dispatch/completion wiring.
+    // Tightened to 36,736 (2c S4): `syntax_error` / `py_syntax_error` / `rust_compile_error`
+    // moved to commands/swarm/parse_checks.rs (shared with the merger's dossier), paying for the
+    // merger's dispatch (dossier brief) and completion (gap follow-ups, after-checks) seams.
+    // Tightened to 36,433 (2c S5a-c): the per-file fix fan's closure body, the whole-file
+    // promoter (`grade_promotion_preview`, `promote_speculative`, `copy_owned_files`) and their
+    // barrier moved out — commands/swarm/repair_waves.rs runs one shard per FINDING, lands by
+    // three-way merge, and dispatches without a round barrier.
+    // Tightened to 36,336 (2c S5d+S8): `render_repair_history` moved to commands/swarm/
+    // ledger_block.rs beside the roll-up it reads, paying for the gate-evidence and the
+    // forming-reset lines.
+    // Tightened to 36,254 (2c S12): the thin-brief floor (`THIN_BRIEF_MIN_CHARS`,
+    // `thin_brief_missing`) and its test moved to commands/swarm/briefs.rs, paying for the
+    // merger's frame arms (owner body, reading rule, the ACT-NOW skip).
+    // Tightened to 34,905 (VA-056/VA-058): the judge's look constants (JUDGE_WAKE,
+    // OMNI_JUDGE_MIN_CHARS, DIGEST_IO_CADENCE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS) moved to
+    // commands/swarm/ladder.rs, paying for the worker loop's undelivered-NEXT clause, the
+    // repeated-NEXT corroboration and the task-attempt `NudgeHistory`; the cadence clock
+    // (OMNI_JUDGE_FIRST_LOOK_SECS / OMNI_JUDGE_INTERVAL_SECS, `omni_next_look`, the 300s backoff)
+    // and the growth-without-acting trigger are deleted outright.
+    // Tightened to 34,782 (VA-081): `render_previous_attempt_block` and its test moved to
+    // commands/swarm/transcripts.rs beside `read_calls_capture` (its input), paying for the worker
+    // loop's `SystemNotification`/`Usage`/`HistoryReplaced` arms (`lane_compaction`/`lane_notice`).
+    // Tightened to 34,714 (VA-067): `render_completed_output_from_ledger` moved to
+    // commands/swarm/transcripts.rs beside `build_task_ledger_row` (the row it reads), paying for
+    // `plan_loaded.tasks[].shard_of/merger_of`.
+    // Tightened to 34,669 (VA-079): `classify_command` / `pytest_runs_whole_suite` and their test
+    // moved to commands/swarm/transcripts.rs (their only production callers, the calls-capture row
+    // builder), paying for `mod merge_holes;`, the merger brief's GAP paragraph at dispatch and the
+    // shard completion's `shard_pieces_absent` event.
+    // Tightened to 34,622 (VA-066): the three `judge_delivery_block` tests moved to
+    // commands/swarm/judge_context.rs beside the function, paying for `shard_by_task` (the
+    // dispatcher's task -> ShardOf map, published with ownership) and the look site's pieces view.
+    // Tightened to 34,564 (VA-065): rule (a) `repair_owning_nothing` + `repoint_dependency` moved
+    // to commands/swarm/plan_repairs.rs beside rules (d)-(f), carrying THE SPLIT exemption, paying
+    // for `merge_dossier_incomplete` at the merger's dispatch and `merge_hole` at its completion.
+    // Tightened to 34,429 (SPLIT v2, part 2): `mentions_ext` / `detect_language` and their two tests
+    // moved to commands/swarm/lang.rs, paying for the shard-completion verification seam
+    // (`shard_verify::verify_shard`, mechanism 2), the fix wave's `setup_failed` field (VA-086) and
+    // the split's `free_hosts` derivation + parameter (mechanism 6) — three commits, one extraction;
+    // the baseline is the count AFTER all three, so each intermediate commit sits under it.
+    // Tightened to 33,802 (r6j, VA-118 wiring): the per-answer research tool lives in
+    // commands/swarm/research_tool.rs with `queue_research_relay` moved beside it; the
+    // wiring here is the frontend-tool arm, the extension add and the fan's landing open/close.
+    // Merged 2026-09-05: local-edition (r6h golden, VA-0xx–156) + mlx-inferencing (multi-engine
+    // layer); baseline = measured. The merge kept swarm_engine.rs as the ONE home of the LM Studio
+    // probe surface (theirs' 386-line copy dropped — byte-identical to the merge base), dropped
+    // the VA-014/015-deleted review/sink-review/replanner fields the mlx line still carried, and
+    // re-seated `reconcile_pool_with_fleet` (fleet_order.rs, now engine-threaded), `live_fleet_slots`
+    // (swarm_engine.rs, per engine) and `fleet_slot_models` (fleet_order.rs, re-exported).
+    const SWARM_RS_LINE_BASELINE: usize = 33_411;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -259,12 +533,30 @@ fn do_everything_never_reaches_a_model() {
 /// failure into a green gate. Baseline 130 measured at HEAD bce2901d9 (swarm.rs 104, scheduler.rs 24,
 /// dag.rs 1, patch.rs 1); TIGHTENED to 128 by GEN-6a, which converted the evidence-hiding sites
 /// (scheduler replan laundering, the pillars serialize/panic pair, distill parse) into named
-/// events. The survivors are the honest-empty class: json field reads and format-string absences
+/// events; to 127 on 2026-09-01 when the retired `split_inherit_spec` echo row took its env-read
+/// `unwrap_or_default()` with it. The survivors are the honest-empty class: json field reads and format-string absences
 /// where empty genuinely means empty. The count may only DECREASE. If you legitimately need a new
 /// one, prove the empty MEANS empty in a comment at the call site (honest-empty exemplar:
 /// scheduler.rs hashes "ABSENT" distinctly instead of hashing nothing) and adjust the baseline in
 /// the SAME commit — the diff then shows the proof next to the licence.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 128;
+// Tightened to 120 (2c S12-D): shards.rs's `parse_shard_note` destructures its four field lists
+// (a wrong count is a `?`, not four empty defaults) and an unreadable piece is SAID
+// (`unreadable: <err>`), never rendered as "parses — no definitions found"; the survivors in
+// shards.rs each carry their empty-means-empty proof comment.
+// Tightened to 117 (2c S13): repair_waves.rs's three-way compose reads its OURS/THEIRS/BASE
+// bytes explicitly — a missing or unreadable OURS is `shard_file_unreadable` and no change (never
+// an EMPTY file landed), an absent THEIRS/BASE is the honest empty of a file that did not exist.
+// To 97 on 2026-09-01 (2c S6): the idle-model judge (judge.rs, `apply_judge_outcome`, `apply_split`,
+// goose-cli's `impl Judge`), its Looping-salvage path and the idle-fill dimension reviews took 20
+// with them — deletions of 0-happy-path arms, not new proofs.
+// To 96 (VA-080 item 3): shards.rs's `measure_fatness` RECORDS a task no opener slice is named
+// for (`FatMeasure::unclaimed`) instead of defaulting its claim away; a plan whose every row is
+// unclaimed is said (`fatness_unmeasurable`) rather than measured as a flat nothing.
+// To 94 (VA-105): the vendor probe's reqwest client `.build().unwrap_or_default()` — a default
+// client that panics on first use if the TLS backend failed — is a match: `Err(e)` is a measured
+// `vendor_probe{ok:false, error: "http client: …"}`, the spec's build proceeds exactly as with a
+// dead vendor (vendor_probe.rs).
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 94;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
@@ -360,60 +652,73 @@ fn campaign_skill_still_forbids_headless_launches() {
 /// GATE 6 — THE ONE-DOOR GATE (Mihai 2026-08-30, minutes after the r4 kill: "add it to our gates
 /// to avoid in the future - make it a practice"). r4's replanner spliced five tasks into the live
 /// DAG past every plan repair; one re-created the module/package shadow the repair had just fixed,
-/// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs:
-/// the scheduler's splice site must sanitize through `repair_replan_specs` before `splice_specs`,
-/// the sink-file strip must stay in the plan-repair chain, and both agentic docs must carry the
-/// gate so a compaction cannot lose it.
+/// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs.
+/// VA-015 (2026-09-01, gate 9) DELETED the dynamic replanner — the door r4 came through no longer
+/// exists — so this test now refuses its RETURN (no `Replanner` attach, no `.replan(` call, no
+/// `repair_replan_specs` in scheduler.rs) and enumerates the one splice site left: the merger's
+/// gap door (`splice_merge_gaps`, 2c S4), whose refusals ARE its ownership repair — the idle-model
+/// judge's `apply_split` partition door is deleted (2c S6). The sink-file strip must stay in the
+/// plan-repair chain, and both agentic docs must carry the gate so a compaction cannot lose it.
 #[test]
 fn every_dag_entry_walks_through_the_same_repairs() {
     let sched = read("crates/goose-swarm/src/scheduler.rs");
+    for gone in [
+        "with_replanner",
+        ".replan(",
+        "repair_replan_specs",
+        "Replanner",
+    ] {
+        assert!(
+            !sched.contains(gone),
+            "scheduler.rs contains `{gone}` — the dynamic replanner was deleted (VA-015: r6c's \
+             replan-r0 ran 208 unsupervised minutes for two bonus tasks nothing imported; r5's held \
+             two READY tasks 19 minutes). A mid-run task-adding path returns only with the \
+             measurement gate 9 demands, and then it walks the same ownership repairs as every \
+             other door and joins the enumerated list below."
+        );
+    }
     // GATE-AUDITOR STRENGTHENING (2026-08-30): the old form windowed ONE known door and was a
-    // lock, not a tripwire — a third `.splice_specs(` call inserted after the guarded window
-    // would have passed unguarded (the r4 lesson applied to the gate's own test). Now every
-    // splice call site is ENUMERATED (a call-site ratchet, same species as the
-    // unwrap_or_default ratchet) and each must show its own repair discipline inside its own
-    // function body. A new door fails the build until it names its repair and joins the list.
+    // lock, not a tripwire — a splice call inserted after the guarded window would have passed
+    // unguarded (the r4 lesson applied to the gate's own test). Every splice call site is
+    // ENUMERATED (a call-site ratchet, same species as the unwrap_or_default ratchet) and each
+    // must show its own repair discipline inside its own function body. A new door fails the
+    // build until it names its repair and joins the list.
     let sites: Vec<usize> = sched
         .match_indices(".splice_specs(")
         .map(|(i, _)| i)
         .collect();
     assert_eq!(
         sites.len(),
-        2,
-        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 2 (apply_split's \
-         partition door and the replan door). A NEW door must carry its ownership repair and be \
-         added here with its guard assert — never spliced past the repairs (gate 6, the r4 class).",
+        1,
+        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 1 \
+         (splice_merge_gaps, the merger's gap door — 2c S4; apply_split's partition door is deleted \
+         with the idle-model judge, 2c S6). A NEW door must carry its ownership repair and be added \
+         here with its guard assert — never spliced past the repairs (gate 6, the r4 class).",
         sites.len()
     );
-    // Door 1 — the replan path: repair_replan_specs stands between the replanner's answer and
-    // the splice. Windowed to dodge the fn-definition trap.
-    let answer_at = sched
-        .find(".replan(ctx).await")
-        .expect("the replanner call site exists");
-    let splice_at = sched[answer_at..]
+    // The merge-gap door (2c S4): a merger's MERGE_GAP follow-ups are shards of the SAME module,
+    // own only fresh files under `.swarm/shards/<module>/` no task already owns, and depend on
+    // nothing — those refusals ARE its ownership repair, and they stand between the fn and its
+    // splice.
+    let gap_fn = sched
+        .find("fn splice_merge_gaps(")
+        .expect("splice_merge_gaps exists");
+    let gap_splice = sched[gap_fn..]
         .find(".splice_specs(")
-        .map(|i| answer_at + i)
-        .expect("the replan splice site exists after the replanner call");
-    assert!(
-        sched[answer_at..splice_at].contains("repair_replan_specs("),
-        "repair_replan_specs must stand between the replanner's answer and splice_specs — \
-         a batch that reaches the DAG unrepaired is the r4 shadow-reintroduction class"
-    );
-    // Door 2 — apply_split's partition validation IS its ownership repair (an exact partition
-    // of the parent's already-repaired claim cannot create a second claimant or a new path):
-    // its two load-bearing refusals must stand between the fn definition and its splice.
-    let split_fn = sched.find("fn apply_split(").expect("apply_split exists");
-    let split_splice = sched[split_fn..]
-        .find(".splice_specs(")
-        .map(|i| split_fn + i)
-        .expect("apply_split's splice site exists inside the fn");
-    let split_body = &sched[split_fn..split_splice];
-    assert!(
-        split_body.contains("!orig_files.contains(f)")
-            && split_body.contains("union != orig_files"),
-        "apply_split's partition refusals (foreign-file and non-exact-cover) must guard its \
-         splice — they are this door's equivalent of repair_replan_specs"
-    );
+        .map(|i| gap_fn + i)
+        .expect("splice_merge_gaps' splice site exists inside the fn");
+    let gap_body = &sched[gap_fn..gap_splice];
+    for guard in [
+        "sh.module != module",
+        "!f.starts_with(&prefix)",
+        "owned_elsewhere.contains(f.as_str())",
+        "!g.deps.is_empty()",
+    ] {
+        assert!(
+            gap_body.contains(guard),
+            "splice_merge_gaps lost its refusal `{guard}` — the gap door's ownership repair"
+        );
+    }
     let engine = read("crates/goose-cli/src/commands/swarm.rs");
     assert!(
         engine.contains("repair_sink_files(plan, &mut actions);"),
@@ -460,4 +765,221 @@ fn the_read_the_words_gate_is_carried() {
         skill.contains("READ THE WORDS FIRST") && skill.contains("tail -c 4000"),
         "the campaign skill lost the words-first checkpoint procedure"
     );
+}
+
+/// GATE 9 — THE VALUE GATE (Mihai 2026-09-01, three hours into r6d's 4-hour research fan under four
+/// ticks that said `continue`: "Why would a phase that takes 4 hours and doesn't bring value continue?
+/// This is the question." / "we don't want steps that consume time and not a lot of value. Get that
+/// straight"). A step exists only while its measured delivery is consumed downstream; the vigil grades
+/// the CURRENT phase every tick and files ACTIONS into the queue surgeons are dispatched from. This is
+/// the tripwire: it pins the practice in the docs and instruments that arm every session. The reader
+/// is the gate.
+#[test]
+fn the_value_gate_is_carried() {
+    for (doc, needle) in [
+        ("AGENTS.md", "THE VALUE GATE"),
+        (".claude/rules/development-gates.md", "THE VALUE GATE"),
+        (".claude/agents/tick-surgeon.md", "PHASE VALUE"),
+        (".claude/agents/tick-surgeon.md", "note.sh action"),
+        (
+            "VIGIL-ACTIONS.md",
+            "| id | filed | surface | status | action |",
+        ),
+        ("CLAUDE.md", "VIGIL-ACTIONS.md"),
+    ] {
+        assert!(
+            read(doc).contains(needle),
+            "{doc} lost the VALUE gate ({needle})"
+        );
+    }
+    let home = std::env::var("HOME").expect("HOME set");
+    let loop_state = std::path::Path::new(&home).join("goose-builds/loop-state");
+    // The vigil instruments live OUTSIDE the repo, on the MacBook only (memory: tick.py lives
+    // only on the MacBook). On any other machine this half of the gate has nothing to read; it
+    // says so by name instead of failing the merged tree's build (measured 2026-09-05 on the
+    // Mac Studio: `note.sh readable` panicked on a tree identical to local-edition's).
+    if !loop_state.is_dir() {
+        eprintln!(
+            "the_value_gate_is_carried: instrument half SKIPPED — {} is absent on this machine \
+             (the vigil instruments live on the MacBook); the doc half above still asserted",
+            loop_state.display()
+        );
+        return;
+    }
+    let note = std::fs::read_to_string(loop_state.join("note.sh")).expect("note.sh readable");
+    assert!(
+        note.contains("VIGIL-ACTIONS.md") && note.contains("\"action\""),
+        "note.sh lost the `action` kind that feeds the surgeons' queue"
+    );
+    let tick = std::fs::read_to_string(loop_state.join("tick.py")).expect("tick.py readable");
+    assert!(
+        tick.contains("PHASE VALUE research") && tick.contains("PHASE VALUE build"),
+        "tick.py lost the PHASE VALUE cost rows"
+    );
+}
+
+/// GATE 10 — THE NO-ABSOLUTES GATE (Mihai 2026-09-02: "we need to avoid hard coded bits because this
+/// is an agent … the benchmark is the cause not the goal"). Every `const NAME: <int|float> = <literal>;`
+/// outside a `#[cfg(test)]` block in the run path is a typed absolute; the count may only DECREASE.
+/// A literal that is a RATIO of something the run produces or a MEASUREMENT carries `// ratio:` or
+/// `// measured:` on its line and is exempt — a reviewer reads the marker, the ratchet only counts.
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
+
+fn is_numeric_const_literal(line: &str) -> bool {
+    let s = line.trim_start();
+    let s = s
+        .strip_prefix("pub(crate) ")
+        .or_else(|| s.strip_prefix("pub(super) "))
+        .or_else(|| s.strip_prefix("pub "))
+        .unwrap_or(s);
+    let Some(rest) = s.strip_prefix("const ") else {
+        return false;
+    };
+    let Some((_, after_colon)) = rest.split_once(':') else {
+        return false;
+    };
+    let ty_and_val = after_colon.trim_start();
+    let Some((ty, val)) = ty_and_val.split_once('=') else {
+        return false;
+    };
+    let ty = ty.trim();
+    if !matches!(ty, "usize" | "u64" | "u32" | "i64" | "f64" | "f32") {
+        return false;
+    }
+    let val = val.trim();
+    let Some(val) = val.strip_suffix(';') else {
+        return false;
+    };
+    let val = val.trim();
+    !val.is_empty()
+        && val
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+}
+
+/// Counts live numeric const literals in one file, skipping every `#[cfg(test)]`-attributed block by
+/// brace depth (swarm.rs interleaves several test modules with live code, so "cut at the first
+/// cfg(test)" would hide live constants).
+fn live_numeric_literals(text: &str) -> Vec<String> {
+    let mut hits = Vec::new();
+    let mut depth: Option<i64> = None;
+    let mut pending = false;
+    for line in text.lines() {
+        let opens = line.matches('{').count() as i64;
+        let closes = line.matches('}').count() as i64;
+        match depth {
+            Some(d) => {
+                let nd = d + opens - closes;
+                depth = if nd <= 0 { None } else { Some(nd) };
+            }
+            None => {
+                if line.trim_start().starts_with("#[cfg(test)]") {
+                    pending = true;
+                    continue;
+                }
+                if pending {
+                    if opens > 0 {
+                        let nd = opens - closes;
+                        depth = if nd <= 0 { None } else { Some(nd) };
+                        pending = false;
+                    }
+                    continue;
+                }
+                let lower = line.to_ascii_lowercase();
+                let exempt = lower.contains("// ratio:") || lower.contains("// measured:");
+                if is_numeric_const_literal(line) && !exempt {
+                    hits.push(line.trim().to_string());
+                }
+            }
+        }
+    }
+    hits
+}
+
+#[test]
+fn live_numeric_literals_only_shrink() {
+    let mut total = 0usize;
+    let mut per_file = String::new();
+    for (rel, text) in run_path_files() {
+        let hits = live_numeric_literals(&text);
+        if !hits.is_empty() {
+            per_file.push_str(&format!("  {:4}  {rel}\n", hits.len()));
+            for h in &hits {
+                per_file.push_str(&format!("          {h}\n"));
+            }
+        }
+        total += hits.len();
+    }
+    assert!(
+        total <= LIVE_NUMERIC_LITERAL_BASELINE,
+        "the run path carries {total} live numeric const literals (baseline \
+         {LIVE_NUMERIC_LITERAL_BASELINE}):\n{per_file}A number lives in the engine only as a RATIO \
+         of what the run produces or a MEASUREMENT it takes (gate 10, AGENTS.md GATES). Derive it, \
+         or mark the line `// ratio: <of what>` / `// measured: <how>` so a reviewer reads the \
+         receipt, and lower the baseline in the same commit."
+    );
+    if total < LIVE_NUMERIC_LITERAL_BASELINE {
+        eprintln!(
+            "live numeric literal count is {total} < baseline {LIVE_NUMERIC_LITERAL_BASELINE}: \
+             tighten LIVE_NUMERIC_LITERAL_BASELINE in the same commit so the ratchet holds the gain"
+        );
+    }
+    for (doc, needle) in [
+        ("AGENTS.md", "THE NO-ABSOLUTES GATE"),
+        (
+            ".claude/rules/development-gates.md",
+            "THE NO-ABSOLUTES GATE",
+        ),
+    ] {
+        assert!(read(doc).contains(needle), "{doc} lost gate 10 ({needle})");
+    }
+}
+
+/// GATE 11 — THE KNOWN-FIX GATE (Mihai 2026-09-02: "are you not doing anything about the hard coded
+/// bits I asked about?"). A `SCHEDULED` action must name the measurement its design waits on; a
+/// `QUEUED` action must name the slot it waits behind. "After the run" is never a status — a surgeon
+/// edits in a worktree cargo-free while a run holds the local node.
+#[test]
+fn a_scheduled_action_names_what_it_waits_on() {
+    let text = read("VIGIL-ACTIONS.md");
+    let mut bad = String::new();
+    for line in text.lines() {
+        if !line.starts_with("| VA-") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split(" | ").collect();
+        let Some(status) = cells.get(3) else { continue };
+        let status = status.trim();
+        if status.starts_with("SCHEDULED") && !status.contains("waits on:") {
+            bad.push_str(&format!(
+                "  {} — SCHEDULED without `waits on:`\n",
+                cells[0].trim_start_matches("| ")
+            ));
+        }
+        if status.starts_with("QUEUED") && !status.contains("behind:") {
+            bad.push_str(&format!(
+                "  {} — QUEUED without `behind:`\n",
+                cells[0].trim_start_matches("| ")
+            ));
+        }
+        if status.to_ascii_lowercase().contains("after the run") {
+            bad.push_str(&format!(
+                "  {} — \"after the run\" is never a status\n",
+                cells[0].trim_start_matches("| ")
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "VIGIL-ACTIONS.md rows parked without a named measurement or slot (gate 11):\n{bad}A fix \
+         whose design is known is CLAIMED now or `QUEUED behind: <branch|agent cap>`; `SCHEDULED \
+         waits on: <event/number>` only when the design needs a measurement that does not exist yet."
+    );
+    for (doc, needle) in [
+        ("AGENTS.md", "THE KNOWN-FIX GATE"),
+        (".claude/rules/development-gates.md", "THE KNOWN-FIX GATE"),
+        ("CLAUDE.md", "QUEUED behind:"),
+    ] {
+        assert!(read(doc).contains(needle), "{doc} lost gate 11 ({needle})");
+    }
 }

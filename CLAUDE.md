@@ -21,6 +21,11 @@ These you should open yourself:
 - **`RUN-LEDGER.md`** — one row per run, in comparable numbers, so runs are judged by measurement rather
   than recollection.
 - **`TICK-NOTES.md`** — every finding, newest last.
+- **`VIGIL-ACTIONS.md`** — the queue the surgeons are dispatched from: every OPEN row is triaged at your next
+  turn (IMPLEMENT → dispatch + CLAIMED · known design but no slot → `QUEUED behind: <branch|agent cap>`, dispatched
+  the tick the slot frees · DROP with reason · `SCHEDULED waits on: <event/number>` ONLY when the design needs a
+  measurement that does not exist yet); no OPEN row survives two ticks, "after the run" is never a status, and "by design" is not one either — a row parked on the ORCHESTRATOR's own decision is claimed and decided in the same tick —
+  gate 11: a surgeon edits in a worktree cargo-free while a run holds the local node.
 - **`.claude/rules/development-gates.md`** — the five refusing gates in full detail (fallbacks,
   generic text, benchmark launch, reaping, time inputs) with the rebukes that paid for each.
 - **`REFUSED.md`** — items culled by review, kept for revival. **Check before proposing something new.**
@@ -52,6 +57,7 @@ thread.
 | `mlx-backend` | goose-sidecar + mlxEngine ACP/DTO backend (measure-first, pagination honesty, loud absence) |
 | `link-backend` | LeanZero Link crate + worker (mesh isolation, measure-first, companion-app stateless API) |
 | `words-reader` | gate 7's independent reader: quotes and diagnoses model output from primary logs |
+| `tick-surgeon` | EVERY vigil tick: reads every active lane's words, verifies delivered content, applies kill checkpoints with proof, notes improvements with quotes — the microscopic vigil itself (tick.py is its step 0) |
 | `fix-tracer` | gate 8's independent tracer: walks a run's real values through a change |
 | `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
 | `gate-auditor` | audits deterministic checks for theater: keep the refusers, kill the superficial |
@@ -69,7 +75,7 @@ The files here are large enough that naive reading is the main cause of lost wor
 
 | object | size | never |
 |---|---|---|
-| `crates/goose-cli/src/commands/swarm.rs` | **42,165 lines** | read whole; `grep -n` then `sed -n 'A,Bp'` |
+| `crates/goose-cli/src/commands/swarm.rs` | **40,691 lines** (was 42,165 on 2026-08-31; shrinking by extraction) | read whole; `grep -n` then `sed -n 'A,Bp'` |
 | `crates/goose-swarm/src/scheduler.rs` | 4,616 lines | — |
 | `ui/desktop/src/components/swarm/SwarmRunPanel.tsx` | 3,971 lines | — |
 | `ui/desktop/src/components/swarm/useSwarmRun.ts` | 3,858 lines | — |
@@ -100,7 +106,9 @@ flight is summarised, and the summary keeps the SHAPE of the task while losing t
 was mid-flight, which of the user's exact words are load-bearing. Before you are close to that:
 
 1. **Write the finding down, do not carry it.** `note.sh <kind> "<finding>"` costs nothing and survives;
-   holding it in context costs on every subsequent turn and survives nothing.
+   holding it in context costs on every subsequent turn and survives nothing. **An improvement that needs a
+   surgeon is an ACTION, not a note**: `note.sh action <surface> "<text>"` → `VIGIL-ACTIONS.md`, triaged at
+   the next turn — that file is where the tick-surgeon's findings become the surgeons' work (Mihai 2026-09-01).
 2. **Commit.** A committed step is recoverable; an uncommitted one is not. A brace-matching script here
    once deleted 34,827 lines of `swarm.rs` and `git checkout` undid it in one command *because the
    previous step was committed*.

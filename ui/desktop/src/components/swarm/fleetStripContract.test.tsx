@@ -75,7 +75,7 @@ type ElectronMock = Record<string, unknown>;
 
 describe('fleetExpandText — one definition of what a cell can expand', () => {
   it('expands on the durable narration alone', () => {
-    expect(fleetExpandText({ fullReasoning: 'weighing the ledger format' })).toContain('ledger');
+    expect(fleetExpandText({ answerWindow: 'weighing the ledger format' })).toContain('ledger');
   });
 
   it('shows the thinking window ONLY when the digest counted thinking', () => {
@@ -98,7 +98,7 @@ describe('fleetExpandText — one definition of what a cell can expand', () => {
 
   it('joins the narration and the thinking line when both are there', () => {
     const t = fleetExpandText({
-      fullReasoning: 'narration',
+      answerWindow: 'narration',
       lastThinking: 'run',
       thinkingChars: 12,
     });

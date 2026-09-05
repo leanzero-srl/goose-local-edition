@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "closure_notes": {
+    "authored_at": "2026-08-31T00:45:00+00:00",
+    "run": "r6, launched 2026-08-30T21:32:57Z from the app's Benchmark view (bench_dispatch over CDP); harness pid carried --entrant swarm-3node --only-rep 0 --timeout 0 --sb7; vendor answered 200 on 127.0.0.1:8850 at authoring time; fixture_seed bb9e397c224e1303 from trace-swarm-3node-r0.jsonl header",
+    "honest_absences": {
+      "launch_sha256": "null because the Benchmark-view pipeline writes no launch.json launch receipt; the v17/v21 receipt was authored at launch time by a dedicated launch controller that does not exist in this pipeline. Fabricating one post-hoc would both write into the live harness directory and assert launch-time facts (vendor_port 18970, entrant swarm-3node-qwen38-brainwaves, an authenticated monitor process) that are false for this run.",
+      "instrument_manifest_sha256": "null because no instrument-manifest.json / instrument/ snapshot exists for a Benchmark-view run; instrument_files below hash the app bundle's serving copies instead (see instrument_source_root).",
+      "monitor": "no monitor process exists in this pipeline; the run dir has no .swarm-monitor/watch.jsonl"
+    },
+    "instrument_source_root": "/Applications/Goose.app/Contents/Resources/swarm-bench",
+    "publication_note": "publication section carries the values validate_config demands verbatim; the flagship target row semantics are the owner's standing doctrine, and this chain has no switch to defer or disable its publisher stage (publish_and_verify is unconditional in _run_locked)."
+  },
+  "controller_sha256": "ff5ff47302b6442ccfce9930a8f4ddbdf34ed2028ef837e8467e06b503ac4bb6",
+  "live_root": "/Users/mihaiperdum/Library/Application Support/Goose/benchmark/runs/build",
+  "run_dir": "/Users/mihaiperdum/Library/Application Support/Goose/benchmark/runs/build/swarm-3node-r0",
+  "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-r6-terminal-closure",
+  "score_lock_path": "/Users/mihaiperdum/goose-builds/.sb7-hermetic-score.lock",
+  "poll_seconds": 10,
+  "seal_settle_seconds": 5,
+  "max_score_attempts": 2,
+  "score_timeout_seconds": 21600,
+  "max_publish_attempts": 3,
+  "publish_timeout_seconds": 1800,
+  "expected": {
+    "vendor_port": 8850,
+    "entrant": "swarm-3node",
+    "raw_scorer_version": "sb-7.0-rc",
+    "check_count": 91,
+    "telemetry_nodes": [
+      "gabee",
+      "mihai",
+      "workhorse"
+    ],
+    "run_id": "swarm-20260830-213257409",
+    "models": [
+      "gabee-qwen3.8-27b",
+      "mihai-qwen3.8-27b",
+      "workhorse-qwen3.8-27b"
+    ],
+    "candidate_commit": "c47674fd454d9ca7bfc91448806a8ea12816eea7",
+    "launch_sha256": null,
+    "instrument_manifest_sha256": null,
+    "binary_sha256": "edef12424fccb6d50e0a0008ba3546e94427b847bf8cd5a5e2b0004e9248a183",
+    "instrument_files": {
+      "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
+      "bench/run_build.py": "f1c6e9b4d2e3867858af9505c34d35c9c00aae5cc988f532a060a7b31b25f9a6",
+      "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
+      "bench/vendor_service_v3.py": "f18979ceeccea722b5f1288912f87ae838c979ac7cb7d52b789f20b09a17ff5f",
+      "bench/fixtures_v3.py": "40d7415ea8b9851619062c2e64d281c38afe631acca1e0802cf1afb55efbc4a6",
+      "bench/schedule_sb7.py": "4c765a401db8513f8c1efbf6d4bd210b3527cddecff71192e534cf515d457e86",
+      "bench/product_probe_v3.mjs": "d4c4aa49ab7c68f783f16cd627a35828b8ab86d68323f413d43fe21c14da1074",
+      "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3"
+    }
+  },
+  "publication": {
+    "target_document_id": "brun-fleet-qwen38-brainwaves-sb70",
+    "protected_document_ids": [
+      "brun-fleet-qwen38-sb70",
+      "brun-fleet-qwen-sb70"
+    ]
+  },
+  "publisher": {
+    "path": "/Users/mihaiperdum/Projects/LeanZero-website/scripts/seed-fleet-brainwaves-sb70.mjs",
+    "sha256": "3a17e4fc535478905bc6c88c450d49723af813d6b2e630a9c324c1316f2bb80e",
+    "node": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/bin/node",
+    "node_sha256": "913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4",
+    "site_root": "/Users/mihaiperdum/Projects/LeanZero-website",
+    "env_file": "/Users/mihaiperdum/Projects/LeanZero-website/.env.local",
+    "base_url": "https://leanzero.net",
+    "package_lock": "/Users/mihaiperdum/Projects/LeanZero-website/package-lock.json",
+    "package_lock_sha256": "3f1463f43e8a36232fa64796c5a979d8a1a36784c930f6aead92e6d3d212748d",
+    "package_json": "/Users/mihaiperdum/Projects/LeanZero-website/package.json",
+    "package_json_sha256": "34aeea73e7ebfdbdb08e8845819034a7afd55706a0796ec4ff86e3fcd05ae513"
+  },
+  "runtime": {
+    "lsof": "/usr/sbin/lsof",
+    "playwright": {
+      "module_root": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/lib/node_modules/playwright",
+      "module_tree_sha256": "4d68fed0312075da8d9dfeafadca4741c72479bfb3c8cad94e0554bbfeebf645",
+      "version": "1.57.0",
+      "browsers_json": "node_modules/playwright-core/browsers.json",
+      "browsers_json_sha256": "b509d013de89d621a142818e0937de356fbb0169096922c08581a4f83e463b8e",
+      "browser_name": "chromium-headless-shell",
+      "browser_revision": "1200",
+      "installed_browsers_path": "/Users/mihaiperdum/Library/Caches/ms-playwright",
+      "browser_directory": "chromium_headless_shell-1200",
+      "browser_tree_sha256": "55b4892f42b70576e0ce296bb4f8b49ba5cb5464e548fb07e4cc613027c7196c",
+      "executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "executable_sha256": "8d6921aef8cc4c7bc48b03d4e709f9b563f8d1fd1ed08bc7fd5fd9784ffc2545"
+    }
+  }
+}

@@ -46,3 +46,16 @@ on 2026-09-02, rather than minting a second tick.py that no operator runs (the d
 ## Learned 2026-09-02
 - The routing fact above held on the campaign's only bench-scorer brief: the repo-path tick.py brief was refused correctly (orchestrator error, logged in ROSTER.md).
 - MacBook-side backlog the workhorse cannot clear: tick.py rows for FIVE engine events landed this campaign — `sidecar-device-excluded{id,reason}` and `sidecar-unmounted-and-load-disabled{devices}` (9d5958f19), `lm-probe-unauthorized` (3030c9f0d), `fleet-probe-failed` (653ffb48f), `sidecar-admission-cap` (d82f8e711). Fixture: the session scratchpad's fixture-pool-absence/run.jsonl. The UNREAD-EVENTS line will not be empty on the next mixed-pool run until they print.
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## Replay budget (added 2026-09-01 20:1x, after VA-049/043 ran 43 tool uses for two rows)
+
+Prove instrument edits by REPLAY, once per archive, not once per row: edit every row in the batch first, then run
+`tick.py <archive>` on each archive you need (the live slot, the motivating archive, one older control) and diff
+against `git show HEAD:tick.py` replayed the same way. A row-by-row replay loop multiplies tool uses without adding
+proof. Cite the archive dirs by exact path in the return.

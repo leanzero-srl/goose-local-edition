@@ -5,6 +5,14 @@
 use crate::dispatch::ToolCallRecord;
 use serde::Serialize;
 
+/// One ready task as `DispatchOrder` ranked it.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct ReadyWeight {
+    pub task: String,
+    pub weight: u32,
+    pub chain_weight: u64,
+}
+
 #[derive(Serialize, Debug)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum SwarmEvent {
@@ -22,6 +30,24 @@ pub enum SwarmEvent {
         /// The task's planned difficulty ("easy"/"hard"). A2's registered check — no hard task on
         /// a busy device while another idles — was unanswerable from the log without it.
         difficulty: String,
+    },
+    /// WHY this task was the one claimed now (VA-113): the ready set it was chosen from, each
+    /// entry's plan weight and REMAINING CHAIN WEIGHT (own weight + the heaviest dependent chain
+    /// down to the join), and the device's speed facts. r6h's BUILD tail — `webhooks-workflow`
+    /// alone for 132 minutes beside two idle nodes — was a dispatch-ORDER defect (plan-alphabet
+    /// order put `console-page` ahead of the 10-section chain head at 03:58Z), and no event said
+    /// which ready tasks had been passed over or why. One per dispatch, emitted before its
+    /// `task_dispatched`.
+    DispatchOrder {
+        task_id: String,
+        weight: u32,
+        chain_weight: u64,
+        /// Every task still Ready at this choice (the chosen one included), heaviest chain first.
+        ready_set: Vec<ReadyWeight>,
+        device: String,
+        device_speed_weight: u32,
+        /// Observed mean ms per completed task on this device, once one has completed there.
+        device_avg_ms: Option<u64>,
     },
     TaskCompleted {
         task_id: String,
@@ -69,39 +95,19 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
-    /// A dynamic replan round: `added` are the spliced task ids; `stopped` means no tasks were
-    /// spliced this round. GEN-6a #4/#9 (fallback rule): `reason` distinguishes the three arms
-    /// that used to collapse into one shape — the planner DECLINED (an empty plan is a
-    /// decision), the planner CALL FAILED (a transport/model fault is not a decision), and the
-    /// SPLICE was rejected (a planner answer the DAG could not take). A network fault reading
-    /// as "planner declined" is exactly the evidence-hiding this field removes. On the success
-    /// arm `reason` opens with the replanner's OWN rationale (verbatim from its answer, or the
-    /// named absence "replanner gave no rationale" — r5's live splice shipped '' here), with any
-    /// splice-repair actions appended.
-    Replanned {
-        round: u32,
-        added: Vec<String>,
-        stopped: bool,
-        reason: String,
-    },
-    /// A judge-side SPLIT was applied: one task became `children`. Emitted because it was previously
-    /// invisible — `apply_split` mutated the DAG and said nothing, so "does the swarm decompose work
-    /// further when it has spare nodes" could not be answered from a run at all. Measured across three
-    /// real runs before this existed: no way to tell a split that never happened from one that did.
-    TaskSplit {
-        task_id: String,
-        children: Vec<String>,
-    },
     /// A SPECULATIVE twin resolved. `winner` is "twin" or "primary"; `aborted` is the side that lost.
-    /// Same reason as TaskSplit: speculation is the mechanism that spends an idle node on latency, and
+    /// Speculation is the mechanism that spends an idle node on latency, and
     /// it emitted nothing, so its contribution to node-scaling was unmeasurable by construction.
     Speculated {
         task_id: String,
         attempt: u32,
         winner: String,
     },
-    /// The idle-model judge inspected an in-flight worker. `action` is "observed" (logged only) or
-    /// "re_dispatch" (the worker was killed and its task re-queued with `hint`).
+    /// The scheduler's own stall accounting (`verdict: degraded_stall`, `deterministic: true`): a
+    /// stall-exhausted task whose owned file was written is degraded to Done for integrate-verify
+    /// to gate. The idle-model judge that used to emit `observed` / `re_dispatch` / `judge_restart`
+    /// rows through this variant is deleted (2c S6); the shape stays because the desktop folds
+    /// `judge_verdict` and archived runs carry it.
     JudgeVerdict {
         task_id: String,
         /// The device of the JUDGED WORKER — the node whose output is being judged.
@@ -118,7 +124,8 @@ pub enum SwarmEvent {
         confidence: f32,
         hint: String,
         action: String,
-        /// PROVENANCE: true when `deterministic_verdict` produced this — a real engine fact (a compile
+        /// PROVENANCE: true when an ENGINE FACT produced this (today the stall accounting; the deleted
+        /// idle-model judge's `deterministic_verdict` was the other writer) — a real engine fact (a compile
         /// error, an owned file never written, a measured char/tool count) — false when the judge MODEL
         /// authored it.
         ///
@@ -129,38 +136,6 @@ pub enum SwarmEvent {
         /// it produced a wrong published finding (an `over_reading` verdict was attributed to the LLM
         /// judge on exactly that reasoning, when a deterministic 420 s branch had emitted it).
         deterministic: bool,
-    },
-    /// A-2: the judge's LOOK failed in transport — its own model call died (provider error, dead node,
-    /// invalid model id) — so there is NOTHING to apply and nothing was learned about the worker. The
-    /// same name the in-call omni judge already uses for the same state, so one grep finds both. This
-    /// exists because the infallible path laundered the failure: r2 emitted 28 `drifting` verdicts
-    /// whose hint was gabee's 400 body, and the run's final read was a transport error dressed as a
-    /// diagnosis.
-    JudgeLookFailed {
-        task_id: String,
-        error: String,
-    },
-    /// An idle node ran a correctness PRE-REVIEW of a completed task on a spare device (concurrently with
-    /// the judge). Makes idle-node utilization observable in the jsonl; `had_findings` = a defect was found
-    /// (persisted to `.swarm/prereview/<task>.json` for integrate-verify).
-    PreReview {
-        task_id: String,
-        device: String,
-        had_findings: bool,
-        /// How long the job HELD ITS FLEET SLOT. A pre-review claims the same `in_flight` permit a
-        /// task dispatch does and can hold it for up to `planner_timeout_secs` (900s), but the event
-        /// fired only on completion with no start and no duration — so the one idle-node mechanism
-        /// that can block a real dispatch for a quarter of an hour was the one nobody could measure.
-        /// Its slot-time had to be ESTIMATED from same-device inter-arrival gaps, which is a guess.
-        secs: f64,
-    },
-    /// A-2: the pre-review call itself failed in transport. Distinct from `PreReview` with no findings,
-    /// which is a REVIEW that read the code and cleared it — r2 logged provider errors as exactly that.
-    PreReviewFailed {
-        task_id: String,
-        device: String,
-        error: String,
-        secs: f64,
     },
     /// A device was ADMITTED to a run already in progress — a fleet node that came back after the
     /// pool was resolved. The pool is read once from `lms ps` at run start, so before this event

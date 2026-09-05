@@ -20,6 +20,7 @@ describe('formation phase truth', () => {
       'Synthesize',
       'Review',
       'Contracts',
+      'Split',
       'Build',
       'Integrate',
       'Repair',
@@ -47,9 +48,10 @@ describe('formation phase truth', () => {
     const at = (key: string) => steps.findIndex((s) => s.key === key);
     expect(formationPhaseState(null, at('open'), evidence, steps)).toBe('complete');
     expect(formationPhaseState(null, at('synthesize'), evidence, steps)).toBe('complete');
-    // ask sits below the furthest observed step and was never observed — skipped, exactly as it
-    // would read behind an active step.
-    expect(formationPhaseState(null, at('ask'), evidence, steps)).toBe('skipped');
+    // ask is CONDITIONAL (VA-138): never observed on this run, so it has no chip at all — nothing to
+    // read as skipped. research is unconditional, sits below the furthest step unobserved: skipped.
+    expect(at('ask')).toBe(-1);
+    expect(formationPhaseState(null, at('research'), evidence, steps)).toBe('skipped');
     // build is the FURTHEST observed: entered, not finished. Evidence lands on phase ENTRY, so a
     // green check here would be unearned — it asserts neither work nor completion.
     expect(formationPhaseState(null, at('build'), evidence, steps)).toBe('upcoming');
@@ -63,35 +65,68 @@ describe('formation phase truth', () => {
     expect(formationPhaseIndex('synthesize')).toBe(3);
     expect(formationPhaseIndex('review')).toBe(4);
     expect(formationPhaseIndex('contracts')).toBe(5);
-    expect(formationPhaseIndex('build')).toBe(6);
-    expect(formationPhaseIndex('integrate')).toBe(7);
-    expect(formationPhaseIndex('repair')).toBe(8);
-    expect(formationPhaseIndex('done')).toBe(9);
+    expect(formationPhaseIndex('split')).toBe(6);
+    expect(formationPhaseIndex('build')).toBe(7);
+    expect(formationPhaseIndex('integrate')).toBe(8);
+    expect(formationPhaseIndex('repair')).toBe(9);
+    expect(formationPhaseIndex('done')).toBe(10);
   });
 
-  // CONTRACTS is deleted from the engine (P1-4). A new run must not be offered it as a stage — it
-  // would sit forever "skipped", claiming a route that no longer exists — but an ARCHIVED run whose
-  // events prove it ran keeps its historical chip. RESEARCH is LIVE again (the v2 fan), so it is
-  // always offered: a run whose opener raises no questions marks it skipped, honestly.
-  it('offers no retired phase without evidence, and keeps it for an archived run that ran it', () => {
-    const live = ['open', 'ask', 'research', 'synthesize', 'review', 'build', 'integrate', 'repair', 'done'];
+  // CONTRACTS (P1-4) and REVIEW (2447d145c) are deleted from the engine. A new run must not be offered
+  // either as a stage — it would sit forever "skipped", claiming a route that no longer exists — but an
+  // ARCHIVED run whose events prove it ran keeps its historical chip. RESEARCH is LIVE (the v2 fan, one
+  // lane per slice on every run), so it is always offered. ASK and SPLIT are CONDITIONAL (VA-138): the
+  // engine walks them only on a run with an open decision / a fat task, so they too appear only on
+  // evidence — the step list is derived from the events seen, never a fixed array.
+  it('offers no retired or conditional phase without evidence, and keeps it for a run that walked it', () => {
+    const live = ['open', 'research', 'synthesize', 'build', 'integrate', 'repair', 'done'];
     expect(formationPhasesFor(undefined).map((s) => s.key)).toEqual(live);
     expect(formationPhasesFor({ open: true, build: true }).map((s) => s.key)).toEqual(live);
+    // Evidence of ONE retired/conditional phase restores only that one.
     expect(
       formationPhasesFor({ open: true, research: true, contracts: true }).map((s) => s.key)
-    ).toEqual(['open', 'ask', 'research', 'synthesize', 'review', 'contracts', 'build', 'integrate', 'repair', 'done']);
-    // Index and state hold against the run's OWN list, where 'build' is no longer at 6.
+    ).toEqual(['open', 'research', 'synthesize', 'contracts', 'build', 'integrate', 'repair', 'done']);
+    expect(
+      formationPhasesFor({ open: true, synthesize: true, review: true }).map((s) => s.key)
+    ).toEqual(['open', 'research', 'synthesize', 'review', 'build', 'integrate', 'repair', 'done']);
+    expect(formationPhasesFor({ open: true, ask: true }).map((s) => s.key)).toEqual([
+      'open',
+      'ask',
+      'research',
+      'synthesize',
+      'build',
+      'integrate',
+      'repair',
+      'done',
+    ]);
+    expect(
+      formationPhasesFor({ open: true, synthesize: true, split: true }).map((s) => s.key)
+    ).toEqual(['open', 'research', 'synthesize', 'split', 'build', 'integrate', 'repair', 'done']);
+    // Index and state hold against the run's OWN list, where 'build' is no longer at 7.
     const steps = formationPhasesFor(undefined);
-    expect(formationPhaseIndex('build', steps)).toBe(5);
-    expect(formationPhaseState('build', 4, undefined, steps)).toBe('complete');
-    expect(formationPhaseState('build', 5, undefined, steps)).toBe('active');
-    expect(formationPhaseState('build', 6, undefined, steps)).toBe('upcoming');
+    expect(formationPhaseIndex('build', steps)).toBe(3);
+    expect(formationPhaseState('build', 2, undefined, steps)).toBe('complete');
+    expect(formationPhaseState('build', 3, undefined, steps)).toBe('active');
+    expect(formationPhaseState('build', 4, undefined, steps)).toBe('upcoming');
+  });
+
+  // THE DEFECT: formationPhaseState reads any step behind the active one without evidence as 'skipped'.
+  // That is right for a conditional live stage and wrong for a deleted one — after 2447d145c every new
+  // run would have shown "Review — skipped" once Build lit. The fix is structural: a retired step is not
+  // in the run's list at all unless its own events put it there, so there is no index to read skipped.
+  it('a retired phase without evidence has no index to read as skipped', () => {
+    const newRun = { open: true, ask: true, research: true, synthesize: true, build: true };
+    const steps = formationPhasesFor(newRun);
+    expect(steps.some((s) => s.key === 'review')).toBe(false);
+    expect(formationPhaseIndex('review', steps)).toBe(-1);
+    const states = steps.map((_, i) => formationPhaseState('build', i, newRun, steps));
+    expect(states).not.toContain('skipped');
   });
 
   it('marks only earlier phases complete and the engine phase active', () => {
-    expect(formationPhaseState('build', 5)).toBe('complete');
-    expect(formationPhaseState('build', 6)).toBe('active');
-    expect(formationPhaseState('build', 7)).toBe('upcoming');
+    expect(formationPhaseState('build', 6)).toBe('complete');
+    expect(formationPhaseState('build', 7)).toBe('active');
+    expect(formationPhaseState('build', 8)).toBe('upcoming');
   });
 
   it('never back-fills a stage the engine did not emit', () => {
@@ -110,9 +145,9 @@ describe('formation phase truth', () => {
       integrate: false,
       repair: false,
     };
-    expect(formationPhaseState('done', 7, noSink)).toBe('skipped');
     expect(formationPhaseState('done', 8, noSink)).toBe('skipped');
-    expect(formationPhaseState('done', 6, noSink)).toBe('complete');
+    expect(formationPhaseState('done', 9, noSink)).toBe('skipped');
+    expect(formationPhaseState('done', 7, noSink)).toBe('complete');
   });
 
   // Each ramp hue carries its OWN ink for exactly this reason: white clears AA on the blue (6.7:1) and

@@ -4,12 +4,10 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAnswer,
-    ReplanContext, Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
-    Verdict,
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, PreReviewer, Scheduler,
+    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -120,6 +118,15 @@ fn spec(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
         owned_files: files.iter().map(|s| s.to_string()).collect(),
         deps: deps.iter().map(|s| s.to_string()).collect(),
         subsplit: Vec::new(),
+        shard_of: None,
+        merger_of: None,
+    }
+}
+
+fn spec_hard(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
+    TaskSpec {
+        difficulty: Difficulty::Hard,
+        ..spec(id, deps, files)
     }
 }
 
@@ -198,6 +205,16 @@ impl EventSink for LogSink {
                 .lock()
                 .unwrap()
                 .push(format!("reused:{task_id}:{device}")),
+            SwarmEvent::DispatchOrder {
+                task_id,
+                chain_weight,
+                device,
+                ..
+            } => self
+                .log
+                .lock()
+                .unwrap()
+                .push(format!("order:{task_id}:{chain_weight}:{device}")),
             _ => {}
         }
     }
@@ -294,8 +311,10 @@ fn no_time_wall_survives_on_the_reuse_path() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let judge = strip_comments(
-        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/judge.rs")).unwrap(),
+    // judge.rs — where the clock kill lived — is deleted with the idle-model judge (2c S6); the
+    // scheduler is where it could regrow.
+    let sched = strip_comments(
+        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scheduler.rs")).unwrap(),
     );
     for banned in [
         "no_output_deadline_secs",
@@ -303,8 +322,8 @@ fn no_time_wall_survives_on_the_reuse_path() {
         "no_file_hint",
     ] {
         assert!(
-            !judge.contains(banned),
-            "judge.rs regrew `{banned}` — the II-7-deleted clock kill that made r8's \
+            !sched.contains(banned),
+            "scheduler.rs regrew `{banned}` — the II-7-deleted clock kill that made r8's \
              same-device re-land fatal; the A-3 reuse path is only safe without it"
         );
     }
@@ -499,6 +518,136 @@ async fn speed_weight_wins_every_equal_load_tie_without_stacking() {
 }
 
 #[tokio::test]
+async fn an_empty_node_outranks_a_loaded_heavier_one_for_a_hard_task() {
+    // SPREAD BEFORE STACK, the first question the placement key asks. `fast` is weighted 4 — it
+    // could legally hold four concurrent workers and it is the highest speed_weight — while `slow`
+    // is weight 1 and sorts FIRST by index. Two HARD tasks are ready in the same instant. The
+    // second must go to the EMPTY node even though the fastest node still has three free slots,
+    // because a device with zero calls in flight outranks any device with one REGARDLESS of weight.
+    //
+    // WHY IT IS PINNED RATHER THAN NEW (r6c, 2026-09-01): the occupancy measurement found the
+    // scheduler never once under-dispatched (0 minutes with an idle node and a ready unclaimed
+    // task) and the five-leaf push did fill breadth-first. Breadth-first is load-primary in
+    // `pick_device` and in `hard_device_key`; nothing else in the run guarantees it, so it gets a
+    // test that fails if weight is ever promoted above load again.
+    let mut fast = dev("z-fast", "m-z", 4);
+    fast.speed_weight = 4;
+    let slow = dev("a-slow", "m-a", 1); // speed_weight 1, index 0
+
+    let dag = Dag::from_specs(vec![
+        spec_hard("h1", &[], &["h1.py"]),
+        spec_hard("h2", &[], &["h2.py"]),
+    ])
+    .unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let sched = Scheduler::new(vec![slow, fast], 3);
+    let report = sched.run(dag, mock(&rec, 40), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 2);
+    let r = rec.lock().unwrap();
+    assert_eq!(
+        r.run_devices["h1"],
+        vec!["z-fast".to_string()],
+        "the first hard task goes to the highest speed_weight host on an idle fleet"
+    );
+    assert_eq!(
+        r.run_devices["h2"],
+        vec!["a-slow".to_string()],
+        "the second must take the EMPTY node, not the fastest node's spare slot: co-locating a \
+         second worker measured -54% per lane and -8% aggregate (r6c)"
+    );
+    assert_eq!(
+        r.peak_per_device.get("z-fast").copied().unwrap_or(0),
+        1,
+        "weight 4 means 'may eventually stack 4', never 'fill me before touching an idle node'"
+    );
+}
+
+#[tokio::test]
+async fn two_heavy_ready_tasks_land_on_distinct_nodes() {
+    // r6c's 12:01:05.541 dispatch instant, reproduced task-for-task. `skeleton` completes and five
+    // leaves become ready in the same pass on a 3-node fleet (speed_weight 3/2/1, weight 2 each).
+    //
+    // MEASURED OUTCOME BEING PINNED AGAINST: `ledgerd-core` (431.2 min) and `web-viz` (518.6 min)
+    // — 6.3x and 7.6x the 68.5-min median and together 67% of all BUILD work — were placed on the
+    // SAME host at the same microsecond and nothing ever moved them. 65% of BUILD ran with exactly
+    // one node busy; the longest single-node stretch was 175 minutes with the other two at 0%.
+    //
+    // Two independent rules make that impossible here, and either one alone suffices:
+    //   (a) the ready order breaks a fan-out tie by difficulty, so `web-viz` is claimed THIRD
+    //       (onto the last empty node) instead of FOURTH (into the first doubled-up slot);
+    //   (b) at equal load, a device carrying no hard task outranks the fastest device that does.
+    //
+    // The join is deliberately named `join`, not `integrate-verify`: this test is about placement,
+    // and the real sink id would drag in the sink-only claim gates.
+    let dag = Dag::from_specs(vec![
+        spec_hard("skeleton", &[], &["app/__init__.py"]),
+        spec_hard("ledgerd-core", &["skeleton"], &["app/db.py"]),
+        spec("notifierd", &["skeleton"], &["app/notifierd/impl.py"]),
+        spec_hard("web-console", &["skeleton"], &["web/app.js"]),
+        spec_hard("web-viz", &["skeleton"], &["web/viz.js"]),
+        spec("decisions-doc", &["skeleton"], &["DECISIONS.md"]),
+        spec_hard(
+            "ledgerd-api",
+            &["ledgerd-core", "skeleton"],
+            &["app/api.py"],
+        ),
+        spec(
+            "join",
+            &[
+                "ledgerd-core",
+                "ledgerd-api",
+                "notifierd",
+                "web-console",
+                "web-viz",
+                "skeleton",
+            ],
+            &[],
+        ),
+    ])
+    .unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(
+        vec![
+            dev_sw("gabee", "m-g", 2, 1),
+            dev_sw("mihai", "m-m", 2, 2),
+            dev_sw("workhorse", "m-w", 2, 3),
+        ],
+        3,
+    )
+    .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched.run(dag, mock(&rec, 40), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 8);
+    let r = rec.lock().unwrap();
+    let core = r.run_devices["ledgerd-core"][0].clone();
+    let viz = r.run_devices["web-viz"][0].clone();
+    assert_ne!(
+        core, viz,
+        "the two longest tasks in the run must not share a host while a node is empty \
+         (r6c: both on workhorse at 12:01:05, 431 min of co-residency)"
+    );
+    assert_eq!(
+        core, "workhorse",
+        "the first hard task still takes the fastest host"
+    );
+    assert_eq!(
+        viz, "gabee",
+        "the third hard task takes the last EMPTY node instead of the fastest node's spare slot"
+    );
+    let log = log.lock().unwrap();
+    let pos = |t: &str| {
+        log.iter()
+            .position(|e| e.starts_with(&format!("dispatch:{t}:")))
+            .unwrap_or_else(|| panic!("no dispatch for {t} in {log:?}"))
+    };
+    assert!(
+        pos("web-viz") < pos("notifierd"),
+        "heaviest first: inside one fan-out tier a HARD task is claimed before an easy one, so \
+         it reaches an empty node rather than the first stacked slot; log = {log:?}"
+    );
+}
+
+#[tokio::test]
 async fn preferred_model_breaks_ties_but_does_not_concentrate() {
     // Two independent tasks both preferring device `a`'s model, with `a` and `b` each weight 2.
     // Spread must place the second on `b` (idle) rather than doubling up on `a`.
@@ -577,22 +726,6 @@ async fn terminal_failure_fails_descendants_without_deadlock() {
     );
 }
 
-struct MockReplanner {
-    rounds: Mutex<VecDeque<Vec<TaskSpec>>>,
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl Replanner for MockReplanner {
-    async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<ReplanAnswer> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(ReplanAnswer {
-            specs: self.rounds.lock().unwrap().pop_front().unwrap_or_default(),
-            rationale: Some("mock rationale".to_string()),
-        })
-    }
-}
-
 fn slow_dispatcher(
     rec: &Arc<Mutex<Recorder>>,
     delay_ms: u64,
@@ -608,233 +741,6 @@ fn slow_dispatcher(
 }
 
 #[tokio::test]
-async fn idle_triggers_replan_and_fills_nodes() {
-    // `slow` runs long while `fast` finishes and frees nodes -> idle window -> replan adds b,c.
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let replanner = Arc::new(MockReplanner {
-        rounds: Mutex::new(VecDeque::from(vec![vec![
-            spec("b", &[], &[]),
-            spec("c", &[], &[]),
-        ]])),
-        calls: calls.clone(),
-    });
-    let sched = Scheduler::new(
-        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
-        3,
-    )
-    .with_replanner(replanner, 3);
-    let report = sched
-        .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "goal".into())
-        .await
-        .unwrap();
-    let done: HashSet<_> = report.done.iter().cloned().collect();
-    assert!(
-        ["slow", "fast", "b", "c"].iter().all(|t| done.contains(*t)),
-        "replan-added tasks must run: done={:?}",
-        report.done
-    );
-    assert!(
-        calls.load(Ordering::SeqCst) >= 1,
-        "the replanner was invoked while nodes idled"
-    );
-}
-
-#[tokio::test]
-async fn empty_replan_stops_cleanly() {
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let replanner = Arc::new(MockReplanner {
-        rounds: Mutex::new(VecDeque::new()), // always empty -> stop, no spin
-        calls: calls.clone(),
-    });
-    let sched = Scheduler::new(
-        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
-        3,
-    )
-    .with_replanner(replanner, 3);
-    let report = sched
-        .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "g".into())
-        .await
-        .unwrap();
-    assert_eq!(
-        report.done.len(),
-        2,
-        "an empty replan adds nothing and ends cleanly"
-    );
-}
-
-/// An empty replan answer must not disable the replanner for the rest of the run.
-///
-/// MEASURED on a live 3-node run: the replan was asked at +50min with 9 of 18 tasks done, correctly
-/// declined because half the DAG was still queued, and the engine then set `replans_done =
-/// max_replans`. At +68min ONE task was in flight, two nodes sat idle with idle_capacity()==5, and the
-/// only mechanism built to fill them had been switched off by that early "no thanks".
-///
-/// The shape here reproduces it exactly: the first idle window occurs while a dependent task is still
-/// blocked (incomplete == 2) and gets an empty answer; the second occurs after the blocker clears
-/// (incomplete == 1), which is strictly fewer and so earns a fresh ask. Under the old behaviour the
-/// second ask never happened and `late` never ran — with max_replans = 1, one decline was the whole
-/// budget.
-#[tokio::test]
-async fn an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag() {
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    // `x` frees a node early -> the FIRST idle window, while `dep`/`y` are still blocked behind `slow`
-    // (incomplete == 3) -> the honest decline. When `slow` lands, `dep` (long) and `y` (short) both
-    // dispatch; `y` finishing is the completion edge that produces the SECOND window, now with only
-    // `dep` outstanding (incomplete == 1) -> strictly fewer, so the replanner is asked again.
-    let dag = Dag::from_specs(vec![
-        spec("slow", &[], &[]),
-        spec("dep", &["slow"], &[]),
-        spec("y", &["slow"], &[]),
-        spec("x", &[], &[]),
-    ])
-    .unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let replanner = Arc::new(MockReplanner {
-        // First answer EMPTY (the honest decline), then real work once the DAG has shrunk.
-        rounds: Mutex::new(VecDeque::from(vec![vec![], vec![spec("late", &[], &[])]])),
-        calls: calls.clone(),
-    });
-    let sched = Scheduler::new(
-        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
-        3,
-    )
-    // Budget of ONE: an empty answer must not consume it, or the second ask is unreachable.
-    .with_replanner(replanner, 1);
-    let report = sched
-        // BOTH are slow: the second idle window only exists while `dep` is still running, and a
-        // fast `dep` finishes inside one loop iteration so the window is never observed.
-        .run(dag, slow_dispatcher(&rec, 30, &["slow", "dep"]), "g".into())
-        .await
-        .unwrap();
-    let done: std::collections::HashSet<_> = report.done.iter().cloned().collect();
-    assert!(
-        done.contains("late"),
-        "an early decline burned the whole replan budget, so the tail never got its ask: done={:?}",
-        report.done
-    );
-    assert!(
-        calls.load(Ordering::SeqCst) >= 2,
-        "the replanner must be re-asked once strictly fewer tasks remain, got {} call(s)",
-        calls.load(Ordering::SeqCst)
-    );
-}
-
-#[tokio::test]
-async fn replan_respects_max_replans() {
-    // The replanner keeps offering NEW slow tasks; the budget must cap the rounds.
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let replanner = Arc::new(MockReplanner {
-        rounds: Mutex::new(VecDeque::from(vec![
-            vec![spec("r1", &[], &[])],
-            vec![spec("r2", &[], &[])],
-            vec![spec("r3", &[], &[])],
-        ])),
-        calls: calls.clone(),
-    });
-    let sched = Scheduler::new(
-        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
-        3,
-    )
-    .with_replanner(replanner, 2);
-    let report = sched
-        .run(
-            dag,
-            slow_dispatcher(&rec, 25, &["slow", "r1", "r2", "r3"]),
-            "g".into(),
-        )
-        .await
-        .unwrap();
-    assert!(
-        calls.load(Ordering::SeqCst) <= 2,
-        "replan rounds must not exceed max_replans"
-    );
-    assert!(
-        !report.done.contains(&"r3".to_string()),
-        "r3 must never be requested once the cap is hit"
-    );
-}
-
-/// r5 (2026-08-30, run swarm-20260830-083847650): the replanner used to be awaited INLINE in the
-/// scheduler loop. Summoned at 11:52:17 (the first pass after `skeleton` completed), the 27B
-/// planner call ground for 40+ minutes — and when `decisions` completed at 12:16:50, its two ready
-/// successors (`ledgerd-service`, `brush-contract`) sat undispatched beside two free devices,
-/// because the one loop that runs `pick_assignments` was parked inside `.replan(ctx).await`.
-/// This pins the exact shape: a task completing WHILE a replan is still thinking must have its
-/// successors dispatched immediately. With the inline await this test hangs (the parked replanner
-/// never resolves), so the 60s harness timeout is what refuses the regression.
-#[tokio::test]
-async fn a_completion_during_an_in_flight_replan_still_dispatches_successors() {
-    struct ParkedReplanner {
-        calls: Arc<AtomicUsize>,
-        park: Arc<tokio::sync::Notify>,
-    }
-    #[async_trait]
-    impl Replanner for ParkedReplanner {
-        async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<ReplanAnswer> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.park.notified().await; // never released: the planner "thinks" for the whole run
-            Ok(ReplanAnswer {
-                specs: Vec::new(),
-                rationale: None,
-            })
-        }
-    }
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    // The r5 DAG shape: skeleton fans out; ledgerd-service/brush-contract wait on decisions.
-    // `quick` exists so a completion wakes the loop into the summon pass (ready empty, two tasks
-    // still in flight, something Done) without waiting out the 15s tick the live run used.
-    let dag = Dag::from_specs(vec![
-        spec("skeleton", &[], &[]),
-        spec("decisions", &["skeleton"], &[]),
-        spec("notifierd-service", &["skeleton"], &[]),
-        spec("quick", &["skeleton"], &[]),
-        spec("ledgerd-service", &["decisions", "skeleton"], &[]),
-        spec("brush-contract", &["decisions", "skeleton"], &[]),
-    ])
-    .unwrap();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let replanner = Arc::new(ParkedReplanner {
-        calls: calls.clone(),
-        park: Arc::new(tokio::sync::Notify::new()),
-    });
-    let sched = Scheduler::new(
-        vec![dev("d0", "m0", 2), dev("d1", "m1", 2), dev("d2", "m2", 2)],
-        3,
-    )
-    .with_replanner(replanner, 1);
-    let report = tokio::time::timeout(
-        Duration::from_secs(60),
-        sched.run(
-            dag,
-            slow_dispatcher(&rec, 30, &["decisions", "notifierd-service"]),
-            "g".into(),
-        ),
-    )
-    .await
-    .expect("the run must finish while the replanner is still thinking — a hang here is the r5 parked-loop regression")
-    .unwrap();
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "the replanner must have been summoned (otherwise this test never opened the r5 window)"
-    );
-    let done: HashSet<_> = report.done.iter().cloned().collect();
-    assert!(
-        ["ledgerd-service", "brush-contract"]
-            .iter()
-            .all(|t| done.contains(*t)),
-        "decisions' successors must dispatch during the in-flight replan: done={:?}",
-        report.done
-    );
-}
-
-#[tokio::test]
 async fn cycle_is_rejected_at_load() {
     let specs = vec![spec("a", &["b"], &[]), spec("b", &["a"], &[])];
     assert!(
@@ -843,605 +749,35 @@ async fn cycle_is_rejected_at_load() {
     );
 }
 
-/// A dispatcher whose target task hangs on its first attempt (long enough to be judged + killed) and
-/// completes quickly on the re-dispatch. Records run counts and any hint the re-dispatch carried.
-struct JudgeTestDispatcher {
-    runs: Arc<Mutex<HashMap<String, u32>>>,
-    hints: Arc<Mutex<Vec<(String, String)>>>,
-    target: String,
-    delay: Duration,
-    // When true the target sleeps long on EVERY attempt (simulating a worker that never recovers), so a
-    // cap-exhausted attempt stays alive long enough for the judge's terminal-fail to act on it.
-    slow_all: bool,
-}
-
-#[async_trait]
-impl TaskDispatcher for JudgeTestDispatcher {
-    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
-        *self
-            .runs
-            .lock()
-            .unwrap()
-            .entry(req.task_id.clone())
-            .or_default() += 1;
-        if let Some(h) = &req.prior_hint {
-            self.hints
-                .lock()
-                .unwrap()
-                .push((req.task_id.clone(), h.clone()));
-        }
-        if req.task_id == self.target && (req.attempt == 0 || self.slow_all) {
-            tokio::time::sleep(self.delay * 50).await; // long — the judge aborts this attempt
-        } else {
-            tokio::time::sleep(self.delay).await;
-        }
-        Ok(format!("out-{}", req.task_id).into())
-    }
-}
-
-/// A judge that flags one target task as looping (confident) and passes everything else.
-struct KillJudge {
-    target: String,
-}
-
-#[async_trait]
-impl Judge for KillJudge {
-    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
-        if req.task_id == self.target {
-            Ok(JudgeOutcome {
-                verdict: Verdict::Restart,
-                confidence: 1.0,
-                hint: "STOP looping and WRITE the file now".to_string(),
-                established: "the CSV has a header row".to_string(),
-                next_action: "write the file now".to_string(),
-                proposed_split: None,
-                // This mock stands in for the MODEL judge, so it is NOT deterministic even at confidence
-                // 1.0. That flag used to be what let a verdict terminal-fail a task; nothing can do that
-                // from here any more. RESTART is the judge's only remaining action.
-                deterministic: false,
-            })
-        } else {
-            Ok(JudgeOutcome::ok())
-        }
-    }
-}
-
-/// The judge's ONLY remaining action, and the two things that make it a restart rather than a retry:
-/// it stays on the SAME device, and the fresh session is SEEDED with what the last attempt established.
-///
-/// This replaces `judge_kills_and_redispatches_stuck_worker`, which asserted the opposite on both counts
-/// (that the task moved to a different node, and that it carried a bare corrective hint). Moving it was
-/// pointless — every node in this fleet runs the same model on a different host — and a bare hint throws
-/// away the half of the call that was working, which is the whole thing the four-field contract exists to
-/// keep.
-#[tokio::test]
-async fn judge_restarts_in_place_and_seeds_what_was_established() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "stuck".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    // One ready task on a 2-device pool: it runs on one node, leaving the other idle for the judge.
-    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(KillJudge {
-        target: "stuck".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.done.contains(&"stuck".to_string()),
-        "the killed task is re-dispatched and eventually completes"
-    );
-    assert!(report.failed.is_empty(), "no task fails");
-    assert_eq!(
-        runs.lock().unwrap()[&"stuck".to_string()],
-        2,
-        "stuck task ran twice: restarted once by the judge, then completed"
-    );
-    let h = hints.lock().unwrap();
-    let seeded = h
-        .iter()
-        .find(|(t, _)| t == "stuck")
-        .map(|(_, hint)| hint.clone())
-        .expect("the restart must carry a seed");
-    assert!(
-        seeded.contains("the CSV has a header row"),
-        "the fresh session is seeded with what the last attempt ESTABLISHED — that is the difference \
-         between a restart and a cold retry. got: {seeded:?}"
-    );
-    assert!(
-        seeded.contains("write the file now"),
-        "...and with the concrete next action. got: {seeded:?}"
-    );
-}
-
-/// THE LIVENESS RULE. The judge's restarts are unbounded by any counter, so the only thing standing
-/// between it and a task it restarts forever is PROGRESS: a restart is permitted only while the task's
-/// owned files moved since the last one. A judge that asks on every look, against a tree that never
-/// changes, must get exactly ONE restart and then be withheld — and crucially the task must still
-/// COMPLETE rather than be failed, because at the moment the ask is withheld the current attempt is
-/// still running and failing it would destroy live work to prevent a loop that withholding already
-/// prevents.
-///
-/// This is the guard the plan's §8.1 liveness argument rests on, and it had no test until here.
-#[tokio::test]
-async fn a_barren_restart_is_withheld_and_never_fails_the_task() {
-    /// Asks for a restart on EVERY look, forever — the pathological judge the rule exists for.
-    struct AlwaysRestartJudge;
-    #[async_trait]
-    impl Judge for AlwaysRestartJudge {
-        async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
-            Ok(JudgeOutcome {
-                verdict: Verdict::Restart,
-                confidence: 1.0,
-                hint: "start over".to_string(),
-                established: String::new(),
-                next_action: "start over".to_string(),
-                proposed_split: None,
-                deterministic: false,
-            })
-        }
-    }
-
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "stuck".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    // The owned file is never written by the mock, so the fingerprint never moves — which is exactly
-    // the "produced nothing" case the rule is about.
-    let dag = Dag::from_specs(vec![spec("stuck", &[], &["never-written.py"])]).unwrap();
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        ..JudgeConfig::default()
-    };
-    let sched = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
-        .with_judge(Arc::new(AlwaysRestartJudge), cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "a withheld restart must never fail the task: {:?}",
-        report.failed
-    );
-    assert!(
-        report.done.contains(&"stuck".to_string()),
-        "the task still completes on its own"
-    );
-    let n = runs.lock().unwrap()[&"stuck".to_string()];
-    assert_eq!(
-        n, 2,
-        "exactly one restart is granted; every later ask is withheld because the tree never moved. \
-         An unbounded judge with no progress rule would run this task forever. got {n} runs"
-    );
-}
-
-/// Backlog #7 regression: a non-test task that LOOPS to exhaustion is SALVAGED (marked Done because its owned
-/// file was written), and that salvage MUST relax its dependents. Before the fix the salvage set state=Done
-/// but never decremented the dependents' indegree, so a downstream sink (the CLI / integrate-verify task)
-/// stayed Pending forever and the run ended `scheduler stuck` — a working library shipped with no entry point
-/// (observed on expense/tmpl). This asserts the dependent now dispatches and completes.
-#[tokio::test]
-async fn salvaged_looping_task_relaxes_dependents() {
-    // The salvage gate requires the looping task's owned file to exist non-empty on disk; use an absolute
-    // path under the temp dir so the check passes regardless of the run cwd.
-    let owned = std::env::temp_dir().join("goose_wf7_salvage_owned.rs");
-    std::fs::write(&owned, "fn main() {}\n").unwrap();
-    let owned_str = owned.to_string_lossy().to_string();
-
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    // slow_all: the target loops on EVERY attempt, so after the intervention cap it terminal-fails -> salvage.
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "app".to_string(),
-        delay: Duration::from_millis(15),
-        slow_all: true,
-    });
-    // app (the looping, salvageable non-test task) -> verify (the sink that must still run after the salvage).
-    let dag = Dag::from_specs(vec![
-        spec("app", &[], &[&owned_str]),
-        spec("verify", &["app"], &[]),
-    ])
-    .unwrap();
-    let judge = Arc::new(KillJudge {
-        target: "app".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        rejudge_cooldown_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    let _ = std::fs::remove_file(&owned);
-    assert!(
-        report.done.contains(&"app".to_string()),
-        "the looping task is salvaged to Done (its owned file was written)"
-    );
-    assert!(
-        report.done.contains(&"verify".to_string()),
-        "backlog #7: the salvage must relax dependents so the verify sink dispatches and completes (not stuck)"
-    );
-    assert!(report.failed.is_empty(), "no task fails");
-}
-
-/// Counts how many times the judge inspects each task; always passes (never kills).
-struct CountJudge {
-    counts: Arc<Mutex<HashMap<String, u32>>>,
-}
-
-#[async_trait]
-impl Judge for CountJudge {
-    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
-        *self
-            .counts
-            .lock()
-            .unwrap()
-            .entry(req.task_id.clone())
-            .or_default() += 1;
-        Ok(JudgeOutcome::ok())
-    }
-}
-
-/// Runs a scenario with ONE long-running task `target` (owning `files`) plus a chain of short filler
-/// tasks that wake the scheduler loop repeatedly (the judge inspects only on a wake / its 15s tick), so
-/// the judge gets many chances to re-inspect `target` — the single clear longest task, so no selection
-/// tie. cooldown=0. Returns how many times the judge inspected `target`. Three devices: target on one, a
-/// serialized filler on the second, the third always free for the judge.
-async fn count_target_rejudges(target: &str, files: &[&str]) -> u32 {
-    let rec = Arc::new(Mutex::new(Recorder::default()));
-    let counts = Arc::new(Mutex::new(HashMap::new()));
-    let judge = Arc::new(CountJudge {
-        counts: counts.clone(),
-    });
-    let mut specs = vec![spec(target, &[], files)];
-    for i in 0..8 {
-        let id = format!("f{i}");
-        let f = format!("f{i}.py");
-        if i == 0 {
-            specs.push(spec(&id, &[], &[&f]));
-        } else {
-            let dep = format!("f{}", i - 1);
-            specs.push(spec(&id, &[&dep], &[&f]));
-        }
-    }
-    let dag = Dag::from_specs(specs).unwrap();
-    let disp = Arc::new(MockDispatcher {
-        rec: rec.clone(),
-        delay: Duration::from_millis(80),
-        fail_transient_first: HashSet::new(),
-        terminal: HashSet::new(),
-        slow: HashSet::from([target.to_string()]),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        rejudge_cooldown_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched = Scheduler::new(
-        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
-        3,
-    )
-    .with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert!(report.failed.is_empty(), "no task fails");
-    let n = counts.lock().unwrap().get(target).copied().unwrap_or(0);
-    n
-}
-
-/// The scoped fix: an owns-NOTHING task (the integrate-verify sink) is judged AT MOST ONCE, even though
-/// the scenario churns many wakes with cooldown=0 (a FILE-OWNING target in the same harness would be
-/// re-judged on every wake). Every deterministic gate is disarmed for an owns-nothing task and its verdict
-/// is always a non-actionable "ok", so re-judging it only steals an idle node from sink-review;
-/// worker_timeout stays its hard-stall backstop. The `<= 1` cap is deterministic (the skip stamps
-/// last_judged under the lock at first selection), so this never flakes under concurrent test load — yet
-/// removing the skip makes the sink exceed 1 in this multi-wake scenario, so the regression is still caught.
-#[tokio::test]
-async fn judge_skips_rejudging_owns_nothing_sink() {
-    let sink = count_target_rejudges("sink", &[]).await;
-    assert!(
-        sink <= 1,
-        "owns-nothing sink judged at most once, got {sink}"
-    );
-}
-
-/// SPEED-PILLAR INSTRUMENT: a judge-RESTARTED attempt must report the time it really ran.
-///
-/// This matters MORE now, not less: node-busy fraction is the falsifier for the whole
-/// semantic-plan change, and it is computed from these numbers. If a restarted attempt reports
-/// 0 ms, the fleet looks idler than it was and the falsifier lies.
-///
-/// Every emit inside `apply_judge_outcome` — accept, kill, salvage, terminal-fail — hard-coded
-/// `elapsed_ms: 0` while the elapsed time sat in scope one screen above. `finish()` then sums
-/// `per_device.busy_ms += a.elapsed_ms` across the whole attempt history, so a judge kill (per F489 the
-/// commonest restart in the engine) contributed ZERO node-seconds to its device, and a task ending in a
-/// judge accept reported zero for itself. MEASURED: a task that ran 80.2 minutes across five attempts
-/// was recorded as taking no time at all on three of them. `busy_ms` is the engine's own answer to how
-/// busy each node was — the question the entire node-scaling goal turns on.
-///
-/// The elapsed floor comes from a judge that DELIBERATES for 50 ms, not from the worker's own delay.
-/// `min_age_secs: 0` lets the judge fire on the dispatch wake, so an attempt is often barely a
-/// millisecond old when it is inspected — asserting on the worker's sleep would race the scheduler and
-/// flake. The clock starts at dispatch, so a judge that takes 50 ms to answer guarantees at least that
-/// much elapsed by the time the verdict is applied, whatever the loop does around it.
-#[tokio::test]
-async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
-    /// Restarts its target like `KillJudge`, but takes measurable wall-clock to say so.
-    struct SlowKillJudge {
-        target: String,
-    }
-    #[async_trait]
-    impl Judge for SlowKillJudge {
-        async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            if req.task_id == self.target {
-                Ok(JudgeOutcome {
-                    verdict: Verdict::Restart,
-                    confidence: 1.0,
-                    hint: "STOP looping and WRITE the file now".to_string(),
-                    established: String::new(),
-                    next_action: String::new(),
-                    proposed_split: None,
-                    deterministic: false,
-                })
-            } else {
-                Ok(JudgeOutcome::ok())
-            }
-        }
-    }
-
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "stuck".to_string(),
-        delay: Duration::from_millis(40),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(SlowKillJudge {
-        target: "stuck".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    let stuck = report
-        .tasks
-        .iter()
-        .find(|t| t.task_id == "stuck")
-        .expect("the restarted task is in the report");
-    let restarted: Vec<_> = stuck
-        .attempt_history
-        .iter()
-        .filter(|a| a.outcome == "judge_restart")
-        .collect();
-    assert!(
-        !restarted.is_empty(),
-        "the scenario must actually produce a judge restart, or this asserts nothing; history={:?}",
-        stuck.attempt_history
-    );
-    for a in &restarted {
-        assert!(
-            a.elapsed_ms > 0,
-            "a judge-restarted attempt ran for real time; reporting 0 ms erases it from \
-             per_device.busy_ms, which is what node-occupancy is measured from"
-        );
-    }
-    let busy: u64 = report.per_device.values().map(|d| d.busy_ms).sum();
-    assert!(
-        busy > 0,
-        "the fleet was busy; per_device.busy_ms must not sum to zero"
-    );
-}
-
-/// Under weight-1 with every node busy there is NO idle device for the judge — but the deterministic
-/// verdicts need no model, so the judge must still fire. A single-device pool running its one task is
-/// fully saturated; the judge must still inspect + act on it (regression guard for judge-dark-saturation).
-#[tokio::test]
-async fn judge_fires_when_fleet_is_saturated() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "stuck".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(KillJudge {
-        target: "stuck".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        ..JudgeConfig::default()
-    };
-    // ONE device, weight 1: running its single task leaves NO idle device for the judge.
-    let sched = Scheduler::new(vec![dev("only", "m-only", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert!(report.done.contains(&"stuck".to_string()));
-    assert_eq!(
-        runs.lock().unwrap()[&"stuck".to_string()],
-        2,
-        "no idle device, yet the judge still fired + re-dispatched the stuck worker"
-    );
-}
-
-/// Records which completed tasks an idle node pre-reviewed (M5).
-struct RecordingPreReviewer {
-    reviewed: Arc<Mutex<Vec<String>>>,
-}
-
-#[async_trait]
-impl PreReviewer for RecordingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
-        self.reviewed.lock().unwrap().push(req.task_id.clone());
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
-    }
-}
-
-/// M5 no-idle: with no in-flight worker to judge, an idle node correctness-pre-reviews a COMPLETED task.
-/// `verify` is the slow target so that, while it runs, the other node is free to review the done `core`.
-#[tokio::test]
-async fn idle_node_pre_reviews_completed_task() {
-    let reviewed = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: Arc::new(Mutex::new(HashMap::new())),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "verify".to_string(), // verify runs long -> idle window to review the done `core`
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![
-        spec("core", &[], &["a.py"]),
-        spec("verify", &["core"], &["v.py"]),
-    ])
-    .unwrap();
-    let pr = Arc::new(RecordingPreReviewer {
-        reviewed: reviewed.clone(),
-    });
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_pre_reviewer(pr);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "no task fails: {:?}",
-        report.failed
-    );
-    assert!(
-        report.done.contains(&"core".to_string()) && report.done.contains(&"verify".to_string()),
-        "both tasks complete: {:?}",
-        report.done
-    );
-    assert!(
-        reviewed.lock().unwrap().contains(&"core".to_string()),
-        "the idle node pre-reviewed the completed task `core`; reviewed = {:?}",
-        reviewed.lock().unwrap()
-    );
-}
-
-/// A judge that only OBSERVES (never intervenes). Used to prove the pre-reviewer runs CONCURRENTLY with a
-/// firing judge instead of being starved by the single idle-slot they used to share.
-struct ObservingJudge;
-
-#[async_trait]
-impl Judge for ObservingJudge {
-    async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
-        Ok(JudgeOutcome::ok())
-    }
-}
-
-/// Idle-jobs concurrency (the lone-idle-node fix): with BOTH a judge and a pre-reviewer attached and >=2
-/// free slots, they must run CONCURRENTLY — the judge inspects the in-flight `slow` worker while a SECOND
-/// idle node pre-reviews the completed `done` task. Under the OLD single `judge_running` slot the judge
-/// starved the pre-review (gate was `if s.judge_running`), so `done` was never reviewed; the fix bounds idle
-/// jobs by `idle_capacity()` instead, so both run. 3 devices: `slow` occupies one, leaving capacity 2.
-#[tokio::test]
-async fn pre_review_runs_concurrently_with_judge() {
-    let reviewed = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: Arc::new(Mutex::new(HashMap::new())),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "slow".to_string(), // slow stays in-flight -> the judge has a worker to inspect
-        delay: Duration::from_millis(60),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![
-        spec("done", &[], &["d.py"]), // completes fast -> a completed-unreviewed task to pre-review
-        spec("slow", &[], &["s.py"]), // runs long -> the judge's in-flight target
-    ])
-    .unwrap();
-    let pr = Arc::new(RecordingPreReviewer {
-        reviewed: reviewed.clone(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched = Scheduler::new(
-        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
-        3,
-    )
-    .with_judge(Arc::new(ObservingJudge), cfg)
-    .with_pre_reviewer(pr);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "no task fails: {:?}",
-        report.failed
-    );
-    assert!(
-        reviewed.lock().unwrap().contains(&"done".to_string()),
-        "pre-review ran on `done` CONCURRENTLY with the judge inspecting `slow` (lone-idle fix); \
-         reviewed = {:?}",
-        reviewed.lock().unwrap()
-    );
-}
-
-/// Records PEAK concurrent pre-reviews so the idle_jobs invariant can be asserted.
-struct PeakPreReviewer {
+/// An operator-question answerer that always has a question waiting and records PEAK concurrent
+/// answers, so the idle_jobs invariant can be asserted on the Q&A idle job (the vehicle since the
+/// M5 pre-review was deleted — the accounting under test is the IdleSlotGuard's, shared by every
+/// idle job).
+struct PeakAnswerer {
     cur: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
 }
 
 #[async_trait]
-impl PreReviewer for PeakPreReviewer {
-    async fn pre_review(&self, _req: PreReviewRequest) -> Result<PreReviewOutput, String> {
+impl PreReviewer for PeakAnswerer {
+    fn has_pending_question(&self) -> bool {
+        true
+    }
+    async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {
         let n = self.cur.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(n, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(40)).await;
         self.cur.fetch_sub(1, Ordering::SeqCst);
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
     }
 }
 
-/// idle_jobs accounting invariant: concurrent pre-reviews must NEVER exceed idle_capacity(). `slow` holds
-/// one of 3 weight-1 nodes (idle_capacity 2 while it runs); four completed tasks are pre-review targets. The
-/// double-decrement-on-normal-exit bug undercounts idle_jobs after each review and lets a 3rd concurrent
-/// review spawn on the 2-slot fleet; with the IdleSlotGuard as the SOLE releaser the gate caps peak at 2.
+/// idle_jobs accounting invariant: concurrent idle jobs must NEVER exceed idle_capacity(). `slow` holds
+/// one of 3 weight-1 nodes (idle_capacity 2 while it runs) and a question is always pending, so the
+/// Q&A job is re-claimed on every tick. The double-decrement-on-normal-exit bug undercounts idle_jobs
+/// after each job and lets a 3rd concurrent one spawn on the 2-slot fleet; with the IdleSlotGuard as
+/// the SOLE releaser the gate caps peak at 2.
 #[tokio::test]
-async fn pre_review_never_oversubscribes_free_nodes() {
+async fn idle_jobs_never_oversubscribe_free_nodes() {
     let rec = Arc::new(Mutex::new(Recorder::default()));
     let dag = Dag::from_specs(vec![
         spec("slow", &[], &["sl.py"]),
@@ -1452,7 +788,7 @@ async fn pre_review_never_oversubscribes_free_nodes() {
     ])
     .unwrap();
     let peak = Arc::new(AtomicUsize::new(0));
-    let pr = Arc::new(PeakPreReviewer {
+    let pr = Arc::new(PeakAnswerer {
         cur: Arc::new(AtomicUsize::new(0)),
         peak: peak.clone(),
     });
@@ -1472,41 +808,41 @@ async fn pre_review_never_oversubscribes_free_nodes() {
     );
     assert!(
         peak.load(Ordering::SeqCst) <= 2,
-        "concurrent pre-reviews ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
+        "concurrent idle jobs ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
          (an idle_jobs double-decrement would let a 3rd spawn and oversubscribe the fleet)",
         peak.load(Ordering::SeqCst)
     );
+    assert!(
+        peak.load(Ordering::SeqCst) >= 1,
+        "the Q&A idle job must have run at least once for the invariant to have been exercised"
+    );
 }
 
-/// Pushes into the same ordered log the LogSink writes, so a review's start can be ordered
-/// against claim-time dispatch events.
-struct LoggingPreReviewer {
+/// An answerer with a question always pending that pushes into the same ordered log the LogSink
+/// writes, so an idle job's start can be ordered against claim-time dispatch events.
+struct LoggingAnswerer {
     log: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
-impl PreReviewer for LoggingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("review_start:{}", req.task_id));
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
+impl PreReviewer for LoggingAnswerer {
+    fn has_pending_question(&self) -> bool {
+        true
+    }
+    async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {
+        self.log.lock().unwrap().push("idle_job_start".to_string());
     }
 }
 
 /// A-3 (r3) ready-work yield: an idle-fill claim must never outrank a real task's dispatch.
 /// `waiter` is READY the whole run but unplaceable (its file is held by the slow `blocker`),
-/// while `done1` completes early and becomes a pre-review candidate with 2 free devices. The
-/// old rule only yielded the LAST free slot (`idle_capacity() <= 1`), so the review claimed a
-/// node here while real work waited — the shape that held nodes through r2's 11-minute retry
-/// starvation (one pre_review call alone held a node 7,535s). Now no idle-fill claim happens
-/// while ANY task sits in `ready`: every review in the log must start after `waiter` was
-/// dispatched. (Claim order is read from the sink, which emits under the state lock; the
-/// review's own start is spawned after its claim, so the ordering is lock-guaranteed.)
+/// while a question is pending from the first tick with 2 free devices. The old rule only
+/// yielded the LAST free slot (`idle_capacity() <= 1`), so an idle job claimed a node here while
+/// real work waited — the shape that held nodes through r2's 11-minute retry starvation (one
+/// pre_review call alone held a node 7,535s). Now no idle-fill claim happens while ANY task sits
+/// in `ready`: every idle job in the log must start after `waiter` was dispatched. (Claim order
+/// is read from the sink, which emits under the state lock; the job's own start is spawned after
+/// its claim, so the ordering is lock-guaranteed.)
 #[tokio::test]
 async fn ready_real_work_outranks_idle_fill_claims() {
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -1520,7 +856,7 @@ async fn ready_real_work_outranks_idle_fill_claims() {
         spec("child", &["blocker"], &["c.py"]),
     ])
     .unwrap();
-    let pr = Arc::new(LoggingPreReviewer { log: log.clone() });
+    let pr = Arc::new(LoggingAnswerer { log: log.clone() });
     let sched = Scheduler::new(
         vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
         3,
@@ -1542,10 +878,10 @@ async fn ready_real_work_outranks_idle_fill_claims() {
         .position(|e| e.starts_with("dispatch:waiter:"))
         .expect("waiter was dispatched");
     for (i, e) in log.iter().enumerate() {
-        if e.starts_with("review_start:") {
+        if e == "idle_job_start" {
             assert!(
                 i > waiter_at,
-                "an idle-fill review claimed a node while `waiter` sat READY — idle-fill \
+                "an idle-fill job claimed a node while `waiter` sat READY — idle-fill \
                  outranked a real task's dispatch; log = {log:?}"
             );
         }
@@ -2315,6 +1651,11 @@ impl goose_swarm::EventSink for EventLog {
             self.0.lock().unwrap().push(v);
         }
     }
+    // The merge-gap door's events (`merge_gap`, `merge_gap_repeated`, `merge_rearmed`) are raw
+    // values, not `SwarmEvent` arms; the trait's default drops them.
+    fn write_value(&self, value: serde_json::Value) {
+        self.0.lock().unwrap().push(value);
+    }
 }
 
 impl EventLog {
@@ -2779,66 +2120,524 @@ async fn the_warden_is_silent_when_the_dependency_actually_delivered() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A-2: a judge look that FAILS IN TRANSPORT applies nothing — `judge_look_failed` with the error,
-/// no `judge_verdict` row of any kind, and the worker runs to its own end untouched. This is the
-/// trait-level pin for r2's laundering: from 22:02:35Z every look returned gabee's 400 "Invalid
-/// model identifier" as text and the run logged 28 `drifting` verdicts whose hint WAS the error
-/// body. An infallible judge signature is what made that reachable; the failed look must now be a
-/// different event, not a differently-worded verdict.
-#[tokio::test]
-async fn a_judge_transport_error_is_a_failed_look_never_a_verdict() {
-    struct DeadModelJudge;
-    #[async_trait]
-    impl Judge for DeadModelJudge {
-        async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
-            Err("HTTP 400: Invalid model identifier 'qwen3-omni-30b'".to_string())
-        }
-    }
+/// THE SPLIT (2c S2): a shard's and a merger's plan metadata ride the DispatchRequest — the
+/// dispatcher renders a shard's folder and builds a merger's dossier from exactly these fields,
+/// so a claim that dropped them would dispatch a shard as an ordinary file author.
+type SeenRole = (String, Option<String>, Option<Vec<String>>);
 
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "slow".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
+struct RoleCapture {
+    seen: Arc<Mutex<Vec<SeenRole>>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for RoleCapture {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        self.seen.lock().unwrap().push((
+            req.task_id.clone(),
+            req.shard_of.as_ref().map(|s| s.folder.clone()),
+            req.merger_of.as_ref().map(|m| m.shards.clone()),
+        ));
+        Ok(format!("output-of-{}", req.task_id).into())
+    }
+}
+
+#[tokio::test]
+async fn a_shards_and_a_mergers_roles_reach_the_dispatch_request() {
+    let mut shard = spec(
+        "web-viz-render",
+        &[],
+        &[".swarm/shards/web-viz/render/README.md"],
+    );
+    shard.shard_of = Some(goose_swarm::ShardOf {
+        module: "web-viz".into(),
+        shard: "render".into(),
+        folder: ".swarm/shards/web-viz/render".into(),
+        responsibility: "programs".into(),
+        interface: goose_swarm::ModuleInterface::default(),
+        module_files: vec!["web/viz.js".into()],
     });
-    let dag = Dag::from_specs(vec![spec("slow", &[], &["a.py"])]).unwrap();
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        ..JudgeConfig::default()
-    };
-    let events = Arc::new(EventLog::default());
-    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
-        .with_sink(events.clone())
-        .with_judge(Arc::new(DeadModelJudge), cfg)
-        .run(dag, disp, String::new())
+    let mut merger = spec("web-viz", &["web-viz-render"], &["web/viz.js"]);
+    merger.merger_of = Some(goose_swarm::MergerOf {
+        module: "web-viz".into(),
+        shards: vec!["web-viz-render".into()],
+        folders: vec![".swarm/shards/web-viz/render".into()],
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    let dag = Dag::from_specs(vec![shard, merger]).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(vec![dev("d0", "m0", 1)], 3);
+    let report = sched
+        .run(
+            dag,
+            Arc::new(RoleCapture { seen: seen.clone() }),
+            String::new(),
+        )
         .await
         .unwrap();
+    assert_eq!(report.done.len(), 2);
+    let seen = seen.lock().unwrap();
+    let shard_req = seen.iter().find(|s| s.0 == "web-viz-render").unwrap();
+    assert_eq!(
+        shard_req.1.as_deref(),
+        Some(".swarm/shards/web-viz/render"),
+        "the shard's folder reaches the dispatcher"
+    );
+    assert!(shard_req.2.is_none());
+    let merger_req = seen.iter().find(|s| s.0 == "web-viz").unwrap();
+    assert_eq!(
+        merger_req.2.as_deref(),
+        Some(&["web-viz-render".to_string()][..]),
+        "the merger's shard list reaches the dispatcher"
+    );
+    assert!(merger_req.1.is_none());
+}
 
-    assert!(
-        report.done.contains(&"slow".to_string()) && report.failed.is_empty(),
-        "the worker is untouched by its supervisor's dead model: done={:?} failed={:?}",
-        report.done,
-        report.failed
+/// VA-064 fixtures: a split module `viz3d-engine` (r6e's plan shape) — shards owning only their
+/// `.swarm/shards/<module>/<shard>/README.md`, the merger owning `web/viz.js` and depending on
+/// every shard, the file-less sink depending on everything.
+fn viz_shard(shard: &str, responsibility: &str) -> TaskSpec {
+    let id = format!("viz3d-engine-{shard}");
+    let folder = format!(".swarm/shards/viz3d-engine/{shard}");
+    let mut t = spec(&id, &[], &[&format!("{folder}/README.md")]);
+    t.shard_of = Some(goose_swarm::ShardOf {
+        module: "viz3d-engine".into(),
+        shard: shard.into(),
+        folder,
+        responsibility: responsibility.into(),
+        interface: goose_swarm::ModuleInterface::default(),
+        module_files: vec!["web/viz.js".into()],
+    });
+    t
+}
+
+fn viz_merger(shards: &[&str]) -> TaskSpec {
+    let ids: Vec<String> = shards.iter().map(|s| format!("viz3d-engine-{s}")).collect();
+    let deps: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let mut t = spec("viz3d-engine", &deps, &["web/viz.js"]);
+    t.merger_of = Some(goose_swarm::MergerOf {
+        module: "viz3d-engine".into(),
+        shards: ids.clone(),
+        folders: shards
+            .iter()
+            .map(|s| format!(".swarm/shards/viz3d-engine/{s}"))
+            .collect(),
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    t
+}
+
+/// One dispatch as the scheduler handed it over: task, attempt, the prior hint, and a start/end
+/// sequence so "the sink waited for the merger to COMPLETE" is an ordering fact, not a guess.
+#[derive(Clone, Debug)]
+struct SplitRun {
+    task: String,
+    attempt: u32,
+    hint: Option<String>,
+    start_seq: usize,
+    end_seq: usize,
+}
+
+struct SplitRoleDispatcher {
+    seen: Arc<Mutex<Vec<SplitRun>>>,
+    seq: AtomicUsize,
+    terminal: HashSet<String>,
+    /// Follow-ups the MERGER's completions carry, one batch per attempt in order (its `MERGE_GAP:`
+    /// lines as specs); an attempt with no batch left completes plain.
+    merger_gaps: Mutex<std::collections::VecDeque<Vec<TaskSpec>>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for SplitRoleDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        let start_seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let result = if self.terminal.contains(&req.task_id) {
+            Err(DispatchError::Terminal("shard lane died".into()))
+        } else {
+            let mut out: TaskRunOutput = format!("output-of-{}", req.task_id).into();
+            if req.merger_of.is_some() {
+                if let Some(batch) = self.merger_gaps.lock().unwrap().pop_front() {
+                    out.follow_ups = batch;
+                }
+            }
+            Ok(out)
+        };
+        let end_seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push(SplitRun {
+            task: req.task_id.clone(),
+            attempt: req.attempt,
+            hint: req.prior_hint.clone(),
+            start_seq,
+            end_seq,
+        });
+        result
+    }
+}
+
+/// VA-064 rule 1 (`fail_descendants`): ONE failed shard relaxes its MERGER — the merger owns the
+/// module's final file, so the owns-nothing relax never applied to it and the failure cascaded it,
+/// after which the file-less sink relaxed and integrated WITHOUT the module. Now the merger
+/// dispatches against the shards that landed, with a hint naming the failed shard, and the sink
+/// still waits for the merger to complete. Rule (b): a NON-merger dependent that owns a file still
+/// cascades exactly as before.
+#[tokio::test]
+async fn a_failed_shard_relaxes_its_merger_but_cascades_a_file_owning_dependent() {
+    let mut specs = vec![
+        viz_shard("pick-buffer", "pick buffer"),
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["pick-buffer", "camera-inertia"]),
+        spec(
+            "viz3d-debug-overlay",
+            &["viz3d-engine-pick-buffer"],
+            &["web/debug.js"],
+        ),
+    ];
+    let everything: Vec<String> = specs.iter().map(|t| t.id.clone()).collect();
+    let everything: Vec<&str> = everything.iter().map(|s| s.as_str()).collect();
+    specs.push(spec("integrate-verify", &everything, &[]));
+    let dag = Dag::from_specs(specs).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
+        merger_gaps: Mutex::new(std::collections::VecDeque::new()),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert_eq!(
+        done,
+        HashSet::from([
+            "viz3d-engine-camera-inertia".to_string(),
+            "viz3d-engine".to_string(),
+            "integrate-verify".to_string(),
+        ]),
+        "the merger dispatches past its failed shard and the sink integrates WITH the module"
     );
-    let failed = events.named("judge_look_failed");
+    let failed: HashSet<_> = report.failed.iter().cloned().collect();
+    assert_eq!(
+        failed,
+        HashSet::from([
+            "viz3d-engine-pick-buffer".to_string(),
+            "viz3d-debug-overlay".to_string(),
+        ]),
+        "the failed shard and the file-owning NON-merger dependent fail as before"
+    );
+    let seen = seen.lock().unwrap();
+    let merger = seen.iter().find(|r| r.task == "viz3d-engine").unwrap();
+    let hint = merger.hint.as_deref().unwrap_or("");
     assert!(
-        !failed.is_empty(),
-        "the failed look is a named engine fact, not silence"
+        hint.contains("shard 'viz3d-engine-pick-buffer' FAILED") && hint.contains("MERGE_GAP:"),
+        "the merger is told WHICH shard failed and how to re-do its piece: {hint:?}"
+    );
+    let sink = seen.iter().find(|r| r.task == "integrate-verify").unwrap();
+    assert!(
+        sink.start_seq > merger.end_seq,
+        "the sink still waits on the merger's COMPLETION (sink start {} vs merger end {})",
+        sink.start_seq,
+        merger.end_seq
     );
     assert!(
-        failed[0]["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Invalid model identifier"),
-        "the event carries the transport error itself: {:?}",
-        failed[0]
+        !seen.iter().any(|r| r.task == "viz3d-debug-overlay"),
+        "a cascaded task is never dispatched"
+    );
+}
+
+/// VA-064 rule 2 (`splice_merge_gaps`): `landed` counted EVERY shard carrying `shard_of`, whatever
+/// its state, so the piece of a FAILED shard — the one gap the door exists for — was refused as
+/// `merge_gap_repeated`. Landed means Done: the failed shard's gap is accepted and spliced; a gap
+/// repeating a Done shard's words is still refused by name.
+#[tokio::test]
+async fn a_failed_shards_gap_is_accepted_not_refused_as_repeated() {
+    let specs = vec![
+        viz_shard("pick-buffer", "pick buffer"),
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["pick-buffer", "camera-inertia"]),
+        spec(
+            "integrate-verify",
+            &[
+                "viz3d-engine-pick-buffer",
+                "viz3d-engine-camera-inertia",
+                "viz3d-engine",
+            ],
+            &[],
+        ),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let gap = |shard: &str, words: &str| {
+        let mut g = viz_shard(
+            shard,
+            &format!("MERGE GAP sent out by the merger of `viz3d-engine`: {words}"),
+        );
+        g.deps.clear();
+        g
+    };
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(EventLog::default());
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
+        merger_gaps: Mutex::new(std::collections::VecDeque::from([vec![
+            gap("gap-pick-buffer", "pick buffer"),
+            gap("gap-camera-inertia", "camera inertia"),
+        ]])),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let accepted: Vec<String> = events
+        .named("merge_gap")
+        .iter()
+        .map(|e| e["shard"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        accepted,
+        vec!["viz3d-engine-gap-pick-buffer".to_string()],
+        "the FAILED shard's piece is a real gap and enters through the door"
+    );
+    let repeated = events.named("merge_gap_repeated");
+    assert_eq!(repeated.len(), 1, "{repeated:?}");
+    assert_eq!(repeated[0]["gap"], "viz3d-engine-gap-camera-inertia");
+    assert_eq!(
+        repeated[0]["landed_as"], "viz3d-engine-camera-inertia",
+        "a gap repeating a DONE shard's words is still refused by name"
     );
     assert!(
-        events.named("judge_verdict").is_empty(),
-        "no verdict row of any kind is minted from a transport error: {:?}",
-        events.named("judge_verdict")
+        events.named("merge_gap_refused").is_empty(),
+        "{:?}",
+        events.named("merge_gap_refused")
+    );
+    assert_eq!(events.named("merge_rearmed").len(), 1);
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("viz3d-engine-gap-pick-buffer")
+            && done.contains("viz3d-engine")
+            && done.contains("integrate-verify"),
+        "gap shard, re-armed merger and sink all complete: {done:?}"
+    );
+    assert_eq!(report.failed, vec!["viz3d-engine-pick-buffer".to_string()]);
+    let seen = seen.lock().unwrap();
+    let merger_attempts: Vec<u32> = seen
+        .iter()
+        .filter(|r| r.task == "viz3d-engine")
+        .map(|r| r.attempt)
+        .collect();
+    assert_eq!(
+        merger_attempts,
+        vec![0, 1],
+        "the merger ran once, sent the gap out, and ran again after it landed"
+    );
+}
+
+/// VA-072 (the refuter's correction to VA-064): gap ids are fresh per lap, so a gap shard that
+/// FAILED relaxed its merger (rule 1), whose brief then asked for the same piece again; with
+/// `landed` meaning only Done, the identical gap was accepted under a new id, failed again, and
+/// cycled forever. A gap the door already sent out counts as landed whatever its state — the
+/// identical request is refused `merge_gap_repeated{landed_as, state: "failed"}` — while a
+/// DIFFERENT gap text is still accepted. A progress rule, not a count.
+#[tokio::test]
+async fn a_failed_gap_shards_identical_request_is_refused_a_different_one_accepted() {
+    let specs = vec![
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["camera-inertia"]),
+        spec(
+            "integrate-verify",
+            &["viz3d-engine-camera-inertia", "viz3d-engine"],
+            &[],
+        ),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let gap = |shard: &str, words: &str| {
+        let mut g = viz_shard(
+            shard,
+            &format!("MERGE GAP sent out by the merger of `viz3d-engine`: {words}"),
+        );
+        g.deps.clear();
+        g
+    };
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(EventLog::default());
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-gap-1".to_string()]),
+        merger_gaps: Mutex::new(std::collections::VecDeque::from([
+            vec![gap("gap-1", "pick buffer")],
+            vec![gap("gap-2", "pick buffer"), gap("gap-3", "labels culling")],
+        ])),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let accepted: Vec<String> = events
+        .named("merge_gap")
+        .iter()
+        .map(|e| e["shard"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        accepted,
+        vec![
+            "viz3d-engine-gap-1".to_string(),
+            "viz3d-engine-gap-3".to_string()
+        ],
+        "the first request and the DIFFERENT text enter; the identical re-send does not"
+    );
+    let repeated = events.named("merge_gap_repeated");
+    assert_eq!(repeated.len(), 1, "{repeated:?}");
+    assert_eq!(repeated[0]["gap"], "viz3d-engine-gap-2");
+    assert_eq!(repeated[0]["landed_as"], "viz3d-engine-gap-1");
+    assert_eq!(
+        repeated[0]["state"], "failed",
+        "the reader sees it was a FAILED gap, not a done one"
+    );
+    assert_eq!(events.named("merge_rearmed").len(), 2);
+    assert_eq!(report.failed, vec!["viz3d-engine-gap-1".to_string()]);
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("viz3d-engine-gap-3")
+            && done.contains("viz3d-engine")
+            && done.contains("integrate-verify"),
+        "{done:?}"
+    );
+    let seen = seen.lock().unwrap();
+    let merger_attempts: Vec<u32> = seen
+        .iter()
+        .filter(|r| r.task == "viz3d-engine")
+        .map(|r| r.attempt)
+        .collect();
+    assert_eq!(
+        merger_attempts,
+        vec![0, 1, 2],
+        "sent out, relaxed past the failed gap, re-armed on the new gap, completed — no lap on the failed text"
+    );
+}
+
+/// r6h's plan (`plan_loaded.tasks[]`, 2026-09-02, archive
+/// `local-sb7-swarm-r6h-FINISHED-0.4616-passed-507m-3d-draws-393a99351`) in its plan order, with the
+/// per-task `weight` the CLI writes from `plan_flag{kind: fat_task}.distribution[].sections`:
+/// ledgerd-core 16, webhooks-workflow 10, notifierd 4, console-page 5, the three viz shards 12/3 = 4
+/// each. `skeleton` (5 files, 0 sections), the merger `viz-engine` (1 file after the split) and the
+/// join carry no measured weight and take `derived_weight` (files × difficulty rank): 10, 2, 2.
+/// Remaining chains: skeleton 10+16+10+2 = 38, a shard 4+2+2 = 8, console-page 7, webhooks 12.
+/// The join is named `join`, not `integrate-verify`: these tests are about ORDER, and the real sink
+/// id would drag in the sink-only claim gates.
+fn r6h_plan() -> Dag {
+    let t = |id: &str, hard: bool, files: &[&str], deps: &[&str], weight: Option<u32>| {
+        let mut o = serde_json::json!({
+            "id": id,
+            "description": format!("do {id}"),
+            "difficulty": if hard { "hard" } else { "easy" },
+            "files": files,
+            "depends_on": deps,
+        });
+        if let Some(w) = weight {
+            o["weight"] = serde_json::json!(w);
+        }
+        o
+    };
+    let shards = [
+        "viz-engine-camera-labels-brush",
+        "viz-engine-data-stream-render-pick",
+        "viz-engine-debug-api",
+    ];
+    let plan = serde_json::json!({ "subtasks": [
+        t("join", true, &[], &["ledgerd-core", "webhooks-workflow", "notifierd", "console-page",
+            "viz-engine", "skeleton", shards[1], shards[0], shards[2]], None),
+        t(shards[0], true, &[".swarm/shards/viz-engine/camera/README.md"], &[], Some(4)),
+        t("viz-engine", true, &["web/viz.js"], &shards, None),
+        t("skeleton", true, &["app/__init__.py", "app/__main__.py", "app/ledgerd/__init__.py",
+            "web/index.html", "README.md"], &[], None),
+        t("notifierd", false, &["app/notifierd/impl.py"], &["ledgerd-core", "skeleton"], Some(4)),
+        t("console-page", true, &["web/console.html", "web/console.js", "web/console.css",
+            "web/api.js"], &[], Some(5)),
+        t(shards[1], true, &[".swarm/shards/viz-engine/data-stream/README.md"], &[], Some(4)),
+        t(shards[2], true, &[".swarm/shards/viz-engine/debug-api/README.md"], &[], Some(4)),
+        t("webhooks-workflow", true, &["app/webhooks.py", "app/workflow.py", "app/outbox.py"],
+            &["ledgerd-core", "skeleton"], Some(10)),
+        t("ledgerd-core", true, &["app/db.py", "app/ledger.py", "app/models.py", "app/api.py",
+            "app/ingest.py", "app/reconcile.py", "app/export.py", "app/config.py"],
+            &["skeleton"], Some(16)),
+    ]});
+    Dag::from_planner_json(&plan.to_string()).unwrap()
+}
+
+#[tokio::test]
+async fn the_longest_remaining_chain_is_claimed_first_and_takes_the_fastest_host() {
+    // r6h's 02:13:38Z BUILD start: ready = {skeleton, 3 shards, console-page}, 3 hosts weight 1,
+    // speed_weight gabee 1 / mihai 2 / workhorse 3. MEASURED there: skeleton, camera, data-stream
+    // went out — the same three — but by fan-out and the alphabet; this pins that they now go out
+    // by REMAINING CHAIN (38 ≫ 8 ≫ 7), that the chain head takes the fastest host, that the two
+    // tied shards follow the PLAN's order (camera is plan index 1, data-stream 6, debug-api 7), and
+    // that `dispatch_order` says so.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(
+        vec![
+            dev_sw("gabee", "m-g", 1, 1),
+            dev_sw("mihai", "m-m", 1, 2),
+            dev_sw("workhorse", "m-w", 1, 3),
+        ],
+        3,
+    )
+    .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched
+        .run(r6h_plan(), mock(&rec, 30), String::new())
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 10);
+    let log = log.lock().unwrap();
+    let dispatches: Vec<&String> = log.iter().filter(|e| e.starts_with("dispatch:")).collect();
+    assert_eq!(
+        dispatches[..3],
+        [
+            "dispatch:skeleton:workhorse",
+            "dispatch:viz-engine-camera-labels-brush:mihai",
+            "dispatch:viz-engine-data-stream-render-pick:gabee",
+        ],
+        "chain 38 to the fastest host, then the two plan-first shards; log = {log:?}"
+    );
+    assert!(
+        log.iter().any(|e| e == "order:skeleton:38:workhorse"),
+        "dispatch_order carries the chain weight it ranked by; log = {log:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_chain_head_outranks_a_waiting_shard_when_ledgerd_core_completes() {
+    // r6h's 03:58:04Z: `ledgerd-core` finished and freed the fastest host while a shard was still
+    // waiting and `console-page` had waited 104 min. MEASURED: `console-page` (chain 7) took the
+    // slot by the alphabet; `webhooks-workflow` (chain 12, 201.9 min as run) waited for the SLOWEST
+    // host and finished 132 min after everything else. One host makes the whole order observable:
+    // after ledgerd-core the chain head goes out BEFORE the waiting shards (8) and console-page (7).
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(vec![dev_sw("workhorse", "m-w", 1, 3)], 3)
+        .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched
+        .run(r6h_plan(), mock(&rec, 10), String::new())
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 10);
+    let log = log.lock().unwrap();
+    let order: Vec<&str> = log
+        .iter()
+        .filter_map(|e| e.strip_prefix("dispatch:"))
+        .map(|e| e.split(':').next().unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "skeleton",
+            "ledgerd-core",
+            "webhooks-workflow",
+            "viz-engine-camera-labels-brush",
+            "viz-engine-data-stream-render-pick",
+            "viz-engine-debug-api",
+            "console-page",
+            "notifierd",
+            "viz-engine",
+            "join",
+        ],
+        "longest remaining chain first, plan order on ties; log = {log:?}"
     );
 }

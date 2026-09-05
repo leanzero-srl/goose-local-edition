@@ -10,27 +10,26 @@ pub mod context;
 pub mod dag;
 pub mod dispatch;
 pub mod event;
-pub mod judge;
-pub mod memory_classify;
+pub mod idle_jobs;
 pub mod patch;
-pub mod replan;
 pub mod scheduler;
+pub mod stub;
+pub mod verdict;
 
 pub use coherence::{extract_signatures, SigLang};
 pub use context::SharedContext;
 pub use dag::{
-    expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
-    Node, TaskId, TaskSpec, TaskState,
+    derived_weight, expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json,
+    Dag, DeclaredExport, Difficulty, MergerOf, ModuleInterface, Node, ShardOf, TaskId, TaskSpec,
+    TaskState,
 };
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
-pub use event::{EventSink, NullSink, SwarmEvent};
-pub use judge::{
-    deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
-};
+pub use event::{EventSink, NullSink, ReadyWeight, SwarmEvent};
+pub use idle_jobs::PreReviewer;
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
-pub use replan::{ReplanAnswer, ReplanContext, Replanner};
 pub use scheduler::{
-    qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,
-    DeviceAdmission, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
+    qa_enabled, testgen_enabled, AttemptRecord, DeviceAdmission, DeviceCfg, DeviceSummary,
+    RunReport, Scheduler, TaskOutcome,
 };
+pub use stub::skeleton_only;
+pub use verdict::{JudgeOutcome, Verdict};

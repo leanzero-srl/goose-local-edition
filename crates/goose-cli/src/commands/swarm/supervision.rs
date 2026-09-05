@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::EventSink;
+use goose_swarm::{JudgeOutcome, Verdict};
 
 /// The rolling judge lane for one supervised task: ONE lane per task, never per look — 31+ looks
 /// on one task would mint 31 lanes and drown the board. Each look reseeds the digest (its
@@ -23,40 +24,6 @@ use super::EventSink;
 /// APPENDS to the durable logs, which is exactly the cumulative story the inspector renders.
 pub(super) fn judge_lane_key(task_id: &str) -> String {
     format!("judge-{task_id}")
-}
-
-/// The dynamic replanner's lane, one per replan round (`ReplanContext.round`, 0-based).
-pub(super) fn replan_lane_key(round: u32) -> String {
-    format!("replan-r{round}")
-}
-
-/// A completion-time pre-review's lane, one per reviewed task.
-pub(super) fn prereview_lane_key(task_id: &str) -> String {
-    format!("prereview-{task_id}")
-}
-
-/// The sink-tail dimension review's lane — keyed by review dimension (it reviews the whole tree,
-/// not one task), matching the `tail_review` events and the `.swarm/prereview/tail-review-<dim>`
-/// findings file it already writes.
-pub(super) fn tail_review_lane_key(dim_id: &str) -> String {
-    format!("tail-review-{dim_id}")
-}
-
-/// The SCHEDULER-side judge's semantic review (`Judge::judge`), one lane per reviewed task.
-/// DELIBERATELY not `judge-<task>` (surgeon #10's warning): the omni judge already owns that key
-/// for the same task, and two writers on one digest would interleave two different reviews into
-/// one rolling story. Distinct class, same task suffix, so the panel can still group both onto
-/// the task.
-pub(super) fn schedjudge_lane_key(task_id: &str) -> String {
-    format!("schedjudge-{task_id}")
-}
-
-/// One sink-review verification (`verify_finding`), keyed by the finding's index in its drained
-/// batch — the fan runs these CONCURRENTLY over the fleet, so a shared key would have parallel
-/// lanes fighting over one digest file. Digit-suffixed exactly (like `replan-r<n>`) so a
-/// model-chosen task id such as `verify-endpoints` stays a worker lane.
-pub(super) fn verify_lane_key(idx: usize) -> String {
-    format!("verify-{idx}")
 }
 
 /// The mid-run operator-question answerer's lane (`answer_user_question`). One lane for the run:
@@ -67,12 +34,6 @@ pub(super) const ASK_ANSWER_LANE: &str = "ask-answer";
 /// The pillars distillation's lane (`distill_pillars`) — one planner call per run, at plan time.
 pub(super) const PILLARS_LANE: &str = "pillars";
 
-/// The stack-skill reflection's lane (`reflect_on_success`) — one call per successful run, at
-/// the very end. Exact-match keys (`pillars`, `reflect`, `ask-answer`) carry the same accepted
-/// hazard as the prefix classes below: a model-chosen task id could collide; live plans name
-/// tasks after modules and none of these three is a module name any measured plan has produced.
-pub(super) const REFLECT_LANE: &str = "reflect";
-
 /// Which supervision class a lane key belongs to — None for every build/planner lane. This is the
 /// ONE derivation behind both consumers: the shared digest builders stamp `"supervision": true`
 /// from it (never hand-set per write site), and `run_agent_in_inner` disarms the omni judge and
@@ -81,42 +42,20 @@ pub(super) const REFLECT_LANE: &str = "reflect";
 /// keys replaced were never judged either (behavior parity).
 ///
 /// Derivation is by the exact shapes the mint fns above produce. A MODEL-chosen task id starting
-/// with `judge-`/`prereview-`/`tail-review-` would be misclassified — the same accepted hazard
+/// with `judge-` would be misclassified — the same accepted hazard
 /// `engine_owned_activity_keys_cannot_collide_with_a_model_chosen_task_id` documents for
-/// `call_objective` (live plans name tasks after modules); the replan shape is digit-exact, so the
-/// measured bonus-task fixture id `replan-extra` stays a worker lane.
+/// `call_objective` (live plans name tasks after modules). The sink-review `verify-<n>` lanes and
+/// the `tail-review-<dim>` lanes are deleted (2c S6), so a model-chosen `verify-endpoints` is a
+/// worker lane by construction.
 pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
     if key.starts_with("judge-") {
         return Some("judge");
-    }
-    if let Some(rest) = key.strip_prefix("replan-r") {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return Some("replan");
-        }
-    }
-    if key.starts_with("prereview-") {
-        return Some("prereview");
-    }
-    if key.starts_with("tail-review-") {
-        return Some("tailreview");
-    }
-    if key.starts_with("schedjudge-") {
-        return Some("schedjudge");
-    }
-    // Digit-exact like replan-r<n>: `verify-endpoints` is a name a plan could give a build task.
-    if let Some(rest) = key.strip_prefix("verify-") {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return Some("verify");
-        }
     }
     if key == ASK_ANSWER_LANE {
         return Some("ask");
     }
     if key == PILLARS_LANE {
         return Some("pillars");
-    }
-    if key == REFLECT_LANE {
-        return Some("reflect");
     }
     None
 }
@@ -134,23 +73,8 @@ mod tests {
             supervision_lane_kind(&judge_lane_key("open-1")),
             Some("judge")
         );
-        assert_eq!(supervision_lane_kind(&replan_lane_key(0)), Some("replan"));
-        assert_eq!(
-            supervision_lane_kind(&prereview_lane_key("store-core")),
-            Some("prereview")
-        );
-        assert_eq!(
-            supervision_lane_kind(&tail_review_lane_key("wiring")),
-            Some("tailreview")
-        );
-        assert_eq!(
-            supervision_lane_kind(&schedjudge_lane_key("web-viz")),
-            Some("schedjudge")
-        );
-        assert_eq!(supervision_lane_kind(&verify_lane_key(3)), Some("verify"));
         assert_eq!(supervision_lane_kind(ASK_ANSWER_LANE), Some("ask"));
         assert_eq!(supervision_lane_kind(PILLARS_LANE), Some("pillars"));
-        assert_eq!(supervision_lane_kind(REFLECT_LANE), Some("reflect"));
         for worker in [
             "test-store-core",
             "review",
@@ -162,10 +86,11 @@ mod tests {
             "research-payments-q0",
             "apptest-primary-journey",
             "integrate-verify",
-            // The digit-exact rule keeps a model-chosen verify task a WORKER lane: a
-            // misclassification here would silently strip its omni-judge supervision.
+            // A model-chosen verify task is a WORKER lane (the engine mints no `verify-` lane
+            // since 2c S6): a misclassification would silently strip its omni-judge supervision.
             "verify-endpoints",
             "verify-2b",
+            "tail-review-wiring",
         ] {
             assert_eq!(
                 supervision_lane_kind(worker),
@@ -325,6 +250,41 @@ pub(super) fn render_forming_file(
     Some(serde_json::json!({ "forming": rows }).to_string())
 }
 
+/// THE READER of what `render_forming_file` writes: argument bytes across the frames open RIGHT
+/// NOW, for the one supervision question no other meter can answer — is this stream mid-delivery?
+///
+/// It lives beside the writer so the two cannot drift on the shape (`forming[].args_bytes`).
+/// MEASURED (r6c web-viz): the lane's ONE delivery of the run — `web/viz.js`, 38,927 bytes — was
+/// streamed as a single `write` tool call's arguments while `thinking_chars` sat at exactly
+/// 156,267 across looks 13, 14 and 15 (18:13:49Z -> 19:00:18Z), `calls.jsonl` was frozen at its
+/// 15:28:09Z entry, and the owned file did not exist. Reasoning, answer, calls and owned bytes
+/// all read DEAD; the argument stream was the whole delivery, and only this sidecar saw it.
+///
+/// The three answers are distinct on purpose (gate 1 — an absence must not impersonate a
+/// measurement):
+///   * `None` — the file is ABSENT, which is the writer's own honest empty: `render_forming_file`
+///     returns None when the live map is empty and the observer then UNLINKS the file. Nothing is
+///     forming.
+///   * `Some(n)` — at least one frame is open and `n` argument bytes have arrived across them.
+///   * a present-but-unparseable body reads as `Some(0)`: a frame IS open (the writer only ever
+///     creates this file for an open frame) and its size is unknown, so it can never be read as
+///     GROWTH. The ambiguity resolves toward the pre-existing behavior, never toward inventing
+///     progress. (The writer is tmp+rename atomic, so this arm needs a corrupt disk to reach.)
+pub(super) fn forming_args_bytes(sidecar: &Path) -> Option<u64> {
+    let body = std::fs::read_to_string(sidecar).ok()?;
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return Some(0);
+    };
+    Some(
+        v["forming"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["args_bytes"].as_u64())
+            .sum(),
+    )
+}
+
 /// `<path>.tmp` for the atomic write below — same directory, so the rename is atomic in-dir.
 pub(super) fn forming_tmp(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
@@ -441,4 +401,1490 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
         out.drain(..drop);
     }
     out
+}
+
+/// THE JUDGE CONTRACT. Four fields, not three. The third — ESTABLISHED — is the whole
+/// point: a redirect that throws away the useful half of a spiralling call is just a slower
+/// kill. The judge extracts what the call has actually worked out, and the nudge hands it
+/// back so the model resumes from there instead of restarting its own thinking.
+///
+/// The last line is taken verbatim from codex/salvage-engine's one genuinely good idea
+/// (its pre-scheduler judge prompt): the judge may NEVER ask for termination. Only the
+/// engine ends a call, and only ever by cancelling a corroborated loop.
+///
+/// r6d (judge-research-ledger-core-q0 look 4, seq 215/216; judge-research-ledger-core-q5 look 1):
+/// the judge's OWN request carries goose's `<turn-context><turn-budget>1/1 used</turn-budget>`
+/// (moim.rs `turn_budget_line`: the look runs at max_turns 1, so turns_taken 1 arms the line on
+/// its first and only turn) and both looks reasoned about it as if it were the worker's — q5:
+/// "The turn budget says '1/1 used'... might mean this is the last turn?... it's ambiguous";
+/// q0: "turn-context says 1/1 used. This is ambiguous — it might mean this is the last turn" —
+/// and q0's look 4 then ended its turn in a tool call: `judge_look_failed` "the reply was the
+/// agent loop's own turn-cap filler". The worker's transcripts never carry that line (workers run
+/// at max_turns 100000 and the line arms at half; grep of every r6d research-*.log/think.log:
+/// none), so the contract names the block as the judge's own and the answer shape as ONE
+/// message with no tool call. Moved verbatim from swarm.rs's omni-look (incremental-split law);
+/// that paragraph is the one addition.
+pub(super) fn judge_contract() -> String {
+    format!(
+        "{JUDGE_CONTRACT_HEAD}{}{JUDGE_CONTRACT_TAIL}",
+        own_turn_sentence()
+    )
+}
+
+/// The judge probe's turn budget — ONE derivation for four facts that used to be copies: the
+/// probe's `max_turns` at dispatch, the structural probe predicate in `run_agent_in_inner`
+/// (which strips the developer toolset from the judge lane — r6e E14), the `<turn-budget>
+/// {n}/{n} used` sentence in the contract, and the tripwire test that pins it.
+pub(super) const JUDGE_PROBE_TURNS: u32 = 1;
+
+fn own_turn_sentence() -> String {
+    format!(
+        "You answer in ONE message with no tool call. Your own request carries a <turn-context> \
+         block whose <turn-budget> reads {t}/{t} used: that is YOUR single turn — the one message \
+         you are writing now — never the call's. Any turn-budget or turn-count text inside the \
+         excerpt belongs to the call you are reading, never to you.\n",
+        t = JUDGE_PROBE_TURNS
+    )
+}
+
+const JUDGE_CONTRACT_HEAD: &str =
+    "You supervise ONE running agent call on a shared multi-agent build. You are \
+     given its goal, what it has produced so far, a measurement of how much its reasoning is \
+     repeating, a sample of its reasoning from much earlier in the same call, its recent \
+     commands, and — when the call owns files — the deterministic checks of what it has \
+     actually written plus the head of the file itself.\n\
+     THE FILE CHECKS ARE FACTS AND OUTRANK THE REASONING. A call that sounds confident \
+     while its owned file does not exist, does not parse, or holds nothing but stubs is \
+     not progressing, whatever its narration says.\n";
+
+const JUDGE_CONTRACT_TAIL: &str =
+    "Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
+     Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
+     revisiting the same analysis without adding evidence, resolving a decision, or taking the \
+     next concrete step.\n\
+     Say LOOPING only when ESTABLISHED quotes the claim this call has now made TWICE — \
+     the sentence from the earlier span and its recurrence in the recent tail. No quote, \
+     no LOOPING: a stream producing NEW content is OK or DRIFTING, whatever its pace. \
+     (Your own law applied to you: a reader quotes what it acted on.)\n\
+     Reply on ONE line, exactly:\n\
+     VERDICT|CONFIDENCE|ESTABLISHED|NEXT\n\
+     VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
+     CONFIDENCE   HIGH | LOW\n\
+     ESTABLISHED  what this call has actually worked out that is worth keeping. Draw it from \
+     what it SAID; do not invent. Fill this on an OK verdict too — one line of what the \
+     call has worked out so far, so the next look can see what changed since this one. \
+     Leave empty only if it has established nothing.\n\
+     NEXT         the single most concrete next action toward the goal. Name the file, the \
+     command, or the function. Never \"continue\" or \"proceed\".\n\
+     ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, NEVER THE WHOLE DELIVERABLE. \
+     A call that has produced no action yet is usually composing the entire artefact \
+     inside its reasoning and waiting until it is perfect to emit it — and it never \
+     becomes perfect. MEASURED: a task owning `web/viz.js` took 13 nudges over 76 \
+     minutes, every one of them asking for the complete file (\"WebGL context, orbit \
+     camera, picking\"), and wrote nothing at all. So if it owns a file, name the file \
+     and ask for a FIRST MINIMAL VERSION it can extend — the stub, the imports, one \
+     function. If its deliverable is a structured reply, it emits ONCE and there is no \
+     after: nothing reads a second reply, and a partial one starves the phase that binds \
+     to it (MEASURED r6e: a split lane told to submit a partial version and refine it \
+     afterwards composed for 30 more minutes, and the merger would have bound to half an \
+     interface). Ask for the COMPLETE reply now — every block its schema requires, the \
+     shortest rows that are true — never \"partial\", never \"refine after\", never a \
+     subset of rows. And to a call with ZERO actions so far, phrase NEXT as a \
+     command about its NEXT MESSAGE — \"your next message must be a single tool call: \
+     <the one write or emit>\" — never as an imperative about the artefact. MEASURED: \
+     \"call the output tool NOW: emit the slice table\" bought 19,000 more characters \
+     of reasoning and zero calls; \"your next message must be a tool call\" was quoted \
+     back by the lane and obeyed. A thing that exists can be improved; a thing being perfected \
+     in silence cannot.\n\
+     This governs your VERDICT too: a call that owns files, has taken ZERO actions, and \
+     whose reasoning is already writing complete file bodies is DRIFTING — working on \
+     the wrong thing (perfection in silence) — however good the draft reads.\n\
+     A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
+     you can name is the job the call was already given, you have nothing to add and the \
+     verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
+     returned was \"Check the slice list against the request section by section\", which \
+     is verbatim the task. Each cost a re-stream, and a re-stream throws away everything \
+     the call had reasoned so far. Redirect it only when you can tell it something it \
+     does not already know.\n\
+     DRIFTING = working, but on the wrong thing.\n\
+     RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
+     you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
+     You may never request termination. Your job is to redirect.\n\n\
+     Finally, end your reply with a token of the form ETA=<n>m — your honest estimate of \
+     how many more MINUTES this call needs to finish the job it was given. Put it on its \
+     OWN line, after the four-field line — never appended to that line as a fifth pipe \
+     field. You are the \
+     only party that can judge this: you have read what it has established, what it is \
+     doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
+     not on how long it has already taken. ETA=0m means it is essentially done. If you \
+     genuinely cannot tell, write ETA=? rather than inventing a number.";
+
+/// WHAT THIS CALL IS FOR, in one line, for the judge.
+///
+/// The judge was given the reasoning tail and nothing else, so it inferred the call's purpose from what
+/// the call happened to be talking about. MEASURED on a live run: it watched the plan-REVIEW call, saw it
+/// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
+/// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
+/// at all. A supervisor that does not know what it is supervising does not help — it derails.
+/// (Moved verbatim from swarm.rs under the incremental-split law, paying for E14's tool gate.)
+pub(super) fn call_objective(activity_key: Option<&str>) -> &'static str {
+    match activity_key {
+        Some(k) if k.starts_with("open-coverage") => {
+            "build a COVERAGE TABLE for its part of the request: every component that part names, which \
+             slice owns each, and a QUOTE from that slice's objective proving it. It must NOT write code \
+             and must NOT rewrite the slices that exist.\n\n\
+             THIS CALL IS SUPPOSED TO LOOK REPETITIVE, and that is the thing to understand before you \
+             judge it. Its deliverable IS a table: dozens of near-identical rows, each naming a component \
+             and an owner in the same shape. Structural repetition here is the call doing exactly what it \
+             was asked to do. MEASURED: judging that shape as a loop re-streamed these lanes three times \
+             in one run, and every re-stream threw away the whole partial table and started the \
+             enumeration again from the top — which is why a phase that should take minutes took thirty. \
+             It is stuck only if the rows stop ADVANCING: the same component named twice, or an owner it \
+             has already given. Rows that merely look alike are progress."
+        }
+        Some("open") | Some("open-resplit") => {
+            "split the request into balanced semantic slices, naming each slice's owned files in its \
+             objective as OWNERSHIP DECLARATIONS and assigning every section of the orientation \
+             index to the slice that owns it. It writes NO questions (VA-089): each slice's \
+             research lane derives and answers its own, in parallel, after this call — an opener \
+             that verifies request lines one by one (\"What do request.md:A-B fix for …\") is \
+             doing the lanes' work serially on one node; tell it the split is the deliverable and \
+             the sections' opening lines in the index are enough to assign them. It must NOT \
+             write code, plan tasks, or dependencies."
+        }
+        Some("synthesis") => {
+            "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
+             must NOT write code and must NOT restate the specifications."
+        }
+        Some(k) if k == "review" || k.starts_with("review-") => {
+            "read the original request against the plan and return a small structural PATCH. It must \
+             NOT write code, and must NOT rewrite any task's specification. A fanned lane (review-N) \
+             holds ONE portion of the request and the whole plan, so a task that looks unrelated to its \
+             portion is almost certainly owned by another portion — that is not a finding."
+        }
+        Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
+        Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
+        Some(k) if k.starts_with("slice-") => {
+            "answer its slice's questions and then give that module's SPECIFICATION — interfaces, edge \
+             cases, files — AS ITS REPLY. The specification is what it says back, not a file it puts on \
+             disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
+             the implementation."
+        }
+        Some(k) if k.starts_with("research-") => {
+            "DERIVE its slice's own design and external questions from the slice's sections (a fact \
+             the sections state is not a question) and answer them — all in this one session — as \
+             HANDOFFS: exact files, exact key/field literals, conventions stated as conventions, \
+             one {question, kind, cite, answer} entry per question in its final_output (the \
+             decisions lane answers tagged [qN] decisions instead). It must NOT write code and has \
+             no file-writing tools; its structured reply IS its deliverable. Its questions \
+             legitimately cover similar ground and it may settle a shared fact once and refer \
+             back to it — it is stuck only if its OWN answers stop advancing."
+        }
+        Some(k) if k.starts_with("apptest-") => {
+            "exercise the BUILT app from one angle and report the defects it observes, with the files \
+             each touches. It must NOT fix anything and must not edit a single file — a call reporting \
+             bugs without writing code is doing this job exactly right."
+        }
+        Some(k) if k.starts_with("contract-") => {
+            "emit a signature-only stub for one module. It must NOT implement anything."
+        }
+        Some("integrate-verify") => {
+            "assemble the produced modules, run the tests, boot the app and exercise the commands the \
+             request advertises."
+        }
+        // A dispatched build worker: the only kind that SHOULD be writing files.
+        _ => "implement its assigned module — write the files it owns, then verify them.",
+    }
+}
+
+/// The `[qN]` tags a lane's user text carries, in order, each once — the questions the lane
+/// owes one entry for (`research::research_user_text` tags them; a lane with none is an
+/// open/synthesis/split lane whose schema, not a tag list, names its blocks).
+pub(super) fn question_tags_in(user_text: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    let mut rest = user_text;
+    while let Some(at) = rest.find("[q") {
+        let Some(after) = rest.get(at + 2..) else {
+            break;
+        };
+        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty()
+            && after
+                .get(digits.len()..)
+                .is_some_and(|r| r.starts_with(']'))
+        {
+            let tag = format!("q{digits}");
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+        rest = after;
+    }
+    tags
+}
+
+/// Does the judge's recorded ESTABLISHED (any prior look) name this `qN` tag? A word-bounded
+/// match — "q5" in "For q5 it has pinned…" or "[q5]" or "q0/D1", never the "q5" inside "q55"
+/// — on the judge's OWN words about the call, which is the only coverage record the engine has
+/// that is not a tool-call count.
+pub(super) fn established_covers(prior_established: &[String], tag: &str) -> bool {
+    prior_established.iter().any(|e| {
+        let lower = e.to_ascii_lowercase();
+        let mut from = 0;
+        while let Some(at) = lower.get(from..).and_then(|r| r.find(tag)) {
+            let start = from + at;
+            let end = start + tag.len();
+            let before_ok = start == 0 || !lower.as_bytes()[start - 1].is_ascii_alphanumeric();
+            let after_ok = !lower
+                .as_bytes()
+                .get(end)
+                .is_some_and(|c| c.is_ascii_digit());
+            if before_ok && after_ok {
+                return true;
+            }
+            from = end;
+        }
+        false
+    })
+}
+
+/// The REQUIRED blocks of an output tool's JSON schema, as a reader would name them:
+/// `interface{exports, shared_state, layout}`, `shards[]{id, responsibility, sections, provides}`,
+/// `answers[]{question_index, answer}`. Read from the schema the lane was actually given, so the
+/// judge's "emit the COMPLETE reply" names THIS lane's blocks (gate 2: assembled from the run's
+/// facts, never a template). Empty for a schema with no `required` list — then the judge is told
+/// only that the schema decides.
+pub(super) fn schema_required_blocks(schema: &serde_json::Value) -> Vec<String> {
+    fn required_names(v: &serde_json::Value) -> Vec<&str> {
+        match v.get("required").and_then(|r| r.as_array()) {
+            Some(names) => names.iter().filter_map(|n| n.as_str()).collect(),
+            None => Vec::new(),
+        }
+    }
+    required_names(schema)
+        .into_iter()
+        .map(|name| {
+            let prop = &schema["properties"][name];
+            let (suffix, inner) = if prop.get("type").and_then(|t| t.as_str()) == Some("array") {
+                ("[]", &prop["items"])
+            } else {
+                ("", prop)
+            };
+            let children = required_names(inner);
+            if children.is_empty() {
+                format!("{name}{suffix}")
+            } else {
+                format!("{name}{suffix}{{{}}}", children.join(", "))
+            }
+        })
+        .collect()
+}
+
+/// The judge's STRUCTURED-REPLY block — the same blindness `owned_block` covers for files, for a
+/// call whose deliverable is a structured reply. MEASURED, run swarm-3node-r0: `open-coverage-1`
+/// reached 144,935 characters with ZERO tool calls across five nudges — the last two literally
+/// "call final_output NOW" — while two of three nodes sat idle waiting on it. Every verdict was
+/// DRIFTING, never LOOPING, because it genuinely produced ~4,000 FRESH characters between looks.
+/// It was not looping. It was enumerating forever into a channel that is not the deliverable.
+///
+/// VA-056: ARMED BY THE JUDGE'S OWN PRIOR READING, NEVER BY THE TOOL-CALL COUNT. This block used
+/// to key on `call_records.is_empty()` ("IT HAS NOT CALLED IT ONCE … tell it to call the output
+/// tool NOW"), which is not "has it emitted": r6e's research-ledgerd-api-boot got it at its FIRST
+/// look, 9 minutes in, while its own tail was already writing the handoff ("Write it as a
+/// handoff") — the judge said DRIFTING "Call the output tool NOW", and the lane's final_output
+/// frame formed 83 seconds later; research-viz3d-engine (0 shell calls) got it on every look and
+/// drew ten DRIFTINGs; research-__open_decisions__ (10 shell reads) never got it and its three
+/// "emit now" NEXTs rode OK verdicts. The coverage record that is not a count is the judge's OWN
+/// ESTABLISHED from prior looks: when it already names what the call worked out for every `[qN]`
+/// the call owes (or, for a lane with no tags, names anything at all), the reply's material
+/// exists and composing further is the drift; a fresh lane with no prior record is judged on its
+/// objective and tail like any other.
+///
+/// VA-061: THE ASK IS THE COMPLETE REPLY. A one-shot structured lane cannot "refine after" — its
+/// single final_output IS the deliverable, and a partial interface starves the merger (r6e
+/// split-viz3d-engine, 19:16:09: "submit this partial version and refine after"; look 4: "ONLY
+/// the vs7dbg API table header plus rows 24–31 … no shared-state section"). The block names THIS
+/// lane's required blocks from its schema and the tags it owes, and bans the partial ask.
+pub(super) fn structured_reply_block(
+    wants_structured_reply: bool,
+    prior_established: &[String],
+    question_tags: &[String],
+    required_blocks: &[String],
+) -> String {
+    if !wants_structured_reply {
+        return String::new();
+    }
+    let complete = match (question_tags.is_empty(), required_blocks.is_empty()) {
+        (false, false) => format!(
+            "{} — with one entry per tag: {}",
+            required_blocks.join(", "),
+            question_tags
+                .iter()
+                .map(|t| format!("[{t}]"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        (false, true) => format!(
+            "one entry per tag: {}",
+            question_tags
+                .iter()
+                .map(|t| format!("[{t}]"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        (true, false) => required_blocks.join(", "),
+        (true, true) => "every block its output schema requires".to_string(),
+    };
+    let mut out = format!(
+        "\n\nTHIS CALL'S DELIVERABLE IS ONE STRUCTURED REPLY, made by calling its output tool \
+         ONCE. The complete reply is: {complete}. There is no second emission and nothing reads \
+         its reasoning — if the call ends without that tool call, everything it worked out is \
+         discarded and the phase gets nothing; if it emits a PARTIAL reply, the phase binds to \
+         the gap (a split with half its interface starves the merger; a research table missing a \
+         tag records it UNANSWERED). So NEXT never asks for a partial reply and never says \
+         \"refine after\": when it asks for the emission it asks for the COMPLETE reply — every \
+         block present, the shortest rows that are true."
+    );
+    let Some(latest) = prior_established.last() else {
+        // A fresh lane: no prior look has recorded what it worked out, so nothing here says
+        // "emit now" — the judge reads its objective and tail like any other call.
+        return out;
+    };
+    let uncovered: Vec<String> = question_tags
+        .iter()
+        .filter(|t| !established_covers(prior_established, t))
+        .map(|t| format!("[{t}]"))
+        .collect();
+    if uncovered.is_empty() {
+        out.push_str(&format!(
+            "\nYOUR OWN PRIOR LOOK ALREADY RECORDED what this call has worked out — \"{latest}\"{}. \
+             That is the reply's material, and it exists in the call's reasoning already. If the \
+             call has still not called its output tool, it is composing what it has already \
+             worked out: the verdict is DRIFTING and NEXT is a command about its NEXT MESSAGE — \
+             \"your next message must be a single tool call: the output tool, with the COMPLETE \
+             reply ({complete})\".",
+            if question_tags.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " — covering every tag it owes ({})",
+                    question_tags
+                        .iter()
+                        .map(|t| format!("[{t}]"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        ));
+    } else {
+        out.push_str(&format!(
+            "\nYour prior look recorded — \"{latest}\" — which does not yet cover {}. Those are \
+             what the call is still working on: NEXT names WHERE TO LOOK for them (a request \
+             line or heading, a file, a command), never an order to emit without them.",
+            uncovered.join(", ")
+        ));
+    }
+    out
+}
+
+/// The judge's EARLIER-SPAN block: a verbatim span from tens of thousands of characters back,
+/// with the compare instruction (gate 7 — the judge is shown the WORDS across looks). Empty
+/// when the meter holds no earlier span yet. (Moved verbatim from swarm.rs's omni-look.)
+pub(super) fn earlier_span_block(earlier: Option<&str>) -> String {
+    match earlier {
+        Some(e) => format!(
+            "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
+             ago):\n{e}\n\
+             COMPARE this earlier span with the 'Most recent reasoning' below — that \
+             comparison is why you are shown both. If the call is walking the SAME items to \
+             the SAME conclusions again — however coherent each sentence reads on its own — \
+             it is re-emitting, not advancing: the verdict is LOOPING, and NEXT names the \
+             exit (call the output tool with what it already has). MEASURED (r4b): a \
+             reviewer cycled one ten-item checklist verbatim for 24 minutes and every \
+             2k-char window of it read as coherent checking; only the two windows side by \
+             side showed the loop.",
+        ),
+        None => String::new(),
+    }
+}
+
+/// Keep the last `max` chars of a snippet, with a leading ellipsis when clipped. Tail, not head, because
+/// the informative part of tool output (the pass/fail line, the traceback, the printed value) is at the end.
+pub(super) fn clip_tail(s: &str, max: usize) -> String {
+    let s = s.trim();
+    let n = s.chars().count();
+    if n > max {
+        format!("…{}", s.chars().skip(n - max).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
+pub(super) fn tail_chars(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n > max {
+        s.chars().skip(n - max).collect()
+    } else {
+        s.to_string()
+    }
+}
+
+/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
+/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
+/// that reach the answer channel without the model having said them, so "does `last_text` end with
+/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
+/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
+/// is what the agent appends LAST before breaking the stream.
+pub(super) const AGENT_ERROR_CLOSERS: [&str; 3] = [
+    "Please resend your message to try again.",
+    "Please retry if you think this is a transient or recoverable error.",
+    "resending this conversation is likely to be refused again.",
+];
+
+/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
+/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
+/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
+/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
+/// "this text is a dead attempt's transport error", because the digest never said which kind of
+/// text it was carrying.
+pub(super) fn said_kind_of(last_text: &str) -> &'static str {
+    let t = last_text.trim_end();
+    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
+        "error"
+    } else {
+        "said"
+    }
+}
+
+/// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
+/// the log and the one number that matters — how often the supervisor actually formed a judgement —
+/// cannot be attributed to a cause. (Moved verbatim from swarm.rs under the incremental-split law,
+/// paying for the E8 avoid-rank wiring.)
+pub(super) fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
+    events.write_value(serde_json::json!({
+        "event": "judge_skipped",
+        "task_id": task_id,
+        "reason": reason,
+    }));
+}
+
+/// The goose core agent loop returns a FIXED meta-message when a weak worker exhausts its turn budget
+/// without calling final_output ("I've reached the maximum number of actions I can do without user input.
+/// Would you like me to continue?", agent.rs MAX_TURNS_MESSAGE). That filler is NOT a usable result: the
+/// detailer must fall back to the skeleton brief rather than write it as a subtask spec, and a repro-author /
+/// reviewer must not treat it as an authored command / verdict. True when the text is empty or is that filler.
+/// Moved here from swarm.rs (incremental-split law) beside its one non-root caller, the
+/// supervised-reply door below.
+pub(super) fn is_agent_loop_filler(s: &str) -> bool {
+    let t = s.trim().to_lowercase();
+    t.is_empty()
+        || t.contains("reached the maximum number of actions")
+        || t.contains("would you like me to continue")
+        || t.contains("continuing agent loop")
+}
+
+/// Why a supervision reply is NOT a usable reply. Both variants take the caller's failed-look
+/// path; they are distinguished because the omni judge names the second with the
+/// `judge_turn_budget_exhausted` vocabulary.
+#[derive(Debug)]
+pub(super) enum SupervisedReplyError {
+    /// The agent loop's own provider-error closer text (A-2, `said_kind_of == "error"`): a dead
+    /// judge model arrives as `Ok` TEXT, and r2's lenient parse minted 28 `drifting` verdicts
+    /// whose hint WAS gabee's 400 body. Carries the tail-clipped error for the failed event.
+    ProviderError(String),
+    /// The reply is — or after the strip reduces to — the agent loop's turn-cap filler
+    /// (`goose::agents::MAX_TURNS_MESSAGE`): the model's single supervision turn ended in a tool
+    /// call, so the ENGINE wrote the filler instead of a verdict. r6a (run.jsonl seq 58) measured
+    /// the laundering: the reply was ONLY the filler and `parse_judge_reply`'s no-token fallback
+    /// manufactured `drifting` with the filler as `next` — an engine sentence in the verdict
+    /// channel. This state was never actually judged; a failed look, never a verdict.
+    TurnBudgetExhausted,
+}
+
+impl std::fmt::Display for SupervisedReplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProviderError(body) => f.write_str(body),
+            Self::TurnBudgetExhausted => f.write_str(
+                "no verdict — the reply was the agent loop's own turn-cap filler \
+                 (the supervisor's single turn ended in a tool call)",
+            ),
+        }
+    }
+}
+
+/// The ONE door a small-turn supervision reply (judge probe, prereview, tail review, finding
+/// verify, ask-answer) walks before any parser sees it:
+///   1. the A-2 error-closer reclassification (absorbs the old `supervision_reply`),
+///   2. a trailing `MAX_TURNS_MESSAGE` is STRIPPED — r6c (live, run.jsonl seq 312) measured a real
+///      DRIFTING verdict whose `next` ended with the filler as its own trailing line, one drift-hold
+///      away from being delivered to a worker as a judge direction. Engine-authored text never
+///      reaches a model-read direction. Stripped by the shared constant, never a duplicated literal
+///      (the JUDGE_ENDED_NEEDLE pattern: emit and matcher move together).
+///   3. what remains must not BE the filler (`is_agent_loop_filler`: empty, or the filler phrases
+///      anywhere — over-broad, but safe).
+pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedReplyError> {
+    if said_kind_of(text) == "error" {
+        return Err(SupervisedReplyError::ProviderError(clip_tail(text, 400)));
+    }
+    let t = text.trim_end();
+    let cleaned = t
+        .strip_suffix(goose::agents::MAX_TURNS_MESSAGE)
+        .map(str::trim_end)
+        .unwrap_or(t);
+    if is_agent_loop_filler(cleaned) {
+        return Err(SupervisedReplyError::TurnBudgetExhausted);
+    }
+    Ok(cleaned.to_string())
+}
+
+/// #135 OMNI-JUDGE probe. Asks a model whether an IN-FLIGHT call is repeating itself, from the call's own
+/// recent reasoning plus the commands it has run. This is the piece a threshold cannot do: for a plan draft,
+/// healthy and pathological look IDENTICAL by volume (healthy reach 57k chars), so only reading the text
+/// separates them.
+///
+/// Deliberately conservative — it returns true ONLY on an explicit LOOPING verdict. Anything ambiguous, any
+/// parse failure, any model error reads as "keep going", because a false abort costs a planner call that has
+/// NO retry path. It can never fail a task or a run: it aborts at most this one call, and every phase
+/// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, worker -> the
+/// existing stall path).
+/// Does this verdict mean the call needs REDIRECTING, as opposed to being left alone?
+///
+/// RESTART belongs here and was missing. `parse_judge_reply` produces it, nothing in the planner-side
+/// omni path matched on it, and the only other actuator is `drifting_now` — so a restart verdict fell
+/// through to the branch that CLEARS the looping streak and was discarded. MEASURED: at 07:36:28 on run
+/// swarm-3node-r0 the judge answered `restart` on the wedged REVIEW call and the engine did nothing with
+/// it, then went quiet. The judge's own words were "Restart the call on a fresh connection and have it
+/// produce the structured output" — which is precisely what the re-stream delivery does, so the verdict
+/// had a working actuator all along and simply was not wired to it.
+pub(super) fn omni_judge_says_looping(reply: &str) -> bool {
+    let out = parse_judge_reply(reply);
+    matches!(
+        out.verdict,
+        Verdict::Looping | Verdict::OverReading | Verdict::Restart
+    ) && out.confidence >= 0.8
+}
+
+/// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
+/// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
+/// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
+/// The judge's own estimate of how many more MINUTES a call needs, from an `ETA=<n>m` token.
+///
+/// Mihai, watching a sink spend an hour on one bug: "the estimate time needs to be updated so the judge
+/// models should update the ETA because they can tell best what time is left". He is right — the repair
+/// ETA is arithmetic over past round durations, which answers "how long did rounds take" and not "how much
+/// is left". The judge has read what the call established, what it is doing now and how fast it is
+/// producing; nothing else in the engine has that.
+///
+/// A labelled token rather than a fifth pipe field on purpose: the free-segment parser above earned its
+/// leniency the hard way, and shifting its indices to add a field would break every measured reply shape.
+/// `ETA=?` is a first-class answer — an invented number is worse than an admitted unknown.
+pub(super) fn parse_judge_eta_mins(s: &str) -> Option<u64> {
+    let up = s.to_uppercase();
+    let at = up.find("ETA")?;
+    let rest = up.get(at + 3..)?.trim_start_matches([':', '=', ' ']);
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None; // "ETA=?" and anything unparseable
+    }
+    digits.parse::<u64>().ok().filter(|m| *m <= 24 * 60)
+}
+
+/// The four field labels the judge contract names (plus the two spellings a 27B substitutes).
+/// Matched CASE-SENSITIVELY as written by the judge: a lowercase "next:" in prose is content, the
+/// uppercase label is structure — the leniency lives in the separators, not in the case.
+const JUDGE_LABELS: [&str; 6] = [
+    "VERDICT",
+    "CONFIDENCE",
+    "ESTABLISHED",
+    "NEXT",
+    "CONF",
+    "HINT",
+];
+
+/// Is `line` a label-led line — the second line of the two-line reply shape (`NEXT|…`,
+/// `NEXT=…`, `NEXT: …`, `NEXT/…`)? Such a line is a new FIELD, not a continuation of the
+/// previous one; any other second line (a sentence of commentary) stays glued to the field it
+/// followed, exactly as the one-line parser always read it.
+fn label_led(line: &str) -> bool {
+    JUDGE_LABELS.iter().any(|label| {
+        line.strip_prefix(label).is_some_and(|after| {
+            after.starts_with(['|', '/']) || after.trim_start_matches(' ').starts_with(['=', ':'])
+        })
+    })
+}
+
+/// `LABEL=value`, `LABEL: value` and `LABEL/value` become `|LABEL|value`, so ONE segment walk reads
+/// every shape the fleet has produced. MEASURED r6e (run swarm-20260901-141137451, judge-open look
+/// 1, run.jsonl seq 11): `VERDICT=OK|CONFIDENCE=HIGH|ESTABLISHED=Read request.md 1-560…|NEXT=Run
+/// sed -n 560,873p…` — four labelled fields the pipe walk saw as four unknown segments; no verdict
+/// token was found, the "no keyword" arm manufactured DRIFTING at confidence 0.5, and a
+/// `VERDICT=RESTART` written the same way would have read as drifting too. Byte-walked against
+/// the original (never an uppercased copy — `to_uppercase` can change length) and only at char
+/// boundaries; a label counts only at a word start, so "UNESTABLISHED" is prose.
+fn normalize_judge_labels(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut i = 0;
+    while i < s.len() {
+        // `i` only ever advances by a whole char or a whole ASCII marker, so it is a boundary;
+        // `get` keeps that a fact the compiler holds rather than an index that could panic.
+        let Some(rest) = s.get(i..) else {
+            break;
+        };
+        let word_start = i == 0 || !s.as_bytes()[i - 1].is_ascii_alphanumeric();
+        let marker = if word_start {
+            JUDGE_LABELS.iter().find_map(|label| {
+                let after = rest.strip_prefix(label)?;
+                let past_spaces = after.trim_start_matches(' ');
+                if let Some(value) = past_spaces.strip_prefix(['=', ':']) {
+                    let value = value.trim_start_matches(' ');
+                    Some((label, s.len() - i - value.len(), false))
+                } else if after.starts_with('/') {
+                    Some((label, label.len() + 1, true))
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        match marker {
+            Some((label, consumed, slashed)) => {
+                // In the `LABEL/value/LABEL/value` shape the '/' that closed the previous value
+                // is the separator, not the value's last character.
+                if slashed && out.ends_with('/') {
+                    out.pop();
+                }
+                out.push('|');
+                out.push_str(label);
+                out.push('|');
+                i += consumed;
+            }
+            None => {
+                let ch = rest.chars().next().expect("i is a char boundary inside s");
+                out.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn parse_judge_reply(s: &str) -> JudgeOutcome {
+    // FOUR fields: VERDICT|CONFIDENCE|ESTABLISHED|NEXT. Parsing stays deliberately LENIENT, because
+    // the fleet is a 27B and the old three-field parser earned that leniency the hard way: qwen-class
+    // models echo the field LABELS back (`VERDICT|CONFIDENCE|LOOPING|HIGH|<text>`), drop fields,
+    // answer in two lines (`VERDICT|OK|HIGH|<established>` then `NEXT|<next>` — r6e judge-open looks
+    // 2/4/6), or write every field as `LABEL=value` (r6e look 1, `normalize_judge_labels`). So: pick
+    // the verdict and confidence out of wherever they land, bind a value to the label that precedes
+    // it when one does, and take the remaining free segments in order. One unbound free segment is
+    // the old shape — NEXT, not ESTABLISHED, since an action is what the nudge cannot do without.
+    let is_token = |seg: &str| {
+        matches!(
+            seg.to_uppercase().trim(),
+            "VERDICT"
+                | "CONFIDENCE"
+                | "CONF"
+                | "HINT"
+                | "ESTABLISHED"
+                | "NEXT"
+                | "OK"
+                | "BROKEN_CODE"
+                | "BROKEN CODE"
+                | "LOOPING"
+                | "DRIFTING"
+                | "RESTART"
+                | "OVER_READING"
+                | "OVER READING"
+                | "SPEC_DRIFT"
+                | "SPEC DRIFT"
+                | "HIGH"
+                | "LOW"
+        )
+    };
+    // STRIP THE ETA TOKEN BEFORE ANYTHING ELSE READS THE SEGMENTS.
+    //
+    // I added `ETA=<n>m` to the judge contract tonight as a labelled token, precisely so it would not
+    // disturb the positional free-segment parse — and then did not remove it from the segments. It is
+    // not in `is_token`, so it survived the filter, became a free segment, and therefore became
+    // ESTABLISHED or NEXT. MEASURED within hours, live: nudges delivered to workers reading, in full,
+    // `ETA=0m`, `ETA=5m`, `ETA=45m`, and `Complete rating all defects and deliver the final verdict
+    // list\nETA=5m`. A direction that says only how long something will take is not a direction, and it
+    // was going out as one.
+    // EVERY occurrence, not the first. `find("ETA")` returned the FIRST match, so any earlier word
+    // CONTAINING those three letters — metadata, details, theta, beta, retain — failed the `:`/`=` guard,
+    // the line was kept whole, and the REAL `ETA=` at the end survived to become a free segment.
+    // MEASURED live 2026-08-28, after the first fix was already shipped: workers re-streamed with a
+    // direction reading, in full, `ETA=5m` and `ETA=10m`. Reproduced deterministically — "read the
+    // metadata table first" leaks, "the schema is written" does not.
+    // Byte-scanned against the ORIGINAL rather than an uppercased copy: `to_uppercase()` can CHANGE
+    // LENGTH (ß -> SS), so an index taken from it and used to slice the original is unsound.
+    let cut_eta = |l: &str| -> String {
+        let b = l.as_bytes();
+        for i in 0..b.len().saturating_sub(2) {
+            if b[i..i + 3].eq_ignore_ascii_case(b"ETA")
+                && l.is_char_boundary(i)
+                && l.get(i + 3..)
+                    .is_some_and(|r| r.trim_start().starts_with([':', '=']))
+            {
+                return l.get(..i).unwrap_or(l).trim_end().to_string();
+            }
+        }
+        l.to_string()
+    };
+    // A label-led second line is a new field (the two-line shape); any other line break stays
+    // inside the field it interrupted, so a sentence of commentary after the four fields is still
+    // read as the tail of NEXT and never displaces it.
+    let mut joined = String::new();
+    for line in s.lines().map(|l| cut_eta(l.trim())) {
+        if line.is_empty() {
+            continue;
+        }
+        if !joined.is_empty() {
+            joined.push(if label_led(&line) { '|' } else { '\n' });
+        }
+        joined.push_str(&line);
+    }
+    let normalized = normalize_judge_labels(&joined);
+    // ONE walk over the segments. A label token binds the free segment that IMMEDIATELY follows it
+    // (`ESTABLISHED|<text>`, `NEXT|<text>`); a label followed by another token is the echoed
+    // header (`VERDICT|CONFIDENCE|ESTABLISHED|NEXT|DRIFTING|HIGH|…`) and binds nothing. Free
+    // segments no label claimed keep the positional rule. A trailing '/' on a token is the
+    // `LABEL/value/LABEL/value` shape's separator, not content.
+    let mut tokens: Vec<String> = Vec::new();
+    let mut free: Vec<&str> = Vec::new();
+    let mut bound_established: Option<&str> = None;
+    let mut bound_next: Option<&str> = None;
+    let mut binding: Option<&str> = None;
+    for raw in normalized.split('|') {
+        let seg = raw.trim();
+        let seg = match seg.strip_suffix('/') {
+            Some(head) if is_token(head) => head,
+            _ => seg,
+        };
+        if seg.is_empty() {
+            continue;
+        }
+        if is_token(seg) {
+            let up = seg.to_uppercase();
+            binding = match up.as_str() {
+                "ESTABLISHED" => Some("ESTABLISHED"),
+                "NEXT" | "HINT" => Some("NEXT"),
+                _ => None,
+            };
+            tokens.push(up);
+            continue;
+        }
+        match binding.take() {
+            Some("ESTABLISHED") => bound_established = Some(seg),
+            Some(_) => bound_next = Some(seg),
+            None => free.push(seg),
+        }
+    }
+    let (established, next_action) = match (bound_established, bound_next) {
+        (Some(e), Some(n)) => (e.to_string(), n.to_string()),
+        (Some(e), None) => (
+            e.to_string(),
+            free.last().copied().unwrap_or("").to_string(),
+        ),
+        (None, Some(n)) => (
+            free.last().copied().unwrap_or("").to_string(),
+            n.to_string(),
+        ),
+        (None, None) => match free.len() {
+            0 => (String::new(), String::new()),
+            1 => (String::new(), free[0].to_string()),
+            _ => (
+                free[free.len() - 2].to_string(),
+                free[free.len() - 1].to_string(),
+            ),
+        },
+    };
+    // THE VERDICT COMES FROM A TOKEN SEGMENT, NEVER FROM A SUBSTRING SCAN OF THE WHOLE REPLY.
+    //
+    // This was `upper.contains("RESTART")` over the entire text — including the free-form hint. So the
+    // judge's own good advice turned into a verdict about itself: `LOOPING|HIGH|est|stop and restart the
+    // server` parsed as Restart, and `BROKEN_CODE|HIGH|the worker keeps restarting the dev server`
+    // parsed as Restart at confidence 0.85, which clears the intervention bar and re-queues a live
+    // worker. The mirror case lost a real verdict — a Restart the in-call loop has no branch for falls
+    // to the `else` and wipes the looping streak and its corroboration tails.
+    //
+    // `is_token` already knows which segments are field values rather than prose, and every measured
+    // reply shape puts the verdict in one of them (`LOOPING|HIGH|…`, the label-echoing
+    // `VERDICT|CONFIDENCE|LOOPING|HIGH|…`, and since r6e the normalized `VERDICT=RESTART`). Reading
+    // only those is exact and keeps the leniency.
+    let said = |k: &str| tokens.iter().any(|t| t == k);
+    // Same bug, same fix: a hint containing "high priority" used to raise the confidence.
+    let confidence = if said("HIGH") { 0.85 } else { 0.5 };
+    let verdict = if said("RESTART") {
+        Verdict::Restart
+    } else if said("LOOPING") {
+        Verdict::Looping
+    } else if said("DRIFTING") {
+        Verdict::Drifting
+    } else if said("BROKEN_CODE") || said("BROKEN CODE") {
+        Verdict::BrokenCode
+    } else if said("OVER_READING") || said("OVER READING") {
+        Verdict::OverReading
+    } else if said("SPEC_DRIFT") || said("SPEC DRIFT") {
+        Verdict::SpecDrift
+    } else if !said("OK") && next_action.len() >= 16 {
+        // No keyword. The measured qwen habit is to state a real problem as `VERDICT|HIGH|<correction>`
+        // with no verdict word at all, and dropping that would make the judge inert on this fleet. Read it
+        // as DRIFTING — a redirect — only when the model did NOT say OK and gave something substantive.
+        // DRIFTING is the safe default now that the judge can only ever nudge: the worst case is one
+        // unnecessary in-session note, not a dead worker.
+        Verdict::Drifting
+    } else {
+        Verdict::Ok
+    };
+    // AN OK VERDICT KEEPS ITS ESTABLISHED AND NEXT. This arm used to return `JudgeOutcome::ok()` —
+    // both fields blank — so every OK look's record read established="" next="" (r6e research: 14 of
+    // 14 OK looks), the next look could not see what the previous one had recorded, and a NEXT the
+    // judge repeated across OK looks ("Emit the structured final_output now", judge-research-
+    // __open_decisions__ looks 1/2/3) was written three times and delivered never. The fields are
+    // the judge's reading of the call; the verdict says only whether to act on them now.
+    JudgeOutcome {
+        verdict,
+        confidence,
+        // `hint` stays the corrective one-liner every existing consumer reads; it is now the NEXT ACTION,
+        // which is what a hint was always trying to be. An OK with no NEXT has no hint — nothing is
+        // being corrected — and never a manufactured one.
+        hint: if !next_action.is_empty() {
+            next_action.clone()
+        } else if verdict == Verdict::Ok {
+            String::new()
+        } else {
+            "Take the next concrete action on your owned files now.".to_string()
+        },
+        established,
+        next_action,
+        // MODEL-AUTHORED. It may STEER; it may never fail a task.
+        deterministic: false,
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+
+    #[test]
+    fn is_agent_loop_filler_catches_max_turns_message_and_empty() {
+        // The exact goose core agent-loop max-turns filler (agent.rs MAX_TURNS_MESSAGE) — the string that
+        // leaked into detailer specs (logstat-2, ledgr-2) and repro/verify verdicts.
+        assert!(is_agent_loop_filler(
+            "I've reached the maximum number of actions I can do without user input. Would you like me to continue?"
+        ));
+        assert!(is_agent_loop_filler(
+            "  Final output tool has not been called yet. Continuing agent loop.  "
+        ));
+        // Empty / whitespace -> filler (subsumes the old empty-only guard).
+        assert!(is_agent_loop_filler(""));
+        assert!(is_agent_loop_filler("   \n\t"));
+        // A REAL detailed subtask spec -> NOT filler (must be kept, not replaced by the brief).
+        assert!(!is_agent_loop_filler(
+            "Implement parser.py: tokenize the input into (ts, level, fields) records; skip malformed lines; \
+             numeric field values parse as numbers. Files: logstat/parser.py."
+        ));
+        assert!(!is_agent_loop_filler(
+            "def compute_ratio(a, b): guard b==0 with a clean error"
+        ));
+    }
+
+    /// r6a run.jsonl seq 58 pinned: the judge probe's reply was ONLY the engine's turn-cap filler
+    /// (built FROM the shared constant, exactly as agent.rs emits it), and the lenient parser
+    /// really does launder it into `drifting` — which is why this gate must run BEFORE the parse.
+    #[test]
+    fn a_filler_only_reply_is_a_failed_look_never_a_verdict() {
+        let r6a_reply = goose::agents::MAX_TURNS_MESSAGE.to_string();
+        assert!(matches!(
+            supervised_reply_text(&r6a_reply),
+            Err(SupervisedReplyError::TurnBudgetExhausted)
+        ));
+        assert_eq!(
+            parse_judge_reply(&r6a_reply).verdict,
+            Verdict::Drifting,
+            "the no-token fallback still manufactures DRIFTING from the filler, so the \
+             classification must happen before parse_judge_reply ever sees it"
+        );
+    }
+
+    /// r6c (live run swarm-20260831-072930517, run.jsonl seq 312) pinned: a REAL verdict whose
+    /// final line is the turn-cap filler. The verdict survives; the engine's sentence does not.
+    #[test]
+    fn a_verdict_with_trailing_filler_parses_with_a_clean_next() {
+        let r6c_shape = format!(
+            "DRIFTING|HIGH|Answer is fully worked out in its reasoning: role matrix and vendor \
+             payment call|Your next message must be a single tool call: invoke the output tool NOW \
+             and emit the structured reply. Do not add more reasoning; refine only after it is \
+             emitted.\n\n{}",
+            goose::agents::MAX_TURNS_MESSAGE
+        );
+        let clean = supervised_reply_text(&r6c_shape).expect("a real verdict is kept");
+        assert!(
+            !clean.contains("maximum number of actions"),
+            "the engine's filler must not survive into the verdict channel: {clean}"
+        );
+        let out = parse_judge_reply(&clean);
+        assert_eq!(out.verdict, Verdict::Drifting);
+        assert!(
+            out.next_action
+                .ends_with("refine only after it is emitted."),
+            "next ends at the judge's own words, not the engine's: {}",
+            out.next_action
+        );
+    }
+
+    /// The r2 provider-error shape (moved with the `supervision_reply` absorption) and two normal
+    /// verdicts, byte-untouched.
+    #[test]
+    fn provider_error_text_is_rejected_and_normal_replies_pass_untouched() {
+        let r2_shape = "Ran into this error: Request failed with status 400 Bad Request: \
+             Invalid model identifier 'qwen3-omni-30b'.\n\nPlease retry if you think this is a \
+             transient or recoverable error.";
+        match supervised_reply_text(r2_shape) {
+            Err(SupervisedReplyError::ProviderError(body)) => assert!(
+                body.contains("Invalid model identifier"),
+                "the failed event carries the error body: {body}"
+            ),
+            _ => panic!("a provider error is never a reply"),
+        }
+        // parse_judge_reply on the same text is exactly the r2 laundering — pinned here so the
+        // guard's necessity stays measured: lenient parsing DOES mint a Drifting verdict from it.
+        assert_eq!(
+            parse_judge_reply(r2_shape).verdict,
+            Verdict::Drifting,
+            "the parser still launders error text, so the gate must run BEFORE it"
+        );
+        for ok in [
+            "LOOPING|HIGH|the schema is written|write app/main.py",
+            "OK|HIGH|wrote store.py",
+        ] {
+            match supervised_reply_text(ok) {
+                Ok(t) => assert_eq!(t, ok),
+                Err(e) => panic!("a normal reply passes untouched: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    /// The ETA token must never become the direction.
+    ///
+    /// Added as a labelled token so the positional free-segment parse would be undisturbed — and then
+    /// not removed from the segments, so it survived the `is_token` filter and became ESTABLISHED or
+    /// NEXT. MEASURED live within hours: workers received nudges whose entire text was `ETA=0m`.
+    fn the_eta_token_never_becomes_the_direction() {
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|read the whole handler, not 25 lines\nETA=8m",
+        );
+        assert_eq!(parse_judge_eta_mins("ETA=8m"), Some(8));
+        assert!(
+            !o.next_action.contains("ETA"),
+            "ETA leaked into NEXT: {:?}",
+            o.next_action
+        );
+        assert!(
+            !o.established.contains("ETA"),
+            "ETA leaked into ESTABLISHED: {:?}",
+            o.established
+        );
+        assert!(o.next_action.contains("read the whole handler"));
+
+        // The pathological shape actually observed: the judge answered with nothing BUT an ETA.
+        let bare = parse_judge_reply("LOOPING|HIGH|ETA=0m");
+        assert!(
+            !bare.next_action.contains("ETA"),
+            "a reply carrying only an ETA must not yield 'ETA=0m' as the direction, got {:?}",
+            bare.next_action
+        );
+
+        // Inline on the same segment, and the ':' spelling.
+        let inline = parse_judge_reply("DRIFTING|HIGH|est|fix the do_GET routing ETA: 5m");
+        assert!(
+            !inline.next_action.contains("ETA"),
+            "{:?}",
+            inline.next_action
+        );
+        assert!(inline.next_action.contains("do_GET"));
+
+        // A word merely CONTAINING eta must survive — "metadata", "beta".
+        let word = parse_judge_reply("DRIFTING|HIGH|est|update the beta metadata table");
+        assert!(
+            word.next_action.contains("beta metadata"),
+            "{:?}",
+            word.next_action
+        );
+    }
+
+    #[test]
+    /// The judge's own words must never become a verdict about the judge.
+    ///
+    /// `upper.contains("RESTART")` scanned the whole reply, hint included. The hint is exactly where the
+    /// word appears in normal use — the live run's best diagnosis was "stop retrying the same port ...
+    /// or check if the server is already running", and a sibling shape is "the worker keeps restarting
+    /// the dev server". Both parsed as Verdict::Restart at 0.85, which clears the intervention bar and
+    /// re-queues a LIVE worker.
+    fn a_verdict_is_read_from_a_field_not_from_the_hint() {
+        // The hint mentions restarting. The verdict is LOOPING and must stay LOOPING.
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|stop and restart the server on a new port",
+        );
+        assert_eq!(o.verdict, Verdict::Looping, "hint text became the verdict");
+
+        let o = parse_judge_reply("BROKEN_CODE|HIGH|the worker keeps restarting the dev server");
+        assert_eq!(o.verdict, Verdict::BrokenCode);
+
+        // A real RESTART verdict still parses, in both measured shapes.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH|nothing usable yet|start again from the spec").verdict,
+            Verdict::Restart
+        );
+        assert_eq!(
+            parse_judge_reply("VERDICT|CONFIDENCE|RESTART|HIGH|est|next").verdict,
+            Verdict::Restart
+        );
+
+        // Confidence had the same bug: "high priority" in a hint used to raise it.
+        let low = parse_judge_reply("DRIFTING|LOW|est|this is a high priority fix");
+        assert!(low.confidence < 0.8, "hint text raised the confidence");
+    }
+
+    /// The retarget budget was env-ONLY, and the env NEVER REACHES THE ENGINE (LaunchServices hands the
+    /// desktop app its own environment — proven with a probe var + `ps eww`). So the campaign's documented
+    /// invariant "HELD CONSTANT every arm: ROUNDS=4" was never true on a single run: every one silently used
+    /// the default 2. config.yaml is the only channel that reaches the engine.
+    #[test]
+    /// The FOUR-field contract, and the leniency it has to keep.
+    ///
+    /// ESTABLISHED is the field the whole nudge exists for — a redirect that throws away the useful half
+    /// of a spiralling call is just a slower kill — so it has to survive the shapes a 27B actually emits.
+    /// The old three-field replies must still parse, and when only ONE free segment arrives it is the
+    /// ACTION, not the establishment: a nudge can be written without knowing what was established, but not
+    /// without knowing what to do next.
+    fn parse_judge_reply_reads_established_and_next() {
+        let full = parse_judge_reply(
+            "LOOPING|HIGH|the CSV parser needs a header row and the delimiter is a pipe|write \
+             app/parse.py with parse_ledger(path: Path) -> list[Row]",
+        );
+        assert_eq!(full.verdict, Verdict::Looping);
+        assert!(
+            full.established.contains("delimiter is a pipe"),
+            "established must survive: {:?}",
+            full.established
+        );
+        assert!(
+            full.next_action.contains("app/parse.py"),
+            "next must be the action: {:?}",
+            full.next_action
+        );
+        assert_eq!(full.hint, full.next_action, "hint IS the next action now");
+
+        // Labels echoed back (the measured qwen habit) must not be mistaken for content.
+        let echoed = parse_judge_reply(
+            "VERDICT|CONFIDENCE|ESTABLISHED|NEXT|DRIFTING|HIGH|the schema is already written|wire it into \
+             app/main.py",
+        );
+        assert_eq!(echoed.verdict, Verdict::Drifting);
+        assert!(echoed.established.contains("schema is already written"));
+        assert!(echoed.next_action.contains("app/main.py"));
+
+        // Old three-field shape: one free segment is the ACTION, established stays empty.
+        let legacy = parse_judge_reply("LOOPING|HIGH|stop re-reading and write the file now");
+        assert_eq!(legacy.verdict, Verdict::Looping);
+        assert!(legacy.established.is_empty(), "no establishment claimed");
+        assert!(legacy.next_action.contains("write the file"));
+
+        // AN EARLIER WORD CONTAINING "ETA" MUST NOT SHIELD THE REAL ETA TOKEN. `find` returned the
+        // first match, so "metadata"/"details"/"theta" failed the `:`/`=` guard and the line survived
+        // whole — workers were then re-streamed with a direction that read, in full, "ETA=5m".
+        for shield in [
+            "read the metadata table first",
+            "check the details of the outbox",
+            "theta values for the camera",
+            "retain the beta flag",
+        ] {
+            let r = parse_judge_reply(&format!(
+                "LOOPING|HIGH|{shield}|write app/main.py with parse_ledger()|ETA=5m"
+            ));
+            assert!(
+                !r.next_action.contains("ETA"),
+                "the ETA token leaked into the direction after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.next_action.contains("app/main.py"),
+                "the real direction must survive after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.established.contains(shield),
+                "established must survive: {:?}",
+                r.established
+            );
+        }
+        // The plain case must keep working.
+        let plain =
+            parse_judge_reply("LOOPING|HIGH|the schema is written|write app/main.py|ETA=45m");
+        assert!(!plain.next_action.contains("ETA"));
+        assert!(plain.next_action.contains("app/main.py"));
+
+        // RESTART is recognised and is never confused with OK.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH||start over from the frozen contract").verdict,
+            Verdict::Restart
+        );
+    }
+
+    #[test]
+    fn parse_judge_reply_handles_qwen_formats() {
+        // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
+        for ok in [
+            "VERDICT|CONFIDENCE|OK|HIGH",
+            "VERDICT|OK|LOW|",
+            "VERDICT|CONFIDENCE|HIGH|OK",
+            "VERDICT|LOW|",
+            "VERDICT|HIGH|OK|done",
+        ] {
+            assert_eq!(
+                parse_judge_reply(ok).verdict,
+                Verdict::Ok,
+                "should be OK: {ok}"
+            );
+        }
+        // A real catch with NO verdict keyword — just HIGH + a corrective hint — must become actionable
+        // (this is the qwen format that was silently dropped before).
+        let caught = parse_judge_reply(
+            "VERDICT|HIGH|STOP retrying failing commands — write rules.py directly with a parser",
+        );
+        assert_ne!(
+            caught.verdict,
+            Verdict::Ok,
+            "keyword-less HIGH+hint must act"
+        );
+        assert!(caught.confidence >= 0.8);
+        assert!(
+            caught.hint.contains("rules.py"),
+            "hint must be the correction, not an echoed label"
+        );
+        // Explicit keyword still classifies, and the hint skips echoed labels.
+        let oread = parse_judge_reply("VERDICT|CONFIDENCE|OVER_READING|HIGH|write the file now");
+        assert_eq!(oread.verdict, Verdict::OverReading);
+        assert_eq!(oread.hint, "write the file now");
+        // HIGH but no real correction -> stays OK (a vague reply can never kill a healthy worker).
+        assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
+    }
+
+    const LOOK1: &str = r#"VERDICT=OK|CONFIDENCE=HIGH|ESTABLISHED=Read request.md 1-560 of 873 lines in order (heading index via `grep -n '^#'`, then `sed` chunks 1-120, 120-260, 260-420, 420-560); captured the API table (GET /api/payments, /api/payments/<id>, /api/summary, /api/buckets), the unsigned webhook verify challenge handshake (answer 200 with same hex), optimistic inline note editor (no prompt(), paint before network), notification row events (draft.submitted/approved/rejected), computed-color distinctness rule, UTC day-position warning, and the draw budget ≤8·max(frames drawn,1) / ≤8·(M+8) forcing instanced draws at N=12,288; remaining sections located: `vs7dbg` REQUIRED, DECISIONS.md (741), graded run (757), consistency rules (789), performance budgets (818), Rules (846)|NEXT=Run `sed -n '560,873p'` on .swarm/request.md to finish sections 9 through Rules, then in the same or next message emit the 3-6 slices: each objective naming its owned files as OWNERSHIP DECLARATIONS, each question an object with a line cite from request.md
+ETA=5m"#;
+    const LOOK2: &str = r#"VERDICT|OK|HIGH|Read all 873 lines of request.md (grep -n '^#' plus six contiguous sed chunks); drafted six candidate slices A–F with mostly disjoint file ownership (notifierd, sync+ledger+outbox, REST+SSE, webhooks+drafts, frontend, viz.js), flagged one overlap risk — app/store.py claimed by both the ledger slice and the API slice — and started weight comparison to balance sizes (A ~2-3, F/viz.js likely largest).
+NEXT|Resolve the store.py conflict by assigning app/store.py to exactly one slice (the sync/ledger slice) and giving the API slice an interface-only dependency on it, then EMIT the answer now: six slices, each with its OWNERSHIP DECLARATION file list and its questions as objects, every question carrying a request.md:<line> cite from the chunks already read.
+ETA=4m"#;
+    const LOOK3: &str = r#"OK|HIGH|Read the full 873-line request.md in sequential sed chunks (1-120 → 740-873) plus `grep -n '^#'` for the heading index and `wc -l`; assigned sections to slices (§4 Webhooks→D, §5 approval workflow→D, §6 notifierd→A, §7 web/→E owning DOM incl. viz hooks, §8 3D field→F engine), resolved that §8's "Data → scene" sub-section may be listed under BOTH C (viz/records API shape) and F (layout math) since a section can appear in two slices' lists, and assigned the error envelope to C with D/A reusing it where applicable.|Reading is complete — emit the structured slice table NOW: all six slices A–F, each with its owned files as OWNERSHIP DECLARATIONS and its questions written as objects carrying line-range cites from request.md, using the section→slice assignments already made; refine after emitting rather than continuing to resolve edge cases in reasoning.
+ETA=3m"#;
+    const VIZ1: &str = r#"VERDICT|DRIFTING|HIGH|For q5 it has pinned the spec constraints: ≤8 default-FBO draws at N=12,288 implies instancing or a merged buffer; top/side/brushed color formulas are exact; brush dim is a per-instance flag plus uniform with no realloc and upload bound |S|·stride+4096.|call the output tool NOW and emit final_output now with one entry per [qN] tag from what you already have
+ETA=5m"#;
+
+    /// VA-052 — THE THREE SHAPES r6e's JUDGE ACTUALLY WROTE, verbatim from the archived
+    /// `judge-open.log` / `judge-research-viz3d-engine.log` (run swarm-20260901-141137451).
+    /// Look 1 (`LABEL=value`) was recorded verdict=drifting conf 0.5 (run.jsonl seq 11) because no
+    /// pipe segment was a bare token; looks 2/3 parsed OK and DROPPED their ESTABLISHED and NEXT (14
+    /// of 14 OK looks on the research lanes carried established="" next=""). Each must now read as
+    /// the judge meant it, with both text fields intact and no ETA residue.
+    #[test]
+    fn parse_judge_reply_reads_r6e_label_value_two_line_and_bare_shapes() {
+        // judge-open look 1: every field labelled, one line, ETA on its own line.
+        let look1 = parse_judge_reply(LOOK1);
+        assert_eq!(
+            look1.verdict,
+            Verdict::Ok,
+            "LABEL=value OK was read as drifting"
+        );
+        assert!(look1.confidence >= 0.8, "CONFIDENCE=HIGH must be read");
+        assert!(
+            look1
+                .established
+                .starts_with("Read request.md 1-560 of 873 lines"),
+            "established lost: {:?}",
+            look1.established
+        );
+        assert!(
+            look1
+                .next_action
+                .starts_with("Run `sed -n '560,873p'` on .swarm/request.md"),
+            "next lost: {:?}",
+            look1.next_action
+        );
+        assert!(
+            !look1.next_action.contains("ETA") && !look1.established.contains("ETA"),
+            "ETA leaked"
+        );
+        assert_eq!(look1.hint, look1.next_action);
+
+        // judge-open look 2: the two-line shape — fields on line 1, `NEXT|…` on line 2.
+        let look2 = parse_judge_reply(LOOK2);
+        assert_eq!(look2.verdict, Verdict::Ok);
+        assert!(
+            look2
+                .established
+                .starts_with("Read all 873 lines of request.md"),
+            "the first line's free text is ESTABLISHED, not swallowed: {:?}",
+            look2.established
+        );
+        assert!(
+            !look2.established.contains("NEXT"),
+            "the second line's label must not glue onto ESTABLISHED: {:?}",
+            look2.established
+        );
+        assert!(
+            look2
+                .next_action
+                .starts_with("Resolve the store.py conflict"),
+            "an OK verdict keeps its NEXT: {:?}",
+            look2.next_action
+        );
+
+        // judge-open look 3: bare `OK|HIGH|est|next` — the old positional shape, now with fields kept.
+        let look3 = parse_judge_reply(LOOK3);
+        assert_eq!(look3.verdict, Verdict::Ok);
+        assert!(look3
+            .established
+            .starts_with("Read the full 873-line request.md"));
+        assert!(look3
+            .next_action
+            .starts_with("Reading is complete — emit the structured slice table NOW"));
+
+        // judge-research-viz3d-engine look 1: a labelled-echo DRIFTING with both fields. Its
+        // ESTABLISHED carries the math notation `|S|·stride+4096` — pipes INSIDE content — so the
+        // pipe walk reads the last piece before NEXT as ESTABLISHED (the archived judge_look event
+        // recorded exactly "·stride+4096."). A pre-existing limit of the pipe contract, pinned
+        // here as measured rather than papered over; NEXT and the verdict are unaffected.
+        let viz = parse_judge_reply(VIZ1);
+        assert_eq!(viz.verdict, Verdict::Drifting);
+        assert!(viz.confidence >= 0.8);
+        assert!(
+            viz.established.ends_with("stride+4096."),
+            "{:?}",
+            viz.established
+        );
+        assert!(viz
+            .next_action
+            .starts_with("call the output tool NOW and emit final_output now"));
+        assert!(!viz.next_action.contains("ETA"));
+
+        // RESTART written the r6e way must never read as drifting, in any separator spelling.
+        for restart in [
+            "VERDICT=RESTART|CONFIDENCE=HIGH|ESTABLISHED=nothing usable yet|NEXT=start again from the spec\nETA=9m",
+            "VERDICT: RESTART|CONFIDENCE: HIGH|ESTABLISHED: nothing usable|NEXT: start again",
+            "VERDICT/RESTART/CONFIDENCE/HIGH/ESTABLISHED/nothing usable/NEXT/start again from the spec",
+            "VERDICT|RESTART|HIGH|nothing usable\nNEXT|start again from the spec",
+        ] {
+            let r = parse_judge_reply(restart);
+            assert_eq!(r.verdict, Verdict::Restart, "RESTART read as {:?} in {restart:?}", r.verdict);
+            assert!(r.confidence >= 0.8, "{restart:?}");
+            assert!(
+                r.next_action.starts_with("start again"),
+                "next lost in {restart:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.established.starts_with("nothing usable"),
+                "established lost in {restart:?}: {:?}",
+                r.established
+            );
+        }
+        // `LABEL/value` with a labelled OK, and a lowercase "next:" in prose stays prose.
+        let slashed = parse_judge_reply("VERDICT/OK/CONFIDENCE/HIGH/ESTABLISHED/the parser is done/NEXT/run cargo test next: read the failures");
+        assert_eq!(slashed.verdict, Verdict::Ok);
+        assert_eq!(slashed.established, "the parser is done");
+        assert_eq!(
+            slashed.next_action,
+            "run cargo test next: read the failures"
+        );
+        // A second line of plain commentary is NOT a new field: it stays the tail of NEXT.
+        let commentary = parse_judge_reply(
+            "DRIFTING|HIGH|the schema is written|write app/main.py now\nIt has been composing this for a while.",
+        );
+        assert_eq!(commentary.established, "the schema is written");
+        assert!(commentary.next_action.starts_with("write app/main.py now"));
+    }
+
+    /// VA-056/VA-061: the structured-reply block keys on the judge's OWN prior ESTABLISHED, never
+    /// on the tool-call count, and asks for the COMPLETE reply. r6e receipts: api-boot look 1 (9
+    /// min, 0 prior looks, own tail already writing the handoff) must get NO emit-now order;
+    /// viz3d look 2 (prior look recorded "For q5 it has pinned…", the lane owes [q5]) gets the
+    /// next-message command for the COMPLETE table; a prior record covering [q1] but not [q3]
+    /// points at where to look, not at the output tool.
+    #[test]
+    fn structured_reply_block_keys_on_prior_established_and_asks_for_the_complete_reply() {
+        let research_blocks = schema_required_blocks(&super::super::research::research_schema());
+        assert_eq!(
+            research_blocks,
+            vec!["answers[]{question_index, answer}".to_string()]
+        );
+        let split_blocks = schema_required_blocks(&super::super::shards::split_schema());
+        assert!(
+            split_blocks.contains(&"interface{exports, shared_state, layout}".to_string()),
+            "{split_blocks:?}"
+        );
+        assert!(
+            split_blocks
+                .iter()
+                .any(|b| b.starts_with("shards[]{id, responsibility, sections")),
+            "{split_blocks:?}"
+        );
+
+        // api-boot look 1: a fresh lane — no prior record, no emit-now pressure.
+        let fresh =
+            structured_reply_block(true, &[], &["q1".into(), "q4".into()], &research_blocks);
+        assert!(fresh.contains("ONE STRUCTURED REPLY"));
+        assert!(fresh.contains("[q1], [q4]"), "{fresh}");
+        assert!(
+            !fresh.contains("NOT CALLED IT ONCE"),
+            "the tool-call-count key is gone"
+        );
+        assert!(
+            !fresh.contains("next message must be"),
+            "no emit order on a fresh lane: {fresh}"
+        );
+        assert!(
+            !fresh.contains("A partial table that exists beats")
+                && fresh.contains("never says \"refine after\""),
+            "{fresh}"
+        );
+        assert!(fresh.contains("COMPLETE reply"));
+
+        // viz3d look 2: the prior look recorded q5's material; the lane owes only [q5].
+        let prior = vec![
+            "For q5 it has pinned the spec constraints: ≤8 default-FBO draws at N=12,288 \
+                          implies instancing or a merged buffer"
+                .to_string(),
+        ];
+        let covered = structured_reply_block(true, &prior, &["q5".into()], &research_blocks);
+        assert!(
+            covered.contains("YOUR OWN PRIOR LOOK ALREADY RECORDED"),
+            "{covered}"
+        );
+        assert!(
+            covered.contains("your next message must be a single tool call"),
+            "{covered}"
+        );
+        assert!(
+            covered.contains(
+                "COMPLETE reply (answers[]{question_index, answer} — with one entry per tag: [q5])"
+            ),
+            "{covered}"
+        );
+        assert!(!covered.contains("with what it already has"), "{covered}");
+
+        // A record that covers [q1] but not [q3]: where to look, not an emit order.
+        let partial = structured_reply_block(
+            true,
+            &["q1 settled: the outbox drains in id order".to_string()],
+            &["q1".into(), "q3".into()],
+            &research_blocks,
+        );
+        assert!(partial.contains("does not yet cover [q3]"), "{partial}");
+        assert!(partial.contains("WHERE TO LOOK"));
+        assert!(!partial.contains("next message must be"), "{partial}");
+
+        // No tags (a split/synthesis/open lane): any prior record is coverage; blocks come from the schema.
+        let untagged = structured_reply_block(true, &prior, &[], &split_blocks);
+        assert!(untagged.contains("YOUR OWN PRIOR LOOK ALREADY RECORDED"));
+        assert!(untagged.contains("interface{exports, shared_state, layout}"));
+        assert!(structured_reply_block(false, &prior, &[], &split_blocks).is_empty());
+
+        // Tag coverage is word-bounded and case-blind.
+        let est = vec!["settled [q1] and Q12; q5 still open".to_string()];
+        assert!(established_covers(&est, "q1"));
+        assert!(established_covers(&est, "q12"));
+        assert!(established_covers(&est, "q5"));
+        assert!(!established_covers(&est, "q2"), "q12 is not q2");
+        assert_eq!(
+            question_tags_in("THE QUESTIONS (2)…:\n[q3] first\n[q7] second\nsee [q3] again [qx]"),
+            vec!["q3".to_string(), "q7".to_string()]
+        );
+    }
+
+    /// THE READER MATCHES THE WRITER, and the three answers stay distinct (gate 1). Built from
+    /// `render_forming_file`'s own output so a shape change breaks here, not silently at the
+    /// delivery seam where a missed growth becomes a wiped delivery (r6c web-viz, look 14).
+    #[test]
+    fn forming_args_bytes_reads_what_render_forming_file_writes() {
+        let dir = std::env::temp_dir().join(format!(
+            "goose-forming-read-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("web-viz.forming.json");
+
+        // Absent = the writer's honest empty: render returns None and the observer unlinks.
+        assert_eq!(forming_args_bytes(&path), None);
+
+        let mut live = std::collections::BTreeMap::new();
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::Forming {
+                id: "call-1".into(),
+                name: "write".into(),
+                since: std::time::Instant::now(),
+            },
+        );
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::ArgsDelta {
+                id: "call-1".into(),
+                delta: "x".repeat(12_000),
+            },
+        );
+        std::fs::write(
+            &path,
+            render_forming_file(&live).expect("an open frame renders"),
+        )
+        .unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(12_000));
+
+        // The r6c growth across one look cycle: same frame, more argument bytes.
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::ArgsDelta {
+                id: "call-1".into(),
+                delta: "y".repeat(19_500),
+            },
+        );
+        std::fs::write(&path, render_forming_file(&live).unwrap()).unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(31_500));
+
+        // Present but unreadable can never read as GROWTH — a frame is open, its size unknown.
+        std::fs::write(&path, "{not json").unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// E9 tripwire (r6d judge-research-ledger-core-q0 look 4 / q5 look 1): the contract must keep
+    /// naming the judge's OWN `<turn-context>` turn-budget as its own single turn and the answer
+    /// shape as ONE message with no tool call — beside the four-field line and the never-terminate
+    /// law it moved here with. A doc-presence check: it summons a reader, it decides nothing.
+    #[test]
+    fn the_judge_contract_owns_its_turn_budget_and_answers_in_one_message() {
+        let c = judge_contract();
+        assert!(c.contains("You answer in ONE message with no tool call."));
+        assert!(c.contains(&format!(
+            "<turn-budget> reads {t}/{t} used: that is YOUR single turn",
+            t = JUDGE_PROBE_TURNS
+        )));
+        assert!(c.starts_with("You supervise ONE running agent call"));
+        assert!(c.contains("belongs to the call you are reading, never to you."));
+        assert!(c.contains("VERDICT|CONFIDENCE|ESTABLISHED|NEXT"));
+        assert!(c.contains("You may never request termination."));
+        // VA-061: a one-shot structured lane has no "after"; the contract may never ask for one.
+        assert!(
+            !c.contains("emit what it has NOW and refine after"),
+            "the partial ask is back in the contract"
+        );
+        assert!(c.contains("Ask for the COMPLETE reply now"));
+        assert!(c.contains("never \"partial\", never \"refine after\""));
+    }
 }

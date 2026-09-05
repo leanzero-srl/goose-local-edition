@@ -180,8 +180,8 @@ What happened (r4, killed at BUILD+7m, archive
   is cascaded-Failed by any build failure — the app-never-binds-a-port class.
 
 The rule: **a repair that guards one door is a guarantee that holds until the first other door
-opens.** Every path that ADDS tasks to the DAG — synthesis, the flat fallback, review patches, the
-skeleton prepend, the replanner splice, any future path — goes through the same ownership rules, and
+opens.** Every path that ADDS tasks to the DAG — synthesis, the flat fallback, the skeleton prepend,
+any future path — goes through the same ownership rules, and
 the join's file-lessness is enforced structurally (a repair rule), never assumed from the planner's
 good behavior.
 
@@ -192,16 +192,23 @@ The mechanisms:
   instead of dropping it — the drop gutted a service task to owning nothing, rule (c) removed it,
   its brief died, and the replanner re-added the shadow; test
   `plan_repair_module_merge_never_creates_a_second_owner`.
-- `repair_replan_specs` (scheduler.rs): the same rules against the LIVE dag's ownership, applied to
-  every replan batch before `splice_specs`; its actions ride the `Replanned` event (loud, MILD —
-  repaired, never refused silently); test `a_replan_batch_is_repaired_against_live_ownership` pins
-  the r4 shape verbatim.
-- The replanner is summoned only after at least one task has COMPLETED — its own prompt says the
-  value is "hardening on the COMPLETED work"; with nothing completed it invents tasks from the goal.
-  Progress-based: bounds when the ENGINE asks, never any model call.
+- THE REPLANNER IS DELETED (VA-015, 2026-09-01, gate 9). It was first guarded (`repair_replan_specs`
+  applied the same rules against the LIVE dag's ownership before `splice_specs`, its actions rode
+  `Replanned`, and it was summoned only after a completion), then measured on the two runs that kept
+  it: r6c's `replan-r0` ran 208 minutes UNSUPERVISED (295.8→504.0m, zero judge looks) and added
+  `vizmath-oracle` (`tools/vizmath_reference.py`, imported by 0 files) and `boot-contract-tests`
+  (40 lane-min, "passed" on a boot the gate could not perform); r5's inline `.await` parked dispatch
+  from 12:16:50 to 12:36:09 with `brush-contract` and `ledgerd-service` READY beside two free devices
+  (the B+80→B+100 hold), then added `frozen-rules-tests` + `viz-math-oracle` (68 node-min, unscored).
+  Nothing scored consumed either round. `repair_replan_specs`, `splice`'s replan door, the
+  `Replanned` event, `ReplanContext`/`ReplanAnswer`/`Replanner`, the `dynamic_replan`/`max_replans`
+  levers and the `replan-r<N>` lanes are gone; the fields survive as `Option` for the config
+  round-trip and are echoed under `retired_levers`.
 
-Refusing test: `development_gates.rs` asserts the scheduler's splice site reaches `splice_specs` only
-through `repair_replan_specs`, and that `repair_sink_files` stays in the repair chain.
+Refusing test: `development_gates.rs` asserts scheduler.rs carries no replanner attach/call/repair,
+enumerates the ONE remaining `.splice_specs(` site (the merger's gap door `splice_merge_gaps`, whose
+refusals are its repair — the idle-model judge's `apply_split` door is deleted, 2c S6), and that
+`repair_sink_files` stays in the repair chain.
 
 ## 7. THE READ-THE-WORDS GATE — the words decide; shapes only corroborate
 
@@ -268,6 +275,116 @@ Refusing enforcement: `development_gates.rs` pins this section and the AGENTS.md
 campaign/knob-turning skills carry the trace template; in review, a fix-commit without a trace block
 is returned on sight — the same standing as a new seconds-literal under gate 5.
 
+## 9. THE VALUE GATE — a step exists only while its measured delivery is consumed downstream
+
+Ordered by Mihai 2026-09-01, three hours into r6d: *"Why would a phase that takes 4 hours and doesn't bring
+value continue? This is the question. Think and implement."* Then, when the first answer was about the
+vigil alone: *"something needs to change correct. we don't want steps that consume time and not a lot of
+value. Get that straight please."* It binds the ENGINE (which steps exist) and the OPERATOR (what the vigil
+grades) at once.
+
+What happened: r6d's research fan planned 38 questions and dispatched them one lane per question at
+~6 minutes each — a 4-hour phase on 3 nodes. Four vigil ticks read every lane's words, found them
+advancing, and returned `continue`. At tick 5, asked directly, the same reader classified the 27
+dispatched questions: 13 SPEC-LOOKUPS answerable at a `request.md` line the opener could have cited
+(198 lane-minutes), 3 duplicates, one decision (D1) decided three times — 16 of 27 need not have run.
+The projection (`research_planned: 38` × the first measured minutes-per-answer) was computable at tick 1;
+nobody computed it, because the vigil graded LANES (is it looping?) and never the PHASE (is it earning?).
+r6c had already paid 126 minutes for the same fan and scored 0.1420 against r5's 0.3609 with no fan at all.
+
+The rule, both halves:
+
+- **ENGINE.** Every phase and sub-step is a purchase: node-minutes for information the next step
+  CONSUMES. A step that cannot name its consumer, or whose delivery is restated from an input the consumer
+  already has (a spec citation the planner could read itself, a duplicate of a landed artifact), is
+  deleted — its MECHANISM is removed, never capped, clocked or counted (gates 1 and 5). Every finished run
+  is audited step by step (cost · delivery · consumed-by · verdict); a step NOT EARNING on two runs goes in
+  the next engine change. A NEW step lands only with the measurement that says what it buys and who reads it.
+- **OPERATOR.** The tick-surgeon grades the CURRENT phase every tick (its step 2b): COST (lane-minutes
+  spent and the projection, from tick.py's `PHASE VALUE` row), DELIVERY (the units READ and classed —
+  research: `spec_restated` · `design` · `external` · `dup`; build: owned files that exist and parse; repair:
+  findings owned, edits landed, promoted), VERDICT (`earning` / `NOT EARNING`, with the numbers and one
+  quoted unit per class). NOT EARNING files an ACTION — `note.sh action <surface> "..."` →
+  `VIGIL-ACTIONS.md`, the queue surgeons are dispatched from — and recommends `cut` at the FIRST tick the
+  numbers exist. The orchestrator triages every OPEN row at its next turn (IMPLEMENT / DROP with reason /
+  SCHEDULED); no OPEN row survives two ticks. A finding that needs a surgeon is never left as a note.
+
+Receipts: the research fan (r6c 126m; r6d 165m spent, 4h projected; 59% waste) — cut landing as spec facts
+at synthesis, decisions once, one lane per slice; fix waves (r5 144m, r6c 215m; zero score value in both;
+r6c's criticals unowned) — ownership landed (afae2eb1b), graded again on r6e; briefs 6k → 21k chars while
+BUILD went 325m → 608m and reasoning 1.48M → 2.44M chars — the brief diet measured before it is cut.
+
+Refusing enforcement: `development_gates.rs::the_value_gate_is_carried` pins this section, the AGENTS.md
+short form, the tick-surgeon's PHASE VALUE step, `VIGIL-ACTIONS.md`, note.sh's `action` kind and tick.py's
+cost row. The reader is the gate (see below); the test is the tripwire.
+
+## 10. THE NO-ABSOLUTES GATE — a number survives only as a ratio or a measurement
+
+Ordered by Mihai 2026-09-02, after the inventory he had to ask for: *"I said many times over but we
+need to avoid hard coded bits because this is an agent and that makes it useless outside of the scope
+of what we are doing now — the benchmark is the cause not the goal."* NO HARD CODING was already a
+prime directive under gate 1; nothing REFUSED it, so 147 named constants accumulated (28 of them live
+numeric absolutes outside `cfg(test)`; 21 after the receipts were marked) and nobody counted them until he asked.
+
+THE LAW: a literal may live in the engine only as (a) a RATIO of something the run itself produces
+(a fraction of the probed context window, a multiple of the app's own median response, a share of
+the lane's own output) or (b) a MEASUREMENT the engine already takes, or (c) a pure algorithm
+constant (a shingle width) / a named policy ratio carrying its receipt (2× median). A typed absolute
+sized for THIS model, THIS language or THIS API (24,000 chars for a 27B on 262,144; 200 seconds for a
+local app; `impl.py`; `?cursor=1`) is a defect, whether or not it moved a score.
+
+HOW IT REFUSES: `development_gates.rs::live_numeric_literals_only_shrink` counts every
+`const NAME: <int|float> = <literal>;` outside `#[cfg(test)]` across the run path and ratchets it —
+the count may only DECREASE. A new one lands only with the marker `// ratio: <of what>` or
+`// measured: <how>` on its line, which the ratchet exempts and a reviewer reads. The inventory
+command that found the 28 is in the campaign skill. The classes and their derivations: VA-126.
+
+### The least-impact rule for gate 10 (Mihai 2026-09-02 20:4x: "ensure that our work here does not affect or has least affects on impairing or making our solution lesser. we finally got to a point where this is amazing now.")
+
+The golden engine is `r6h-golden-0.4616` (393a99351) and its behaviour is the thing being protected. Every
+derivation lands in one of two forms, and the commit says which:
+- **BYTE-IDENTICAL on this fleet** — the derived value equals today's typed value for every host we run
+  (so the budgets derive from the fleet's MAXIMUM probed window, 262,144, not per host — per-host precision
+  is a later measured step), proven by a unit test that feeds this fleet's windows and asserts the exact
+  current numbers. A new probe path that would ADD content the golden run never saw (a vendor cursor page
+  that now succeeds) is not "removing a hard-coded bit", it is a behaviour change — remove the guess, state
+  the absence, add the feature later with its measurement.
+- **BEHAVIOUR-CHANGING** (a self-relative detector floor, an app-timing ratio, a lang.rs route) — ships only
+  with gate 8's trace showing the golden run's looks, verdicts and probes would have produced the SAME
+  outcomes, or it ships behind a measurement on the next run and is reverted on regression.
+Every VA-126 batch gets one full sb-7 run compared against 0.4616 with the revert path ready (the tag, the
+kept `Goose-prev-393a99351.app`); a score drop with no named cause reverts the batch, never argues with it.
+
+## 11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW; only cargo waits for the run
+
+Ordered by Mihai 2026-09-02 20:2x: *"just asking but are you not doing anything about the hard coded
+bits I asked about or did I misunderstood something?"* and then *"you made a mistake that you need to
+account for in our agentic mechanisms please so that with future compacting this never gets
+forgotten."* The mistake: VA-126 was filed OPEN with the sentence "I will run them as a batch after
+r6j finishes, not during, so the run keeps measuring one thing." That sentence is false on its face —
+an edit in a worktree touches nothing the running bundle executes — and it is the same shape as the
+19 SCHEDULED rows ("next scheduler touch", "next panel touch", "r7") that had quietly become a
+backlog, the thing he had already forbidden: *"don't let them rot in a fucking backlog."*
+
+THE RULE: an action row has exactly one of these statuses, and the reader is held to the words —
+- `OPEN` — filed this tick, triaged at the orchestrator's next turn (never survives two ticks);
+- `CLAIMED <who> <where>` — a surgeon is on it now;
+- `QUEUED behind: <the single-writer branch or the agent cap>` — the design is KNOWN and the only
+  thing it waits for is a slot (one surgeon per file, ~3 agents concurrent); it is dispatched the
+  moment the slot frees, in the same tick, without a new decision;
+- `SCHEDULED waits on: <the event or number a run must produce>` — the DESIGN depends on a
+  measurement that does not exist yet; the measurement is named, and the row flips to OPEN the tick
+  it lands;
+- `LANDED <sha>` / `DROPPED <reason>` / `DONE`.
+The ONLY in-run constraint on engine work is no cargo on the machine whose LM Studio node the run
+holds (compile load starves the local decode); a surgeon edits in a worktree cargo-free and the proof
+chain runs the minute the run ends. "After the run" is never a status.
+
+HOW IT REFUSES: `development_gates.rs::a_scheduled_action_names_what_it_waits_on` fails the build
+on any `SCHEDULED` row without `waits on:` and any `QUEUED` row without `behind:`; the orchestrator's
+triage line in CLAUDE.md carries the vocabulary; and the campaign skill's "engine work DURING a run"
+entry carries the cargo rule.
+
 ## HOW GATES 7 AND 8 ACTUALLY DECIDE — the reader is the gate, the test is only a tripwire
 
 **SCOPE (Mihai, same conversation): gates 7 and 8 are about HOW CLAUDE OPERATES ON GOOSE — the
@@ -326,6 +443,10 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "read the WORDS not the fucking shape... stop wasting my money" | words first, quoted; shapes corroborate only | 7 READ-WORDS |
 | "run the changes mentally... be more exact. This is why I pay a fortune" | every fix-commit carries its would-it-have-fired trace | 8 TRACE |
 | "not pure deterministic garbage right?... Rethink please that gate" | tests are tripwires; an independent AI reading the primary data decides | 7+8 |
+| "Why would a phase that takes 4 hours and doesn't bring value continue?" | grade the PHASE every tick; NOT EARNING → an ACTION + cut | 9 VALUE |
+| "we don't want steps that consume time and not a lot of value. Get that straight" | a step lives only while its delivery is consumed; delete the mechanism | 9 VALUE |
+| "we need to avoid hard coded bits … the benchmark is the cause not the goal" | a literal is a ratio or a measurement; the live-const ratchet | 10 NO-ABSOLUTES |
+| "are you not doing anything about the hard coded bits I asked about?" | a known fix starts now in a worktree; SCHEDULED names what it waits on | 11 KNOWN-FIX |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file

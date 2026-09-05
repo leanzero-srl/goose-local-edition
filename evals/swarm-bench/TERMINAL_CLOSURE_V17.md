@@ -78,3 +78,20 @@ scoring, then re-hashes the
 module/browser/executable and wrapper after scoring and rejects the attempt if the runtime is
 absent, resolves elsewhere, or changes. Those hashes are carried into the worker, provenance, and
 final receipts.
+
+## r6 attempt (2026-08-31) — this chain cannot close a Benchmark-view run
+
+`terminal-closure-r6.json` was authored honestly for the r6 desktop run (run
+`swarm-20260830-213257409`, entrant `swarm-3node`, advertised vendor port 8850, engine binary
+`edef12424fccb6d5…` from `c47674fd4`): every frozen-hash field hashes the actual current files,
+and the two receipts this pipeline never produces (`launch.json`, `instrument-manifest.json`)
+are `null`, stated as absent rather than fabricated. Preflight refused it, correctly:
+`ClosureError: v17 advertised/scoring port must remain 18970` (`validate_config`,
+terminal_closure.py:1006). A scratchpad-only probe with the pins parroted refused one layer
+deeper: `FileNotFoundError: …/runs/build/launch.json` — the launch-time receipt, the instrument
+snapshot, and the authenticated monitor process are artifacts of the v17/v21 launch controller
+and do not exist in the Benchmark-view pipeline. The port pin, the entrant pin, and the
+score-worker's `port != 18970` literal are chain guards; closing an 8850 run here would need
+either falsified frozen inputs or edited guards, both forbidden. Benchmark-view runs are sealed
+and scored by the standing hermetic path (`score_run.sh` with the run's own seed at the
+advertised port) after natural exit. The controller was not started.

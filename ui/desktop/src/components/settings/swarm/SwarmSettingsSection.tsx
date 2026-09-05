@@ -990,12 +990,6 @@ export default function SwarmSettingsSection() {
             <Row label="Research planning" hint="off / on / auto (auto = only with source files). Grounds the plan in looked-up fact; costs a research phase.">
               <Segmented options={RESEARCH_MODES} value={(cfg.research_planning ?? 'on') as ResearchMode} onChange={(v) => set({ research_planning: v })} label="Research planning" />
             </Row>
-            <Row label="Max replans" hint="cap on dynamic-replan rounds">
-              <NumberField value={cfg.max_replans} onCommit={(v) => set({ max_replans: v ?? 2 })} />
-            </Row>
-            <Row label="Max research questions" hint="scoping questions before planning">
-              <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
-            </Row>
             <Row
               label="Research lookups per scout"
               hint="how many searches a scout may run before it must answer. This is the real limit on research — it stops when it has looked enough things up, not when a clock runs out."

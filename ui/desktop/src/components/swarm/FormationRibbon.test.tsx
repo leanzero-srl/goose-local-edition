@@ -26,17 +26,23 @@ describe('FormationRibbon', () => {
       'data-state',
       'upcoming'
     );
-    // RETIRED phases are not offered without evidence: CONTRACTS is deleted from the engine (P1-4),
-    // so a run with no proof it ran it draws no chip — Review sits immediately before Build.
-    // RESEARCH is LIVE again (the v2 fan) and is always offered. The deleted Plan stage must not
-    // reappear either.
+    // RETIRED phases are not offered without evidence: CONTRACTS (P1-4) and REVIEW (2447d145c) are
+    // deleted from the engine, so a run with no proof it ran them draws no chip — Synthesize sits
+    // immediately before Build, and nothing reads "Review — skipped" over a run that could never have
+    // reviewed. RESEARCH is LIVE again (the v2 fan) and is always offered. The deleted Plan stage must
+    // not reappear either.
     const labels = within(phases)
       .getAllByRole('listitem')
       .map((li) => li.textContent?.trim());
-    expect(labels.indexOf('Review')).toBe(labels.indexOf('Build') - 1);
+    expect(labels.indexOf('Synthesize')).toBe(labels.indexOf('Build') - 1);
     expect(labels.indexOf('Research')).toBe(labels.indexOf('Synthesize') - 1);
     expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
-    expect(within(phases).getByText('Ask').closest('li')).toHaveAttribute('data-state', 'complete');
+    expect(within(phases).queryByText(/Review/)).not.toBeInTheDocument();
+    // ASK and SPLIT are conditional (VA-138): with no evidence the run asked nothing and split
+    // nothing, so neither chip is drawn — and nothing back-fills a green check for an ask that
+    // never happened.
+    expect(within(phases).queryByText(/Ask/)).not.toBeInTheDocument();
+    expect(within(phases).queryByText(/Split/)).not.toBeInTheDocument();
     expect(within(phases).queryByText('Plan')).not.toBeInTheDocument();
 
     const nodes = screen.getAllByTestId('formation-node');
@@ -71,9 +77,39 @@ describe('FormationRibbon', () => {
     expect(buildChip).toHaveAttribute('data-held', 'true');
   });
 
+  // THE DEFECT 2447d145c LEFT BEHIND: the engine stopped emitting `phase: review`, and until 'review'
+  // joined RETIRED_PHASES every new run's ribbon read "Review — skipped" from the moment Build lit —
+  // a chip asserting the run had bypassed a stage the engine no longer has. The evidence here is
+  // exactly what foldRunPhase observes on a post-2447d145c stream (open, ask, research, synthesis,
+  // plan_loaded): no review key at all.
+  it('never offers Review to a new run — no chip, no "skipped", once Build lights', () => {
+    render(
+      <FormationRibbon
+        phase="build"
+        evidence={{ open: true, ask: true, research: true, synthesize: true, build: true }}
+        nodes={[{ device: 'gabee-qwen', working: true }]}
+      />
+    );
+    const phases = screen.getByRole('list', { name: 'Run phases' });
+    const items = within(phases).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent?.trim())).toEqual([
+      'Open',
+      'Ask',
+      'Research',
+      'Synthesize',
+      'Build',
+      'Integrate',
+      'Repair',
+      'Done',
+    ]);
+    expect(items.filter((li) => li.dataset.state === 'skipped')).toHaveLength(0);
+    expect(within(phases).getByText('Build').closest('li')).toHaveAttribute('data-state', 'active');
+  });
+
   // An ARCHIVED run proves it ran the retired stages, so it keeps their chips in engine order —
-  // old run.jsonl files still carry the research/contracts phase events and must render as history.
-  it('keeps Research and Contracts for a run whose evidence proves it ran them', () => {
+  // old run.jsonl files still carry the research/review/contracts phase events and must render as
+  // history (retired means "absent is not skipped", never "hidden").
+  it('keeps Research, Review and Contracts for a run whose evidence proves it ran them', () => {
     render(
       <FormationRibbon
         phase="build"
@@ -93,7 +129,12 @@ describe('FormationRibbon', () => {
       .getAllByRole('listitem')
       .map((li) => li.textContent?.trim());
     expect(labels.indexOf('Research')).toBe(labels.indexOf('Synthesize') - 1);
+    expect(labels.indexOf('Review')).toBe(labels.indexOf('Synthesize') + 1);
     expect(labels.indexOf('Contracts')).toBe(labels.indexOf('Build') - 1);
+    expect(within(phases).getByText('Review').closest('li')).toHaveAttribute(
+      'data-state',
+      'complete'
+    );
     expect(within(phases).getByText('Contracts').closest('li')).toHaveAttribute(
       'data-state',
       'complete'

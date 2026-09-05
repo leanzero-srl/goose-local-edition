@@ -26,6 +26,9 @@ import {
   supervisionRollingCaption,
   type TurnStatus,
   type TurnLane,
+  type ResearchLaneClose,
+  type ResearchQuestionRow,
+  type ResearchRaisedFold,
   type LiveChannel,
   type SwarmCall,
   type InflightCall,
@@ -47,6 +50,8 @@ import {
   type SwarmRunState,
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
+  type RunVerdict,
+  type KnownBug,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -83,10 +88,11 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
 import FormationRibbon, { type FormationActiveTone } from './FormationRibbon';
-import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseList';
+import { isPlanningPhase, planningLanesFor, unclaimedPlanningLanes, type PhaseLaneGroup } from './phaseList';
 import {
   EYEBROW_CLASS,
   SWARM_STATUS,
+  fmtPhaseDuration,
   nextRevealedText,
   usePrefersReducedMotion,
   usePageVisible,
@@ -366,8 +372,8 @@ const ReasoningBlock: React.FC<{
   forceOpen?: boolean;
   label?: string;
   live?: boolean;
-  /** Honest provenance beside the label — e.g. REASONING_CLIP_NOTE when the body is the digest's
-   *  24k-clipped tail rather than a durable log. */
+  /** Honest provenance beside the label — e.g. ANSWER_WINDOW_NOTE when the body is the digest's
+   *  rolling answer window rather than a durable log. */
   note?: string;
   /** True (the default) when the body is the model's REASONING/GENERATION channel — the one surface that
    *  carries the Studio's secondary accent on its label. A task spec rendered through the same block
@@ -432,6 +438,231 @@ const ReasoningBlock: React.FC<{
   );
 };
 
+/** Solid fill per research question KIND (`research_question_kind.kind`, the lane's own word): the
+ *  engine's vocabulary is design | external | unkinded, plus the classifier's spec_restated (VA-118: a
+ *  design entry showing fewer than two alternatives); any other word the engine may name gets the
+ *  neutral slate rather than no chip. White ink on every fill — no tints. */
+const RESEARCH_KIND_COLOR: Record<string, string> = {
+  design: '#7c3aed',
+  external: '#0e7490',
+  spec_restated: '#c2410c',
+  unkinded: SWARM_STATUS.stopped,
+};
+const researchKindColor = (kind: string) => RESEARCH_KIND_COLOR[kind] ?? SWARM_STATUS.stopped;
+/** VA-031: the solid fills for a question another mini or a decision already COVERED (the q chip and
+ *  its provenance chip) and for a question the lane RAISED and folded into its builder's brief. */
+const RESEARCH_COVERED = '#0369a1';
+const RESEARCH_RAISED = '#be185d';
+
+/** `covered by <slice> q<n>` from the mini the engine named (`research_question_covered.by_mini`, the
+ *  file name research.rs research_mini_name wrote: `research-<slice>-q<n>.json`), or `covered by
+ *  decision <i>` for a question routed to an open decision (`by: decision`, the engine's own index into
+ *  the opener's list). A mini name outside the pattern is shown as it came — never blank. */
+const coveredByLabel = (c: NonNullable<ResearchQuestionRow['covered']>): string => {
+  if (c.by === 'decision' && c.decision != null) return `covered by decision ${c.decision}`;
+  const mini = c.mini?.match(/^research-(.+)-q(\d+)\.json$/);
+  if (mini) return `covered by ${mini[1]} q${mini[2]}`;
+  return `covered by ${c.mini || c.by || 'an earlier answer'}`;
+};
+
+/**
+ * THE QUESTIONS A RESEARCH LANE CARRIES (VA-029), numbered by the engine's own q_index, each with the
+ * outcome its terminal event recorded. Module scope, like every component here. One lane per slice
+ * since the fan cut; the lane's digest names only the key, so this list is the ONLY place a reader
+ * learns what the lane was asked — and which of its questions came back unanswered (the loud twin: an
+ * unanswered question stays a raw question in the brief, never a fabricated answer). Solid status
+ * chips, full borders — no rails, no tints.
+ *
+ * VA-145: this list is where a lane's LANDINGS stay PINNED. The compact feed is a 30-row window and
+ * r6j's 37 landings spread over 144 minutes, so a lane's early landings had scrolled out of it long
+ * before the lane closed; here every landing is a row for as long as the lane exists — the kind the
+ * lane named as a solid chip, the answer's chars, what it raised, the lane clock it landed at (the
+ * same facts the feed's `<slice> · q<n> landed · <kind> · <chars> · raised <n>` line carries, read off
+ * the one carry rather than copied from the feed). The header folds the rows; the close line stays.
+ */
+const ResearchQuestionRows: React.FC<{
+  questions: ResearchQuestionRow[];
+  /** VA-143: the lane's closer — rendered as the lane's close line, never as a question row. */
+  close?: ResearchLaneClose;
+  /** VA-031: what the lane raised and folded into its builder's brief — its own rows under the list. */
+  raisedFolded?: ResearchRaisedFold[];
+  live: boolean;
+}> = ({ questions, close, raisedFolded, live }) => {
+  const [expanded, setExpanded] = useState(true);
+  const answered = questions.filter((q) => q.status === 'answered').length;
+  const missed = questions.filter((q) => q.status === 'unanswered').length;
+  // VA-031: a question another mini or a decision already covered (LEGACY-LOG, r6c–r6h) is one the
+  // lane held — counted in the header, shown as its own row, never a silent gap in the numbering.
+  const covered = questions.filter((q) => q.status === 'covered').length;
+  const open = questions.length - answered - missed - covered;
+  const raised = raisedFolded?.length ?? 0;
+  const chipColor = (q: ResearchQuestionRow) =>
+    q.status === 'answered'
+      ? STATUS_COLOR.done
+      : q.status === 'unanswered'
+        ? STATUS_COLOR.error
+        : q.status === 'covered'
+          ? RESEARCH_COVERED
+          : live
+            ? STATUS_COLOR.running
+            : CALL_PENDING;
+  const caption = (q: ResearchQuestionRow) => {
+    // A landing's line: the answer's size, what it raised, and the engine's lane clock at the landing
+    // (`research_answered.secs`) — absent on a landing-only archive, and then unsaid.
+    if (q.status === 'answered')
+      return [
+        `${(q.chars ?? 0).toLocaleString()} chars`,
+        q.raised ? `${q.raised} raised` : '',
+        q.secs != null ? `${q.secs}s` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    if (q.status === 'unanswered')
+      return `unanswered${q.reason ? ` · ${q.reason.replace(/_/g, ' ')}` : ''}`;
+    // The engine's match rule, verbatim (cite | decision_id | stem) — the WHY the vigil reads.
+    if (q.status === 'covered') return `covered${q.covered?.rule ? ` · rule ${q.covered.rule}` : ''}`;
+    // Dispatched, no terminal event: answering while the lane runs; on a lane that is over, the
+    // honest words are that no outcome was recorded — never "answered".
+    return live ? 'answering…' : 'no outcome recorded';
+  };
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <div data-testid="research-questions">
+      <button
+        type="button"
+        onClick={() => setExpanded((x) => !x)}
+        aria-expanded={expanded}
+        data-testid="research-questions-toggle"
+        className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary transition-colors mb-1.5"
+      >
+        <Chevron className="h-3 w-3 shrink-0" />
+        <span>
+          Questions · {questions.length}
+          {answered > 0 ? ` · ${answered} answered` : ''}
+          {covered > 0 ? ` · ${covered} covered` : ''}
+          {missed > 0 ? ` · ${missed} unanswered` : ''}
+          {open > 0 && live ? ` · ${open} open` : ''}
+          {raised > 0 ? ` · ${raised} raised` : ''}
+        </span>
+      </button>
+      {expanded ? (
+        <ol className={cx('space-y-1 bg-lz-surface px-2 py-1.5', SURFACE.outline, RADIUS.control)}>
+          {questions.map((q) => (
+            <li
+              key={`${q.slice}::${q.qIndex}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-question"
+              data-status={q.status}
+              title={q.detail || undefined}
+            >
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                style={{ background: chipColor(q), borderRadius: 3 }}
+              >
+                q{q.qIndex}
+              </span>
+              {q.kind ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: researchKindColor(q.kind), borderRadius: 3 }}
+                  data-testid="research-kind"
+                  data-kind={q.kind}
+                >
+                  {q.kind}
+                </span>
+              ) : null}
+              {/* VA-031: the kind CHANGED — the classifier overrode the lane's word
+                  (`research_question_kind{source: classifier, model_kind}`); the chip says what the lane
+                  had said, and the evidence the classifier read (`cite`) is the title. The event carries
+                  no separate reason field — the cite IS the classifier's reading. */}
+              {q.kindSource === 'classifier' && q.modelKind ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: researchKindColor(q.modelKind), borderRadius: 3 }}
+                  data-testid="research-kind-reclassified"
+                  data-model-kind={q.modelKind}
+                  title={`the lane said ${q.modelKind}; reclassified ${q.kind ?? ''} by the classifier${q.cite ? ` — ${q.cite}` : ''}`}
+                >
+                  was {q.modelKind}
+                </span>
+              ) : null}
+              {/* VA-031: the provenance of a covered question — the mini or decision that already held
+                  its answer, as the engine named it. A solid chip: this is a fact, not a dimmed row. */}
+              {q.status === 'covered' && q.covered ? (
+                <span
+                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
+                  style={{ background: RESEARCH_COVERED, borderRadius: 3 }}
+                  data-testid="research-covered-by"
+                  data-by={q.covered.by}
+                  title={q.covered.mini || undefined}
+                >
+                  {coveredByLabel(q.covered)}
+                </span>
+              ) : null}
+              <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {/* VA-031: what the lane RAISED and could not settle (`research_raised_folded`, one per line of a
+          landed row) — folded verbatim into this slice's brief for its builder; the words, pinned here
+          beside the question that raised them. The list is append-only in event order (never a sliding
+          window), so the ordinal is a stable identity. */}
+      {expanded && raisedFolded && raisedFolded.length > 0 ? (
+        <ol
+          className={cx('mt-1.5 space-y-1 bg-lz-surface px-2 py-1.5', SURFACE.outline, RADIUS.control)}
+          data-testid="research-raised-folded-list"
+        >
+          {raisedFolded.map((r, i) => (
+            <li
+              key={`${r.qIndex}::${i}`}
+              className="flex items-start gap-2 text-[11px] min-w-0"
+              data-testid="research-raised-folded"
+              data-q-index={r.qIndex}
+              title={r.raisedBy || undefined}
+            >
+              <span
+                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
+                style={{ background: RESEARCH_RAISED, borderRadius: 3 }}
+              >
+                raised
+              </span>
+              <span className="flex-1 min-w-0 break-words text-text-primary">{r.question}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">
+                by q{r.qIndex} · folded into this slice’s brief
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {/* VA-143: the lane's close — what it landed and the choices it left to its builder — from the
+          `remainder_empty` closer and the `research_builder_decides` events, clocked by the engine's
+          own lane secs. r6j web-viz: "landed 4 · builder_decides 11 · done 34m", where the closer
+          used to read "q4 · unanswered · remainder empty". */}
+      {close ? (
+        <div
+          className="mt-1.5 flex items-center gap-2 text-[11px] min-w-0"
+          data-testid="research-lane-close"
+          data-reason={close.reason}
+          title={close.detail || undefined}
+        >
+          <span
+            className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
+            style={{ background: STATUS_COLOR.done, borderRadius: 3 }}
+          >
+            closed
+          </span>
+          <span className="tabular-nums text-text-primary">
+            landed {close.landed} · builder_decides {close.builderDecides}
+            {close.secs != null ? ` · done ${fmtPhaseDuration(close.secs * 1000)}` : ''}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const LaneRow: React.FC<{
   lane: TurnLane;
   deviceOrder: string[];
@@ -477,7 +708,8 @@ const LaneRow: React.FC<{
     (lane.forming?.length ?? 0) > 0 ||
     (lane.recent?.length ?? 0) > 0 ||
     laneError.length > 0 ||
-    saidChips;
+    saidChips ||
+    (lane.researchQuestions?.length ?? 0) > 0;
   // The first call NEEDING ATTENTION auto-expands so the reason is zero clicks away. One definition —
   // this site used `c.ok === false`, which opens on productive app-errors (the worker testing), while the
   // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
@@ -647,6 +879,16 @@ const LaneRow: React.FC<{
               <MonoOutput text={laneError} failed />
             </div>
           ) : null}
+          {/* A research lane's questions (VA-029) — the lane's identity, not a reasoning dump, so every
+              mode shows them: numbered, each with its own outcome from the per-question events. */}
+          {lane.researchQuestions && lane.researchQuestions.length > 0 ? (
+            <ResearchQuestionRows
+              questions={lane.researchQuestions}
+              close={lane.researchClose}
+              raisedFolded={lane.researchRaisedFolded}
+              live={live}
+            />
+          ) : null}
           {mode === 'compact' ? (
             // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
             compactLine ? (
@@ -682,7 +924,7 @@ const LaneRow: React.FC<{
                   forceOpen={dev || live}
                   // Developer: name the model so it's unmistakable WHOSE generation this is.
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
-                  note={narrativeClipNote(lane) ?? undefined}
+                  note={narrativeWindowNote(lane) ?? undefined}
                 />
               )}
               {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
@@ -1288,6 +1530,11 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
 /// The inspector now renders `calls` themselves (WorkPane), where `summary` is the command and `result`
 /// is its output; this function is only what the model SAID. `StreamLane.recent` stays in the type —
 /// `laneLiveLine` still reads it as a last-resort live line.
+///
+/// THE ANSWER WINDOW LIVES HERE, BY CHANNEL (agenda item V, UI half). `answerWindow` is the digest's
+/// rolling ~24k tail of this same ANSWER stream — it used to sit in `inspectorThinkingText`'s chain,
+/// where a lane with no think.log rendered its answer under the title "Thinking" while Work showed the
+/// same words from the log. The log outranks it; the 400-char `lastText` is the last resort below it.
 /**
  * The stream fields of a lane, as every renderer needs them.
  *
@@ -1298,7 +1545,7 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
 export type StreamLane = {
   fullTranscript?: string;
   fullThinking?: string;
-  fullReasoning?: string;
+  answerWindow?: string;
   reasoning?: string;
   lastText?: string;
   lastThinking?: string;
@@ -1345,7 +1592,7 @@ function liveTranscript(lane: { fullTranscript?: string }): string {
 }
 
 export function inspectorOutputText(lane: StreamLane): string {
-  return liveTranscript(lane) || lane.lastText?.trim() || '';
+  return liveTranscript(lane) || lane.answerWindow?.trim() || lane.lastText?.trim() || '';
 }
 
 /** One attempt's SAID text as the pane renders it. */
@@ -1463,10 +1710,32 @@ export function squeezeNote(before: string, after: string): string {
 ///
 /// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
 /// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
+///
+/// ONE CHANNEL, and this was wrong a third way: the chain read `fullReasoning` (the ANSWER window) and
+/// `reasoning` (the answer summary) AHEAD of the thinking window, so any lane whose think.log had not
+/// landed — or any model with no thinking stream at all — showed its ANSWER in the pane titled Thinking,
+/// captioned "archived digest; full log unavailable" while Work showed the very same words from the
+/// durable log. The answer window belongs to `inspectorOutputText`; nothing from that channel is read here.
+///
+/// THE WINDOW IS GATED ON THE COUNTER (VA-026). `lastThinking` outlives the call that produced it: the
+/// join carries the previous poll's window when a new digest omits the key (`d?.last_thinking ??
+/// prev?.lastThinking`), and a lane key reused call after call (REVIEW's rounds, a judge re-stream)
+/// seeds its next digest with `thinking_chars: 0` and no think.log yet — so this pane filled with a
+/// DEAD call's reasoning under the new call's title. `laneThinkingRun` had this gate; this function
+/// was the second copy of the same rule without it. One predicate now, shared by both.
 export function inspectorThinkingText(lane: StreamLane): string {
-  const durable =
-    lane.fullThinking?.trim() || lane.fullReasoning?.trim() || lane.reasoning?.trim() || '';
-  return durable || (lane.lastThinking?.trim() ?? '');
+  return lane.fullThinking?.trim() || liveThinkingWindow(lane);
+}
+
+/**
+ * THE ROLLING THINKING WINDOW, ONLY WHILE A LIVE COUNTER STANDS BEHIND IT — the one rule for every
+ * surface that falls back to `lastThinking`. `thinkingChars` is the engine's own counter for THIS
+ * call's reasoning channel (reset by a re-stream, zero on a fresh seed digest); a window with a zero
+ * counter is a leftover from a previous call or attempt, never this one's reasoning. The durable
+ * `<task>.think.log` is not gated here — it is append-only truth and its own honest history.
+ */
+export function liveThinkingWindow(lane: StreamLane): string {
+  return (lane.thinkingChars ?? 0) > 0 ? (lane.lastThinking?.trim() ?? '') : '';
 }
 
 /**
@@ -1488,7 +1757,8 @@ export const INLINE_TAIL_CHARS = 2400;
 export const REPEAT_SCAN_CHARS = 24_000;
 
 /** The preview cards show a lot more than a strip cell, but still not a whole log — this is the same
- *  volume the old 24,000-char `full_reasoning` clip put on screen, now taken from the durable log. */
+ *  volume the engine's 24,000-char answer window (`ANSWER_WINDOW_CHARS`, once misnamed `full_reasoning`)
+ *  put on screen, now taken from the durable log. */
 export const CARD_TAIL_CHARS = 24_000;
 
 export function tailOf(text: string, max: number): string {
@@ -1500,13 +1770,13 @@ export function tailOf(text: string, max: number): string {
  *
  * Prefers the durable `<task>.think.log`; the digest's `lastThinking` is a ROLLING WINDOW the engine
  * rewrites ~2.5x a second, which is why a cell fed from it clears and refills instead of advancing.
- * The window is still the fallback for a lane whose log has not appeared yet, and it keeps its
- * `thinkingChars` gate: without a live counter behind it the window may be a stale leftover.
+ * The window is still the fallback for a lane whose log has not appeared yet, gated on the live
+ * counter by `liveThinkingWindow` — the same predicate the inspector pane reads, so the two cannot
+ * disagree about whether a window is this call's.
  */
 export function laneThinkingRun(lane: StreamLane): string {
   const durable = lane.fullThinking?.trim() ?? '';
-  const windowed = (lane.thinkingChars ?? 0) > 0 ? (lane.lastThinking?.trim() ?? '') : '';
-  return collapseRepeats(tailOf(durable || windowed, INLINE_TAIL_CHARS));
+  return collapseRepeats(tailOf(durable || liveThinkingWindow(lane), INLINE_TAIL_CHARS));
 }
 
 /**
@@ -1619,15 +1889,16 @@ export function fleetThinkingLine(lane: StreamLane | undefined): string {
 ///
 /// A THINKING-ONLY model must never produce an unclickable row: that is the node you most need to open.
 export function fleetExpandText(lane: StreamLane | undefined): string {
-  const said = (lane ? liveTranscript(lane) : '') || lane?.fullReasoning?.trim() || '';
+  const said = (lane ? liveTranscript(lane) : '') || lane?.answerWindow?.trim() || '';
   return [said, fleetThinkingLine(lane)].filter(Boolean).join('\n\n');
 }
 
-/** The narration a ROW renders in its expanded body: the durable answer channel, then the clipped digests. */
+/** The narration a ROW renders in its expanded body: the durable answer channel, then the digest's answer
+ *  window (captioned by `narrativeWindowNote` when it is the body), then the smaller rolling views. */
 export function laneNarrative(lane: StreamLane): string {
   return (
     liveTranscript(lane) ||
-    lane.fullReasoning?.trim() ||
+    lane.answerWindow?.trim() ||
     lane.reasoning?.trim() ||
     lane.lastText?.trim() ||
     ''
@@ -1694,60 +1965,55 @@ export function thinkingCaption(
 /**
  * The text the per-task LIVE GENERATION card shows.
  *
- * It reached for `full_reasoning` — the engine's 24,000-char TAIL CLIP — first, and never looked at the
- * durable logs sitting unread in the same digest object, so this surface still showed a clipped
+ * It reached for `full_reasoning` — the engine's 24,000-char answer WINDOW — first, and never looked at
+ * the durable logs sitting unread in the same digest object, so this surface still showed a clipped
  * transcript after every other reader had been moved onto the append-only logs.
+ *
+ * THE INPUT IS A JOINED LANE, never a raw digest. This card used to receive the digest and map its keys
+ * by hand (`streamLaneOfDigest`) — a second copy of `digestStreamFields` by construction, the exact
+ * shape that diverged twice on the lane paths; it read the answer window through the join's own key
+ * read and still owned its own list of which keys exist. The lane it now gets was joined once, in the
+ * hook (deriveFleet / deriveNodeHistory for a digest no event lane claims), so the card cannot learn a
+ * different rule than the lanes about ANY field.
  */
-export function taskGenReasoning(digest: Record<string, unknown>): string {
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
-  const lane: StreamLane = {
-    fullThinking: str('full_thinking'),
-    fullReasoning: str('full_reasoning'),
-    reasoning: str('reasoning'),
-    lastThinking: str('last_thinking'),
-    fullTranscript: str('full_transcript'),
-    lastText: str('last_text'),
-  };
-  // BOTH DURABLE LOGS OUTRANK EVERY CLIPPED VIEW. Taking the inspector's chain whole would put
-  // `full_reasoning` — the clip this card is here to stop showing — ahead of `full_transcript`.
+export function taskGenReasoning(lane: StreamLane): string {
+  // BOTH DURABLE LOGS OUTRANK EVERY DIGEST VIEW; then the answer channel's window (the larger record,
+  // via laneNarrative's chain), then the thinking window — the two inspector panes' orders, composed.
   const durable = lane.fullThinking?.trim() || liveTranscript(lane) || '';
-  const text = durable || inspectorThinkingText(lane) || laneNarrative(lane);
+  const text = durable || laneNarrative(lane) || inspectorThinkingText(lane);
   return tailOf(text, CARD_TAIL_CHARS);
 }
 
-/** The honest words for a body that is `full_reasoning` — the digest's 24,000-char clipped tail. */
-export const REASONING_CLIP_NOTE = 'last 24k chars — archived digest; full log unavailable';
+/** The honest words for a body that is the digest's answer window: a rolling tail (the engine's
+ *  `ANSWER_WINDOW_CHARS`, 24k), shown only when the call has no durable `<task>.log`. The digest carries
+ *  no answer-channel total, so how much lies beyond the window is not knowable from it — the caption
+ *  names what the body IS rather than guessing at what it lacks. */
+export const ANSWER_WINDOW_NOTE =
+  "answer window — the digest's rolling tail; no durable log for this call";
 
 /**
- * THE FALLBACK STAYS; THE CAPTION CLOSES THE ITEM (agenda item V's residue). Archived runs whose
- * durable logs are gone still carry `full_reasoning` in the digest — a 24k TAIL CLIP — and every
- * surface that falls back to it used to present the clip as the whole record. These predicates say,
- * per chain, whether the body a surface is about to show IS that clip, so the caption can say so.
- *
- * `narrativeClipNote` matches laneNarrative's chain (transcript first, then the clip);
- * `taskGenClipNote` matches taskGenReasoning's (both durable logs outrank it).
+ * WHEN THE BODY IS THE WINDOW, SAY SO (agenda item V, UI half). The window read is not deleted
+ * outright because the durable log cannot serve one measured case: 39 archived runs under
+ * ~/goose-builds predate the transcripts and carry the window as their ONLY narration (measured
+ * 2026-09-01: every digest with `full_reasoning` in a pre-08-29 archive lacks a sibling `.log`; every
+ * one of r6b's 39 has it, and the engine appends the log at all three digest-write sites, so a LIVE
+ * lane's window is always a subset of its log). So the log ranks first on every surface, the window is
+ * the fallback for exactly that absence, and this predicate — the same chain `laneNarrative` and
+ * `inspectorOutputText` use (transcript first, then the window) — captions it wherever it is the body.
  */
-export function narrativeClipNote(lane: StreamLane): string | null {
-  return !liveTranscript(lane) && (lane.fullReasoning?.trim() ?? '') ? REASONING_CLIP_NOTE : null;
+export function narrativeWindowNote(lane: StreamLane): string | null {
+  return !liveTranscript(lane) && (lane.answerWindow?.trim() ?? '') ? ANSWER_WINDOW_NOTE : null;
 }
 
-export function taskGenClipNote(digest: Record<string, unknown>): string | null {
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
-  const lane: StreamLane = {
-    fullThinking: str('full_thinking'),
-    fullReasoning: str('full_reasoning'),
-    fullTranscript: str('full_transcript'),
-  };
-  if (lane.fullThinking?.trim() || liveTranscript(lane)) return null;
-  return lane.fullReasoning?.trim() ? REASONING_CLIP_NOTE : null;
+/** taskGenReasoning's chain: BOTH durable logs outrank the window. */
+export function taskGenWindowNote(lane: StreamLane): string | null {
+  return lane.fullThinking?.trim() ? null : narrativeWindowNote(lane);
 }
 
-/** The inspector THINKING pane's variant: its chain (inspectorThinkingText) reaches the clip only
- *  when the durable think.log is absent. Returned pre-joined for the pane's `count` caption. */
-export function thinkingClipNote(lane: StreamLane): string {
-  return !lane.fullThinking?.trim() && (lane.fullReasoning?.trim() ?? '')
-    ? ` · ${REASONING_CLIP_NOTE}`
-    : '';
+/** The inspector WORK pane's caption suffix, pre-joined like its neighbours in that template. */
+export function outputWindowNote(lane: StreamLane): string {
+  const note = narrativeWindowNote(lane);
+  return note ? ` · ${note}` : '';
 }
 
 /**
@@ -2362,9 +2628,9 @@ const NodeInspector: React.FC<{
   );
   const [fullThinkFailed, setFullThinkFailed] = useState(false);
 
-  // PREFER THE DURABLE THINKING LOG. `fullReasoning` is built from the ANSWER channel and the digest's
-  // thinking is a 2,400-char rolling window, so without this the pane clears and refills as the model
-  // streams instead of accumulating a readable document.
+  // PREFER THE DURABLE THINKING LOG. The digest's thinking is a 2,400-char rolling window, so without
+  // this the pane clears and refills as the model streams instead of accumulating a readable document.
+  // (The ANSWER window is not read here at all any more — see inspectorThinkingText.)
   // NEVER CONCATENATE THE LOG WITH THE ROLLING WINDOW — THEY ARE THE SAME STREAM.
   //
   // `fullThinking` is the durable `<task>.think.log`; `lastThinking` is the digest's 2,400-char ROLLING
@@ -2581,7 +2847,7 @@ const NodeInspector: React.FC<{
                     lane?.fullThinking,
                     lane?.thinkingBytes,
                     lane?.thinkingChars
-                  )}${thinkingClipNote(lane ?? {})}${squeezeNote(rawThink, thinkText)}`
+                  )}${squeezeNote(rawThink, thinkText)}`
             }
             action={
               showingFullThink ? (
@@ -2602,7 +2868,15 @@ const NodeInspector: React.FC<{
                 </PaneActionButton>
               ) : null
             }
-            empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
+            // TWO HONEST EMPTIES. This pane no longer borrows the answer channel to fill itself, so a model
+            // with no thinking stream leaves it empty — and "has not produced a token" would then be false
+            // over a lane whose answer and calls are right beside it. `thinkingChars` is the engine's own
+            // counter for the channel: zero with work present means the call has no reasoning channel.
+            empty={
+              hasWork && (lane?.thinkingChars ?? 0) === 0
+                ? 'No reasoning channel on this call — the model is working without one; its answer and tool calls are under Work.'
+                : 'Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token.'
+            }
             isEmpty={showingFullThink ? !fullThinkSqueezed : !thinkText}
           >
             <NodeExpandBox
@@ -2631,7 +2905,7 @@ const NodeInspector: React.FC<{
             count={
               showingFullWork
                 ? `all ${fullWork.bytes.toLocaleString()} bytes${squeezeNote(fullWork.text, fullWorkSqueezed)}`
-                : `${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${formingNote(lane?.forming)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`
+                : `${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${formingNote(lane?.forming)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${outputWindowNote(lane ?? {})}${squeezeNote(rawNarration, narration)}`
             }
             action={
               showingFullWork ? (
@@ -3882,25 +4156,26 @@ const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({
 
 // Per-task LIVE GENERATION detail — what the model on THIS task actually produced: the tool-call breakdown (so
 // over-reading is visible at a glance: many reads/shell, no write), how much it's thinking, the reasoning text,
-// and which node/model. All of it is already collected per worker in .swarm/activity/<task>.json (the panel
-// reads it as run.activity) — this is the surface that makes "what are the models actually doing / why so long"
-// answerable instead of a blank two-line un-truncation.
-const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }) => {
-  const num = (k: string) => (typeof digest[k] === 'number' ? (digest[k] as number) : 0);
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : '');
-  const calls = Array.isArray(digest.calls) ? (digest.calls as Array<Record<string, unknown>>) : [];
+// and which node/model. All of it is collected per worker in .swarm/activity/<task>.json and reaches this
+// card as a LANE joined once through `digestStreamFields` — the WORK board's fallback for a task whose
+// digest no event lane claims (a judge-split parent: its lane is dropped on purpose, its call still
+// happened). It used to take the raw digest and read `tool_calls` / `thinking_chars` / `malformed` /
+// `calls` by hand — a second copy of the join, and the copy had already drifted: the join did not carry
+// `malformed` at all, so this card was the only reader of a field no lane had.
+const TaskGenDetail: React.FC<{ lane: TurnLane }> = ({ lane }) => {
+  const calls = lane.calls ?? [];
   const byName: Record<string, number> = {};
   for (const c of calls) {
-    const n = c && typeof c.name === 'string' ? c.name : 'other';
+    const n = typeof c.name === 'string' && c.name ? c.name : 'other';
     byName[n] = (byName[n] ?? 0) + 1;
   }
-  const rawModel = str('model');
+  const rawModel = lane.model ?? '';
   const model = rawModel.split('-').slice(0, 2).join('-') || rawModel;
-  const toolCalls = num('tool_calls');
-  const thinking = num('thinking_chars');
-  const errors = num('errors');
-  const malformed = num('malformed');
-  const reasoning = taskGenReasoning(digest);
+  const toolCalls = lane.toolCalls ?? 0;
+  const thinking = lane.thinkingChars ?? 0;
+  const errors = lane.errors ?? 0;
+  const malformed = lane.malformed ?? 0;
+  const reasoning = taskGenReasoning(lane);
   const breakdown = Object.entries(byName)
     .map(([n, c]) => `${c} ${n}`)
     .join(' · ');
@@ -3934,13 +4209,17 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
       </div>
       {reasoning.trim()
         ? (() => {
-            // ITEM 2's residue: when both durable logs are absent this card's body IS the digest's
-            // 24k clip — an archived run's leftover — and calling that "(live)" was the lie.
-            const clip = taskGenClipNote(digest);
+            // ITEM V's residue: when both durable logs are absent this card's body IS the digest's
+            // answer window — a pre-transcript archive's leftover — and calling that "(live)" was the lie.
+            // "(live)" is also a claim about the CALL: the lane's status says whether it is still running
+            // (a split parent's call is over; a raw digest could not say so and this card said live).
+            const clip = taskGenWindowNote(lane);
             return (
               <ReasoningBlock
                 text={reasoning}
-                label={clip ? 'Model reasoning' : 'Model reasoning (live)'}
+                label={
+                  !clip && lane.status === 'running' ? 'Model reasoning (live)' : 'Model reasoning'
+                }
                 note={clip ?? undefined}
               />
             );
@@ -3977,17 +4256,14 @@ const PhaseTodoRow: React.FC<{
   item: PhaseTodoItem;
   deviceOrder: string[];
   stale: boolean;
-  activity?: Record<string, unknown>;
   plan?: PlanTask[];
   workingDir?: string;
-}> = ({ item, deviceOrder, stale, activity, plan, workingDir }) => {
-  // build rows are `b-<taskid>`, the verify sink is `b-integrate-verify`; strip the prefix to key run.activity
-  // (gen/app/miner/…) and run.plan. Non-task rows (r-start, p-conf, v-e2e…) simply won't match → no gen block.
+}> = ({ item, deviceOrder, stale, plan, workingDir }) => {
+  // build rows are `b-<taskid>`, the verify sink is `b-integrate-verify`; strip the prefix to key run.plan.
+  // Non-task rows (r-start, p-conf, v-e2e…) simply won't match. This row no longer looks a raw digest up
+  // by that id: the planning checklist's ids (o-start, r2-done, a-none…) never name a digest, so the
+  // "live generation" card here was an un-joined dead path; the WORK board owns that card, lane-fed.
   const taskId = item.id.replace(/^[bv]-/, '');
-  const digest =
-    activity && typeof activity[taskId] === 'object' && activity[taskId] !== null
-      ? (activity[taskId] as Record<string, unknown>)
-      : undefined;
   const planTask = plan?.find((t) => t.id === taskId);
   const revealFile = (rel: string) => {
     if (!workingDir) return;
@@ -4000,7 +4276,6 @@ const PhaseTodoRow: React.FC<{
     item.description ||
     (item.files && item.files.length) ||
     item.judge ||
-    digest ||
     planTask
   );
   const [open, setOpen] = useState(false);
@@ -4104,7 +4379,6 @@ const PhaseTodoRow: React.FC<{
             </div>
           ) : null}
           {item.description ? <ReasoningBlock text={item.description} label="Full task spec" reasoning={false} /> : null}
-          {digest ? <TaskGenDetail digest={digest} /> : null}
           {item.judge ? <JudgeReason judge={item.judge} /> : null}
         </div>
       ) : null}
@@ -4138,8 +4412,10 @@ const BoardTaskRow: React.FC<{
   stale: boolean;
   dev: boolean;
   workingDir?: string;
-  digest?: Record<string, unknown>;
-}> = ({ row, deviceOrder, stale, dev, workingDir, digest }) => {
+  /** The JOINED lane for a task whose digest no event lane claims (a judge-split parent) — built
+   *  once per poll by deriveFleet / deriveNodeHistory through the one join, never a raw digest. */
+  lanelessLane?: TurnLane;
+}> = ({ row, deviceOrder, stale, dev, workingDir, lanelessLane }) => {
   const interrupted = stale && row.state === 'running';
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
@@ -4157,7 +4433,7 @@ const BoardTaskRow: React.FC<{
     calls.length > 0 ||
     reasoning ||
     laneError ||
-    digest ||
+    lanelessLane ||
     row.deps.length ||
     row.difficulty
   );
@@ -4426,7 +4702,7 @@ const BoardTaskRow: React.FC<{
               live={row.state === 'running' && !interrupted}
               forceOpen={dev}
               label={row.state === 'running' ? 'Generating' : 'Reasoning'}
-              note={(lane && narrativeClipNote(lane)) ?? undefined}
+              note={(lane && narrativeWindowNote(lane)) ?? undefined}
             />
           ) : null}
           {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (
@@ -4450,7 +4726,7 @@ const BoardTaskRow: React.FC<{
               </div>
             </div>
           ) : null}
-          {!lane && digest ? <TaskGenDetail digest={digest} /> : null}
+          {!lane && lanelessLane ? <TaskGenDetail lane={lanelessLane} /> : null}
           {row.judge && (row.judge.verdict || row.judge.hint) ? <JudgeReason judge={row.judge} /> : null}
         </div>
       ) : null}
@@ -4471,16 +4747,16 @@ const WorkZone: React.FC<{
   dev: boolean;
   live: boolean;
   workingDir?: string;
-  digests: Record<string, unknown>;
-}> = ({ board, deviceOrder, stale, dev, live, workingDir, digests }) => {
+  /** Lanes the hook joined for digests NO event lane claims (deriveFleet's laneless rows and
+   *  deriveNodeHistory's digest-only entries). A board row without a fold lane — a judge-split
+   *  parent — takes its card from here, so the card is fed by the one join and never a raw digest. */
+  lanelessLanes: TurnLane[];
+}> = ({ board, deviceOrder, stale, dev, live, workingDir, lanelessLanes }) => {
   const total = board.running.length + board.queued.length + board.done.length;
   const failedCount = board.done.filter(
     (r) => r.state === 'failed' || r.state === 'judge_failed'
   ).length;
-  const digestFor = (id: string) =>
-    typeof digests[id] === 'object' && digests[id] !== null
-      ? (digests[id] as Record<string, unknown>)
-      : undefined;
+  const lanelessById = new Map(lanelessLanes.map((l) => [l.taskId, l]));
   const rows = (list: BoardRow[]) => (
     <div className="divide-y divide-lz-border">
       {list.map((r) => (
@@ -4491,7 +4767,7 @@ const WorkZone: React.FC<{
           stale={stale}
           dev={dev}
           workingDir={workingDir}
-          digest={digestFor(r.id)}
+          lanelessLane={r.lane ? undefined : lanelessById.get(r.id)}
         />
       ))}
     </div>
@@ -4930,7 +5206,8 @@ const PlanningZone: React.FC<{
   planLanes: TurnLane[];
   /** RESEARCH's per-slice lanes — one node per slice, each writing that module's spec (v1, archived). */
   sliceLanes: TurnLane[];
-  /** The v2 research fan (research-<slice>-q<n>) — the live engine's Research work, one question each. */
+  /** The v2 research fan — one lane per batch (`research-<slice>` since the fan cut; one per question
+   *  on r6b–r6d logs), each listing its questions from the per-question events (VA-029). */
   researchLanes: TurnLane[];
   /** CONTRACTS' per-module lanes — one node per module, each freezing that module's interface. */
   contractLanes: TurnLane[];
@@ -4942,7 +5219,6 @@ const PlanningZone: React.FC<{
   dev: boolean;
   buildStarted: boolean;
   workingDir?: string;
-  activity?: Record<string, unknown>;
 }> = ({
   conf,
   planConfidence,
@@ -4963,7 +5239,6 @@ const PlanningZone: React.FC<{
   dev,
   buildStarted,
   workingDir,
-  activity,
 }) => {
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const [laneOpen, setLaneOpen] = useState<Record<string, boolean>>({});
@@ -4977,25 +5252,33 @@ const PlanningZone: React.FC<{
   const clarifyInterrupted = !!clarify?.pending && !proxy.timedOut && stale;
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
+  // Every step's own calls render UNDER that step (VA-138): the opener under Open, the synthesis
+  // call under Synthesize, the split-<task> call under Split — the r6j split lane ran 23 minutes in
+  // the trailing group with nothing saying which step it belonged to.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
-    const group = planningLanesFor(key, { sliceLanes, contractLanes, researchLanes });
+    const group = planningLanesFor(key, { sliceLanes, contractLanes, researchLanes, planningLanes });
     return group && group.lanes.length > 0 ? group : null;
   };
   const shownPhases = phases.filter((p) => p.items.length > 0 || fanOf(p.key) != null);
   // The generations that belong to no single phase, grouped by what they ARE.
   const laneGroups: Array<{ key: string; label: string; lanes: TurnLane[] }> = [
-    { key: 'planning', label: 'Planning calls', lanes: planningLanes },
+    { key: 'planning', label: 'Planning calls', lanes: unclaimedPlanningLanes(planningLanes) },
     { key: 'drafts', label: 'Candidate drafts', lanes: planLanes },
   ].filter((g) => g.lanes.length > 0);
-  const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => (
-    <div key={key} className="mt-1">
-      <div className="flex h-7 items-center gap-1.5 px-3">
-        <Braces className="size-3 text-lz-ink-3" />
-        <span className={cx(EYEBROW_CLASS, 'text-lz-ink-3')}>
-          {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
-          {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
-        </span>
-      </div>
+  const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => {
+    // A header counts what the body shows: research lanes list their questions, so the group header
+    // says how many questions those lanes carry between them (VA-029) — zero on every other fan.
+    const questions = lanes.reduce((n, l) => n + (l.researchQuestions?.length ?? 0), 0);
+    return (
+      <div key={key} className="mt-1">
+        <div className="flex h-7 items-center gap-1.5 px-3">
+          <Braces className="size-3 text-lz-ink-3" />
+          <span className={cx(EYEBROW_CLASS, 'text-lz-ink-3')}>
+            {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
+            {questions > 0 ? ` · ${questions} question${questions === 1 ? '' : 's'}` : ''}
+            {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
+          </span>
+        </div>
       <div className="divide-y divide-lz-border">
         {lanes.map((lane) => {
           const defaultOpen = lane.status === 'running';
@@ -5017,7 +5300,8 @@ const PlanningZone: React.FC<{
         })}
       </div>
     </div>
-  );
+    );
+  };
   const hasBody =
     clarifyPending ||
     clarifyInterrupted ||
@@ -5113,6 +5397,14 @@ const PlanningZone: React.FC<{
                         {p.counts.done}/{p.counts.total}
                       </span>
                     ) : null}
+                    {/* What no row below can carry — Research: the questions the opener settled as cited
+                        spec facts, answered with NO lane, so they are outside the lane list under this
+                        header and the words say so (VA-029; from research_planned.facts, events only). */}
+                    {p.note ? (
+                      <span className="text-[10px] text-text-secondary" data-testid={`planning-phase-${p.key}-note`}>
+                        · {p.note}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="px-3 pl-4 space-y-0">
                     {p.items.map((item) => (
@@ -5121,7 +5413,6 @@ const PlanningZone: React.FC<{
                         item={item}
                         deviceOrder={deviceOrder}
                         stale={stale}
-                        activity={activity}
                         plan={plan}
                         workingDir={workingDir}
                       />
@@ -5149,25 +5440,70 @@ const PlanningZone: React.FC<{
  * These are deliberately NOT rendered as failures. Amber, its own heading, and a sentence that says the run
  * passed — a red list here would be a false red, which this panel exists to prevent as much as a false green.
  */
-const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
+/** The solid fill for a known bug's class chip — one saturated tone per severity the engine derives
+ *  (`FindingSeverity::label`): critical err, high warn, medium accent, low/unsourced stopped. White text on
+ *  every one; never a tint. */
+const knownBugClassTone = (severity: string): Tone =>
+  severity === 'critical' ? 'err' : severity === 'high' ? 'warn' : severity === 'medium' ? 'accent' : 'stopped';
+
+/** The chip recipe the verdict surface's counts wear (lz Chip's, inlined so each can carry its test id). */
+const BUG_CHIP = cx('inline-flex h-5 shrink-0 items-center whitespace-nowrap px-1.5 text-lz-meta', WEIGHT.semibold, TNUM, RADIUS.control);
+
+const KnownActiveBugs: React.FC<{ bugs: KnownBug[]; verdict: RunVerdict | null }> = ({ bugs, verdict }) => {
   const [open, setOpen] = useState(true);
   if (bugs.length === 0) return null;
+  // VA-129: the engine's own count of render-class findings among the shipped bugs. 0 on every green by
+  // construction; on a red with zero criticals it is the reason for the red, so it is said beside the count.
+  const renderClass = verdict?.renderClassKnownBugs ?? 0;
+  const explain =
+    verdict && !verdict.passed
+      ? renderClass > 0
+        ? `still active when the run ended — ${renderClass} render-class finding${renderClass === 1 ? '' : 's'} blocked the green`
+        : 'still active when the run ended'
+      : 'the run passed — these are what it passed WITH';
   return (
-    <div className="border-t border-lz-border">
+    <div className="border-t border-lz-border" data-testid="known-active-bugs">
       <ZoneHeader
         label="Known active bugs"
-        explain="the run passed — these are what it passed WITH"
+        // "the run passed" may only be claimed when the engine's verdict says so — on a FAILED gate the
+        // same list is simply what was still broken at the end, and the old caption asserted a pass from
+        // bug presence alone (the truth-layer sin: a claim driven by nothing that could invalidate it).
+        explain={explain}
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
-        right={<Chip tone="warn">{bugs.length}</Chip>}
+        right={
+          <>
+            {renderClass > 0 ? (
+              <span
+                className={cx(BUG_CHIP, 'uppercase', TONE_FILL.err)}
+                data-testid="known-bugs-render-class-chip"
+              >
+                {renderClass} render-class
+              </span>
+            ) : null}
+            <span className={cx(BUG_CHIP, TONE_FILL.warn)} data-testid="known-bugs-count-chip">
+              {bugs.length}
+            </span>
+          </>
+        }
       />
       {open ? (
         <ol className="space-y-1.5 px-3 pb-3">
-          {bugs.map((bug, i) => (
-            <li key={i} className="flex items-start gap-2 text-lz-body text-lz-ink">
+          {bugs.map((bug) => (
+            <li key={bug.text} className="flex items-start gap-2 text-lz-body text-lz-ink">
               <Bug className={cx('mt-0.5 size-3.5 shrink-0', TONE_TEXT.warn)} aria-hidden />
+              {bug.severity ? (
+                // The class the engine's authoring check derived, verbatim — r6h shipped a `critical`
+                // known bug green; without this chip it read as a cosmetic minor.
+                <span
+                  className={cx(BUG_CHIP, 'mt-px uppercase', TONE_FILL[knownBugClassTone(bug.severity)])}
+                  data-testid="known-bug-class"
+                >
+                  {bug.severity}
+                </span>
+              ) : null}
               <span className="min-w-0 break-words">
-                <InlineMarkdown content={bug} />
+                <InlineMarkdown content={bug.text} />
               </span>
             </li>
           ))}
@@ -5346,9 +5682,64 @@ const RunOverview: React.FC<{
   );
 };
 
+/** " · N render-class finding(s) blocked the green" on a FAILED verdict whose red is the render-class
+ *  clause (VA-006/VA-129): zero criticals, but a browser-probe finding the gate refuses to ship as a known
+ *  bug. Empty on a pass (always 0 there) and on engines that never emitted the field. */
+const renderClassSuffix = (v: RunVerdict): string => {
+  const n = v.renderClassKnownBugs ?? 0;
+  return n > 0 ? ` · ${n} render-class finding${n === 1 ? '' : 's'} blocked the green` : '';
+};
+
 // The clear ENDING a run was missing: a solid terminal banner so a finished/stopped run never sits in limbo
 // (tasks green, no "running", no "done"). Done = green, finished-with-failures = red, stopped-without-a-
 // completion-signal (killed/crashed) = solid slate. Carries the tally + total time + the output directory.
+/**
+ * THE POST-VERDICT TAIL — verdict in, run not finished. Between complete_result and run_finished the
+ * engine still works (the persona reflection is a full model call; r5's took 3.5 minutes) with no task
+ * lane and "0 working" in the fleet — a finished-but-silent stretch Mihai read as a lock-up, on the
+ * exact phase where r0 once genuinely hung. This banner states the verdict the moment it exists and
+ * says what the engine is still doing, driven by the events/digests: the `reflect` supervision digest
+ * while it is open (HEAD engines stream it; older engines wrote nothing until persona_learned), else
+ * the generic record-writing line. Flips to TerminalBanner when run_finished lands.
+ */
+const WrapUpBanner: React.FC<{
+  verdict: RunVerdict;
+  bugCount: number;
+  activityDigests: Record<string, unknown>;
+}> = ({ verdict, bugCount, activityDigests }) => {
+  const reflect = activityDigests['reflect'] as { phase?: string } | undefined;
+  const what =
+    reflect && reflect.phase !== 'done'
+      ? 'learning a reusable stack skill from this build'
+      : 'writing the final run record (stack skill + overview)';
+  const color = verdict.passed
+    ? verdict.verified
+      ? SWARM_STATUS.solidDone
+      : SWARM_STATUS.solidRunning
+    : SWARM_STATUS.solidError;
+  const headline = verdict.passed
+    ? `Verdict is in — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugCount > 0 ? ` · ${bugCount} known bug${bugCount === 1 ? '' : 's'} ship` : ''}`
+    : `Verdict is in — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}${renderClassSuffix(verdict)}`;
+  return (
+    <div className="border-b border-border-primary" data-testid="wrapup-banner">
+      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
+        {verdict.passed ? (
+          <Check className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+        ) : (
+          <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+        )}
+        <span className="text-xs font-semibold">{headline}</span>
+      </div>
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" style={{ color: SWARM_STATUS.action }} />
+        <span>
+          Wrapping up — {what}. The run record closes when this lands.
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const TerminalBanner: React.FC<{
   outcome: 'done' | 'failed' | 'stopped';
   summary: RunSummary | null;
@@ -5356,7 +5747,19 @@ const TerminalBanner: React.FC<{
   durationLabel: string | null;
   outputDir?: string;
   deviceOrder: string[];
-}> = ({ outcome, summary, totals, durationLabel, outputDir, deviceOrder }) => {
+  /** The engine's own gate verdict (complete_result, revision folded). When present it OWNS the
+   *  headline — "Build complete" said nothing about whether the run PASSED, and Mihai watched a
+   *  passed+verified r5 and asked where on screen that was stated. Null on runs whose engine never
+   *  ran the gate (and on 'stopped'), which keep the task-count headline. */
+  verdict: RunVerdict | null;
+  /** run.knownActiveBugs.length — the SAME array the Known active bugs section renders, so the
+   *  banner's chip can never count something the body doesn't show. */
+  bugCount: number;
+  /** The engine-stamped run command (run_overview) — part of the verdict surface: "it passed" and
+   *  "here is how you run it" belong in the same glance. */
+  runCommand: string | null;
+  runCommandVerified: boolean;
+}> = ({ outcome, summary, totals, durationLabel, outputDir, deviceOrder, verdict, bugCount, runCommand, runCommandVerified }) => {
   const done = summary?.done ?? totals.done;
   const failed = summary?.failed ?? totals.failed;
   const tasks = totals.tasks;
@@ -5369,19 +5772,64 @@ const TerminalBanner: React.FC<{
     },
     stopped: { tone: 'stopped' as Tone, Icon: CircleSlash, title: 'Run stopped' },
   }[outcome];
-  const { tone, Icon, title } = cfg;
+  // THE VERDICT HEADLINE. Engine truth in the engine's own words: PASSED requires the gate's word,
+  // "verified" is only said while the engine's green stands (complete_result_revised retracts it in
+  // state, not just the feed). Solid tone fills only — ok for passed+verified, warn for a
+  // passed-but-unverified ship, err for failed. A 'stopped' run has no verdict to claim.
+  const v = outcome !== 'stopped' ? verdict : null;
+  const tone: Tone = v ? (v.passed ? (v.verified ? 'ok' : 'warn') : 'err') : cfg.tone;
+  const Icon = v ? (v.passed ? Check : AlertTriangle) : cfg.Icon;
+  const title = v
+    ? v.passed
+      ? v.verified
+        ? 'PASSED — verified end-to-end'
+        : 'PASSED — but the engine retracted its verification'
+      : `FAILED${v.remainingFindings != null ? ` — ${v.remainingFindings} finding${v.remainingFindings === 1 ? '' : 's'} remain` : ''}${renderClassSuffix(v)}`
+    : cfg.title;
   const parts = [
     `${done}/${tasks} task${tasks === 1 ? '' : 's'} done`,
     outcome !== 'failed' && failed ? `${failed} failed` : null,
     durationLabel ? `in ${durationLabel}` : null,
   ].filter(Boolean);
   return (
-    <div className="border-b border-lz-border">
-      <div className={cx('flex items-center gap-2 px-3 py-2', TONE_FILL[tone])} data-testid="terminal-banner">
+    <div className="border-b border-lz-border" data-testid="terminal-banner">
+      <div className={cx('flex items-center gap-2 px-3 py-2', TONE_FILL[tone])}>
         <Icon className="size-4 shrink-0" strokeWidth={2.5} />
         <span className={cx('text-lz-body', WEIGHT.semibold)}>{title}</span>
         <span className={cx('text-lz-meta', TNUM)}>{parts.join(' · ')}</span>
+        {v && bugCount > 0 ? (
+          // The honesty chip: a green run still shipped these. A solid warn fill with a white hairline
+          // so it reads on any band — the full list is the Known active bugs section below, same
+          // array, same count.
+          <span
+            className={cx('ml-auto border border-white', BUG_CHIP, TONE_FILL.warn)}
+            data-testid="verdict-bug-chip"
+          >
+            {bugCount} known bug{bugCount === 1 ? '' : 's'} shipped
+          </span>
+        ) : null}
       </div>
+      {v?.passedMeans ? (
+        // The engine's own definition of what "passed" asserts, verbatim — the honesty line that keeps
+        // PASSED from over-claiming (criticals closed AND no render-class finding stands — VA-087;
+        // the other minors ship as known bugs, listed below).
+        <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+          Passed means: {v.passedMeans}
+          {v.shipped ? ` · shipped: ${v.shipped}` : ''}
+        </div>
+      ) : null}
+      {v && runCommand ? (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary min-w-0">
+          <Terminal className="h-3 w-3 shrink-0 text-text-secondary" />
+          <span className="text-text-secondary shrink-0">Run it:</span>
+          <code className="font-mono text-text-primary truncate">{runCommand}</code>
+          {runCommandVerified ? (
+            <span className="text-[10px] font-semibold shrink-0" style={{ color: STATUS_COLOR.done }}>
+              — goose ran this command itself
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {outcome === 'stopped' ? (
         <div className="px-3 py-1.5 text-lz-meta text-lz-ink-3">
           {/* Absorbs the liveness banner's exited explanation — outcome 'stopped' keys on the same
@@ -5564,6 +6012,15 @@ export const SwarmRunPanel: React.FC<{
     scope: workingDir,
     poolNodes: run.poolNodes,
   });
+  // EVERY JOINED LANE FOR A DIGEST NO EVENT LANE CLAIMS — live ones from the fleet's laneless rows,
+  // finished/interrupted ones from the node history. The WORK board's card for a task without a fold
+  // lane (a judge-split parent) reads one of these, so it is fed by the ONE join (the two derivations
+  // above both spread `digestStreamFields`), never by a raw digest mapped by hand at render.
+  const lanelessLanes: TurnLane[] = [
+    ...fleet.workingByDevice.values(),
+    ...[...fleet.alsoRunningByDevice.values()].flat(),
+    ...[...nodeHistory.values()].flat().map((h) => h.lane),
+  ];
   // A device the engine EXCLUDED never reaches pool_resolved, so it has no fleet row from the pool —
   // its note is what puts it on the board, as "excluded — <reason>" rather than silent absence.
   const deviceOrder: string[] = Array.from(
@@ -5850,6 +6307,10 @@ export const SwarmRunPanel: React.FC<{
           phase={run.runPhase}
           nodes={formationNodes}
           evidence={run.runPhasesObserved}
+          spans={run.runPhaseSpans}
+          // The live clock only while the engine is alive and the run is open; otherwise the ribbon
+          // reads the open phase against the newest event, so a dead run's chip stops counting.
+          now={run.inProgress && !stale && !ended ? now : undefined}
           held={run.held}
           activeTone={activePhaseTone}
         />
@@ -5893,6 +6354,17 @@ export const SwarmRunPanel: React.FC<{
           is a question awaiting YOUR answer; two input boxes at once would be a puzzle). */}
       {!ended && !clarifyPending && runDir ? <NoteBox workingDir={runDir} /> : null}
 
+      {/* The verdict surface. The moment complete_result lands the top of the panel says PASSED/FAILED —
+          first as the wrap-up banner (verdict in, engine still writing its record), then as the terminal
+          banner when run_finished arrives. Both are driven by the event stream, never file presence. */}
+      {!ended && run.verdict ? (
+        <WrapUpBanner
+          verdict={run.verdict}
+          bugCount={run.knownActiveBugs.length}
+          activityDigests={run.activityDigests}
+        />
+      ) : null}
+
       {ended && outcome ? (
         <TerminalBanner
           outcome={outcome}
@@ -5901,6 +6373,10 @@ export const SwarmRunPanel: React.FC<{
           durationLabel={durationLabel}
           outputDir={workingDir}
           deviceOrder={deviceOrder}
+          verdict={run.verdict}
+          bugCount={run.knownActiveBugs.length}
+          runCommand={run.overview?.runCommand ?? null}
+          runCommandVerified={!!run.overview?.runCommandVerified}
         />
       ) : null}
 
@@ -5916,7 +6392,7 @@ export const SwarmRunPanel: React.FC<{
 
       {/* The imperfections a green run shipped with. Mounted whenever the engine has rated defects — during
           the repair phase as well as at the end, because that is when they are actionable. */}
-      <KnownActiveBugs bugs={run.knownActiveBugs} />
+      <KnownActiveBugs bugs={run.knownActiveBugs} verdict={run.verdict} />
 
       {/* Mid-run questions the swarm answered (finding 10) — otherwise the answers live only in dotfiles. */}
       <SwarmQA qa={run.qa} />
@@ -5943,7 +6419,6 @@ export const SwarmRunPanel: React.FC<{
         dev={dev}
         buildStarted={buildStarted}
         workingDir={runDir}
-        activity={run.activityDigests}
       />
 
       {/* ── FLEET zone — the fixed realtime per-node rows, now under the same header register. */}
@@ -5987,7 +6462,7 @@ export const SwarmRunPanel: React.FC<{
         dev={dev}
         live={run.inProgress && !stale && !ended}
         workingDir={runDir}
-        digests={run.activityDigests}
+        lanelessLanes={lanelessLanes}
       />
 
       {/* ── EVENT LOG zone — the chronological engine narrative, subordinate and collapsed by default in

@@ -33,6 +33,14 @@ describe('supervisionLaneKind mirrors the engine derivation, digit-exact on repl
     expect(supervisionLaneKind('replan-r12')).toBe('replan');
     expect(supervisionLaneKind('prereview-store-core')).toBe('prereview');
     expect(supervisionLaneKind('tail-review-wiring')).toBe('tailreview');
+    // The mirror had drifted: the engine grew schedjudge/verify-N/ask-answer/pillars/reflect and the
+    // panel's copy classified none of them — the reflect lane (the post-verdict persona call, r5's
+    // 3.5-minute silent tail) fell through to a bare humanized id.
+    expect(supervisionLaneKind('schedjudge-web-viz')).toBe('schedjudge');
+    expect(supervisionLaneKind('verify-3')).toBe('verify');
+    expect(supervisionLaneKind('ask-answer')).toBe('ask');
+    expect(supervisionLaneKind('pillars')).toBe('pillars');
+    expect(supervisionLaneKind('reflect')).toBe('reflect');
   });
 
   it('leaves the measured MODEL-chosen worker ids alone — the engine pins these by test', () => {
@@ -41,6 +49,9 @@ describe('supervisionLaneKind mirrors the engine derivation, digit-exact on repl
     expect(supervisionLaneKind('replan-r')).toBeNull();
     expect(supervisionLaneKind('ledgerd-core')).toBeNull();
     expect(supervisionLaneKind('verify::web')).toBeNull();
+    // Digit-exact: `verify-endpoints` is a name a plan could give a build task (engine pins the same).
+    expect(supervisionLaneKind('verify-endpoints')).toBeNull();
+    expect(supervisionLaneKind('verify-')).toBeNull();
   });
 });
 

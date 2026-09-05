@@ -112,7 +112,7 @@ remaining space for dynamic text.
 The swarm builds software by fanning work across 3 local LM Studio nodes. It is the subject of most work
 in this repo and it has a specific set of invariants that produce no compiler error when broken.
 
-**Phases (r6, research fan v2 81cd50d38):** `OPEN → [ASK handshake, only when the opener leaves open decisions] → RESEARCH FAN (the opener's per-slice questions dispatched one-per-host to the fleet, uncapped, read-only-quarantined; answers snowball into the ledger and the briefs; a miss is a loud research_unanswered that flows to REPAIR — never a block) → SYNTHESIS (planning over ANSWERED material) → REVIEW (one round) → BUILD → INTEGRATE → REPAIR`. RESEARCH, coverage, the resplit, the ASK proxy and CONTRACTS are DELETED — workers read real dependency sources (dep_block) and the ledger block instead of briefs and frozen stubs.
+**Phases (r6i, research fan v3 — VA-089):** `OPEN (ONE call: balanced semantic SLICES with the spec sections each owns — NO per-slice questions; a legacy emit carrying questions is a loud research_question_ignored{slice,count}) → [ASK handshake, only when the opener leaves open decisions] → RESEARCH (ONE lane per slice, always, in parallel across the fleet, read-only-quarantined: each lane DERIVES its own design/external questions from its sections and answers them in-session; research_planned{lanes, per_slice_sections, resumed_slices, decisions}; answers snowball into the ledger and the briefs; a miss is a loud research_unanswered — never a block; the opener's ~65-min single-lane question pass and the SPEC FACTS block are DELETED — r6h measured OPEN 65.6 min on four runs regardless of emit size) → SYNTHESIS (planning over ANSWERED material; then CROSS-SLICE ANSWER ROUTING, VA-104 `swarm/answer_routing.rs`: an answer naming a file another task owns is rendered into that task's brief with the OWNER stated — research_answer_routed / research_answer_unowned — because r6h's ledgerd-core implemented webhook registration itself when the webhooks answers never reached it) → the deterministic plan repairs (`finalize_plan_before_dag`) → THE SPLIT (2c S1, `swarm/shards.rs`: spec sections per owned file; FAT = above mean+σ of the plan's section-claiming tasks AND ≥ 2× their median — mean+σ alone flags the maximum of almost any plan (r6c minus web-viz: ledgerd-core 2.0/file vs 1.78), the median floor is what makes it "twice the typical task"; a fat task — r6c web-viz, 7 sections → 1 file → 519 min — gets ONE split patch from synthesis: N SHARD tasks working in `.swarm/shards/<module>/<shard>/` on pieces + a structured README, the module task as MERGER owning the final file, the interface declared as plan text; shards are SIZED to the free hosts (`split_sized{declared, hosts, shards, groups, weights}` — pieces grouped contiguously, largest group minimised; never declined: `split_hosts_scarce` when hosts are few); at completion every shard is VERIFIED (`shard_verify`: pieces parsed, references resolved against the declared interface — negative events only, the verdict lives in the shard's ledger row under `verify`, tick.py's SHARDS VERIFIED row prints it); CODE assembles the pieces in declared order (`merge_assembled`) and the merger writes glue only) → BUILD (every worker's brief opens with ONE named write — VA-102: for a shard the README with copy-in PROVIDES then the lowest-weight cluster; a dependency that references the task's owned module rides WHOLE and every other dep-source cut is a loud `dep_source_truncated` + recovery marker — VA-103; the vendor docs page rides WHOLE, bodies cut after a whole JSON object with a CUT marker — VA-105, `vendor_probe.rs`) → INTEGRATE → REPAIR (v2: repro first, promote on the finding's own flip, render-class/boot exceptions CRITICAL, `passed` needs zero render-class known bugs)`. REVIEW's LLM round (VA-014), the dynamic replanner (VA-015) and LEARN/persona (VA-016) are DELETED as of 2026-09-01; RESEARCH, coverage, the resplit, the ASK proxy and CONTRACTS are DELETED — workers read real dependency sources (dep_block) and the ledger block instead of briefs and frozen stubs.
 
 **These six are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
 path-scoped rules arm only on the **Read** tool — `cat`, `sed`, `grep`, Grep and Glob do NOT trigger
@@ -135,22 +135,39 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    entry files); a NON-sink task that owns nothing is REPORTED there (`tasks_owning_nothing`,
    `plan_repaired.before/after`) and removed by the repair — never refused. Mihai, 2026-08-29: "avoid
    making it overly deterministic and gated, be very mild" — code measures and nudges, it does not abort.
-3. **A correction is a PATCH (`plan_patched`), never a re-emission.** Re-emitting whole plans is what
-   burned 3h40m without starting a build.
+3. **A correction is a PATCH, never a re-emission.** Re-emitting whole plans is what burned 3h40m
+   without starting a build. Since VA-014 (2026-09-01) the deterministic path is
+   `finalize_plan_before_dag`'s repairs, which patch the loaded plan in place and ride
+   `plan_repaired.before/after`; the ONE model-assisted correction is THE SPLIT (2c S1,
+   `shards::split_fat_tasks`): a measured fat task gets one `PlanPatch` (add shards, widen the
+   module's deps) built by CODE from synthesis's declaration, emitted as `plan_patched{source: split}`,
+   and the patched plan walks the door again (`plan_repaired{source: split}`). No path re-plans; the
+   LLM review round that once emitted `plan_patched` is deleted.
 4. **The judge NUDGES; it does not kill.** A steer interrupts the stream at a chunk boundary and keeps the
    partial — but MEASURED on r1 a reasoning-only looping call ignored six of them; the RESTART verdict is
-   what must reach such a call (re-stream), and that wiring is still open.
+   what must reach such a call (re-stream), and that wiring is still open. Since VA-013 (2026-09-01) a
+   BUILD/REPAIR lane is looked at on EVIDENCE only (`ladder::judge_summon_trigger`: repeat, degenerate
+   answer, the recurrence meter, a forming-channel stall) — r6c spent 925 look-minutes of cadence and
+   growth looks on build lanes for two compliances and zero kills; since e444953af (VA-056, 2026-09-01) EVERY lane kind is looked at on evidence only — recurrence, a forming-frame stall, or a judge NEXT the lane never acted on; r6e measured 31 cadence looks / 0 steers on planner lanes and 19 research looks all on nodes generating a sibling; the cadence/first-look/growth triggers and OMNI_JUDGE_*_SECS are deleted.
 5. **Every app-under-test spawn goes through `spawn_grouped` / `kill_app_tree` (process groups).** A bare
    `tokio::process::Command` with piped stdio and `kill()` reaches ONE pid; the wrapper's `Popen`
    grandchildren keep the pipe write-ends and a reader awaiting EOF parks forever — r0 hung 20 minutes
    after its verdict, and 41 leaked servers were found holding ports. Proof without a run:
    `goose swarm gate <archived tree> --spec evals/swarm-bench/spec-build-sb7.md` must return and leave
    `tick.py` at `orphans: 0`.
-6. **REVIEW is ONE round (`review_once`); no planning phase loops on an LLM's own novelty.** r1's REVIEW
-   surfaced 8 → 4 → 9 new findings across three rounds, 51 minutes and 209k reasoning chars, because a
-   27B reviewer always finds another "not explicitly owned" concern. The measured plan flags
-   (`tasks_owning_nothing`, `module_package_collisions`, `shared_files`) are injected as MUST-FIX instead.
-   A terminator that waits for an LLM to find nothing is not a terminator.
+6. **The LLM REVIEW round is DELETED (VA-014, 2026-09-01); no planning phase loops on an LLM's own
+   novelty, and none is re-added without the measurement gate 9 demands.** History: r1's REVIEW surfaced
+   8 → 4 → 9 new findings across three rounds, 51 minutes and 209k reasoning chars, because a 27B
+   reviewer always finds another "not explicitly owned" concern, so it was cut to ONE round
+   (`review_once`). Then three runs measured the one round at ZERO effective patches: r5 (52.6 wall-min,
+   4 lanes) added `brush-contract` with a 658-char brief and the brush ReferenceError shipped anyway;
+   r6c (28.1 wall-min) added `decisions-doc` with a 387-char brief that nothing depended on while its
+   findings claimed "both now depend on it"; r6b/r6d one finding, zero patches — ~140–206 node-minutes
+   per run to rediscover flags the engine had already computed. The plan's structural defects are
+   repaired DETERMINISTICALLY in `finalize_plan_before_dag` (`repair_plan_flags`: owning-nothing,
+   shared files, module/package shadows, the join's files, unowned advertised entries) — that is what
+   stays, and `plan_slices_to_dag`'s seam test pins open → synthesis → plan_repaired with no review
+   event between. A terminator that waits for an LLM to find nothing is not a terminator.
 
 **Every worker call has FIVE lane-building paths in the UI and one shared join, `digestStreamFields()`.**
 Never hand-copy a digest field onto a lane; the join diverged twice that way and the failure is invisible
@@ -224,11 +241,12 @@ tasks straight into the live DAG past `finalize_plan_before_dag` — one re-crea
 module/package import shadow (`app/notifierd.py` vs the skeleton's `app/notifierd/`) the plan repair
 had fixed four minutes earlier, with a 500-char brief; and the pinned sink shipped owning `README.md`
 (the cascaded-Failed, app-never-binds-a-port class). A repair that guards only ONE door holds until
-the first other door opens. HOW IT REFUSES: `repair_replan_specs` (scheduler.rs) applies the same
-ownership rules to every replan batch BEFORE `splice_specs` and its actions ride the `Replanned`
-event; `repair_sink_files` strips the join's files to a real owner; the replanner is summoned only
-once something has COMPLETED (its own value theory is "harden the completed work"); and
-`development_gates.rs` refuses a splice site that reaches the DAG around the repair. Mihai,
+the first other door opens. HOW IT REFUSES: `repair_sink_files` strips the join's files to a real
+owner inside `finalize_plan_before_dag`; the DYNAMIC REPLANNER — the door r4 came through — is
+DELETED (VA-015, 2026-09-01, gate 9: r6c's `replan-r0` ran 208 unsupervised minutes for two bonus
+tasks nothing imported, r5's held two READY tasks 19 minutes at B+80; `repair_replan_specs` and the
+`Replanned` event went with it), and `development_gates.rs` refuses its return and enumerates the one
+splice site left (the merger's gap door, `splice_merge_gaps`, whose refusals are its repair; the idle-model judge's `apply_split` door is deleted in 2c S6). Mihai,
 2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
 practice."
 
@@ -263,6 +281,42 @@ every consumer — a commit that cannot name what was read around the edit is sk
 REFUSES: `development_gates.rs` pins this gate's presence here and in development-gates.md; the
 knob-turning/campaign skills carry the trace template; and in review, a fix-commit with no trace
 block is sent back on sight.
+
+**9. THE VALUE GATE (engine design AND operating) — a step exists only while its measured delivery is
+CONSUMED downstream; a step that costs hours and delivers little is DELETED, never capped.** Mihai,
+2026-09-01, after r6d's research fan ran 165 minutes at 59% spec-lookups under four vigil ticks that said
+`continue`: *"Why would a phase that takes 4 hours and doesn't bring value continue? This is the
+question."* and *"we don't want steps that consume time and not a lot of value. Get that straight."*
+Every phase and sub-step is a PURCHASE — node-minutes for information the next step consumes — and it is
+graded on BOTH sides: the vigil grades the CURRENT phase every tick (tick-surgeon step 2b: cost and
+projection from tick.py's `PHASE VALUE` row, delivery by class from READING the units, verdict
+`earning`/`NOT EARNING`; NOT EARNING files an ACTION in `VIGIL-ACTIONS.md` — the queue surgeons are
+dispatched from — and recommends `cut` at the FIRST tick the numbers exist), and every finished run is
+audited step by step (cost, delivery, who consumed it) so a step that fails on two runs is deleted in
+the next engine change. The fix for a wasteful step is its MECHANISM — the prompt that asks for
+questions with no lookup/decision split, the fan that dispatches duplicates, the brief that injects what
+the spec already says — never a cap, clock or count (gates 1 and 5 refuse those). Receipts: the research
+fan (r6c 126m, r6d 4h projected, 16 of 27 questions need not have run); fix waves r5 144m / r6c 215m with
+zero score value both runs. HOW IT REFUSES: `development_gates.rs` pins this gate, the tick-surgeon's
+PHASE VALUE step, `VIGIL-ACTIONS.md` and tick.py's cost row; in review, a new phase or step lands only
+with the measurement that says what it buys and which step consumes it.
+
+**10. THE NO-ABSOLUTES GATE — a number lives in the engine only as a RATIO or a MEASUREMENT.** Mihai,
+2026-09-02: *"we need to avoid hard coded bits because this is an agent and that makes it useless
+outside of the scope of what we are doing now — the benchmark is the cause not the goal."* A typed
+absolute sized for this model / language / API (24,000 chars, 200 s, `impl.py`, `?cursor=1`) is a
+defect; a fraction of the probed window, a multiple of the app's own median, a share of the lane's own
+output, an algorithm constant or a named policy ratio with its receipt may stay. HOW IT REFUSES:
+`development_gates.rs` ratchets the count of live numeric `const` literals outside `cfg(test)` (28 on
+2026-09-02, 21 after the VA-140/141 receipts) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
+
+**11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW, in a worktree; only cargo waits for
+a run.** Mihai, 2026-09-02, after VA-126 was parked "until after r6j": *"are you not doing anything
+about the hard coded bits I asked about?"* An edit in a worktree touches nothing the running bundle
+executes; the sole in-run constraint is no cargo on the machine whose node the run holds. Action rows
+are `OPEN` / `CLAIMED` / `QUEUED behind: <slot>` / `SCHEDULED waits on: <measurement>` / `LANDED` /
+`DROPPED` — "after the run" is never a status. HOW IT REFUSES: `development_gates.rs` fails on a
+SCHEDULED row without `waits on:` or a QUEUED row without `behind:`.
 
 ## Never
 

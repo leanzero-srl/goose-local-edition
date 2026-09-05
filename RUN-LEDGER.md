@@ -10,6 +10,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
 
+- **run_id**: swarm-20260829-100743413
 - **phases**: open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate
 - **started**: 10:07:43
 - **tasks**: 10
@@ -30,6 +31,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **python_parses**: 11 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css, viz.js
 - **tasks_done**: 10/10 completed, 13 dispatched, 3 retried
+- **arm**: F (fleet of 3)
 - **plan_patched**: 1
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=4 r2:new=0
@@ -40,9 +42,9 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=2 brief_defects=1 testgen=1 fix_target_selected=1 complete_verify=1 complete_result=0
 - **score**: **0.0568** hermetic — seed 687ff58bfa6b707d (the run's own), vendor port 8850, playwright node (inner 0.1789 × crit_mult 0.36). TWO criticals: `sync_completeness` 0/12288 (the `items`-vs-`data` key) and `j_workflow_journey` (the frontend, graded for the first time). vs target 0.2006: 28%. vs published local 0.0273: 2.1×. An earlier 0.0832 was BLIND (no playwright, 30/99 checks unavailable) and on a FRESH seed — retracted, kept as `verdict-BLIND-fresh-seed-NOT-COMPARABLE-0.0832.json`. Comparable verdict: `verdict-hermetic-seed687ff58b-port8850-0.0568.json` in the run dir.
-
 ## swarm-3node-r1-KILLED-review-diverged-8-4-9-new-findings-4-rounds-51min-vs-r0-12min
 
+- **run_id**: swarm-20260829-154354036
 - **phases**: open → ask → research → synthesis → review
 - **started**: 15:43:54
 - **tasks**: 0
@@ -63,6 +65,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
 - **plan_patched**: 3
 - **plan_loaded**: 0
 - **review_rounds**: r1:new=8 r2:new=4 r3:new=9
@@ -75,6 +78,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r2-KILLED-by-operator-killpg-reap-INTEGRATE-139m
 
+- **run_id**: swarm-20260829-174301751
 - **phases**: open → ask → research → synthesis → review → contracts → build → integrate
 - **started**: 17:43:01
 - **tasks**: 11
@@ -86,12 +90,12 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **brief_median**: 4740
 - **reasoning_chars**: 281376
 - **answer_chars**: 152004
-- **code_files**: 41
-- **code_bytes**: 873076
+- **code_files**: 38
+- **code_bytes**: 202486
 - **elapsed_min**: 289
 - **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 67m · integrate 129m
 - **before_build_min**: 92 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 873,076B delivered, 281,376 chars reasoned, 12 tasks completed, 2 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 202,486B delivered, 281,376 chars reasoned, 12 tasks completed, 2 retried.
 - **python_parses**: 29 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css, test_camera.js, viz.js, viz_camera.js
 - **tasks_done**: 12/11 completed, 15 dispatched, 2 retried
@@ -110,6 +114,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r4-KILLED-replan-r0-spliced-5-tasks-past-repair-shadow-reintroduced-sink-owned-README-build-7m
 
+- **run_id**: swarm-20260830-061251549
 - **phases**: open → ask → synthesis → review → build
 - **started**: 06:12:51
 - **tasks**: 8
@@ -145,6 +150,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r4b-KILLED-reviewer-verbatim-cycle-24m-judge-read-shapes-not-words-looks-2-6-OK-at-78pct-dup
 
+- **run_id**: swarm-20260830-065953254
 - **phases**: open → ask → synthesis → review
 - **started**: 06:59:53
 - **tasks**: 0
@@ -177,8 +183,9 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 
-## swarm-3node-r0
+## local-sb7-swarm-r5-PASSED-0.3609-hermetic-published-r5-row-best-ever
 
+- **run_id**: swarm-20260830-083847650
 - **phases**: open → ask → synthesis → review → build → integrate → repair → fix
 - **started**: 08:38:47
 - **tasks**: 9
@@ -188,14 +195,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 1383164
-- **answer_chars**: 97434
-- **code_files**: 28
-- **code_bytes**: 260399
-- **elapsed_min**: 652
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 95m
+- **reasoning_chars**: 1480079
+- **answer_chars**: 100674
+- **code_files**: 29
+- **code_bytes**: 262846
+- **elapsed_min**: 712
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 155m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 260,399B delivered, 1,383,164 chars reasoned, 11 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 262,846B delivered, 1,480,079 chars reasoned, 11 tasks completed, 0 retried.
 - **python_parses**: 20 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, brush.js, index.html, styles.css, viz.js
 - **tasks_done**: 11/9 completed, 11 dispatched, 0 retried
@@ -205,13 +212,135 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 145
+- **judge_looks**: 155
 - **judge_nudges**: 5
 - **judge_ended**: 0
 - **drift_held**: 9
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=0
-- **ledger**: 16 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
+- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=1
+- **ledger**: 17 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=17 delivered=1
+- **score**: **0.3609** hermetic — seed ddcbba021ea1eba1 (the run's own), vendor port 8850, playwright node (inner 0.7988, pre-severity 0.7260 × crit_mult 0.4971). TWO criticals: `b_money_rendered` 0.0, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum) and `j_workflow_journey` 0.5714, factor 0.8286 (dead primary flow — approval cannot complete through the UI). vs target 0.2006: 180% — FIRST RUN ABOVE the cloud one-agent target (its inner was 0.7662 with crit_mult 0.288; ours wins on criticals, not just inner). vs local 0.0568: 6.4×. vs published local 0.0273: 13.2×. The harness's own in-run grade concurred: 0.3497 (inner 0.7731, same seed, same two criticals). Known context: 3D field DOA (`viz.js` ReferenceError onBrushChangeTracked), 7 contract findings shipped as known bugs. Comparable verdict: `verdict-hermetic-seedddcbba02-port8850-0.3609.json` in the run dir.
+
+## local-sb7-swarm-r6a-KILLED-open-ladder-5-restream-cycles-ignored-verdict-carries-across-attempts-49m
+
+- **run_id**: swarm-20260830-213257409
+- **phases**: open
+- **started**: 21:32:57
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 2884
+- **answer_chars**: 10363
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 48
+- **phase_split**: open 48m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 2,884 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: bb9e397c224e1303
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 10
+- **judge_nudges**: 5
+- **judge_ended**: 0
+- **drift_held**: 3
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
+
+## local-sb7-swarm-r6b-PAUSED-operator-exam-BUILD-10m-plan-loaded-fan-33of33-answered
+
+- **run_id**: swarm-20260830-230241502
+- **phases**: open → ask → synthesis → review → build
+- **started**: 23:02:41
+- **tasks**: 8
+- **files_planned**: 20
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 1
+- **brief_median**: 19313
+- **reasoning_chars**: 1344951
+- **answer_chars**: 260490
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 299
+- **phase_split**: open 48m · ask 175m · synthesis 28m · review 35m · build 9m
+- **before_build_min**: 289 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 1,344,951 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/8 completed, 1 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 1578fe2a5ce51207
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: r1:new=5
+- **judge_looks**: 75
+- **judge_nudges**: 8
+- **judge_ended**: 0
+- **drift_held**: 23
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=1 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 33 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## local-sb7-swarm-r6c-FINISHED-0.1420-passed-with-2-unowned-criticals-build-608m
+
+- **run_id**: swarm-20260831-072930517
+- **phases**: open → ask → synthesis → review → build → integrate → repair → fix
+- **started**: 07:29:31
+- **tasks**: 8
+- **files_planned**: 22
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 4
+- **startable**: 1
+- **brief_median**: 21104
+- **reasoning_chars**: 2444226
+- **answer_chars**: 478330
+- **code_files**: 26
+- **code_bytes**: 227473
+- **elapsed_min**: 1105
+- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 608m · integrate 68m · repair 1m · fix 219m
+- **before_build_min**: 208 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 227,473B delivered, 2,444,226 chars reasoned, 10 tasks completed, 0 retried.
+- **python_parses**: 19 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 10/8 completed, 10 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: d32de873c1f2be83
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: r1:new=3
+- **judge_looks**: 182
+- **judge_nudges**: 12
+- **judge_ended**: 0
+- **drift_held**: 37
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=12 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=1
+- **ledger**: 46 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=20 delivered=1
+- **phase_minutes_verified**: open 39 · ask+research-fan 126 · synthesis 13 · review 28 · build 608 · integrate 68 · repair 1 · fix r0 87 · fix r1 126 · learn 7 — run_finished 01:55:20Z, 1,106m (18h26m) from open; from run.jsonl phase events (the machine phase_split's 'fix 215m' spans both rounds plus learn)
+- **tasks_verified**: 10/10 done, 0 failed, 0 retried — 8 planned (skeleton prepended before plan_loaded) + 2 replanned bonus (vizmath-oracle, boot-contract-tests); integrate-verify owned nothing (sink_owns []). Delivered tree: 25 files / 227,171 B outside .swarm (the machine code_files/code_bytes above counted .pytest_cache/README.md too); 19 .py parse, 0 syntax errors. Reasoning:answer 2,437,458:476,301 chars = 5.1× (think.log bytes on disk 3,926,140)
+- **judge_verified**: looks 182 (dispatched 227, abandoned 45), nudges 12, drift_held 37, restream_held 18, desk 1,271 looks / 167 summons (shadow)
+- **fix_rounds**: r0 (87m, 4 shards on baseline 9): web/viz.js PROMOTED — 1/66 changed samples, 9→8 findings; app/ledgerd/__init__.py 0/19, app/webhooks.py 0/38, web/app.js 0/85 = activity without one landed edit. r1 (126m, 3 shards on baseline 8): app/ledgerd/__init__.py 2/123, app/webhooks.py 1/78, web/app.js 2/41 changed — 0 promoted (each shard's verify = 8 = baseline); complete_fix_converged: "the wave changed nothing on the tree". complete_fix_wave unassigned=2 in BOTH rounds
+- **unowned_criticals**: 2, never assigned to any shard in either wave, shipped in the final tree: (1) "the served page renders NO data rows in a real browser — the API works but the frontend shows a user nothing. First console error: TypeError: Illegal invocation … (in `viz.js`)"; (2) "after a SUCCESSFUL sync the page still renders ZERO rows — the backend acquired the data (the API returns it) but the frontend never displays it, so the user sees an empty table forever." Both carry the render gate's own severity label `critical` (known_active_bugs_severities[0..1])
+- **passed_means**: complete_result passed=true does NOT mean the criticals were fixed. swarm.rs:36312 sets `final_passed = criticals.is_empty()` where the partition is `engine_critical` (findings.rs:275) — a TEXT class: does not start / never bound / does not run at all / did not build / exited non-zero / no such command / runtime crash / missing deliverable / is missing or empty / never returns / nothing at all once it. It says the app boots, builds and answers. Neither render-gate finding matches a needle, so both were partitioned as minors and shipped as known_active_bugs while carrying the authoring check's severity label `critical`. verified=true = the final verify ran and was established with 8 findings remaining (2 critical-labelled + 6 medium contract findings: /note, /webhooks/meridian, /drafts, /submit, /approve, /reject responses)
+- **harness_grade**: 0.1392 — run_build.py's own in-run grade (same seed d32de873c1f2be83, port 8850, playwright; inner 0.7136, pre-severity 0.6445 × crit_mult 0.216; 3 criticals: b_money_rendered 0.0000, j_loads_data 0.0000, j_workflow_journey 0.0000). Recorded, NOT the row's score
+- **score**: **0.1420** hermetic — seed d32de873c1f2be83 (the run's own, from <run>/trace.jsonl), vendor port 8850, playwright node (nvm v22), disposable rsync clone, serial, after run_build.py exited and released the port (inner 0.7282, pre-severity 0.6573 × crit_mult 0.216). 3 criticals UNSUPPRESSED: `b_money_rendered` 0.0000, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum); `j_loads_data` 0.0000, factor 0.6 (dead primary flow — no data visible); `j_workflow_journey` 0.0000, factor 0.6 (dead primary flow — approval cannot complete through the UI). Tiers: A 1.00 B 0.90 C 0.92 D 0.75 J 0.57 V 0.20 P 0.67 T 0.24 X 1.00 R 0.95 E 0.14 (gate False, frac 0.5). probe_unavailable=[]. vs r5 hermetic 0.3609 (inner 0.7988, crit_mult 0.4971, two criticals): 0.39× — BELOW the best-ever; the inner is lower AND one more critical is unsuppressed, so the multiplier does most of the damage. vs cloud target 0.2006: 71%. vs published local 0.0273: 5.2×. RENDER GATE, the scorer's own words: j_loads_data 0.0000 "0 rows rendered, DOM claims 0 (want 12290)"; j_console_clean 0.0000 "6 console error(s) across load+sync: TypeError: Illegal invocation"; b_money_rendered 0.0000 "no amount cells rendered"; j_workflow_journey 0.0000 "roleTokenAccepted"; j_empty_state 1.0000 (pre-sync state rendered, progressText 'no data yet'); j_error_state 1.0000 "visible + actionable: Vendor unreachable — retrying automatically". What a person sees (probe shots, run's own + harness's + hermetic): header and chrome render; 'PAYMENTS BY CURRENCY: no data yet'; the 3D field is a black rectangle; the payments table shows its five column headers and ZERO rows; on load a red banner 'The ledger service is unreachable. Check that `ledgerd` is running, then retry — local data reappears automatically.' and after Sync an amber banner 'Invalid or missing token — check the bearer token.' — the frontend never authenticates its own API calls, so nothing it fetches ever lands. Comparable verdict: `verdict-hermetic-seedd32de873-port8850-0.1420.json` in the archive; the harness's `verdict.json` beside it.
+- **notes**: learn phase wrote a persona skill under stack_key `angular` (~/.config/goose/skills/stack-angular/SKILL.md) for a Python-stdlib + vanilla-JS tree — the model's own text opens "Despite the name, this stack ships as a Python backend + vanilla-JS static web console"; the stack key is mis-derived. Harness c_paged_walk 0.0: "385/192 pages served, 192 duplicate pages" — the sync walked the collection twice. Fix-wave unassigned=2 both rounds = the two critical-labelled findings have no owning file group in the fan
+- **scorer_noise_floor**: `.swarm/best-tree` (round-1 snapshot, byte-identical to the final tree — verified by hash) re-scored hermetically 2026-09-01 11:0x on the same seed/port/node: inner 0.7244 / crit_mult 0.216 / **0.1413** vs the final 0.1420 — 4 of 91 checks moved on identical bytes (j_sync_journey 1.0→0.75, c_conditional_resync 0.78→0.82). One datum: a `fix_waves_delta` under ~0.001 score / 0.004 inner, or a single J-check step, is noise. The pre-fix (round-0) tree is GONE — round 1 overwrote it — so r6c's 458 fix node-min cannot be scored (VA-027).
+- **verdict**: FINISHED at 18h26m; passed=true by the engine's boots-and-answers definition, but the product a person opens shows zero payments, a black 3D field and an auth error — hermetic 0.1420 vs r5 0.3609 (0.39×): WORSE than the best-ever; nothing to publish
 
 ## fakerun
 
@@ -244,4 +373,482 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **drift_held**: 0
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
+## local-sb7-swarm-r6d-KILLED-no-chance-vs-r5-fan-38q-research-165m-viz-brief-lacks-vs7dbg-cceab86eb
+
+- **run_id**: swarm-20260901-035310576
+- **phases**: open → ask → research
+- **started**: 03:53:11
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 888392
+- **answer_chars**: 208870
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 189
+- **phase_split**: open 23m · ask 0m · research 165m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 888,392 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: b70c74dbd9ef7961
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 82
+- **judge_nudges**: 6
+- **judge_ended**: 0
+- **drift_held**: 15
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 26 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## swarm-3node-r0 → r6e-KILLED-split-merger-deps-stripped-by-decision-doc-gate (BUILD+4m, 142 min, engine 30b1c4fb2)
+
+- **outcome**: KILLED 19:33 EEST 2026-09-01 — the split's merger lost its 8 shard deps to `repair_decision_doc_gates` (shards own only a README → "docs-only"); measured before the kill: OPEN 46m (15 shell reads of the spec), RESEARCH 60m for 16 grounded answers + 21 free facts, SYNTHESIS 8m + split call 22m, judge 31 looks/0 steers on planner lanes
+
+- **run_id**: swarm-20260901-141137451
+- **phases**: open → ask → research → synthesis → build
+- **started**: 14:11:38
+- **tasks**: 16
+- **files_planned**: 29
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 11
+- **brief_median**: 54500
+- **reasoning_chars**: 439374
+- **answer_chars**: 138992
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 138
+- **phase_split**: open 46m · ask 0m · research 60m · synthesis 30m · build 0m
+- **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 439,374 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/16 completed, 3 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 13605237ae593ea4
+- **plan_patched**: 1
+- **plan_repaired**: 10 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 48
+- **judge_nudges**: 5
+- **judge_ended**: 0
+- **drift_held**: 5
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 37 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## r4b_noabs
+
+- **run_id**: swarm-20260830-065953254
+- **phases**: open → ask → synthesis → review
+- **started**: 06:59:53
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 99408
+- **answer_chars**: 8396
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 21
+- **phase_split**: open 7m · ask 0m · synthesis 6m · review 6m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 99,408 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 22
+- **judge_nudges**: 4
+- **judge_ended**: 0
+- **drift_held**: 5
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
+## local-sb7-swarm-r6e-KILLED-split-merger-deps-stripped-by-decision-doc-gate-shards-own-only-README-build-4m-30b1c4fb2
+
+- **run_id**: swarm-20260901-141137451
+- **phases**: open → ask → research → synthesis → build
+- **started**: 14:11:38
+- **tasks**: 16
+- **files_planned**: 29
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 11
+- **brief_median**: 54500
+- **reasoning_chars**: 460085
+- **answer_chars**: 139266
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 142
+- **phase_split**: open 46m · ask 0m · research 60m · synthesis 30m · build 4m
+- **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 460,085 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/16 completed, 3 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 13605237ae593ea4
+- **plan_patched**: 1
+- **plan_repaired**: 10 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 48
+- **judge_nudges**: 5
+- **judge_ended**: 0
+- **drift_held**: 5
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 37 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## swarm-3node-r0-UNARCHIVED-swarm-20260901-183803640
+
+- **run_id**: swarm-20260901-183803640
+- **phases**: open
+- **started**: 18:38:04
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 170190
+- **answer_chars**: 637
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 72
+- **phase_split**: open 72m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 170,190 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 353525d7ab0f6a04
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
+## swarm-3node-r0-UNARCHIVED-swarm-20260901-210334275
+
+- **run_id**: swarm-20260901-210334275
+- **phases**: open → research → synthesis → build
+- **started**: 21:03:34
+- **tasks**: 12
+- **files_planned**: 23
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 6
+- **brief_median**: 38020
+- **reasoning_chars**: 287064
+- **answer_chars**: 84761
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 108
+- **phase_split**: open 60m · research 14m · synthesis 32m · build 0m
+- **before_build_min**: 108 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 287,064 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/12 completed, 3 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 206dd14909d0ec26
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 87 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## local-sb7-swarm-r6f-KILLED-opener-final_output-collected-at-71m-but-open_slices-never-returned-second-buffered-emit-open-77m-d48f5cdbe
+
+- **run_id**: swarm-20260901-183803640
+- **phases**: open
+- **started**: 18:38:04
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 170190
+- **answer_chars**: 637
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 75
+- **phase_split**: open 75m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 170,190 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 353525d7ab0f6a04
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
+## swarm-3node-r0 → r6h-FINISHED-0.4616-passed-507m-3d-draws (engine 393a99351 / 1.41.107)
+
+- **run_id**: swarm-20260902-002811909
+- **phases**: open → research → synthesis → build → integrate → repair → fix
+- **started**: 00:28:12
+- **tasks**: 10
+- **files_planned**: 25
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 4
+- **startable**: 5
+- **brief_median**: 42376
+- **reasoning_chars**: 1646590
+- **answer_chars**: 121249
+- **code_files**: 24
+- **code_bytes**: 243395
+- **elapsed_min**: 507
+- **phase_split**: open 65m · research 8m · synthesis 31m · build 319m · integrate 46m · repair 1m · fix 35m
+- **before_build_min**: 105 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 243,395B delivered, 1,646,590 chars reasoned, 10 tasks completed, 0 retried.
+- **python_parses**: 16 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 10/10 completed, 10 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 8ee514993063ff59
+- **plan_patched**: 1
+- **plan_repaired**: 4 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=1
+- **ledger**: 104 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
+- **fix_waves_delta**: prefix 0.8445/0.600/0.4748 → final 0.8252/0.600/0.4616; criticals moved: none (1 unsuppressed: j_workflow_journey)
+- **score**: **0.4616** hermetic — seed 8ee514993063ff59 (the run's own), vendor port 8850, serial (inner 0.8252 × crit_mult 0.60). ONE critical unsuppressed: `j_workflow_journey` (approval cannot complete through the UI). PREFIX (pre-REPAIR tree) 0.4748 / inner 0.8445 → repair delta −0.0132, moved no critical. Tiers A 1.00 B 1.00 C 0.95 D 0.80 J 0.51 V 1.00 P 0.83 T 0.69 X 0.83 R 0.90 E 0.36. The 3D field draws and picks (t_scene_binding 0.21 count 12290/12290, t_pick_buffer 0.60, t_vs7dbg_truth 0.20). vs r5 0.3609 (+0.10), r6c 0.1420. PUBLISHED 12:1x to leanzero.net as `brun-fleet-qwen38-sb70` (seed-fleet38-sb70.mjs --live, 4 shots).
+- **anatomy**: wall 507 min = OPEN 66 · RESEARCH 8 · SYNTHESIS 12 · SPLIT 20 · BUILD 319 (idle 265/957 node-min, 264 in the webhooks tail) · INTEGRATE 46 · REPAIR 36; 10/10 done, 0 failed, 0 retries, 0 judge looks, 1 false compaction (128k default window); split: 3 shards 86/117/43 min, merger 58 min glue-only (retype 1.03); archive `~/goose-builds/local-sb7-swarm-r6h-FINISHED-0.4616-passed-507m-3d-draws-393a99351`.
+
+
+## local-sb7-swarm-r6g-STOPPED-split-measured-first-shard-done-49m-5-pieces-typed-README-merger-held-c079e8c49
+
+- **run_id**: swarm-20260901-210334275
+- **phases**: open → research → synthesis → build
+- **started**: 21:03:34
+- **tasks**: 12
+- **files_planned**: 23
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 6
+- **brief_median**: 38020
+- **reasoning_chars**: 583464
+- **answer_chars**: 93946
+- **code_files**: 3
+- **code_bytes**: 29839
+- **elapsed_min**: 157
+- **phase_split**: open 60m · research 14m · synthesis 32m · build 49m
+- **before_build_min**: 108 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 29,839B delivered, 583,464 chars reasoned, 2 tasks completed, 0 retried.
+- **python_parses**: 3 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 2/12 completed, 5 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 206dd14909d0ec26
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 89 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=2 delivered=0
+
+## swarm-3node-r0-UNARCHIVED-swarm-20260902-095111765
+
+- **run_id**: swarm-20260902-095111765
+- **phases**: open → research
+- **started**: 09:51:12
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 446780
+- **answer_chars**: 63477
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 99
+- **phase_split**: open 38m · research 60m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 446,780 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: d68b10c79dbaf9ea
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 3
+- **judge_nudges**: 2
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 20 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## local-sb7-swarm-r6i-STOPPED-by-Mihai-research-tail-heaviest-slice-dispatched-last-to-slowest-node-research-107m-501e38a98
+
+- **run_id**: swarm-20260902-095111765
+- **phases**: open → research
+- **started**: 09:51:12
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 555415
+- **answer_chars**: 87750
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 149
+- **phase_split**: open 38m · research 110m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 555,415 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: d68b10c79dbaf9ea
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 3
+- **judge_nudges**: 2
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 35 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
+
+## local-sb7-swarm-r6h-FINISHED-0.4616-passed-507m-3d-draws-393a99351
+
+- **run_id**: swarm-20260902-002811909
+- **phases**: open → research → synthesis → build → integrate → repair → fix
+- **started**: 00:28:12
+- **tasks**: 10
+- **files_planned**: 25
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 4
+- **startable**: 5
+- **brief_median**: 42376
+- **reasoning_chars**: 1646590
+- **answer_chars**: 121249
+- **code_files**: 24
+- **code_bytes**: 243395
+- **elapsed_min**: 507
+- **phase_split**: open 65m · research 8m · synthesis 31m · build 319m · integrate 46m · repair 1m · fix 35m
+- **before_build_min**: 105 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 243,395B delivered, 1,646,590 chars reasoned, 10 tasks completed, 0 retried.
+- **python_parses**: 16 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 10/10 completed, 10 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 8ee514993063ff59
+- **plan_patched**: 1
+- **plan_repaired**: 4 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 0
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 0
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=1
+- **ledger**: 104 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
+- **fix_waves_delta**: prefix 0.8445/0.600/0.4748 → final 0.8252/0.600/0.4616; criticals moved: none (1 unsuppressed: j_workflow_journey)
+
+## swarm-3node-r0
+
+- **run_id**: swarm-20260902-153603606
+- **phases**: open → research → synthesis → build → integrate → repair → fix
+- **started**: 15:36:04
+- **tasks**: 11
+- **files_planned**: 27
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 5
+- **brief_median**: 48800
+- **reasoning_chars**: 2343535
+- **answer_chars**: 235061
+- **code_files**: 25
+- **code_bytes**: 279797
+- **elapsed_min**: 580
+- **phase_split**: open 52m · research 144m · synthesis 50m · build 295m · integrate 36m · repair 1m · fix 0m
+- **before_build_min**: 247 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 279,797B delivered, 2,343,535 chars reasoned, 11 tasks completed, 0 retried.
+- **python_parses**: 18 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 11/11 completed, 11 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: 051c94cb9f72e284
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
+- **review_rounds**: none
+- **judge_looks**: 1
+- **judge_nudges**: 0
+- **judge_ended**: 0
+- **drift_held**: 1
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=1 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=1 complete_result=1
+- **ledger**: 56 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=13 delivered=1
 

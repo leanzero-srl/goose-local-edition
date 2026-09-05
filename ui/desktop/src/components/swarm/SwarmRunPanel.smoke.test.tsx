@@ -167,9 +167,9 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
 
     // The RIBBON draws every phase the run gives evidence of, in engine order, and lights the one it is
     // actually in — read from the events, never from a label. The newest lifecycle event here is
-    // defects_rated, so it is Repair. This fixture EMITTED a research phase (an archived shape), so
-    // Research renders as history; it never emitted contracts, and the retired stage must not be
-    // offered — the engine can no longer reach it (P1-4).
+    // defects_rated, so it is Repair. This fixture EMITTED research and review phases (archived shapes;
+    // REVIEW is deleted since 2447d145c), so both render as history; it never emitted contracts, and a
+    // retired stage without evidence must not be offered — the engine can no longer reach it (P1-4).
     const ribbon = await findByTestId('formation-ribbon');
     expect(ribbon).toHaveAttribute('data-active-phase', 'repair');
     const steps = [

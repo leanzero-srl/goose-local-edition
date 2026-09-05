@@ -48,6 +48,10 @@ export interface SwarmConfig {
   context_cap?: number | null;
   research_planning?: ResearchMode;
   parallel_planning?: boolean;
+  /** RETIRED (VA-015, 83e8089a5): the dynamic replanner is deleted from the engine — r6c's replan-r0 ran
+   *  208 unsupervised minutes for two bonus tasks nothing imported. Both keys stay on the type ONLY so a
+   *  config.yaml that still pins them round-trips untouched (the section writes the whole cfg back); the
+   *  engine echoes them under levers_resolved.retired_levers and reads them nowhere. No default, no row. */
   dynamic_replan?: boolean;
   max_research_questions?: number;
   max_replans?: number;
@@ -143,16 +147,14 @@ export interface SwarmConfig {
    *  done, a silent false-green. When on, that deterministic signature is re-dispatched onto a different
    *  device so the task re-runs and produces a real result. Default ON (only fires on an actual body-drop). */
   stream_decode_retry?: boolean;
-  /** #135: during plan drafting, once every draft but one has returned a valid skeleton, wait only the grace
-   *  window for the lone lagging draft, then stop it and proceed on the quorum — instead of blocking the
-   *  whole run on one slow node. Mihai's "if 2 of 3 finish and the 3rd lags, stop it". Default OFF. */
+  /** ENGINE-RETIRED (levers_resolved.retired_levers, 2026-09-01): collect_drafts_with_straggler_stop is
+   *  #[cfg(test)] since P1-4, so no run reads this. Kept only so a config.yaml carrying the key round-trips
+   *  untouched; not in DEFAULTS or PRESET_KEYS. Was #135: stop the lone lagging plan draft once the quorum
+   *  is in. */
   straggler_stop?: boolean;
-  /** #135: seconds the last lagging plan draft gets once the quorum is in, before it is stopped. Clamped to
-   *  [10, draft timeout]. Blank = 45. Only used when straggler_stop is on. */
+  /** ENGINE-RETIRED with straggler_stop — same collector. */
   straggler_grace_secs?: number;
-  /** #135: extend straggler-stop to the CONTRACTS and DETAIL planning steps too. Separate from straggler_stop
-   *  because a stopped contract/detail changes a build input — the module builds without its frozen interface
-   *  (exactly like a timed-out contract; integrate-verify reconciles). At most one module degrades. Default OFF. */
+  /** ENGINE-RETIRED with straggler_stop — same collector. */
   straggler_stop_degrade?: boolean;
   /** #median-slash: drop the frozen contract bundle from the final integrate-verify step's prompt. It RUNS the
    *  built app (reads the real files), so the stubs are dead context that only slows the slowest task. Default OFF. */
@@ -188,15 +190,12 @@ export interface SwarmConfig {
    *  because the frozen interface already gives every importer its siblings' signatures and only
    *  integrate-verify compiles the crate; tests and the sink join are untouched. Gated on contracts. Default OFF. */
   relax_contracted_deps?: boolean;
-  /** #119 sink decomposition: split the single final integrate-verify check — which depends on every module
-   *  and does ALL verification on ONE node (it stalls) — into one scoped, read-only verify task per module
-   *  (these fan across the fleet like the build tasks) plus a THIN final integration run. The thin run stays
-   *  the sole end-to-end gate; per-module green never substitutes for it. Default OFF (byte-identical when off). */
+  /** ENGINE-RETIRED (levers_resolved.retired_levers, 2026-09-01): fan_verify_split is #[cfg(test)] since
+   *  P1-4. Kept only for the config round-trip; not in DEFAULTS or PRESET_KEYS. Was #119: fan the sink's
+   *  per-module verification across the fleet. */
   fan_verify?: boolean;
-  /** Split the final whole-app check by COMMAND across the fleet: instead of one task running every
-   *  advertised command in sequence on one node, each node checks a slice of the commands in parallel, and
-   *  the final step just assembles, repairs what they found, and probes the store. Needs the per-module split
-   *  on. Measured to roughly halve the end-to-end phase; a node no longer runs the whole check alone. */
+  /** ENGINE-RETIRED: no consumer — it sharded the fan that fan_verify no longer builds. Kept only for the
+   *  config round-trip. */
   fan_e2e?: boolean;
   /** Actually RUN the app's advertised commands (and each with a bad argument) as part of the final check,
    *  instead of only checking that --help works. Catches an app whose commands crash or dump a traceback on
@@ -256,9 +255,8 @@ export interface SwarmConfig {
   /** Give the integrate-verify sink the built entry's REAL --help before it writes its golden checks, so it
    *  targets the interface the app actually has instead of the one the spec describes. Default OFF. */
   sink_prebuild?: boolean;
-  /** LEARN & REFLECT: after a build that provably worked, goose reflects and writes a reusable per-STACK
-   *  skill, then starts from it on the next build of that stack. Structural only, advisory only, and the
-   *  skill is a plain markdown file the user can edit or delete. Default OFF. */
+  /** RETIRED (VA-016, 97d5735a4): LEARN & REFLECT is deleted from the engine — the per-stack skill learned
+   *  zero lessons on both runs that wrote one. The key stays only so an old config.yaml round-trips. */
   persona?: boolean;
   /** Let the user add background notes WHILE a build runs; they are folded into the next dispatched worker,
    *  so a live worker is never disturbed. Advisory — the spec always wins. Default OFF. */
@@ -309,11 +307,11 @@ export const DEFAULTS: SwarmConfig = {
   progress_watchdog_secs: 900, // baked
   planner_timeout_secs: 900, // default_planner_timeout_secs
   research_planning: 'on', // ResearchPlanningMode::On
-  max_research_questions: 4, // default_max_research
-  // UNBOUNDED. Replan is suppressed while the sink is in flight and refuses when too little of the DAG
-  // is left; both are structural. A count on top of them only decides that the LAST honest replan does
-  // not happen. The panel said 2.
-  max_replans: 4_294_967_295, // default_max_replans (u32::MAX)
+  // max_research_questions is deliberately absent: RETIRED by the fan cut (engine-dead since P1-5,
+  // echoed under levers_resolved.retired_levers) — a reset must not write a bound that bounds nothing.
+  // max_replans / dynamic_replan are deliberately absent for the same reason: the replanner is DELETED
+  // (VA-015, 83e8089a5; the Rust defaults are None). This DEFAULTS used to carry u32::MAX here, so every
+  // "reset to golden" wrote a cap for a mechanism that no longer exists into config.yaml.
   scout_max_lookups: 10, // default_scout_max_lookups
   scout_budget_secs: 900, // default_scout_budget_secs
   best_of_n_skeletons: 1, // default_best_of_n_skeletons
@@ -336,8 +334,6 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'progress_watchdog_secs',
   'planner_timeout_secs',
   'research_planning',
-  'max_research_questions',
-  'max_replans',
   'scout_max_lookups',
   'scout_budget_secs',
   'best_of_n_skeletons',
