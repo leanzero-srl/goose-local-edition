@@ -130,6 +130,31 @@ pub fn headline(content: &str) -> String {
     format!("{cut}…")
 }
 
+/// Lower-cased alphanumeric word tokens of a text, in order, repeats kept.
+pub fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+// ratio: a prefix needs four characters before it may stand for a longer word — "dock" is not
+// "docker", but "docker" is "dockerized" and "compact" is "compaction".
+const PREFIX_MIN_CHARS: usize = 4;
+
+/// How many tokens a query term matches: the whole word, or a longer word it is a prefix of. A term is
+/// never matched inside another word ("rest" is not in "research").
+pub fn term_occurrences(term: &str, tokens: &[String]) -> usize {
+    tokens
+        .iter()
+        .filter(|token| {
+            token.as_str() == term
+                || (term.chars().count() >= PREFIX_MIN_CHARS && token.starts_with(term))
+        })
+        .count()
+}
+
 /// Lower-cased, de-duplicated alphanumeric terms of a query.
 pub fn search_terms(query: &str) -> Vec<String> {
     let mut terms: Vec<String> = query
@@ -309,10 +334,11 @@ impl MemoryStore {
                     entry.category,
                     entry.tags.join(" "),
                     entry.headline()
-                )
-                .to_lowercase();
+                );
                 let haystack = format!("{} {}", name, entry.content).to_lowercase();
-                corpus.push((entry, name, haystack));
+                let name_tokens = tokenize(&name);
+                let tokens = tokenize(&haystack);
+                corpus.push((entry, name_tokens, tokens, haystack));
             }
         }
         let n = corpus.len();
@@ -321,7 +347,7 @@ impl MemoryStore {
             .map(|term| {
                 corpus
                     .iter()
-                    .filter(|(_, _, haystack)| haystack.contains(term.as_str()))
+                    .filter(|(_, _, tokens, _)| term_occurrences(term, tokens) > 0)
                     .count()
             })
             .collect();
@@ -332,14 +358,14 @@ impl MemoryStore {
         let all_weights: f64 = weights.iter().sum();
 
         let mut hits = Vec::new();
-        for (entry, name, haystack) in corpus {
+        for (entry, name_tokens, tokens, haystack) in corpus {
             let mut score = 0.0;
             let mut matched_terms = 0;
             let mut rare_terms = 0;
             let mut name_terms = 0;
             let mut occurrences = 0;
             for (i, term) in terms.iter().enumerate() {
-                let count = haystack.matches(term.as_str()).count();
+                let count = term_occurrences(term, &tokens);
                 if count == 0 {
                     continue;
                 }
@@ -349,7 +375,7 @@ impl MemoryStore {
                 if document_frequency[i] * 2 <= n {
                     rare_terms += 1;
                 }
-                if name.contains(term.as_str()) {
+                if term_occurrences(term, &name_tokens) > 0 {
                     name_terms += 1;
                     score += weights[i];
                 }
@@ -719,6 +745,38 @@ mod tests {
         assert!(
             rarity_weight(6, 0) > rarity_weight(6, 3) && rarity_weight(6, 3) > rarity_weight(6, 6)
         );
+    }
+
+    #[test]
+    fn terms_match_whole_words_or_longer_words_they_begin() {
+        let tokens = tokenize("Research the REST API; the dockerized DB; compaction runs.");
+        assert_eq!(term_occurrences("rest", &tokens), 1, "REST, not reSearch");
+        assert_eq!(
+            term_occurrences("search", &tokens),
+            0,
+            "no match inside 'research'"
+        );
+        assert_eq!(
+            term_occurrences("docker", &tokens),
+            1,
+            "docker stands for dockerized"
+        );
+        assert_eq!(term_occurrences("dock", &tokens), 1, "four letters may");
+        assert_eq!(term_occurrences("doc", &tokens), 0, "three letters do not");
+        assert_eq!(term_occurrences("compact", &tokens), 1);
+        assert_eq!(term_occurrences("api", &tokens), 1);
+
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember("research", "Research articles before drafting.", &[], true)
+            .unwrap();
+        store
+            .remember("rest", "The REST API needs a token.", &[], true)
+            .unwrap();
+        let hits = store.search("rest api", None).unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].entry.category, "rest");
     }
 
     #[test]

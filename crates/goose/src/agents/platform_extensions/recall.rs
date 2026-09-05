@@ -15,7 +15,9 @@ use crate::conversation::effective_role;
 use crate::conversation::message::{Message, MessageContent};
 use anyhow::Result;
 use async_trait::async_trait;
-use goose_memory_store::{rarity_weight, search_terms, MemoryStore, SearchHit};
+use goose_memory_store::{
+    rarity_weight, search_terms, term_occurrences, tokenize, MemoryStore, SearchHit,
+};
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
@@ -135,12 +137,12 @@ pub fn select_hits(hits: Vec<SearchHit>) -> Vec<SearchHit> {
 /// Skills the request is about, by the same rule as memories: terms weighted by their rarity across
 /// the catalogue (a name match counts twice), at least one rare term, at least half the best score.
 pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
-    let catalogue: Vec<(&SourceEntry, String, String)> = skills
+    let catalogue: Vec<(&SourceEntry, Vec<String>, Vec<String>)> = skills
         .iter()
         .filter(|s| matches!(s.source_type, SourceType::Skill | SourceType::BuiltinSkill))
         .map(|skill| {
-            let name = skill.name.to_lowercase();
-            let text = format!("{} {}", name, skill.description).to_lowercase();
+            let name = tokenize(&skill.name);
+            let text = tokenize(&format!("{} {}", skill.name, skill.description));
             (skill, name, text)
         })
         .collect();
@@ -150,7 +152,7 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
         .map(|term| {
             catalogue
                 .iter()
-                .filter(|(_, _, text)| text.contains(term.as_str()))
+                .filter(|(_, _, text)| term_occurrences(term, text) > 0)
                 .count()
         })
         .collect();
@@ -160,7 +162,7 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
             let mut score = 0.0;
             let mut rare = 0;
             for (i, term) in terms.iter().enumerate() {
-                if !text.contains(term.as_str()) {
+                if term_occurrences(term, text) == 0 {
                     continue;
                 }
                 let weight = rarity_weight(n, document_frequency[i]);
@@ -168,7 +170,7 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
                 if document_frequency[i] * 2 <= n {
                     rare += 1;
                 }
-                if name.contains(term.as_str()) {
+                if term_occurrences(term, name) > 0 {
                     score += weight;
                 }
             }
@@ -295,11 +297,18 @@ impl McpClientTrait for RecallClient {
         let skills = relevant_skills(&catalogue, &terms);
 
         let part = render(&memories, &skills);
+        let recalled: Vec<String> = memories
+            .iter()
+            .map(|hit| format!("{}({:.1})", hit.entry.category, hit.score))
+            .collect();
+        let suggested: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
         tracing::info!(
             session_id,
             terms = terms.len(),
             memories = memories.len(),
+            recalled = ?recalled,
             skills = skills.len(),
+            suggested = ?suggested,
             "recall"
         );
         part
