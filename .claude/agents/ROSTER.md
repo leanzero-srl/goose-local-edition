@@ -188,6 +188,29 @@ about the realfs push tests is garbled from a 2026-08-30 edit; mlx-backend/link-
 "Claude Fable 5".
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-09-05 general-purpose ×3 rounds (swarm_router.rs, the Swarm provider's idle guard): CLEAN+ / one
+  premise miss the live proof caught — round 1 built pick/sticky/queue/failover/named-error with 13 tests and
+  found its own early-permit-release bug via the failover test; round 2 (own-context per route, pool context
+  limit) read the trait callers before deciding; round 3 fixed probe_mlx reading THIS process's manager (the
+  CLI got "engine is stopped" while the app served on :8090) by probing the engine over HTTP with wiremock
+  tests. Brief leak: none. CHARTER GAP: no surgeon owns crates/goose/src/providers — a third inline brief
+  there mints one (candidate: provider-surgeon: Provider trait seams, retry semantics, no seconds literals,
+  the node-is-the-truth rule).
+- 2026-09-05 panel-surgeon ×3 (fleet truth A–H, 1776 green; provider allow-list + migration, 1791 green;
+  resumed-session migration, 1798 green): CLEAN++ ×3. Flagged the GOOSE_PROVIDER-vs-active_provider edition
+  derivation (→ the orchestrator's edition-defaults-LOCAL fix) and that swarm-build was not yet in Rust.
+  Charter gap: none. Bloat: none.
+- 2026-09-05 swarm-surgeon (sidecar probe/mount loudness + settle_prewarm extraction, 36/36): CLEAN++ — paid
+  the line ratchet with a whole-block extraction and traced the happy path byte-identical; caught by the
+  proof chain on one clippy nit + the ratchet (both fixed on resume). Charter gap: none.
+- 2026-09-05 fallback-hunter (11 findings on the sidecar/link surfaces): CLEAN — 1,2,3,7,8,9 confirmed and
+  landed; 4/5/10/11 correctly judged design/pre-existing. Charter gap: none.
+- 2026-09-05 refuter (3 desktop claims + 6 sweep): CLEAN++ — A/B confirmed-with-correction (worse on the
+  MLX-only pool than claimed), C REFUTED (the join was clean), every sweep item file:line + fix direction.
+- 2026-09-05 works-prover (MLX-node swarm path): APPEARS-TO-WORK with 7 findings; finding 2 (mount failure
+  stderr-only, run proceeds into a dead port) became the settle_prewarm exclusion. Charter gap: none.
+- 2026-09-05 Explore ×2 (provider surface map; idle-node map): CLEAN++ — facts only, file:line, exactly the
+  tables the design needed. Nothing to amend.
 - 2026-08-30 swarm-surgeon (cluster A, 6abd934c3..8a68a9c59): CLEAN PASS — six items with honest
   per-item traces including two labeled NETs (item 4's look-1 case was already covered and it said
   so; judge amendment (d)); the web_refs scan proven EMPIRICALLY against the real r5 viz.js (one
