@@ -187,6 +187,14 @@ above. Staleness seen, not fixed on this pass (existing text is kept by rule): p
 about the realfs push tests is garbled from a 2026-08-30 edit; mlx-backend/link-backend trailers still say
 "Claude Fable 5".
 
+## Minted 2026-09-05 — `memory-skills-surgeon`
+Trigger met the third time the same work was briefed inline: the memory index/search rewrite, the
+recall platform extension, and the rarity/tokenizer follow-ups were all done by the orchestrator with
+the same inline material (store contract, selection law, probe + live-session measurement). The
+charter carries that material and the wake-up mechanism: `evals/memory-recall/probe.py` output and the
+CLI log's `recall` lines are the findings feed; each finding is a `VIGIL-ACTIONS.md` row with surface
+`memory` or `skills`, triaged at the orchestrator's next turn like every other row.
+
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
 - 2026-09-05 general-purpose ×3 rounds (swarm_router.rs, the Swarm provider's idle guard): CLEAN+ / one
   premise miss the live proof caught — round 1 built pick/sticky/queue/failover/named-error with 13 tests and

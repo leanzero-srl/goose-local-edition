@@ -61,6 +61,7 @@ thread.
 | `fix-tracer` | gate 8's independent tracer: walks a run's real values through a change |
 | `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
 | `gate-auditor` | audits deterministic checks for theater: keep the refusers, kill the superficial |
+| `memory-skills-surgeon` | the memory store, the memory extension, recall, skills, the Claude Code importer — and the probe that measures what is recalled |
 
 The last five are read-only by charter — they report, the orchestrator decides. A kill or a shipped
 fix needs the matching reader's independent verdict (gates 7/8); a third-party finding needs the

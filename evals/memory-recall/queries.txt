@@ -1,0 +1,9 @@
+# One request per line: the kind of thing a user types. Read what each one recalls.
+What is the e2e probe token for this machine, and which port does the swarm bench vendor answer on?
+How do I search Jira issues with JQL over the Jira Cloud REST API?
+Fix the failing test in the scheduler.
+Write a blog post about local models.
+Can you list the files in this directory?
+How do I connect to the workhorse over SSH?
+Deploy the Forge app to production.
+What did Mihai say about hard-coded values?
