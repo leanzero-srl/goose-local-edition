@@ -1,5 +1,23 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-05 late — MEMORY INDEX + SEARCH LANDED, 13 UPSTREAM PICKS PORTED (no swarm engine file touched).** Research
+> first: the memory extension pasted every global memory into every system prompt — measured 171 entries / 344,605 bytes
+> (~86k tokens) per session on this machine, local memories never preloaded, retrieval only by exact category. Now
+> (b864f26c7) startup injects an INDEX (`category [tags]: headline`, both scopes) and `search_memories` returns full
+> entries ranked by terms matched → terms in the name → occurrences; proven on the built binary over a real MCP
+> initialize: 40,687 bytes, 171 index lines, no body text (88% cut). Upstream (block/goose = aaif, 646 commits since the
+> 2026-07-03 merge-base; rmcp 1.4→3.2 and the unrolled-loop state machine are NOT pickable): 9 clean cherry-picks +
+> 4 hand ports landed as their own commits (skills: disable built-ins, web-search built-in; hints: bounded expansion,
+> contained discovery; providers: metadata-only SSE frames, partial thinking tags, context-length classifiers, thinking
+> coalescing, local-inference text; security: memory category validation, Unicode tags in MCP prompts; toolshim
+> compact schema). FOUR of these touch the worker provider path the golden engine streams through (SSE frames, thinking
+> tags, thinking coalescing, toolshim schema) — each is one revertible commit; the next sb-7 run measures them against
+> 0.4616. Not done: remember-by-category update semantics (append stays), chatrecall stays default-off, the skills list
+> is already index-shaped (7.4k chars for 28 skills). Gotcha: `cargo test -p goose-mcp` alone fails on tokio feature
+> unification — pair it with `-p goose`. Clippy (rust 1.98 here): goose-mcp and goose-provider-types clean with -D warnings;
+> the goose crate carries 28 PRE-EXISTING errors (21 `result_large_err`, 4 `sort_by_key`, 3 misc; blame 2025-08..2026-02), none
+> in a file the ports touched — a separate cleanup, not a regression.
+
 > **2026-09-05 night — ENGINE REVIEW WITHOUT RUNNING IT (the workhorse serves the Forge model; no cargo, no inference).** Three
 > read-only lenses on the golden core: correctness (4 survivors, top: a panicked worker future is never joined → the run sleeps
 > forever with no event; a constructible `expect("ephemeral bind")` sits on the sink's own path), fallbacks (4 guilty silent arms:
