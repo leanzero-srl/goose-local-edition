@@ -81,7 +81,7 @@
     "defaultMessage": "選擇提供方…"
   },
   "addNode.providersCaption": {
-    "defaultMessage": "節點提供方即 flock 引擎支援的提供方——更多雲端系列會隨引擎支援一起到來。"
+    "defaultMessage": "節點提供方即 swarm 引擎支援的提供方——更多雲端系列會隨引擎支援一起到來。"
   },
   "addNode.reassignButton": {
     "defaultMessage": "移除並重新新增"
@@ -423,7 +423,7 @@
     "defaultMessage": "設定核准模式"
   },
   "confirmCloseRun.body": {
-    "defaultMessage": "關閉此視窗會停止本次執行:視窗的後端將被釋放,其下的 flock 引擎會收到結束訊號。"
+    "defaultMessage": "關閉此視窗會停止本次執行:視窗的後端將被釋放,其下的 swarm 引擎會收到結束訊號。"
   },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "繼續執行"
@@ -438,7 +438,7 @@
     "defaultMessage": "正在停止執行…"
   },
   "confirmCloseRun.title": {
-    "defaultMessage": "此視窗中有一個 flock 執行正在進行"
+    "defaultMessage": "此視窗中有一個 swarm 執行正在進行"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "警告"
@@ -1068,7 +1068,7 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "editionSelector.standard": {
     "defaultMessage": "goose"
@@ -2493,7 +2493,7 @@
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
@@ -4146,13 +4146,13 @@
     "defaultMessage": "Dock 圖示"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Goose Swarm in the model selector. The Goose Swarm settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
-    "defaultMessage": "LeanZero Flock — the fan-in view"
+    "defaultMessage": "Goose Swarm — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "settings.help.description": {
     "defaultMessage": "回報問題或申請新功能，協助我們改善 goose"
@@ -4362,7 +4362,7 @@
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
   },
   "shortcutRefused.reload": {
-    "defaultMessage": "Reloading would discard the live log and flock panel state."
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
   },
   "shortcutRefused.spawn": {
     "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."

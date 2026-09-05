@@ -1,4 +1,4 @@
-// Flock tunables: the type, the faithful defaults, and the GOLDEN formula preset.
+// Swarm tunables: the type, the faithful defaults, and the GOLDEN formula preset.
 //
 // DEFAULTS mirror the Rust serde defaults in crates/goose-cli/src/commands/swarm.rs so the panel
 // baseline is truthful about what goose actually does when a field is absent from config.yaml.

@@ -54,7 +54,7 @@ export interface Settings {
   showLmStudioFleet: boolean;
   seenAnnouncementIds: string[];
 
-  // Goose Flock (edition value 'local') — the local/swarm-model UX skin (presentation only, never
+  // Goose Swarm (edition value 'local') — the local/swarm-model UX skin (presentation only, never
   // gates capability). OPTIONAL on purpose: absence means "never explicitly chosen", which lets the
   // renderer derive the edition from the active provider exactly like the Rust resolver
   // (crates/goose-cli/src/edition.rs). A default here would masquerade as an explicit choice and

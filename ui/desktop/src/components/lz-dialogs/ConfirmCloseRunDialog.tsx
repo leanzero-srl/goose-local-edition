@@ -15,12 +15,12 @@ import type { LiveRunRef } from '../../utils/closeGuard';
 const i18n = defineMessages({
   title: {
     id: 'confirmCloseRun.title',
-    defaultMessage: 'A flock run is live in this window',
+    defaultMessage: 'A swarm run is live in this window',
   },
   body: {
     id: 'confirmCloseRun.body',
     defaultMessage:
-      "Closing this window stops the run: the window's backend is released and the flock engine under it is signalled to exit.",
+      "Closing this window stops the run: the window's backend is released and the swarm engine under it is signalled to exit.",
   },
   runLine: {
     id: 'confirmCloseRun.runLine',

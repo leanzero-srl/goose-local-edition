@@ -5,9 +5,9 @@ import { IntlTestWrapper } from '../../i18n/test-utils';
 import SettingsView from './SettingsView';
 
 /**
- * Goose Flock pass A: the Models tab left the settings navigation (provider management consolidates
- * into the Goose Flock view). Owner (2026-08-31): the LeanZero Flock tab is gone too — the
- * LeanZero Flock view's nodes tab is the only swarm surface. This pins the tab LIST — the
+ * Goose Swarm pass A: the Models tab left the settings navigation (provider management consolidates
+ * into the Goose Swarm view). Owner (2026-08-31): the Goose Swarm tab is gone too — the
+ * Goose Swarm view's nodes tab is the only swarm surface. This pins the tab LIST — the
  * components stay in code, the nav entries must not creep back, and the default tab must be one
  * that actually exists.
  */
@@ -59,7 +59,7 @@ describe('SettingsView tab list (models and swarm tabs removed)', () => {
     expect(screen.getByTestId('chat-body')).toBeTruthy();
   });
 
-  it('local edition (Goose Flock) has NO Swarm tab either and defaults to Chat', () => {
+  it('local edition (Goose Swarm) has NO Swarm tab either and defaults to Chat', () => {
     editionState.edition = 'local';
     editionState.isLocal = true;
     try {

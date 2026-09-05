@@ -548,7 +548,7 @@ function CloudPane({
 
       {devices.length > 0 && (
         <div className="flex flex-col gap-1">
-          <SectionHeader as="h3" title="Cloud nodes in your flock pool" count={devices.length} />
+          <SectionHeader as="h3" title="Cloud nodes in your swarm pool" count={devices.length} />
           <DataTable
             dense
             aria-label={`${def.label} nodes in the pool`}
@@ -839,7 +839,7 @@ export default function SwarmSettingsSection() {
   return (
     <section id="swarm" className="flex flex-col gap-lz-section pb-8 pr-4">
       <Panel
-        title="LeanZero Flock — fleet"
+        title="Goose Swarm — fleet"
         headerRight={
           <Segmented
             options={NODE_PROVIDERS}
@@ -944,14 +944,14 @@ export default function SwarmSettingsSection() {
         </div>
       </Panel>
 
-      <Panel title="LeanZero Flock — tunables">
+      <Panel title="Goose Swarm — tunables">
         <p className={TYPE.bodyMuted}>
           The knobs that were CLI-only (`goose swarm pool`). Changes save to your goose config immediately.
         </p>
       </Panel>
 
       {!loaded ? (
-        <div className={TYPE.bodyMuted}>Loading flock config…</div>
+        <div className={TYPE.bodyMuted}>Loading swarm config…</div>
       ) : (
         <>
           <PresetBar active={activePreset} onApply={applyPreset} />
@@ -1067,7 +1067,7 @@ export default function SwarmSettingsSection() {
             <Row label="Homogeneous models" hint="all workers same weights/tokenizer → planner splits more aggressively">
               <StudioSwitch aria-label="Homogeneous models" checked={!!cfg.homogeneous_models} onChange={(v) => set({ homogeneous_models: v })} />
             </Row>
-            <Row label="Allow model load" hint="let the flock spin up non-resident models (off = warm fleet only)">
+            <Row label="Allow model load" hint="let the swarm spin up non-resident models (off = warm fleet only)">
               <StudioSwitch aria-label="Allow model load" checked={!!cfg.allow_model_load} onChange={(v) => set({ allow_model_load: v })} />
             </Row>
           </Group>

@@ -30,7 +30,7 @@
     "defaultMessage": "Setiap mesin yang ditemui sudah ada nod MLX — buang satu dahulu, atau tambah nod awan (tanpa had)."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# mesin flock} other{# mesin flock}} masih tanpa nod MLX — setiap mesin membawa tepat satu."
+    "defaultMessage": "{count,plural,one{# mesin swarm} other{# mesin swarm}} masih tanpa nod MLX — setiap mesin membawa tepat satu."
   },
   "addNode.machineLabel": {
     "defaultMessage": "Mesin — satu nod MLX setiap satu"
@@ -39,7 +39,7 @@
     "defaultMessage": "mesin ini"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Tiada mesin flock ditemui (LM Studio / lms tidak boleh dicapai) — nod dibuat untuk MESIN INI; namakannya di bawah."
+    "defaultMessage": "Tiada mesin swarm ditemui (LM Studio / lms tidak boleh dicapai) — nod dibuat untuk MESIN INI; namakannya di bawah."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Pilih mesin…"
@@ -81,7 +81,7 @@
     "defaultMessage": "Pilih penyedia…"
   },
   "addNode.providersCaption": {
-    "defaultMessage": "Penyedia nod ialah yang disokong enjin flock — lebih banyak keluarga awan akan tiba bersama sokongan enjin."
+    "defaultMessage": "Penyedia nod ialah yang disokong enjin swarm — lebih banyak keluarga awan akan tiba bersama sokongan enjin."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Buang & tambah semula"
@@ -423,7 +423,7 @@
     "defaultMessage": "Konfigurasi mod kelulusan"
   },
   "confirmCloseRun.body": {
-    "defaultMessage": "Menutup tetingkap ini menghentikan larian: backend tetingkap dilepaskan dan enjin flock di bawahnya diberi isyarat untuk keluar."
+    "defaultMessage": "Menutup tetingkap ini menghentikan larian: backend tetingkap dilepaskan dan enjin swarm di bawahnya diberi isyarat untuk keluar."
   },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Teruskan larian"
@@ -438,7 +438,7 @@
     "defaultMessage": "Menghentikan larian…"
   },
   "confirmCloseRun.title": {
-    "defaultMessage": "Larian flock sedang aktif dalam tetingkap ini"
+    "defaultMessage": "Larian swarm sedang aktif dalam tetingkap ini"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "Amaran"
@@ -1068,7 +1068,7 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "editionSelector.standard": {
     "defaultMessage": "goose"
@@ -1809,7 +1809,7 @@
     "defaultMessage": "Log masuk untuk memautkan peranti anda ke dalam mesh peribadi — tiada kata laluan, hanya kod melalui e-mel."
   },
   "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Satu tempat untuk seluruh flock: enjin MLX dalaman, kelayakan penyedia awan, dan kumpulan nod yang digunakan flock untuk membina."
+    "defaultMessage": "Satu tempat untuk seluruh swarm: enjin MLX dalaman, kelayakan penyedia awan, dan kumpulan nod yang digunakan swarm untuk membina."
   },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Penyedia Awan"
@@ -1818,7 +1818,7 @@
     "defaultMessage": "LeanZero Link"
   },
   "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Tetapan Flock"
+    "defaultMessage": "Tetapan Swarm"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang memadatkan perbualan..."
@@ -2493,7 +2493,7 @@
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
@@ -4146,13 +4146,13 @@
     "defaultMessage": "Ikon dok"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Goose Swarm in the model selector. The Goose Swarm settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
-    "defaultMessage": "LeanZero Flock — the fan-in view"
+    "defaultMessage": "Goose Swarm — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "settings.help.description": {
     "defaultMessage": "Bantu kami menambah baik goose dengan melaporkan isu atau meminta ciri baharu"
@@ -4362,7 +4362,7 @@
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
   },
   "shortcutRefused.reload": {
-    "defaultMessage": "Reloading would discard the live log and flock panel state."
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
   },
   "shortcutRefused.spawn": {
     "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
@@ -4542,7 +4542,7 @@
     "defaultMessage": "Nod MLX mesin jauh — tersimpan dalam kumpulan, dilayani apabila penghalaan per nod tiba"
   },
   "swarmSettings.nodesDesc": {
-    "defaultMessage": "Setiap nod yang dijalankan flock — baris yang dikonfigurasi serta apa sahaja yang residen dalam LM Studio sekarang. Pemberat: lebih tinggi mendapat bahagian tugasan yang lebih besar."
+    "defaultMessage": "Setiap nod yang dijalankan swarm — baris yang dikonfigurasi serta apa sahaja yang residen dalam LM Studio sekarang. Pemberat: lebih tinggi mendapat bahagian tugasan yang lebih besar."
   },
   "swarmSettings.nodesTitle": {
     "defaultMessage": "Nod"
@@ -4566,7 +4566,7 @@
     "defaultMessage": "Buang"
   },
   "swarmSettings.removeMessage": {
-    "defaultMessage": "{id} keluar dari kumpulan flock. Tiada fail model disentuh; anda boleh menambahnya semula bila-bila masa."
+    "defaultMessage": "{id} keluar dari kumpulan swarm. Tiada fail model disentuh; anda boleh menambahnya semula bila-bila masa."
   },
   "swarmSettings.removeTitle": {
     "defaultMessage": "Buang nod"

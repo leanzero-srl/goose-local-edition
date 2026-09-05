@@ -87,7 +87,7 @@ export default function SettingsView({
   const { edition } = useEdition();
   const isLocalEdition = edition === 'local';
   // The Models tab left the settings nav in pass A (provider management consolidates into the
-  // Goose Flock view), and the owner removed the LeanZero Flock tab too — the Goose Flock
+  // Goose Swarm view), and the owner removed the Goose Swarm tab too — the Goose Swarm
   // view's nodes tab is the only swarm surface now. SwarmSettingsSection stays in code, unrouted.
   const [activeTab, setActiveTab] = useState('chat');
   const intl = useIntl();

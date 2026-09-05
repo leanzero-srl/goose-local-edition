@@ -65,7 +65,7 @@ describe('SwarmRunPanel — an injected run replaces the poller, it does not add
       </IntlTestWrapper>
     );
 
-    await findByText('Flock run');
+    await findByText('Swarm run');
     await findByText('vendorsync');
     expect(readSwarmRun).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe('SwarmRunPanel — an injected run replaces the poller, it does not add
       </IntlTestWrapper>
     );
 
-    await findByText('Flock run');
+    await findByText('Swarm run');
     expect(readSwarmRun).toHaveBeenCalledWith('/tmp/build');
   });
 });

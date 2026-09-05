@@ -9,13 +9,13 @@ describe('lz/PageHeader', () => {
     const { container, getByRole, getByText } = render(
       <PageHeader
         eyebrow="Benchmark · sb-7"
-        title="Flock run r5"
+        title="Swarm run r5"
         subtitle="Three nodes, one spec, one verdict."
         actions={<button type="button">Stop</button>}
       />
     );
     const h1 = getByRole('heading', { level: 1 });
-    expect(h1.textContent).toBe('Flock run r5');
+    expect(h1.textContent).toBe('Swarm run r5');
     for (const c of TYPE.display.split(' ')) expect(h1.className).toContain(c);
     for (const c of TYPE.zone.split(' '))
       expect(getByText('Benchmark · sb-7').className).toContain(c);

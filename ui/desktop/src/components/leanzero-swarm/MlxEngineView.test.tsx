@@ -282,7 +282,7 @@ describe('formatGb', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pass C: the engine content is the LeanZero MLX TAB of the Goose Flock view.
+// Pass C: the engine content is the LeanZero MLX TAB of the Goose Swarm view.
 // The page header moved to LeanZeroSwarmView; this panel keeps the sub-tab bar,
 // the live state badge and the powered-by line. The nav carries the VIEW's name.
 // ---------------------------------------------------------------------------
@@ -299,10 +299,10 @@ describe('LeanZero MLX panel naming', () => {
     unmount();
   });
 
-  it('the nav item is /leanzero-swarm labelled Goose Flock (old /mlx-engine path is gone)', () => {
+  it('the nav item is /leanzero-swarm labelled Goose Swarm (old /mlx-engine path is gone)', () => {
     expect(NAV_ITEMS.find((i) => i.path === '/mlx-engine')).toBeUndefined();
     const item = NAV_ITEMS.find((i) => i.path === '/leanzero-swarm');
-    expect(item?.label).toBe('Goose Flock');
+    expect(item?.label).toBe('Goose Swarm');
   });
 });
 

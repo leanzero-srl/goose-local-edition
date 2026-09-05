@@ -81,7 +81,7 @@
     "defaultMessage": "Escolha um provedor…"
   },
   "addNode.providersCaption": {
-    "defaultMessage": "Os provedores de nós são os que o motor do flock suporta — mais famílias de nuvem chegam junto com o suporte do motor."
+    "defaultMessage": "Os provedores de nós são os que o motor do swarm suporta — mais famílias de nuvem chegam junto com o suporte do motor."
   },
   "addNode.reassignButton": {
     "defaultMessage": "Remover e readicionar"
@@ -423,7 +423,7 @@
     "defaultMessage": "Configurar modo de aprovação"
   },
   "confirmCloseRun.body": {
-    "defaultMessage": "Fechar esta janela interrompe a execução: o backend da janela é liberado e o motor do flock abaixo dele recebe o sinal para encerrar."
+    "defaultMessage": "Fechar esta janela interrompe a execução: o backend da janela é liberado e o motor do swarm abaixo dele recebe o sinal para encerrar."
   },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Continuar executando"
@@ -438,7 +438,7 @@
     "defaultMessage": "Parando a execução…"
   },
   "confirmCloseRun.title": {
-    "defaultMessage": "Há uma execução do flock ativa nesta janela"
+    "defaultMessage": "Há uma execução do swarm ativa nesta janela"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "Aviso"
@@ -1068,7 +1068,7 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "editionSelector.standard": {
     "defaultMessage": "goose"
@@ -2493,7 +2493,7 @@
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
@@ -4146,13 +4146,13 @@
     "defaultMessage": "Ícone da dock"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Flock skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick LeanZero Flock in the model selector. The LeanZero Flock settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Goose Swarm in the model selector. The Goose Swarm settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
-    "defaultMessage": "LeanZero Flock — the fan-in view"
+    "defaultMessage": "Goose Swarm — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Flock"
+    "defaultMessage": "Goose Swarm"
   },
   "settings.help.description": {
     "defaultMessage": "Ajude-nos a melhorar o goose comunicando problemas ou solicitando novas funcionalidades"
@@ -4362,7 +4362,7 @@
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
   },
   "shortcutRefused.reload": {
-    "defaultMessage": "Reloading would discard the live log and flock panel state."
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
   },
   "shortcutRefused.spawn": {
     "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."

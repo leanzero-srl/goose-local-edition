@@ -5,21 +5,21 @@ import { isLocalProviderName } from '../components/settings/models/leanzeroSelec
 
 /**
  * MAIN-PROCESS edition branding (queued fix #10): the tray tooltip, notifications and the
- * main-process dialogs used to hardcode "Goose" while every renderer surface said "Goose Flock" —
+ * main-process dialogs used to hardcode "Goose" while every renderer surface said "Goose Swarm" —
  * main.ts had no edition awareness at all. This is the ONE shared constant pair + resolver both
  * main.ts and autoUpdater.ts read.
  *
  * Resolution mirrors the renderer's EditionContext / the Rust resolver (edition.rs), minus the
  * CLI/env layers the desktop main process does not have: an explicitly persisted `edition`
  * setting wins; with none stored, the edition derives from the active provider in the goose
- * config.yaml (local/swarm provider fragments => the local edition => "Goose Flock").
+ * config.yaml (local/swarm provider fragments => the local edition => "Goose Swarm").
  *
  * Electron-free on purpose (paths are passed in / defaulted from the home dir), so the pure
  * pieces are unit-testable without an electron mock.
  */
 
 export const STANDARD_BRAND = 'Goose';
-export const SWARM_BRAND = 'Goose Flock';
+export const SWARM_BRAND = 'Goose Swarm';
 
 /** PURE resolver — explicit persisted edition first, else provider derivation. */
 export function resolveBrandName(
