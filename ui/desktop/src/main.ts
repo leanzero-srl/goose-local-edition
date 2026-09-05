@@ -4891,10 +4891,14 @@ async function appMain() {
     }
   });
 
-  // Handle app restart
+  // An in-app restart is a QUIT that relaunches. `app.exit(0)` skipped `will-quit`, so the backend
+  // leases were never released and the mesh daemon + the MLX engine under them outlived the app
+  // (the handoff queue's daemon leak). `app.quit()` walks the same door as Cmd+Q — the live-run
+  // confirmation can still refuse it — and `will-quit` schedules the relaunch only once the quit
+  // is actually happening, so a refused restart never arms a surprise relaunch on a later quit.
   ipcMain.on('restart-app', () => {
-    app.relaunch();
-    app.exit(0);
+    relaunchOnQuit = true;
+    app.quit();
   });
 
   // Handler for getting app version
@@ -5210,10 +5214,14 @@ async function getAllowList(): Promise<string[]> {
   }
 }
 
+// Set by the renderer's restart-app request; read once the quit is really happening (will-quit).
+let relaunchOnQuit = false;
+
 app.on('will-quit', async () => {
   // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
   // synchronous so it lands before Electron finishes quitting (U-M8).
   if (activeBenchRun !== null) cancelActiveBenchRun('app quitting');
+  if (relaunchOnQuit) app.relaunch();
 
   const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
   if (gooseServeLeaseCount > 0) {
