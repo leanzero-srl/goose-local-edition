@@ -1,5 +1,16 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-05 night — ENGINE REVIEW WITHOUT RUNNING IT (the workhorse serves the Forge model; no cargo, no inference).** Three
+> read-only lenses on the golden core: correctness (4 survivors, top: a panicked worker future is never joined → the run sleeps
+> forever with no event; a constructible `expect("ephemeral bind")` sits on the sink's own path), fallbacks (4 guilty silent arms:
+> the sink swallowing write failures, a stale ledger roll-up passing as fresh, the shadow-copy recursion defeating its bail, an
+> unreadable question dispatched empty; 4 loud-able), gate audit (8 false doctrine anchors — fixed on main; the live-const walker
+> read a tenth of swarm.rs). FIXES: desktop on main (2ddc8dbd2: the golden's REPAIR/SPLIT events folded, dead later-line
+> listeners gone, sampling strip only for builds). ENGINE fixes on `pending/engine-fixes-2026-09-05` (6 commits, every one an
+> error-arm/loudness change traced NO-change on r6h, plus the VA-164 gate tightenings; app spawns moved to app_spawn.rs) —
+> COMPILE UNPROVEN until the machine frees; then `cargo test -p goose-cli --lib`, `-p goose-swarm --no-fail-fast`, clippy, and
+> the merge to main. Refused on purpose: `boot_budget = 3` (VA-167, in the measured run). Queue: VA-157..167.
+
 > **2026-09-05 evening — THE ENGINE IS THE r6h GOLDEN, AND ONLY THAT.** Mihai: "the engine is the one that had the golden formula, the
 > score of 0.46. That is the one we need to keep — everything that might modify that needs to be deleted." Measured: local-edition's tip
 > (d8202bc89) carried 42 engine commits PAST the golden 393a99351 (VA-089 research fan v3, VA-100..118, VA-113 dispatch order, r6i-staging
