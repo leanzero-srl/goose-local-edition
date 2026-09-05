@@ -100,3 +100,7 @@ Everything below is DONE on the workhorse (Mac Studio) and is the source for eve
   authenticates to Apple with `notarytool history`. Idempotent. After it, `just release-notarized` works there.
 - **Proof that this works end to end:** the 2.0.2 build on 2026-09-05 (see local-edition/mlx/NOW.md for the
   `spctl` verdict of that run).
+- **Publishing:** `just publish-release <version> [notes.md]` uploads the DMG + `Goose.zip` + `latest-mac.yml` to a GitHub
+  release tagged `v<version>` and marks it latest (the auto-updater follows it). It refuses an unnotarized app or a missing
+  tag. gh is logged in as `leanzero-srl` (keyring) on the workhorse; the token also lives in `~/.leanzero/github/token.env`
+  (never in git) — the bootstrap for another Mac is `gh auth login --with-token` with that value.
