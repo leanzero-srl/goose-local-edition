@@ -30,11 +30,13 @@ use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_sidecar::engine::{EngineSettings, EngineStatus};
 
 const SWARM_CONFIG_KEY: &str = "swarm";
 const LMSTUDIO_HOST_ENV: &str = "LMSTUDIO_HOST";
 const LMSTUDIO_TOKEN_KEY: &str = "LMSTUDIO_API_KEY";
 const OMLX_HOST_ENV: &str = "OMLX_HOST";
+const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
 
 /// The `swarm` config block, as much of it as routing needs. Mirrors `SwarmDevice` in
 /// goose-cli's swarm.rs (id, model_id, weight, enabled, instances, provider, engine) plus the
@@ -297,9 +299,13 @@ impl LiveProbe {
         }
     }
 
-    async fn get_json(&self, url: &str) -> Result<serde_json::Value, String> {
+    async fn get_json(
+        &self,
+        url: &str,
+        token: Option<String>,
+    ) -> Result<serde_json::Value, String> {
         let mut req = self.http.get(url);
-        if let Some(token) = Self::lm_api_token() {
+        if let Some(token) = token {
             req = req.bearer_auth(token);
         }
         let resp = req
@@ -323,7 +329,7 @@ impl LiveProbe {
     async fn probe_lmstudio(&self, endpoint: &str, model_id: &str) -> Result<Servable, String> {
         let host = endpoint.trim_end_matches('/');
         let url = format!("{host}/v1/models");
-        let body = self.get_json(&url).await?;
+        let body = self.get_json(&url, Self::lm_api_token()).await?;
         let entry = body
             .get("data")
             .and_then(serde_json::Value::as_array)
@@ -336,7 +342,7 @@ impl LiveProbe {
             .find_map(|key| entry.get(key).and_then(serde_json::Value::as_u64));
         if context_window.is_none() {
             let native = format!("{host}/api/v0/models");
-            match self.get_json(&native).await {
+            match self.get_json(&native, Self::lm_api_token()).await {
                 Ok(catalog) => {
                     context_window = catalog
                         .get("data")
@@ -363,20 +369,48 @@ impl LiveProbe {
         })
     }
 
+    /// THE NODE IS THE TRUTH, NOT THIS PROCESS'S MANAGER. The engine is mounted by the desktop's
+    /// goosed; a second goosed (each window holds its own goose-serve) or the CLI has a manager that
+    /// knows nothing — measured 2026-09-05 13:20: with the engine idle on :8090 the CLI was told
+    /// "MLX engine is stopped". So the decision comes from probing the engine's own HTTP surface at
+    /// the base URL the local manager reports when it is the one running it, else the configured
+    /// port; the local manager only enriches the reason when nothing listens.
     async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
-        let status = goose_sidecar::engine::global_manager().status().await;
-        if status.state != "running" {
-            let detail = match (&status.model_id, &status.last_error) {
-                (_, Some(err)) => format!(" ({err})"),
-                (Some(m), None) => format!(" (model {m})"),
-                (None, None) => String::new(),
-            };
-            return Err(format!(
-                "MLX engine is {}{detail} — mount it in the MLX window",
-                status.state
-            ));
+        let local = goose_sidecar::engine::global_manager().status().await;
+        let base = mlx_base_url(
+            &local,
+            Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY),
+        )?;
+        let diagnostic = match (&local.state, &local.last_error) {
+            (state, Some(err)) => format!("this process's manager: {state}, {err}"),
+            (state, None) => format!("this process's manager: {state}"),
+        };
+        self.probe_mlx_at(&base, model_id, &diagnostic).await
+    }
+
+    async fn probe_mlx_at(
+        &self,
+        base: &str,
+        model_id: &str,
+        local_diagnostic: &str,
+    ) -> Result<Servable, String> {
+        let models_url = format!("{base}/v1/models");
+        let resp = self.http.get(&models_url).send().await.map_err(|e| {
+            format!(
+                "MLX engine is not listening on {base} — mount it in the MLX window ({local_diagnostic}; {e})"
+            )
+        })?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("GET {models_url} answered {status}"));
         }
-        match status.served_model_id.as_deref() {
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("GET {models_url} body unreadable ({e})"))?;
+        let (served, context_window, _parser) =
+            goose_sidecar::engine::parse_model_info(&body).map_err(|e| format!("{e:#}"))?;
+        match served.as_deref() {
             Some(served) if served == model_id => {}
             Some(served) => {
                 return Err(format!(
@@ -385,29 +419,61 @@ impl LiveProbe {
             }
             None => {
                 return Err(format!(
-                    "MLX engine is running but its served id is unknown ({})",
-                    status
-                        .probe_error
-                        .as_deref()
-                        .unwrap_or("no /v1/models answer")
+                    "MLX engine on {base} lists a model without an id in {models_url}"
                 ))
             }
         }
-        if let Some(base_url) = status.base_url.as_deref() {
-            align_host_env(OMLX_HOST_ENV, &OMLX_HOST_USER_OWNED, base_url);
-        }
-        if let Some(err) = &status.active_requests_error {
-            tracing::warn!(
-                target: "swarm_router",
-                error = %err,
-                "MLX engine reported no in-flight count; routing on in-process leases alone"
-            );
-        }
+        align_host_env(OMLX_HOST_ENV, &OMLX_HOST_USER_OWNED, base);
+        let status_url = format!("{base}/v1/status");
+        let live_in_flight = match self.http.get(&status_url).send().await {
+            Ok(resp) => match resp.text().await {
+                Ok(body) => goose_sidecar::engine::parse_active_requests(&body)
+                    .map_err(|e| format!("{e:#}")),
+                Err(e) => Err(format!("GET {status_url} body unreadable ({e})")),
+            },
+            Err(e) => Err(format!("GET {status_url} failed ({e})")),
+        };
+        let live_in_flight = match live_in_flight {
+            Ok(n) => Some(n),
+            Err(err) => {
+                tracing::warn!(
+                    target: "swarm_router",
+                    error = %err,
+                    "MLX engine reported no in-flight count; routing on in-process leases alone"
+                );
+                None
+            }
+        };
         Ok(Servable {
-            live_in_flight: status.active_requests,
-            context_window: status.context_window,
+            live_in_flight,
+            context_window,
         })
     }
+}
+
+/// Where the sidecar node listens: the local manager's base URL while THIS process runs the
+/// engine, else the configured `mlx_engine.port` on loopback (the default port when no block was
+/// written). An unreadable block is a named reason — pointing the probe at the default port would
+/// impersonate a configuration the operator wrote and we could not read.
+fn mlx_base_url(
+    local: &EngineStatus,
+    settings: Result<EngineSettings, ConfigError>,
+) -> Result<String, String> {
+    if local.state == "running" {
+        if let Some(base) = &local.base_url {
+            return Ok(base.clone());
+        }
+    }
+    let port = match settings {
+        Ok(settings) => settings.port,
+        Err(ConfigError::NotFound(_)) => EngineSettings::default().port,
+        Err(e) => {
+            return Err(format!(
+                "the `{MLX_ENGINE_CONFIG_KEY}` config block is unreadable ({e}); the engine's port is unknown"
+            ))
+        }
+    };
+    Ok(format!("http://127.0.0.1:{port}"))
 }
 
 #[async_trait]
@@ -1187,6 +1253,97 @@ devices:
         assert!(matches!(err, ProviderError::ServerError(_)));
         assert!(err.to_string().contains("max concurrent"));
         assert_eq!(router.semaphore(&nodes[0]).available_permits(), 1);
+    }
+
+    /// The base URL rule: a stopped local manager defers to the configured port; no block → the
+    /// engine's default port; an unreadable block is a named reason, never a default.
+    #[tokio::test]
+    async fn mlx_base_url_comes_from_config_when_this_process_runs_no_engine() {
+        let stopped = goose_sidecar::engine::MlxEngineManager::new()
+            .status()
+            .await;
+        assert_eq!(stopped.state, "stopped");
+        let settings = EngineSettings {
+            port: 8090,
+            ..EngineSettings::default()
+        };
+        assert_eq!(
+            mlx_base_url(&stopped, Ok(settings)).unwrap(),
+            "http://127.0.0.1:8090"
+        );
+        assert_eq!(
+            mlx_base_url(&stopped, Err(ConfigError::NotFound("mlx_engine".into()))).unwrap(),
+            format!("http://127.0.0.1:{}", EngineSettings::default().port)
+        );
+        let err = mlx_base_url(
+            &stopped,
+            Err(ConfigError::DeserializeError("port: not a number".into())),
+        )
+        .unwrap_err();
+        assert!(err.contains("unreadable"), "{err}");
+        assert!(err.contains("port: not a number"), "{err}");
+    }
+
+    /// The engine's own HTTP surface decides: a fake engine answering /v1/models + /v1/status is
+    /// servable with its in-flight count and context window; a served-id mismatch and a dead port
+    /// are the named reasons.
+    #[tokio::test]
+    async fn probe_mlx_reads_the_engine_over_http_not_this_processs_manager() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let engine = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"object":"list","data":[{"id":"workhorse-qwen3.5-9b-4bit-mlx","object":"model","context_window":262144,"tool_call_parser":"qwen3_coder"}]}"#,
+            ))
+            .mount(&engine)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/status"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"status":"generating","num_running":1,"num_waiting":2}"#),
+            )
+            .mount(&engine)
+            .await;
+        let probe = LiveProbe {
+            http: reqwest::Client::new(),
+            providers: Arc::new(LiveProviders::new()),
+        };
+        let facts = probe
+            .probe_mlx_at(&engine.uri(), "workhorse-qwen3.5-9b-4bit-mlx", "stopped")
+            .await
+            .unwrap();
+        assert_eq!(facts.live_in_flight, Some(3));
+        assert_eq!(facts.context_window, Some(262_144));
+
+        let mismatch = probe
+            .probe_mlx_at(&engine.uri(), "some-other-model", "stopped")
+            .await
+            .unwrap_err();
+        assert!(
+            mismatch.contains(
+                "serves 'workhorse-qwen3.5-9b-4bit-mlx', the device wants 'some-other-model'"
+            ),
+            "{mismatch}"
+        );
+
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
+        };
+        let down = probe
+            .probe_mlx_at(
+                &dead,
+                "workhorse-qwen3.5-9b-4bit-mlx",
+                "this process's manager: stopped",
+            )
+            .await
+            .unwrap_err();
+        assert!(down.contains("MLX engine is not listening on"), "{down}");
+        assert!(down.contains("mount it in the MLX window"), "{down}");
+        assert!(down.contains("this process's manager: stopped"), "{down}");
     }
 
     #[test]

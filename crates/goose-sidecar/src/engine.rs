@@ -668,21 +668,28 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/models body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&body).context("parsing /v1/models body")?;
-        let model = parsed
-            .get("data")
-            .and_then(|d| d.get(0))
-            .with_context(|| format!("/v1/models returned no data entries: {body}"))?;
-        Ok((
-            model.get("id").and_then(|v| v.as_str()).map(str::to_string),
-            model.get("context_window").and_then(|v| v.as_u64()),
-            model
-                .get("tool_call_parser")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-        ))
+        parse_model_info(&body)
     }
+}
+
+/// The first `/v1/models` entry as (served id, context_window, tool_call_parser) — the sidecar
+/// serves one model, so the first entry is the model. Shared with every out-of-process reader of
+/// the same catalog (the swarm chat router), so one parse rule describes the engine.
+pub fn parse_model_info(body: &str) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(body).context("parsing /v1/models body")?;
+    let model = parsed
+        .get("data")
+        .and_then(|d| d.get(0))
+        .with_context(|| format!("/v1/models returned no data entries: {body}"))?;
+    Ok((
+        model.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        model.get("context_window").and_then(|v| v.as_u64()),
+        model
+            .get("tool_call_parser")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    ))
 }
 
 impl Default for MlxEngineManager {

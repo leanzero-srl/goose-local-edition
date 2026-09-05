@@ -24,6 +24,29 @@ error unchanged; the permit rides the stream and frees on drop; ProviderUsage.mo
 served. Out of scope, stated: a mesh PEER's sidecar (loopback-bound; reachable only through the Link mlx proxy) — LM Link
 already fans LM Studio models across machines.
 
+## 2026-09-05 13:xx — LIVE PASS on the packaged app (build 12:56, CDP 9897) — receipts
+- Brand: document.title "Goose Swarm", sidebar wordmark + nav row "Goose Swarm", hub title "Goose Swarm", tabs LeanZero MLX |
+  Cloud Providers | Swarm Settings | LeanZero Link; body innerText has 0 "flock" matches.
+- Migrations FIRED: config `active_provider: omlx → swarm` at launch (desktop migration); `spawn_command …@v0.13.1 → @v0.13.4-lz.1`
+  when the hub loaded settings (goosed WARN "mlx_engine spawn_command was a superseded default"). Spawn-command panel shows the new pin.
+- Mount from the hub on the new pin: running after ~10 s, served alias workhorse-qwen3.5-9b-4bit-mlx, ctx 262,144, hermes, In flight 0,
+  base http://127.0.0.1:8090; /v1/status idle.
+- Chat turn on the Swarm provider (session 20260831_2, window focused): the node counted the request (processed 1 → 2, 6 completion
+  tokens), the reply "swarm ok" rendered, the context pill read 22k / 262k (the pool's window, via the MLX-only context-limit fix).
+- Switch-model dialog in a fresh session: EXACTLY "Goose Swarm — chat…", "Goose Swarm · Build — plan and fan out…", "Amazon Bedrock"
+  (the one configured cloud). No omlx, no "use other provider".
+- Router proof from the CLI (release binary, engine unmounted): `goose run --provider swarm --model swarm -t …` → "Execution error:
+  swarm chat: no node can serve this turn — workhorse-mlx: MLX engine is stopped — mount it in the MLX window." (the named refusal).
+- DEFECT FOUND by the same proof: with the engine MOUNTED by the app's goosed, the CLI (another process) still got "MLX engine is
+  stopped" — probe_mlx read THIS process's MlxEngineManager instead of the engine on the port. Every desktop window has its own goosed,
+  so a second window could not use the node either. Fix in flight: probe the engine over HTTP (/v1/models served ids + context, /v1/status
+  in-flight) at the manager's base_url or the configured mlx_engine port; the manager becomes diagnostic only.
+- Also seen: a RESUMED session created on omlx keeps omlx (sessions carry their provider) → hit :8090 directly with the engine down and
+  failed as a network error; fix in flight (resumed sessions on omlx/lmstudio move to swarm/swarm in the local edition, loudly).
+- Tooling note: cdp-probe can only --eval; typing into the chat needs the WINDOW FOCUSED (execCommand insertText returns false when
+  document.hasFocus() is false) — the first turn worked while focused, later attempts did not send. Not a product defect; the CLI proof
+  covers the provider path.
+
 ## 2026-09-05 — THE NAME IS GOOSE SWARM · RAPID-MLX DRAWN TO UPSTREAM HEAD · BRANCH → MAIN
 - Owner: the product is officially **Goose Swarm**. The 2026-09-02 Flock rename (92e2aa4c5, 91f2d6315) is reversed on every
   rendered label, the provider display name ("Goose Swarm" in the model selector), the sidebar wordmark, the hub title, the CLI
