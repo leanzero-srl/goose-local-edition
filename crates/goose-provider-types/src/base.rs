@@ -814,11 +814,7 @@ mod tests {
             &message.content[1],
             &message.content[2],
         ) {
-            (
-                MessageContent::Thinking(a),
-                MessageContent::Thinking(b),
-                MessageContent::Text(c),
-            ) => {
+            (MessageContent::Thinking(a), MessageContent::Thinking(b), MessageContent::Text(c)) => {
                 assert_eq!(a.thinking, "prior");
                 assert_eq!(
                     a.signature, "",

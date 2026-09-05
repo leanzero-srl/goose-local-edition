@@ -643,7 +643,9 @@ impl From<PromptMessage> for Message {
 
         // Convert and add the content
         let content = match prompt_message.content {
-            PromptMessageContent::Text { text } => MessageContent::text(sanitize_unicode_tags(&text)),
+            PromptMessageContent::Text { text } => {
+                MessageContent::text(sanitize_unicode_tags(&text))
+            }
             PromptMessageContent::Image { image } => {
                 MessageContent::image(image.data.clone(), image.mime_type.clone())
             }

@@ -120,7 +120,7 @@ fn headline(content: &str) -> String {
         return line.to_string();
     }
     let cut: String = line.chars().take(INDEX_HEADLINE_CHARS).collect();
-    let cut = cut.rfind(' ').map_or(cut.as_str(), |i| &cut[..i]);
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
     format!("{cut}…")
 }
 
