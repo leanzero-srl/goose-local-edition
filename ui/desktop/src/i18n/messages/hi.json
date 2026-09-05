@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "नोड"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "अनमाउंट"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
   },

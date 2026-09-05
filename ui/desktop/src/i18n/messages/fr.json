@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nœuds"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "démonté"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
   },

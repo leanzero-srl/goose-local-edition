@@ -631,6 +631,30 @@ function EngineSection(props: EngineSectionProps) {
       value: status?.contextWindow != null ? status.contextWindow.toLocaleString() : <Absent />,
     },
     {
+      // Rapid-MLX's own num_running + num_waiting, read by the sidecar on the status probe. An
+      // absent count is never a fabricated 0: the engine did not say, and `activeRequestsError`
+      // says why — a mute /v1/status is what made the swarm's fleet zone read the node idle
+      // while it generated, with the reason printed nowhere.
+      key: 'inflight',
+      label: 'In flight',
+      value:
+        status?.state !== 'running' ? (
+          <Absent />
+        ) : typeof status.activeRequests === 'number' ? (
+          <span data-testid="mlx-inflight-count">{status.activeRequests}</span>
+        ) : (
+          <span data-testid="mlx-inflight-unknown" className="break-words">
+            unknown{status.activeRequestsError ? ` — ${status.activeRequestsError}` : ''}
+          </span>
+        ),
+      tone:
+        status?.state === 'running' && typeof status.activeRequests !== 'number'
+          ? 'err'
+          : status?.state === 'running' && (status.activeRequests as number) > 0
+            ? 'ok'
+            : undefined,
+    },
+    {
       key: 'memory',
       label: 'Memory headroom',
       value: status ? (

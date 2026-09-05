@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nút"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "đã gỡ"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
   },

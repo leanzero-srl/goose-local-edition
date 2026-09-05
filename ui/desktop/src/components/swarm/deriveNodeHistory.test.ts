@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnLane } from './useSwarmRun';
-import { DIGEST_FRESH_MS, DIGEST_OPEN_CALL_FRESH_MS, deriveNodeHistory } from './useSwarmRun';
+import { DIGEST_FRESH_MS, DIGEST_OPEN_CALL_FRESH_MS, deriveNodeHistory, poolNodeMap } from './useSwarmRun';
 
 /**
  * The cumulative per-node history behind the inspector's folded log — the durable answer to "as soon
@@ -139,5 +139,54 @@ describe('deriveNodeHistory', () => {
       now: NOW,
     });
     expect((history.get('mihai') ?? []).map((h) => h.lane.taskId)).toEqual(['earlier', 'later']);
+  });
+
+  describe('the sidecar model id files under the sidecar node (the pool join, same as deriveFleet)', () => {
+    const MIXED_POOL = [
+      { id: 'workhorse-27b', model_id: 'workhorse-qwen3.8-27b', engine: 'lmstudio', node: 'workhorse' },
+      {
+        id: 'workhorse-mlx',
+        model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+        engine: 'mlx-sidecar',
+        node: 'workhorse-mlx',
+      },
+    ];
+    const MLX_DONE = { ...DONE_DIGEST, model: 'workhorse-qwen3.5-9b-4bit-mlx' };
+
+    it('MLX-only pool: a finished `judge-<task>` call is the MLX node\'s history, not a phantom `workhorse`', () => {
+      const poolNodes = poolNodeMap([{ event: 'pool_resolved', devices: [MIXED_POOL[1]] }]);
+      const history = deriveNodeHistory({
+        laneSources: [],
+        digests: { 'judge-ledgerd-core': MLX_DONE },
+        digestMtimes: { 'judge-ledgerd-core': 1_000 },
+        now: NOW,
+        poolNodes,
+      });
+      expect(Array.from(history.keys())).toEqual(['workhorse-mlx']);
+      expect(history.get('workhorse-mlx')?.[0]?.lane.thinkingBytes).toBe(128_270);
+    });
+
+    it('mixed pool: the sidecar call files under `workhorse-mlx`; `workhorse` has no entry', () => {
+      const poolNodes = poolNodeMap([{ event: 'pool_resolved', devices: MIXED_POOL }]);
+      const history = deriveNodeHistory({
+        laneSources: [],
+        digests: { 'judge-ledgerd-core': MLX_DONE },
+        digestMtimes: { 'judge-ledgerd-core': 1_000 },
+        now: NOW,
+        poolNodes,
+      });
+      expect(history.get('workhorse-mlx')?.[0]?.lane.taskId).toBe('judge-ledgerd-core');
+      expect(history.has('workhorse')).toBe(false);
+    });
+
+    it('without the map the prefix rule files it under `workhorse` — the pre-fix misattribution, pinned', () => {
+      const history = deriveNodeHistory({
+        laneSources: [],
+        digests: { 'judge-ledgerd-core': MLX_DONE },
+        digestMtimes: { 'judge-ledgerd-core': 1_000 },
+        now: NOW,
+      });
+      expect(Array.from(history.keys())).toEqual(['workhorse']);
+    });
   });
 });

@@ -693,6 +693,9 @@ export interface SwarmRunState {
   /** The pool's `{id | model_id → node}` join (poolNodeMap) for feeds keyed by LM Studio model ids —
    *  `useFleetStatus`'s `lms ps` rows. Undefined before the first fold; `{}` for a log with no pool. */
   poolNodes?: Record<string, string>;
+  /** The engine's per-device "why" (deviceNoteMap): exclusions, probe failures, admission refusals,
+   *  load failures — rendered on the fleet rows so a device the engine dropped is never silently absent. */
+  deviceNotes: DeviceNotes;
   /** OPEN supervision spans (judge generations with no lane) — see foldSupervision. */
   supervision: SupervisionSpan[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
@@ -823,6 +826,7 @@ const EMPTY: SwarmRunState = {
   planningLanes: [],
   fixLanes: [],
   pool: [],
+  deviceNotes: { byDevice: {}, fleet: [] },
   supervision: [],
   phaseTodo: [],
   overview: null,
@@ -868,6 +872,17 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
 /** Canonical node label: the prefix before the first '-' or '/' of a model id ('gabee-qwen…' -> 'gabee'). */
 const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
+
+/**
+ * The node a laneless digest belongs to, from its `model` — the pool map first (the engine's own
+ * `node` per device, 748084b97), the prefix only for an id the pool does not carry. The same precedence
+ * `deviceFromModelId` (useFleet.ts) applies to the `lms ps` feed. Measured 2026-09-05 on an MLX-only
+ * pool: the sidecar's `judge-<task>` digest carried `model: 'workhorse-qwen3.5-9b-4bit-mlx'`, the bare
+ * prefix read `workhorse`, no such node was in the pool, and the row was DROPPED — the only device in
+ * the fleet read idle while it generated. In a mixed pool the same call landed on the LM Studio row.
+ */
+const digestDevice = (model: string, poolNodes?: Record<string, string>): string =>
+  (model && poolNodes?.[model]) || shortNode(model);
 
 /**
  * Canonical node labeler: any device or model id -> the node's short name (gabee/mihai/workhorse).
@@ -973,6 +988,144 @@ export function poolNodeMap(events: Array<Record<string, unknown>>): Record<stri
   const canon = emptyNodeCanon();
   for (const e of events) absorbNodeCanon(canon, e);
   return { ...canon.pool, ...canon.devices };
+}
+
+/**
+ * The engine's per-device "why" events — the fleet-truth family that until 2026-09-05 fell into the
+ * fold's `default: break` and rendered NOWHERE: a device the engine excluded from the pool, a sidecar
+ * that served nothing or another alias, a residency probe that failed, an admission refusal, a model
+ * load that failed. Each is a fact about a NODE (or, for a host-level probe, about the fleet), so it is
+ * folded here as a note on that node's fleet row — the row says "excluded — engine not registered"
+ * instead of reading idle or being silently absent — and in buildActivity as a feed line carrying the
+ * payload. Kinds that end a device's participation for the run (`excluded`, `unmounted`,
+ * `other-alias`, `load-failed`) drive the row's STATE label; the rest are past-tense facts shown as text.
+ */
+export type DeviceNoteKind =
+  | 'excluded'
+  | 'unmounted'
+  | 'other-alias'
+  | 'probe-failed'
+  | 'probe-unauthorized'
+  | 'admission-cap'
+  | 'residency-empty'
+  | 'slots-fallback'
+  | 'load-failed';
+export interface DeviceNote {
+  kind: DeviceNoteKind;
+  text: string;
+  seq: number;
+  at?: string;
+}
+export interface DeviceNotes {
+  /** Canonical node name → its notes, in event order. */
+  byDevice: Record<string, DeviceNote[]>;
+  /** Notes about the fleet or a host, not attributable to one node (lm-probe-unauthorized names a
+   *  host; fleet-slots-snapshot-fallback names nothing). */
+  fleet: DeviceNote[];
+}
+
+/** The kinds that END a device's participation in the run — they own the row's state label. */
+export const EXCLUDING_NOTE_KINDS: ReadonlySet<DeviceNoteKind> = new Set<DeviceNoteKind>([
+  'excluded',
+  'unmounted',
+  'other-alias',
+  'load-failed',
+]);
+
+export const emptyDeviceNotes = (): DeviceNotes => ({ byDevice: {}, fleet: [] });
+
+/** `field: value · field: value` over the payload — the event's own fields, nothing invented. */
+export function payloadFields(e: Record<string, unknown>): string {
+  return Object.entries(e)
+    .filter(([k]) => k !== 'event' && k !== 'ts' && k !== 'seq')
+    .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' · ');
+}
+
+/** The engine each pool device runs under (`lmstudio` when the record predates the field). */
+function absorbEngineNodes(into: Record<string, Set<string>>, e: Record<string, unknown>): void {
+  const list = e['event'] === 'run_started' ? e['pool'] : e['event'] === 'pool_resolved' ? e['devices'] : null;
+  for (const p of arr(list)) {
+    const rec = p as Record<string, unknown>;
+    const engine = str(rec['engine']) || 'lmstudio';
+    const node = str(rec['node']) || shortNode(str(rec['model_id'])) || shortNode(str(rec['id']));
+    if (!node) continue;
+    (into[engine] ??= new Set()).add(node);
+  }
+}
+
+export function deviceNoteMap(events: Array<Record<string, unknown>>): DeviceNotes {
+  const canon = emptyNodeCanon();
+  const engineNodes: Record<string, Set<string>> = {};
+  for (const e of events) {
+    absorbNodeCanon(canon, e);
+    absorbEngineNodes(engineNodes, e);
+  }
+  const named = { ...canon.pool, ...canon.devices };
+  const canonOf = (id: string): string => named[id] ?? id;
+  const out = emptyDeviceNotes();
+  const put = (devices: string[], note: DeviceNote) => {
+    if (devices.length === 0) {
+      out.fleet.push(note);
+      return;
+    }
+    for (const d of devices) (out.byDevice[d] ??= []).push(note);
+  };
+  const ofEngine = (engine: string): string[] => Array.from(engineNodes[engine] ?? []).sort();
+  events.forEach((e, seq) => {
+    const at = str(e['ts']) || undefined;
+    const note = (kind: DeviceNoteKind, text: string): DeviceNote => ({ kind, text, seq, at });
+    switch (e['event']) {
+      case 'fleet-probe-failed': {
+        const engine = str(e['engine']);
+        put(ofEngine(engine), note('probe-failed', `residency probe failed on ${engine || 'the engine'} — ${str(e['error']) || 'no error text'}`));
+        break;
+      }
+      case 'lm-probe-unauthorized': {
+        const present = e['token_present'] === true;
+        put([], note('probe-unauthorized', `LM Studio at ${str(e['host']) || '?'} refused the probe — wants an API token (${str(e['token_key']) || 'token'} ${present ? 'present but refused' : 'absent'})`));
+        break;
+      }
+      case 'sidecar-device-excluded': {
+        const id = str(e['id']);
+        put(id ? [canonOf(id)] : [], note('excluded', `excluded from the pool — ${str(e['reason']) || 'no reason given'}`));
+        break;
+      }
+      case 'sidecar-unmounted-and-load-disabled': {
+        const ids = arr(e['devices']).map(String).filter(Boolean);
+        put(ids.map(canonOf), note('unmounted', 'excluded — the mlx-sidecar serves nothing and loading is disabled'));
+        break;
+      }
+      case 'sidecar-device-serves-other-alias': {
+        const id = str(e['id']);
+        put(id ? [canonOf(id)] : [], note('other-alias', `excluded — wants ${str(e['wanted']) || '?'} but the mlx-sidecar serves ${str(e['serving']) || 'nothing'}`));
+        break;
+      }
+      case 'sidecar-admission-cap': {
+        const dev = str(e['device']);
+        const inFlight = num(e['in_flight']);
+        put(dev ? [canonOf(dev)] : [], note('admission-cap', `refused admission for ${str(e['task_id']) || 'a task'} (attempt ${num(e['attempt']) ?? '?'}, ${inFlight ?? '?'} in flight) — re-dispatched after backoff`));
+        break;
+      }
+      case 'fleet-residency-empty': {
+        const engine = str(e['engine']);
+        put(ofEngine(engine), note('residency-empty', `${engine || 'the engine'} reports no resident model`));
+        break;
+      }
+      case 'fleet-slots-snapshot-fallback': {
+        put([], note('slots-fallback', `slot snapshot fell back — ${str(e['reason']) || 'no reason given'} (${num(e['snapshot_len']) ?? '?'} entries)`));
+        break;
+      }
+      case 'lms-load-failed': {
+        const model = str(e['model']);
+        put(model ? [digestDevice(model, named)] : [], note('load-failed', `loading ${model || 'the model'} failed — ${str(e['error']) || 'no error text'}`));
+        break;
+      }
+      default:
+        break;
+    }
+  });
+  return out;
 }
 
 // The engine ships each task's FULL worker spec as `description` — a wall of markdown ("**Subtask: [id] Do X**
@@ -2508,6 +2661,64 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         finished = true;
         break;
       }
+      // The fleet-truth family (deviceNoteMap folds the same events onto the fleet rows). Each line is
+      // the event's own fields; the sub IS the payload, so the row's expand and the Clipped reveal open
+      // the whole of it.
+      case 'fleet-probe-failed': {
+        const t = `Residency probe failed on ${str(e['engine']) || 'an engine'}`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'lm-probe-unauthorized': {
+        const t = `LM Studio at ${str(e['host']) || '?'} refused the probe — API token ${e['token_present'] === true ? 'present but refused' : 'absent'}`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'sidecar-device-excluded': {
+        const t = `${str(e['id']) || 'A device'} excluded from the pool — ${str(e['reason']) || 'no reason given'}`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'sidecar-unmounted-and-load-disabled': {
+        const ids = arr(e['devices']).map(String);
+        const t = `The mlx-sidecar serves nothing and loading is disabled — ${ids.length ? ids.join(', ') : 'its devices'} excluded`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'sidecar-device-serves-other-alias': {
+        const t = `${str(e['id']) || 'A device'} wants ${str(e['wanted']) || '?'} but the mlx-sidecar serves ${str(e['serving']) || 'nothing'} — excluded`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'sidecar-admission-cap': {
+        const t = `${str(e['device']) || 'The sidecar'} refused admission for ${str(e['task_id']) || 'a task'} (${num(e['in_flight']) ?? '?'} in flight) — re-dispatched after backoff`;
+        compact({ kind: 'retry', text: t, tone: 'warn', sub: payloadFields(e) });
+        verbose({ kind: 'retry', text: t, tone: 'warn', sub: payloadFields(e) });
+        break;
+      }
+      case 'fleet-residency-empty': {
+        const t = `${str(e['engine']) || 'An engine'} reports no resident model`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
+      case 'fleet-slots-snapshot-fallback': {
+        const t = `Slot snapshot fell back — ${str(e['reason']) || 'no reason given'}`;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub: payloadFields(e) });
+        break;
+      }
+      case 'lms-load-failed': {
+        const t = `Loading ${str(e['model']) || 'a model'} failed`;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub: payloadFields(e) });
+        break;
+      }
       case 'run_overview': {
         overview = {
           generated: e['generated'] === true,
@@ -3649,6 +3860,10 @@ export function deriveFleet(args: {
   /** The run directory, for channel-memory scoping of the laneless digest rows — the fifth
    *  lane-building path, joined here outside the fold. Same contract as finishFold's scope. */
   scope?: string;
+  /** The pool's `{id | model_id → node}` join (poolNodeMap). A laneless digest names its node only by
+   *  `model`; the sidecar's `workhorse-qwen3.5-9b-4bit-mlx` must land on `workhorse-mlx`, which the
+   *  prefix rule alone cannot produce — see `digestDevice`. */
+  poolNodes?: Record<string, string>;
 }): {
   devices: string[];
   workingByDevice: Map<string, TurnLane>;
@@ -3755,7 +3970,7 @@ export function deriveFleet(args: {
   for (const [key, raw] of Object.entries(args.digests)) {
     if (represented.has(key)) continue;
     const d = raw as (Digest & { model?: string }) | undefined;
-    const device = shortNode(str(d?.model));
+    const device = digestDevice(str(d?.model), args.poolNodes);
     if (!device || !devices.includes(device)) continue;
     const open = d?.phase !== 'done';
     // The digest's OWN open-call record (a provisional `ok: null` tail entry the engine appends while a
@@ -3876,6 +4091,8 @@ export function deriveNodeHistory(args: {
    *  derivations agree about which side of the freshness window a digest is on. */
   now: number;
   scope?: string;
+  /** Same pool join deriveFleet takes — a finished sidecar call must file under `workhorse-mlx`. */
+  poolNodes?: Record<string, string>;
 }): Map<string, NodeHistoryEntry[]> {
   const byDevice = new Map<string, NodeHistoryEntry[]>();
   const add = (device: string, entry: NodeHistoryEntry) => {
@@ -3905,7 +4122,7 @@ export function deriveNodeHistory(args: {
       if (fresh) continue;
       interrupted = true;
     }
-    const device = shortNode(str(d?.model));
+    const device = digestDevice(str(d?.model), args.poolNodes);
     if (!device) continue;
     add(device, {
       lane: {
@@ -5070,6 +5287,7 @@ export function useSwarmRun(
           fixLanes,
           pool: resolvePool(data.events),
           poolNodes: poolNodeMap(data.events),
+          deviceNotes: deviceNoteMap(data.events),
           supervision: foldSupervision(data.events),
           phaseTodo,
           overview,

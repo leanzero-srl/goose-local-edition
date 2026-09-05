@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nod"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "tidak dipasang"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
   },

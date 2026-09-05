@@ -68,15 +68,80 @@ describe('NodesStrip', () => {
     expect(screen.getByText('Z.ai')).toBeInTheDocument();
   });
 
-  it('shows IDLE for the mlx node when the engine is stopped', async () => {
+  it('shows UNMOUNTED for the mlx node when the engine is stopped — an engine that is not up is not "idle"', async () => {
     mlxStatus = { state: 'stopped', restartRequired: false, availableMemoryGb: 32, totalMemoryGb: 64 };
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('nodes-strip-occupancy-workhorse-mlx')).toHaveTextContent('unmounted')
+    );
+    const occ = screen.getByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(occ).not.toHaveTextContent('idle');
+    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('stopped');
+    expect(dotIn(screen.getByTestId('nodes-strip-row-workhorse-mlx'))?.getAttribute('data-live')).toBeNull();
+  });
+
+  it('shows IDLE only for a RUNNING engine that serves no model', async () => {
+    mlxStatus = { state: 'running', restartRequired: false, availableMemoryGb: 32, totalMemoryGb: 64 };
     mount();
     await waitFor(() =>
       expect(screen.getByTestId('nodes-strip-occupancy-workhorse-mlx')).toHaveTextContent('idle')
     );
-    const occ = screen.getByTestId('nodes-strip-occupancy-workhorse-mlx');
-    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('stopped');
-    expect(dotIn(screen.getByTestId('nodes-strip-row-workhorse-mlx'))?.getAttribute('data-live')).toBeNull();
+  });
+
+  it('FAILED carries the engine\'s own reason: lastError first', async () => {
+    mlxStatus = {
+      state: 'failed',
+      restartRequired: false,
+      availableMemoryGb: 32,
+      totalMemoryGb: 64,
+      lastError: 'rapid-mlx exited with code 1: Metal device lost',
+      gateMessage: 'BLOCK: not enough memory',
+      probeError: 'GET /v1/models refused',
+    };
+    mount();
+    const occ = await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(occ).toHaveTextContent('failed');
+    expect(chipsIn(occ)[0]?.getAttribute('data-tone')).toBe('err');
+    expect(screen.getByTestId('nodes-strip-occupancy-detail')).toHaveTextContent(
+      'rapid-mlx exited with code 1: Metal device lost'
+    );
+  });
+
+  it('FAILED without lastError falls to the gate refusal, then the probe error — never a bare chip when a reason exists', async () => {
+    mlxStatus = {
+      state: 'failed',
+      restartRequired: false,
+      availableMemoryGb: 32,
+      totalMemoryGb: 64,
+      gateMessage: 'BLOCK: model needs 24.0 GB but only 9.1 GB is free',
+      probeError: 'GET /v1/models refused',
+    };
+    mount();
+    await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(screen.getByTestId('nodes-strip-occupancy-detail')).toHaveTextContent(
+      'BLOCK: model needs 24.0 GB but only 9.1 GB is free'
+    );
+  });
+
+  it('FAILED with only a probe error shows the probe error', async () => {
+    mlxStatus = {
+      state: 'failed',
+      restartRequired: false,
+      availableMemoryGb: 32,
+      totalMemoryGb: 64,
+      probeError: 'GET /v1/models refused',
+    };
+    mount();
+    await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(screen.getByTestId('nodes-strip-occupancy-detail')).toHaveTextContent('GET /v1/models refused');
+  });
+
+  it('FAILED with no reason anywhere in the status is a bare chip — nothing invented', async () => {
+    mlxStatus = { state: 'failed', restartRequired: false, availableMemoryGb: 32, totalMemoryGb: 64 };
+    mount();
+    const occ = await screen.findByTestId('nodes-strip-occupancy-workhorse-mlx');
+    expect(occ).toHaveTextContent('failed');
+    expect(screen.queryByTestId('nodes-strip-occupancy-detail')).toBeNull();
   });
 
   it('shows SERVING with the served model when the engine runs', async () => {
