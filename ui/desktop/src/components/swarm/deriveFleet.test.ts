@@ -722,6 +722,70 @@ describe('deriveFleet × the mixed pool — a name the pool knows is compared ve
   });
 });
 
+describe('deriveFleet × laneless digests — the sidecar model id lands on the sidecar row', () => {
+  // The MLX-only pool measured 2026-09-05 on this machine: ONE device, engine mlx-sidecar, zero LM Studio.
+  const MLX_ONLY_POOL = [MIXED_POOL[2]];
+  const NOW = 10 * 60_000;
+  const judgeDigest = {
+    model: 'workhorse-qwen3.5-9b-4bit-mlx',
+    phase: 'processing',
+    calls: [{ ok: null }],
+  };
+
+  it('MLX-only pool: a `judge-<task>` digest whose model is the -mlx id shows on the ONLY row (it was dropped)', () => {
+    const events = [{ event: 'pool_resolved', devices: MLX_ONLY_POOL, worker_count: 1 }];
+    const fleet = deriveFleet({
+      pool: resolvePool(events),
+      laneSources: [],
+      digests: { 'judge-ledgerd-core': judgeDigest },
+      digestMtimes: { 'judge-ledgerd-core': NOW - 1_000 },
+      now: NOW,
+      poolNodes: poolNodeMap(events),
+    });
+    expect(fleet.devices).toEqual(['workhorse-mlx']);
+    expect(fleet.workingByDevice.get('workhorse-mlx')?.taskId).toBe('judge-ledgerd-core');
+  });
+
+  it('without the pool map the same digest derives `workhorse`, which is not a pool node — the drop that hid the MLX node', () => {
+    const fleet = deriveFleet({
+      pool: ['workhorse-mlx'],
+      laneSources: [],
+      digests: { 'judge-ledgerd-core': judgeDigest },
+      digestMtimes: { 'judge-ledgerd-core': NOW - 1_000 },
+      now: NOW,
+    });
+    expect(fleet.workingByDevice.size).toBe(0);
+  });
+
+  it('mixed pool: the activity lands on `workhorse-mlx`; the LM Studio `workhorse` row stays idle', () => {
+    const events = [{ event: 'pool_resolved', devices: MIXED_POOL, worker_count: 3 }];
+    const fleet = deriveFleet({
+      pool: resolvePool(events),
+      laneSources: [],
+      digests: { 'judge-ledgerd-core': judgeDigest },
+      digestMtimes: { 'judge-ledgerd-core': NOW - 1_000 },
+      now: NOW,
+      poolNodes: poolNodeMap(events),
+    });
+    expect(fleet.workingByDevice.get('workhorse-mlx')?.taskId).toBe('judge-ledgerd-core');
+    expect(fleet.workingByDevice.has('workhorse')).toBe(false);
+  });
+
+  it('an LM Studio model id in the same mixed pool still lands on `workhorse`', () => {
+    const events = [{ event: 'pool_resolved', devices: MIXED_POOL, worker_count: 3 }];
+    const fleet = deriveFleet({
+      pool: resolvePool(events),
+      laneSources: [],
+      digests: { 'verify::api': { ...judgeDigest, model: 'workhorse-qwen3.8-27b' } },
+      digestMtimes: { 'verify::api': NOW - 1_000 },
+      now: NOW,
+      poolNodes: poolNodeMap(events),
+    });
+    expect(fleet.workingByDevice.get('workhorse')?.taskId).toBe('verify::api');
+    expect(fleet.workingByDevice.has('workhorse-mlx')).toBe(false);
+  });
+});
+
 describe('run_started — the header node list reads the engine\'s own `node` per device', () => {
   it('names the sidecar `workhorse-mlx` beside `workhorse` (three nodes, not two)', () => {
     const { meta, verbose } = buildActivity([{ event: 'run_started', pool: MIXED_POOL, prompt: 'x' }]);

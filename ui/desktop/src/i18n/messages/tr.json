@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Düğümler"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "bağlı değil"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
   },

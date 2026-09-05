@@ -334,6 +334,38 @@ describe('MlxEngineView engine tab', () => {
     unmount();
   });
 
+  it('shows the in-flight count the engine reported (Rapid-MLX num_running + num_waiting)', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN, activeRequests: 3 }));
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(screen.getByTestId('mlx-inflight-count')).toHaveTextContent('3'));
+    expect(screen.getByText('In flight')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('a running engine with NO count says UNKNOWN and prints activeRequestsError verbatim — never a fabricated 0', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'running',
+        modelId: QWEN,
+        activeRequestsError: 'GET http://127.0.0.1:9600/v1/status returned HTTP 401',
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const unknown = await screen.findByTestId('mlx-inflight-unknown');
+    expect(unknown).toHaveTextContent('unknown — GET http://127.0.0.1:9600/v1/status returned HTTP 401');
+    expect(screen.queryByTestId('mlx-inflight-count')).toBeNull();
+    unmount();
+  });
+
+  it('a stopped engine has no in-flight row value — an absent fact, not unknown', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('stopped'));
+    expect(screen.queryByTestId('mlx-inflight-unknown')).toBeNull();
+    expect(screen.queryByTestId('mlx-inflight-count')).toBeNull();
+    unmount();
+  });
+
   it('renders a BLOCK gate message verbatim as a solid red banner', async () => {
     const gate =
       'BLOCK: model needs 24.0 GB but only 9.1 GB of unified memory is free — close something or pick a smaller quant';

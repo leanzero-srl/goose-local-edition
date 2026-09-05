@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "ノード"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "アンマウント済み"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
   },

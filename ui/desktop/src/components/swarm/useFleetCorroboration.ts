@@ -45,6 +45,13 @@ export interface FleetCorroboration {
   busyNodes: string[];
   /** Local sidecar devices whose engine answered `running` — in reportedNodes; busy only by its count. */
   mlxNodes: string[];
+  /** Sidecar nodes whose engine is RUNNING but did not say whether anything is in flight — no
+   *  `activeRequests` on the status (an older agent, or a refused `/v1/status` probe). The node is
+   *  neither idle nor busy: it is UNKNOWN, and the fleet zone must say so rather than read idle. */
+  busyUnknownNodes: string[];
+  /** The engine's own reason for the unknown, verbatim (`activeRequestsError`); undefined when the
+   *  status simply carried no count. */
+  busyUnknownReason?: string;
 }
 
 const BUSY_STATES: ReadonlySet<string> = new Set(['generating', 'processingPrompt']);
@@ -52,6 +59,18 @@ const BUSY_STATES: ReadonlySet<string> = new Set(['generating', 'processingPromp
 function localSidecarRows(cfg: SwarmConfig | null): SwarmDeviceRow[] {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
   return rows.filter((d) => d.engine === 'mlx-sidecar' && d.enabled !== false && !d.host);
+}
+
+/**
+ * Whether `lms ps` has anything to report on: true unless the config declares devices and EVERY
+ * enabled one is an mlx-sidecar. Measured 2026-09-05 on this machine (one sidecar device, zero LM
+ * Studio devices): the feed spawned `lms ps` every 1.5 s for a fleet that had no LM Studio node. An
+ * absent or empty device list is the legacy LM Studio discovery pool and keeps the probe.
+ */
+export function lmStudioFeedWanted(cfg: SwarmConfig | null): boolean {
+  const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
+  const enabled = rows.filter((d) => d.enabled !== false);
+  return enabled.length === 0 || enabled.some((d) => d.engine !== 'mlx-sidecar');
 }
 
 /** The configured local sidecar devices under the run's canonical node names — `workhorse-mlx` when
@@ -68,24 +87,32 @@ export function useFleetCorroboration(
   pollMs = 1500,
   poolNodes?: Record<string, string>
 ): FleetCorroboration {
-  const nodeStatus = useFleetStatus(pollMs, true, poolNodes);
-
   // The configured local sidecar devices, read once per mount: adding a device mid-run is a config
-  // edit, and the next mount sees it. Unreadable config means no sidecar feed — no fabricated device.
+  // edit, and the next mount sees it. Unreadable config means no sidecar feed — no fabricated device —
+  // and keeps the LM Studio probe (an unreadable config cannot prove the fleet has no LM Studio node).
   const [sidecarRows, setSidecarRows] = useState<SwarmDeviceRow[]>([]);
+  // `null` until the config has answered: the first `lms ps` waits for the one read that can say
+  // whether an LM Studio node exists at all, so an MLX-only pool never spawns it even once.
+  const [lmsWanted, setLmsWanted] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
     void acpReadConfig('swarm', false)
       .then((raw) => {
-        if (alive) setSidecarRows(localSidecarRows((raw as SwarmConfig | null) ?? null));
+        if (!alive) return;
+        const cfg = (raw as SwarmConfig | null) ?? null;
+        setSidecarRows(localSidecarRows(cfg));
+        setLmsWanted(lmStudioFeedWanted(cfg));
       })
       .catch(() => {
-        if (alive) setSidecarRows([]);
+        if (!alive) return;
+        setSidecarRows([]);
+        setLmsWanted(true);
       });
     return () => {
       alive = false;
     };
   }, []);
+  const nodeStatus = useFleetStatus(pollMs, lmsWanted === true, poolNodes);
   // The names are re-joined whenever the pool map arrives or changes (the first fold lands after the
   // config read), but the fold hands a fresh map object every tick, so the ARRAY identity is pinned to
   // its content: the memo below and the poll's `enabled` flag only move when a name actually does.
@@ -98,7 +125,10 @@ export function useFleetCorroboration(
   const { status: mlx } = useMlxEngineStatusPoll(sidecarNames.length > 0);
   const mlxReplied = mlx?.state === 'running' && !mlx.probeError;
   // Busy needs the count ITSELF: `undefined` is the engine not saying (never treated as 0).
-  const mlxBusy = mlxReplied && typeof mlx.activeRequests === 'number' && mlx.activeRequests > 0;
+  const mlxCounted = mlxReplied && typeof mlx.activeRequests === 'number';
+  const mlxBusy = mlxCounted && (mlx.activeRequests as number) > 0;
+  const mlxBusyUnknown = mlxReplied && !mlxCounted;
+  const mlxBusyUnknownReason = mlxBusyUnknown ? mlx.activeRequestsError : undefined;
 
   return useMemo(() => {
     const mlxNodes = mlxReplied ? sidecarNames : [];
@@ -112,6 +142,8 @@ export function useFleetCorroboration(
       reportedNodes: Array.from(reported).sort(),
       busyNodes,
       mlxNodes,
+      busyUnknownNodes: mlxBusyUnknown ? mlxNodes : [],
+      busyUnknownReason: mlxBusyUnknownReason,
     };
-  }, [nodeStatus, mlxReplied, mlxBusy, sidecarNames]);
+  }, [nodeStatus, mlxReplied, mlxBusy, mlxBusyUnknown, mlxBusyUnknownReason, sidecarNames]);
 }

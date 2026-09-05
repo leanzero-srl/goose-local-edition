@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Node"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "tidak terpasang"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."
   },

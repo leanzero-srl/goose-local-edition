@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import {
   useSwarmRun,
+  EXCLUDING_NOTE_KINDS,
   deriveFleet,
   deriveNodeHistory,
   deriveTaskBoard,
@@ -41,6 +42,8 @@ import {
   type TaskBoard,
   type SupervisionSpan,
   type NodeHistoryEntry,
+  type DeviceNote,
+  type DeviceNotes,
   type SwarmRunState,
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
@@ -2381,7 +2384,7 @@ const NodeInspector: React.FC<{
   // exact input measured at 354ms per scan. Length is identity on an append-only channel; the lane key
   // rides the deps so another lane's equal length can never serve a stale collapse.
   const thinkSource = inspectorThinkingText(lane ?? {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   const rawThink = useMemo(
     () => collapseRepeats(tailOf(thinkSource, REPEAT_SCAN_CHARS)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2731,12 +2734,31 @@ function fmtChars(n: number | undefined): string {
  *  read: a supervising lane is the accent (the judge acts on the run), a worker lane the warn amber of
  *  running work, a node LM Studio reports busy with no lane on disk is the ok green of a live generation,
  *  and a dead/ended run freezes every node on the stopped slate — never a spinner on a non-live run. */
-function fleetNodeState(
+/** The state label a note owns: the kinds that END a device's run participation (deviceNoteMap). */
+const NOTE_STATE_LABEL: Partial<Record<DeviceNote['kind'], string>> = {
+  excluded: 'excluded',
+  unmounted: 'unmounted',
+  'other-alias': 'wrong alias',
+  'load-failed': 'load failed',
+};
+
+export function fleetNodeState(
   lane: TurnLane | undefined,
   live: boolean,
-  lmsState: string | undefined
+  lmsState: string | undefined,
+  facts?: {
+    /** The engine's own "why" for this device (deviceNoteMap) — an excluding kind owns the label. */
+    note?: DeviceNote;
+    /** The sidecar is running but did not say what is in flight (useFleetCorroboration): neither
+     *  idle nor busy — UNKNOWN, and the row says so instead of reading idle. */
+    busyUnknown?: boolean;
+  }
 ): { tone: Tone; label: string; live: boolean } {
-  if (!live) return { tone: 'stopped', label: lane ? 'stopped' : 'idle', live: false };
+  const excluding = facts?.note && EXCLUDING_NOTE_KINDS.has(facts.note.kind) ? facts.note : undefined;
+  if (!live) {
+    if (excluding && !lane) return { tone: 'err', label: NOTE_STATE_LABEL[excluding.kind] ?? 'excluded', live: false };
+    return { tone: 'stopped', label: lane ? 'stopped' : 'idle', live: false };
+  }
   if (lane) {
     if (lane.phase === 'supervision' || lane.supervision === true)
       return { tone: 'accent', label: 'supervising', live: true };
@@ -2745,6 +2767,8 @@ function fleetNodeState(
   }
   if (lmsState === 'generating' || lmsState === 'processingPrompt')
     return { tone: 'ok', label: 'generating', live: true };
+  if (excluding) return { tone: 'err', label: NOTE_STATE_LABEL[excluding.kind] ?? 'excluded', live: false };
+  if (facts?.busyUnknown) return { tone: 'warn', label: 'in flight unknown', live: false };
   return { tone: 'stopped', label: 'idle', live: false };
 }
 
@@ -2777,6 +2801,11 @@ const FleetStrip: React.FC<{
   /** The loaded plan: a lane's `description` is cleanTaskTitle's 120-char clip of the task's brief, so
    *  the cell's door opens on the plan's own text. */
   plan?: PlanTask[];
+  /** The engine's per-device "why" (deviceNoteMap) — shown on the row instead of idle/absence. */
+  deviceNotes?: DeviceNotes;
+  /** Sidecar nodes whose engine is running but reported no in-flight count (useFleetCorroboration). */
+  busyUnknownNodes?: string[];
+  busyUnknownReason?: string;
 }> = ({
   deviceOrder,
   runningByDevice,
@@ -2788,6 +2817,9 @@ const FleetStrip: React.FC<{
   historyByDevice,
   runDir,
   plan,
+  deviceNotes,
+  busyUnknownNodes,
+  busyUnknownReason,
 }) => {
   // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
   // which made the panel least readable exactly when a node was busiest.
@@ -2841,7 +2873,10 @@ const FleetStrip: React.FC<{
               const nodeHistory = historyByDevice.get(device) ?? [];
               const canExpand = (!!lane && fullGen.length > 0) || nodeHistory.length > 0;
               const lmsState = nodeStatus[short];
-              const state = fleetNodeState(lane, live, lmsState);
+              const notes = deviceNotes?.byDevice[device] ?? [];
+              const lastNote = notes.length ? notes[notes.length - 1] : undefined;
+              const busyUnknown = !lane && (busyUnknownNodes ?? []).includes(device);
+              const state = fleetNodeState(lane, live, lmsState, { note: lastNote, busyUnknown });
               const supervising = !!lane && (lane.phase === 'supervision' || lane.supervision === true);
               const openPrimary = () => setInspect({ device, taskId: lane?.taskId ?? '' });
               const siblings = lane ? (alsoRunningByDevice.get(device) ?? []) : [];
@@ -3112,6 +3147,43 @@ const FleetStrip: React.FC<{
                               generating — no lane on disk for this call yet
                             </span>
                           </Tip>
+                        ) : lastNote ? (
+                          // The engine's own reason this device sits without work — an exclusion, a failed
+                          // probe, a refused admission — in the engine's words, with the reveal for the
+                          // whole of it. Before this the device read "idle" or had no row at all.
+                          <span
+                            data-testid="fleet-node-why"
+                            data-note-kind={lastNote.kind}
+                            className={cx(
+                              'flex min-h-5 min-w-0 items-center gap-1.5',
+                              EXCLUDING_NOTE_KINDS.has(lastNote.kind) ? TONE_TEXT.err : TONE_TEXT.warn,
+                              WEIGHT.semibold
+                            )}
+                          >
+                            <Clipped
+                              text={lastNote.text}
+                              label="Why"
+                              context={[
+                                { label: 'node', value: short },
+                                { label: 'event', value: lastNote.kind },
+                              ]}
+                              className="min-w-0"
+                              testId="fleet-node-why-text"
+                            />
+                          </span>
+                        ) : busyUnknown ? (
+                          <span
+                            data-testid="fleet-node-busy-unknown"
+                            className={cx('flex min-h-5 min-w-0 items-center gap-1.5', TONE_TEXT.warn, WEIGHT.semibold)}
+                          >
+                            <Clipped
+                              text={`in flight: unknown${busyUnknownReason ? ` — ${busyUnknownReason}` : ' — the engine reported no count'}`}
+                              label="In flight"
+                              context={[{ label: 'node', value: short }]}
+                              className="min-w-0"
+                              testId="fleet-node-busy-unknown-text"
+                            />
+                          </span>
                         ) : (
                           <span className="flex min-h-5 items-center gap-1.5 text-lz-ink-3">
                             {live ? 'no task' : '—'}
@@ -3188,6 +3260,30 @@ const FleetStrip: React.FC<{
                 ? ' — on an idle node (the verdict names it when it lands)'
                 : ' — on idle nodes (each verdict names its node when it lands)'}
             </span>
+          </span>
+        </div>
+      ) : null}
+      {deviceNotes && deviceNotes.fleet.length > 0 ? (
+        // Fleet-level facts no single row owns (a host refusing the probe, a slot snapshot fallback) —
+        // said once, in the engine's words, never dropped.
+        <div
+          data-testid="fleet-notes"
+          className={cx('flex items-start gap-2 border-t px-3 py-2 text-lz-body', SURFACE.hairline)}
+        >
+          <AlertTriangle size={12} className={cx('mt-[3px] shrink-0', TONE_TEXT.err)} />
+          <span className="min-w-0 text-lz-ink-2">
+            {deviceNotes.fleet.map((n, i) => (
+              <React.Fragment key={`${n.kind}-${n.seq}`}>
+                {i > 0 ? <span> · </span> : null}
+                <Clipped
+                  text={n.text}
+                  label="Fleet"
+                  context={[{ label: 'event', value: n.kind }]}
+                  className={cx('min-w-0', TONE_TEXT.err, WEIGHT.semibold)}
+                  testId="fleet-notes-text"
+                />
+              </React.Fragment>
+            ))}
           </span>
         </div>
       ) : null}
@@ -5451,6 +5547,9 @@ export const SwarmRunPanel: React.FC<{
     reportedNodes: corroboration.reportedNodes,
     // Channel-memory scope for the laneless digest rows — same discriminant as the hook's fold scope.
     scope: workingDir,
+    // The laneless digests name their node by model id; the pool map is what tells the sidecar's
+    // `…-mlx` model apart from an LM Studio model on the same host (and finds it at all on an MLX-only pool).
+    poolNodes: run.poolNodes,
   });
   // The cumulative per-node call history — the same laneSources and gated digests deriveFleet reads,
   // kept beside it rather than inside it so the NOW derivation and the LOG derivation stay separately
@@ -5463,8 +5562,13 @@ export const SwarmRunPanel: React.FC<{
     // deriveFleet call above already accepts.
     now: Date.now(),
     scope: workingDir,
+    poolNodes: run.poolNodes,
   });
-  const deviceOrder: string[] = fleet.devices;
+  // A device the engine EXCLUDED never reaches pool_resolved, so it has no fleet row from the pool —
+  // its note is what puts it on the board, as "excluded — <reason>" rather than silent absence.
+  const deviceOrder: string[] = Array.from(
+    new Set([...fleet.devices, ...Object.keys(run.deviceNotes.byDevice)])
+  ).sort();
   // The WORK board — the single source of truth for plan / ongoing / done (see deriveTaskBoard).
   const board = deriveTaskBoard({
     plan: run.plan,
@@ -5868,6 +5972,9 @@ export const SwarmRunPanel: React.FC<{
             historyByDevice={nodeHistory}
             runDir={runDir ?? ''}
             plan={run.plan}
+            deviceNotes={run.deviceNotes}
+            busyUnknownNodes={corroboration.busyUnknownNodes}
+            busyUnknownReason={corroboration.busyUnknownReason}
           />
         </div>
       ) : null}

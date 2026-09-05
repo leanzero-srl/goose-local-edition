@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "節點"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "未掛載"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"
   },

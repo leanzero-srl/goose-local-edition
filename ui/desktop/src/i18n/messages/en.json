@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nodes"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "unmounted"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
   },

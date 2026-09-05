@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nodes"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "nicht eingebunden"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."
   },

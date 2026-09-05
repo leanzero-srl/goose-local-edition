@@ -24,6 +24,7 @@ const i18nMsg = defineMessages({
   idle: { id: 'nodesStrip.idle', defaultMessage: 'idle' },
   mounting: { id: 'nodesStrip.mounting', defaultMessage: 'mounting' },
   failed: { id: 'nodesStrip.failed', defaultMessage: 'failed' },
+  unmounted: { id: 'nodesStrip.unmounted', defaultMessage: 'unmounted' },
 });
 
 /** Occupancy is STATE, so it renders in the status triad — never a node hue, never a hand-written hex. */
@@ -32,6 +33,7 @@ const OCCUPANCY_TONE = {
   idle: 'stopped',
   mounting: 'warn',
   failed: 'err',
+  unmounted: 'stopped',
 } as const satisfies Record<string, Tone>;
 
 type Occupancy = keyof typeof OCCUPANCY_TONE;
@@ -57,7 +59,10 @@ const nodeHue = (i: number): NodeIndex => NODE_INDEXES[i % NODE_INDEXES.length];
  * discovery (those rows are legacy and live behind the showLmStudioFleet setting elsewhere).
  *
  * Occupancy is shown only where a LIVE signal exists: the local machine's mlx-sidecar node reads
- * the MLX engine status (running+model = serving, mounting = amber, stopped = idle, failed = red).
+ * the MLX engine status (running+model = serving, running without a model = idle, mounting = amber,
+ * stopped = UNMOUNTED — the engine is not up, which is not the same fact as an idle one — and
+ * failed = red WITH the engine's own reason: `lastError`, else the gate refusal, else the probe error,
+ * verbatim; a "failed" chip with no reason sent the reader to the logs for a fact the status carried).
  * Cloud rows and remote/LM Studio rows get their provider chip and NO invented state — a missing
  * signal renders nothing rather than a guess.
  */
@@ -98,10 +103,12 @@ export default function NodesStrip({ className = '' }: { className?: string }) {
       }
       case 'mounting':
         return { kind: 'mounting' };
-      case 'failed':
-        return { kind: 'failed' };
+      case 'failed': {
+        const detail = mlxStatus.lastError ?? mlxStatus.gateMessage ?? mlxStatus.probeError;
+        return detail ? { kind: 'failed', detail } : { kind: 'failed' };
+      }
       case 'stopped':
-        return { kind: 'idle' };
+        return { kind: 'unmounted' };
       default:
         return null;
     }
@@ -112,6 +119,7 @@ export default function NodesStrip({ className = '' }: { className?: string }) {
     idle: intl.formatMessage(i18nMsg.idle),
     mounting: intl.formatMessage(i18nMsg.mounting),
     failed: intl.formatMessage(i18nMsg.failed),
+    unmounted: intl.formatMessage(i18nMsg.unmounted),
   };
 
   return (

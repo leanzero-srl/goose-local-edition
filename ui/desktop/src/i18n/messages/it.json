@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Nodi"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "smontato"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Il server potrebbe essere in fase di avvio o temporaneamente non disponibile."
   },

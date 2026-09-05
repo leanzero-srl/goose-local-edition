@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "노드"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "마운트 해제됨"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
   },

@@ -12,7 +12,7 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineStatus: (...a: unknown[]) => mockMlxStatus(...a),
 }));
 
-import { localSidecarNames, useFleetCorroboration } from './useFleetCorroboration';
+import { lmStudioFeedWanted, localSidecarNames, useFleetCorroboration } from './useFleetCorroboration';
 
 const electron = () => (window as unknown as { electron: Record<string, unknown> }).electron;
 
@@ -109,6 +109,27 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
     expect(result.current.busyNodes).toEqual(['mihai']);
   });
 
+  it('a running sidecar with NO count is BUSY-UNKNOWN — named, with the engine\'s reason, never read as idle', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    mockMlxStatus.mockResolvedValue({
+      ...RUNNING,
+      activeRequestsError: 'GET http://127.0.0.1:8090/v1/status returned HTTP 401',
+    });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.busyUnknownNodes).toEqual(['workhorse']));
+    expect(result.current.busyUnknownReason).toBe('GET http://127.0.0.1:8090/v1/status returned HTTP 401');
+    expect(result.current.busyNodes).toEqual(['mihai']);
+  });
+
+  it('a count of any kind (0 or more) clears busy-unknown', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    expect(result.current.busyUnknownNodes).toEqual([]);
+    expect(result.current.busyUnknownReason).toBeUndefined();
+  });
+
   it('a stopped or probe-failed engine takes the sidecar OUT of reported — fail safe, no demotion', async () => {
     mockReadConfig.mockResolvedValue(SIDECAR_CFG);
     mockMlxStatus.mockResolvedValue({ ...RUNNING, state: 'stopped' });
@@ -120,7 +141,10 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
 
   it('a REMOTE sidecar (host set) is not corroborated by the local engine and stays out', async () => {
     mockReadConfig.mockResolvedValue({
-      devices: [{ ...SIDECAR_CFG.devices[1], id: 'gabee-mlx', model_id: 'gabee-qwen-mlx', host: 'gabee.local' }],
+      devices: [
+        SIDECAR_CFG.devices[0],
+        { ...SIDECAR_CFG.devices[1], id: 'gabee-mlx', model_id: 'gabee-qwen-mlx', host: 'gabee.local' },
+      ],
     });
     const { result } = renderHook(() => useFleetCorroboration(10_000_000));
     await waitFor(() => expect(result.current.reportedNodes).toEqual(['gabee', 'mihai']));
@@ -249,5 +273,47 @@ describe('deriveFleet × the MLX feed', () => {
       reportedNodes: ['gabee'],
     });
     expect(fleet.workingByDevice.has('workhorse')).toBe(true);
+  });
+});
+
+/**
+ * The `lms ps` probe runs only when the pool has an LM Studio node to report on. Measured 2026-09-05
+ * on an MLX-only machine: `lms ps` spawned every 1.5 s for a fleet with zero LM Studio devices.
+ */
+describe('useFleetCorroboration — `lms ps` is spawned only for a pool that has an LM Studio node', () => {
+  const MLX_ONLY_CFG = { devices: [SIDECAR_CFG.devices[1]] };
+  beforeEach(() => {
+    electron().fleetStatus = vi.fn(async () => ({ 'gabee-qwen3.6-27b': 'idle' }));
+    mockReadConfig.mockReset();
+    mockMlxStatus.mockReset();
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+  });
+  afterEach(() => {
+    delete electron().fleetStatus;
+  });
+
+  it('lmStudioFeedWanted: false only when every enabled device is an mlx-sidecar', () => {
+    expect(lmStudioFeedWanted(MLX_ONLY_CFG)).toBe(false);
+    expect(lmStudioFeedWanted(SIDECAR_CFG)).toBe(true);
+    expect(lmStudioFeedWanted({ devices: [] })).toBe(true);
+    expect(lmStudioFeedWanted(null)).toBe(true);
+    expect(
+      lmStudioFeedWanted({ devices: [{ ...SIDECAR_CFG.devices[0], enabled: false }, SIDECAR_CFG.devices[1]] })
+    ).toBe(false);
+  });
+
+  it('MLX-only pool: the sidecar is reported and `lms ps` is never asked', async () => {
+    mockReadConfig.mockResolvedValue(MLX_ONLY_CFG);
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    expect(result.current.reportedNodes).toEqual(['workhorse']);
+    expect(electron().fleetStatus).not.toHaveBeenCalled();
+  });
+
+  it('mixed pool: `lms ps` runs beside the sidecar poll', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    const { result } = renderHook(() => useFleetCorroboration(10_000_000));
+    await waitFor(() => expect(result.current.reportedNodes).toEqual(['gabee', 'workhorse']));
+    expect(electron().fleetStatus).toHaveBeenCalled();
   });
 });

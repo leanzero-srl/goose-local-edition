@@ -2519,6 +2519,9 @@
   "nodesStrip.title": {
     "defaultMessage": "Узлы"
   },
+  "nodesStrip.unmounted": {
+    "defaultMessage": "отключено"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
   },
