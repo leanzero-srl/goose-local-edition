@@ -21303,11 +21303,34 @@ impl PreReviewer for GooseAgentDispatcher {
             inflight.insert(q.to_string_lossy().to_string());
             q
         };
-        let question = std::fs::read_to_string(&q_path).unwrap_or_default();
         let stem = q_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "question.txt".to_string());
+        let adir = self.working_dir.join(".swarm").join("answers");
+        // B2 (gate 1): an unreadable question file used to dispatch an EMPTY operator question
+        // to the model and hand back an answer to nothing. Now the model is not called; the
+        // reply file — the answered-marker, so the tick cannot re-pick it forever — states the
+        // read error, and the event names the file.
+        let question = match std::fs::read_to_string(&q_path) {
+            Ok(q) => q,
+            Err(e) => {
+                let reply = format!("(question file unreadable: {e})");
+                let _ = std::fs::create_dir_all(&adir);
+                let _ = std::fs::write(adir.join(&stem), &reply);
+                self.events.write_value(serde_json::json!({
+                    "event": "ask_question_unreadable",
+                    "file": stem,
+                    "path": q_path.display().to_string(),
+                    "error": e.to_string(),
+                }));
+                self.qa_inflight
+                    .lock()
+                    .unwrap()
+                    .remove(&q_path.to_string_lossy().to_string());
+                return;
+            }
+        };
         let system = "You are the SUPERVISOR of a running multi-agent code build. The OPERATOR \
             (the human who started the run) asked a question mid-run. Answer it directly and \
             briefly from the run state you are given — what is done, running, pending, failed — \
@@ -21329,7 +21352,6 @@ impl PreReviewer for GooseAgentDispatcher {
             .ok()
             .and_then(|o| supervised_reply_text(&o.text).ok())
             .unwrap_or_else(|| "(the answerer failed — ask again)".to_string());
-        let adir = self.working_dir.join(".swarm").join("answers");
         let _ = std::fs::create_dir_all(&adir);
         let _ = std::fs::write(adir.join(&stem), &reply);
         self.events.write_value(serde_json::json!({
@@ -22931,8 +22953,16 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
 }
 
 /// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
-/// twin gets the source to read but the copy stays cheap. Best-effort — an unreadable entry is skipped, never
-/// fatal. Used only on the speculative path (GOOSE_SWARM_SPECULATE); never touches the real tree.
+/// twin gets the source to read but the copy stays cheap. Used on the speculative/REPAIR-shard path
+/// (`make_shadow`) and for `entry_help`'s throwaway snapshot; never touches the real tree.
+///
+/// B1 (gate 1): a failed copy PROPAGATES. Before this the recursion and the per-file copy were
+/// `let _ =`, so a shadow with a missing subtree returned Ok and the twin built against a partial
+/// tree — while `make_shadow`'s documented bail and `run_task_inner`'s
+/// `Transient("speculative shadow setup failed")` were unreachable. The one tolerated miss is a
+/// file that VANISHED between the directory listing and its copy (NotFound): the source tree is
+/// alive under other lanes, and a snapshot of a tree in motion legitimately lacks a file that no
+/// longer exists — that is a fact about the tree, not a failure of the copy.
 fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
     const SKIP: &[&str] = &[
         "node_modules",
@@ -22953,12 +22983,17 @@ fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
         let from = entry.path();
         let to = dst.join(&name);
         match entry.file_type() {
-            Ok(ft) if ft.is_dir() => {
-                let _ = copy_tree_excluding(&from, &to);
-            }
-            Ok(ft) if ft.is_file() => {
-                let _ = std::fs::copy(&from, &to);
-            }
+            Ok(ft) if ft.is_dir() => copy_tree_excluding(&from, &to)?,
+            Ok(ft) if ft.is_file() => match std::fs::copy(&from, &to) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(std::io::Error::new(
+                        e.kind(),
+                        format!("copy {} -> {}: {e}", from.display(), to.display()),
+                    ))
+                }
+            },
             _ => {} // skip symlinks / other
         }
     }
