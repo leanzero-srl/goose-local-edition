@@ -134,16 +134,6 @@ pub struct Node {
     pub spec: TaskSpec,
     pub indegree_remaining: usize,
     pub fan_out: usize,
-    /// The plan's own SIZE signal for this task, the unit of the critical-path order (VA-113): the
-    /// spec sections the task claims when the plan JSON carries `weight` (the CLI writes each
-    /// task's measured `sections` there), otherwise `derived_weight` — owned files × difficulty
-    /// rank — so a task the split or a splice created without a section count still ranks by the
-    /// facts it does carry. Never a wall-clock estimate: that would be invented data.
-    pub weight: u32,
-    /// Position in the plan (load order; a spliced task appends). The LAST tie-break of the
-    /// dispatch order — the planner's sequence, not the alphabet (r6h's alphabet put
-    /// `console-page` ahead of `webhooks-workflow` at the exact moment the chain needed the latter).
-    pub plan_index: usize,
     pub state: TaskState,
     pub attempts: u32,
     pub result: Option<String>,
@@ -158,25 +148,11 @@ pub struct Dag {
     pub dependents: HashMap<TaskId, Vec<TaskId>>,
 }
 
-/// The size a task ranks by when the plan carries no measured section count for it: owned files ×
-/// difficulty rank (hard 2, easy 1), floor 1. Files are the plan's only per-task volume fact besides
-/// sections, and difficulty is its only intensity fact; a file-less task (the join) is 1 × rank so it
-/// adds the same small constant to every chain that ends in it. This is a DERIVATION from the plan's
-/// facts, not a default: `dispatch_order` prints every weight it ranked by, so a plan that never
-/// wrote `weight` is readable as such in the jsonl.
-pub fn derived_weight(difficulty: Difficulty, owned_files: &[String]) -> u32 {
-    let rank = match difficulty {
-        Difficulty::Hard => 2,
-        Difficulty::Easy => 1,
-    };
-    (owned_files.len().max(1) as u32) * rank
-}
-
 impl Dag {
     /// Build + validate the DAG from specs. Errors on duplicate ids, unknown deps, or cycles.
     pub fn from_specs(specs: Vec<TaskSpec>) -> Result<Self> {
         let mut tasks: HashMap<TaskId, Node> = HashMap::new();
-        for (plan_index, spec) in specs.into_iter().enumerate() {
+        for spec in specs {
             if tasks.contains_key(&spec.id) {
                 bail!("duplicate task id: {}", spec.id);
             }
@@ -186,8 +162,6 @@ impl Dag {
                 Node {
                     indegree_remaining: indegree,
                     fan_out: 0,
-                    weight: derived_weight(spec.difficulty, &spec.owned_files),
-                    plan_index,
                     state: if indegree == 0 {
                         TaskState::Ready
                     } else {
@@ -274,28 +248,8 @@ impl Dag {
     /// Callers that can answer "does this module's stub parse" expand via
     /// `from_planner_json_with` AFTER the contracts freeze; this bare form parses only.
     pub fn from_planner_json(json: &str) -> Result<Self> {
-        let parsed = parse_plan_json(json)?;
-        let weights: Vec<(TaskId, u32)> = parsed
-            .iter()
-            .filter_map(|(t, w)| w.map(|w| (t.id.clone(), w)))
-            .collect();
-        let mut dag = Dag::from_specs(parsed.into_iter().map(|(t, _)| t).collect())?;
-        dag.apply_plan_weights(&weights);
-        Ok(dag)
-    }
-
-    /// Overwrite the derived weight with the plan's MEASURED one (`weight` in the plan JSON, the
-    /// CLI's per-task spec-section count) wherever the plan carries a positive value; a task the
-    /// plan did not measure keeps `derived_weight`. Zero is not "unknown" here — it is refused,
-    /// because a zero-weight task would sort behind every other ready task for no measured reason.
-    pub fn apply_plan_weights(&mut self, weights: &[(TaskId, u32)]) {
-        for (id, w) in weights {
-            if *w > 0 {
-                if let Some(n) = self.tasks.get_mut(id) {
-                    n.weight = *w;
-                }
-            }
-        }
+        let specs = specs_from_plan_json(json)?;
+        Dag::from_specs(specs)
     }
 
     /// F804/F809: parse AND expand, with each module's slots taken FROM ITS OWN STUB. The
@@ -308,14 +262,10 @@ impl Dag {
         json: &str,
         stub_slots: &dyn Fn(&str) -> Option<Vec<String>>,
     ) -> Result<Self> {
-        let parsed = parse_plan_json(json)?;
-        let weights: Vec<(TaskId, u32)> = parsed
-            .iter()
-            .filter_map(|(t, w)| w.map(|w| (t.id.clone(), w)))
-            .collect();
+        let parsed = specs_from_plan_json(json)?;
         let specs = parsed
             .into_iter()
-            .map(|(mut t, _)| {
+            .map(|mut t| {
                 if !t.subsplit.is_empty() {
                     match stub_slots(&t.id) {
                         Some(names) if names.len() >= 2 => {
@@ -327,9 +277,7 @@ impl Dag {
                 t
             })
             .collect();
-        let mut dag = Dag::from_specs(expand_subsplits(specs))?;
-        dag.apply_plan_weights(&weights);
-        Ok(dag)
+        Dag::from_specs(expand_subsplits(specs))
     }
 
     /// Splice additional specs into a LIVE dag (the merger's gap door, `splice_merge_gaps`; the
@@ -429,14 +377,11 @@ impl Dag {
                 TaskState::Pending
             };
             wiring.push((s.id.clone(), s.deps.clone()));
-            let plan_index = self.tasks.len();
             self.tasks.insert(
                 s.id.clone(),
                 Node {
                     indegree_remaining: indeg_remaining,
                     fan_out: 0,
-                    weight: derived_weight(s.difficulty, &s.owned_files),
-                    plan_index,
                     state,
                     attempts: 0,
                     result: None,
@@ -477,14 +422,6 @@ pub fn tasks_owning_nothing(specs: &[TaskSpec]) -> Vec<String> {
 
 /// Parse the planner's `{ "subtasks": [...] }` JSON into specs.
 pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
-    Ok(parse_plan_json(json)?.into_iter().map(|(t, _)| t).collect())
-}
-
-/// Each plan task with the plan's measured `weight` for it, when the plan wrote one (the CLI's
-/// per-task spec-section count, VA-113). `TaskSpec` itself carries no weight — the size lives on
-/// the DAG node (`Node::weight`), so every constructor of a spec outside this crate is untouched
-/// and a plan that never measured stays loadable.
-fn parse_plan_json(json: &str) -> Result<Vec<(TaskSpec, Option<u32>)>> {
     #[derive(Deserialize)]
     struct PlanJson {
         subtasks: Vec<PlanTask>,
@@ -506,8 +443,6 @@ fn parse_plan_json(json: &str) -> Result<Vec<(TaskSpec, Option<u32>)>> {
         shard_of: Option<ShardOf>,
         #[serde(default)]
         merger_of: Option<MergerOf>,
-        #[serde(default)]
-        weight: Option<u32>,
     }
     let plan: PlanJson = serde_json::from_str(json)?;
     Ok(plan
@@ -515,7 +450,7 @@ fn parse_plan_json(json: &str) -> Result<Vec<(TaskSpec, Option<u32>)>> {
         .into_iter()
         .map(|t| {
             let subsplit = extract_subsplit(&t.description);
-            let spec = TaskSpec {
+            TaskSpec {
                 id: t.id,
                 description: t.description,
                 difficulty: match t.difficulty.as_deref() {
@@ -528,8 +463,7 @@ fn parse_plan_json(json: &str) -> Result<Vec<(TaskSpec, Option<u32>)>> {
                 subsplit,
                 shard_of: t.shard_of,
                 merger_of: t.merger_of,
-            };
-            (spec, t.weight)
+            }
         })
         .collect())
 }

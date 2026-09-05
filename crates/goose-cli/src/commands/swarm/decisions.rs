@@ -423,6 +423,7 @@ mod tests {
             secs: 1,
             kind: "design".to_string(),
             cite: String::new(),
+            origin: String::new(),
             batch: 0,
         }
     }

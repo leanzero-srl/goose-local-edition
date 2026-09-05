@@ -400,129 +400,6 @@ pub(super) enum NudgeDelivery {
     Hold(&'static str),
 }
 
-/// THE READER'S ANSWER ON THE STEER (VA-117, r6i OPEN look 3): what the judge's OWN TEXT said
-/// about the direction it last delivered, read off an explicit `STEER_FOLLOWED: yes|no|unclear`
-/// line it is asked for over the SINCE-STEER span (the call's reasoning from the steer's durable
-/// byte offset to now — never a fixed tail). `None` = the judge wrote no such line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SteerFollowed {
-    Yes,
-    No,
-    Unclear,
-}
-
-impl SteerFollowed {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            SteerFollowed::Yes => "yes",
-            SteerFollowed::No => "no",
-            SteerFollowed::Unclear => "unclear",
-        }
-    }
-}
-
-/// The reasons the reader's answer produces, shared with the tests so a reworded reason cannot
-/// silently split the artefact from the pin.
-pub(super) const JUDGE_SAYS_FOLLOWED: &str = "the judge read the since-steer span and said the      direction IS being followed — composing or acting on it — so the recurrence meter's reading      does not override the reader; the direction rides another note";
-pub(super) const JUDGE_SAID_NOTHING: &str = "the judge wrote no STEER_FOLLOWED line, so no reader      has said the steer was ignored — the meter alone never decides a wipe; held for a look that      answers over the since-steer span";
-pub(super) const JUDGE_UNCLEAR: &str = "the judge read the since-steer span and could not tell      whether the direction was followed — held, never wiped on a reader's shrug";
-pub(super) const STEER_IGNORED: &str = "steer ignored: the judge read the since-steer span and      said the direction was NOT followed, and the deliverable did not move since the steer";
-
-/// Read the `STEER_FOLLOWED` line out of a judge reply and STRIP it, so the lenient four-field
-/// parser never folds it into NEXT — the ETA-token leak class (`parse_judge_reply`): a trailing
-/// non-label line is read as the tail of NEXT, and a direction ending in "STEER_FOLLOWED: yes"
-/// would have gone to the worker verbatim. Accepts `STEER_FOLLOWED`/`STEER FOLLOWED` in any
-/// case, `:`/`=`/`|` separators, the value word as the first alphabetic run after them; the line
-/// is cut AT the label so a same-line NEXT before it survives. A label with an unreadable value is
-/// `Unclear` — the judge answered, illegibly; a missing label is `None` — it did not answer.
-pub(super) fn split_steer_followed(reply: &str) -> (Option<SteerFollowed>, String) {
-    let mut found: Option<SteerFollowed> = None;
-    let mut kept: Vec<String> = Vec::new();
-    for line in reply.lines() {
-        let up = line.to_ascii_uppercase();
-        let hit = up
-            .find("STEER_FOLLOWED")
-            .or_else(|| up.find("STEER FOLLOWED"));
-        let Some(i) = hit else {
-            kept.push(line.to_string());
-            continue;
-        };
-        // `i` came from the ASCII-uppercased copy, which preserves byte positions; `get` keeps
-        // the slice panic-free anyway (an empty tail reads as an illegible answer below).
-        let after = up.get(i + "STEER_FOLLOWED".len()..).unwrap_or("");
-        let value =
-            after.trim_start_matches(|c: char| matches!(c, ':' | '=' | '|') || c.is_whitespace());
-        let word: String = value
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        found = Some(match word.as_str() {
-            "YES" => SteerFollowed::Yes,
-            "NO" => SteerFollowed::No,
-            _ => SteerFollowed::Unclear,
-        });
-        // ASCII uppercasing preserves byte length, so `i` indexes the original line too.
-        let head = line
-            .get(..i)
-            .unwrap_or(line)
-            .trim_end_matches(|c: char| matches!(c, '|' | '-' | '—') || c.is_whitespace());
-        if !head.is_empty() {
-            kept.push(head.to_string());
-        }
-    }
-    (found, kept.join("\n"))
-}
-
-/// The since-steer span: every byte `<task>.think.log` gained after `from_byte` (the durable
-/// length recorded when the steer was delivered). `None` when the durable transcript cannot be
-/// read — stated to the judge, never rendered as an empty span (fallback gate).
-pub(super) fn since_steer_span(think_log: &std::path::Path, from_byte: u64) -> Option<String> {
-    let bytes = std::fs::read(think_log).ok()?;
-    let from = usize::try_from(from_byte).ok()?.min(bytes.len());
-    Some(String::from_utf8_lossy(&bytes[from..]).into_owned())
-}
-
-/// The system-prompt ask that accompanies a since-steer span: the one extra line the judge
-/// answers, and what each value means — with the r6c channel trap named (prose ABOUT a file that
-/// was to land on disk is not following), because the deterministic `write_progress` fact the
-/// judge is also shown is the tie-breaker it must weigh.
-pub(super) fn steer_followed_ask() -> &'static str {
-    "\n\nYou delivered a direction to this call, and every character of reasoning it produced \
-     SINCE that note is quoted below under SINCE YOUR LAST DIRECTION. Add ONE extra line to your \
-     reply, on its own line after the four fields:\n\
-     STEER_FOLLOWED: yes|no|unclear\n\
-     `yes` = the since-direction reasoning is DOING what you directed — assembling the exact \
-     deliverable you named (a call whose deliverable is an emitted reply and is composing that \
-     reply IS following, however long it takes) or taking the named action. `no` = it went back \
-     to re-deriving, re-reading or re-verifying what you told it not to, or the deliverable you \
-     named as bytes on disk did not appear while it wrote prose about it. `unclear` = the words do \
-     not show either. This line decides whether the call is redirected in place (yes/unclear) or \
-     restarted from a seed (no). A deterministic recurrence meter may have summoned this look; it \
-     never decides that — you do, from the words. Name in ESTABLISHED the words you decided on."
-}
-
-/// The user-text block carrying the since-steer span. Three honest shapes: the span, a span that
-/// has not grown (the call produced nothing after the note), and an unreadable transcript (the
-/// absence is stated, and the judge is told to answer from the tail and say `unclear` if it does
-/// not show).
-pub(super) fn since_steer_block(span: Option<&str>) -> String {
-    match span {
-        Some(s) if !s.trim().is_empty() => format!(
-            "\n\nSINCE YOUR LAST DIRECTION — every character of reasoning this call produced after \
-             your note was delivered ({} chars, verbatim, oldest first):\n{}",
-            s.chars().count(),
-            s
-        ),
-        Some(_) => "\n\nSINCE YOUR LAST DIRECTION the durable transcript has not grown: the call \
-                    produced no reasoning after your note was delivered."
-            .to_string(),
-        None => "\n\nSINCE YOUR LAST DIRECTION: the durable transcript could not be read, so the \
-                 since-direction span is UNAVAILABLE this look — decide STEER_FOLLOWED from the most \
-                 recent reasoning above and say `unclear` if it does not show."
-            .to_string(),
-    }
-}
-
 /// HOW a nudge is delivered. Escalation on measured non-obedience, never a counter.
 ///
 /// A steer wakes the in-flight stream at its next chunk and KEEPS the partial (agent.rs:2140), so it
@@ -584,29 +461,11 @@ pub(super) fn since_steer_block(span: Option<&str>) -> String {
 /// restream, whose seed carries the directive plus the composed tail. A lane with real writes
 /// since its nudge still steers (`Some(true)` outranks), a lane making calls keeps today's hold
 /// (a steer can land where turns happen), and a reasoning lane is structurally exempt.
-///
-/// AND THE METER MAY SUMMON A LOOK, NEVER DECIDE DELIVERY (VA-117, r6i OPEN look 3, 10:13:34Z).
-/// The `advancing` input above was `produced && !recur.recurring()` — the deterministic
-/// recurrence meter — and it decided the wipe: r6i's judge wrote, in its own text, "Each sed
-/// command reads a NEW range. This is advancing, not looping" and "recent reasoning is in final
-/// section-to-slice assignment phase", verdict DRIFTING; the meter read 0.2986 over 65,536 chars
-/// as recurring, so `advancing` was false, the `Some(false)` arm fell through to "the stream has
-/// stopped advancing", and `judge_restream` abandoned 82,872 chars — 16k of them the emit being
-/// composed in reasoning after the steer (`open.forming.json` empty because the composition was
-/// thinking, not a tool frame). The emit came 16 minutes later from the fresh attempt. Gate 7:
-/// a detector may SUMMON; only a reader may judge. So the reader's answer replaces the meter in
-/// this signature: `judge_says_followed` is the judge's `STEER_FOLLOWED` line, answered over the
-/// since-steer span (`since_steer_span`, from the steer's durable byte offset to now). The wipe
-/// needs the reader to say `No` AND no write progress; `Yes` steers whatever the meter says;
-/// `Unclear`/no line HOLDS, loudly named (a reader's shrug or silence is never a wipe). The
-/// file-fact arms (wrong channel, due promise) keep their reasons under `No` — they say WHY the
-/// reader's "not followed" is also measured on disk. The meter still summons the look and still
-/// rides `judge_delivery_decided` as evidence beside the reader's answer.
 pub(super) fn nudge_delivery(
     pending_empty: bool,
     write_progress_since_nudge: Option<bool>,
     verdict: &goose_swarm::Verdict,
-    judge_says_followed: Option<SteerFollowed>,
+    advancing: bool,
     wrong_channel: bool,
     promise_due: bool,
 ) -> NudgeDelivery {
@@ -619,24 +478,25 @@ pub(super) fn nudge_delivery(
     match write_progress_since_nudge {
         None => NudgeDelivery::Steer("first nudge of this attempt"),
         Some(true) => NudgeDelivery::Steer("write progress since the previous nudge"),
-        Some(false) => match judge_says_followed {
-            Some(SteerFollowed::Yes) => NudgeDelivery::Steer(JUDGE_SAYS_FOLLOWED),
-            None => NudgeDelivery::Hold(JUDGE_SAID_NOTHING),
-            Some(SteerFollowed::Unclear) => NudgeDelivery::Hold(JUDGE_UNCLEAR),
-            Some(SteerFollowed::No) if wrong_channel => NudgeDelivery::Restream(
-                "steer ignored (the judge said so over the since-steer span) and the advance is \
-                 in the WRONG CHANNEL: this lane owes files, none exist on disk, and the formed \
-                 answer channel keeps growing — the directive rides a fresh attempt's seed \
-                 instead of watching file content pour into chat",
-            ),
-            Some(SteerFollowed::No) if promise_due => NudgeDelivery::Restream(
-                "steer ignored (the judge said so over the since-steer span) and the promised \
-                 delivery is due: zero actions and zero write progress since the steer on this \
-                 files-owing lane — the directive rides a fresh attempt's seed instead of \
-                 deferring the promise another look",
-            ),
-            Some(SteerFollowed::No) => NudgeDelivery::Restream(STEER_IGNORED),
-        },
+        Some(false) if advancing && !wrong_channel && promise_due => NudgeDelivery::Restream(
+            "steer ignored and the promised delivery is due: zero actions and zero write \
+             progress since the steer on this files-owing lane, with only think advancing — \
+             the directive rides a fresh attempt's seed instead of deferring the promise \
+             another look",
+        ),
+        Some(false) if advancing && !wrong_channel => NudgeDelivery::Hold(
+            "steer not acted on, but the stream is advancing: fresh non-recurring content since \
+             the last look — held, not wiped",
+        ),
+        Some(false) if advancing => NudgeDelivery::Restream(
+            "steer ignored and the advance is in the WRONG CHANNEL: this lane owes files, none \
+             exist on disk, and the formed answer channel keeps growing — the directive rides a \
+             fresh attempt's seed instead of watching file content pour into chat",
+        ),
+        Some(false) => NudgeDelivery::Restream(
+            "steer ignored: no write progress since the previous nudge and the stream has \
+             stopped advancing",
+        ),
     }
 }
 
@@ -943,57 +803,39 @@ mod tests {
     fn nudge_delivery_escalates_on_measured_non_obedience() {
         use goose_swarm::Verdict;
         assert_eq!(
-            nudge_delivery(true, None, &Verdict::Looping, None, false, false),
+            nudge_delivery(true, None, &Verdict::Looping, false, false, false),
             NudgeDelivery::Steer("first nudge of this attempt"),
             "the first nudge on a call is a steer: it keeps the partial and costs nothing"
         );
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(false),
-                &Verdict::Looping,
-                Some(SteerFollowed::No),
-                false,
-                false
+            nudge_delivery(true, Some(false), &Verdict::Looping, false, false, false),
+            NudgeDelivery::Restream(
+                "steer ignored: no write progress since the previous nudge and the stream has \
+                 stopped advancing"
             ),
-            NudgeDelivery::Restream(STEER_IGNORED),
-            "a prior nudge with no write progress since AND the judge's own text saying the \
-             direction was not followed is measured non-obedience, so the anchor goes"
+            "a prior nudge with no write progress since AND a stopped stream is measured \
+             non-obedience, so the anchor goes"
         );
         assert_eq!(
-            nudge_delivery(true, Some(true), &Verdict::Looping, None, false, false),
+            nudge_delivery(true, Some(true), &Verdict::Looping, false, false, false),
             NudgeDelivery::Steer("write progress since the previous nudge"),
             "a call that moved its deliverable since the steer keeps getting steers"
         );
         assert_eq!(
-            nudge_delivery(
-                true,
-                None,
-                &Verdict::Restart,
-                Some(SteerFollowed::Yes),
-                false,
-                false
-            ),
+            nudge_delivery(true, None, &Verdict::Restart, true, false, false),
             NudgeDelivery::Restream("judge said restart"),
             "RESTART is the judge saying a fresh attempt beats continuing, even on the first \
              nudge and even mid-production — the judge is the reader and said so outright; \
              this verdict is NEVER held"
         );
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(true),
-                &Verdict::Restart,
-                Some(SteerFollowed::Yes),
-                false,
-                true
-            ),
+            nudge_delivery(true, Some(true), &Verdict::Restart, true, false, true),
             NudgeDelivery::Restream("judge said restart"),
             "not even write progress holds a RESTART — the reader's outright verdict outranks \
              every arm below it"
         );
         assert_eq!(
-            nudge_delivery(false, None, &Verdict::Looping, None, false, false),
+            nudge_delivery(false, None, &Verdict::Looping, false, false, false),
             NudgeDelivery::Restream("tool request in flight"),
             "a tool request in flight is never steered around"
         );
@@ -1050,118 +892,6 @@ mod tests {
         );
     }
 
-    /// r6i OPEN look 3 (10:13:34Z) — THE METER OVERRODE THE READER. The judge's own text: "Each sed
-    /// command reads a NEW range. This is advancing, not looping" and "recent reasoning is in final
-    /// section-to-slice assignment phase" (verdict DRIFTING); the meter: recur 0.2986 over 65,536 —
-    /// recurring, so the old `advancing` was false; open owns no files and its formed channel was
-    /// empty, so write progress since the 10:09:29 steer was `Some(false)`. The old ladder wiped
-    /// 82,872 chars (16k of them the emit being composed); asked `STEER_FOLLOWED` over that
-    /// since-steer span the judge's words say `yes`, and the reader's yes is a steer whatever the
-    /// meter says. The true loop (the judge reads a verbatim repeat and says `no`) still wipes; a
-    /// judge that wrote no line, or could not tell, holds — named, never a wipe on silence.
-    #[test]
-    fn the_readers_steer_followed_answer_decides_delivery_not_the_meter() {
-        use goose_swarm::Verdict;
-        assert_eq!(
-            nudge_delivery(
-                true,
-                Some(false),
-                &Verdict::Drifting,
-                Some(SteerFollowed::Yes),
-                false,
-                false,
-            ),
-            NudgeDelivery::Steer(JUDGE_SAYS_FOLLOWED),
-            "r6i look 3: the judge says the emit is being composed -> steer, not the wipe"
-        );
-        assert_eq!(
-            nudge_delivery(
-                true,
-                Some(false),
-                &Verdict::Looping,
-                Some(SteerFollowed::No),
-                false,
-                false,
-            ),
-            NudgeDelivery::Restream(STEER_IGNORED),
-            "the true loop: the judge read the since-steer span as a verbatim repeat -> wipe"
-        );
-        assert_eq!(
-            nudge_delivery(true, Some(false), &Verdict::Looping, None, false, false),
-            NudgeDelivery::Hold(JUDGE_SAID_NOTHING),
-            "no STEER_FOLLOWED line: no reader said ignored, the meter alone never wipes"
-        );
-        assert_eq!(
-            nudge_delivery(
-                true,
-                Some(false),
-                &Verdict::Drifting,
-                Some(SteerFollowed::Unclear),
-                false,
-                false,
-            ),
-            NudgeDelivery::Hold(JUDGE_UNCLEAR),
-            "a reader's shrug holds"
-        );
-    }
-
-    /// The line is read in the shapes a 27B writes it and STRIPPED before the four-field parse,
-    /// so it can never ride into NEXT the way `ETA=5m` once did; a same-line NEXT before it
-    /// survives the cut.
-    #[test]
-    fn split_steer_followed_reads_every_shape_and_strips_the_line() {
-        let (a, rest) = split_steer_followed(
-            "VERDICT|DRIFTING|HIGH|split settled|emit it now\nSTEER_FOLLOWED: yes",
-        );
-        assert_eq!(a, Some(SteerFollowed::Yes));
-        assert_eq!(rest, "VERDICT|DRIFTING|HIGH|split settled|emit it now");
-        let (b, rest) = split_steer_followed(
-            "VERDICT|LOOPING|HIGH|x|y\nsteer_followed=no — same ten items again",
-        );
-        assert_eq!(b, Some(SteerFollowed::No));
-        assert_eq!(rest, "VERDICT|LOOPING|HIGH|x|y");
-        let (c, rest) =
-            split_steer_followed("VERDICT|OK|HIGH|x|emit now | STEER FOLLOWED: unclear");
-        assert_eq!(c, Some(SteerFollowed::Unclear));
-        assert_eq!(
-            rest, "VERDICT|OK|HIGH|x|emit now",
-            "a same-line NEXT before the label survives"
-        );
-        let (d, rest) = split_steer_followed("VERDICT|OK|HIGH|x|y\nSTEER_FOLLOWED: maybe");
-        assert_eq!(
-            d,
-            Some(SteerFollowed::Unclear),
-            "an unreadable value is an illegible answer, not silence"
-        );
-        assert_eq!(rest, "VERDICT|OK|HIGH|x|y");
-        let (e, rest) = split_steer_followed("VERDICT|OK|HIGH|x|y");
-        assert_eq!(e, None, "no line is no answer");
-        assert_eq!(rest, "VERDICT|OK|HIGH|x|y");
-    }
-
-    /// The span is the durable transcript from the steer's byte offset to now — no fixed tail;
-    /// an unreadable transcript is `None` (stated to the judge), a non-grown one is empty.
-    #[test]
-    fn since_steer_span_reads_from_the_steer_offset_to_now() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("open.think.log");
-        std::fs::write(&p, "before the steer|after the steer, composing the emit").unwrap();
-        let from = "before the steer|".len() as u64;
-        assert_eq!(
-            since_steer_span(&p, from).as_deref(),
-            Some("after the steer, composing the emit")
-        );
-        assert_eq!(
-            since_steer_span(&p, 10_000).as_deref(),
-            Some(""),
-            "not grown -> empty, not None"
-        );
-        assert!(since_steer_span(&dir.path().join("missing.think.log"), 0).is_none());
-        assert!(since_steer_block(None).contains("UNAVAILABLE"));
-        assert!(since_steer_block(Some("")).contains("has not grown"));
-        assert!(since_steer_block(Some("composing")).contains("(9 chars, verbatim"));
-    }
-
     /// r6a look 1 on each fresh attempt (22:11:09: 1,005 chars, 0 actions; 22:20:21: 1,709 chars,
     /// 0 actions): the previous attempt's nudge memory survived the restream, so the ladder read the
     /// very first look on a 45-second-old stream as "steer ignored" and wiped it. The restream seam
@@ -1172,20 +902,15 @@ mod tests {
     fn a_fresh_attempts_first_look_cannot_be_read_as_ignoring_a_steer() {
         use goose_swarm::Verdict;
         for verdict in [Verdict::Drifting, Verdict::Looping, Verdict::Ok] {
-            for judge in [
-                None,
-                Some(SteerFollowed::Yes),
-                Some(SteerFollowed::No),
-                Some(SteerFollowed::Unclear),
-            ] {
+            for advancing in [false, true] {
                 for wrong in [false, true] {
                     for promise in [false, true] {
                         assert_eq!(
-                            nudge_delivery(true, None, &verdict, judge, wrong, promise),
+                            nudge_delivery(true, None, &verdict, advancing, wrong, promise),
                             NudgeDelivery::Steer("first nudge of this attempt"),
                             "a fresh attempt (write_progress_since_nudge = None after the seam \
                              reset) earns its own ladder: first delivery is a steer, never the \
-                             wipe (verdict {verdict:?}, judge {judge:?}, wrong {wrong}, \
+                             wipe (verdict {verdict:?}, advancing {advancing}, wrong {wrong}, \
                              promise {promise})"
                         );
                     }
@@ -1201,14 +926,7 @@ mod tests {
     #[test]
     fn a_producing_non_recurring_call_after_a_nudge_is_held_not_wiped() {
         use goose_swarm::Verdict;
-        let d = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::Unclear),
-            false,
-            false,
-        );
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
         assert!(
             matches!(d, NudgeDelivery::Hold(_)),
             "advancing after an unacted steer is a hold, not a restream: {d:?}"
@@ -1222,26 +940,12 @@ mod tests {
     #[test]
     fn a_recurring_or_plateaued_call_after_a_nudge_still_walks_the_ladder() {
         use goose_swarm::Verdict;
-        let recurring = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Looping,
-            Some(SteerFollowed::No),
-            false,
-            false,
-        );
+        let recurring = nudge_delivery(true, Some(false), &Verdict::Looping, false, false, false);
         assert!(
             matches!(recurring, NudgeDelivery::Restream(_)),
             "recurring after an unacted steer still escalates to the restream: {recurring:?}"
         );
-        let plateaued = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::No),
-            false,
-            false,
-        );
+        let plateaued = nudge_delivery(true, Some(false), &Verdict::Drifting, false, false, false);
         assert!(
             matches!(plateaued, NudgeDelivery::Restream(_)),
             "plateaued after an unacted steer still escalates to the restream: {plateaued:?}"
@@ -1267,14 +971,7 @@ mod tests {
             "and the SAME pour is not write progress — counting it would shield the pour from \
              the restream via the obedience steer"
         );
-        let d = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::No),
-            wrong,
-            false,
-        );
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, wrong, false);
         assert!(
             matches!(d, NudgeDelivery::Restream(_)),
             "a formed-channel-only advance does not count as advancing for hold purposes: {d:?}"
@@ -1309,27 +1006,13 @@ mod tests {
             write_progress(true, true, false, 0),
             "an owned file appearing or growing is write progress whatever the formed channel did"
         );
-        let held = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::Unclear),
-            false,
-            false,
-        );
+        let held = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
         assert!(
             matches!(held, NudgeDelivery::Hold(_)),
             "an advancing builder whose files are landing is held exactly as before: {held:?}"
         );
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(true),
-                &Verdict::Drifting,
-                Some(SteerFollowed::No),
-                true,
-                true
-            ),
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, true, true),
             NudgeDelivery::Steer("write progress since the previous nudge"),
             "moving the deliverable since the nudge is the obedience the ladder escalates on — a \
              steer, whatever the channel measurement says"
@@ -1352,7 +1035,7 @@ mod tests {
             true,
             Some(false),
             &Verdict::Looping,
-            Some(SteerFollowed::Unclear),
+            true,
             wrong_channel_stall(false, false, Some(80_000)),
             delivery_promise_due(false, true, 5, 0),
         );
@@ -1443,7 +1126,7 @@ mod tests {
             true,
             Some(false),
             &goose_swarm::Verdict::Drifting,
-            Some(SteerFollowed::No),
+            true,
             false,
             true,
         );
@@ -1490,14 +1173,7 @@ mod tests {
         // and the delivery is the seeded restream carrying the directive plus the composed tail.
         s = drift_streak_step(s, true, false, true);
         assert!(delivery_promise_due(true, true, s, 0));
-        let d = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::No),
-            false,
-            true,
-        );
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, true);
         assert!(
             matches!(d, NudgeDelivery::Restream(_)),
             "the promised second DRIFTING on a zero-action lane delivers, not holds: {d:?}"
@@ -1511,14 +1187,7 @@ mod tests {
         assert_eq!(s, 0, "write progress resets the promise's memory");
         assert!(!delivery_promise_due(true, true, s, 0));
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(true),
-                &Verdict::Drifting,
-                Some(SteerFollowed::Unclear),
-                false,
-                false
-            ),
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, false, false),
             NudgeDelivery::Steer("write progress since the previous nudge"),
             "a lane that moved its deliverable is steered, never wiped"
         );
@@ -1526,14 +1195,7 @@ mod tests {
         // A lane making tool calls since its steer keeps the hold: a steer can land where
         // turns happen, so the promise is reachable by today's rungs.
         assert!(!delivery_promise_due(true, true, 3, 2));
-        let held = nudge_delivery(
-            true,
-            Some(false),
-            &Verdict::Drifting,
-            Some(SteerFollowed::Unclear),
-            false,
-            false,
-        );
+        let held = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
         assert!(
             matches!(held, NudgeDelivery::Hold(_)),
             "reading-before-writing with calls flowing keeps the advancing hold: {held:?}"
@@ -1542,14 +1204,7 @@ mod tests {
         // Write progress since the nudge outranks even a set flag (the streak-reset race: a
         // write between the nudge and the last look), and a reasoning lane is never due.
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(true),
-                &Verdict::Drifting,
-                Some(SteerFollowed::No),
-                false,
-                true
-            ),
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, false, true),
             NudgeDelivery::Steer("write progress since the previous nudge")
         );
         assert!(!delivery_promise_due(false, true, 5, 0));
@@ -1564,15 +1219,11 @@ mod tests {
     #[test]
     fn a_restream_is_aborted_while_a_tool_argument_stream_is_still_growing() {
         assert_eq!(
-            nudge_delivery(
-                true,
-                Some(false),
-                &Verdict::Drifting,
-                Some(SteerFollowed::No),
-                false,
-                false
+            nudge_delivery(true, Some(false), &Verdict::Drifting, false, false, false),
+            NudgeDelivery::Restream(
+                "steer ignored: no write progress since the previous nudge and the stream has \
+                 stopped advancing"
             ),
-            NudgeDelivery::Restream(STEER_IGNORED),
             "the ladder still reaches the wipe on the r6c facts — the abort is the seam's job"
         );
         assert!(

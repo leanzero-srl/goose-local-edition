@@ -19,12 +19,12 @@ pub mod verdict;
 pub use coherence::{extract_signatures, SigLang};
 pub use context::SharedContext;
 pub use dag::{
-    derived_weight, expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json,
-    Dag, DeclaredExport, Difficulty, MergerOf, ModuleInterface, Node, ShardOf, TaskId, TaskSpec,
+    expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag,
+    DeclaredExport, Difficulty, MergerOf, ModuleInterface, Node, ShardOf, TaskId, TaskSpec,
     TaskState,
 };
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
-pub use event::{EventSink, NullSink, ReadyWeight, SwarmEvent};
+pub use event::{EventSink, NullSink, SwarmEvent};
 pub use idle_jobs::PreReviewer;
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
 pub use scheduler::{

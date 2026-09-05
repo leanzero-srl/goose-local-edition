@@ -52,10 +52,9 @@ mod levers;
 use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
     escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
-    produced_since_look, restream_seed, since_steer_block, since_steer_span, split_steer_followed,
-    steer_followed_ask, steer_note, stream_woke, tail_shingle_set, tails_recur, write_progress,
-    wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts, DIGEST_IO_CADENCE, JUDGE_WAKE,
-    LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
+    produced_since_look, restream_seed, steer_note, stream_woke, tail_shingle_set, tails_recur,
+    write_progress, wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts,
+    DIGEST_IO_CADENCE, JUDGE_WAKE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
 };
 mod ask_floor;
 use ask_floor::{ask_floor_weak_bump, model_active_params_b};
@@ -79,17 +78,17 @@ use orientation::{
 };
 mod research;
 use research::{
-    announce_research_phase, briefs_from_slices, emit_research_outcome, emit_research_planned,
-    files_from_objective, fold_research_panic, load_research_mini, persist_request_text,
-    persist_research_row, research_dispatch_text, research_fan_lanes, research_prompt_head,
-    research_request_block, research_schema, research_sources_block, research_system_text,
-    ResearchLane, ResearchQuestion, ResearchRow, REQUEST_FILE,
+    announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
+    emit_research_planned, files_from_objective, fold_research_panic, land_spec_fact,
+    load_research_mini, persist_request_text, persist_research_row, relay_note, relay_targets,
+    research_dispatch_text, research_fan_lanes, research_prompt_head, research_request_block,
+    research_schema, research_sources_block, research_system_text, ResearchQuestion, ResearchRow,
+    REQUEST_FILE,
 };
-mod research_tool;
-use research_tool::ResearchLanding;
+mod research_plan;
+use research_plan::{covering_mini, route_questions_to_decisions};
 mod imports;
-use imports::{tree_import_gaps, verify_tree_imports};
-mod cross_task;
+use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod plan_store;
 use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state_from_dir};
 mod prose;
@@ -102,10 +101,7 @@ mod parse_checks;
 use lang::detect_language;
 mod repair_waves;
 use parse_checks::{rust_compile_error, syntax_error, RustCheck};
-mod answer_routing;
-mod dom_contract;
 mod plan_repairs;
-use answer_routing::flat_plan_from_briefs;
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
@@ -118,7 +114,6 @@ mod ledger_block;
 #[cfg(test)]
 use ledger_block::render_ledger_block;
 mod merge_holes;
-mod shard_siblings;
 mod shard_verify;
 use ledger_block::{
     read_ledger_rollup, render_ledger_block_measured, render_repair_history, truncate_block_at_line,
@@ -129,11 +124,10 @@ mod plan_shape;
 use plan_shape::decomposition_of;
 mod briefs;
 use briefs::thin_brief_missing;
-mod dep_sources;
 mod lenient_json;
 use lenient_json::parse_json_lenient;
 mod opener;
-use opener::{open_schema, OpenOutput, OpenOutputRaw, OpenSlice};
+use opener::{open_schema, opener_questions_rule, OpenOutput, OpenOutputRaw, OpenSlice};
 mod spec_sets;
 mod spec_surface;
 use spec_surface::{spec_advertised_surface, spec_post_endpoints, spec_surface_rows, SpecSurface};
@@ -165,20 +159,15 @@ use findings::{
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
-mod vendor_probe;
-use vendor_probe::{json_rows_evidence, probe_vendor, read_vendor_probe_rows, spec_vendor};
 mod fleet_order;
-mod telemetry_rates;
 use fleet_order::{
     aux_candidate_models, configured_speed_weight, fanout_over_fleet, least_loaded_aux_model,
-    measured_rate_for, one_lane_per_host, order_heaviest_first, publish_fleet_speed_weights,
-    rank_fix_target, reconcile_pool_with_fleet, resolved_fleet_speed_weights,
-    unmatched_speed_weight_patterns, InflightGuard,
+    measured_rate_for, one_lane_per_host, publish_fleet_speed_weights, rank_fix_target,
+    reconcile_pool_with_fleet, unmatched_speed_weight_patterns, InflightGuard,
 };
 // The boot-snapshot slot builder lives in fleet_order.rs with its tests; swarm_engine.rs's
 // per-engine `live_fleet_slots` reads it as its fallback through this one re-export.
 pub(super) use fleet_order::fleet_slot_models;
-use telemetry_rates::telemetry_node_rates;
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -5860,8 +5849,6 @@ mod tests {
                 "m",
                 &SaidProvenance::at_dispatch(0),
                 None,
-                None,
-                None,
             )
         };
         let d = build(&pending);
@@ -5929,8 +5916,6 @@ mod tests {
             "workhorse-qwen",
             &said0,
             None,
-            None,
-            None,
         );
         assert_eq!(d0["attempt"], 0);
         assert_eq!(
@@ -5974,8 +5959,6 @@ mod tests {
             "",
             "workhorse-qwen",
             &said1,
-            None,
-            None,
             None,
         );
         assert_eq!(d1["attempt"], 1);
@@ -6043,8 +6026,6 @@ mod tests {
             "m",
             &said,
             Some("judge-open-1"),
-            None,
-            None,
         );
         assert_eq!(d["supervision"], serde_json::json!(true));
         assert_eq!(
@@ -6064,8 +6045,6 @@ mod tests {
             "m",
             &said,
             Some("test-store-core"),
-            None,
-            None,
         );
         assert!(
             w.get("supervision").is_none(),
@@ -9159,6 +9138,219 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!rust_entry_is_empty_stub(false, ""));
     }
 
+    /// The fan-outs hold `DeviceCfg` (the resolved runtime pool), not the config-file `SwarmDevice`
+    /// that `dev()` above builds. Two structs, both with a `weight` field, and the compiler is the
+    /// only thing that tells them apart.
+    fn cfg_w(id: &str, model: &str, weight: u32) -> DeviceCfg {
+        DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+            is_cloud: false,
+        }
+    }
+
+    /// THE CONTRACT F350 ACTUALLY SHIPPED, which nothing was checking.
+    ///
+    /// `fanout_caps_one_call_per_device` above still passes, and that is the problem: its fixture is three
+    /// UNIQUE device strings, while every production caller now passes `fleet_slot_models()` — each model_id
+    /// repeated `weight` times. So the guard that exists asserts one-call-per-device on a shape the engine no
+    /// longer sends, and the shape it does send (six entries, three models) was asserted nowhere. F350 tested
+    /// that the LIST is six long; the list length is the shape, and running six at once is the contract.
+    #[tokio::test]
+    async fn fanout_runs_one_call_per_slot_so_a_weight_two_device_takes_two() {
+        use std::sync::atomic::AtomicUsize;
+        // Exactly what fleet_slot_models() yields for the bed: 3 devices x weight 2.
+        let slots = fleet_slot_models(&[
+            cfg_w("a", "m-a", 2),
+            cfg_w("b", "m-b", 2),
+            cfg_w("c", "m-c", 2),
+        ]);
+        assert_eq!(slots.len(), 6);
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..18).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results = fanout_over_fleet("test-slots", &NullSink, slots, items, move |i, dev| {
+            let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+            async move {
+                let cur = {
+                    let mut g = inf.lock().unwrap();
+                    let e = g.entry(dev.clone()).or_insert(0);
+                    *e += 1;
+                    *e
+                };
+                {
+                    let mut m = mpd.lock().unwrap();
+                    let e = m.entry(dev.clone()).or_insert(0);
+                    if cur > *e {
+                        *e = cur;
+                    }
+                }
+                let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                mtot.fetch_max(t, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                tot.fetch_sub(1, Ordering::SeqCst);
+                *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                i
+            }
+        })
+        .await;
+        assert_eq!(results.len(), 18, "every item returns a result");
+        // Three DISTINCT models, six slots: the duplicates must not collapse the pool.
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should still touch every device"
+        );
+        // The whole point of the change: a weight-2 device runs TWO at once, and the fleet reaches SIX.
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(
+                m <= 2,
+                "device {dev} exceeded its weight with {m} concurrent"
+            );
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 6,
+            "never more than the slot count"
+        );
+        assert!(
+            max_total.load(Ordering::SeqCst) > 3,
+            "if this caps at 3 the fan is still sized by DEVICES and F350 is inert: got {}",
+            max_total.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn fanout_caps_one_call_per_device() {
+        use std::sync::atomic::AtomicUsize;
+        let devices = vec!["d0".to_string(), "d1".to_string(), "d2".to_string()];
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..9).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results =
+            fanout_over_fleet("test-devices", &NullSink, devices, items, move |i, dev| {
+                let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+                async move {
+                    let cur = {
+                        let mut g = inf.lock().unwrap();
+                        let e = g.entry(dev.clone()).or_insert(0);
+                        *e += 1;
+                        *e
+                    };
+                    {
+                        let mut m = mpd.lock().unwrap();
+                        let e = m.entry(dev.clone()).or_insert(0);
+                        if cur > *e {
+                            *e = cur;
+                        }
+                    }
+                    let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                    mtot.fetch_max(t, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    tot.fetch_sub(1, Ordering::SeqCst);
+                    *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                    i * 2
+                }
+            })
+            .await;
+        assert_eq!(results.len(), 9, "every item returns a result");
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(
+                m <= 1,
+                "device {dev} ran {m} concurrent calls; must be <= 1"
+            );
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 3,
+            "no more than 3 concurrent across a 3-device fleet"
+        );
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should use every device"
+        );
+    }
+
+    /// THE PANIC CASCADE, pinned. Before the DeviceReturn guard, a panicking lane on a
+    /// single-device pool stranded its device: the next lane's "a device is free whenever a
+    /// permit is held" expect fired inside the MutexGuard temporary, poisoned the pool, every
+    /// later `lock().unwrap()` panicked in turn, and the `if let Ok(r)` join swallowed the lot —
+    /// one panic consumed the whole fan and this test would have hung or returned 0 results.
+    /// Now: the device rides Drop back to the pool, the surviving lanes run to completion, the
+    /// panicked lane's slot arrives as Err, and the join names it with a lane_panicked event.
+    #[tokio::test]
+    async fn a_panicked_lane_returns_its_device_and_the_rest_of_the_fan_survives() {
+        #[derive(Default)]
+        struct ValueSink(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for ValueSink {
+            fn emit(&self, _event: &SwarmEvent) {}
+            fn write_value(&self, value: serde_json::Value) {
+                self.0.lock().unwrap().push(value);
+            }
+        }
+        let sink = ValueSink::default();
+        let items: Vec<usize> = vec![0, 1, 2];
+        let results = fanout_over_fleet(
+            "panic-test",
+            &sink,
+            vec!["only-device".to_string()],
+            items,
+            move |i, dev| async move {
+                assert_eq!(dev, "only-device");
+                if i == 0 {
+                    panic!("lane 0 exploded on purpose");
+                }
+                i * 10
+            },
+        )
+        .await;
+        assert_eq!(
+            results.len(),
+            3,
+            "one slot per item, panicked lane included"
+        );
+        assert!(
+            results[0].as_ref().is_err_and(|e| e.contains("exploded")),
+            "the panicked lane's slot carries its panic message, got {:?}",
+            results[0]
+        );
+        assert_eq!(results[1], Ok(10), "the device came back for lane 1");
+        assert_eq!(results[2], Ok(20), "and again for lane 2");
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1, "exactly the one lost lane is named");
+        assert_eq!(
+            events[0].get("event").and_then(|v| v.as_str()),
+            Some("lane_panicked")
+        );
+        assert_eq!(
+            events[0].get("context").and_then(|v| v.as_str()),
+            Some("panic-test")
+        );
+        assert!(events[0]
+            .get("error")
+            .and_then(|v| v.as_str())
+            .is_some_and(|e| e.contains("exploded")));
+    }
+
     #[test]
     fn target_lang_profile_python_is_unchanged_others_translate() {
         // NOTE ON `entry_clause`: it is `#[cfg(test)]` and has NO production caller. It carried the
@@ -10694,11 +10886,6 @@ fn build_worker_digest(
     model_id: &str,
     said: &SaidProvenance,
     activity_key: Option<&str>,
-    // VA-107: the last provider-reported usage total and the context window as the compaction
-    // guard knows it (`goose::context_mgmt::effective_context_limit`) — the digest half of the
-    // lane's measured context line, so tick.py and the panel read the two numbers the lane reads.
-    usage_total: Option<i64>,
-    context_window: Option<usize>,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
     let recent: Vec<String> = tool_calls
@@ -10761,8 +10948,6 @@ fn build_worker_digest(
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
         "last_thinking": tail_chars(last_thinking, LOOK_TAIL_CHARS),
         "model": model_id,
-        "usage_total": usage_total,
-        "context_window": context_window,
         // SAID provenance — which attempt `last_text` belongs to, when it was dispatched, when the
         // answer channel last advanced, whether the text is the model's or an agent error, and what
         // a prior attempt left behind. Kept in the shared builder so no write site can drop them.
@@ -11126,7 +11311,7 @@ pub struct GooseAgentDispatcher {
     /// (the block ahead of `run_with_decisions`) and refreshed per task at dispatch (which is how a
     /// replan-spliced task enters). Read by the omni-judge loop, which is handed only an
     /// `activity_key` and otherwise cannot tell a build task from a planner call, and by
-    /// `cross_task::classify_import_gap`, which needs the PLAN's ownership, not the dispatch log's — on r5
+    /// `attribute_import_gap`, which needs the PLAN's ownership, not the dispatch log's — on r5
     /// three `delivery_defects` events read a planned owner (ledgerd-service / `app/httpapi.py`)
     /// as "no task owns" because this map used to grow only at dispatch.
     ///
@@ -11153,25 +11338,18 @@ pub struct GooseAgentDispatcher {
     /// already trying; sending it ONCE is new information. Nothing here can end a task, burn an attempt
     /// or bound anything — a defect that is never fixed simply stops being mentioned.
     defects_told: Mutex<HashMap<String, std::collections::HashSet<String>>>,
-    /// r6e E7 — the research fan's LATE snowball. `research_running`: activity key -> relay
-    /// target (the lane's slice and the route paths its material names; VA-089 — a lane has
-    /// no questions before it runs) for every research lane between its dispatch and its rows
-    /// (`research::relay_targets`); `research_relay`: target key -> notes queued for it, drained
+    /// r6e E7 — the research fan's LATE snowball. `research_running`: activity key -> question
+    /// for every research lane between its dispatch and its row (the relay's target set,
+    /// `research::relay_targets`); `research_relay`: target key -> notes queued for it, drained
     /// by that lane's OWN loop at a boundary where `pending` is empty (the gate the judge's
     /// steers respect) and delivered through `Agent::steer` — one more user message in the
     /// running session, never a restream. Nothing here bounds or ends anything.
-    research_running: Mutex<HashMap<String, research::RelayTarget>>,
+    research_running: Mutex<HashMap<String, Vec<ResearchQuestion>>>,
     research_relay: Mutex<HashMap<String, Vec<research::RelayNote>>>,
-    /// VA-118: activity key -> a research lane's per-answer landing between dispatch and its rows
-    /// (`research_tool`); the `research_answer` tool is registered only for a key present here.
-    research_landing: Mutex<HashMap<String, ResearchLanding>>,
     /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
     /// the event fires once per distinct {area, frozen, extra} rather than on every completion
     /// while the extra file sits there (the defects_told rule applied to a run-level fact).
     spec_set_reported: Mutex<std::collections::HashSet<String>>,
-    /// (importer, module, verdict) cross-import facts already stated: the tree scan runs at EVERY
-    /// completion (r6h: the same three lines at five completions, 04:10 → 05:20); once per fact.
-    cross_task_reported: Mutex<std::collections::HashSet<String>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
     /// Mid-run AUX routing candidates (r6c 18:38): every omni-judge look and the dynamic replanner
@@ -11261,6 +11439,30 @@ impl GooseAgentDispatcher {
     /// `avoid` is the SUPERVISED lane's model (the omni-look passes its worker's; the replanner
     /// has none): ranked last among equal loads, never excluded — r6d's q0 looks all landed on
     /// q0's own node while another sat as idle (`least_loaded_aux_model`).
+    /// r6e E7: hand a just-landed mini to every still-running lane of its slice
+    /// (`relay_targets`); the target's own loop delivers it and names the delivery
+    /// (`research_mini_relayed`). MEASURED: r6d research-ledger-core-q5 dispatched 04:46:55Z,
+    /// q2's mini landed 04:47:28Z — 33 s too late for `prior_minis_block`, and q5 hedged
+    /// against the rule q2 had settled. A queue, never a bound: nothing waits on it.
+    fn queue_research_relay(&self, row: &ResearchRow) {
+        let running: Vec<(String, Vec<ResearchQuestion>)> = self
+            .research_running
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, q)| (k.clone(), q.clone()))
+            .collect();
+        let targets = relay_targets(row, &running);
+        if targets.is_empty() {
+            return;
+        }
+        let note = relay_note(row);
+        let mut inbox = self.research_relay.lock().unwrap();
+        for t in targets {
+            inbox.entry(t).or_default().push(note.clone());
+        }
+    }
+
     fn aux_model_for_call(&self, avoid: Option<&str>) -> (String, u32) {
         // Same poison-recovery idiom as `fleet_order::InflightGuard`'s enter/Drop arms: the map
         // holds plain u32 counters, so a panic mid-increment leaves at worst an off-by-one that
@@ -11329,9 +11531,7 @@ impl GooseAgentDispatcher {
             defects_told: Mutex::new(HashMap::new()),
             research_running: Mutex::new(HashMap::new()),
             research_relay: Mutex::new(HashMap::new()),
-            research_landing: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
-            cross_task_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
             aux_models,
             inflight_by_model: Mutex::new(HashMap::new()),
@@ -11800,16 +12000,12 @@ impl GooseAgentDispatcher {
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
-        let provider = self.provider_for(model_id).await?;
-        // VA-107: the window as the compaction guard compares it — ONE derivation shared with
-        // `check_if_compaction_needed` and the lane's per-turn context line, so the digest's
-        // `context_window` is the number the lane actually read. r6h receipt: the engine held
-        // 128,000 (DEFAULT_CONTEXT_LIMIT — the n_ctx probe reads llama.cpp's `meta.n_ctx`; LM
-        // Studio serves `loaded_context_length` = 180,224 on /api/v0/models) and nothing wrote it.
-        let context_window =
-            goose::context_mgmt::effective_context_limit(provider.as_ref(), &model_config).await;
         agent
-            .update_provider(provider, model_config, &session_id)
+            .update_provider(
+                self.provider_for(model_id).await?,
+                model_config,
+                &session_id,
+            )
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
@@ -11825,9 +12021,6 @@ impl GooseAgentDispatcher {
         // worker_max_turns and keeps its tools). Every other call is byte-identical.
         let judge_probe = max_turns == JUDGE_PROBE_TURNS
             && activity_key.is_some_and(|k| supervision_lane_kind(k) == Some("judge"));
-        // VA-107: every lane but the judge probe reads the measured context line each turn (the
-        // probe has no tools and one turn; the desk/judge context is untouched).
-        agent.set_swarm_measured_context(!judge_probe);
         if !judge_probe {
             agent
                 .add_extension(
@@ -11866,13 +12059,6 @@ impl GooseAgentDispatcher {
             if let Err(e) = agent.add_extension(ext.clone(), &session_id).await {
                 eprintln!("(worker extension add failed: {e})");
             }
-        }
-        // VA-118: the per-answer research tool, only for a lane whose landing the fan opened.
-        if let Some(ext) = activity_key.and_then(|k| self.research_answer_extension_for(k)) {
-            agent
-                .add_extension(ext, &session_id)
-                .await
-                .map_err(|e| anyhow!("add {}: {e}", research::RESEARCH_ANSWER_TOOL))?;
         }
 
         // Captured before the move: the judge loop below needs to know whether this call OWES a
@@ -12058,8 +12244,6 @@ impl GooseAgentDispatcher {
         // VA-081: the last provider usage this lane reported (`AgentEvent::Usage`, one per turn) —
         // the `tokens_before` a compaction notice carries. Instrumentation only.
         let mut last_usage_total: Option<i64> = None;
-        // VA-107: `usage_unavailable` fires ONCE per lane, never per turn.
-        let mut usage_unavailable_reported = false;
         // REMOVED: the sink wall-clock cap (sink_cap_secs, sink_cap_ref_bytes, scaled_sink_cap,
         // GOOSE_SWARM_SINK_CAP_SECS, sink_plan and sink_capped).
         //
@@ -12213,11 +12397,6 @@ impl GooseAgentDispatcher {
         // resets it with the rest of the ladder) — the owned-file half of the ladder's
         // write-progress obedience signal (`ladder::write_progress`).
         let mut owned_bytes_at_last_nudge: Option<u64> = None;
-        // VA-117: the durable `<task>.think.log` length when the last steer was delivered — the
-        // start of the SINCE-STEER span the judge answers `STEER_FOLLOWED` over (`ladder::
-        // since_steer_span`); reset with the ladder at the restream seam. The in-memory
-        // `last_thinking` is a 2,400-char window and cannot hold that span; the durable log can.
-        let mut durable_think_at_last_nudge: Option<u64> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -12339,11 +12518,6 @@ impl GooseAgentDispatcher {
                                     });
                                 }
                             },
-                            // VA-118: the agent parks the lane until this replies (every arm replies).
-                            MessageContent::FrontendToolRequest(req) => {
-                                let result = self.frontend_tool_result(activity_key, req);
-                                agent.handle_tool_result(req.id.clone(), result).await;
-                            }
                             MessageContent::ToolResponse(resp) => {
                                 if let Some(InflightCall {
                                     name,
@@ -12405,39 +12579,13 @@ impl GooseAgentDispatcher {
                             MessageContent::SystemNotification(n) => {
                                 let kind = format!("{:?}", n.notification_type);
                                 let about_compaction = n.msg.to_lowercase().contains("compact");
-                                // VA-107: core says the last call reported no usage (the lane's
-                                // context line rendered its not-reported arm). ONE event per lane —
-                                // the arm repeats every turn the provider stays silent.
-                                let usage_unavailable = n.msg.starts_with(
-                                    goose::context_mgmt::context_line::USAGE_UNAVAILABLE_LINE,
-                                );
-                                if usage_unavailable && usage_unavailable_reported {
-                                    continue;
-                                }
-                                if usage_unavailable {
-                                    usage_unavailable_reported = true;
-                                    let turn = n
-                                        .msg
-                                        .rsplit("(turn ")
-                                        .next()
-                                        .and_then(|r| r.strip_suffix(')'))
-                                        .and_then(|r| r.parse::<u32>().ok());
-                                    self.events.write_value(serde_json::json!({
-                                        "event": "usage_unavailable",
-                                        "task": activity_key,
-                                        "attempt": attempt,
-                                        "turn": turn,
-                                        "text": n.msg,
-                                    }));
-                                } else {
-                                    self.events.write_value(serde_json::json!({
-                                        "event": if about_compaction { "lane_compaction" } else { "lane_notice" },
-                                        "task": activity_key,
-                                        "kind": kind,
-                                        "text": n.msg,
-                                        "tokens_before": last_usage_total,
-                                    }));
-                                }
+                                self.events.write_value(serde_json::json!({
+                                    "event": if about_compaction { "lane_compaction" } else { "lane_notice" },
+                                    "task": activity_key,
+                                    "kind": kind,
+                                    "text": n.msg,
+                                    "tokens_before": last_usage_total,
+                                }));
                                 if let Some(p) = &activity_file {
                                     let errs = append_lane_note(
                                         p,
@@ -12787,10 +12935,6 @@ impl GooseAgentDispatcher {
                     .get(activity_key.unwrap_or(""))
                     .cloned()
                     .unwrap_or_default();
-                // VA-117: the since-steer span and its char count, filled when a steer was
-                // delivered to THIS attempt; the count rides `judge_delivery_decided` below.
-                let mut since_steer_chars: Option<usize> = None;
-                let mut since_steer_block_text = String::new();
                 if history.nudges_used > 0 {
                     let (nudges_used, last_direction) =
                         (history.nudges_used, history.last_direction.as_str());
@@ -12838,21 +12982,6 @@ impl GooseAgentDispatcher {
                          and make NEXT a MEASUREMENT that would prove you wrong — a command whose output \
                          separates your old theory from the new one."
                     ));
-                    // THE READER ANSWERS OVER THE SINCE-STEER SPAN (VA-117, r6i OPEN look 3): the
-                    // judge is handed every character the call reasoned after the steer landed —
-                    // from the durable offset recorded at delivery to now, never a fixed tail —
-                    // and asked one explicit line, `STEER_FOLLOWED: yes|no|unclear`. That answer,
-                    // not the recurrence meter, decides delivery (`ladder::nudge_delivery`).
-                    // Absent on a fresh attempt (the seam resets the offset): no steer has
-                    // reached it, so there is nothing to ask about.
-                    if let Some(from) = durable_think_at_last_nudge {
-                        let span = activity_file
-                            .as_ref()
-                            .and_then(|p| since_steer_span(&p.with_extension("think.log"), from));
-                        since_steer_chars = span.as_ref().map(|s| s.chars().count());
-                        since_steer_block_text = since_steer_block(span.as_deref());
-                        sys.push_str(steer_followed_ask());
-                    }
                     // VERDICT CONTINUITY ON AN IGNORED STEER (r5, reader 5). Only a second DRIFTING
                     // re-arms delivery; skeleton's 11:05 steer went unescalated for 42 minutes/63k
                     // chars because looks 4-8 oscillated looping/drifting — while open's look 12
@@ -13105,7 +13234,7 @@ impl GooseAgentDispatcher {
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
                      It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}\
-                     \n\nMost recent reasoning:\n{tail}{since_steer_block_text}\n\n\
+                     \n\nMost recent reasoning:\n{tail}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
                      the defect you suspect, YOUR DIAGNOSIS IS WRONG and repeating it more forcefully \
@@ -13355,8 +13484,6 @@ impl GooseAgentDispatcher {
                                                 model_id,
                                                 &said,
                                                 activity_key,
-                                                last_usage_total,
-                                                Some(context_window),
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
                                             let _ = std::fs::write(p, d.to_string());
@@ -13502,12 +13629,9 @@ impl GooseAgentDispatcher {
                     // invisible for a whole run — five hours of "is the judge even watching?" with
                     // no way to answer from the artifacts. Its verdict and the measured recurrence
                     // now land in run.jsonl where every other decision lives.
-                    // VA-117: the reader's `STEER_FOLLOWED` line is read and STRIPPED first, so the
-                    // lenient four-field parse cannot fold it into NEXT (the ETA-token leak class).
-                    let (judge_says_followed, judge_text) = split_steer_followed(&o.text);
-                    let omni_outcome = parse_judge_reply(&judge_text);
+                    let omni_outcome = parse_judge_reply(&o.text);
                     history.record_established(&omni_outcome.established);
-                    let judge_eta_mins = parse_judge_eta_mins(&judge_text);
+                    let judge_eta_mins = parse_judge_eta_mins(&o.text);
                     let omni_hint = {
                         let h = omni_outcome.next_action.trim();
                         if h.is_empty() {
@@ -13579,7 +13703,7 @@ impl GooseAgentDispatcher {
                         "thinking_chars": thinking_chars,
                         "recur_rate": recur.rate(),
                         "recur_span": recur.span(),
-                        "looping": omni_judge_says_looping(&judge_text),
+                        "looping": omni_judge_says_looping(&o.text),
                         // The judge's OWN WORDS in the log. Without these a run tells you the judge fired
                         // but not whether it was any good, which is the only question that matters once it
                         // is the thing deciding when a call has stopped progressing.
@@ -13587,7 +13711,7 @@ impl GooseAgentDispatcher {
                         "established": omni_outcome.established,
                         "next": omni_outcome.next_action,
                     }));
-                    if omni_judge_says_looping(&judge_text) {
+                    if omni_judge_says_looping(&o.text) {
                         // #F924: corroborate against ANY earlier look, and treat a measured
                         // recurrence as corroboration in its own right — a long-period loop
                         // presents DIFFERENT windows on consecutive looks by construction, which
@@ -13827,41 +13951,14 @@ impl GooseAgentDispatcher {
                         omni_drift_streak,
                         calls_since_nudge(tool_calls_at_last_nudge, call_records.len()),
                     );
-                    // VA-117: the METER SUMMONS, THE READER DECIDES. `advancing` (the meter's
-                    // reading) no longer enters the ladder — r6i look 3's meter read 0.2986 over
-                    // 65,536 as "stopped advancing" while the judge's own text said "This is
-                    // advancing, not looping … in final section-to-slice assignment phase", and
-                    // the wipe abandoned 82,872 chars with the emit 16k chars into composition.
-                    // The judge's `STEER_FOLLOWED` answer over the since-steer span decides;
-                    // the meter's reading rides the decision event beside it as evidence.
                     let delivery = nudge_delivery(
                         pending.is_empty(),
                         write_progress_since_nudge,
                         &omni_outcome.verdict,
-                        judge_says_followed,
+                        advancing,
                         wrong_channel,
                         promise_due,
                     );
-                    if nudge_wanted {
-                        let (delivery_kind, decided_reason) = match delivery {
-                            NudgeDelivery::Steer(r) => ("steer", r),
-                            NudgeDelivery::Restream(r) => ("restream", r),
-                            NudgeDelivery::Hold(r) => ("hold", r),
-                        };
-                        self.events.write_value(serde_json::json!({
-                            "event": "judge_delivery_decided",
-                            "task_id": activity_key,
-                            "look": omni_looks,
-                            "judge_says_followed": judge_says_followed.map(|s| s.as_str()),
-                            "meter_recurring": recur.recurring(),
-                            "meter_advancing": advancing,
-                            "write_progress": write_progress_since_nudge,
-                            "since_steer_chars": since_steer_chars,
-                            "verdict": omni_outcome.verdict.as_str(),
-                            "delivery": delivery_kind,
-                            "reason": decided_reason,
-                        }));
-                    }
                     // A RESTREAM IS RE-CHECKED AGAINST THE STREAM AS IT IS AT THE WIPE, not as the
                     // probe's input described it (r6c web-viz look 14 — the measured walk is on
                     // `ladder::stream_woke`). Every other ladder input is a fact about FINISHED
@@ -14167,13 +14264,6 @@ impl GooseAgentDispatcher {
                         tool_calls_at_last_nudge = Some(call_records.len());
                         answer_chars_at_last_nudge = Some(answer_chars_now);
                         owned_bytes_at_last_nudge = Some(owned_bytes_now);
-                        // VA-117: where the since-steer span starts. No durable transcript stat
-                        // (`None`) means "from the transcript's start" — and the span read itself
-                        // reports an unreadable file to the judge as UNAVAILABLE, never as empty.
-                        // The unflushed think buffer (one DIGEST_IO_CADENCE of tokens) lands
-                        // after this offset, so the span may open a few hundred pre-steer chars
-                        // early; it never misses post-steer reasoning.
-                        durable_think_at_last_nudge = Some(durable_think_now.unwrap_or(0));
 
                         if can_steer {
                             // Queued into the SAME running session. The in-flight turn is not burned and
@@ -14330,7 +14420,6 @@ impl GooseAgentDispatcher {
                             tool_calls_at_last_nudge = None;
                             answer_chars_at_last_nudge = None;
                             owned_bytes_at_last_nudge = None;
-                            durable_think_at_last_nudge = None;
                             omni_drift_streak = 0;
                             omni_quiet_secs = 0;
                             omni_last_look_at = tokio::time::Instant::now();
@@ -14487,8 +14576,6 @@ impl GooseAgentDispatcher {
                         model_id,
                         &said,
                         activity_key,
-                        last_usage_total,
-                        Some(context_window),
                     );
                     let _ = std::fs::write(p, digest.to_string());
                     if let Some(m) = &activity_mirror {
@@ -14539,8 +14626,6 @@ impl GooseAgentDispatcher {
                 model_id,
                 &said,
                 activity_key,
-                last_usage_total,
-                Some(context_window),
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
             // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
@@ -16849,6 +16934,194 @@ fn spec_python_entry(spec: &str) -> Option<String> {
             "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
         )
     })
+}
+
+/// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
+/// Parsed from the spec's own idiom — "documentation is at `URL`", "Base URL `URL`",
+/// "API key `KEY`" — so this is spec-derived, never benchmark-specific; a spec that names no
+/// vendor yields Nones and every consumer stays inert. Pure/testable.
+fn spec_vendor(spec: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let grab = |pat: &str| {
+        regex::Regex::new(pat)
+            .ok()
+            .and_then(|re| re.captures(spec))
+            .map(|c| c[1].to_string())
+    };
+    (
+        grab(r"documentation is at\s+`(https?://[^`]+)`"),
+        grab(r"[Bb]ase URL\s+`(https?://[^`]+)`"),
+        grab(r"API key\s+`([^`]+)`"),
+    )
+}
+
+/// P1-8: every GET path a vendor's DOCS BODY advertises, deduped, made probeable (templated
+/// query values filled, param'd paths excluded — `probeable_get_path`'s rules). The docs page is
+/// the vendor's own text, not the spec, so this is the plain `GET /path` idiom rather than the
+/// spec's markdown-table surface.
+fn vendor_docs_get_paths(docs_text: &str) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    if let Ok(re) = regex::Regex::new(r"GET\s+(/[A-Za-z0-9_./{}<>:?&=-]*)") {
+        for c in re.captures_iter(docs_text) {
+            if let Some(p) = probeable_get_path(&c[1]) {
+                if seen.insert(p.clone()) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What the vendor probe measured. `ok` is the DOCS fetch outcome — the probe's one load-bearing
+/// page; `block` is empty exactly when nothing usable came back, and an empty block injected into
+/// `doc_facts` is a no-op, never a failure.
+struct VendorProbeOutcome {
+    ok: bool,
+    block: String,
+    endpoints: Vec<String>,
+    fetched: usize,
+    bytes: usize,
+    error: String,
+    /// P1-12: the vendor's OWN row truth, read off page 1 of its advertised GETs — the `total`
+    /// field when the body documents one, and the first collection array's length. The GATE's
+    /// `sync_rows` row compares the app's own row count against these; they are persisted to
+    /// `.swarm/vendor-probe.json` because a number that lives only in an event cannot be read
+    /// by a later gate.
+    vendor_total: Option<i64>,
+    page1_rows: Option<i64>,
+}
+
+/// P1-12, pure: the two row-evidence numbers one JSON body can carry — (`total` field, first
+/// collection array's length over the names this bench family uses). Both None for a body that
+/// is not JSON or carries neither: the caller then abstains rather than inventing a zero.
+fn json_rows_and_total(body: &str) -> (Option<i64>, Option<i64>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+        return (None, None);
+    };
+    let total = v.get("total").and_then(|t| t.as_i64());
+    let rows = [
+        "data",
+        "items",
+        "rows",
+        "events",
+        "processed",
+        "notifications",
+    ]
+    .iter()
+    .find_map(|k| v.get(*k).and_then(|a| a.as_array()).map(|a| a.len() as i64));
+    (total, rows)
+}
+
+/// P1-12, pure: one number for "how many rows does this body prove" — the documented `total`
+/// outranks a page length (a page is bounded by `limit`; the total is the collection).
+fn json_rows_evidence(body: &str) -> Option<i64> {
+    let (total, rows) = json_rows_and_total(body);
+    total.or(rows)
+}
+
+/// P1-12: the vendor row truth the RUN persisted at BUILD start (`.swarm/vendor-probe.json`,
+/// written beside the vendor_probe event). None when the file is absent or carries no number —
+/// an offline replay of an older tree, or a spec with no vendor.
+fn read_vendor_probe_rows(root: &Path) -> Option<i64> {
+    let text = std::fs::read_to_string(root.join(".swarm").join("vendor-probe.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("vendor_total")
+        .and_then(|t| t.as_i64())
+        .or_else(|| v.get("page1_rows").and_then(|t| t.as_i64()))
+}
+
+/// P1-8: fetch the vendor's docs page and ONE page of each GET it advertises, so every worker's
+/// `doc_facts` carries the vendor's REAL key names before a line of sync code is written.
+///
+/// The r2 root critical: vendor_sync.py issued ZERO list requests in sync #1 → 0/12288 payments,
+/// with 31 vacuous legs under it — the builder guessed the vendor's shape (`items`) instead of
+/// reading it (`data`, `amount_minor`). One real response body in the prompt is the cheapest
+/// possible correction.
+///
+/// Transport bounds only: a CONNECT timeout (a refused or silent-to-connect vendor answers
+/// promptly) and NO read window — II-7 deleted the read cut class, and this fetch inherits that
+/// rule. The body is truncated to `VENDOR_PROBE_PAGE_CHARS` per page AFTER it arrives, which
+/// bounds the prompt, not the transport. Every failure is an outcome (`ok:false`, empty block),
+/// never an error path: a spec whose vendor is down still builds exactly as it would have.
+const VENDOR_PROBE_PAGE_CHARS: usize = 6_000;
+
+async fn probe_vendor(docs_url: &str, base_url: &str, api_key: Option<&str>) -> VendorProbeOutcome {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    let fetch = |url: String| {
+        let client = client.clone();
+        let auth = api_key.map(|k| format!("Bearer {k}"));
+        async move {
+            let mut req = client.get(&url);
+            if let Some(a) = auth {
+                req = req.header("Authorization", a);
+            }
+            match req.send().await {
+                Ok(r) => {
+                    let status = r.status().as_u16();
+                    match r.text().await {
+                        Ok(t) if (200..300).contains(&status) && !t.trim().is_empty() => Ok(t),
+                        Ok(_) => Err(format!("status {status}")),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }
+    };
+    let docs_text = match fetch(docs_url.to_string()).await {
+        Ok(t) => t,
+        Err(e) => {
+            return VendorProbeOutcome {
+                ok: false,
+                block: String::new(),
+                endpoints: Vec::new(),
+                fetched: 0,
+                bytes: 0,
+                error: e,
+                vendor_total: None,
+                page1_rows: None,
+            };
+        }
+    };
+    let excerpt = |t: &str| -> String { t.trim().chars().take(VENDOR_PROBE_PAGE_CHARS).collect() };
+    let endpoints = vendor_docs_get_paths(&docs_text);
+    let mut pages: Vec<String> = vec![format!("### GET {docs_url}\n{}", excerpt(&docs_text))];
+    let mut fetched = 0usize;
+    let mut vendor_total: Option<i64> = None;
+    let mut page1_rows: Option<i64> = None;
+    for path in &endpoints {
+        let url = format!("{}{path}", base_url.trim_end_matches('/'));
+        if let Ok(body) = fetch(url.clone()).await {
+            // P1-12: read the row truth off the FULL body before it is excerpted for the prompt.
+            let (t, r) = json_rows_and_total(&body);
+            vendor_total = vendor_total.max(t);
+            page1_rows = page1_rows.max(r);
+            pages.push(format!("### GET {url}\n{}", excerpt(&body)));
+            fetched += 1;
+        }
+    }
+    let block = format!(
+        "## Vendor probe — the vendor's REAL responses, fetched by the engine just now\n\
+         These are the vendor's actual key names and body shapes, read from its live endpoints. \
+         Use these literals EXACTLY — never a guessed name (`items` for `data` is how a sync \
+         acquires nothing).\n\n{}",
+        pages.join("\n\n")
+    );
+    let bytes = block.len();
+    VendorProbeOutcome {
+        ok: true,
+        block,
+        endpoints,
+        fetched,
+        bytes,
+        error: String::new(),
+        vendor_total,
+        page1_rows,
+    }
 }
 
 /// Ask the VENDOR how many items exist — the ground truth the Vacuous arm was missing (F823).
@@ -19283,9 +19556,8 @@ fn skeleton_schema() -> serde_json::Value {
 // output shape here; a hard limit would just produce a brief that stops mid-signature.
 
 impl GooseAgentDispatcher {
-    /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices
-    /// (each with the spec sections it owns) and the decisions the spec genuinely leaves open.
-    /// It writes NO questions (VA-089): each slice's research lane derives its own, in parallel.
+    /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices, the
+    /// questions each needs answered, and the decisions the spec genuinely leaves open.
     pub(crate) async fn open_slices(
         &self,
         planner_model: &str,
@@ -19316,11 +19588,9 @@ impl GooseAgentDispatcher {
         let sections_block = if armed {
             "\n\nTHE REQUEST ARRIVES AS AN ORIENTATION INDEX — every section of the document \
              with its heading, measured size and opening lines. The FULL text is the request \
-             file named under SOURCES: never print the whole file; open a section (`sed -n \
-             'A,Bp'` on the range the index gives) only when its opening lines do not tell you \
-             which slice owns it. The engine splices each section's FULL text into the owning \
-             slice's brief after you answer, and that slice's research lane reads the same text \
-             to derive its questions — you write none. For each slice, list in `sections` the \
+             file named under SOURCES: never print the whole file; grep it for every question \
+             (the QUESTIONS rule below). The engine splices each section's FULL text into the \
+             owning slice's brief after you answer. For each slice, list in `sections` the \
              EXACT headings (verbatim from the index) of every section that slice owns; every \
              section must appear in at least one slice's `sections`."
         } else {
@@ -19330,12 +19600,10 @@ impl GooseAgentDispatcher {
             "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
              work, divided by MEANING and by interface, never by document order or by equal-sized \
              buckets.\n\n\
-             Each slice gets: an id (kebab-case), a title, an objective, and a weight from 1 to 5 \
-             estimating how much work it is. You write NO questions: each slice's research lane \
-             derives its own from the sections you assign it — in parallel, after you answer — \
-             so your whole job is the split, its file ownership and its section assignment. \
-             MEASURED: openers that also wrote per-slice questions ran 46 to 71 minutes on one \
-             node while two idled (four runs); the questions are what the parallel lanes do.\n\n\
+             Each slice gets: an id (kebab-case), a title, an objective, its QUESTIONS (the \
+             QUESTIONS rule follows the SOURCES block in the request message — every question is \
+             an object with a kind, a cite and, for a lookup, the fact), and a weight from 1 to 5 \
+             estimating how much work it is.\n\n\
              SLICES MUST BE COMPARABLE IN SIZE, AND THERE ARE THREE TO SIX OF THEM. A slice more than \
              roughly twice the work of another means one machine grinds while the others idle — split \
              that one, and if splitting would push you past six, the overweight slice is hiding layers \
@@ -19397,8 +19665,15 @@ impl GooseAgentDispatcher {
         // full sb-7 spec). The detail is not lost: briefs_from_slices splices each claimed
         // section's full text into the owning slice verbatim. Below the floor everything here
         // is byte-identical.
-        // VA-089: no QUESTIONS rule follows the SOURCES block any more — the opener slices; each
-        // slice's research lane derives and answers its questions in parallel (research.rs).
+        // D10-8 (VA-034's mechanism): the QUESTIONS rule sits RIGHT AFTER the SOURCES block, where
+        // the request file's path is, not at the end of a 9-paragraph system prompt. r6c's and r6d's
+        // openers both HAD a shell and made ZERO shell calls (`open.json tool_calls 1
+        // ['recipe__final_output']`); r6d at 0.3k "First let me check the working directory", then
+        // 74k chars and one call; at 62.4k it wrote "Health response shape ('shape below' — in full
+        // text) — which fields?" while request.md:134-136 held the shape. The rule says RUN the
+        // grep, shows the three shapes with real sb-7 examples, and the schema below refuses a
+        // question without a cite — no cap, no retry count: the validator is the refuser.
+        let questions_rule = opener_questions_rule(request_path.as_deref());
         let user_text = if armed {
             let orientation = spec_orientation(&sections);
             self.events.write_value(serde_json::json!({
@@ -19409,10 +19684,11 @@ impl GooseAgentDispatcher {
             }));
             format!(
                 "The request, as its ORIENTATION INDEX (the engine splices each section's full \
-                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}"
+                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}\
+                 {questions_rule}"
             )
         } else {
-            format!("The request:\n\n{user_prompt}{sources_block}")
+            format!("The request:\n\n{user_prompt}{sources_block}{questions_rule}")
         };
         let out = self
             .run_agent_timed_at(
@@ -19953,7 +20229,7 @@ fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut 
         // replanner re-added the task four minutes into BUILD with the shadow back. The work the
         // planner assigned survives at an unshadowed path inside the package; only a path some
         // other task already claims falls back to the old drop.
-        let rewritten = format!("{prefix}{}", plan_repairs::PACKAGE_IMPL_FILE);
+        let rewritten = format!("{prefix}impl.py");
         let rewrite_free = !subtasks.iter().any(|st| owns(st, &rewritten));
         if let Some(files) = subtasks[module_owner]
             .get_mut("files")
@@ -20081,7 +20357,7 @@ async fn run_linear_plan(
     // single-slice fallback: the whole request as one slice. That always parses, always validates, and
     // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
     // is a worse plan and still a plan.
-    let opened = match dispatcher
+    let mut opened = match dispatcher
         .open_slices(&cfg.planner_model, &opts.prompt)
         .await
     {
@@ -20113,6 +20389,7 @@ async fn run_linear_plan(
                             id: "app".to_string(),
                             title: "the whole request".to_string(),
                             objective: opts.prompt.clone(),
+                            questions: Vec::new(),
                             weight: 5,
                             sections: Vec::new(),
                         }],
@@ -20201,10 +20478,9 @@ async fn run_linear_plan(
     // ---- RESEARCH FAN v2 (v1 stays dead) ------------------------------------------------------
     // v1 — prose briefs REPLACING dependency sources — is deleted (P1-5) and stays deleted: r2
     // paid 48 minutes with 2 of 3 nodes idle and its paraphrases did not prevent the five
-    // wrong-key defects. v2 is a different mechanism: ONE structured read-only lane per slice
-    // (VA-089) that derives the slice's own design/external questions from its sections and
-    // answers them, answers spliced as ANSWERS beside the sources (never instead of them —
-    // dep_block is untouched). See the dead-form notes on the fan block.
+    // wrong-key defects. v2 is a different mechanism: the opener's OWN questions, one structured
+    // read-only call each across one lane per host, answers spliced as FACTS beside the sources
+    // (never instead of them — dep_block is untouched). See the dead-form notes on the fan block.
     // Spawned AFTER the ASK handshake so whatever the user DID answer informs research (on the
     // benchmark the window expires unanswered — r5's low_confidence_ask_timeout: "no answers
     // arrived"), awaited before the DAG exists. MILD: a panicked fan is zero answers plus a loud
@@ -20214,6 +20490,14 @@ async fn run_linear_plan(
     // per-decision answer-absence is the ONLY trigger, so an attended run where the human
     // answers everything dispatches none of these.
     let still_open = decisions::still_open_after_user(&decision_lines, user_decisions);
+    // THE FAN CUT (C2a): a slice question that IS one of the opener's open decisions is routed
+    // to it — decided ONCE, on the decisions lane (or by the user), never again on a slice
+    // lane. r6d decided D1 three times (`__open_decisions__-q2`, web-page-q1, inside
+    // web-page-q3) and re-asked the token-entry decision as web-page-q0 (7.9 min). Runs
+    // AFTER ASK so the routed question's settlement — whichever channel settles it — reaches
+    // the brief through the decisions partition; the fan below skips routed questions and
+    // `briefs_from_slices` points each at its decision.
+    route_questions_to_decisions(&mut opened, sink.as_ref());
     let fan_rows: Vec<ResearchRow> = {
         let fan = tokio::spawn({
             let dispatcher = dispatcher.clone();
@@ -20369,7 +20653,7 @@ async fn run_linear_plan(
 // questions with real read tools, and its answers ride NEXT TO dep_block, never instead of it.
 // The other dead forms cannot recur here either: SCOUT lens arrays are test-fixture only, dead in
 // the run path (`SCOUT_LENSES` lives under `#[cfg(test)]`), and the fan's ONLY inputs are the
-// opener's own output — its slices and its open decisions — no const array exists to
+// opener's own output — its per-slice questions and its open decisions — no const array exists to
 // generify; no multi-draft vote (every lane answers a DIFFERENT question, nothing scores a
 // winner); no coverage barrier (per-answer minis + events land as each finishes; the only join
 // feeds the one serial SYNTHESIS call); no resplit.
@@ -20387,9 +20671,7 @@ async fn run_linear_plan(
 // ================================================================================================
 
 impl GooseAgentDispatcher {
-    /// RESEARCH FAN v2 — one uncapped structured call per SLICE (the lane derives its own
-    /// questions from the slice's sections and answers them; VA-089) plus one for the open
-    /// decisions, one lane per host,
+    /// RESEARCH FAN v2 — one uncapped structured call per opener question, one lane per host,
     /// spawned AFTER the ASK handshake resolves (A6: whatever the user DID answer informs
     /// research — on the benchmark the ask window expires unanswered, r5's
     /// low_confidence_ask_timeout: "no answers arrived") and awaited before
@@ -20408,7 +20690,7 @@ impl GooseAgentDispatcher {
     /// NAMED LIMITATION (A2, pre-existing transport class, deliberately not widened into here):
     /// a stream that CONNECTS and then emits zero characters forever is non-terminal today — the
     /// judge's look predicate needs ~2,000 thinking chars before it reads a lane — and this fan
-    /// multiplies that exposure by the lane count. Carried as a named risk, not fixed here.
+    /// multiplies that exposure by the question count. Carried as a named risk, not fixed here.
     pub(crate) async fn research_fan(
         self: &Arc<Self>,
         worker_models: Vec<String>,
@@ -20418,26 +20700,19 @@ impl GooseAgentDispatcher {
         tree_at_start: &[String],
         still_open_decisions: &[(usize, String)],
     ) -> Vec<ResearchRow> {
-        // VA-089: ONE lane per slice, ALWAYS — the lane derives its own questions from its
-        // sections. The opener emits slices only: r6h's opener reasoned ~66 minutes on one node
-        // over dozens of "What do request.md:A-B fix for …" lookups while two nodes idled, and
-        // r6g's fan dispatched lanes for only the 4 of 6 slices that had dispatch-kind
-        // questions (7 answers on 4 lanes in 15 minutes — the parallel phase starved by the
-        // serial one). Each lane's prompt HEAD is built here from the slice's own facts; the one
-        // dispatch-time addition is the snowball block (`research_dispatch_text`).
+        // ONE pass over the opener's own slices builds each question WITH its prompt HEAD —
+        // no later lookup exists that could miss and silently substitute an empty prompt. The
+        // one dispatch-time addition is the snowball block (`research_dispatch_text`): the minis
+        // answered before THIS lane left, whose emptiness on a first dispatch is honest.
         let sections = spec_sections(spec);
         let armed = orientation_armed(spec, &sections);
         let index_sections = if armed { sections.len() } else { 0 };
         let request_path = persist_request_text(&self.working_dir, spec, self.events.as_ref());
         let sources = research_sources_block(request_path.as_deref(), spec, tree_at_start);
-        let landed_before = research::load_research_minis(&self.working_dir);
+        let mut total_questions = 0usize;
         let mut rows: Vec<ResearchRow> = Vec::new();
-        // (sections, lane): the lane's size in the unit `research_planned.per_slice_sections`
-        // reports — the heaviest-first dispatch key (VA-113).
-        let mut lanes_to_run: Vec<(usize, ResearchLane)> = Vec::new();
-        let mut resumed_slices: Vec<String> = Vec::new();
-        let mut per_slice_sections: std::collections::BTreeMap<String, usize> =
-            std::collections::BTreeMap::new();
+        let mut fact_rows: Vec<ResearchRow> = Vec::new();
+        let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
         // The plan-wide view `consumed_spec_sections` needs (VA-030): every slice's claims, so
         // rule (c) counts claimants across the plan instead of seeing one, and this slice's
         // declared files, so rule (a) can match an advertised route against `web/app.js`'s
@@ -20448,24 +20723,7 @@ impl GooseAgentDispatcher {
             .map(|sl| sl.sections.as_slice())
             .collect();
         for sl in &opened.slices {
-            per_slice_sections.insert(sl.id.clone(), sl.sections.len());
-            // The resume watermark: a slice whose lane already landed rows — its own questions,
-            // answered or not, or its lane-outcome row — is settled history and never re-runs
-            // (an unanswered row stays unanswered on resume; revival would be an explicit engine
-            // decision, never a silent retry). The rows ride into the briefs as they landed.
-            let resumed: Vec<ResearchRow> = landed_before
-                .iter()
-                .filter(|r| r.slice == sl.id)
-                .cloned()
-                .collect();
-            if !resumed.is_empty() {
-                self.events.write_value(serde_json::json!({
-                    "event": "research_slice_resumed",
-                    "slice": sl.id,
-                    "rows": resumed.len(),
-                }));
-                resumed_slices.push(sl.id.clone());
-                rows.extend(resumed);
+            if sl.questions.is_empty() {
                 continue;
             }
             let head = research_prompt_head(
@@ -20486,162 +20744,175 @@ impl GooseAgentDispatcher {
                 tree_at_start,
                 &sources,
             );
-            // The sibling slices' objectives: what the OTHER builders own, so a lane does not
-            // derive a question another slice's lane derives — this run's facts, never a template.
-            let siblings = opened
-                .slices
-                .iter()
-                .filter(|other| other.id != sl.id)
-                .map(|other| format!("- `{}` — {}: {}", other.id, other.title, other.objective))
-                .collect::<Vec<_>>()
-                .join("\n");
-            lanes_to_run.push((
-                sl.sections.len(),
-                ResearchLane {
-                    slice: sl.id.clone(),
-                    head,
-                    siblings,
-                    questions: Vec::new(),
-                    material: research::slice_material(sl, &sections),
-                },
-            ));
-        }
-        // THE UNANSWERED DECISION REMAINDER (item 0): the decisions the user left unanswered ride
-        // ONE lane under the reserved DECISION_SLICE id, each indexed by its stable position in
-        // the opener's own list (the resume identity of its ledger mini). The prompt carries the
-        // WHOLE request — a decision is global, no claimed-section subset exists — plus whatever
-        // the user DID answer, and the decision text is tagged exactly as before (`[qN]`).
-        let mut decision_questions: Vec<ResearchQuestion> = Vec::new();
-        for (i, d) in still_open_decisions {
-            match load_research_mini(&self.working_dir, decisions::DECISION_SLICE, *i) {
-                Some(row) => rows.push(row),
-                None => decision_questions.push(ResearchQuestion::decision(*i, d)),
+            for (i, q) in sl.questions.iter().enumerate() {
+                total_questions += 1;
+                let rq = ResearchQuestion::of(&sl.id, i, q);
+                match load_research_mini(&self.working_dir, &sl.id, i) {
+                    Some(row) => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "resumed");
+                        rows.push(row);
+                    }
+                    // THE FAN CUT (C1, VA-095): a lookup whose cite is a line range of the request
+                    // is not a question — `land_spec_fact` renders those lines of `spec` as the
+                    // terminal row (SPEC FACTS block, ledger block, snowball), persists the mini,
+                    // NO lane runs; the opener wrote no fact text (r6g: 80 facts, 61 opener-min on
+                    // one node). A cite past the file or across sections is named, and rides a lane.
+                    None if q.is_cited_fact() => {
+                        let events = self.events.as_ref();
+                        match land_spec_fact(&self.working_dir, spec, &rq, events) {
+                            Some(row) => fact_rows.push(row),
+                            None => to_dispatch.push((rq, head.clone())),
+                        }
+                    }
+                    // C2(a): routed to an open decision — no row of its own; the decision's
+                    // settlement rides every brief and this slice's brief points at it.
+                    None if q.decision.is_some() => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "decision");
+                    }
+                    None => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "dispatch");
+                        to_dispatch.push((rq, head.clone()));
+                    }
+                }
             }
         }
-        let decisions_n = decision_questions.len();
-        if !decision_questions.is_empty() {
-            let material = decision_questions
-                .iter()
-                .map(|q| q.question.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
-            // The decisions lane's size is its question count — one derivation per decision.
-            lanes_to_run.push((
-                decision_questions.len(),
-                ResearchLane {
-                    slice: decisions::DECISION_SLICE.to_string(),
-                    head: decisions::decision_user_text(
-                        spec,
-                        user_decisions,
-                        tree_at_start,
-                        &sources,
-                    ),
-                    siblings: String::new(),
-                    questions: decision_questions,
-                    material,
-                },
-            ));
+        // THE UNANSWERED DECISION REMAINDER (item 0): each rides as one structured call under
+        // the reserved DECISION_SLICE id, indexed by its stable position in the opener's own
+        // list (the resume identity of its ledger mini). The prompt carries the WHOLE request —
+        // a decision is global, no claimed-section subset exists — plus whatever the user DID
+        // answer, and the fan appends the decision text exactly as it appends a slice question.
+        for (i, d) in still_open_decisions {
+            total_questions += 1;
+            match load_research_mini(&self.working_dir, decisions::DECISION_SLICE, *i) {
+                Some(row) => rows.push(row),
+                None => to_dispatch.push((
+                    ResearchQuestion::decision(*i, d),
+                    decisions::decision_user_text(spec, user_decisions, tree_at_start, &sources),
+                )),
+            }
         }
+        if total_questions == 0 {
+            // Measured absence, honest empty (the fallback gate): the opener emitted no
+            // questions and left no unanswered decisions — including the double-failure
+            // one-slice fallback — so there is nothing to research and the event says so.
+            self.events.write_value(serde_json::json!({
+                "event": "research_no_questions",
+                "slices": opened.slices.len(),
+            }));
+            return Vec::new();
+        }
+        // Every question that reaches a lane, in dispatch order (the `research_planned`
+        // denominator), then the lanes themselves: C3 — ONE lane per slice, carrying every
+        // remaining question of that slice, plus one for the open decisions (`batch_by_slice`;
+        // the plan's own design, "1 slice per node, queued"). r6d ran 38 lanes for 38
+        // questions, ~5 minutes of read/orientation tail on each; a slice's questions share
+        // one reading of its sections. A panicked lane's Err arrives positionally, so
+        // `batches[i]` folds into terminal rows below.
+        let dispatched: Vec<ResearchQuestion> =
+            to_dispatch.iter().map(|(q, _)| q.clone()).collect();
+        let lane_batches = research::batch_by_slice(to_dispatch);
+        let batches: Vec<Vec<ResearchQuestion>> =
+            lane_batches.iter().map(|(b, _)| b.clone()).collect();
         emit_research_planned(
             self.events.as_ref(),
-            lanes_to_run.len(),
-            &per_slice_sections,
-            &resumed_slices,
-            decisions_n,
+            &dispatched,
+            &rows,
+            fact_rows.len(),
+            lane_batches.len(),
         );
-        if lanes_to_run.is_empty() {
+        // The facts join the rows AFTER the queue event: they are settled, not lane work, and
+        // the event's `questions` denominator is what tick.py subtracts dispatched from.
+        rows.extend(fact_rows);
+        if lane_batches.is_empty() {
             return rows;
         }
         announce_research_phase(self.events.as_ref());
         let lanes = research_fan_lanes(worker_models);
-        // HEAVIEST FIRST, TO THE FASTEST FREE HOST (VA-113, r6i: ledgerd's 17-section lane was
-        // dispatched last, at 11:28:37Z, to the slowest node, and ran alone from 11:32 while two
-        // nodes idled ≥ 49 minutes). The fan starts items in list order onto a fastest-first
-        // device queue (`fanout_over_fleet`), so ordering the lanes by section count is the
-        // whole mechanism; `rank` is the position in that order and rides the dispatch event
-        // with the host's resolved speed weight — the same number `pool_resolved.devices[]
-        // .speed_weight` carries — so the pairing is auditable per lane. MILD: an order, never a
-        // cap; a lane is never held back for a heavier one.
-        let ordered = order_heaviest_first(lanes_to_run, |(sections, _)| *sections);
-        let host_speed: Arc<std::collections::HashMap<String, u32>> =
-            Arc::new(resolved_fleet_speed_weights(&load_config()));
-        let lanes_to_run: Vec<(usize, usize, ResearchLane)> = ordered
-            .into_iter()
-            .enumerate()
-            .map(|(rank, (sections, lane))| (rank, sections, lane))
-            .collect();
-        // A panicked lane's Err arrives positionally; its slice and (for the decisions lane) its
-        // questions fold into terminal rows below.
-        let lane_specs: Vec<(String, Vec<ResearchQuestion>)> = lanes_to_run
-            .iter()
-            .map(|(_, _, l)| (l.slice.clone(), l.questions.clone()))
-            .collect();
         let me = self.clone();
         let fan_rows = fanout_over_fleet(
             "research",
             self.events.as_ref(),
             lanes,
-            lanes_to_run,
-            move |(rank, sections, lane): (usize, usize, ResearchLane), model: String| {
+            lane_batches,
+            move |(batch, head): (Vec<ResearchQuestion>, String), model: String| {
                 let me = me.clone();
-                let host_speed = host_speed.clone();
                 async move {
-                    // One activity digest, one transcript, one judge lane per slice.
-                    let key = format!("research-{}", lane.slice);
+                    // `batch_by_slice` never yields an empty batch; the key is the slice's —
+                    // one activity digest, one transcript, one judge lane per slice.
+                    let slice = batch
+                        .first()
+                        .map(|q| q.slice.clone())
+                        .unwrap_or_else(|| decisions::DECISION_SLICE.to_string());
+                    let key = format!("research-{slice}");
+                    let mut out_rows: Vec<ResearchRow> = Vec::new();
+                    // THE FAN CUT (C2b): read the minis on disk RIGHT NOW — resumed, or landed
+                    // by lanes of any slice that finished before this one got a node — and
+                    // every question of the batch one already answers (same cite, same
+                    // decision id, or a stem past both floors; `research_plan::same_question`)
+                    // gets that answer copied into its row with the original mini as
+                    // provenance, and leaves the batch. r6d: drafts-workflow-q4 asked what
+                    // ledger-api-q5 had settled from request.md:218 (8.1 min). MILD: the three
+                    // rules are strict; anything else stays in the batch and is asked.
+                    let landed = research::load_research_minis(&me.working_dir);
+                    let mut remaining: Vec<ResearchQuestion> = Vec::new();
+                    for q in batch {
+                        let Some((cover, rule)) = covering_mini(&q, &landed, me.events.as_ref()) else {
+                            remaining.push(q);
+                            continue;
+                        };
+                        let row = ResearchRow::covered_by(&q, cover, rule);
+                        persist_research_row(&me.working_dir, me.events.as_ref(), &row);
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_question_covered",
+                            "slice": q.slice,
+                            "q_index": q.q_index,
+                            "question": q.question.chars().take(200).collect::<String>(),
+                            "by": "mini",
+                            "by_mini": row.origin.trim_start_matches(research::ORIGIN_COVERED_PREFIX),
+                            "rule": rule,
+                        }));
+                        out_rows.push(row);
+                    }
+                    if remaining.is_empty() {
+                        // Every question was covered: no model is called for this slice.
+                        return out_rows;
+                    }
                     // E7: enrolled as a relay target for the life of the call (removed at its rows).
                     me.research_running
                         .lock()
                         .unwrap()
-                        .insert(key.clone(), lane.relay_target());
-                    me.events.write_value(serde_json::json!({
-                        "event": "research_dispatch_order",
-                        "slice": lane.slice,
-                        "sections": sections,
-                        "rank": rank,
-                        "host": model,
-                        // null = the resolver never saw this model (a pool outside the config);
-                        // `pool_resolved.speed_weight_unmatched_patterns` names that case.
-                        "host_speed": host_speed.get(&model),
-                    }));
-                    me.events.write_value(serde_json::json!({
-                        "event": "research_dispatched",
-                        "slice": lane.slice,
-                        // VA-089: a slice lane's questions are its own — none exist at dispatch;
-                        // the decisions lane's tags ride here as before.
-                        "derives": lane.derives(),
-                        "q_indexes": lane.questions.iter().map(|q| q.q_index).collect::<Vec<_>>(),
-                        "model": model,
-                        "activity_key": key,
-                    }));
+                        .insert(key.clone(), remaining.clone());
+                    for q in &remaining {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_dispatched",
+                            "slice": q.slice,
+                            "q_index": q.q_index,
+                            // A hard head cut: this feeds an event, not a model (the
+                            // head_to_sentence_end rule's own exemption), at final_text's 200.
+                            "question": q.question.chars().take(200).collect::<String>(),
+                            "model": model,
+                            "activity_key": key,
+                            "batch": remaining.len(),
+                        }));
+                    }
                     let user_text = research_dispatch_text(
                         &me.working_dir,
                         me.events.as_ref(),
-                        &lane,
+                        &head,
+                        &remaining,
                         &key,
                         index_sections,
                     );
-                    let schema = if lane.derives() {
-                        research::research_derived_schema()
-                    } else {
-                        research_schema()
-                    };
-                    if lane.derives() {
-                        // VA-118: the per-answer tool is open for this lane's key until its rows.
-                        me.research_landing
-                            .lock()
-                            .unwrap()
-                            .insert(key.clone(), ResearchLanding::open(&lane.slice, &model));
-                    }
                     let t = std::time::Instant::now();
                     let out = me
                         .run_agent_timed_at(
                             &model,
-                            research_system_text(&lane),
+                            research_system_text(),
                             user_text,
                             // A1: the structured deliverable arms wants_structured_reply and,
                             // with may_terminate below, the judge_out_of_moves ending.
                             Some(Response {
-                                json_schema: Some(schema),
+                                json_schema: Some(research_schema()),
                             }),
                             planner_side_turns(),
                             // A4: the REAL toolset under the read-only quarantine — the
@@ -20652,51 +20923,37 @@ impl GooseAgentDispatcher {
                             None,
                             Some(&key),
                             true, // read_only: the II-12 research-write quarantine
-                            true, // may_terminate: a lost lane costs one slice's answers, never a phase
+                            true, // may_terminate: a lost lane costs one answer, never a phase
                         )
                         .await;
                     let secs = t.elapsed().as_secs();
-                    // VA-118: the rows the lane's research_answer calls already landed — the final
-                    // reply folds only the REMAINDER, numbered after them; the rows seed the return.
-                    let (landed, landed_rows) = me
-                        .research_landing
-                        .lock()
-                        .unwrap()
-                        .remove(&key)
-                        .map_or((0, Vec::new()), ResearchLanding::close);
                     let folded = match out {
                         Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
                         Err(e) => Err(e.to_string()),
                     };
-                    // Terminal rows: a slice lane's OWN remaining questions (`fold_research_lane_from`
-                    // — at least one row, the lane's outcome, when none landed either way); the
-                    // decisions lane's tagged batch (`fold_research_batch`, one row per decision).
-                    // An entry the fold cannot attribute is named, never silently dropped.
-                    let (lane_rows, strays) = if lane.derives() {
-                        research::fold_research_lane_from(&lane.slice, &model, secs, folded, landed)
-                    } else {
-                        research::fold_research_batch(&lane.questions, &model, secs, folded)
-                    };
+                    // ONE row per question of the batch, every one terminal (answered, or
+                    // unanswered with the reason — including "no entry for [qN]" when the
+                    // lane's reply skipped a tag); an entry with a tag the batch never carried
+                    // is named, never silently dropped.
+                    let (lane_rows, strays) =
+                        research::fold_research_batch(&remaining, &model, secs, folded);
                     for s in strays {
                         me.events.write_value(serde_json::json!({
                             "event": "research_batch_stray_answer",
                             "task": key,
-                            "slice": lane.slice,
+                            "slice": slice,
                             "question_index": s.question_index,
                             "answer_head": s.answer_head,
                         }));
                     }
                     me.research_running.lock().unwrap().remove(&key);
-                    // Tool-landed rows first (persisted, emitted, relayed at their landing), then the
-                    // remainder: this one list is what synthesis reads; disk minis are read at resume.
-                    let mut out_rows: Vec<ResearchRow> = landed_rows;
                     for row in lane_rows {
                         // The mini is written for BOTH outcomes — the absence is a fact the
                         // ledger holds — and the events (one funnel, `emit_research_outcome`:
-                        // the row's kind, the answered/unanswered row, one
-                        // `research_raised_folded` per raised question) are the loud channel
-                        // tick.py counts. Each landed row is relayed to the still-running lanes
-                        // whose material names a path it names (E7, re-aimed by VA-089).
+                        // the answered/unanswered row plus one `research_raised_folded` per
+                        // raised question) are the loud channel tick.py counts. Each landed
+                        // row is relayed to the still-running lanes whose questions name a
+                        // path it names (E7, re-aimed by C3).
                         persist_research_row(&me.working_dir, me.events.as_ref(), &row);
                         emit_research_outcome(me.events.as_ref(), &row);
                         me.queue_research_relay(&row);
@@ -20715,26 +20972,11 @@ impl GooseAgentDispatcher {
             match folded {
                 Ok(lane_rows) => rows.extend(lane_rows),
                 Err(error) => {
-                    // A panicked lane is a TERMINAL unanswered outcome: one lane-outcome row for a
-                    // slice lane (its questions died with it), one row per decision for the
-                    // decisions lane (`fold_research_panic`); each mini is written, each event
-                    // rides the same funnel as every other row.
-                    let (slice, questions) = &lane_specs[i];
-                    let panicked: Vec<ResearchRow> = if questions.is_empty() {
-                        vec![research::lane_outcome_row(
-                            slice,
-                            "lane_panicked",
-                            &error,
-                            "",
-                            0,
-                        )]
-                    } else {
-                        questions
-                            .iter()
-                            .map(|q| fold_research_panic(q, &error))
-                            .collect()
-                    };
-                    for row in panicked {
+                    // A panicked lane is a TERMINAL unanswered outcome for EVERY question it
+                    // carried (`fold_research_panic`): each mini is written, each event rides
+                    // the same funnel as every other row, and the brief keeps the raw question.
+                    for q in &batches[i] {
+                        let row = fold_research_panic(q, &error);
                         persist_research_row(&self.working_dir, self.events.as_ref(), &row);
                         emit_research_outcome(self.events.as_ref(), &row);
                         rows.push(row);
@@ -20913,18 +21155,8 @@ where
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
     // exact-equality consumers read it), prepends the skeleton, repairs the measured flags,
     // injects advertised entry files, and emits `plan_repaired` every time — actions or none.
-    // Then, AFTER the repairs so the owner map holds FINAL paths: VA-104's cross-slice answers
-    // (`answer_routing.rs`) and VA-109's DOM contract (`dom_contract.rs`) — ONE tail, walked by
-    // this door and by the DAG-invalid flat plan below, so the two cannot drift.
-    let door = dom_contract::PlanDoor {
-        spec: user_prompt,
-        every_decision_settled,
-        briefs: &briefs,
-        research,
-        opened: &opened,
-        sink,
-    };
-    let plan_json = dom_contract::finalize_and_route(plan_json, "plan", &door);
+    let plan_json =
+        finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
 
     // THE SPLIT (VA-021 / VA-024): on the finalized plan, spec sections per owned file are
     // measured against the plan's own distribution; a fat task (r6c web-viz: 7 sections → 1 file →
@@ -20960,12 +21192,14 @@ where
                 "  {} the synthesised plan will not load ({e}) — one task per slice instead",
                 style("!").yellow().bold()
             );
-            plan_json = dom_contract::finalize_and_route(
+            plan_json = finalize_plan_before_dag(
                 flat_plan_from_briefs(&briefs, lang, user_prompt),
+                user_prompt,
+                every_decision_settled,
+                sink,
                 // Finding 6: the second finalize of one planning pass — tagged so the tick's
                 // fired-twice defect line can except it instead of paging on a legitimate arm.
                 "dag_fallback",
-                &door,
             );
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
@@ -21065,6 +21299,70 @@ fn finalize_plan_before_dag(
     }
 }
 
+/// One task per slice, deps stripped, plus the sink. Always validates.
+///
+/// EACH TASK OWNS THE FILES ITS OWN BRIEF DECLARES. This hardcoded `"files": []`, so on either fallback
+/// path — synthesis failed, or the synthesised plan will not load as a DAG — every task owned nothing:
+/// the scheduler had no file ownership to serialise on, `smoke_all_files` was empty, the decomposition
+/// counters reported the whole plan as `tasks_owning_nothing`, and `require_advertised_entry_files`
+/// degenerated (its last-resort pick is the first task owning anything, and none did), so the
+/// package-entry guarantee added after two runs shipped packages with no `__main__.py` did not run at all.
+/// `SliceBrief.files` is populated by `files_from_objective` precisely so ownership is not invented.
+///
+/// FIRST CLAIMANT WINS, so ownership stays disjoint: two objectives declaring the same path is the
+/// expected case (the synthesised path measures the same collision as `shared_files` in the
+/// decomposition flags), and a plan where two tasks own one file is a plan the scheduler must
+/// serialise rather than parallelise.
+fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang, spec: &str) -> String {
+    // A slice whose objective declared no files (the `slice_files_unnamed` case) would make an
+    // owns-nothing task, and an owns-nothing task is REMOVED by the plan repair's rule (a) — the
+    // fallback once shed every task that way in its own test. A conventional one-module-per-slice
+    // path keeps every fallback task buildable.
+    let ext = match lang {
+        TargetLang::Python => "py",
+        TargetLang::TypeScript => "ts",
+        TargetLang::Rust => "rs",
+        TargetLang::Go => "go",
+        TargetLang::Other => "py",
+    };
+    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut tasks: Vec<serde_json::Value> = briefs
+        .iter()
+        .map(|b| {
+            let mut files: Vec<String> = b
+                .files
+                .iter()
+                .filter(|f| claimed.insert((*f).clone()))
+                .cloned()
+                .collect();
+            if files.is_empty() {
+                let conventional = format!("{}.{ext}", b.id.replace('-', "_"));
+                if claimed.insert(conventional.clone()) {
+                    files.push(conventional);
+                }
+            }
+            serde_json::json!({
+                "id": b.id,
+                "slice": b.id,
+                "difficulty": "hard",
+                "files": files,
+                "depends_on": [],
+                "description": b.brief,
+            })
+        })
+        .collect();
+    tasks.push(serde_json::json!({
+        "id": goose_swarm::SINK_ID,
+        "difficulty": "hard",
+        "files": [],
+        "depends_on": briefs.iter().map(|b| b.id.clone()).collect::<Vec<_>>(),
+        // Finding 1: the fallback plan's sink row reaches the judge and the review — built
+        // from the spec's advertised surface, never the banned template.
+        "description": plan_sink_description(spec, lang),
+    }));
+    serde_json::json!({ "subtasks": tasks }).to_string()
+}
+
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
@@ -21121,12 +21419,9 @@ def normalize(r):
         .contains("DATA SHAPES"));
         // And the first-wave redirect survives: a worker with no dependency on disk yet is told
         // so, under the same heading its prompts point at (P1-4 rewired it off the deleted
-        // frozen-interfaces bundle; P1-6 keeps it; VA-106 moved it beside the block it stands
-        // in for, `dep_sources::DepSourcesBlock::text_or_none_on_disk`).
+        // frozen-interfaces bundle; P1-6 keeps it).
         assert!(
-            dep_sources::DepSourcesBlock::default()
-                .text_or_none_on_disk()
-                .starts_with("## API of dependencies — NONE ON DISK YET\n"),
+            include_str!("swarm.rs").contains("## API of dependencies — NONE ON DISK YET"),
             "the first-wave NONE ON DISK YET redirect must stay"
         );
     }
@@ -21211,6 +21506,119 @@ def normalize(r):
         assert!(
             from_empty.kind_prompt,
             "a config.yaml omitting kind_prompt must KEEP the baked default, not serde's false"
+        );
+    }
+
+    #[test]
+    fn spec_vendor_parses_the_spec_idiom_and_stays_inert_without_it() {
+        // The exact idiom both spec-build.md versions use — the F825 vendor-truth chain
+        // starts here, so the parse is pinned against silent drift.
+        let spec = "The Meridian API documentation is at `http://127.0.0.1:8935/v1/docs`. \
+                    Read it before you start. Base URL `http://127.0.0.1:8935`,\n\
+                    API key `sk_test_meridian`.";
+        let (docs, base, key) = spec_vendor(spec);
+        assert_eq!(docs.as_deref(), Some("http://127.0.0.1:8935/v1/docs"));
+        assert_eq!(base.as_deref(), Some("http://127.0.0.1:8935"));
+        assert_eq!(key.as_deref(), Some("sk_test_meridian"));
+
+        // A spec naming no vendor must yield Nones — the whole chain stays inert, and the
+        // Vacuous arm keeps its original never-blame-the-app behavior.
+        let (d2, b2, k2) = spec_vendor("Build a todo app. No vendor here.");
+        assert!(d2.is_none() && b2.is_none() && k2.is_none());
+    }
+
+    /// P1-8 isolation fixture: a local vendor serving `/v3/docs` + `/v3/payments`. The probe must
+    /// deliver BOTH real literals (`data`, `amount_minor`) into the doc_facts block — the two
+    /// names r2's sync guessed wrong on its way to 0/12288 — and a dead vendor must come back
+    /// promptly as a measured `ok:false`, never a failure or a wait.
+    #[tokio::test]
+    async fn the_vendor_probe_delivers_real_body_literals_and_measures_a_dead_vendor() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut s, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut s, &mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.starts_with("GET /v3/docs") {
+                    "Meridian vendor API.\nGET /v3/payments returns one page of payments."
+                        .to_string()
+                } else {
+                    r#"{"data":[{"id":"p_1","amount_minor":1250,"currency":"EUR"}],"total":12288,"limit":100,"offset":0}"#
+                        .to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut s, resp.as_bytes());
+            }
+        });
+
+        let base = format!("http://{addr}");
+        let probe = probe_vendor(&format!("{base}/v3/docs"), &base, Some("sk_test")).await;
+        server.join().unwrap();
+        assert!(probe.ok, "a live vendor probes ok: {}", probe.error);
+        assert_eq!(probe.endpoints, vec!["/v3/payments".to_string()]);
+        assert_eq!(probe.fetched, 1, "one page of the one advertised GET");
+        assert!(
+            probe.block.contains(r#""data""#),
+            "the vendor's real collection key must reach doc_facts verbatim: {}",
+            probe.block
+        );
+        assert!(
+            probe.block.contains("amount_minor"),
+            "the vendor's real field literal must reach doc_facts verbatim: {}",
+            probe.block
+        );
+
+        // The dead-vendor case: a port nothing listens on refuses the connect, and the probe
+        // returns a MEASUREMENT — ok:false, empty block — promptly, on the transport's connect
+        // path alone. (The elapsed assertion is a test measuring a test fixture, not a cap on
+        // model work: no model is anywhere near this code.)
+        let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_addr = dead.local_addr().unwrap();
+        drop(dead);
+        let started = std::time::Instant::now();
+        let probe = probe_vendor(
+            &format!("http://{dead_addr}/v3/docs"),
+            &format!("http://{dead_addr}"),
+            None,
+        )
+        .await;
+        assert!(!probe.ok);
+        assert!(probe.block.is_empty(), "{}", probe.block);
+        assert!(!probe.error.is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "connect-refused must answer promptly, not wait on a read"
+        );
+    }
+
+    /// P1-8: the docs-body GET parser — dedupe, template filling, param'd-path exclusion.
+    #[test]
+    fn vendor_docs_get_paths_dedupes_fills_templates_and_excludes_param_routes() {
+        let docs = "GET /v3/payments returns a page. GET /v3/payments?limit=<int>&offset=<int> \
+                    pages it. GET /v3/payments/{id} returns one. GET /v3/reversals lists reversals. \
+                    GET /v3/payments is idempotent.";
+        let got = vendor_docs_get_paths(docs);
+        assert!(got.contains(&"/v3/payments".to_string()), "{got:?}");
+        assert!(
+            got.contains(&"/v3/payments?limit=1&offset=1".to_string()),
+            "a templated query is filled, not dropped: {got:?}"
+        );
+        assert!(got.contains(&"/v3/reversals".to_string()), "{got:?}");
+        assert!(
+            !got.iter().any(|p| p.contains("{id}")),
+            "a param'd PATH cannot be probed blind: {got:?}"
+        );
+        assert_eq!(
+            got.iter().filter(|p| *p == "/v3/payments").count(),
+            1,
+            "deduped: {got:?}"
         );
     }
 }
@@ -24362,58 +24770,53 @@ impl GooseAgentDispatcher {
             &imports::ledger_task_states(root),
             &self.dispatched_tasks.lock().unwrap(),
         );
-        // AND THE CROSS-TASK CHECK, on the same free pass — a task completing is exactly when the
-        // tree changed. Every unresolved import is read against the PLAN's ownership
-        // (`cross_task::classify_import_gap`, VA-110): an owner still to finish is
-        // `cross_task_pending`, never a defect; an owner done without its file owns the defect; a
-        // file the plan never assigned is `cross_task_unowned` and the importer's line to fix.
-        // Routed, not dumped (r5 item 5): the completing task's `defects` keep its own gaps, another
-        // task's ride `cross_task` with `owner_task` as data — ONCE per fact across completions
-        // (r6h: the same three false lines at five completions, 04:10 → 05:20).
+        // AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file perfectly and
+        // still leave the tree unrunnable by importing something nobody wrote. Run it here rather than on
+        // a cadence: a task completing is exactly when the tree changed, so there is nothing to schedule
+        // and nothing to poll.
+        //
+        // II-9: each gap is ATTRIBUTED from the DAG before it enters the event. The scan fires on
+        // whichever task completes, so without attribution the event's task_id charges the whole
+        // tree's gaps to that task — on r2, 5 of 6 events blamed the wrong one. The line itself now
+        // names the owner and its state, so a reader (and the ledger) gets "owned by sse-endpoint,
+        // state: running" instead of a defect pinned on the last task through the door.
+        // ROUTED, NOT DUMPED (r5 assessment item 5, receipts at run.jsonl seqs 172/223): the whole
+        // tree's gaps used to enter THIS event's `defects`, so decisions' completion carried
+        // notifierd/ledgerd import defects and frozen-rules-tests carried a ledgerd one — a reader
+        // grepping by task_id misattributed them, and a worker shown its own event was invited to
+        // reason about files it must not touch. The completing task's list now keeps only its OWN
+        // gaps plus explicitly-unowned ones; a gap the plan-load ownership map routes to another
+        // task rides `cross_task` with `owner_task` as data. Same scan, same loudness, one honest
+        // address per defect.
         let gaps = tree_import_gaps(root);
-        let mut cross_lines: Vec<serde_json::Value> = Vec::new();
+        let mut cross_task: Vec<serde_json::Value> = Vec::new();
         if !gaps.is_empty() {
             let ownership = self.owned_files_by_task.lock().unwrap().clone();
             let dispatched = self.dispatched_tasks.lock().unwrap().clone();
             let states = imports::ledger_task_states(root);
-            let mut seen = self.cross_task_reported.lock().unwrap();
-            let mut emit = |ev: serde_json::Value| {
-                self.events.write_value(ev);
-            };
-            let mut notice = |s: String| eprintln!("  {} {s}", style("·").dim());
             for (rel, module) in gaps {
-                let verdict = cross_task::classify_import_gap(
+                let (d, owner) = attribute_import_gap_with_owner(
                     &rel,
                     &module,
                     &ownership,
                     &states,
                     &dispatched,
                 );
-                match cross_task::route_import_gap(
-                    task_id,
-                    &rel,
-                    &module,
-                    verdict,
-                    &mut seen,
-                    &mut emit,
-                    &mut notice,
-                ) {
-                    Some(cross_task::Routed::Own(line)) => {
-                        if !defects.contains(&line) {
-                            defects.push(line);
+                match owner {
+                    Some(t) if t != task_id => {
+                        if !cross_task.iter().any(|c| c["defect"] == d.as_str()) {
+                            cross_task.push(serde_json::json!({"owner_task": t, "defect": d}));
                         }
                     }
-                    Some(cross_task::Routed::Cross { owner, line }) => {
-                        if !cross_lines.iter().any(|c| c["defect"] == line.as_str()) {
-                            cross_lines
-                                .push(serde_json::json!({"owner_task": owner, "defect": line}));
+                    _ => {
+                        if !defects.contains(&d) {
+                            defects.push(d);
                         }
                     }
-                    None => {}
                 }
             }
         }
-        if defects.is_empty() && cross_lines.is_empty() {
+        if defects.is_empty() && cross_task.is_empty() {
             return;
         }
         let mut ev = serde_json::json!({
@@ -24423,11 +24826,26 @@ impl GooseAgentDispatcher {
             "defects": defects,
             "salvaged": salvaged,
         });
-        if !cross_lines.is_empty() {
-            ev["cross_task"] = serde_json::Value::from(cross_lines.clone());
+        if !cross_task.is_empty() {
+            ev["cross_task"] = serde_json::Value::from(cross_task.clone());
         }
         self.events.write_value(ev);
-        cross_task::print_delivery_lines(task_id, &defects, &cross_lines);
+        for d in &defects {
+            eprintln!(
+                "  {} {} delivered a defect: {d}",
+                style("!").red().bold(),
+                style(task_id).bold()
+            );
+        }
+        for c in &cross_task {
+            eprintln!(
+                "  {} {} owns a defect surfaced at {}'s completion: {}",
+                style("!").red().bold(),
+                style(c["owner_task"].as_str().unwrap_or("?")).bold(),
+                task_id,
+                c["defect"].as_str().unwrap_or("?")
+            );
+        }
     }
 
     /// §II.2 WRITERS, task leg: persist what this attempt measurably did the moment it says it
@@ -24939,9 +25357,21 @@ impl GooseAgentDispatcher {
                      your owned file written and non-empty FAILS and is retried.\n\n"
                         .to_string()
                 } else {
-                    // VA-102: ONE named first write (briefs.rs) — "write your owned file(s) IN FULL"
-                    // had r6h's ledgerd-core design all 8 files in reasoning before its first write.
-                    briefs::write_first_body(&req.owned_files, &req.description)
+                    "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
+                     `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
+                     the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
+                     LAYOUT above IS the complete structure (there is nothing on disk to discover), tests are a \
+                     SEPARATE subtask, and the API of EVERY dependency you import is ALREADY injected below \
+                     under 'API of …' — read it THERE, NEVER `cat` the module. Cat-ing files whose APIs are \
+                     already injected only bloats your context until you LOOP — repeating 'let me write the \
+                     file' over and over without ever emitting the write. Implement from the spec + injected \
+                     APIs, THEN run `python3 -m pytest` to check — never piped through `head`/`tail` (the \
+                     pipe hides the real exit code), and `collected 0 items`/`no tests ran`/`file or \
+                     directory not found` in the output means the check DID NOT RUN, whatever the exit \
+                     code says. A turn that ends without every owned file \
+                     written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
+                     #1 way workers burn their whole budget and produce nothing.\n\n"
+                        .to_string()
                 };
                 // THE PORT RULE, for every test author regardless of the kind-prompt lever. It is
                 // a correctness rule, not kind tailoring: coupling it to the A/B lever meant the
@@ -25016,42 +25446,106 @@ impl GooseAgentDispatcher {
                 &req.owned_files,
                 repairing,
             );
-            // The task's DEPENDENCY sources — every plan file on disk it does not own — as fenced
-            // "API of" sections, so cli/integration tasks need not `cat` them (a cli-edit-delete task
-            // once over-read 16 deps and paralysed at 82 msgs / 0 writes). VA-103: assembled in
-            // swarm/dep_sources.rs — a file that names the task's own module is its CONTRACT and is
-            // carried whole; every cut or omission the budget forces is emitted here as
-            // `dep_source_truncated` (r6h's ledgerd-core lost `run()`/`impl.run(...)` at byte 5,128
-            // of the 6,104-byte skeleton `app/ledgerd/__init__.py` to a 3,500-char cut nothing logged).
-            let dep_sources = dep_sources::dependency_sources_block(
-                std::path::Path::new(&cwd),
-                &req.owned_files,
-                &req.all_files,
-                lang,
-                dep_signatures_on(),
-            );
-            for ev in dep_sources.cut_events(&req.task_id) {
-                self.events.write_value(ev);
-            }
-            // D3 (a first-wave task, nothing on disk): the same heading with a redirect, so every
-            // prompt pointer at "'API of …'" stays true — `DepSourcesBlock::text_or_none_on_disk`.
-            let dep_block = dep_sources.text_or_none_on_disk();
-            // VA-106: a SHARD's parallel siblings share no DAG edge, so the dep_block above never
-            // carries them. Every sibling whose ledger row is `done` rides here — folder, pieces
-            // with sizes, PROVIDES/WRITES verbatim, the ASSUMES that name this shard — and the
-            // event (`shard_siblings_delivered` / `shard_siblings_none`) says what was handed over.
-            let siblings_block = match shard {
-                Some(sh) => {
-                    let b = shard_siblings::landed_siblings(&root, sh, &req.all_files);
-                    self.events.write_value(b.event(&req.task_id));
-                    b.text
+            // Inject the CURRENT content of the task's DEPENDENCY source files (already-built modules it
+            // imports from) so cli/integration tasks need not `cat` them — a cli-edit-delete task over-read
+            // 16 deps and paralysed at 82 msgs / 0 writes. Only files that EXIST on disk (i.e. completed
+            // deps); skip owned files (already injected above), test files, and non-`.py`. Capped per-file
+            // and total to bound context on slow local models.
+            let owned_set: std::collections::HashSet<&String> = req.owned_files.iter().collect();
+            // SWARM-COHERENCE Phase-1 (Tier-A): inject deterministically-extracted dependency SIGNATURES
+            // instead of full bodies when enabled. Computed once; OFF => the full body path below is
+            // byte-identical to before.
+            let dep_sig_on = dep_signatures_on();
+            let sig_lang = match lang {
+                TargetLang::Python => goose_swarm::SigLang::Python,
+                TargetLang::Rust => goose_swarm::SigLang::Rust,
+                TargetLang::Go => goose_swarm::SigLang::Go,
+                TargetLang::TypeScript => goose_swarm::SigLang::TypeScript,
+                TargetLang::Other => goose_swarm::SigLang::Other,
+            };
+            let mut dep_block = String::new();
+            let mut dep_budget: usize = 14000;
+            for f in &req.all_files {
+                if dep_budget == 0 {
+                    break;
                 }
-                None => String::new(),
+                if owned_set.contains(f) || !lang.is_source_file(f) {
+                    continue;
+                }
+                let base = std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if lang.is_test_file(base) {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(std::path::Path::new(&cwd).join(f)) {
+                    let trimmed = content.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    // Tier-A (P1-6): when the lever is on, the excerpt is `shape_excerpt` —
+                    // signatures PLUS the shape-carrying lines — never signatures alone, which
+                    // withheld the behaviour r0's five worst defects needed. Falls back to the
+                    // full body if extraction yields nothing, so ON never injects an empty API.
+                    // OFF (the shipped default) => `api_source` is `trimmed` => the real body.
+                    let api_source: std::borrow::Cow<str> = if dep_sig_on {
+                        let excerpt = shape_excerpt(trimmed, sig_lang);
+                        if excerpt.trim().is_empty() {
+                            std::borrow::Cow::Borrowed(trimmed)
+                        } else {
+                            std::borrow::Cow::Owned(excerpt)
+                        }
+                    } else {
+                        std::borrow::Cow::Borrowed(trimmed)
+                    };
+                    // CUT ON A LINE BOUNDARY AND SAY SO. The raw `.take(n)` sliced mid-identifier and the
+                    // fence below closed unconditionally, so the worker received a file that stops in the
+                    // middle of a `def` formatted exactly like a complete one. MEASURED (F196) on a live
+                    // test-author prompt: 3 of 4 blocks ended mid-token — `meridian.py` at `    def _up`,
+                    // whose pasted body FAILS `ast.parse` — and NONE of the four carried any indication it
+                    // had been truncated. The same prompt forbids the worker to `cat` the real file, so the
+                    // missing remainder was unrecoverable by any permitted action.
+                    let budget = dep_budget.min(3500);
+                    let head: String = api_source.chars().take(budget).collect();
+                    let truncated = head.chars().count() < api_source.chars().count();
+                    let capped = if truncated {
+                        let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+                        format!(
+                            "{whole}\n# … TRUNCATED — this is a PARTIAL view of {f}. If you need what is \
+                             missing, read the file; it is not all shown here."
+                        )
+                    } else {
+                        head
+                    };
+                    dep_budget = dep_budget.saturating_sub(capped.chars().count().min(budget));
+                    dep_block.push_str(&format!(
+                        "## API of {f} (a dependency you import — build against THIS; for any \
+                         symbol, key or route it does not show, read the real file TARGETED: \
+                         `grep -n '<name>' {f}` then `sed -n 'A,Bp' {f}` — never a whole-file cat):\n```\n{capped}\n```\n\n"
+                    ));
+                }
+            }
+            // D3: the worker prompts point at "'API of …'" as the authoritative surface, and for a
+            // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY and the
+            // heading is absent, so the worker is pointed at a section that is not there. Emitting
+            // the heading WITH a redirect makes every pointer true without touching the prompts
+            // that carry them. (The redirect used to point at the FROZEN MODULE INTERFACES bundle;
+            // that died with CONTRACTS, P1-4 — the plan manifest is now the naming authority.)
+            let dep_block = if dep_block.is_empty() {
+                "## API of dependencies — NONE ON DISK YET\n\
+                 No dependency source exists on disk yet (your siblings are still building). The \
+                 PROJECT FILE LAYOUT above is the naming authority: import your dependencies from \
+                 EXACTLY those paths, and once a dependency lands on disk read its real source \
+                 (`grep -n`/`sed -n`) before writing calls against it.\n\n"
+                    .to_string()
+            } else {
+                dep_block
             };
             format!(
                 "## PROJECT FILE LAYOUT — the agreed plan\n\
                  Every module lives at EXACTLY these paths; import from here, NEVER invent another \
-                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}{siblings_block}"
+                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
         // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
@@ -25386,7 +25880,7 @@ impl GooseAgentDispatcher {
         // reverses under repair: the shard's own order is the SMALLEST edit that removes an
         // observed defect, and re-emitting a live file from memory is how a repair round regresses
         // work no finding named. Branched in briefs.rs; the authoring text is byte-identical.
-        let write_granularity_rule = briefs::write_granularity_rule(repairing, shard.is_some());
+        let write_granularity_rule = briefs::write_granularity_rule(repairing);
         let worker_directive = lang.directive();
         // LANGUAGE- AND FRAMEWORK-SPECIFIC RULES, GATED — they used to be unconditional.
         //
@@ -25712,30 +26206,22 @@ impl GooseAgentDispatcher {
         // exists yet. A worker that owns nothing, or has already written something, reads nothing new.
         // S12-C: never for the MERGER — "write it now, in one `write`" is the retype its brief
         // forbids (the pieces are the source; the final file is assembled, not typed).
-        // VA-102: ONE file by name — it used to list every owned file joined by "and", so an
-        // 8-file owner read "write it now, in one `write`" about all eight; the target is the same
-        // derivation the WRITE FIRST script opens with, so the two agree. A shard's one owned file
-        // is its README, which nothing runs — its next step is the piece its brief names.
-        let act_now_target = if act_now_nudge()
+        let worker_user_text = if act_now_nudge()
             && req.merger_of.is_none()
             && !req.owned_files.is_empty()
             && !req.owned_files.iter().any(|f| root.join(f).is_file())
         {
-            briefs::first_write_target(&req.owned_files, effective_description)
-        } else {
-            None
-        };
-        let worker_user_text = match act_now_target {
-            Some(first) => format!(
+            format!(
                 "{worker_user_text}\n\nYour next message must be a TOOL CALL, not prose. \
-                 `{first}` does not exist yet — write it now, in one `write`, then {next}.",
-                next = if req.shard_of.is_some() {
-                    "the smallest piece your task names"
-                } else {
-                    "verify by running it"
-                }
-            ),
-            None => worker_user_text,
+                 {} does not exist yet — write it now, in one `write`, then verify by running it.",
+                req.owned_files
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            )
+        } else {
+            worker_user_text
         };
         // THE SINK IS NOT A WORKER, AND THE TURN BUDGET NEVER NOTICED.
         //
@@ -26072,9 +26558,11 @@ impl GooseAgentDispatcher {
                                 m, &missing,
                             )));
                         }
-                        return Err(DispatchError::ContentRetry(briefs::missing_files_hint(
-                            &missing,
-                            &req.description,
+                        return Err(DispatchError::ContentRetry(format!(
+                            "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this \
+                             attempt MUST be to `write` EACH of them IN FULL from your spec, then finish — do \
+                             NOT explore, cat, or explain first.",
+                            missing.join(", ")
                         )));
                     }
                 }
@@ -26554,6 +27042,85 @@ fn env_f32_clamped(name: &str, lo: f32, hi: f32) -> Option<f32> {
         .and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite())
         .map(|v| v.clamp(lo, hi))
+}
+
+/// Median decode rate (tokens/sec) per node, from the run's OWN telemetry file. A record
+/// contributes only when it carries real backend usage and a positive decode window —
+/// approximations and failed calls never rank a node. Pure/testable.
+fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
+    let mut samples: std::collections::HashMap<String, Vec<f64>> = Default::default();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("usage").and_then(|x| x.as_bool()) != Some(true) {
+            continue;
+        }
+        let (Some(node), Some(ct), Some(ttft), Some(total)) = (
+            v.get("node").and_then(|x| x.as_str()),
+            v.get("completion_tokens").and_then(|x| x.as_f64()),
+            v.get("ttft_ms").and_then(|x| x.as_f64()),
+            v.get("total_ms").and_then(|x| x.as_f64()),
+        ) else {
+            continue;
+        };
+        let decode_s = (total - ttft) / 1000.0;
+        if ct > 0.0 && decode_s > 0.0 {
+            samples
+                .entry(node.to_string())
+                .or_default()
+                .push(ct / decode_s);
+        }
+    }
+    samples
+        .into_iter()
+        .map(|(k, mut v)| {
+            v.sort_by(|a, b| a.total_cmp(b));
+            let m = v[v.len() / 2];
+            (k, m)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod telemetry_rank_tests {
+    use super::*;
+
+    #[test]
+    fn rates_use_median_and_skip_useless_records() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("t.jsonl");
+        std::fs::write(
+            &p,
+            [
+                // three good gabee samples: 10, 20, 30 tok/s -> median 20
+                r#"{"node":"gabee","usage":true,"completion_tokens":100,"ttft_ms":0,"total_ms":10000}"#,
+                r#"{"node":"gabee","usage":true,"completion_tokens":200,"ttft_ms":0,"total_ms":10000}"#,
+                r#"{"node":"gabee","usage":true,"completion_tokens":300,"ttft_ms":0,"total_ms":10000}"#,
+                // no real usage -> never ranks a node
+                r#"{"node":"mihai","usage":false,"completion_tokens":900,"ttft_ms":0,"total_ms":1000}"#,
+                // zero decode window -> skipped
+                r#"{"node":"mihai","usage":true,"completion_tokens":50,"ttft_ms":1000,"total_ms":1000}"#,
+                "not json at all",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let rates = telemetry_node_rates(&p);
+        assert_eq!(
+            rates.len(),
+            1,
+            "only nodes with usable samples rank: {rates:?}"
+        );
+        assert!(
+            (rates["gabee"] - 20.0).abs() < 1e-9,
+            "median, not mean: {rates:?}"
+        );
+        assert!(telemetry_node_rates(Path::new("/definitely/missing")).is_empty());
+    }
 }
 
 fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
@@ -27565,16 +28132,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
     // P1-8: VENDOR PROBE. If the spec names a vendor (its own idiom — docs URL + base URL), fetch
-    // the docs page and one page of each GET those docs advertise, and put the vendor's live
+    // the docs page and one page of each GET those docs advertise, and put the vendor's REAL
     // response bodies into every worker's doc_facts. r2's root critical was a sync that guessed
     // the vendor's shape and acquired 0 of 12,288 rows; the probe makes the true key literals
     // (`data`, `amount_minor`) part of the prompt instead of a discovery the build may never make.
     // Inert when the spec names no vendor; a dead vendor yields vendor_probe{ok:false} and an
-    // unchanged doc_facts — measured outcome, never a failure. VA-105: the docs page rides WHOLE
-    // (r6h's 6,000-char cut lost §7–§9 for the planner and every worker while the header called
-    // the fragment complete); an endpoint body over the budget is `vendor_probe_truncated` plus a
-    // CUT marker in the block, and an advertised GET the probe could not fetch is
-    // `vendor_probe_fetch_failed` plus a listed line — said, never dropped.
+    // unchanged doc_facts — measured outcome, never a failure.
     {
         let (docs_url, base_url, vendor_key) = spec_vendor(&opts.prompt);
         if let (Some(docs_url), Some(base_url)) = (docs_url, base_url) {
@@ -27587,32 +28150,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "endpoints": probe.endpoints,
                 "fetched": probe.fetched,
                 "bytes": probe.bytes,
-                "docs_chars": probe.docs_chars,
-                "docs_kept": probe.docs_kept,
-                "bodies_truncated": probe.cuts.len(),
-                "fetch_failed": probe.fetch_failures.len(),
-                "fetched_at": probe.fetched_at,
                 "error": probe.error,
                 "vendor_total": probe.vendor_total,
                 "page1_rows": probe.page1_rows,
             }));
-            for cut in &probe.cuts {
-                sink.write_value(serde_json::json!({
-                    "event": "vendor_probe_truncated",
-                    "kind": "body",
-                    "url": cut.url,
-                    "chars": cut.chars,
-                    "kept": cut.kept,
-                    "at_object_boundary": cut.at_object_boundary,
-                }));
-            }
-            for failure in &probe.fetch_failures {
-                sink.write_value(serde_json::json!({
-                    "event": "vendor_probe_fetch_failed",
-                    "url": failure.url,
-                    "error": failure.error,
-                }));
-            }
             // P1-12: persist the probe's row truth WHERE THE GATE CAN READ IT. The `sync_rows`
             // gate row compares the app's own row count against what the vendor held, and a
             // number that lives only in run.jsonl is invisible to run_spec_contract — the same
@@ -27644,11 +28185,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 eprintln!(
                     "{}",
                     style(format!(
-                        "vendor probe: docs whole ({} chars) + {} endpoint page(s), {} cut, {} not fetched — live vendor bodies to every worker",
-                        probe.docs_chars,
-                        probe.fetched,
-                        probe.cuts.len(),
-                        probe.fetch_failures.len()
+                        "vendor probe: docs + {} endpoint page(s) — real vendor bodies to every worker",
+                        probe.fetched
                     ))
                     .green()
                 );
@@ -28552,7 +29090,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     //
-    // THE WHOLE PLAN's OWNERSHIP, PUBLISHED BEFORE THE FIRST DISPATCH. `cross_task::classify_import_gap`
+    // THE WHOLE PLAN's OWNERSHIP, PUBLISHED BEFORE THE FIRST DISPATCH. `attribute_import_gap`
     // reads this map on every completion's import scan; populated only at dispatch it was the
     // dispatch log, not the plan — MEASURED on r5 (seqs 141/172/183): `app/ledgerd/__init__.py`'s
     // import of `app.httpapi` was reported "which no task owns — the import line is skeleton's to
@@ -32679,6 +33217,38 @@ mod audit_regressions {
         }
     }
 
+    /// P1-12: the row-evidence readers are pinned — `total` outranks a page length (a page is
+    /// bounded by `limit`; the total is the collection), a collection array counts when no total
+    /// is documented, and a body that is not JSON or carries neither ABSTAINS (None), never
+    /// invents a zero — a zero here becomes a repair finding, so an invented one would send a
+    /// fixer at working code.
+    #[test]
+    fn row_evidence_reads_total_over_page_and_abstains_on_neither() {
+        assert_eq!(
+            json_rows_and_total(r#"{"data": [1, 2, 3], "total": 12288, "limit": 64}"#),
+            (Some(12288), Some(3))
+        );
+        assert_eq!(
+            json_rows_evidence(r#"{"data": [1, 2], "total": 12288}"#),
+            Some(12288)
+        );
+        assert_eq!(json_rows_evidence(r#"{"events": [1]}"#), Some(1));
+        assert_eq!(json_rows_evidence(r#"{"data": []}"#), Some(0));
+        assert_eq!(json_rows_evidence(r#"{"status": "ok"}"#), None);
+        assert_eq!(json_rows_evidence("<html>not json</html>"), None);
+        // the persisted probe file round-trips through the gate-side reader
+        let dir = tmp("vendor-probe");
+        assert_eq!(read_vendor_probe_rows(&dir), None, "absent file abstains");
+        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
+        std::fs::write(
+            dir.join(".swarm/vendor-probe.json"),
+            r#"{"ok": true, "vendor_total": 12288, "page1_rows": 64}"#,
+        )
+        .unwrap();
+        assert_eq!(read_vendor_probe_rows(&dir), Some(12288));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// P1-12 (MILD): the sync_rows FINDING repairs and never blocks — its wording must stay
     /// outside every engine_critical needle, because under P1-9 `passed` means the gate's
     /// criticals closed and this row must never flip it.
@@ -32780,6 +33350,7 @@ mod audit_regressions {
             secs: 41,
             kind: "design".into(),
             cite: String::new(),
+            origin: String::new(),
             batch: 0,
         };
         research::write_research_ledger(root, &row).expect("the mini writes through the funnel");
@@ -32832,6 +33403,7 @@ mod audit_regressions {
             secs: 5,
             kind: "design".into(),
             cite: String::new(),
+            origin: String::new(),
             batch: 0,
         };
         research::write_research_ledger(
@@ -32896,6 +33468,7 @@ mod audit_regressions {
                     id: "api".into(),
                     title: "the api".into(),
                     objective: "serve GET /health".into(),
+                    questions: vec!["which port".into()],
                     weight: 3,
                     sections: Vec::new(),
                 },
@@ -32903,6 +33476,7 @@ mod audit_regressions {
                     id: "web".into(),
                     title: "the web".into(),
                     objective: "draw the dashboard".into(),
+                    questions: Vec::new(),
                     weight: 2,
                     sections: Vec::new(),
                 },
@@ -32916,8 +33490,8 @@ mod audit_regressions {
 
     /// P1-5: THE PLANNER IS A STRAIGHT LINE. Driven end to end with fake model closures (the
     /// fake-dispatcher seam), the sequence from OPEN's output is exactly
-    /// synthesis -> plan_synthesized -> plan_repaired — the review round is DELETED (VA-014), and
-    /// no coverage, RESEARCH, resplit or ask-proxy event comes between. r2 measured what those cost: 48 min of
+    /// synthesis -> plan_synthesized -> review (one round) -> plan_repaired — with NO coverage,
+    /// RESEARCH, resplit or ask-proxy event between. r2 measured what those cost: 48 min of
     /// RESEARCH with 2 of 3 nodes idle, a resplit-manufactured file collision, and a coverage
     /// slice writing code at the tree root. SYNTHESIS takes the slices directly; a decision that
     /// stayed open after the user and the fan is folded as "choose the conventional option".
@@ -32938,11 +33512,11 @@ mod audit_regressions {
             &[],
             &pd,
             |briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
-                // SYNTHESIS receives the slices DIRECTLY: objective and the opener's open decisions
-                // folded as conventional-option instructions. The opener writes NO per-slice
-                // questions since VA-089 (each research lane derives its own), so none reach here.
+                // SYNTHESIS receives the slices DIRECTLY: objective, the slice's own questions,
+                // and the opener's open decisions folded as conventional-option instructions.
                 assert_eq!(briefs.len(), 2);
                 assert!(briefs[0].brief.contains("serve GET /health"));
+                assert!(briefs[0].brief.contains("which port"));
                 assert!(briefs[0].brief.contains("which storage backend"));
                 assert!(briefs[0].brief.contains("CONVENTIONAL"));
                 assert!(briefs[1].brief.contains("which storage backend"));

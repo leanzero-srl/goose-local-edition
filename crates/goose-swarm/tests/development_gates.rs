@@ -495,7 +495,13 @@ fn swarm_rs_line_count_only_decreases() {
     // the VA-014/015-deleted review/sink-review/replanner fields the mlx line still carried, and
     // re-seated `reconcile_pool_with_fleet` (fleet_order.rs, now engine-threaded), `live_fleet_slots`
     // (swarm_engine.rs, per engine) and `fleet_slot_models` (fleet_order.rs, re-exported).
-    const SWARM_RS_LINE_BASELINE: usize = 33_411;
+    // Restored to the r6h golden 393a99351 + multi-engine layer, 2026-09-05: baseline = measured
+    // (`wc -l` 33,985 — the golden's 34,378 minus the probe/import cluster that lives in
+    // swarm_engine.rs, plus the engine seams). The 42 post-golden engine commits (VA-089..118,
+    // VA-113, the r6i-staging merges) are gone with their modules; the count rises from the
+    // merge's 33,411 because those commits had also extracted golden code into modules that are
+    // deleted with them.
+    const SWARM_RS_LINE_BASELINE: usize = 33_985;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -556,7 +562,11 @@ fn do_everything_never_reaches_a_model() {
 // client that panics on first use if the TLS backend failed — is a match: `Err(e)` is a measured
 // `vendor_probe{ok:false, error: "http client: …"}`, the spec's build proceeds exactly as with a
 // dead vendor (vendor_probe.rs).
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 94;
+// Restored to the r6h golden 393a99351 + multi-engine layer, 2026-09-05: baseline = measured (95 by
+// this gate's own counter: 86 under commands/swarm{,.rs,_engine.rs} + 9 in goose-swarm/src — the
+// golden's scheduler.rs carries 7, one more than the post-golden tip; the deleted post-golden
+// modules took 8 with them).
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 95;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
@@ -823,7 +833,9 @@ fn the_value_gate_is_carried() {
 /// outside a `#[cfg(test)]` block in the run path is a typed absolute; the count may only DECREASE.
 /// A literal that is a RATIO of something the run produces or a MEASUREMENT carries `// ratio:` or
 /// `// measured:` on its line and is exempt — a reviewer reads the marker, the ratchet only counts.
-const LIVE_NUMERIC_LITERAL_BASELINE: usize = 28;
+// Restored to the r6h golden 393a99351 + multi-engine layer, 2026-09-05: baseline = measured (27 by
+// this gate's own counter: 23 under commands/swarm{,.rs,_engine.rs} + 4 in goose-swarm/src).
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 27;
 
 fn is_numeric_const_literal(line: &str) -> bool {
     let s = line.trim_start();
