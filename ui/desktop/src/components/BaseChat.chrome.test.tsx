@@ -17,11 +17,11 @@ import { missingUtilities } from './lz/compileStudioCss';
 const wrap = (ui: React.ReactElement) => render(<IntlTestWrapper>{ui}</IntlTestWrapper>);
 
 describe('BaseChat chrome — SessionBrand', () => {
-  it('Flock edition: one quiet chip "LeanZero Flock" with a solid accent mark, linking to leanzero.net', () => {
+  it('Swarm edition: one quiet chip "Goose Swarm" with a solid accent mark, linking to leanzero.net', () => {
     const { container } = wrap(<SessionBrand isLocal />);
     const chips = screen.getAllByTestId('lz-chip');
     expect(chips).toHaveLength(1);
-    expect(chips[0].textContent).toBe('LeanZero Flock');
+    expect(chips[0].textContent).toBe('Goose Swarm');
     expect(chips[0].getAttribute('data-tone')).toBeNull();
     expect(chips[0].className).toContain('border-lz-border-strong');
     expect(chips[0].className).not.toMatch(/uppercase|tracking-/);

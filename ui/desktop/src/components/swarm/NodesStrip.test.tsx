@@ -8,7 +8,7 @@ import { missingUtilities } from '../lz/compileStudioCss';
 
 /**
  * Pass E — the blank-session "Nodes" strip: rows come from the CONFIGURED swarm devices (the same
- * swarm-config read the Goose Flock nodes tab uses), never from LM Studio discovery, and
+ * swarm-config read the Goose Swarm nodes tab uses), never from LM Studio discovery, and
  * occupancy renders only where a live signal exists (the local mlx-sidecar node via the MLX engine
  * status). No fake states: cloud rows get a chip and nothing else.
  *

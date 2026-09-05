@@ -67,7 +67,7 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
       )}
     >
       <div className={cx('mb-2 flex items-center justify-between text-lz-meta text-lz-ink-3', TNUM)}>
-        <span>flock · {dispatch}</span>
+        <span>swarm · {dispatch}</span>
         <span>
           {/* LANES, not nodes: a 3-node fleet running 8 slice specs read "8 NODES". And the count was
               rendered again verbatim at the foot of the same card. */}

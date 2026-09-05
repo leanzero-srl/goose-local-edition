@@ -53,7 +53,7 @@ const nodeHue = (i: number): NodeIndex => NODE_INDEXES[i % NODE_INDEXES.length];
 /**
  * Pass E (owner): a compact "Nodes" strip for a session's BLANK state — YOUR configured swarm
  * devices and whether they are occupied, before any run exists. Rows come from the same swarm
- * config the Goose Flock nodes tab reads (`read('swarm')` → devices) — NEVER from LM Studio
+ * config the Goose Swarm nodes tab reads (`read('swarm')` → devices) — NEVER from LM Studio
  * discovery (those rows are legacy and live behind the showLmStudioFleet setting elsewhere).
  *
  * Occupancy is shown only where a LIVE signal exists: the local machine's mlx-sidecar node reads

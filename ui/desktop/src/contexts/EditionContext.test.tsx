@@ -117,7 +117,7 @@ describe('EditionContext', () => {
     // Derivation caches for the pre-paint stamp but never writes the explicit setting.
     expect(localStorage.getItem('edition')).toBe('local');
     expect(setSetting).not.toHaveBeenCalled();
-    expect(document.title).toBe('Goose Flock');
+    expect(document.title).toBe('Goose Swarm');
   });
 
   it('an explicit "standard" setting beats a local provider, without even reading it', async () => {
@@ -146,7 +146,7 @@ describe('EditionContext', () => {
     expect(getByTestId('isLocal').textContent).toBe('true');
     expect(setSetting).toHaveBeenCalledWith('edition', 'local');
     expect(localStorage.getItem('edition')).toBe('local');
-    expect(document.title).toBe('Goose Flock');
+    expect(document.title).toBe('Goose Swarm');
 
     await act(async () => {
       getByTestId('to-standard').click();

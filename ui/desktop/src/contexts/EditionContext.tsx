@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 
 /**
- * Goose Flock edition state.
+ * Goose Swarm edition state.
  *
- * The `edition` (`standard` | `local`) selects the "goose" vs "Goose Flock" UX skin — a presentation
+ * The `edition` (`standard` | `local`) selects the "goose" vs "Goose Swarm" UX skin — a presentation
  * choice only, never gating capability. The VALUE stays 'local' for storage compatibility; only the
- * display brand changed ("Goose Local Edition" → "Goose Flock"). It is persisted through the settings
+ * display brand changed ("Goose Local Edition" → "Goose Swarm"). It is persisted through the settings
  * bridge and mirrored in `localStorage` so the document class can be stamped synchronously before first
  * paint (no flash), exactly like the theme. The local edition adds the `.local-edition` class on the
  * document root, which the CSS theme overrides key off.
@@ -32,7 +32,7 @@ const LOCAL_EDITION_CLASS = 'local-edition';
 
 /** Window-title brand per edition. Only these exact titles are ever swapped, so a window that set its
  *  own title (e.g. a standalone app window) is never clobbered. */
-const BRAND_TITLE: Record<Edition, string> = { standard: 'Goose', local: 'Goose Flock' };
+const BRAND_TITLE: Record<Edition, string> = { standard: 'Goose', local: 'Goose Swarm' };
 
 /** Provider-name fragments that are inherently local — their presence derives the local edition.
  *  Mirrors LOCAL_PROVIDER_FRAGMENTS in crates/goose-cli/src/edition.rs. */

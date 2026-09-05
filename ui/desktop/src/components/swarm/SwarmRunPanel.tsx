@@ -5091,7 +5091,7 @@ const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
     <div className="border-t border-lz-border" data-testid="swarm-qa">
       <ZoneHeader
         label="Questions answered"
-        explain="questions dropped to the running flock, and its answers"
+        explain="questions dropped to the running swarm, and its answers"
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
         right={<Chip tone="accent">{qa.length}</Chip>}
@@ -5563,7 +5563,7 @@ export const SwarmRunPanel: React.FC<{
       <div className="border-b border-lz-border">
       <div className="flex items-center justify-between gap-3 px-3 py-2">
         <span className="flex min-w-0 items-center gap-2">
-          <span className={cx(EYEBROW_CLASS, 'shrink-0 text-lz-ink-3')}>Flock run</span>
+          <span className={cx(EYEBROW_CLASS, 'shrink-0 text-lz-ink-3')}>Swarm run</span>
           <Tip
             label={
               run.meta?.prompt ? (

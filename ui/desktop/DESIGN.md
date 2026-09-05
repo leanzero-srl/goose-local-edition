@@ -1,6 +1,6 @@
 # LeanZero Studio — design system v1
 
-The visual contract for the Goose Flock desktop remake. Tokens live in `src/styles/main.css`
+The visual contract for the Goose Swarm desktop remake. Tokens live in `src/styles/main.css`
 (the `LEANZERO STUDIO` block), the class-name helpers in `src/components/lz/tokens.ts`, the
 primitives in `src/components/lz/`. Every value here is measured against the real Tailwind
 pipeline by `src/components/lz/*.test.ts(x)`; a class that compiles to nothing, a faded tint, a

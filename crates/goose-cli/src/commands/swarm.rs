@@ -1426,7 +1426,7 @@ fn save_config(cfg: &SwarmConfig) -> Result<()> {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum SwarmCommand {
-    /// Plan a task and run it across the flock device pool.
+    /// Plan a task and run it across the swarm device pool.
     Run {
         /// The task to plan and run.
         prompt: String,
@@ -1467,7 +1467,7 @@ pub enum SwarmCommand {
         #[arg(long = "owns")]
         owns: Vec<String>,
     },
-    /// View and manage the flock device pool (interactive menu when no subcommand is given).
+    /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
         #[command(subcommand)]
         command: Option<PoolCommand>,
@@ -1477,8 +1477,8 @@ pub enum SwarmCommand {
         #[command(subcommand)]
         command: Option<CloudCommand>,
     },
-    /// Cloud flock nodes from any supported provider: validate/store an API key, auto-populate
-    /// the usable model ids, and add per-model flock devices (mix cloud models into the fleet).
+    /// Cloud swarm nodes from any supported provider: validate/store an API key, auto-populate
+    /// the usable model ids, and add per-model swarm devices (mix cloud models into the fleet).
     /// Providers: bedrock, zai (GLM), google (Gemini), deepseek.
     Cloud {
         /// One of: bedrock | zai | google | deepseek.
@@ -1518,10 +1518,10 @@ pub enum SwarmCommand {
         #[arg(long)]
         spec: Option<PathBuf>,
     },
-    /// Serve the flock as an MCP extension over stdio, so an interactive `goose session` can offload work
+    /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
     /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
     #[command(
-        about = "Serve the flock as an MCP extension over stdio (goose session --with-extension)"
+        about = "Serve the swarm as an MCP extension over stdio (goose session --with-extension)"
     )]
     Serve,
 }
@@ -1590,18 +1590,18 @@ pub enum CloudCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Add a Bedrock model as a flock device (checked against the live roster first).
+    /// Add a Bedrock model as a swarm device (checked against the live roster first).
     Add {
         model_id: String,
         /// Concurrent tasks this cloud node may run at once.
         #[arg(long, default_value_t = 2)]
         weight: u32,
     },
-    /// Remove a Bedrock flock device by model id.
+    /// Remove a Bedrock swarm device by model id.
     Rm { model_id: String },
 }
 
-/// The cloud providers the flock can add nodes from. `name` is what `SwarmDevice.provider`
+/// The cloud providers the swarm can add nodes from. `name` is what `SwarmDevice.provider`
 /// stores and what the CLI/desktop present; `registry` is the goose provider factory's EXACT
 /// key (the two differ — storing "bedrock" while the registry says "aws_bedrock" was a live
 /// dispatch bug the provider-recon audit caught before any run hit it).
@@ -2126,7 +2126,7 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
                 .filter(|d| d.provider_name() == name)
                 .collect();
             if !mine.is_empty() {
-                println!("\nConfigured {label} flock nodes:");
+                println!("\nConfigured {label} swarm nodes:");
                 for d in mine {
                     println!(
                         "  {} → {} (weight {}{})",
@@ -2321,7 +2321,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
 // ---------------------------------------------------------------------------------------------
 
 fn show_pool(cfg: &SwarmConfig) {
-    println!("\n{}", style(" flock pool ").on_cyan().black().bold());
+    println!("\n{}", style(" swarm pool ").on_cyan().black().bold());
     println!("  endpoint   {}", style(&cfg.endpoint).cyan());
     println!(
         "  planner    {}   also-works {} (w{})",
@@ -36486,7 +36486,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Some(p) => match JsonlSink::new(p, run_id.clone()) {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                eprintln!("(flock log disabled: {e})");
+                eprintln!("(swarm log disabled: {e})");
                 Arc::new(NullSink)
             }
         },
@@ -39747,7 +39747,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             serde_json::to_string_pretty(&report).unwrap_or_default()
         );
     } else {
-        println!("\n{}", style("=== flock report ===").bold());
+        println!("\n{}", style("=== swarm report ===").bold());
         println!(
             "phases: research {:.1}m ({}%) | planning {:.1}m ({}%) | execute {:.1}m ({}%) | total {:.1}m",
             research_m,

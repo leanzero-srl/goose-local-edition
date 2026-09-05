@@ -94,7 +94,7 @@ type BenchPhase = 'boot' | 'build' | 'score' | 'done';
 
 const PHASES: Array<{ key: BenchPhase; label: string }> = [
   { key: 'boot', label: 'Boot' },
-  { key: 'build', label: 'Flock build' },
+  { key: 'build', label: 'Swarm build' },
   { key: 'score', label: 'Scoring' },
   { key: 'done', label: 'Done' },
 ];

@@ -126,7 +126,7 @@ describe('SwarmWorkspace', () => {
     expect(draft).toHaveValue('do not lose this');
     expect(screen.getByTestId('swarm-workspace-conversation')).toBe(conversationPanel);
     expect(conversationPanel.scrollTop).toBe(173);
-    expect(screen.getByRole('tablist', { name: 'Active flock workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('tablist', { name: 'Active swarm workspace' })).toBeInTheDocument();
 
     rerender(
       <SwarmWorkspace active={false} conversation={conversation()} run={<div>Finished run</div>} />
@@ -151,7 +151,7 @@ describe('SwarmWorkspace', () => {
     );
     const draft = screen.getByLabelText('Crash-safe draft');
     fireEvent.change(draft, { target: { value: 'survives a quiet model' } });
-    expect(screen.getByRole('tablist', { name: 'Active flock workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('tablist', { name: 'Active swarm workspace' })).toBeInTheDocument();
 
     const quietRun = { ...liveRun, heartbeat: NOW - 600_000 };
     rerender(
@@ -161,7 +161,7 @@ describe('SwarmWorkspace', () => {
         run={<div>Still running</div>}
       />
     );
-    expect(screen.getByRole('tablist', { name: 'Active flock workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('tablist', { name: 'Active swarm workspace' })).toBeInTheDocument();
 
     rerender(
       <SwarmWorkspace

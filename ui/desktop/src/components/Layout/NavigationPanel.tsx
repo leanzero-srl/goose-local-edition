@@ -73,12 +73,12 @@ const BrandBlock: React.FC = () => (
     >
       <LeanZeroGlyph />
     </span>
-    <span className={cx(TYPE.h2, 'truncate')}>LeanZero Flock</span>
+    <span className={cx(TYPE.h2, 'truncate')}>Goose Swarm</span>
   </div>
 );
 
 /**
- * Goose Flock sidebar: brand block, nav rows, then the Projects tree (pass B — user-curated
+ * Goose Swarm sidebar: brand block, nav rows, then the Projects tree (pass B — user-curated
  * project folders, each expanding to its own sessions via the server-side cwd filter), then
  * Settings pinned to the bottom. The old recent-chats CHATS section was removed in pass A; the
  * Projects tree is its replacement, with "Unfiled" catching sessions that belong to no project.
@@ -95,7 +95,7 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
     return NAV_ITEMS.filter((item) => {
       // Benchmark measures a local fleet, so it has no meaning in an upstream-flavoured build.
       if (item.path === '/benchmark') return isLocal;
-      // The Goose Flock hub carries the flock settings and cloud credentials for the local edition,
+      // The Goose Swarm hub carries the swarm settings and cloud credentials for the local edition,
       // and the MLX engine tab whenever the agent advertises that capability — so it shows for
       // either fact, and only vanishes in an upstream-flavoured build with no MLX engine.
       if (item.path === '/leanzero-swarm') return isLocal || mlxEngine;

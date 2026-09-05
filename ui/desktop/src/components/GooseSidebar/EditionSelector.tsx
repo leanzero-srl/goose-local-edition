@@ -7,7 +7,7 @@ import { defineMessages, useIntl } from '../../i18n';
 const i18n = defineMessages({
   edition: { id: 'editionSelector.edition', defaultMessage: 'Edition' },
   standard: { id: 'editionSelector.standard', defaultMessage: 'goose' },
-  local: { id: 'editionSelector.local', defaultMessage: 'Goose Flock' },
+  local: { id: 'editionSelector.local', defaultMessage: 'Goose Swarm' },
 });
 
 interface EditionSelectorProps {
@@ -17,9 +17,9 @@ interface EditionSelectorProps {
 }
 
 /**
- * goose vs Goose Flock selector — a segmented control mirroring ThemeSelector. Active option is a
+ * goose vs Goose Swarm selector — a segmented control mirroring ThemeSelector. Active option is a
  * solid inverse fill (not a faded tint); no left rail. Reselectable any time. The edition VALUE
- * stays 'local' internally (storage compat); only the display brand is "Goose Flock".
+ * stays 'local' internally (storage compat); only the display brand is "Goose Swarm".
  */
 const EditionSelector: React.FC<EditionSelectorProps> = ({
   className = '',

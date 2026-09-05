@@ -77,7 +77,7 @@ export const createNavigationHandler = (navigate: NavigateFunction) => {
         navigate('/extensions', { state: options });
         break;
       case 'mlxEngine':
-        // The engine window folded into the Goose Flock view (its LeanZero MLX tab).
+        // The engine window folded into the Goose Swarm view (its LeanZero MLX tab).
         navigate('/leanzero-swarm', { state: options });
         break;
       default:
