@@ -5128,7 +5128,7 @@ mod tests {
     fn spec_run_argv_v2_fills_each_placeholder_by_kind() {
         let tmp = tempfile::TempDir::new().unwrap();
         let spec = "Run `python -m vendorsync --db PATH --port N` to serve.";
-        let (argv, ports) = spec_run_argv_v2(spec, "vendorsync", tmp.path(), 8999);
+        let (argv, ports, _) = spec_run_argv_v2(spec, "vendorsync", tmp.path(), 8999);
         assert_eq!(argv[0], "--db");
         assert!(argv[1].starts_with(&*tmp.path().to_string_lossy()));
         assert_eq!(argv[2], "--port");
@@ -5138,7 +5138,7 @@ mod tests {
         // F910 defect 1, pinned: the sb-7 combined boot — TWO DISTINCT ports, a created
         // scratch dir, the spec's vendor base for URL, a scratch tokens file.
         let sb7 = "Boot: `python -m app --db-dir P --ledger-port N --notifier-port M --vendor URL --tokens-file T`";
-        let (a, p2) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
+        let (a, p2, _) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
         assert_eq!(p2.len(), 2, "each port-flag gets its OWN port: {a:?}");
         assert_ne!(
             p2[0], p2[1],
@@ -5161,7 +5161,7 @@ mod tests {
         );
 
         // Literals survive; no invocation / wrong package = empty.
-        let (lit, _) = spec_run_argv_v2("`python -m app serve --port N`", "app", tmp.path(), 9);
+        let (lit, _, _) = spec_run_argv_v2("`python -m app serve --port N`", "app", tmp.path(), 9);
         assert_eq!(lit[0], "serve");
         assert!(
             spec_run_argv_v2("Build a CLI. It should be fast.", "app", tmp.path(), 9)
@@ -13548,9 +13548,21 @@ impl GooseAgentDispatcher {
                                                 activity_key,
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
-                                            let _ = std::fs::write(p, d.to_string());
+                                            if let Err(e) = std::fs::write(p, d.to_string()) {
+                                                self.note_transcript_write_failure(
+                                                    p,
+                                                    "digest",
+                                                    &e.to_string(),
+                                                );
+                                            }
                                             if let Some(m) = &activity_mirror {
-                                                let _ = std::fs::write(m, d.to_string());
+                                                if let Err(e) = std::fs::write(m, d.to_string()) {
+                                                    self.note_transcript_write_failure(
+                                                        p,
+                                                        "digest_mirror",
+                                                        &e.to_string(),
+                                                    );
+                                                }
                                             }
                                             let mirror = activity_mirror.as_deref();
                                             let (at, mut werrs) = append_reasoning_transcript(
@@ -14639,9 +14651,16 @@ impl GooseAgentDispatcher {
                         &said,
                         activity_key,
                     );
-                    let _ = std::fs::write(p, digest.to_string());
+                    // C2 (gate 1): the rolling digest is what the desktop's live line and the
+                    // judge's look read; a write that fails leaves them on a FROZEN digest with
+                    // nothing saying so. Same one-event-per-kind door the durable transcripts use.
+                    if let Err(e) = std::fs::write(p, digest.to_string()) {
+                        self.note_transcript_write_failure(p, "digest", &e.to_string());
+                    }
                     if let Some(m) = &activity_mirror {
-                        let _ = std::fs::write(m, digest.to_string());
+                        if let Err(e) = std::fs::write(m, digest.to_string()) {
+                            self.note_transcript_write_failure(p, "digest_mirror", &e.to_string());
+                        }
                     }
                     let mirror = activity_mirror.as_deref();
                     let (at, mut werrs) =
@@ -14695,7 +14714,9 @@ impl GooseAgentDispatcher {
             if let Some(obj) = digest.as_object_mut() {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
-            let _ = std::fs::write(p, digest.to_string());
+            if let Err(e) = std::fs::write(p, digest.to_string()) {
+                self.note_transcript_write_failure(p, "digest", &e.to_string());
+            }
             let mirror = activity_mirror.as_deref();
             let (_, mut werrs) = append_reasoning_transcript(p, mirror, &texts, transcript_at);
             werrs.extend(append_thinking_transcript(p, mirror, &mut think_unflushed));
@@ -14737,7 +14758,9 @@ impl GooseAgentDispatcher {
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
             // moment the round ends, so the mirror is the only copy left to correct.
             if let Some(m) = &activity_mirror {
-                let _ = std::fs::write(m, digest.to_string());
+                if let Err(e) = std::fs::write(m, digest.to_string()) {
+                    self.note_transcript_write_failure(p, "digest_mirror", &e.to_string());
+                }
             }
         }
 
@@ -16437,23 +16460,25 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
     }
 }
 
-/// Best-effort `--help` of the produced app's entry, to ground the Lever B repro author. Python only in v1:
-/// find a package dir (one containing `__main__.py`) and run `python3 -m <pkg> --help`. Empty on any miss or
-/// for a non-Python tree. Bounded (20s) + fail-open.
-async fn entry_help(root: &Path, lang: TargetLang) -> String {
+/// `--help` of the produced app's entry, to ground the sink's brief. Python only in v1: find a package dir
+/// (one containing `__main__.py`) and run `python3 -m <pkg> --help` in a throwaway snapshot.
+///
+/// C3 (gate 1): `Ok("")` is the by-design absence (a non-Python tree — the brief is byte-identical);
+/// `Err(reason)` is a MEASURED miss the caller emits as `entry_help_unavailable{reason}` before the
+/// brief renders without the section: the snapshot could not be made or copied, no package was found,
+/// or the entry produced no output (spawn failure, the repro timeout, or a silent exit — `run_repro_once`
+/// folds those three into one empty string). Before this every miss was "" and the sink's brief lost its
+/// "ACTUAL INTERFACE" section with nothing in the event stream.
+async fn entry_help(root: &Path, lang: TargetLang) -> Result<String, String> {
     if !matches!(lang, TargetLang::Python) {
-        return String::new();
+        return Ok(String::new());
     }
     // Run in a SNAPSHOT, not the live tree: `--help` still imports the package (executes produced module-level
     // code), which should not touch the real working tree.
-    let Ok(tmp) = tempfile::TempDir::new() else {
-        return String::new();
-    };
-    if copy_tree_excluding(root, tmp.path()).is_err() {
-        return String::new();
-    }
+    let tmp = tempfile::TempDir::new().map_err(|e| format!("snapshot tempdir: {e}"))?;
+    copy_tree_excluding(root, tmp.path()).map_err(|e| format!("snapshot copy: {e}"))?;
     let Some(pkg) = python_package(tmp.path()) else {
-        return String::new();
+        return Err("no python package (a dir with __main__.py) in the tree".to_string());
     };
     let argv = [
         "python3".to_string(),
@@ -16461,7 +16486,13 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
         pkg.clone(),
         "--help".to_string(),
     ];
-    let top = run_repro_once(&argv, tmp.path()).await.0;
+    let (top, ok) = run_repro_once(&argv, tmp.path()).await;
+    if top.trim().is_empty() {
+        return Err(format!(
+            "`python3 -m {pkg} --help` produced no output (exit ok: {ok}; spawn failure, timeout or \
+             silent exit)"
+        ));
+    }
     // Enrich with PER-SUBCOMMAND help: top-level --help lists the subcommands but not their required args, so a
     // repro-author aiming at a SUBCOMMAND crash omits the args and the app argparse-errors before it reproduces.
     // Fetch `<pkg> <sub> --help` for each parsed subcommand (capped); drop any that argparse-errors (a false
@@ -16481,7 +16512,7 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
             out.push_str(&format!("\n\n### `python3 -m {pkg} {sub} --help`\n{ht}"));
         }
     }
-    out
+    Ok(out)
 }
 
 /// Result of the deterministic spec-contract check (#120). HARD `findings` gate `passed` (red + fix loop);
@@ -16525,7 +16556,17 @@ struct SpecContractResult {
 async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     let pkg = spec_python_entry(spec)?;
     let scratch = std::env::temp_dir().join(format!("goose-boot-probe-{}", std::process::id()));
-    let (argv, ports) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    let (argv, ports, bind_inconclusive) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    // C4: a port placeholder the harness could not fill (ephemeral bind refused) makes the
+    // floor unprobeable — refuse to conclude, say why on stderr (this probe has no sink), and
+    // let the ship-best restore decide, exactly as the pre-bound-port arm below does.
+    if let Some(reason) = bind_inconclusive.first() {
+        eprintln!(
+            "  {} boot floor NOT probed — {reason}",
+            style("!").red().bold()
+        );
+        return None;
+    }
     // No port placeholder substituted: the app boots on its OWN advertised literal port —
     // and when that port is already bound pre-spawn (vendor mock, squatter) the bind cannot
     // be attributed, so the probe refuses to conclude rather than concluding wrong. A spec
@@ -17112,14 +17153,17 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
 /// Rules, all generic: each port-flag gets its OWN fresh free port; a dir-flag gets a created
 /// scratch DIRECTORY; a vendor/url-flag gets the spec's own advertised vendor base; a
 /// token/file-flag gets a scratch file; anything else keeps the scratch db path. Returns the
-/// substituted ports so the caller accepts ANY of them binding as boot proof. Pure aside from
-/// scratch-dir/file creation and ephemeral port allocation.
+/// substituted ports so the caller accepts ANY of them binding as boot proof, and (C4) the
+/// INCONCLUSIVE reasons — an ephemeral bind the kernel refused used to `expect(...)` and panic
+/// inside the sink's worker future; now the port-flag is filled with `0`, left out of `ports`,
+/// and the reason rides to the caller's `inconclusive` list. Pure aside from scratch-dir/file
+/// creation and ephemeral port allocation.
 fn spec_run_argv_v2(
     spec: &str,
     pkg: &str,
     scratch_base: &Path,
     spec_vendor_port: u16,
-) -> (Vec<String>, Vec<u16>) {
+) -> (Vec<String>, Vec<u16>, Vec<String>) {
     let needle = format!("-m {pkg}");
     let span = spec
         .split('`')
@@ -17127,16 +17171,27 @@ fn spec_run_argv_v2(
         .unwrap_or_default();
     let mut it = span.split_whitespace().skip_while(|t| *t != pkg);
     if it.next().is_none() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
     let _ = std::fs::create_dir_all(scratch_base);
     // Listeners stay alive until the end so every allocated port is DISTINCT.
     let mut holders: Vec<std::net::TcpListener> = Vec::new();
-    let mut fresh_port = || -> u16 {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral bind");
-        let p = l.local_addr().map(|a| a.port()).unwrap_or(0);
-        holders.push(l);
-        p
+    let mut inconclusive: Vec<String> = Vec::new();
+    let mut fresh_port = |inconclusive: &mut Vec<String>| -> Option<u16> {
+        match std::net::TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => {
+                let p = l.local_addr().map(|a| a.port()).unwrap_or(0);
+                holders.push(l);
+                Some(p)
+            }
+            Err(e) => {
+                inconclusive.push(format!(
+                    "spec-contract: ephemeral bind failed for a `{pkg}` port placeholder: {e} — \
+                     bind unverifiable"
+                ));
+                None
+            }
+        }
     };
     let mut out: Vec<String> = Vec::new();
     let mut ports: Vec<u16> = Vec::new();
@@ -17155,9 +17210,13 @@ fn spec_run_argv_v2(
         let filled = if !is_placeholder {
             tok.to_string()
         } else if prev_flag.contains("port") {
-            let p = fresh_port();
-            ports.push(p);
-            p.to_string()
+            match fresh_port(&mut inconclusive) {
+                Some(p) => {
+                    ports.push(p);
+                    p.to_string()
+                }
+                None => "0".to_string(),
+            }
         } else if prev_flag.contains("vendor") || prev_flag.contains("url") || tok == "URL" {
             format!("http://127.0.0.1:{spec_vendor_port}")
         } else if prev_flag.contains("dir") {
@@ -17177,7 +17236,7 @@ fn spec_run_argv_v2(
         out.push(filled);
     }
     drop(holders);
-    (out, ports)
+    (out, ports, inconclusive)
 }
 
 /// The boot-repair brief's extra diagnosis when the probe's tail shows NO crash: the process ran
@@ -17673,11 +17732,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         std::process::id(),
         SPEC_DB_SEQ.load(std::sync::atomic::Ordering::Relaxed)
     ));
-    let (advertised, advertised_ports) = if free_port.is_some() {
+    let (advertised, advertised_ports, bind_inconclusive) = if free_port.is_some() {
         spec_run_argv_v2(spec, &pkg, &contract_scratch, spec_port(spec))
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new())
     };
+    // C4: an ephemeral bind the kernel refused is an abstention the verdict must carry — it
+    // narrows `established()` like every other inconclusive reason instead of panicking here.
+    inconclusive.extend(bind_inconclusive);
     let port = advertised_ports
         .first()
         .copied()
@@ -18952,7 +19014,12 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             if other == pkg {
                 continue;
             }
-            let (oargv, oports) = spec_run_argv_v2(spec, &other, &inv_scratch, spec_port(spec));
+            let (oargv, oports, obind_inconclusive) =
+                spec_run_argv_v2(spec, &other, &inv_scratch, spec_port(spec));
+            if !obind_inconclusive.is_empty() {
+                inconclusive.extend(obind_inconclusive);
+                continue;
+            }
             if oports.is_empty() {
                 inconclusive.push(format!(
                     "spec-contract: `python -m {other}` is advertised without a port placeholder \
@@ -25146,7 +25213,18 @@ impl GooseAgentDispatcher {
             let owned_part = if req.task_id == "integrate-verify"
                 && swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild)
             {
-                let help = entry_help(std::path::Path::new(&cwd), lang).await;
+                let help = match entry_help(std::path::Path::new(&cwd), lang).await {
+                    Ok(help) => help,
+                    // C3 (gate 1): the brief keeps its shape (no section) — the absence is SAID.
+                    Err(reason) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "entry_help_unavailable",
+                            "task_id": req.task_id,
+                            "reason": reason,
+                        }));
+                        String::new()
+                    }
+                };
                 if help.trim().is_empty() {
                     owned_part
                 } else {
@@ -29986,7 +30064,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         shard_of: None,
                         merger_of: None,
                     };
-                    let _ = smoke_fix_dispatcher.run(boot_req).await;
+                    // C1 (gate 1): a boot-repair lane that never ran used to be indistinguishable
+                    // from one that ran and changed nothing — the next probe then sees the same
+                    // traceback and `boot_repair_exhausted` says "no progress". The dispatch
+                    // failure is named here so that exhaustion reads as what it was.
+                    if let Err(e) = smoke_fix_dispatcher.run(boot_req).await {
+                        sink.write_value(serde_json::json!({
+                            "event": "smoke_fix_dispatch_failed",
+                            "lane": format!("boot-repair-{attempts}"),
+                            "transient": !matches!(e, DispatchError::Terminal(_)),
+                            "error": e.to_string(),
+                        }));
+                        eprintln!(
+                            "{} boot-repair-{attempts}: the fix lane did NOT run ({e})",
+                            style("!").red().bold()
+                        );
+                    }
                 } else {
                     break;
                 }
@@ -30096,7 +30189,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     shard_of: None,
                     merger_of: None,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                // C1 (gate 1): the fix lane's Result was discarded, so a dispatch that never
+                // reached a model read on stderr as "N finding(s) remain after one fix attempt"
+                // — an attempt that was never made. Named, and the verdict line says which.
+                let fix_lane = smoke_fix_dispatcher.run(fix_req).await;
+                if let Err(e) = &fix_lane {
+                    sink.write_value(serde_json::json!({
+                        "event": "smoke_fix_dispatch_failed",
+                        "lane": "smoke-fix",
+                        "transient": !matches!(e, DispatchError::Terminal(_)),
+                        "error": e.to_string(),
+                    }));
+                }
                 let after =
                     run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
@@ -30108,6 +30212,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     eprintln!(
                         "{}",
                         style("smoke gate: corrective fix RESOLVED the findings").green()
+                    );
+                } else if let Err(e) = &fix_lane {
+                    eprintln!(
+                        "{} ({} finding(s) remain — the fix lane did NOT run: {e})",
+                        style("smoke gate: still failing").red().bold(),
+                        after.findings.len()
                     );
                 } else {
                     eprintln!(
@@ -30258,7 +30368,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     shard_of: None,
                     merger_of: None,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                // C1 (gate 1): same as the smoke fix above — a wire-fix that never dispatched
+                // is said, and the verdict line below says the lane did not run.
+                let fix_lane = smoke_fix_dispatcher.run(fix_req).await;
+                if let Err(e) = &fix_lane {
+                    sink.write_value(serde_json::json!({
+                        "event": "smoke_fix_dispatch_failed",
+                        "lane": "wire-fix",
+                        "transient": !matches!(e, DispatchError::Terminal(_)),
+                        "error": e.to_string(),
+                    }));
+                }
                 // Re-derive the scope: the wire-fix worker may have written a NEW module.
                 let after =
                     run_ast_review(&ov_root, &app_scope_py(&ov_root, &smoke_all_files)).await;
@@ -30279,6 +30399,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     eprintln!(
                         "{}",
                         style("AST review: wire-fix RESOLVED the unwired findings").green()
+                    );
+                } else if let Err(e) = &fix_lane {
+                    eprintln!(
+                        "{} ({} new finding(s) remain — the wire-fix lane did NOT run: {e})",
+                        style("AST review: still unwired").yellow().bold(),
+                        after_new.len()
                     );
                 } else {
                     eprintln!(
