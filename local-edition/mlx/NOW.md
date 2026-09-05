@@ -1,5 +1,29 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-05 (afternoon) — PROVIDERS = {defined clouds, Swarm}; THE SWARM PROVIDER ROUTES CHAT TURNS TO IDLE NODES
+Owner: "in the providers we can only ever get the providers we have defined — the defined cloud ones and Swarm; if you
+choose Swarm you tap into the nodes automatically; the idle guard should let different sessions access idle nodes as they
+come, or queue." Mapped first (two read-only passes, facts in the commit messages): the full upstream catalog leaked through
+three surfaces (onboarding ProviderSelector, /settings/configure-providers, the hub's Cloud Providers tab), every filter was
+a TypeScript fragment test, and a chat turn on the `swarm` provider spawned a WHOLE `goose swarm run` — no node choice, no
+busy check, no queue; the Link idle guard is a per-machine boolean from cancel tokens, consumed only by the manual
+"run a prompt on a linked device" card; the sidecar's live in-flight count reached no Rust path.
+DESIGN (landing now): (1) desktop allow-list = the swarm's four cloud families by REGISTRY id (aws_bedrock, zai, google,
+custom_deepseek) + `swarm`, one source beside CLOUD_PROVIDERS, applied to the picker, onboarding, configure-providers and the
+Cloud Providers tab; omlx/lmstudio rows gone from the picker (the Rust registry keeps omlx — the sidecar path needs it); a
+loud one-time migration moves an active omlx/lmstudio provider to swarm in the local edition. (2) the `swarm` provider keeps one
+registry name and two model ids: `swarm` = CHAT (default): the turn goes to an idle node of the configured pool;
+`swarm-build` = the old brief → `goose swarm run` build (byte-identical). (3) `providers/swarm_router.rs`, process-wide: pool
+= enabled `swarm.devices` re-read every turn; node kinds LM Studio (one endpoint, model id selects the LM Link machine),
+mlx-sidecar (omlx at the aligned OMLX_HOST; capacity = the engine's admission cap, one source in goose-sidecar; free =
+cap − max(leases, live in-flight from the manager)), cloud (family → registry); capacity per node = instances / the cap;
+servable = model listed / engine running with that alias / provider constructible; pick = sticky (hash of system + first
+user text) if free, else most free slots, ties by weight; none free → QUEUE on select_all of every servable node's semaphore,
+no timeout (gate 5); zero servable → a NAMED error listing every device and why; admission 503 → next free node, else the
+error unchanged; the permit rides the stream and frees on drop; ProviderUsage.model = the node's model id so the UI shows who
+served. Out of scope, stated: a mesh PEER's sidecar (loopback-bound; reachable only through the Link mlx proxy) — LM Link
+already fans LM Studio models across machines.
+
 ## 2026-09-05 — THE NAME IS GOOSE SWARM · RAPID-MLX DRAWN TO UPSTREAM HEAD · BRANCH → MAIN
 - Owner: the product is officially **Goose Swarm**. The 2026-09-02 Flock rename (92e2aa4c5, 91f2d6315) is reversed on every
   rendered label, the provider display name ("Goose Swarm" in the model selector), the sidebar wordmark, the hub title, the CLI
