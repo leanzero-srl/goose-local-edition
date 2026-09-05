@@ -500,7 +500,8 @@ function OutcomeChip({ session }: { session: BenchSession }) {
       tone={OUTCOME_TONE[session.outcome]}
       icon={
         session.outcome === 'running' ? (
-          <span className={cx('inline-block size-1.5 animate-pulse bg-white', RADIUS.pill)} />
+          // DESIGN.md motion: the live dot SCALES (animate-lz-live), it never fades.
+          <span className={cx('inline-block size-1.5 animate-lz-live bg-white', RADIUS.pill)} />
         ) : undefined
       }
     >

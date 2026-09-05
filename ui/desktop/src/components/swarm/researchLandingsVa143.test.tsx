@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SwarmRunPanel from './SwarmRunPanel';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import {
-  buildActivity,
   buildPhaseTodo,
   foldEvents,
   resetFoldCache,
@@ -113,8 +112,7 @@ const LANDED: Record<string, number> = {
   'ledgerd-api': 10,
 };
 
-const dispatch = ([ts, slice, rank, sections]: (typeof ORDER)[number]): Ev[] => [
-  at(ts, { event: 'research_dispatch_order', slice, sections, rank, host: HOST[slice], host_speed: 1 }),
+const dispatch = ([ts, slice]: (typeof ORDER)[number]): Ev[] => [
   at(ts, {
     event: 'research_dispatched',
     slice,
@@ -124,11 +122,8 @@ const dispatch = ([ts, slice, rank, sections]: (typeof ORDER)[number]): Ev[] => 
     activity_key: `research-${slice}`,
   }),
 ];
-/** The three events one landing emits, in the engine's order: kind → funnel → landing. */
-const landing = (
-  [ts, slice, q, kind, chars, raised, secs]: (typeof LANDINGS)[number],
-  order: 'engine' | 'landing-first' = 'engine'
-): Ev[] => {
+/** The two events one landing emits, in the engine's order: kind → funnel. */
+const landing = ([ts, slice, q, kind, chars, raised, secs]: (typeof LANDINGS)[number]): Ev[] => {
   const kindEv = at(ts, {
     event: 'research_question_kind',
     slice,
@@ -149,18 +144,7 @@ const landing = (
     batch: 0,
     model: HOST[slice],
   });
-  const landed = at(ts, {
-    event: 'research_answer_landed',
-    task: `research-${slice}`,
-    slice,
-    q_index: q,
-    kind,
-    status: 'answered',
-    chars,
-    raised,
-    via: 'tool',
-  });
-  return order === 'engine' ? [kindEv, funnel, landed] : [kindEv, landed, funnel];
+  return [kindEv, funnel];
 };
 const closer = ([ts, slice, next, secs, decides]: (typeof CLOSERS)[number]): Ev[] => [
   at(ts, {
@@ -172,9 +156,6 @@ const closer = ([ts, slice, next, secs, decides]: (typeof CLOSERS)[number]): Ev[
     secs,
     model: HOST[slice],
   }),
-  ...Array.from({ length: decides }, (_, i) =>
-    at(ts, { event: 'research_builder_decides', slice, q_index: next, text: `choice ${i} for ${slice}` })
-  ),
 ];
 
 /** Microsecond order — `Date.parse` drops the run's microseconds, and the web-viz closer (.220532)
@@ -184,12 +165,10 @@ const usOf = (e: Ev): number => {
   return Date.parse(ts.replace(/\.\d+/, '')) * 1000 + Number(ts.match(/\.(\d{6})/)![1]);
 };
 /** r6j's research stream, every event at its own timestamp. */
-const r6jResearch = (order: 'engine' | 'landing-first' = 'engine'): Ev[] =>
-  [
-    ...ORDER.flatMap(dispatch),
-    ...LANDINGS.flatMap((l) => landing(l, order)),
-    ...CLOSERS.flatMap(closer),
-  ].sort((a, b) => usOf(a) - usOf(b));
+const r6jResearch = (): Ev[] =>
+  [...ORDER.flatMap(dispatch), ...LANDINGS.flatMap(landing), ...CLOSERS.flatMap(closer)].sort(
+    (a, b) => usOf(a) - usOf(b)
+  );
 
 const OPENING: Ev[] = [
   at('2026-09-02T15:36:03.606000+00:00', {
@@ -232,18 +211,17 @@ describe('VA-143 (1) — a remainder_empty closer is the lane’s close, never a
       expect(lane.researchClose).toMatchObject({ reason: 'remainder_empty', landed: n });
     }
     expect(rows).toBe(37);
-    // The closer's own words survive on the close (title), and the decides are the engine's events.
+    // The closer's own words survive on the close (title).
     expect(lanes['research-web-viz'].researchClose).toEqual({
       reason: 'remainder_empty',
       landed: 4,
-      builderDecides: 11,
       secs: 2049,
       detail:
         '4 question(s) landed through research_answer; the final reply added none and listed 11 builder_decides',
     });
     expect(lanes['research-web-viz'].elapsedMs).toBe(2049 * 1000);
-    expect(lanes['research-ledgerd-core'].researchClose).toMatchObject({ landed: 12, builderDecides: 4 });
-    expect(lanes['research-ledgerd-api'].researchClose).toMatchObject({ landed: 10, builderDecides: 8 });
+    expect(lanes['research-ledgerd-core'].researchClose).toMatchObject({ landed: 12 });
+    expect(lanes['research-ledgerd-api'].researchClose).toMatchObject({ landed: 10 });
   });
 
   it('a genuine reason stays a loud miss, and a lane that derived nothing is not a clean pass', () => {
@@ -282,120 +260,19 @@ describe('VA-143 (1) — a remainder_empty closer is the lane’s close, never a
   });
 });
 
-describe('VA-143 (2) — research_answer_landed is consumed: one row and one feed line per landing', () => {
-  it('the landing and its funnel twin fold onto ONE row, in either order, keeping what each carried', () => {
-    const engine = lanesOf(R6J, 'va143-order-a')['research-web-viz'].researchQuestions!;
-    const landingFirst = lanesOf([...OPENING, ...r6jResearch('landing-first')], 'va143-order-b')[
-      'research-web-viz'
-    ].researchQuestions!;
-    expect(engine).toHaveLength(4);
-    expect(engine[0]).toMatchObject({
-      qIndex: 0,
-      status: 'answered',
-      kind: 'design',
-      chars: 2007,
-      raised: 1,
-      secs: 1270,
-    });
-    expect(landingFirst).toEqual(engine);
-    // The landing alone (no funnel twin on the log) still counts.
-    const only = LANDINGS.slice(0, 4).map((l) => landing(l)[2]);
-    const lane = lanesOf([...OPENING, ...dispatch(ORDER[1]), ...only], 'va143-landing-only')[
-      'research-web-viz'
-    ];
-    expect(lane.researchQuestions?.filter((q) => q.status === 'answered')).toHaveLength(4);
-    expect(lane.researchQuestions?.[0]).toMatchObject({ kind: 'design', chars: 2007, raised: 1 });
-  });
-
-  it('the feed carries one landing line per landing with its kind, and the lane closes as a done-line', () => {
-    // `activity` is the compact feed's 30-row window and `verbose` the 200-row one: the whole stream
-    // is read on verbose; the window is read on a prefix cut at web-viz's close (its own 11 rows).
-    const { verbose } = buildActivity(R6J);
-    const landed = verbose.filter((r) => / · q\d+ landed/.test(r.text));
-    expect(landed).toHaveLength(37);
-    expect(landed.every((r) => r.kind === 'done' && r.tone === 'good')).toBe(true);
-    // The funnel's legacy line was rewritten by its landing twin, never left beside it.
-    expect(verbose.some((r) => r.text.startsWith('Research answered —'))).toBe(false);
-    // Six closers, zero misses.
-    expect(verbose.some((r) => r.text.startsWith('Research unanswered'))).toBe(false);
-    expect(verbose.filter((r) => r.text.includes(' lane closed — ')).map((r) => r.text)).toEqual([
-      'Research web-viz lane closed — landed 4 · builder_decides 11',
-      'Research web-page lane closed — landed 1 · builder_decides 9',
-      'Research ledgerd-core lane closed — landed 12 · builder_decides 4',
-      'Research notifierd lane closed — landed 2 · builder_decides 10',
-      'Research ledgerd-webhooks-drafts lane closed — landed 8 · builder_decides 7',
-      'Research ledgerd-api lane closed — landed 10 · builder_decides 8',
-    ]);
-    const q0 = verbose.find((r) => r.text.startsWith('web-viz · q0 landed'))!;
-    expect(q0.text).toBe('web-viz · q0 landed · design · 2,007 chars · raised 1');
-    expect(q0.sub).toBe('by workhorse · 1270s');
-    expect(verbose.find((r) => r.text.startsWith('ledgerd-core · q5 landed'))?.text).toBe(
-      'ledgerd-core · q5 landed · external · 956 chars · raised 1'
-    );
-    // raised 0 is unsaid, never "raised 0".
-    expect(verbose.find((r) => r.text.startsWith('ledgerd-core · q0 landed'))?.text).toBe(
-      'ledgerd-core · q0 landed · external · 636 chars'
-    );
-    const close = verbose.find((r) => r.text.startsWith('Research web-viz lane closed'))!;
-    expect(close.sub).toBe(
-      '4 question(s) landed through research_answer; the final reply added none and listed 11 builder_decides'
-    );
-    // The landing lines sit in the feed in landing order, between the dispatch and the close.
-    const idx = (p: string) => verbose.findIndex((r) => r.text.startsWith(p));
-    expect(idx('Researching web-viz')).toBeLessThan(idx('web-viz · q0 landed'));
-    expect(idx('web-viz · q3 landed')).toBeLessThan(idx('Research web-viz lane closed'));
-
-    // The compact window carries the same lines: cut at web-viz's close, its four landings and its
-    // close are the newest rows; at the end of the stream, ledgerd-api's ten and its close are.
-    const atVizClose = R6J.slice(0, R6J.findIndex((e) => e['event'] === 'research_dispatched' && e['slice'] === 'web-page'));
-    const early = buildActivity(atVizClose).activity;
-    expect(early.filter((r) => / · q\d+ landed/.test(r.text)).map((r) => r.text)).toEqual([
-      'web-viz · q0 landed · design · 2,007 chars · raised 1',
-      'web-viz · q1 landed · design · 569 chars · raised 1',
-      'web-viz · q2 landed · design · 890 chars · raised 1',
-      'web-viz · q3 landed · design · 1,181 chars · raised 1',
-    ]);
-    expect(early[early.length - 1].text).toBe('Research web-viz lane closed — landed 4 · builder_decides 11');
-    const { activity } = buildActivity(R6J);
-    expect(activity.filter((r) => r.text.startsWith('ledgerd-api · q'))).toHaveLength(10);
-    expect(activity[activity.length - 1].text).toBe(
-      'Research ledgerd-api lane closed — landed 10 · builder_decides 8'
-    );
-  });
-
-  it('the landing-first order and a funnel-only archive each yield one line per landing', () => {
-    const swapped = buildActivity([...OPENING, ...r6jResearch('landing-first')]);
-    expect(swapped.verbose.filter((r) => / · q\d+ landed/.test(r.text))).toHaveLength(37);
-    expect(swapped.verbose.some((r) => r.text.startsWith('Research answered —'))).toBe(false);
-    expect(swapped.verbose.find((r) => r.text.startsWith('web-viz · q0 landed'))?.sub).toBe(
-      'by workhorse · 1270s'
-    );
-    // A log that predates research_answer_landed keeps its one verbose funnel line, unchanged.
-    const legacy = buildActivity([...OPENING, ...dispatch(ORDER[1]), ...landing(LANDINGS[0]).slice(0, 2)]);
-    expect(legacy.verbose.filter((r) => r.text.startsWith('Research answered — web-viz q0'))).toHaveLength(1);
-    expect(legacy.verbose[legacy.verbose.length - 1].text).toBe(
-      'Research answered — web-viz q0 (2,007 chars, 1 follow-up raised)'
-    );
-    expect(legacy.activity.some((r) => r.text.includes(' landed'))).toBe(false);
-  });
-});
-
-describe('VA-145 (2) — the Research step’s lane rows count the builder_decides', () => {
-  it('reads `landed N · builder_decides M` on a lane that listed any, and only `landed N` on one that did not', () => {
+describe('VA-138 — the Research step’s lane rows count what each lane landed', () => {
+  it('reads `landed N · <kinds> · closed` on a closed lane and `running` before its closer', () => {
     const research = buildPhaseTodo(R6J, {}, { clarifyPending: false }).find((p) => p.key === 'research')!;
     const detail = (slice: string) => research.items.find((i) => i.id === `r2-lane-${slice}`)!.detail;
     expect(detail('ledgerd-core')).toBe(
-      'landed 12 · builder_decides 4 · 5 design, 7 external · rank 2 · 7 sections · closed — the final reply added nothing behind the landed answers'
+      'landed 12 · 5 design, 7 external · closed — the final reply added nothing behind the landed answers'
     );
     expect(detail('web-viz')).toBe(
-      'landed 4 · builder_decides 11 · 4 design · rank 0 · 10 sections · closed — the final reply added nothing behind the landed answers'
+      'landed 4 · 4 design · closed — the final reply added nothing behind the landed answers'
     );
-    // Before its closer no decides exist, and the row says nothing about them.
     const cut = R6J.findIndex((e) => e['event'] === 'research_unanswered' && e['slice'] === 'web-viz');
     const early = buildPhaseTodo(R6J.slice(0, cut), {}, { clarifyPending: false }).find((p) => p.key === 'research')!;
-    expect(early.items.find((i) => i.id === 'r2-lane-web-viz')!.detail).toBe(
-      'landed 4 · 4 design · rank 0 · 10 sections · running'
-    );
+    expect(early.items.find((i) => i.id === 'r2-lane-web-viz')!.detail).toBe('landed 4 · 4 design · running');
   });
 });
 
@@ -436,7 +313,7 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
   });
   afterEach(() => cleanup());
 
-  it('reads "Questions · 4 · 4 answered" and "landed 4 · builder_decides 11 · done 34m" — no unanswered', async () => {
+  it('reads "Questions · 4 · 4 answered" and "landed 4 · done 34m" — no unanswered', async () => {
     const { result } = renderHook(() => useSwarmRun('/tmp/build'));
     await waitFor(() => expect(result.current.present).toBe(true));
     expect(result.current.researchLanes).toHaveLength(6);
@@ -461,7 +338,7 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
     expect(viz.querySelectorAll('[data-status="unanswered"]')).toHaveLength(0);
     const close = viz.querySelector('[data-testid="research-lane-close"]') as HTMLElement;
     expect(close.dataset.reason).toBe('remainder_empty');
-    expect(close.textContent).toBe('closedlanded 4 · builder_decides 11 · done 34m');
+    expect(close.textContent).toBe('closedlanded 4 · done 34m');
     expect(close.title).toBe(
       '4 question(s) landed through research_answer; the final reply added none and listed 11 builder_decides'
     );
@@ -469,17 +346,7 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
     expect(viz.textContent).toContain('2049s');
   });
 
-  it('VA-145 (1): ledgerd-core’s 12 landings stay pinned under its row after the compact feed rolled past them', async () => {
-    // At the end of the stream the compact window (30 rows) reaches back exactly to ledgerd-core's
-    // q7: its first seven landings (17:25–17:30, 80+ minutes before the stream's end) have rolled out
-    // of the feed, and only the lane row can still show them.
-    const { activity } = buildActivity(R6J);
-    expect(
-      activity
-        .map((r) => r.text.match(/^ledgerd-core · q(\d+) landed/)?.[1])
-        .filter(Boolean)
-        .map(Number)
-    ).toEqual([7, 8, 9, 10, 11]);
+  it('VA-145 (1): ledgerd-core’s 12 landings are rows under its lane with their kinds, and the rows fold', async () => {
     const { result } = renderHook(() => useSwarmRun('/tmp/build'));
     await waitFor(() => expect(result.current.present).toBe(true));
     render(
@@ -506,7 +373,7 @@ describe('VA-143 rendered — r6j’s web-viz lane row', () => {
     const q5 = [...rows()].find((el) => el.textContent?.startsWith('q5external'))!;
     expect(q5.textContent).toBe('q5external[ledgerd-core] q5956 chars · 1 raised · 3724s');
     const close = core.querySelector('[data-testid="research-lane-close"]') as HTMLElement;
-    expect(close.textContent).toBe('closedlanded 12 · builder_decides 4 · done 1h 8m');
+    expect(close.textContent).toBe('closedlanded 12 · done 1h 8m');
     // The header folds the rows and keeps the close line; a second click brings all twelve back.
     const toggle = core.querySelector('[data-testid="research-questions-toggle"]') as HTMLElement;
     fireEvent.click(toggle);
@@ -538,7 +405,7 @@ const WEB_PAGE_RAISED = 'Does the sort survive a brush from viz.js, or reset to 
 const LANDING_TS = '2026-09-02T17:21:55.379061+00:00';
 const COVERED_TS = '2026-09-02T17:02:23.220900+00:00';
 const va031Landing: Ev[] = [
-  // The engine's order for one landing: kind → funnel → the raised lines → the landing twin.
+  // The engine's order for one landing: kind → funnel → the raised lines.
   at(LANDING_TS, {
     event: 'research_question_kind',
     slice: 'web-page',
@@ -565,17 +432,6 @@ const va031Landing: Ev[] = [
     q_index: 0,
     raised_by: 'research-web-page-q0.json',
     question: WEB_PAGE_RAISED,
-  }),
-  at(LANDING_TS, {
-    event: 'research_answer_landed',
-    task: 'research-web-page',
-    slice: 'web-page',
-    q_index: 0,
-    kind: 'spec_restated',
-    status: 'answered',
-    chars: 2860,
-    raised: 1,
-    via: 'tool',
   }),
 ];
 const va031CoveredByMini: Ev = at(COVERED_TS, {
@@ -628,7 +484,7 @@ describe('VA-031 — covered, reclassified and raised-folded rows on the lane', 
     );
     // Covered rows are terminal: the lane settles, and they are neither landed nor missed.
     expect(lane.status).toBe('done');
-    expect(lane.researchClose).toMatchObject({ reason: 'remainder_empty', landed: 1, builderDecides: 9 });
+    expect(lane.researchClose).toMatchObject({ reason: 'remainder_empty', landed: 1 });
   });
 
   it('the classifier’s override keeps what the lane said; the raised line is on the lane that raised it', () => {
@@ -727,7 +583,9 @@ describe('VA-031 rendered — the web-page lane row', () => {
     expect(chips.map((c) => c.textContent)).toEqual(['covered by web-viz q0', 'covered by decision 0']);
     expect(chips.map((c) => c.dataset.by)).toEqual(['mini', 'decision']);
     expect(chips[0].title).toBe('research-web-viz-q0.json');
-    expect(chips[0].style.background).not.toBe('');
+    // A solid token fill, never a hand-written colour (DESIGN.md ban 5).
+    expect(chips[0].className).toContain('bg-lz-secondary');
+    expect(chips[0].getAttribute('style')).toBeNull();
     expect(rows[1].textContent).toBe(`q1covered by web-viz q0${WEB_PAGE_Q1}covered · rule cite`);
     expect(rows[2].textContent).toBe(`q2covered by decision 0${WEB_PAGE_Q2}covered · rule decision_id`);
     // The override: the final kind chip, then what the lane had said, with the classifier's evidence.
@@ -751,7 +609,7 @@ describe('VA-031 rendered — the web-page lane row', () => {
     expect(lane.querySelectorAll('[data-testid="research-question"]')).toHaveLength(0);
     expect(lane.querySelectorAll('[data-testid="research-raised-folded"]')).toHaveLength(0);
     expect(lane.querySelector('[data-testid="research-lane-close"]')?.textContent).toBe(
-      'closedlanded 1 · builder_decides 9 · done 22m'
+      'closedlanded 1 · done 22m'
     );
   });
 });

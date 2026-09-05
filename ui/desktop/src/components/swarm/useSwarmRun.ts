@@ -372,12 +372,8 @@ export interface ResearchQuestionRow {
  */
 export interface ResearchLaneClose {
   reason: string;
-  /** Answers the lane landed — its rows with status answered (`research_answer_landed` and its
-   *  outcome-funnel twin `research_answered` fold onto ONE row, so the count holds on either shape). */
+  /** Answers the lane landed — its `research_answered` rows with status answered. */
   landed: number;
-  /** Choices only this slice's builder makes — one `research_builder_decides` event each, emitted
-   *  after the closer. */
-  builderDecides: number;
   detail?: string;
   /** The engine's own lane clock at the close (`secs`). */
   secs?: number;
@@ -738,6 +734,69 @@ export interface KnownBug {
   severity: string | null;
 }
 
+/** REPAIR v2 §1 (repair_waves.rs `repro_verdict`): did the finding shard re-run the finding's OWN check
+ *  before its first edit. Each value is the engine's own event — `repro_confirmed`, `edit_before_repro`,
+ *  `repro_never_ran`, `repro_unobservable` — never inferred from the transcript. */
+export type RepairRepro = 'confirmed' | 'edited_first' | 'never_ran' | 'unobservable';
+/** REPAIR v2 §2 (`decide_promotion`): the promotion decision on the shard's merged preview —
+ *  `finding_flipped` / `finding_still_failing` / `preview_regressed` / `finding_closed_by_sibling` /
+ *  `finding_unverifiable`. */
+export type RepairDecision =
+  | 'flipped'
+  | 'still_failing'
+  | 'regressed'
+  | 'closed_by_sibling'
+  | 'unverifiable';
+/** One finding shard of a REPAIR wave — keyed by (round, shard file). `complete_fix_dispatched` opens
+ *  it, the repro / decision / merge events fill it, `complete_fix_completed` closes it with `promoted`.
+ *  A shard whose fix never flipped its check, or that never re-ran it, must not read like a landed fix. */
+export interface RepairFindingRow {
+  round: number;
+  shard: string;
+  taskId: string;
+  finding: string;
+  check: string | null;
+  repro: RepairRepro | null;
+  reproDetail: string | null;
+  decision: RepairDecision | null;
+  failsBefore: number | null;
+  failsAfter: number | null;
+  /** `complete_fix_completed.promoted` — null while the shard runs. */
+  promoted: boolean | null;
+  conflicted: boolean;
+  unavailable: boolean;
+  promotionLost: boolean;
+  setupError: string | null;
+  seq: number;
+}
+/** SPLIT v2 shard verification (shard_verify.rs) — the engine emits NEGATIVE events only
+ *  (`shard_piece_unparsed`, `shard_undefined_ref`, `shard_check_unavailable`, `shard_pieces_absent`), so
+ *  a row exists only for a shard with something to say; the absence of a row is never "verified clean". */
+export interface ShardVerifyRow {
+  taskId: string;
+  module: string;
+  shard: string;
+  piecesUnparsed: Array<{ piece: string; error: string }>;
+  undefinedRefs: string[];
+  piecesScanned: number | null;
+  checksUnavailable: Array<{ check: string; reason: string }>;
+  piecesAbsent: boolean;
+}
+/** `merge_assembled` (shards/assembly.rs): what CODE assembled for the merger from the shard pieces. */
+export interface MergeAssembledRow {
+  taskId: string;
+  module: string;
+  path: string;
+  pieces: number;
+  piecesSkipped: Array<{ path: string; why: string }>;
+  definitions: number;
+  lines: number;
+  orderSource: string;
+  glueNeeded: string[];
+  declaredMissing: string[];
+  duplicates: Array<{ name: string; shards: string[] }>;
+}
+
 /** The OPEN phase's cut of the request, plus what RESEARCH produced from it. `weights` are the opener's own
  *  effort estimates (a lopsided cut is the shape that leaves a node idle), `briefChars` the size of the spec
  *  each slice owner wrote back. */
@@ -889,6 +948,12 @@ export interface SwarmRunState {
    *  These are NOT failures: the run passed, and these are what is imperfect about what it passed with.
    *  Rendered as their own list, never as errors. */
   knownActiveBugs: KnownBug[];
+  /** REPAIR v2's finding shards — repro verdict + promotion decision per (round, shard), from the events. */
+  repairFindings: RepairFindingRow[];
+  /** SPLIT v2 shard verification — only the shards the engine said something about (negative events). */
+  shardVerify: ShardVerifyRow[];
+  /** `merge_assembled` per merger — the pieces CODE assembled before the merger wrote glue. */
+  mergeAssembled: MergeAssembledRow[];
   /** The engine's own end-to-end verdict (complete_result, revised by complete_result_revised) — null until
    *  the gate has run. Non-null with finished=false is the POST-VERDICT TAIL (persona reflection, overview,
    *  final report): the verdict is in but the engine is still wrapping up, and the panel must say so — r5's
@@ -992,6 +1057,9 @@ const EMPTY: SwarmRunState = {
   sinkRenamedFrom: null,
   synthesisFallback: null,
   knownActiveBugs: [],
+  repairFindings: [],
+  shardVerify: [],
+  mergeAssembled: [],
   verdict: null,
   planConfidence: null,
   confidence: null,
@@ -1613,6 +1681,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   sinkRenamedFrom: string | null;
   synthesisFallback: { error: string; tasks: number } | null;
   knownActiveBugs: KnownBug[];
+  repairFindings: RepairFindingRow[];
+  shardVerify: ShardVerifyRow[];
+  mergeAssembled: MergeAssembledRow[];
   verdict: RunVerdict | null;
 } {
   const feed: ActivityItem[] = [];
@@ -1664,20 +1735,14 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         : [node, ...questionLines].filter(Boolean).join('\n') || undefined,
     };
   };
-  // VA-143: ONE LINE PER LANDING, on both feeds. `research_answer_landed` (the mid-lane landing,
-  // research_tool.rs `land` — r6j: 37 of them, unconsumed here until now) and `research_answered`
-  // (the same row through the outcome funnel) are twins: whichever arrives first owns the line and
-  // the other updates it in place — never a second line. An archived log with only the funnel event
-  // keeps its one verbose line; the landing twin rewrites it with the kind the lane named and
-  // promotes it to the compact feed. A lane's CLOSER (`research_unanswered{reason: remainder_empty}`)
-  // is a done-line naming what the lane landed and the builder_decides it listed, re-rendered as
-  // each `research_builder_decides` arrives (the engine emits them after the closer).
+  // VA-143: ONE LINE PER LANDING. A `research_answered` row owns its line; a second event for the same
+  // (slice, q_index) updates it in place — never a second line. A lane's CLOSER
+  // (`research_unanswered{reason: remainder_empty}`) is a done-line naming what the lane landed.
   const researchLandingLines = new Map<
     string,
     { compactIdx: number | null; verboseIdx: number; node: string; secs?: number }
   >();
   const researchLandedBySlice = new Map<string, Set<number>>();
-  const researchDecidesBySlice = new Map<string, number>();
   const researchCloseLines = new Map<string, { compactIdx: number; verboseIdx: number; detail?: string }>();
   const renderResearchLanding = (
     slice: string,
@@ -1724,11 +1789,10 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
     const line = researchCloseLines.get(slice);
     if (!line) return;
     const landed = researchLandedBySlice.get(slice)?.size ?? 0;
-    const decides = researchDecidesBySlice.get(slice) ?? 0;
     const row = {
       kind: 'done' as const,
       tone: 'good' as const,
-      text: `Research ${researchSliceLabel(slice) || 'a slice'} lane closed — landed ${landed} · builder_decides ${decides}`,
+      text: `Research ${researchSliceLabel(slice) || 'a slice'} lane closed — landed ${landed}`,
       sub: line.detail,
     };
     feed[line.compactIdx] = { ...feed[line.compactIdx], ...row };
@@ -1742,6 +1806,65 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
   let knownActiveBugs: KnownBug[] = [];
+  // REPAIR v2 per-finding rows (repair_waves.rs), keyed by (round, shard file): the dispatch opens the
+  // row, the repro / decision / merge events fill it, complete_fix_completed closes it with `promoted`.
+  const repairRows = new Map<string, RepairFindingRow>();
+  let repairSeq = 0;
+  const repairRowOf = (e: Record<string, unknown>): RepairFindingRow => {
+    const round = num(e['round']) ?? 0;
+    const shard = str(e['shard']) || str(e['task_id']) || '?';
+    const key = `${round}::${shard}`;
+    let row = repairRows.get(key);
+    if (!row) {
+      row = {
+        round,
+        shard,
+        taskId: str(e['task_id']),
+        finding: '',
+        check: null,
+        repro: null,
+        reproDetail: null,
+        decision: null,
+        failsBefore: null,
+        failsAfter: null,
+        promoted: null,
+        conflicted: false,
+        unavailable: false,
+        promotionLost: false,
+        setupError: null,
+        seq: repairSeq++,
+      };
+      repairRows.set(key, row);
+    }
+    if (!row.taskId && e['task_id']) row.taskId = str(e['task_id']);
+    if (!row.finding && e['finding']) row.finding = str(e['finding']);
+    if (row.check == null && typeof e['check'] === 'string') row.check = e['check'];
+    return row;
+  };
+  const repairWhere = (row: RepairFindingRow) => `${row.shard} (round ${row.round})`;
+  // SPLIT v2 shard verification — NEGATIVE events only; a row exists only once the engine said something.
+  const shardVerifyRows = new Map<string, ShardVerifyRow>();
+  const shardVerifyOf = (e: Record<string, unknown>): ShardVerifyRow => {
+    const taskId = str(e['task_id']) || `${str(e['module'])}/${str(e['shard'])}`;
+    let row = shardVerifyRows.get(taskId);
+    if (!row) {
+      row = {
+        taskId,
+        module: str(e['module']),
+        shard: str(e['shard']),
+        piecesUnparsed: [],
+        undefinedRefs: [],
+        piecesScanned: null,
+        checksUnavailable: [],
+        piecesAbsent: false,
+      };
+      shardVerifyRows.set(taskId, row);
+    }
+    return row;
+  };
+  const shardWhere = (e: Record<string, unknown>) =>
+    `Shard ${str(e['shard']) || str(e['task_id']) || '?'} of ${str(e['module']) || 'a module'}`;
+  const mergeAssembledRows = new Map<string, MergeAssembledRow>();
   let verdict: RunVerdict | null = null;
   let finished = false;
   let cseq = 0;
@@ -1952,7 +2075,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           qi != null
             ? researchDispatchLines.get(researchLineBySlice.get(slice) ?? '')?.qs.get(qi)?.kind
             : undefined;
-        // VA-143: the landing twin (`research_answer_landed`) may already own this landing's line —
+        // VA-143: an earlier `research_answered` for this question may already own its line —
         // then this event only adds what it alone carries (secs, node); otherwise this is the one
         // verbose line an archived funnel-only log keeps.
         const landing = qi != null ? researchLandingLines.get(`${slice}::${qi}`) : undefined;
@@ -1985,32 +2108,6 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           if (!set) researchLandedBySlice.set(slice, (set = new Set()));
           set.add(qi);
         }
-        break;
-      }
-      case 'research_answer_landed': {
-        // VA-143: the mid-lane landing — the kind the lane named rides on it. A landing whose status
-        // is not answered has its miss rendered by the `research_unanswered` twin, which carries the
-        // reason; nothing here claims an answer that did not land.
-        const slice = str(e['slice']);
-        const qi = num(e['q_index']);
-        if (qi == null || (e['status'] && str(e['status']) !== 'answered')) break;
-        const prior = researchLandingLines.get(`${slice}::${qi}`);
-        const laneLine = researchDispatchLines.get(researchLineBySlice.get(slice) ?? '');
-        renderResearchLanding(slice, qi, {
-          kind: str(e['kind']) || laneLine?.qs.get(qi)?.kind,
-          chars: num(e['chars']) ?? 0,
-          raised: num(e['raised']) ?? 0,
-          node: prior?.node || laneLine?.node || '',
-          secs: prior?.secs,
-        });
-        break;
-      }
-      case 'research_builder_decides': {
-        // VA-143: one per choice the lane left to its builder, after the closer — counted onto the
-        // lane's close line, never a line each (r6j: 49 across six lanes).
-        const slice = str(e['slice']);
-        researchDecidesBySlice.set(slice, (researchDecidesBySlice.get(slice) ?? 0) + 1);
-        renderResearchClose(slice);
         break;
       }
       case 'research_unanswered': {
@@ -2061,27 +2158,6 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
             sub: [question, cite && `cites ${cite}`].filter(Boolean).join(' — ') || undefined,
           });
         }
-        break;
-      }
-      case 'research_slice_resumed': {
-        // VA-089: the slice's rows were on the ledger already — they ride into the briefs as they
-        // landed and NO lane runs for it; the plan line counts these as "resumed from the ledger".
-        const slice = researchSliceLabel(str(e['slice'])) || 'a slice';
-        const rows = num(e['rows']);
-        const t = `Research ${slice} resumed from the ledger — ${rows != null ? `${rows} row${rows === 1 ? '' : 's'}` : 'its rows'} reused, no lane`;
-        compact({ kind: 'plan', text: t, tone: 'info' });
-        verbose({ kind: 'plan', text: t, tone: 'info' });
-        break;
-      }
-      case 'research_question_ignored': {
-        // VA-089: the opener's contract has no per-slice questions (the lanes derive their own); a
-        // model that wrote them anyway spent its serial emit on work the fan does — the entries are
-        // dropped and this is the one loud line about it.
-        const slice = researchSliceLabel(str(e['slice'])) || 'a slice';
-        const n = num(e['count']);
-        const t = `Opener wrote ${n != null ? `${n} question${n === 1 ? '' : 's'}` : 'questions'} for ${slice} — ignored; its research lane derives its own`;
-        compact({ kind: 'plan', text: t, tone: 'warn' });
-        verbose({ kind: 'plan', text: t, tone: 'warn' });
         break;
       }
       case 'research_fan_panicked': {
@@ -2912,84 +2988,6 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'fail', text: t, tone: 'warn', sub });
         break;
       }
-      // VA-104 (answer_routing.rs): a research answer that names a collaborator's owned file is routed
-      // into that task's brief — said per match (verbose; one per file per task); a slash-bearing path
-      // the plan does not own, and a plan the routing could not read, are said too, never skipped.
-      case 'research_answer_routed': {
-        const owner = str(e['owner']);
-        const value = str(e['value']);
-        const arm = str(e['arm']);
-        const t = `Research answer q${num(e['q_index']) ?? '?'} of ${researchSliceLabel(str(e['from_slice'])) || 'a slice'} routed to ${str(e['to_task']) || 'a task'}${
-          owner || value
-            ? ` (${[owner && `owner ${owner}`, value && `${str(e['matched']) || 'file'} ${value}`].filter(Boolean).join(', ')})`
-            : ''
-        }`;
-        verbose({ kind: 'plan', text: t, tone: 'info', sub: arm ? arm.replace(/_/g, ' ') : undefined });
-        break;
-      }
-      case 'research_answer_unowned': {
-        const names = arr(e['names']).map(String);
-        const t = `Research answer q${num(e['q_index']) ?? '?'} of ${researchSliceLabel(str(e['from_slice'])) || 'a slice'} names ${names.length || 'some'} path${names.length === 1 ? '' : 's'} no plan task owns`;
-        const sub = names.join(', ') || undefined;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
-        break;
-      }
-      case 'research_answer_routing_skipped': {
-        const t = 'Research answers were not routed into the briefs — the plan did not parse';
-        const sub = str(e['error']) || undefined;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
-        break;
-      }
-      // VA-103 (dep_sources.rs): a dependency source cut before it rode a brief — the marker in the
-      // brief says where; this line says it on the feed with the kept/whole sizes.
-      case 'dep_source_truncated': {
-        const bytes = num(e['bytes']);
-        const kept = num(e['kept']);
-        const t = `Dependency source ${str(e['file']) || 'a file'} cut in ${str(e['task_id']) || 'a task'}'s brief${
-          kept != null && bytes != null ? ` — ${kept.toLocaleString()} of ${bytes.toLocaleString()} bytes kept` : ''
-        }`;
-        const sub = str(e['reason']) || undefined;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
-        break;
-      }
-      // VA-105 (vendor_probe.rs): an endpoint body cut after a whole JSON object, or a fetch that
-      // failed — each is said, with the url; the docs page itself rides whole.
-      case 'vendor_probe_truncated': {
-        const chars = num(e['chars']);
-        const kept = num(e['kept']);
-        const t = `Vendor ${str(e['kind']) || 'body'} ${str(e['url']) || '(url unknown)'} cut${
-          kept != null && chars != null ? ` — ${kept.toLocaleString()} of ${chars.toLocaleString()} chars kept` : ''
-        }`;
-        const sub =
-          e['at_object_boundary'] === true
-            ? 'cut after a whole JSON object'
-            : e['at_object_boundary'] === false
-              ? 'cut mid-object'
-              : undefined;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
-        break;
-      }
-      case 'vendor_probe_fetch_failed': {
-        const err = str(e['error']);
-        const t = `Vendor fetch failed — ${str(e['url']) || '(url unknown)'}${err ? `: ${err.slice(0, 120)}` : ''}`;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub: err.length > 120 ? err : undefined });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub: err || undefined });
-        break;
-      }
-      // VA-102 (shards.rs apply_module_split): a shard whose synthesis declared no exports — its brief
-      // states the absence where the README's PROVIDES lines would be copied in.
-      case 'shard_provides_empty': {
-        const sections = arr(e['sections']).map(String);
-        const t = `Shard ${str(e['shard']) || '?'} of ${str(e['module']) || 'a module'} declares no exports — its brief states the absence where PROVIDES would be`;
-        const sub = sections.length ? `sections: ${sections.join(', ')}` : undefined;
-        compact({ kind: 'fail', text: t, tone: 'warn', sub });
-        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
-        break;
-      }
       case 'low_confidence_ask': {
         // Surface the confidence AS SOON AS the swarm asks (before plan_loaded), so the badge is visible at
         // the exact moment it pauses for the user — not only after the re-plan.
@@ -3407,12 +3405,396 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         phase = (num(e['findings']) ?? 0) > 0 ? 'Repairing' : 'Integrating';
         break;
       }
-      case 'complete_fix_dispatched':
-      case 'complete_fix_completed':
-      case 'complete_fix_wave': {
-        // spec_repair_wave is gone from this group: no emitter remains, and an archive that carries it
-        // still enters Repairing via the complete_fix_* siblings that always ride beside it.
+      case 'complete_fix_wave':
         phase = 'Repairing';
+        break;
+      case 'complete_fix_dispatched': {
+        phase = 'Repairing';
+        const row = repairRowOf(e);
+        if (e['conflict_retry'] === true) {
+          // The same finding, re-dispatched on the tree that beat its first shard: the earlier repro and
+          // decision belong to the attempt that lost; the row starts again and keeps the conflict count.
+          row.repro = null;
+          row.reproDetail = null;
+          row.decision = null;
+          row.failsBefore = null;
+          row.failsAfter = null;
+        }
+        row.promoted = null;
+        break;
+      }
+      case 'complete_fix_completed': {
+        phase = 'Repairing';
+        const row = repairRowOf(e);
+        row.promoted = e['promoted'] === true;
+        if (e['conflicted'] === true) row.conflicted = true;
+        if (e['merge_unavailable'] === true) row.unavailable = true;
+        if (typeof e['setup_failed'] === 'string' && e['setup_failed']) row.setupError = e['setup_failed'];
+        break;
+      }
+      // ── REPAIR v2's per-shard events (repair_waves.rs). Each was appended to run.jsonl and dropped at
+      // `default:` here; a shard that never re-ran its check or never flipped it read exactly like a fix.
+      case 'finding_shards': {
+        const round = num(e['round']);
+        const shards = num(e['shards']) ?? 0;
+        const files = num(e['files']) ?? 0;
+        verbose({
+          kind: 'dispatch',
+          tone: 'info',
+          text: `Repair round ${round ?? '?'} — ${shards} finding shard${shards === 1 ? '' : 's'} across ${files} file${files === 1 ? '' : 's'}`,
+        });
+        break;
+      }
+      case 'repro_confirmed':
+      case 'edit_before_repro':
+      case 'repro_never_ran':
+      case 'repro_unobservable': {
+        const row = repairRowOf(e);
+        const detail = (e['detail'] ?? {}) as Record<string, unknown>;
+        const check = str(e['check']) || row.check || '';
+        if (type === 'repro_confirmed') {
+          row.repro = 'confirmed';
+          row.reproDetail = str(detail['call']) || null;
+          verbose({
+            kind: 'done',
+            tone: 'good',
+            text: `Repro confirmed — ${repairWhere(row)}: the finding's own check ran before any edit`,
+            sub: row.reproDetail || check || undefined,
+          });
+        } else if (type === 'edit_before_repro') {
+          row.repro = 'edited_first';
+          row.reproDetail = str(detail['first_edit']) || null;
+          const t = `Edited before repro — ${repairWhere(row)}: the first edit came before the finding's check`;
+          const sub = [row.reproDetail && `first edit ${row.reproDetail}`, check && `check: ${check}`, row.finding]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+          compact({ kind: 'fail', tone: 'warn', text: t, sub });
+          verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        } else if (type === 'repro_never_ran') {
+          row.repro = 'never_ran';
+          row.reproDetail = null;
+          const t = `Repro never ran — ${repairWhere(row)}: the finding's check was not re-run`;
+          const sub = [check && `check: ${check}`, row.finding].filter(Boolean).join(' · ') || undefined;
+          compact({ kind: 'fail', tone: 'warn', text: t, sub });
+          verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        } else {
+          row.repro = 'unobservable';
+          row.reproDetail = str(detail['why']) || null;
+          verbose({
+            kind: 'judge',
+            tone: 'info',
+            text: `Repro unobservable — ${repairWhere(row)}`,
+            sub: row.reproDetail || undefined,
+          });
+        }
+        break;
+      }
+      case 'finding_flipped': {
+        const row = repairRowOf(e);
+        row.decision = 'flipped';
+        row.failsBefore = num(e['fails_before']);
+        row.failsAfter = num(e['fails_after']);
+        const t = `Finding flipped — ${repairWhere(row)}: ${row.check || 'its check'} fails ${row.failsBefore ?? '?'} → ${row.failsAfter ?? '?'} on the preview`;
+        compact({ kind: 'done', tone: 'good', text: t, sub: row.finding || undefined });
+        verbose({ kind: 'done', tone: 'good', text: t, sub: row.finding || undefined });
+        break;
+      }
+      case 'finding_still_failing': {
+        const row = repairRowOf(e);
+        row.decision = 'still_failing';
+        row.failsAfter = num(e['fails_on_preview']);
+        const t = `Finding still failing — ${repairWhere(row)}: ${row.check || 'its check'} fails ${row.failsAfter ?? '?'} on the preview — not promoted`;
+        const sub = str(e['quote']) || row.finding || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'preview_regressed': {
+        const row = repairRowOf(e);
+        row.decision = 'regressed';
+        const fails = arr(e['new_failures']) as Array<Record<string, unknown>>;
+        const t = `Preview regressed — ${repairWhere(row)}: ${fails.length} new failure${fails.length === 1 ? '' : 's'} — not promoted`;
+        const sub =
+          fails
+            .map((f) => [str(f['check']), str(f['quote'])].filter(Boolean).join(': '))
+            .filter(Boolean)
+            .join('\n') || undefined;
+        compact({ kind: 'fail', tone: 'bad', text: t, sub });
+        verbose({ kind: 'fail', tone: 'bad', text: t, sub });
+        break;
+      }
+      case 'finding_closed_by_sibling': {
+        const row = repairRowOf(e);
+        row.decision = 'closed_by_sibling';
+        verbose({
+          kind: 'done',
+          tone: 'good',
+          text: `Finding closed by a sibling's landed fix — ${repairWhere(row)}; this shard is discarded`,
+          sub: row.finding || undefined,
+        });
+        break;
+      }
+      case 'finding_unverifiable': {
+        const row = repairRowOf(e);
+        row.decision = 'unverifiable';
+        const t = `Finding unverifiable — ${repairWhere(row)}: no authoring check recorded, nothing vouches for the fix — never promotes`;
+        const sub =
+          [
+            row.finding,
+            num(e['verified_findings']) != null
+              ? `preview ${num(e['verified_findings'])} vs tree ${num(e['baseline_findings']) ?? '?'} findings`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'shard_promotion_lost': {
+        const row = repairRowOf(e);
+        row.promotionLost = true;
+        const t = `Promotion lost — ${repairWhere(row)}: the tree moved between grade and landing; nothing was written`;
+        compact({ kind: 'fail', tone: 'bad', text: t });
+        verbose({ kind: 'fail', tone: 'bad', text: t });
+        break;
+      }
+      case 'merge_conflict': {
+        const row = repairRowOf(e);
+        row.conflicted = true;
+        const files = (arr(e['files']) as Array<Record<string, unknown>>).map(
+          (f) => `${str(f['file'])}${num(f['hunks']) != null ? ` (${num(f['hunks'])} hunk${num(f['hunks']) === 1 ? '' : 's'})` : ''}`
+        );
+        const t = `Merge conflict — ${repairWhere(row)}: ${files.length} file${files.length === 1 ? '' : 's'} — the finding re-arms on the new tree`;
+        const sub = files.join(', ') || undefined;
+        compact({ kind: 'fail', tone: 'bad', text: t, sub });
+        verbose({ kind: 'fail', tone: 'bad', text: t, sub });
+        break;
+      }
+      case 'merge_unavailable': {
+        const row = repairRowOf(e);
+        row.unavailable = true;
+        const said = (arr(e['said']) as Array<Record<string, unknown>>).map((f) =>
+          [str(f['file']), str(f['why'])].filter(Boolean).join(': ')
+        );
+        const t = `Merge unavailable — ${repairWhere(row)}: the three-way merge could not run`;
+        const sub = said.join('\n') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'fix_claimed_without_edit': {
+        const row = repairRowOf(e);
+        const n = num(e['finding_n']);
+        const t = `FIXED claimed without an edit — ${repairWhere(row)}${n != null ? ` finding ${n}` : ''}: the shadow never diverged from the tree`;
+        const sub = str(e['said']) || row.finding || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'dismissed_without_replay': {
+        const row = repairRowOf(e);
+        const n = num(e['finding_n']);
+        const t = `NOT REAL without a replay — ${repairWhere(row)}${n != null ? ` finding ${n}` : ''}: a probe/render finding dismissed without quoting the request and response`;
+        const sub = str(e['said']) || row.finding || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'repair_tree_regraded': {
+        const findings = num(e['findings']);
+        const inForce = num(e['baseline_in_force']);
+        const t =
+          findings != null
+            ? `Tree re-graded — ${findings} finding${findings === 1 ? '' : 's'} after a landed fix`
+            : `Tree re-grade could not run — the previous count (${inForce ?? '?'}) stays in force`;
+        const sub =
+          [str(e['after_finding']) && `after: ${str(e['after_finding'])}`, num(e['tree_version']) != null ? `tree v${num(e['tree_version'])}` : '']
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        verbose({ kind: 'judge', tone: findings != null ? 'info' : 'warn', text: t, sub });
+        break;
+      }
+      case 'repair_shard_setup_failed': {
+        const row = repairRowOf(e);
+        row.setupError = str(e['error']) || 'the harness failed this shard';
+        const t = `Repair shard setup failed — ${repairWhere(row)}: the harness, not the model`;
+        const sub = [row.setupError, row.finding].filter(Boolean).join(' · ') || undefined;
+        compact({ kind: 'fail', tone: 'bad', text: t, sub });
+        verbose({ kind: 'fail', tone: 'bad', text: t, sub });
+        break;
+      }
+      case 'shard_promoted': {
+        const files = arr(e['files']).map(String);
+        const created = num(e['created_copied']);
+        verbose({
+          kind: 'done',
+          tone: 'good',
+          text: `Shard ${str(e['task_id']) || '?'} promoted — ${files.length} file${files.length === 1 ? '' : 's'} written${e['three_way_merged'] === true ? ' (three-way merged)' : ''}${created ? `, ${created} created file${created === 1 ? '' : 's'} copied` : ''}`,
+          sub: files.join(', ') || undefined,
+        });
+        break;
+      }
+      // ── SPLIT v2: CODE's verification of each shard folder (shard_verify.rs, negatives only), the
+      // holes at the merger's dispatch (merge_holes.rs) and the assembly it was handed (assembly.rs).
+      case 'shard_piece_unparsed': {
+        const row = shardVerifyOf(e);
+        row.piecesUnparsed.push({ piece: str(e['piece']), error: str(e['error']) });
+        const t = `${shardWhere(e)} — piece ${str(e['piece']) || '?'} did not parse`;
+        const sub = str(e['error']) || undefined;
+        compact({ kind: 'fail', tone: 'bad', text: t, sub });
+        verbose({ kind: 'fail', tone: 'bad', text: t, sub });
+        break;
+      }
+      case 'shard_undefined_ref': {
+        const row = shardVerifyOf(e);
+        const names = arr(e['names']).map(String);
+        row.undefinedRefs.push(...names);
+        row.piecesScanned = num(e['pieces_scanned']) ?? row.piecesScanned;
+        const t = `${shardWhere(e)} — ${names.length} undefined name${names.length === 1 ? '' : 's'} across ${num(e['pieces_scanned']) ?? '?'} scanned piece${num(e['pieces_scanned']) === 1 ? '' : 's'}`;
+        const sub = names.join(', ') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'shard_check_unavailable': {
+        const row = shardVerifyOf(e);
+        const check = str(e['check']) || 'check';
+        const reason =
+          str(e['reason']) || (e['tool'] ? `${str(e['tool'])} is not installed` : 'no checker for this piece');
+        row.checksUnavailable.push({ check, reason });
+        const pieces = arr(e['pieces']).map(String);
+        verbose({
+          kind: 'judge',
+          tone: 'info',
+          text: `${shardWhere(e)} — ${check.replace(/_/g, ' ')} unavailable for ${pieces.length} piece${pieces.length === 1 ? '' : 's'}`,
+          sub: [reason, pieces.join(', ')].filter(Boolean).join(' · ') || undefined,
+        });
+        break;
+      }
+      case 'shard_pieces_absent': {
+        const row = shardVerifyOf(e);
+        row.piecesAbsent = true;
+        const t = `${shardWhere(e)} delivered no pieces — README ${e['readme_present'] === true ? 'present' : 'missing'}, folder empty`;
+        const sub = str(e['folder']) || undefined;
+        compact({ kind: 'fail', tone: 'bad', text: t, sub });
+        verbose({ kind: 'fail', tone: 'bad', text: t, sub });
+        break;
+      }
+      case 'merge_note_missing': {
+        const t = `${shardWhere(e)} left no README — the merger reads its folder blind`;
+        const sub = [str(e['reason']), str(e['folder'])].filter(Boolean).join(' · ') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'merge_assembled': {
+        const taskId = str(e['task_id']) || str(e['module']);
+        const row: MergeAssembledRow = {
+          taskId,
+          module: str(e['module']),
+          path: str(e['path']),
+          pieces: num(e['pieces']) ?? 0,
+          piecesSkipped: (arr(e['pieces_skipped']) as Array<Record<string, unknown>>).map((p) => ({
+            path: str(p['path']),
+            why: str(p['why']),
+          })),
+          definitions: num(e['definitions']) ?? 0,
+          lines: num(e['lines']) ?? 0,
+          orderSource: str(e['order_source']),
+          glueNeeded: arr(e['glue_needed']).map(String),
+          declaredMissing: arr(e['declared_missing']).map(String),
+          duplicates: (arr(e['duplicates']) as Array<Record<string, unknown>>).map((d) => ({
+            name: str(d['name']),
+            shards: arr(d['shards']).map(String),
+          })),
+        };
+        mergeAssembledRows.set(taskId, row);
+        const clean = row.piecesSkipped.length === 0 && row.declaredMissing.length === 0 && row.duplicates.length === 0;
+        const t = `Merge of ${row.module || taskId} assembled — ${row.pieces} piece${row.pieces === 1 ? '' : 's'}, ${row.definitions} definition${row.definitions === 1 ? '' : 's'}, ${row.lines.toLocaleString()} lines into ${row.path || 'the module file'}`;
+        const sub =
+          [
+            row.orderSource && `ordered by ${row.orderSource.replace(/_/g, ' ')}`,
+            row.glueNeeded.length ? `glue needed: ${row.glueNeeded.join(', ')}` : 'no glue needed',
+            row.declaredMissing.length ? `declared but missing: ${row.declaredMissing.join(', ')}` : '',
+            row.duplicates.length ? `${row.duplicates.length} duplicate definition${row.duplicates.length === 1 ? '' : 's'}` : '',
+            row.piecesSkipped.length ? `${row.piecesSkipped.length} piece${row.piecesSkipped.length === 1 ? '' : 's'} skipped` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'plan', tone: clean ? 'good' : 'warn', text: t, sub });
+        verbose({ kind: 'plan', tone: clean ? 'good' : 'warn', text: t, sub });
+        break;
+      }
+      case 'merge_duplicate_definition': {
+        const shards = arr(e['shards']).map(String);
+        verbose({
+          kind: 'plan',
+          tone: 'warn',
+          text: `Merge of ${str(e['module']) || '?'} — \`${str(e['name'])}\` defined by ${shards.length} shard${shards.length === 1 ? '' : 's'}; both kept under a MERGE_DUPLICATE marker`,
+          sub: shards.join(', ') || undefined,
+        });
+        break;
+      }
+      case 'merge_hole': {
+        const missing = arr(e['shards_missing']).map(String);
+        const readmes = arr(e['readmes_missing']).map(String);
+        const t = `Merge of ${str(e['module']) || '?'} has holes — ${missing.length} shard${missing.length === 1 ? '' : 's'} missing and unexplained`;
+        const sub =
+          [
+            missing.length ? `missing: ${missing.join(', ')}` : '',
+            readmes.length ? `no README: ${readmes.join(', ')}` : '',
+            e['merge_readme_present'] === false ? 'MERGE.md missing' : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'merge_dossier_incomplete': {
+        const missing = arr(e['missing']).map(String);
+        const absent = arr(e['pieces_absent']).map(String);
+        const refs = arr(e['undefined_refs']) as Array<Record<string, unknown>>;
+        const unparsed = arr(e['pieces_unparsed']) as Array<Record<string, unknown>>;
+        const t = `Merger ${str(e['task_id']) || str(e['module']) || '?'} dispatched over an incomplete dossier — READMEs missing ${missing.length} · pieces absent ${absent.length} · undefined refs ${refs.length} · unparsed ${unparsed.length}`;
+        const sub =
+          [
+            missing.length ? `no README: ${missing.join(', ')}` : '',
+            absent.length ? `empty: ${absent.join(', ')}` : '',
+            ...refs.map((r) => `${str(r['shard'])}: ${arr(r['names']).map(String).join(', ')}`),
+            ...unparsed.map((u) => `${str(u['shard'])} ${str(u['piece'])}: ${str(u['error'])}`),
+          ]
+            .filter(Boolean)
+            .join('\n') || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'merge_gap_requested': {
+        verbose({
+          kind: 'dispatch',
+          tone: 'info',
+          text: `Merge gap requested — ${str(e['module']) || '?'}: \`${str(e['missing'])}\` → shard ${str(e['shard']) || '?'}`,
+          sub: str(e['folder']) || undefined,
+        });
+        break;
+      }
+      case 'merge_gap_predictable': {
+        const t = `Merge gap was predictable — ${str(e['module']) || '?'}: \`${str(e['item'])}\` was listed UNFINISHED by ${str(e['shard']) || 'its shard'}`;
+        const sub = str(e['unfinished']) || undefined;
+        compact({ kind: 'fail', tone: 'warn', text: t, sub });
+        verbose({ kind: 'fail', tone: 'warn', text: t, sub });
+        break;
+      }
+      case 'merge_promoted': {
+        const files = arr(e['files']).map(String);
+        verbose({
+          kind: 'done',
+          tone: 'good',
+          text: `Merge of ${str(e['module']) || '?'} promoted — ${files.length} file${files.length === 1 ? '' : 's'}`,
+          sub: files.join(', ') || undefined,
+        });
         break;
       }
       // ── THE REPAIR-TAIL DECISIONS. The long fix tail is where the run is most opaque, and these are
@@ -3622,6 +4004,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
     sinkRenamedFrom,
     synthesisFallback,
     knownActiveBugs,
+    repairFindings: [...repairRows.values()].sort((a, b) => a.seq - b.seq),
+    shardVerify: [...shardVerifyRows.values()],
+    mergeAssembled: [...mergeAssembledRows.values()],
     verdict,
   };
 }
@@ -3982,8 +4367,6 @@ interface ResearchBatchCarry {
   questions: Map<string, ResearchQuestionRow>;
   /** VA-143: `research_unanswered{reason: remainder_empty}` — the lane's close, not a question. */
   close?: { reason: string; detail?: string; secs?: number };
-  /** VA-143: `research_builder_decides` events for this slice, counted as they arrive. */
-  builderDecides: number;
   /** VA-031: `research_raised_folded` events for this slice — the words, in event order. */
   raisedFolded: ResearchRaisedFold[];
   seq: number;
@@ -4084,7 +4467,6 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         model: str(e['model']) || undefined,
         derives: e['derives'] === true,
         questions: new Map(),
-        builderDecides: 0,
         raisedFolded: [],
         seq: c.seq++,
       };
@@ -4154,7 +4536,6 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
         slice,
         derives: false,
         questions: new Map(),
-        builderDecides: 0,
         raisedFolded: [],
         seq: c.seq++,
       };
@@ -4190,17 +4571,10 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
     batch.raisedFolded.push({ qIndex, raisedBy: str(e['raised_by']), question: str(e['question']) });
     return;
   }
-  // VA-143: the lane's closer and its builder_decides are LANE facts, never question rows. A
+  // VA-143: the lane's closer is a LANE fact, never a question row. A
   // `research_unanswered{reason: remainder_empty}` closes a lane whose final reply added nothing
   // behind the answers the tool landed (its q_index is the remainder's first — no question was ever
-  // named there); every other reason stays the loud miss it is. The `research_builder_decides` events
-  // (one per choice the lane left to its builder) follow the closer and count onto the same lane.
-  if (type === 'research_builder_decides') {
-    const key = c.researchBySlice.get(str(e['slice']));
-    const batch = key ? c.research.get(key) : undefined;
-    if (batch) batch.builderDecides += 1;
-    return;
-  }
+  // named there); every other reason stays the loud miss it is.
   if (type === 'research_unanswered' && str(e['reason']) === 'remainder_empty') {
     const key = c.researchBySlice.get(str(e['slice']));
     const batch = key ? c.research.get(key) : undefined;
@@ -4212,15 +4586,7 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       };
     return;
   }
-  // `research_answer_landed` (the mid-lane landing, research_tool.rs `land` — one per tool call, r6j:
-  // 37) and `research_answered` (the same row through the outcome funnel) are TWINS of one landing:
-  // both fold onto ONE question row, each keeping what the other carried (the landing names the kind,
-  // the funnel names secs), so the lane's landed count is right on either shape and never doubled.
-  if (
-    type === 'research_answered' ||
-    type === 'research_answer_landed' ||
-    type === 'research_unanswered'
-  ) {
+  if (type === 'research_answered' || type === 'research_unanswered') {
     const slice = str(e['slice']);
     const qIndex = num(e['q_index']);
     if (qIndex == null) return;
@@ -4536,7 +4902,6 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         ? {
             ...batch.close,
             landed: questions?.filter((q) => q.status === 'answered').length ?? 0,
-            builderDecides: batch.builderDecides,
           }
         : undefined;
       const status: TurnStatus = allMissed
@@ -5480,28 +5845,21 @@ export function buildPhaseTodo(
   const r2Reasons = new Map<string, number>();
   let r2FanPanicked = false;
   // VA-138: the fan PER LANE, so the Research step lists its lanes and what each delivered — the
-  // dispatch order (research_dispatch_order: rank / host / sections), the answers that landed on it
-  // (research_answered and its VA-089 twin research_answer_landed, one set per slice so the two
-  // shapes never double-count), the kinds the lane named, its real misses, and the event that CLOSED
+  // host it ran on, the answers that landed on it (research_answered, one set per slice so a repeated
+  // row never double-counts), the kinds the lane named, its real misses, and the event that CLOSED
   // it: a `research_unanswered{reason: remainder_empty}` is the engine's outcome row for a lane whose
   // final reply added nothing behind the answers the tool already landed (research.rs
   // fold_research_lane_from) — a lane closer, never a question kept raw in a brief.
-  const r2LaneOrder = new Map<
-    string,
-    { rank: number | null; host: string; sections: number | null; seq: number }
-  >();
+  const r2LaneOrder = new Map<string, { host: string; seq: number }>();
   const r2LaneLanded = new Map<string, Set<number>>();
   const r2LaneKinds = new Map<string, Map<number, string>>();
   const r2LaneMissed = new Map<string, number>();
   const r2LaneClosed = new Map<string, string>();
-  // VA-145: the choices a lane left to its builder (`research_builder_decides`, one event each, after
-  // the closer) — the lane row reads `landed N · builder_decides M` like its close line does.
-  const r2LaneDecides = new Map<string, number>();
   let r2LaneSeq = 0;
   const laneOrderOf = (slice: string) => {
     let o = r2LaneOrder.get(slice);
     if (!o) {
-      o = { rank: null, host: '', sections: null, seq: r2LaneSeq++ };
+      o = { host: '', seq: r2LaneSeq++ };
       r2LaneOrder.set(slice, o);
     }
     return o;
@@ -5519,13 +5877,6 @@ export function buildPhaseTodo(
     if (!m) r2LaneKinds.set(slice, (m = new Map()));
     m.set(q, kind);
   };
-  // CROSS-SLICE ANSWER ROUTING (VA-104, answer_routing.rs) — synthesis's own delivery: an answer
-  // naming a file another task owns is rendered into that task's brief with the owner stated.
-  let r2Routed = 0;
-  let r2Unowned = 0;
-  let r2RoutingSkipped: string | null = null;
-  const r2Ignored: Array<{ slice: string; count: number | null }> = [];
-  const r2Resumed: Array<{ slice: string; rows: number | null }> = [];
   // The fan's PLAN event (research_planned, VA-089: lanes / per_slice_sections / resumed_slices /
   // decisions — no question count exists at planning).
   let r2Plan: ResearchPlan | null = null;
@@ -5638,6 +5989,26 @@ export function buildPhaseTodo(
   const buildsOnFlagged = new Map<string, Set<string>>();
   let defects: { critical: number; minor: number; forced: number } | null = null;
   let fixWaves = 0;
+  // REPAIR v2 (repair_waves.rs): what each finding shard PROVED, counted from the engine's own events —
+  // the repro verdict (§1) and the promotion decision (§2) — beside the merge faults that void a shard.
+  const reproV2 = { confirmed: 0, editedFirst: 0, neverRan: 0, unobservable: 0 };
+  const decisionV2 = { flipped: 0, stillFailing: 0, regressed: 0, closedBySibling: 0, unverifiable: 0 };
+  const shardFaults = { conflicts: 0, unavailable: 0, promotionLost: 0, setupFailed: 0, claimedNoEdit: 0, dismissedNoReplay: 0 };
+  let shardsPromoted = 0;
+  let findingShards = 0;
+  let regraded: { findings: number | null; inForce: number | null; version: number | null } | null = null;
+  // SPLIT v2: the shards CODE found something wrong with (negatives only), the mergers' assemblies and holes.
+  const shardIssues = new Map<string, { module: string; shard: string; unparsed: number; undefinedRefs: number; unavailable: number; piecesAbsent: boolean }>();
+  const shardIssueOf = (e: Record<string, unknown>) => {
+    const key = str(e['task_id']) || `${str(e['module'])}/${str(e['shard'])}`;
+    let row = shardIssues.get(key);
+    if (!row) shardIssues.set(key, (row = { module: str(e['module']), shard: str(e['shard']) || key, unparsed: 0, undefinedRefs: 0, unavailable: 0, piecesAbsent: false }));
+    return row;
+  };
+  const assembled = new Map<string, { pieces: number; definitions: number; lines: number; glue: number; declaredMissing: number; duplicates: number; skipped: number }>();
+  const mergeHoles = new Map<string, { shardsMissing: number; readmesMissing: number }>();
+  const dossierIncomplete = new Map<string, { readmes: number; absent: number; refs: number; unparsed: number }>();
+  const mergePromoted = new Set<string>();
   // Canonical node names throughout — a raw pool id stored here reaches the node chip and mis-keys its
   // letter/hue against the canonical device order (same defect class as the "fusi, fusi, fable" feed line).
   const nodeOf = nodeLabeler(events);
@@ -5669,9 +6040,6 @@ export function buildPhaseTodo(
       synthesized = { tasks: num(e['tasks']) ?? synthesized?.tasks ?? null };
     else if (t === 'plan_weighted' || (t === 'plan_repaired' && str(e['source']) === 'plan'))
       synthesized = synthesized ?? { tasks: null };
-    else if (t === 'research_answer_routed') r2Routed += 1;
-    else if (t === 'research_answer_unowned') r2Unowned += 1;
-    else if (t === 'research_answer_routing_skipped') r2RoutingSkipped = str(e['error']) || 'the plan did not parse';
     else if (t === 'split_sized')
       splitSized.set(str(e['module']), {
         declared: num(e['declared']),
@@ -5680,18 +6048,6 @@ export function buildPhaseTodo(
         weights: arr(e['weights']).map((w) => num(w) ?? 0),
       });
     else if (t === 'split_hosts_scarce') splitScarce.set(str(e['task']), num(e['free_hosts']));
-    else if (t === 'research_dispatch_order') {
-      const o = laneOrderOf(str(e['slice']));
-      o.rank = num(e['rank']);
-      o.host = e['host'] ? nodeOf(str(e['host'])) : o.host;
-      o.sections = num(e['sections']);
-    } else if (t === 'research_answer_landed') {
-      // VA-089's per-answer twin of research_answered (task, slice, q_index, kind, status) — the
-      // per-lane set dedups the two shapes; the fan totals stay on research_answered alone.
-      if (str(e['status']) === 'answered' || !e['status'])
-        laneLanded(str(e['slice']), num(e['q_index']), str(e['kind']) || undefined);
-      else laneKind(str(e['slice']), num(e['q_index']), str(e['kind']));
-    }
     else if (t === 'plan_flag' && str(e['kind']) === 'fat_task')
       fatTasks.set(str(e['task']), {
         sections: num(e['sections']),
@@ -5764,6 +6120,52 @@ export function buildPhaseTodo(
         forced: num(e['engine_forced']) ?? 0,
       };
     else if (t === 'complete_fix_wave' || t === 'spec_repair_wave') fixWaves += 1;
+    else if (t === 'finding_shards') findingShards += num(e['shards']) ?? 0;
+    else if (t === 'repro_confirmed') reproV2.confirmed += 1;
+    else if (t === 'edit_before_repro') reproV2.editedFirst += 1;
+    else if (t === 'repro_never_ran') reproV2.neverRan += 1;
+    else if (t === 'repro_unobservable') reproV2.unobservable += 1;
+    else if (t === 'finding_flipped') decisionV2.flipped += 1;
+    else if (t === 'finding_still_failing') decisionV2.stillFailing += 1;
+    else if (t === 'preview_regressed') decisionV2.regressed += 1;
+    else if (t === 'finding_closed_by_sibling') decisionV2.closedBySibling += 1;
+    else if (t === 'finding_unverifiable') decisionV2.unverifiable += 1;
+    else if (t === 'merge_conflict') shardFaults.conflicts += 1;
+    else if (t === 'merge_unavailable') shardFaults.unavailable += 1;
+    else if (t === 'shard_promotion_lost') shardFaults.promotionLost += 1;
+    else if (t === 'repair_shard_setup_failed') shardFaults.setupFailed += 1;
+    else if (t === 'fix_claimed_without_edit') shardFaults.claimedNoEdit += 1;
+    else if (t === 'dismissed_without_replay') shardFaults.dismissedNoReplay += 1;
+    else if (t === 'shard_promoted') shardsPromoted += 1;
+    else if (t === 'repair_tree_regraded')
+      regraded = { findings: num(e['findings']), inForce: num(e['baseline_in_force']), version: num(e['tree_version']) };
+    else if (t === 'shard_piece_unparsed') shardIssueOf(e).unparsed += 1;
+    else if (t === 'shard_undefined_ref') shardIssueOf(e).undefinedRefs += arr(e['names']).length;
+    else if (t === 'shard_check_unavailable') shardIssueOf(e).unavailable += 1;
+    else if (t === 'shard_pieces_absent') shardIssueOf(e).piecesAbsent = true;
+    else if (t === 'merge_assembled')
+      assembled.set(str(e['module']) || str(e['task_id']), {
+        pieces: num(e['pieces']) ?? 0,
+        definitions: num(e['definitions']) ?? 0,
+        lines: num(e['lines']) ?? 0,
+        glue: arr(e['glue_needed']).length,
+        declaredMissing: arr(e['declared_missing']).length,
+        duplicates: arr(e['duplicates']).length,
+        skipped: arr(e['pieces_skipped']).length,
+      });
+    else if (t === 'merge_hole')
+      mergeHoles.set(str(e['module']), {
+        shardsMissing: arr(e['shards_missing']).length,
+        readmesMissing: arr(e['readmes_missing']).length,
+      });
+    else if (t === 'merge_dossier_incomplete')
+      dossierIncomplete.set(str(e['module']) || str(e['task_id']), {
+        readmes: arr(e['missing']).length,
+        absent: arr(e['pieces_absent']).length,
+        refs: arr(e['undefined_refs']).length,
+        unparsed: arr(e['pieces_unparsed']).length,
+      });
+    else if (t === 'merge_promoted') mergePromoted.add(str(e['module']));
     else if (t === 'scouts_planned') scoutsN = arr(e['lenses']).length || (num(e['count']) ?? 0);
     else if (t === 'research_planned') {
       // Three shapes share the name. VA-089's plan event carries `per_slice_sections`/`resumed_slices`;
@@ -5807,14 +6209,7 @@ export function buildPhaseTodo(
         if (reason) r2Reasons.set(reason, (r2Reasons.get(reason) ?? 0) + 1);
         r2LaneMissed.set(slice, (r2LaneMissed.get(slice) ?? 0) + 1);
       }
-    } else if (t === 'research_builder_decides') {
-      const slice = str(e['slice']);
-      r2LaneDecides.set(slice, (r2LaneDecides.get(slice) ?? 0) + 1);
-    } else if (t === 'research_question_ignored')
-      r2Ignored.push({ slice: str(e['slice']), count: num(e['count']) });
-    else if (t === 'research_slice_resumed')
-      r2Resumed.push({ slice: str(e['slice']), rows: num(e['rows']) });
-    else if (t === 'research_fan_panicked') r2FanPanicked = true;
+    } else if (t === 'research_fan_panicked') r2FanPanicked = true;
     else if (t === 'research_completed') {
       // Two shapes share this name: the rewritten engine reports SLICES + per-slice spec sizes; the old one
       // reported a bare findings count. Only the new shape carries `brief_chars`.
@@ -6023,11 +6418,11 @@ export function buildPhaseTodo(
   // The fan is awaited before plan_slices_to_dag: the engine's `phase: synthesis` (or the plan) is
   // what ends it — a lane's question count is not known up front, so no count can.
   const r2Over = phasesSeen.has('synthesis') || planned;
-  const r2ResumedN = r2Resumed.length || (r2Plan?.resumed.length ?? 0);
+  const r2ResumedN = r2Plan?.resumed.length ?? 0;
   const r2ResumedClause = r2ResumedN > 0 ? `, ${r2ResumedN} resumed from the ledger` : '';
   const r2KindsTally = tallyKinds(r2Kinds);
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  if (r2Plan || r2Lanes > 0 || r2Ignored.length > 0 || r2Resumed.length > 0) {
+  if (r2Plan || r2Lanes > 0) {
     if (r2FanPanicked)
       // The whole fan died at the join — any answers its lanes produced were lost with it.
       research.push(
@@ -6076,14 +6471,13 @@ export function buildPhaseTodo(
     // and whether it is still running or what closed it. The node chip is the host. A closed lane
     // that landed nothing reads unverified, never a clean pass.
     const laneSlices = [...r2LaneOrder.entries()]
-      .sort(([, a], [, b]) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.seq - b.seq)
+      .sort(([, a], [, b]) => a.seq - b.seq)
       .map(([slice]) => slice);
     for (const slice of laneSlices) {
       const order = r2LaneOrder.get(slice)!;
       const landed = r2LaneLanded.get(slice)?.size ?? 0;
       const kinds = tallyKinds([...(r2LaneKinds.get(slice)?.values() ?? [])]);
       const missed = r2LaneMissed.get(slice) ?? 0;
-      const decides = r2LaneDecides.get(slice) ?? 0;
       const closer = r2LaneClosed.get(slice);
       const over = closer != null || r2Over || r2FanPanicked;
       const state: TodoState = !over ? 'running' : landed > 0 ? 'done' : 'unverified';
@@ -6094,11 +6488,8 @@ export function buildPhaseTodo(
           state,
           [
             `landed ${landed}`,
-            decides > 0 ? `builder_decides ${decides}` : '',
             kinds,
             missed > 0 ? `${missed} unanswered` : '',
-            order.rank != null ? `rank ${order.rank}` : '',
-            order.sections != null ? `${order.sections} section${order.sections === 1 ? '' : 's'}` : '',
             !over
               ? 'running'
               : closer === 'remainder_empty'
@@ -6123,15 +6514,6 @@ export function buildPhaseTodo(
           'unverified',
           [...r2Reasons.entries()].map(([r, n]) => `${r.replace(/_/g, ' ')} ×${n}`).join(' · ') ||
             undefined
-        )
-      );
-    // A legacy opener emit: per-slice questions the contract no longer has, dropped and said once.
-    for (const ig of r2Ignored)
-      research.push(
-        it(
-          `r2-ignored-${ig.slice}`,
-          `Opener wrote ${ig.count != null ? plural(ig.count, 'question') : 'questions'} for ${researchSliceLabel(ig.slice) || 'a slice'} — ignored; its research lane derives its own`,
-          'advisory'
         )
       );
   } else if (r2LegacyDispatched > 0 || r2FanPanicked || r2LegacyPlanned) {
@@ -6288,29 +6670,6 @@ export function buildPhaseTodo(
             ]
               .filter(Boolean)
               .join(' · ')
-      )
-    );
-  // CROSS-SLICE ANSWER ROUTING (VA-104) — what synthesis delivered beyond the DAG: research answers
-  // rendered into the briefs of the tasks that own the files they name. r6h's ledgerd-core
-  // implemented webhook registration itself because the webhooks answers never reached it.
-  if (r2Routed > 0 || r2Unowned > 0)
-    synthesis.push(
-      it(
-        's-routed',
-        `Routed ${plural(r2Routed, 'research answer')} into the briefs of the tasks that own their files`,
-        r2Routed > 0 ? 'done' : 'unverified',
-        r2Unowned > 0
-          ? `${plural(r2Unowned, 'answer')} named files no task owns — left unrouted`
-          : undefined
-      )
-    );
-  if (r2RoutingSkipped)
-    synthesis.push(
-      it(
-        's-routing-skipped',
-        'Research answers were not routed into the briefs — the plan did not parse',
-        'unverified',
-        r2RoutingSkipped
       )
     );
   if (sinkRenamedFrom)
@@ -6488,6 +6847,65 @@ export function buildPhaseTodo(
       );
   }
 
+  // SPLIT v2's verification and assembly (shard_verify.rs / assembly.rs / merge_holes.rs): a shard row
+  // exists only where the engine SAID something (negatives only) — no row is never "verified clean".
+  for (const [key, si] of shardIssues) {
+    const bad = si.unparsed > 0 || si.piecesAbsent;
+    split.push(
+      it(
+        `s-verify-${key}`,
+        si.piecesAbsent
+          ? `Shard ${si.shard} of ${si.module} delivered no pieces`
+          : `Shard ${si.shard} of ${si.module} verified with ${plural(si.unparsed + si.undefinedRefs, 'problem')}`,
+        bad ? 'failed' : si.undefinedRefs > 0 ? 'unverified' : 'advisory',
+        [
+          si.unparsed > 0 ? `${plural(si.unparsed, 'piece')} did not parse` : '',
+          si.undefinedRefs > 0 ? `${plural(si.undefinedRefs, 'undefined name')}` : '',
+          si.unavailable > 0 ? `${plural(si.unavailable, 'check')} unavailable` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      )
+    );
+  }
+  for (const [module, hole] of mergeHoles)
+    split.push(
+      it(
+        `s-hole-${module}`,
+        `Merge of ${module} has holes — ${plural(hole.shardsMissing, 'shard')} missing and unexplained`,
+        'unverified',
+        hole.readmesMissing > 0 ? `${plural(hole.readmesMissing, 'README')} missing` : undefined
+      )
+    );
+  for (const [module, d] of dossierIncomplete)
+    split.push(
+      it(
+        `s-dossier-${module}`,
+        `Merger ${module} dispatched over an incomplete dossier`,
+        'unverified',
+        `READMEs missing ${d.readmes} · pieces absent ${d.absent} · undefined refs ${d.refs} · unparsed ${d.unparsed}`
+      )
+    );
+  for (const [module, a] of assembled) {
+    const clean = a.declaredMissing === 0 && a.duplicates === 0 && a.skipped === 0;
+    split.push(
+      it(
+        `s-assembled-${module}`,
+        `Merge of ${module} assembled — ${plural(a.pieces, 'piece')}, ${plural(a.definitions, 'definition')}, ${a.lines.toLocaleString()} lines`,
+        mergePromoted.has(module) ? 'done' : clean ? 'done' : 'unverified',
+        [
+          a.glue > 0 ? `glue needed for ${plural(a.glue, 'name')}` : 'no glue needed',
+          a.declaredMissing > 0 ? `${plural(a.declaredMissing, 'declared export')} missing` : '',
+          a.duplicates > 0 ? `${plural(a.duplicates, 'duplicate definition')}` : '',
+          a.skipped > 0 ? `${plural(a.skipped, 'piece')} skipped` : '',
+          mergePromoted.has(module) ? 'promoted' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      )
+    );
+  }
+
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
   const plannedIds = new Set(planTasks.map((tk) => tk.id));
@@ -6662,6 +7080,74 @@ export function buildPhaseTodo(
   }
   if (fixWaves > 0)
     repair.push(it('x-waves', `Repair wave${fixWaves === 1 ? '' : 's'} — ${fixWaves}`, 'done'));
+  // REPAIR v2 — the proof per shard, from the engine's events. A wave whose shards never re-ran their
+  // check, or never flipped it, is not a repair; each row says so in the engine's own terms.
+  const reproTotal = reproV2.confirmed + reproV2.editedFirst + reproV2.neverRan + reproV2.unobservable;
+  if (reproTotal > 0)
+    repair.push(
+      it(
+        'x-repro-v2',
+        `Repro before the edit — ${reproV2.confirmed} of ${plural(reproTotal, 'shard')} re-ran the finding's own check first`,
+        reproV2.confirmed === reproTotal ? 'done' : reproV2.confirmed > 0 ? 'unverified' : 'failed',
+        [
+          reproV2.editedFirst > 0 ? `${reproV2.editedFirst} edited first` : '',
+          reproV2.neverRan > 0 ? `${reproV2.neverRan} never ran it` : '',
+          reproV2.unobservable > 0 ? `${reproV2.unobservable} unobservable` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      )
+    );
+  const decisionTotal =
+    decisionV2.flipped + decisionV2.stillFailing + decisionV2.regressed + decisionV2.closedBySibling + decisionV2.unverifiable;
+  if (decisionTotal > 0 || findingShards > 0)
+    repair.push(
+      it(
+        'x-flipped',
+        `Promoted on the flip — ${decisionV2.flipped} of ${plural(findingShards || decisionTotal, 'finding shard')} made their check fail less`,
+        decisionV2.flipped > 0 ? (decisionV2.regressed > 0 ? 'unverified' : 'done') : decisionTotal > 0 ? 'failed' : 'running',
+        [
+          decisionV2.stillFailing > 0 ? `${decisionV2.stillFailing} still failing` : '',
+          decisionV2.regressed > 0 ? `${decisionV2.regressed} regressed the preview` : '',
+          decisionV2.closedBySibling > 0 ? `${decisionV2.closedBySibling} closed by a sibling` : '',
+          decisionV2.unverifiable > 0 ? `${decisionV2.unverifiable} unverifiable (no check)` : '',
+          shardsPromoted > 0 ? `${plural(shardsPromoted, 'shard')} promoted` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      )
+    );
+  const faultTotal =
+    shardFaults.conflicts + shardFaults.unavailable + shardFaults.promotionLost + shardFaults.setupFailed + shardFaults.claimedNoEdit + shardFaults.dismissedNoReplay;
+  if (faultTotal > 0)
+    repair.push(
+      it(
+        'x-shard-faults',
+        `${plural(faultTotal, 'shard fault')} — fixes that did not land or claims without proof`,
+        'failed',
+        [
+          shardFaults.conflicts > 0 ? `${shardFaults.conflicts} merge conflicts` : '',
+          shardFaults.unavailable > 0 ? `${shardFaults.unavailable} merge unavailable` : '',
+          shardFaults.promotionLost > 0 ? `${shardFaults.promotionLost} promotion lost` : '',
+          shardFaults.setupFailed > 0 ? `${shardFaults.setupFailed} harness setup failed` : '',
+          shardFaults.claimedNoEdit > 0 ? `${shardFaults.claimedNoEdit} FIXED claimed without an edit` : '',
+          shardFaults.dismissedNoReplay > 0 ? `${shardFaults.dismissedNoReplay} NOT REAL without a replay` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      )
+    );
+  if (regraded)
+    repair.push(
+      it(
+        'x-regraded',
+        regraded.findings != null
+          ? `Tree re-graded after the last landed fix — ${plural(regraded.findings, 'finding')} remain`
+          : `Tree re-grade could not run — ${regraded.inForce ?? '?'} findings stay in force`,
+        regraded.findings != null ? 'done' : 'unverified',
+        regraded.version != null ? `tree v${regraded.version}` : undefined
+      )
+    );
   if (repro != null)
     repair.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
   if (reviewFix)
@@ -7050,6 +7536,9 @@ export function useSwarmRun(
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          repairFindings,
+          shardVerify,
+          mergeAssembled,
           verdict,
         } = buildActivity(data.events);
         // RESIDENT GATE (pass E): a session surface must not put a dead leftover run on screen. Runs
@@ -7167,6 +7656,9 @@ export function useSwarmRun(
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          repairFindings,
+          shardVerify,
+          mergeAssembled,
           verdict,
           planConfidence,
           confidence,
