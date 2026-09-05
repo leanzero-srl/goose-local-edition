@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Add Custom Provider"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Connect {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Connect to a Provider"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Use a Local Model"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Use {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Chat and builds run on the nodes of your own pool. No API key needed."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Provider Configuration Settings"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Select thinking mode"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "plan and fan out a build across the pool"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "chat — each turn goes to an idle node of your pool, or waits for one"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Thinking Budget (tokens)"

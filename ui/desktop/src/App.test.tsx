@@ -9,6 +9,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AppInner, resolveSessionInitialMessage } from './App';
 import { IntlTestWrapper } from './i18n/test-utils';
 import { FeaturesProvider } from './contexts/FeaturesContext';
+import { EditionProvider } from './contexts/EditionContext';
 
 // Set up globals for jsdom
 Object.defineProperty(window, 'location', {
@@ -192,10 +193,14 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
+// Mirrors App()'s provider tree: EditionProvider wraps everything there too (the onboarding
+// ProviderSelector reads the edition to decide which providers it may offer).
 function AppInnerTestWrapper({ children }: { children: React.ReactNode }) {
   return (
     <IntlTestWrapper>
-      <FeaturesProvider>{children}</FeaturesProvider>
+      <EditionProvider>
+        <FeaturesProvider>{children}</FeaturesProvider>
+      </EditionProvider>
     </IntlTestWrapper>
   );
 }

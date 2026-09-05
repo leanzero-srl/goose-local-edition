@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Добавить пользовательского провайдера"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Подключить {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Подключиться к провайдеру"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Использовать локальную модель"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Использовать {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Чат и сборки выполняются на узлах вашего собственного пула. Ключ API не нужен."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Настройки конфигурации провайдера"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Выберите режим размышления"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "спланировать сборку и распределить её по всему пулу"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Сборка"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "чат — каждый ход уходит на свободный узел вашего пула или ждёт, пока он освободится"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Бюджет размышления (токены)"

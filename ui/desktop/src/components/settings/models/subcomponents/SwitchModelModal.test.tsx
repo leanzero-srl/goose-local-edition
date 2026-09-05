@@ -4,32 +4,27 @@ import userEvent from '@testing-library/user-event';
 import { SwitchModelModal } from './SwitchModelModal';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import type { ProviderDetails } from '../../../../types/providers';
-import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: IntlTestWrapper });
 
 const mockChangeModel = vi.fn();
+let mockCurrentProvider = 'anthropic';
+let mockCurrentModel = 'claude-sonnet-4';
 vi.mock('../../../ModelAndProviderContext', () => ({
   useModelAndProvider: () => ({
     changeModel: mockChangeModel,
-    currentModel: 'claude-sonnet-4',
-    currentProvider: 'anthropic',
+    currentModel: mockCurrentModel,
+    currentProvider: mockCurrentProvider,
   }),
 }));
 
-let mockMlxCapability = false;
-vi.mock('../../../../contexts/FeaturesContext', () => ({
-  useFeatures: () => ({
-    localInference: false,
-    mlxEngine: mockMlxCapability,
-    isLoading: false,
+let mockIsLocal = false;
+vi.mock('../../../../contexts/EditionContext', () => ({
+  useEdition: () => ({
+    edition: mockIsLocal ? 'local' : 'standard',
+    isLocal: mockIsLocal,
+    setEdition: vi.fn(),
   }),
-}));
-
-let mockMlxStatus: MlxEngineStatus | null = null;
-let mockMlxStatusError: string | null = null;
-vi.mock('../../../leanzero-swarm/useMlxEngineStatus', () => ({
-  useMlxEngineStatusPoll: () => ({ status: mockMlxStatus, error: mockMlxStatusError }),
 }));
 
 const mockListProviderDetails = vi.fn();
@@ -54,10 +49,10 @@ vi.mock('../../../../utils/analytics', () => ({
   trackModelChanged: vi.fn(),
 }));
 
-function providerOf(name: string, displayName: string): ProviderDetails {
+function providerOf(name: string, displayName: string, configured = true): ProviderDetails {
   return {
     name,
-    is_configured: true,
+    is_configured: configured,
     provider_type: 'Builtin',
     metadata: {
       config_keys: [],
@@ -71,6 +66,8 @@ function providerOf(name: string, displayName: string): ProviderDetails {
   };
 }
 
+// The registry as this machine sees it: upstream clouds, local backends, the swarm's four cloud
+// families (one of them not yet configured) and the Goose Swarm provider itself.
 const ALL_PROVIDERS: ProviderDetails[] = [
   providerOf('anthropic', 'Anthropic'),
   providerOf('openai', 'OpenAI'),
@@ -78,23 +75,18 @@ const ALL_PROVIDERS: ProviderDetails[] = [
   providerOf('lmstudio', 'LM Studio'),
   providerOf('local', 'Local'),
   providerOf('omlx', 'oMLX'),
+  providerOf('google', 'Google Gemini'),
+  providerOf('zai', 'Z.ai'),
+  providerOf('aws_bedrock', 'Amazon Bedrock'),
+  providerOf('custom_deepseek', 'DeepSeek', false),
+  providerOf('swarm', 'Goose Swarm'),
 ];
-
-function mlxStatusOf(overrides: Partial<MlxEngineStatus>): MlxEngineStatus {
-  return {
-    state: 'stopped',
-    restartRequired: false,
-    availableMemoryGb: 40,
-    totalMemoryGb: 64,
-    ...overrides,
-  };
-}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockMlxCapability = false;
-  mockMlxStatus = null;
-  mockMlxStatusError = null;
+  mockIsLocal = false;
+  mockCurrentProvider = 'anthropic';
+  mockCurrentModel = 'claude-sonnet-4';
   mockListProviderDetails.mockResolvedValue(ALL_PROVIDERS);
   mockChangeModel.mockResolvedValue(true);
 });
@@ -108,139 +100,154 @@ async function openProviderMenu() {
     expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
   });
   await userEvent.click(screen.getAllByRole('combobox')[0]);
+  await waitFor(() => {
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
+  });
 }
 
-describe('SwitchModelModal provider list — Leanzero edition policy', () => {
-  it('capability ON: lists cloud providers plus one Leanzero MLX entry, local providers hidden', async () => {
-    mockMlxCapability = true;
+const rowIds = () =>
+  screen
+    .getAllByTestId(/^provider-row-/)
+    .map((el) => el.getAttribute('data-testid')!.replace('provider-row-', ''));
+
+describe('SwitchModelModal — Goose Swarm (local) edition: only the defined providers', () => {
+  it('lists the two Goose Swarm rows FIRST, then the configured swarm cloud families — nothing else', async () => {
+    mockIsLocal = true;
     render(
       <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
     );
     await openProviderMenu();
-    expect(await screen.findByRole('option', { name: 'Leanzero MLX' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Anthropic' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'OpenAI' })).toBeInTheDocument();
-    // Hidden in the UI only — the providers stay registered and configured in code.
-    expect(screen.queryByRole('option', { name: 'Ollama' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'LM Studio' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Local' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'oMLX' })).not.toBeInTheDocument();
+    expect(rowIds()).toEqual(['swarm', 'swarm:swarm-build', 'google', 'zai', 'aws_bedrock']);
+    expect(screen.getByText('Goose Swarm · Build')).toBeInTheDocument();
+    expect(
+      screen.getByText('chat — each turn goes to an idle node of your pool, or waits for one')
+    ).toBeInTheDocument();
+    expect(screen.getByText('plan and fan out a build across the pool')).toBeInTheDocument();
+    // the unconfigured family is not offered yet; no upstream cloud, no local backend, no escape
+    for (const absent of [
+      'DeepSeek',
+      'Anthropic',
+      'OpenAI',
+      'Ollama',
+      'LM Studio',
+      'Local',
+      'oMLX',
+      'Leanzero MLX',
+      'Use other provider',
+    ]) {
+      expect(screen.queryByText(absent)).not.toBeInTheDocument();
+    }
   });
 
-  it('capability OFF: the selector lists every configured provider exactly as before', async () => {
-    mockMlxCapability = false;
-    render(
-      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
-    );
-    await openProviderMenu();
-    expect(await screen.findByRole('option', { name: 'Ollama' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'LM Studio' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'oMLX' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Leanzero MLX' })).not.toBeInTheDocument();
-  });
-});
-
-describe('SwitchModelModal — the Leanzero MLX entry', () => {
-  it('running engine: shows the served id and submits (omlx, servedModelId) via changeModel', async () => {
-    mockMlxCapability = true;
-    mockMlxStatus = mlxStatusOf({
-      state: 'running',
-      modelId: 'mlx-community/Qwen3-30B-A3B-4bit',
-      servedModelId: 'qwen3-30b-served',
-    });
+  it('the Build row submits provider swarm + model swarm-build through changeModel', async () => {
+    mockIsLocal = true;
     const onModelSelected = vi.fn();
     render(
       <SwitchModelModal
-        sessionId="session-42"
+        sessionId="session-7"
         onClose={vi.fn()}
         setView={vi.fn()}
-        initialProvider="omlx"
+        initialProvider={null}
         onModelSelected={onModelSelected}
       />
     );
+    await openProviderMenu();
+    await userEvent.click(screen.getByTestId('provider-row-swarm:swarm-build'));
     await waitFor(() => {
-      expect(screen.getByTestId('mlx-entry-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('swarm-row-panel')).toHaveTextContent('swarm-build');
     });
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('qwen3-30b-served')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
-    await waitFor(() => {
-      expect(mockChangeModel).toHaveBeenCalledTimes(1);
-    });
-    expect(mockChangeModel).toHaveBeenCalledWith(
-      'session-42',
-      expect.objectContaining({ name: 'qwen3-30b-served', provider: 'omlx' })
+    expect(screen.getByTestId('swarm-row-panel')).toHaveTextContent(
+      'plan and fan out a build across the pool'
     );
-    expect(onModelSelected).toHaveBeenCalledWith('qwen3-30b-served', 'omlx');
+    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
+    await waitFor(() => expect(mockChangeModel).toHaveBeenCalledTimes(1));
+    expect(mockChangeModel).toHaveBeenCalledWith(
+      'session-7',
+      expect.objectContaining({ name: 'swarm-build', provider: 'swarm' })
+    );
+    expect(onModelSelected).toHaveBeenCalledWith('swarm-build', 'swarm');
   });
 
-  it('engine down: says "no model mounted", blocks submit, and the button opens the engine window', async () => {
-    mockMlxCapability = true;
-    mockMlxStatus = mlxStatusOf({ state: 'stopped' });
+  it('the chat row submits provider swarm + model swarm', async () => {
+    mockIsLocal = true;
+    render(
+      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
+    );
+    await openProviderMenu();
+    await userEvent.click(screen.getByTestId('provider-row-swarm'));
+    await waitFor(() => {
+      expect(screen.getByTestId('swarm-row-panel')).toHaveTextContent(
+        'chat — each turn goes to an idle node of your pool, or waits for one'
+      );
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
+    await waitFor(() => expect(mockChangeModel).toHaveBeenCalledTimes(1));
+    expect(mockChangeModel).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ name: 'swarm', provider: 'swarm' })
+    );
+  });
+
+  it('an omlx session is never preselected: nothing to submit until an allowed row is picked', async () => {
+    mockIsLocal = true;
+    render(
+      <SwitchModelModal
+        sessionId="session-omlx"
+        onClose={vi.fn()}
+        setView={vi.fn()}
+        sessionProvider="omlx"
+        sessionModel="qwen3-served"
+      />
+    );
+    await waitFor(() => {
+      expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText('oMLX')).not.toBeInTheDocument();
+    expect(screen.queryByText('qwen3-served')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
+    expect(mockChangeModel).not.toHaveBeenCalled();
+    expect(screen.getByText('Please select a provider')).toBeInTheDocument();
+  });
+
+  it('a session already on Goose Swarm opens on its row', async () => {
+    mockIsLocal = true;
+    mockCurrentProvider = 'swarm';
+    mockCurrentModel = 'swarm';
+    render(<SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('swarm-row-panel')).toHaveTextContent('swarm');
+    });
+    expect(screen.getByTestId('provider-row-swarm')).toBeInTheDocument();
+  });
+});
+
+describe('SwitchModelModal — standard edition is untouched', () => {
+  it('lists every configured provider plus "Use other provider"; no Goose Swarm helper rows', async () => {
+    mockIsLocal = false;
+    render(
+      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
+    );
+    await openProviderMenu();
+    expect(screen.getByText('Ollama')).toBeInTheDocument();
+    expect(screen.getByText('LM Studio')).toBeInTheDocument();
+    expect(screen.getByText('oMLX')).toBeInTheDocument();
+    // Anthropic is the current provider: rendered as the control value AND as a menu row
+    expect(screen.getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(screen.getByText('Use other provider')).toBeInTheDocument();
+    expect(screen.queryByText('Goose Swarm · Build')).not.toBeInTheDocument();
+    expect(rowIds()).not.toContain('swarm:swarm-build');
+  });
+
+  it('"Use other provider" still routes to ConfigureProviders', async () => {
+    mockIsLocal = false;
     const setView = vi.fn();
     const onClose = vi.fn();
     render(
-      <SwitchModelModal
-        sessionId="session-42"
-        onClose={onClose}
-        setView={setView}
-        initialProvider="omlx"
-      />
+      <SwitchModelModal sessionId={null} onClose={onClose} setView={setView} initialProvider={null} />
     );
-    await waitFor(() => {
-      expect(screen.getByTestId('mlx-entry-panel')).toBeInTheDocument();
-    });
-    expect(screen.getByText('no model mounted')).toBeInTheDocument();
-
-    // Submit stays blocked: there is no served model to select.
-    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
-    expect(mockChangeModel).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole('button', { name: /Open Leanzero MLX/ }));
-    expect(setView).toHaveBeenCalledWith('mlxEngine');
+    await openProviderMenu();
+    await userEvent.click(screen.getByTestId('provider-row-configure_providers'));
+    expect(setView).toHaveBeenCalledWith('ConfigureProviders');
     expect(onClose).toHaveBeenCalled();
-  });
-
-  it('mounting engine: pulsing mounting state, no open-window action, submit blocked', async () => {
-    mockMlxCapability = true;
-    mockMlxStatus = mlxStatusOf({
-      state: 'mounting',
-      modelId: 'mlx-community/Qwen3-30B-A3B-4bit',
-    });
-    render(
-      <SwitchModelModal
-        sessionId="session-42"
-        onClose={vi.fn()}
-        setView={vi.fn()}
-        initialProvider="omlx"
-      />
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId('mlx-entry-panel')).toBeInTheDocument();
-    });
-    expect(screen.getByText('mounting')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Open Leanzero MLX/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
-    expect(mockChangeModel).not.toHaveBeenCalled();
-  });
-
-  it('unreachable status renders the failure twin verbatim, never a stale claim', async () => {
-    mockMlxCapability = true;
-    mockMlxStatus = null;
-    mockMlxStatusError = 'agent connection lost';
-    render(
-      <SwitchModelModal
-        sessionId="session-42"
-        onClose={vi.fn()}
-        setView={vi.fn()}
-        initialProvider="omlx"
-      />
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId('mlx-entry-panel')).toBeInTheDocument();
-    });
-    expect(screen.getByText('unreachable')).toBeInTheDocument();
-    expect(screen.getByText('agent connection lost')).toBeInTheDocument();
   });
 });

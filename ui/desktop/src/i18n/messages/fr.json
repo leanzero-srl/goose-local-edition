@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Ajouter un fournisseur personnalisé"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Connecter {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Se connecter à un fournisseur"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Utiliser un modèle local"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Utiliser {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Le chat et les builds s’exécutent sur les nœuds de votre propre pool. Aucune clé API requise."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Paramètres de configuration du fournisseur"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Sélectionnez le mode de réflexion"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "planifier et répartir un build sur tout le pool"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "chat — chaque tour part vers un nœud libre de votre pool, ou attend qu’un nœud se libère"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Budget de réflexion (jetons)"

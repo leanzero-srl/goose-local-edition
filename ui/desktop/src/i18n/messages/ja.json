@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "カスタムプロバイダーを追加"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "{providers} に接続"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "プロバイダーに接続"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "ローカルモデルを使用"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "{name} を使う"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "チャットとビルドは自分のプールのノード上で実行されます。API キーは不要です。"
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "プロバイダー設定"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "思考モードを選択"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "ビルドを計画し、プール全体に分散して実行します"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · ビルド"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "チャット — 各ターンはプール内の空いているノードに送られます（空くまで待機）"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "思考バジェット（トークン）"

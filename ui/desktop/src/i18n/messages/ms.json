@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Tambah Penyedia Tersuai"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Sambungkan {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Sambung ke Penyedia"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Guna Model Tempatan"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Gunakan {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Sembang dan build berjalan pada nod pool anda sendiri. Tiada kunci API diperlukan."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Tetapan Konfigurasi Penyedia"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Pilih mod pemikiran"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "merancang dan mengagihkan build ke seluruh pool"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "sembang — setiap giliran dihantar ke nod pool anda yang melahu, atau menunggu sehingga ada"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Bajet Pemikiran (token)"

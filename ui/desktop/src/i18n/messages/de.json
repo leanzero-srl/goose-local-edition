@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Benutzerdefinierten Anbieter hinzufügen"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "{providers} verbinden"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Mit einem Anbieter verbinden"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Ein lokales Modell verwenden"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "{name} verwenden"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "Chat und Builds laufen auf den Knoten deines eigenen Pools. Kein API-Schlüssel nötig."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Einstellungen zur Anbieterkonfiguration"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Denkmodus auswählen"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "einen Build planen und über den Pool verteilen"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "Chat — jede Runde geht an einen freien Knoten deines Pools oder wartet auf einen"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Denkbudget (Tokens)"

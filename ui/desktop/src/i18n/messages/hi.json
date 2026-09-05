@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "कस्टम प्रदाता जोड़ें"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "{providers} कनेक्ट करें"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "किसी प्रदाता से कनेक्ट करें"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "स्थानीय मॉडल का प्रयोग करें"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "{name} का उपयोग करें"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "चैट और बिल्ड आपके अपने पूल के नोड्स पर चलते हैं। किसी API कुंजी की ज़रूरत नहीं।"
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "प्रदाता कॉन्फ़िगरेशन Settings"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "सोच मोड का चयन करें"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "एक बिल्ड की योजना बनाएं और उसे पूरे पूल में बाँटें"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · बिल्ड"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "चैट — हर टर्न आपके पूल के किसी खाली नोड पर जाता है, या किसी के खाली होने का इंतज़ार करता है"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "सोच बजट (टोकन)"

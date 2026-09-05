@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "Añadir proveedor personalizado"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "Conectar {providers}"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "Conectar a un proveedor"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "Usar un modelo local"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "Usar {name}"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "El chat y los builds se ejecutan en los nodos de tu propio pool. No necesitas clave de API."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Ajustes de configuración del proveedor"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "Selecciona el modo de pensamiento"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "planificar y repartir un build por todo el pool"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · Build"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "chat — cada turno va a un nodo libre de tu pool, o espera a que haya uno"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "Presupuesto de pensamiento (tokens)"

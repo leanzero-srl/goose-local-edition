@@ -3077,6 +3077,9 @@
   "providerSelector.addCustomProviderTitle": {
     "defaultMessage": "사용자 지정 제공업체 추가"
   },
+  "providerSelector.connectCloudProviderDescription": {
+    "defaultMessage": "{providers} 연결"
+  },
   "providerSelector.connectProvider": {
     "defaultMessage": "제공업체에 연결"
   },
@@ -3091,6 +3094,12 @@
   },
   "providerSelector.useLocalModel": {
     "defaultMessage": "로컬 모델 사용"
+  },
+  "providerSelector.useSwarm": {
+    "defaultMessage": "{name} 사용"
+  },
+  "providerSelector.useSwarmDescription": {
+    "defaultMessage": "채팅과 빌드가 내 풀의 노드에서 실행됩니다. API 키가 필요하지 않습니다."
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "제공업체 구성 설정"
@@ -4672,6 +4681,15 @@
   },
   "switchModelModal.selectThinkingMode": {
     "defaultMessage": "추론 모드 선택"
+  },
+  "switchModelModal.swarmBuildHelper": {
+    "defaultMessage": "빌드를 계획하고 풀 전체에 분산 실행합니다"
+  },
+  "switchModelModal.swarmBuildLabel": {
+    "defaultMessage": "{name} · 빌드"
+  },
+  "switchModelModal.swarmChatHelper": {
+    "defaultMessage": "채팅 — 각 턴은 풀의 유휴 노드로 보내지며, 없으면 대기합니다"
   },
   "switchModelModal.thinkingBudget": {
     "defaultMessage": "추론 예산(토큰)"

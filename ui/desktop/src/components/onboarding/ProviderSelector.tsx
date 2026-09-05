@@ -9,6 +9,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { HardDrive, Key, Plus } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import { useFeatures } from '../../contexts/FeaturesContext';
+import { useEdition } from '../../contexts/EditionContext';
+import { LeanZero } from '../icons';
+import { SWARM_DISPLAY_NAME, SWARM_PROVIDER_ID } from '../../branding';
+import { CLOUD_PROVIDERS } from '../leanzero-swarm/cloudProviders';
+import {
+  isLocalEditionCloudProvider,
+  SWARM_CHAT_MODEL_ID,
+} from '../settings/models/leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   useLocalModel: {
@@ -39,6 +47,18 @@ const i18n = defineMessages({
     id: 'providerSelector.addCustomProviderTitle',
     defaultMessage: 'Add Custom Provider',
   },
+  useSwarm: {
+    id: 'providerSelector.useSwarm',
+    defaultMessage: 'Use {name}',
+  },
+  useSwarmDescription: {
+    id: 'providerSelector.useSwarmDescription',
+    defaultMessage: 'Chat and builds run on the nodes of your own pool. No API key needed.',
+  },
+  connectCloudProviderDescription: {
+    id: 'providerSelector.connectCloudProviderDescription',
+    defaultMessage: 'Connect {providers}',
+  },
 });
 
 const LOCAL_MODEL = 'local-model' as const;
@@ -62,7 +82,11 @@ export default function ProviderSelector({
   onFirstSelection,
 }: ProviderSelectorProps) {
   const intl = useIntl();
-  const { localInference } = useFeatures();
+  const { localInference: localInferenceCapability } = useFeatures();
+  // Goose Swarm (local) edition: onboarding offers Swarm straight through (no credentials) and the
+  // four swarm cloud families — no local-model download, no custom provider, no upstream catalog.
+  const { isLocal } = useEdition();
+  const localInference = localInferenceCapability && !isLocal;
   const [providerList, setProviderList] = useState<ProviderDetails[]>([]);
   const [selectedOption, setSelectedOption] = useState<ProviderOption | null>(null);
   const [selectedPath, setSelectedPath] = useState<SelectedPath>(null);
@@ -82,6 +106,7 @@ export default function ProviderSelector({
 
   const options: ProviderOption[] = useMemo(() => {
     return [...providerList]
+      .filter((p) => !isLocal || isLocalEditionCloudProvider(p.name))
       .sort((a, b) => {
         const aPreferred = a.provider_type === 'Preferred' ? 0 : 1;
         const bPreferred = b.provider_type === 'Preferred' ? 0 : 1;
@@ -93,7 +118,7 @@ export default function ProviderSelector({
         label: provider.metadata.display_name,
         provider,
       }));
-  }, [providerList]);
+  }, [providerList, isLocal]);
 
   const fuzzyFilterOption = (option: { label: string; value: string }, inputValue: string) => {
     const normalize = (s: string) => s.toLowerCase().replace(/[\s_-]/g, '');
@@ -114,6 +139,12 @@ export default function ProviderSelector({
     onFirstSelection?.();
   };
 
+  // Swarm needs no key: SWARM_COMMAND defaults, so the defaults write alone completes onboarding.
+  const handleSwarmClick = () => {
+    onFirstSelection?.();
+    onConfigured(SWARM_PROVIDER_ID, SWARM_CHAT_MODEL_ID);
+  };
+
   const handleProviderSelect = (option: ProviderOption | null) => {
     setSelectedOption(option);
     if (option) onFirstSelection?.();
@@ -131,7 +162,24 @@ export default function ProviderSelector({
 
   return (
     <div>
-      <div className={`grid ${localInference ? 'grid-cols-2' : 'grid-cols-1'} gap-3 mb-6`}>
+      <div
+        className={`grid ${localInference || isLocal ? 'grid-cols-2' : 'grid-cols-1'} gap-3 mb-6`}
+      >
+        {isLocal && (
+          <div
+            onClick={handleSwarmClick}
+            data-testid="onboarding-use-swarm"
+            className="p-4 border rounded-xl transition-all duration-200 cursor-pointer group border-border-default bg-background-muted hover:border-blue-400"
+          >
+            <LeanZero className="size-5 text-text-muted mb-2" />
+            <span className="font-medium text-text-default text-base block">
+              {intl.formatMessage(i18n.useSwarm, { name: SWARM_DISPLAY_NAME })}
+            </span>
+            <p className="text-text-muted text-sm mt-1">
+              {intl.formatMessage(i18n.useSwarmDescription)}
+            </p>
+          </div>
+        )}
         {localInference && (
           <div
             onClick={handleLocalModelClick}
@@ -164,7 +212,11 @@ export default function ProviderSelector({
             {intl.formatMessage(i18n.connectProvider)}
           </span>
           <p className="text-text-muted text-sm mt-1">
-            {intl.formatMessage(i18n.connectProviderDescription)}
+            {isLocal
+              ? intl.formatMessage(i18n.connectCloudProviderDescription, {
+                  providers: CLOUD_PROVIDERS.map((c) => c.label).join(', '),
+                })
+              : intl.formatMessage(i18n.connectProviderDescription)}
           </p>
         </div>
       </div>
@@ -190,13 +242,15 @@ export default function ProviderSelector({
             />
           </div>
 
-          <button
-            onClick={() => setShowCustomModal(true)}
-            className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors mb-6"
-          >
-            <Plus size={14} />
-            <span>{intl.formatMessage(i18n.addCustomProvider)}</span>
-          </button>
+          {!isLocal && (
+            <button
+              onClick={() => setShowCustomModal(true)}
+              className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors mb-6"
+            >
+              <Plus size={14} />
+              <span>{intl.formatMessage(i18n.addCustomProvider)}</span>
+            </button>
+          )}
 
           {selectedProvider && (
             <ProviderConfigForm

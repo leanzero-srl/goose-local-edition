@@ -7,6 +7,8 @@ import { acpListProviderDetails } from '../../../acp/providers';
 import type { ProviderDetails } from '../../../types/providers';
 import { createNavigationHandler } from '../../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../../i18n';
+import { useEdition } from '../../../contexts/EditionContext';
+import { keepProviderInLocalEdition } from '../models/leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   otherProviders: {
@@ -41,11 +43,18 @@ export default function ProviderSettings({
 }: ProviderSettingsProps) {
   const intl = useIntl();
   const navigate = useNavigate();
+  // Goose Swarm (local) edition: this route used to be an unfiltered escape hatch to the whole
+  // registry; it now shows exactly the allow-list (the four swarm cloud families + Swarm).
+  const { isLocal } = useEdition();
   const [loading, setLoading] = useState(true);
   const [providers, setProviders] = useState<ProviderDetails[]>([]);
   const initialLoadDone = useRef(false);
 
   const setView = useMemo(() => createNavigationHandler(navigate), [navigate]);
+  const shownProviders = useMemo(
+    () => (isLocal ? providers.filter((p) => keepProviderInLocalEdition(p.name)) : providers),
+    [isLocal, providers]
+  );
 
   // Create a function to load providers that can be called multiple times
   const loadProviders = useCallback(async () => {
@@ -107,11 +116,12 @@ export default function ProviderSettings({
                 <div>{intl.formatMessage(i18n.loadingProviders)}</div>
               ) : (
                 <ProviderGrid
-                  providers={providers}
+                  providers={shownProviders}
                   isOnboarding={isOnboarding}
                   refreshProviders={refreshProviders}
                   setView={setView}
                   onModelSelected={onProviderLaunched}
+                  allowCustomProvider={!isLocal}
                 />
               )}
             </div>

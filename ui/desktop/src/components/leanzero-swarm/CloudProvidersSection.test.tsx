@@ -10,8 +10,8 @@ import type { ProviderDetails } from '../../types/providers';
 // its own behavior is covered where it lives. Here the contract is the FILTER and the failure twin.
 const gridSpy = vi.fn();
 vi.mock('../settings/providers/ProviderGrid', () => ({
-  default: (props: { providers: ProviderDetails[] }) => {
-    gridSpy(props.providers);
+  default: (props: { providers: ProviderDetails[]; allowCustomProvider?: boolean }) => {
+    gridSpy(props);
     return (
       <div data-testid="provider-grid">
         {props.providers.map((p) => (
@@ -62,7 +62,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('CloudProvidersSection', () => {
-  it('lists ONLY cloud providers — every local/swarm provider is filtered out', async () => {
+  it("shows EXACTLY the swarm's four cloud families by registry id — no upstream cloud, no local backend, no swarm, no custom card", async () => {
     mockList.mockResolvedValue([
       provider('anthropic', true),
       provider('openai', false),
@@ -70,23 +70,32 @@ describe('CloudProvidersSection', () => {
       provider('ollama', false),
       provider('omlx', true),
       provider('swarm', true),
+      provider('aws_bedrock', true),
+      provider('zai', false),
+      provider('google', true),
+      provider('custom_deepseek', false),
     ]);
     render();
     await waitFor(() => {
       expect(screen.getByTestId('provider-grid')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('grid-provider-anthropic')).toBeInTheDocument();
-    expect(screen.getByTestId('grid-provider-openai')).toBeInTheDocument();
-    for (const local of ['lmstudio', 'ollama', 'omlx', 'swarm']) {
-      expect(screen.queryByTestId(`grid-provider-${local}`)).not.toBeInTheDocument();
+    for (const allowed of ['aws_bedrock', 'zai', 'google', 'custom_deepseek']) {
+      expect(screen.getByTestId(`grid-provider-${allowed}`)).toBeInTheDocument();
     }
-    // the count chip counts what the grid shows: 1 of the 2 CLOUD providers is configured
-    expect(screen.getByText('1 of 2 configured')).toBeInTheDocument();
+    for (const hidden of ['anthropic', 'openai', 'lmstudio', 'ollama', 'omlx', 'swarm']) {
+      expect(screen.queryByTestId(`grid-provider-${hidden}`)).not.toBeInTheDocument();
+    }
+    expect(gridSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowCustomProvider: false })
+    );
+    expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(4);
+    // the count chip counts what the grid shows: 2 of the 4 families are configured
+    expect(screen.getByText('2 of 4 configured')).toBeInTheDocument();
   });
 
   it('a failed provider list renders the failure twin with a working Retry — never a clean empty grid', async () => {
     mockList.mockRejectedValueOnce(new Error('agent unreachable'));
-    mockList.mockResolvedValueOnce([provider('anthropic', true)]);
+    mockList.mockResolvedValueOnce([provider('google', true)]);
     render();
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('agent unreachable');
@@ -94,7 +103,7 @@ describe('CloudProvidersSection', () => {
     expect(screen.queryByTestId('provider-grid')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => {
-      expect(screen.getByTestId('grid-provider-anthropic')).toBeInTheDocument();
+      expect(screen.getByTestId('grid-provider-google')).toBeInTheDocument();
     });
   });
 });

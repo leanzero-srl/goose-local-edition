@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import ProviderGrid from '../settings/providers/ProviderGrid';
 import { acpListProviderDetails } from '../../acp/providers';
 import type { ProviderDetails } from '../../types/providers';
-import { keepProviderInLeanzeroSelector } from '../settings/models/leanzeroSelectorPolicy';
+import { isLocalEditionCloudProvider } from '../settings/models/leanzeroSelectorPolicy';
 import { createNavigationHandler } from '../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -27,8 +27,8 @@ const i18n = defineMessages({
 
 /**
  * The Cloud Providers tab — the provider-credential experience relocated from Settings, filtered
- * to CLOUD providers only (`keepProviderInLeanzeroSelector`: local/swarm providers are served by
- * the other two tabs). REUSES ProviderGrid wholesale — the cards, ProviderConfigurationModal
+ * to the swarm's FOUR cloud families (`isLocalEditionCloudProvider`, joined on registry id: the
+ * only cloud providers this edition can chat through; Swarm itself needs no credentials). REUSES ProviderGrid wholesale — the cards, ProviderConfigurationModal
  * (key entry / authenticate / delete over the acp provider-config surface) and the custom-provider
  * form are the exact components Settings used; nothing is forked.
  */
@@ -68,7 +68,7 @@ export default function CloudProvidersSection() {
   }, []);
 
   const cloudProviders = useMemo(
-    () => (providers ?? []).filter((p) => keepProviderInLeanzeroSelector(p.name)),
+    () => (providers ?? []).filter((p) => isLocalEditionCloudProvider(p.name)),
     [providers]
   );
   const configuredCount = cloudProviders.filter((p) => p.is_configured).length;
@@ -117,6 +117,7 @@ export default function CloudProvidersSection() {
           isOnboarding={false}
           refreshProviders={() => void refreshProviders()}
           setView={setView}
+          allowCustomProvider={false}
         />
       )}
     </div>
