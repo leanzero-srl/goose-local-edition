@@ -74,6 +74,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - New Mac: `bash ui/desktop/scripts/bootstrap-signing.sh` (pulls the bundle from `workhorse`, creates the keychain, proves signing and
   the Apple login). Full setup notes: ui/desktop/NOTARIZATION.md → "LeanZero setup".
 - Never put the bundle in git; never use the login keychain for the identity (it prompts for the user's password).
+- Then `just publish-release <version> [notes.md]` — GitHub release (DMG + Goose.zip + latest-mac.yml, --latest). gh is logged in as leanzero-srl on the workhorse; token in `~/.leanzero/github/token.env` (never in git). First notarized release: v2.0.3 (2026-09-05).
 
 ## The evolution loop (this is the durable memory — update as you go)
 1. Every experiment/change lands as one row in `local-edition/mlx/experiments.jsonl`
