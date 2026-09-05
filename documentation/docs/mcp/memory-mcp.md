@@ -57,14 +57,15 @@ Memories are stored as files on disk in one of two locations:
 | Local (project) | `.goose/memory/` in your working directory | Project-specific preferences and configs |
 | Global (user) | `~/.config/goose/memory/` | Preferences that apply across all projects |
 
-goose loads all saved memories at the start of a session and includes them in every prompt sent to the LLM.
+At the start of a session goose loads an **index** of your memories into the prompt — one line per entry, `category [tags]: headline` — for both scopes. Only the headlines are loaded; a memory's full text reaches the model when it calls `retrieve_memories` for that category or `search_memories` for a topic. The index costs a few tokens per memory, so hundreds of memories no longer crowd out the conversation (a 171-entry global store measured 344 KB when everything was injected; the index of the same store is 39 KB, an 89% cut).
 
 ## Tool Reference
 
 | Tool | What it does |
 |------|-------------|
 | `remember_memory(category, data, tags, is_global)` | Store information with a category, optional tags, and scope (local/global) |
-| `retrieve_memories(category, is_global)` | Retrieve memories by category. Use `"*"` to retrieve all. |
+| `retrieve_memories(category, is_global)` | Load the full text of every memory in a category. Use `"*"` to load all. |
+| `search_memories(query, is_global?, limit?)` | Keyword search over category, tags and content; returns the best-matching entries in full, most terms matched first. Omit `is_global` to search both scopes. goose is told to search before it remembers, so a corrected fact replaces the old one instead of duplicating it. |
 | `remove_memory_category(category, is_global)` | Remove all memories in a category. Use `"*"` to clear all. |
 | `remove_specific_memory(category, memory_content, is_global)` | Remove a single memory by matching its content within a category |
 
