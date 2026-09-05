@@ -128,8 +128,8 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    Since II-7 (e1e32cdda) the guard is STRUCTURAL: `run_agent`/`run_agent_in` carry no time parameter
    at all, so re-arming a cap means re-adding a parameter through every signature — never flipping a
    number. (`effective_idle_budget()` and its test are deleted; do not reintroduce either.)
-2. **`"integrate-verify"` is an exact-equality string test in five live places**, and the join must own
-   NO files — `scheduler.rs:2603` relaxes a dependent through an upstream failure only if it owns
+2. **`"integrate-verify"` is an exact-equality string test (two live literals — `scheduler.rs` and `patch.rs`'s `SINK_ID` — and every other use goes through `SINK_ID`)**, and the join must own
+   NO files — the scheduler's owns-nothing arm relaxes a dependent through an upstream failure only if it owns
    nothing, so a file-owning join is cascaded-Failed and the app never binds a port. Since `ee0cbfe73`
    the plan is REPAIRED by code before the DAG exists (`finalize_plan_before_dag`: pin sink → repair →
    entry files); a NON-sink task that owns nothing is REPORTED there (`tasks_owning_nothing`,
@@ -194,7 +194,7 @@ what each one cost: `.claude/rules/development-gates.md`. Enforced by
 absence-event (`ledger_empty_at_sink` class) that tick.py prints — never a template, never a quiet
 default. A fallback the owner ordered killed STAYS dead without his word; root-causing it does not
 revive it. Before writing any `unwrap_or_default()` / `Err(_) => empty` / `.ok()`-and-continue in the
-run path, prove the empty MEANS empty (honest-empty exemplar: `scheduler.rs:237` hashes `"ABSENT"`
+run path, prove the empty MEANS empty (honest-empty exemplar: the scheduler's fingerprint hashes `"ABSENT"`
 distinctly). WHY: the nine-week template lived inside an empty-ledger fallback, and the GEN-6 sweep
 found 10 of these hiding real failures — one turned a pillars serialize failure into a green gate.
 HOW IT REFUSES: `development_gates.rs` ratchets the run-path `unwrap_or_default()` count — it may only
@@ -209,8 +209,10 @@ module and VERIFY", "DO EVERYTHING" and their class are banned — the ban is ni
 phrase still shipped on 2026-08-30. Every dispatched description is assembled from THIS run's facts
 (spec surface, ledger, fs_delta), and every output is a HANDOFF: exact files, symbols, the concrete
 next step — vagueness is what a small model copes with by overthinking (measured: 11+ min of reasoning
-on a trivial-but-vague probe task). HOW IT REFUSES: the `swarm.rs:~4900` dispatch checkpoint plus the
-banned-phrase count-ratchet in `development_gates.rs`; GEN-5's brief floor emits a `plan_flag` WARNING.
+on a trivial-but-vague probe task). HOW IT REFUSES: structurally — the template functions are `#[cfg(test)]`-only and
+`sink_semantic_description` returns a `SinkBrief` with no template arm, so the phrase cannot reach a dispatch (the unit test
+`the_banned_integrate_template_cannot_reach_a_dispatch` pins it), plus the banned-phrase count-ratchet in `development_gates.rs`;
+GEN-5's brief floor emits a `thin_brief` WARNING event (2026-09-05 audit: there is no runtime `swarm.rs:~4900` checkpoint).
 
 **3. THE BENCHMARK-LAUNCH GATE — a benchmark run starts ONLY from the app's Benchmark view.**
 `pkill` stray Goose apps, `open -n /Applications/Goose.app --args --remote-debugging-port=9897`, then
@@ -233,7 +235,10 @@ read windows, idle budgets and seconds-verdicts are DELETED, only connect timeou
 and terminators are look-counts and progress, not clocks. In review, any new literal-seconds constant
 that can bound a model call is rejected on sight. WHY: the 600s read cut was manufacturing retries
 (r2 drop 1), and the 420s stopwatch was the real harm behind r8's measurement. HOW IT REFUSES: the
-NO CAPS invariant above, and the structure itself — there is no knob left to set.
+NO CAPS invariant above, and the structure itself. HONEST NOTE (2026-09-05 audit): the golden engine still carries six literal-seconds constants
+(`REPEAT_BREAK_MIN_SECS` 60 — decides a lane kill, `HANG_CONFIRM_SECS` 200, `POST_PROBE_SECS` 20, `FIX_PROGRESS_SAMPLE_SECS` 60,
+`SCAN_TIMEOUT_SECS` 60, `JUDGE_WAKE` 30 s); they were IN the measured 0.4616 run, so changing them is an engine change behind the
+measured-run gate, and the live-const ratchet does not yet count `Duration` or fn-body defaults (VA-164).
 
 **6. THE ONE-DOOR GATE — every task enters the DAG through the same repairs, and the join owns
 nothing STRUCTURALLY.** r4 (2026-08-30) was killed at BUILD+7m: the dynamic replanner spliced five
@@ -308,7 +313,7 @@ absolute sized for this model / language / API (24,000 chars, 200 s, `impl.py`, 
 defect; a fraction of the probed window, a multiple of the app's own median, a share of the lane's own
 output, an algorithm constant or a named policy ratio with its receipt may stay. HOW IT REFUSES:
 `development_gates.rs` ratchets the count of live numeric `const` literals outside `cfg(test)` (28 on
-2026-09-02, 21 after the VA-140/141 receipts) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
+2026-09-02; 27 on the golden engine main ships — VA-140/141's receipts landed only on the archived r6k line) — it may only decrease; a new one needs `// ratio:` or `// measured:` on its line. VA-126.
 
 **11. THE KNOWN-FIX GATE — a fix whose design is known starts NOW, in a worktree; only cargo waits for
 a run.** Mihai, 2026-09-02, after VA-126 was parked "until after r6j": *"are you not doing anything
