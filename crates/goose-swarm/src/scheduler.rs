@@ -850,6 +850,20 @@ struct State {
     warden_pending: HashMap<TaskId, Vec<String>>,
 }
 
+/// The panic payload of a joined worker, as text — a `&str` or `String` payload verbatim, anything
+/// else named as such, and a non-panic join error (cannot happen once `is_cancelled` is ruled out)
+/// folded to its own message. Mirrors the research fan's `lane_panicked` extraction.
+fn join_panic_message(join: tokio::task::JoinError) -> String {
+    match join.try_into_panic() {
+        Ok(payload) => payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panicked with a non-string payload".to_string()),
+        Err(join_err) => join_err.to_string(),
+    }
+}
+
 impl State {
     fn all_terminal(&self) -> bool {
         self.dag
@@ -2762,7 +2776,10 @@ impl Scheduler {
                 let attempt = a.request.attempt;
                 let request = a.request;
                 let done_id = task_id.clone();
-                let jh = tokio::spawn(async move {
+                let device = request.device_id.clone();
+                let panic_state = state.clone();
+                let panic_notify = notify.clone();
+                let worker = tokio::spawn(async move {
                     let res = dispatcher.run(request).await;
                     {
                         let mut s = task_state.lock().await;
@@ -2777,8 +2794,40 @@ impl Scheduler {
                         .lock()
                         .await
                         .abort_handles
-                        .insert(task_id, jh.abort_handle());
+                        .insert(task_id.clone(), worker.abort_handle());
                 }
+                // THE PANIC NET. `worker` was never awaited: a panic inside `dispatcher.run` skipped
+                // `complete()`, so the task stayed Claimed, its device's `in_flight` was never
+                // decremented (`build_in_flight` sums it, so the stuck-bail below could not fire),
+                // `all_terminal` stayed false, and the loop slept its full tick forever with NO
+                // event — the run hung silently. The same class the research fan repaired with
+                // `lane_panicked` (fleet_order.rs). A CANCELLED join is speculation's own abort of
+                // this primary; `resolve_speculation` completes the task on the twin's behalf, so
+                // that arm stays silent exactly as an un-awaited future did. A PANIC completes the
+                // attempt as a Terminal like any other and is named loudly first.
+                tokio::spawn(async move {
+                    let Err(join) = worker.await else { return };
+                    if join.is_cancelled() {
+                        return;
+                    }
+                    let error = join_panic_message(join);
+                    {
+                        let mut s = panic_state.lock().await;
+                        s.sink.emit(&SwarmEvent::LanePanicked {
+                            context: format!("worker {task_id} attempt {attempt} on {device}"),
+                            task_id: task_id.clone(),
+                            attempt,
+                            device,
+                            error: error.clone(),
+                        });
+                        s.complete(
+                            &task_id,
+                            attempt,
+                            Err(DispatchError::Terminal(format!("worker panicked: {error}"))),
+                        );
+                    }
+                    panic_notify.notify_one();
+                });
             }
 
             {
