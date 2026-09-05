@@ -58,7 +58,7 @@ every flag-gated boolean with the flags as we actually run.
 
 ### The honest-empty counter-examples (what a LEGITIMATE empty looks like)
 
-- `crates/goose-swarm/src/scheduler.rs:237` — `Err(_) => "ABSENT".hash(&mut h)`: an unreadable file
+- `crates/goose-swarm/src/scheduler.rs` (the fingerprint) — `Err(_) => "ABSENT".hash(&mut h)`: an unreadable file
   hashes DISTINCTLY from an empty one, so absence changes the fingerprint instead of impersonating
   emptiness. This is the exemplar.
 - A rules block that is an instructional CONSTANT branched on a measured predicate (the prompt surface
@@ -88,7 +88,7 @@ generic shit … the only way that this will work is if slices are neatly done n
 - The judge asserts only what was actually delivered (rules_delivered/pitfalls_delivered/dep_block),
   never context that may not exist (GEN-4).
 
-Refusing tests: the `swarm.rs` dispatch checkpoint (`!desc.contains("Integrate every module and
+Refusing tests: the structural refusal (the template functions are `#[cfg(test)]`-only and `sink_semantic_description` has no template arm; the unit test `the_banned_integrate_template_cannot_reach_a_dispatch` asserts `!desc.contains("Integrate every module and
 VERIFY")`, ~line 4900) and the banned-phrase count-ratchet in `development_gates.rs` (drops to zero when
 GEN-1 lands, then tightens).
 
@@ -186,7 +186,7 @@ the join's file-lessness is enforced structurally (a repair rule), never assumed
 good behavior.
 
 The mechanisms:
-- `repair_sink_files` (swarm.rs, in `repair_plan_flags`' chain): the pinned sink's files move to the
+- `repair_sink_files` (commands/swarm/plan_repairs.rs, in `repair_plan_flags`' chain): the pinned sink's files move to the
   first file-owning task; test `plan_repair_strips_the_sinks_files_to_a_real_owner`.
 - `repair_module_package_collisions` REWRITES a shadowed module into its package (`<pkg>/impl.py`)
   instead of dropping it — the drop gutted a service task to owning nothing, rule (c) removed it,
@@ -324,7 +324,7 @@ Ordered by Mihai 2026-09-02, after the inventory he had to ask for: *"I said man
 need to avoid hard coded bits because this is an agent and that makes it useless outside of the scope
 of what we are doing now — the benchmark is the cause not the goal."* NO HARD CODING was already a
 prime directive under gate 1; nothing REFUSED it, so 147 named constants accumulated (28 of them live
-numeric absolutes outside `cfg(test)`; 21 after the receipts were marked) and nobody counted them until he asked.
+numeric absolutes outside `cfg(test)`; 27 on the golden engine main ships — the VA-140/141 receipts landed only on the archived r6k line) and nobody counted them until he asked.
 
 THE LAW: a literal may live in the engine only as (a) a RATIO of something the run itself produces
 (a fraction of the probed context window, a multiple of the app's own median response, a share of
