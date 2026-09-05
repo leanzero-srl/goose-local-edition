@@ -47,16 +47,26 @@ impl MemoryEntry {
     }
 }
 
-/// A search hit: how many distinct query terms the entry matched, whether the whole query appeared as
-/// a phrase, how many of the terms sit in the entry's name (category, tags, headline), how often the
-/// terms occur in total, and the entry itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A search hit. `score` is the sum of the matched terms' rarity weights (a term found in few of the
+/// searched entries weighs more than one found in most; a term in the entry's NAME — category, tags,
+/// headline — counts twice; a whole-phrase match adds every term's weight again). `rare_terms` counts the
+/// matched terms that occur in at most half of the searched entries — the ones that carry information.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
+    pub score: f64,
     pub matched_terms: usize,
+    pub rare_terms: usize,
     pub phrase: bool,
     pub name_terms: usize,
     pub occurrences: usize,
     pub entry: MemoryEntry,
+}
+
+/// Rarity weight of a term found in `df` of `n` documents: `ln((n + 1) / (df + 0.5))` — large for a term
+/// few documents carry, small but never zero for one every document carries, so a name match still
+/// breaks a tie between entries that share only common words.
+pub fn rarity_weight(n: usize, df: usize) -> f64 {
+    ((n as f64 + 1.0) / (df as f64 + 0.5)).ln()
 }
 
 // measured: 171 imported entries on the first machine — first-line median 153 chars, p90 234, max 422;
@@ -278,10 +288,9 @@ impl MemoryStore {
         out
     }
 
-    /// Keyword search over category, tags and content. Ranked by distinct terms matched (a whole-query
-    /// phrase match counts as matching every term again), then by how many terms sit in the entry's
-    /// name — category, tags, headline — so an entry ABOUT the topic outranks one that mentions it in
-    /// passing, then by total occurrences; the last tie breaks on category name.
+    /// Keyword search over category, tags and content, ranked by rarity-weighted score (see
+    /// [`SearchHit`]): an entry ABOUT the topic — the term in its name, or several rare terms — outranks
+    /// one that shares common words with the query. Ties break on category name.
     pub fn search(&self, query: &str, is_global: Option<bool>) -> io::Result<Vec<SearchHit>> {
         let terms = search_terms(query);
         if terms.is_empty() {
@@ -292,7 +301,7 @@ impl MemoryStore {
             Some(scope) => vec![scope],
             None => vec![true, false],
         };
-        let mut hits = Vec::new();
+        let mut corpus = Vec::new();
         for scope in scopes {
             for entry in self.entries(scope)? {
                 let name = format!(
@@ -303,41 +312,69 @@ impl MemoryStore {
                 )
                 .to_lowercase();
                 let haystack = format!("{} {}", name, entry.content).to_lowercase();
-                let matched_terms = terms
-                    .iter()
-                    .filter(|term| haystack.contains(term.as_str()))
-                    .count();
-                if matched_terms == 0 {
-                    continue;
-                }
-                let name_terms = terms
-                    .iter()
-                    .filter(|term| name.contains(term.as_str()))
-                    .count();
-                let occurrences = terms
-                    .iter()
-                    .map(|term| haystack.matches(term.as_str()).count())
-                    .sum();
-                let phrase = terms.len() > 1 && haystack.contains(&phrase);
-                hits.push(SearchHit {
-                    matched_terms,
-                    phrase,
-                    name_terms,
-                    occurrences,
-                    entry,
-                });
+                corpus.push((entry, name, haystack));
             }
         }
-        let rank = |hit: &SearchHit| {
-            (
-                hit.matched_terms + if hit.phrase { terms.len() } else { 0 },
-                hit.name_terms,
-                hit.occurrences,
-            )
-        };
+        let n = corpus.len();
+        let document_frequency: Vec<usize> = terms
+            .iter()
+            .map(|term| {
+                corpus
+                    .iter()
+                    .filter(|(_, _, haystack)| haystack.contains(term.as_str()))
+                    .count()
+            })
+            .collect();
+        let weights: Vec<f64> = document_frequency
+            .iter()
+            .map(|&df| rarity_weight(n, df))
+            .collect();
+        let all_weights: f64 = weights.iter().sum();
+
+        let mut hits = Vec::new();
+        for (entry, name, haystack) in corpus {
+            let mut score = 0.0;
+            let mut matched_terms = 0;
+            let mut rare_terms = 0;
+            let mut name_terms = 0;
+            let mut occurrences = 0;
+            for (i, term) in terms.iter().enumerate() {
+                let count = haystack.matches(term.as_str()).count();
+                if count == 0 {
+                    continue;
+                }
+                matched_terms += 1;
+                occurrences += count;
+                score += weights[i];
+                if document_frequency[i] * 2 <= n {
+                    rare_terms += 1;
+                }
+                if name.contains(term.as_str()) {
+                    name_terms += 1;
+                    score += weights[i];
+                }
+            }
+            if matched_terms == 0 {
+                continue;
+            }
+            let phrase = terms.len() > 1 && haystack.contains(&phrase);
+            if phrase {
+                score += all_weights;
+            }
+            hits.push(SearchHit {
+                score,
+                matched_terms,
+                rare_terms,
+                phrase,
+                name_terms,
+                occurrences,
+                entry,
+            });
+        }
         hits.sort_by(|a, b| {
-            rank(b)
-                .cmp(&rank(a))
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.entry.category.cmp(&b.entry.category))
         });
         Ok(hits)
@@ -371,10 +408,9 @@ impl MemoryStore {
         {
             return Ok(RememberOutcome::Unchanged);
         }
-        let outcome = match entries
-            .iter()
-            .position(|(_, stored)| !incoming_headline.is_empty() && headline(stored) == incoming_headline)
-        {
+        let outcome = match entries.iter().position(|(_, stored)| {
+            !incoming_headline.is_empty() && headline(stored) == incoming_headline
+        }) {
             Some(index) => {
                 entries[index] = (tags.to_vec(), content.to_string());
                 RememberOutcome::Updated
@@ -407,7 +443,10 @@ mod tests {
     use tempfile::tempdir;
 
     fn store_in(temp_dir: &tempfile::TempDir) -> MemoryStore {
-        MemoryStore::new(temp_dir.path().join("global"), &temp_dir.path().join("project"))
+        MemoryStore::new(
+            temp_dir.path().join("global"),
+            &temp_dir.path().join("project"),
+        )
     }
 
     fn tags(list: &[&str]) -> Vec<String> {
@@ -437,12 +476,18 @@ mod tests {
 
         let index = store.index();
 
-        assert!(index.contains("Global memories (2 entries, is_global=true):"), "{index}");
+        assert!(
+            index.contains("Global memories (2 entries, is_global=true):"),
+            "{index}"
+        );
         assert!(index.contains(
             "- build-commands [project build]: Run `just release-binary` for a release build."
         ));
         assert!(index.contains("- build-commands: Tests live under crates/<crate>/tests."));
-        assert!(!index.contains("The debug build"), "bodies must stay out of the index: {index}");
+        assert!(
+            !index.contains("The debug build"),
+            "bodies must stay out of the index: {index}"
+        );
         assert!(!index.contains("Never put them in src"));
         assert_eq!(index.matches("\n- ").count(), 2);
         assert!(index.contains("Project memories (.goose/memory): none saved yet."));
@@ -487,10 +532,20 @@ mod tests {
             )
             .unwrap();
         store
-            .remember("docker", "Docker desktop must be running before tests.", &[], true)
+            .remember(
+                "docker",
+                "Docker desktop must be running before tests.",
+                &[],
+                true,
+            )
             .unwrap();
         store
-            .remember("editor", "The user prefers tabs.", &tags(&["preference"]), false)
+            .remember(
+                "editor",
+                "The user prefers tabs.",
+                &tags(&["preference"]),
+                false,
+            )
             .unwrap();
 
         let hits = store.search("docker database", None).unwrap();
@@ -544,7 +599,9 @@ mod tests {
     fn search_honours_scope_and_empty_queries() {
         let temp_dir = tempdir().unwrap();
         let store = store_in(&temp_dir);
-        store.remember("hosts", "workhorse is 192.168.8.220", &[], true).unwrap();
+        store
+            .remember("hosts", "workhorse is 192.168.8.220", &[], true)
+            .unwrap();
         store
             .remember("hosts", "the staging host is workhorse-2", &[], false)
             .unwrap();
@@ -562,12 +619,22 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = store_in(&temp_dir);
         let first = store
-            .remember("editor", "Indentation: tabs.\nThe user said so on Monday.", &tags(&["user"]), true)
+            .remember(
+                "editor",
+                "Indentation: tabs.\nThe user said so on Monday.",
+                &tags(&["user"]),
+                true,
+            )
             .unwrap();
         assert_eq!(first, RememberOutcome::Added);
 
         let again = store
-            .remember("editor", "Indentation: tabs.\nThe user said so on Monday.", &tags(&["user"]), true)
+            .remember(
+                "editor",
+                "Indentation: tabs.\nThe user said so on Monday.",
+                &tags(&["user"]),
+                true,
+            )
             .unwrap();
         assert_eq!(again, RememberOutcome::Unchanged);
 
@@ -594,7 +661,64 @@ mod tests {
         assert_eq!(entries[1].content, "Line width: 100.");
 
         let raw = fs::read_to_string(store.category_file("editor", true).unwrap()).unwrap();
-        assert_eq!(parse_entries(&raw).len(), 2, "the file round-trips through the parser: {raw:?}");
+        assert_eq!(
+            parse_entries(&raw).len(),
+            2,
+            "the file round-trips through the parser: {raw:?}"
+        );
+    }
+
+    #[test]
+    fn search_weighs_rare_terms_above_words_every_entry_shares() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        for i in 0..5 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i}: the goose agent, the machine, the tool, the port."),
+                    &[],
+                    true,
+                )
+                .unwrap();
+        }
+        store
+            .remember(
+                "vendor",
+                "The bench vendor answers on port 8850 on this machine.",
+                &[],
+                true,
+            )
+            .unwrap();
+
+        let hits = store
+            .search(
+                "which port does the vendor answer on this machine tool",
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(hits[0].entry.category, "vendor", "{hits:?}");
+        assert!(
+            hits[0].rare_terms >= 2,
+            "vendor, answers, 8850… are rare: {:?}",
+            hits[0]
+        );
+        let note = hits.iter().find(|h| h.entry.category == "note-0").unwrap();
+        assert_eq!(
+            note.rare_terms, 0,
+            "port/machine/tool are in every entry and carry nothing: {note:?}"
+        );
+        assert!(
+            note.score < hits[0].score / 2.0,
+            "{} vs {}",
+            note.score,
+            hits[0].score
+        );
+        assert!(rarity_weight(6, 6) > 0.0 && rarity_weight(6, 6) < 0.1);
+        assert!(
+            rarity_weight(6, 0) > rarity_weight(6, 3) && rarity_weight(6, 3) > rarity_weight(6, 6)
+        );
     }
 
     #[test]
@@ -615,7 +739,10 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = store_in(&temp_dir);
         for bad in ["", "*", ".", "..", "a/b", "a\\b", "a:b", "CON", "com1"] {
-            assert!(store.category_file(bad, true).is_err(), "{bad:?} must be refused");
+            assert!(
+                store.category_file(bad, true).is_err(),
+                "{bad:?} must be refused"
+            );
         }
         fs::create_dir_all(&store.global_dir).unwrap();
         fs::write(store.global_dir.join("CON.txt"), "device\n\n").unwrap();

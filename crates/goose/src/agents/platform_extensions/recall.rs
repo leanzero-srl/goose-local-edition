@@ -15,7 +15,7 @@ use crate::conversation::effective_role;
 use crate::conversation::message::{Message, MessageContent};
 use anyhow::Result;
 use async_trait::async_trait;
-use goose_memory_store::{search_terms, MemoryStore, SearchHit};
+use goose_memory_store::{rarity_weight, search_terms, MemoryStore, SearchHit};
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
@@ -30,6 +30,9 @@ pub static EXTENSION_NAME: &str = "recall";
 const RECALL_MAX_MEMORIES: usize = 3;
 // ratio: a skill line is a name and a description; three of them is the same budget as one memory.
 const RECALL_MAX_SKILLS: usize = 3;
+// ratio: a candidate rides along only while it scores at least half of the best candidate — measured
+// on the 171-entry store, the slots below that line were filled by entries sharing six common words.
+const RECALL_MIN_SHARE_OF_TOP: f64 = 0.5;
 
 /// Function words that match every memory and rank nothing.
 const STOPWORDS: &[&str] = &[
@@ -114,39 +117,78 @@ pub fn query_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Which hits are worth injecting: an entry that shares at least two terms with the request, or one
-/// whose NAME (category, tags, headline) carries a request term. Anything matching one body word in
-/// passing stays out.
+/// Which hits are worth injecting: an entry that matched at least one RARE term (one found in at most
+/// half of the store) and scores at least half of the best such hit. Entries that only share common
+/// words with the request stay out, however many.
 pub fn select_hits(hits: Vec<SearchHit>) -> Vec<SearchHit> {
+    let top = hits
+        .iter()
+        .filter(|hit| hit.rare_terms >= 1)
+        .map(|hit| hit.score)
+        .fold(0.0_f64, f64::max);
     hits.into_iter()
-        .filter(|hit| hit.matched_terms >= 2 || hit.name_terms >= 1)
+        .filter(|hit| hit.rare_terms >= 1 && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
         .take(RECALL_MAX_MEMORIES)
         .collect()
 }
 
-/// Skills whose name or description shares at least two terms with the request, or whose name shares
-/// one, best first.
+/// Skills the request is about, by the same rule as memories: terms weighted by their rarity across
+/// the catalogue (a name match counts twice), at least one rare term, at least half the best score.
 pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
-    let mut scored: Vec<(usize, usize, &SourceEntry)> = skills
+    let catalogue: Vec<(&SourceEntry, String, String)> = skills
         .iter()
         .filter(|s| matches!(s.source_type, SourceType::Skill | SourceType::BuiltinSkill))
-        .filter_map(|skill| {
+        .map(|skill| {
             let name = skill.name.to_lowercase();
             let text = format!("{} {}", name, skill.description).to_lowercase();
-            let name_terms = terms.iter().filter(|t| name.contains(t.as_str())).count();
-            let matched = terms.iter().filter(|t| text.contains(t.as_str())).count();
-            (matched >= 2 || name_terms >= 1).then_some((name_terms, matched, skill))
+            (skill, name, text)
         })
         .collect();
+    let n = catalogue.len();
+    let document_frequency: Vec<usize> = terms
+        .iter()
+        .map(|term| {
+            catalogue
+                .iter()
+                .filter(|(_, _, text)| text.contains(term.as_str()))
+                .count()
+        })
+        .collect();
+    let mut scored: Vec<(f64, &SourceEntry)> = catalogue
+        .iter()
+        .filter_map(|(skill, name, text)| {
+            let mut score = 0.0;
+            let mut rare = 0;
+            for (i, term) in terms.iter().enumerate() {
+                if !text.contains(term.as_str()) {
+                    continue;
+                }
+                let weight = rarity_weight(n, document_frequency[i]);
+                score += weight;
+                if document_frequency[i] * 2 <= n {
+                    rare += 1;
+                }
+                if name.contains(term.as_str()) {
+                    score += weight;
+                }
+            }
+            (rare >= 1).then_some((score, *skill))
+        })
+        .collect();
+    let top = scored
+        .iter()
+        .map(|(score, _)| *score)
+        .fold(0.0_f64, f64::max);
+    scored.retain(|(score, _)| *score >= top * RECALL_MIN_SHARE_OF_TOP);
     scored.sort_by(|a, b| {
-        (b.0, b.1)
-            .cmp(&(a.0, a.1))
-            .then_with(|| a.2.name.cmp(&b.2.name))
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.name.cmp(&b.1.name))
     });
     scored
         .into_iter()
         .take(RECALL_MAX_SKILLS)
-        .map(|(_, _, skill)| skill)
+        .map(|(_, skill)| skill)
         .collect()
 }
 
@@ -269,12 +311,14 @@ mod tests {
     use super::*;
     use goose_memory_store::MemoryEntry;
 
-    fn hit(category: &str, matched: usize, name_terms: usize) -> SearchHit {
+    fn hit(category: &str, score: f64, rare_terms: usize) -> SearchHit {
         SearchHit {
-            matched_terms: matched,
+            score,
+            matched_terms: rare_terms.max(1),
+            rare_terms,
             phrase: false,
-            name_terms,
-            occurrences: matched,
+            name_terms: 0,
+            occurrences: rare_terms.max(1),
             entry: MemoryEntry {
                 is_global: true,
                 category: category.to_string(),
@@ -329,24 +373,25 @@ mod tests {
     }
 
     #[test]
-    fn select_hits_needs_two_shared_terms_or_a_name_match() {
+    fn select_hits_needs_a_rare_term_and_half_the_top_score() {
         let hits = vec![
-            hit("a-passing-mention", 1, 0),
-            hit("postgres", 1, 1),
-            hit("docker-compose", 2, 0),
-            hit("three", 3, 1),
-            hit("four", 2, 1),
-            hit("five", 2, 0),
+            hit("best", 4.0, 2),
+            hit("common-words-only", 5.0, 0),
+            hit("half", 2.0, 1),
+            hit("under-half", 1.9, 1),
+            hit("also-fine", 3.0, 1),
+            hit("fourth", 2.5, 1),
         ];
         let kept: Vec<String> = select_hits(hits)
             .into_iter()
             .map(|h| h.entry.category)
             .collect();
-        assert_eq!(kept, vec!["postgres", "docker-compose", "three"]);
+        assert_eq!(kept, vec!["best", "half", "also-fine"]);
+        assert!(select_hits(vec![hit("nothing-rare", 9.0, 0)]).is_empty());
     }
 
     #[test]
-    fn relevant_skills_match_on_name_or_two_description_terms() {
+    fn relevant_skills_need_a_rare_term_and_rank_name_matches_first() {
         let skills = vec![
             skill(
                 "jira-api",
@@ -354,7 +399,7 @@ mod tests {
             ),
             skill(
                 "leanzero-newsroom",
-                "Research and draft articles about local models",
+                "Research and draft articles about local models and Atlassian tools",
             ),
             skill(
                 "note-d90573",
@@ -364,25 +409,34 @@ mod tests {
                 "note-651f5d",
                 "Siemens Atlassian operations on se-dps (Jira + JSM)",
             ),
+            skill(
+                "note-6799ed",
+                "E.ON Atlassian operations (Jira Cloud and Data Center)",
+            ),
         ];
         let terms = query_terms("create a jira issue through the rest api");
-        let names: Vec<&str> = relevant_skills(&skills, &terms)
+        let mut names: Vec<&str> = relevant_skills(&skills, &terms)
             .into_iter()
             .map(|s| s.name.as_str())
             .collect();
+        names.sort();
         assert_eq!(
             names,
-            vec!["jira-api", "note-d90573"],
-            "name match first, then two description terms; one passing 'jira' is not enough"
+            vec!["note-d90573", "jira-api"],
+            "'jira' is in four of five skills and weighs little; rest/api/issue decide"
         );
         assert!(relevant_skills(&skills, &query_terms("bake bread")).is_empty());
+        assert!(
+            relevant_skills(&skills, &query_terms("atlassian jira")).is_empty(),
+            "words most skills share must not suggest any of them"
+        );
     }
 
     #[test]
     fn render_says_nothing_when_nothing_matched() {
         assert_eq!(render(&[], &[]), None);
-        let hits = vec![hit("postgres", 2, 1)];
-        let skills = vec![skill("jira-api", "Jira REST")];
+        let hits = [hit("postgres", 2.0, 1)];
+        let skills = [skill("jira-api", "Jira REST")];
         let refs: Vec<&SourceEntry> = skills.iter().collect();
         let out = render(&hits, &refs).unwrap();
         assert!(out.starts_with("<recalled-memories>"));
