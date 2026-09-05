@@ -101,7 +101,71 @@ fn run_path_files() -> Vec<(String, String)> {
 /// (integrate_verify_spec_inner) plus the r2-plan JSON fixture embedded in a test that documents the
 /// r2 shape. When GEN-1 lands the live site goes, the count drops to 1, and this baseline TIGHTENS in
 /// the same commit — it may only decrease, never grow.
-const INTEGRATE_TEMPLATE_BASELINE: usize = 1;
+/// VA-164 (2026-09-05): the scan now covers every run-path file (`run_path_files`) and skips
+/// `#[cfg(test)]` blocks the way the other two ratchets do, so the archived-r2 fixture no longer
+/// counts and the baseline is 0 — measured by a replica of this walker over the worktree.
+const INTEGRATE_TEMPLATE_BASELINE: usize = 0;
+
+/// The lines of `text` OUTSIDE every `#[cfg(test)]`-attributed item, with their 1-based numbers — the
+/// one walker every count-ratchet here reads through, so "live" means the same thing in all of them.
+///
+/// The attribute at indent `k` covers the item that follows it: doc comments, further attributes and
+/// blank lines between stay pending; a brace-less item (`use x;`, `const X: &str = "…";`, an array
+/// const closing at `];`) ends at its `;`; a braced item ends at the first later line that is exactly
+/// `<k spaces>}` (optionally `};` / `},`) — rustfmt closes every item at its own indentation. The
+/// previous walker counted `{`/`}` per line, and a test string carrying an unbalanced `{` made it
+/// swallow swarm.rs from `mod tests` (line ~2,900) to EOF: 31k live lines were never scanned, and
+/// the "27 live literals" baseline was a count over the first tenth of the file (VA-164).
+fn live_lines(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        if !trimmed.starts_with("#[cfg(test)]") {
+            out.push((i + 1, line));
+            i += 1;
+            continue;
+        }
+        let indent = &line[..line.len() - line.trim_start().len()];
+        i += 1;
+        while i < lines.len() {
+            let l = lines[i];
+            let s = l.trim();
+            if s.is_empty() || s.starts_with("#[") || s.starts_with("//") {
+                i += 1;
+                continue;
+            }
+            if !l.contains('{') && s.ends_with(';') {
+                i += 1;
+                break;
+            }
+            if l.contains('{') {
+                let balanced = l.matches('{').count() == l.matches('}').count();
+                if balanced && (s.ends_with('}') || s.ends_with("};") || s.ends_with("},")) {
+                    i += 1;
+                    break;
+                }
+                let close = format!("{indent}}}");
+                let close_semi = format!("{close};");
+                let close_comma = format!("{close},");
+                i += 1;
+                while i < lines.len() {
+                    let r = lines[i].trim_end();
+                    if r == close || r == close_semi || r == close_comma {
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                break;
+            }
+            i += 1;
+        }
+    }
+    out
+}
 
 /// A corrector's needle operand can sit on the line AFTER `.replacen(` (rustfmt breaks the call),
 /// so the previous line vouches for it too.
@@ -116,24 +180,23 @@ fn carries_banned_template(prev: &str, line: &str) -> bool {
 
 #[test]
 fn the_banned_integrate_template_only_shrinks() {
-    let engine = read("crates/goose-cli/src/commands/swarm.rs");
-    let lines: Vec<&str> = engine.lines().collect();
-    let sites: Vec<String> = lines
-        .iter()
-        .enumerate()
-        .filter(|(i, l)| carries_banned_template(if *i == 0 { "" } else { lines[i - 1] }, l))
-        .map(|(i, l)| {
-            format!(
-                "  swarm.rs:{}: {}",
-                i + 1,
-                l.chars().take(90).collect::<String>()
-            )
-        })
-        .collect();
+    let mut sites: Vec<String> = Vec::new();
+    for (rel, text) in run_path_files() {
+        let all: Vec<&str> = text.lines().collect();
+        for (n, l) in live_lines(&text) {
+            let prev = if n > 1 { all[n - 2] } else { "" };
+            if carries_banned_template(prev, l) {
+                sites.push(format!(
+                    "  {rel}:{n}: {}",
+                    l.chars().take(90).collect::<String>()
+                ));
+            }
+        }
+    }
     assert!(
         sites.len() <= INTEGRATE_TEMPLATE_BASELINE,
-        "swarm.rs carries the banned 'Integrate every module and VERIFY' template on {} lines \
-         (baseline {INTEGRATE_TEMPLATE_BASELINE}):\n{}\nThis text is banned from reaching a model — \
+        "the run path carries the banned 'Integrate every module and VERIFY' template on {} live \
+         lines (baseline {INTEGRATE_TEMPLATE_BASELINE}):\n{}\nThis text is banned from reaching a model — \
          the ban is nine weeks old. A dispatched description is assembled from THIS run's facts (spec \
          surface, ledger, fs_delta) or the absence is emitted as a named event; a template is never \
          the answer. See AGENTS.md GATES 2 and .claude/rules/development-gates.md.",
@@ -572,14 +635,21 @@ fn do_everything_never_reaches_a_model() {
 // this gate's own counter: 86 under commands/swarm{,.rs,_engine.rs} + 9 in goose-swarm/src — the
 // golden's scheduler.rs carries 7, one more than the post-golden tip; the deleted post-golden
 // modules took 8 with them).
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 95;
+// VA-164 (2026-09-05): the count skips `#[cfg(test)]` blocks through `live_lines` like the other two
+// ratchets — a test fixture's unwrap_or_default() is not a run-path fallback. Baseline = 86, the number
+// a Python replica of `live_lines` + this count yielded over the worktree (cargo forbidden while the
+// machine served a run): 49 swarm.rs + 3 swarm_engine.rs + 25 under commands/swarm/ + 9 goose-swarm/src.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 86;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
     let mut total = 0usize;
     let mut per_file = String::new();
     for (rel, text) in run_path_files() {
-        let n = text.matches("unwrap_or_default()").count();
+        let n: usize = live_lines(&text)
+            .iter()
+            .map(|(_, l)| l.matches("unwrap_or_default()").count())
+            .sum();
         if n > 0 {
             per_file.push_str(&format!("  {n:4}  {rel}\n"));
         }
@@ -645,10 +715,15 @@ fn campaign_skill_still_forbids_headless_launches() {
             return;
         }
     };
-    let path = Path::new(&home).join(".claude/skills/goose-swarm-campaign/SKILL.md");
+    // VA-164: the skill lives under ~/.agents/skills (the path `the_read_the_words_gate_is_carried`
+    // reads); the old ~/.claude/skills path is absent on this Mac, so this gate silently passed
+    // for as long as it pointed there. SKIP BY NAME only when the file is absent; a file that
+    // exists without the needles FAILS.
+    let path = Path::new(&home).join(".agents/skills/goose-swarm-campaign/SKILL.md");
     let Ok(skill) = std::fs::read_to_string(&path) else {
         eprintln!(
-            "{} absent; skipping the campaign-skill doc gate (no skill, no fleet on this machine)",
+            "SKIPPED campaign_skill_still_forbids_headless_launches: {} absent (no skill, no fleet \
+             on this machine)",
             path.display()
         );
         return;
@@ -735,11 +810,21 @@ fn every_dag_entry_walks_through_the_same_repairs() {
             "splice_merge_gaps lost its refusal `{guard}` — the gap door's ownership repair"
         );
     }
+    // VA-164: the needle is looked for INSIDE `fn repair_plan_flags` — a call anywhere else in the
+    // 34k-line file (a test, a moved helper) would satisfy a whole-file `contains` while the chain
+    // itself had lost the strip.
     let engine = read("crates/goose-cli/src/commands/swarm.rs");
+    let chain_start = engine
+        .find("fn repair_plan_flags(")
+        .expect("repair_plan_flags — the plan-repair chain — exists in swarm.rs");
+    let chain_end = engine[chain_start..]
+        .find("\n}\n")
+        .map(|e| chain_start + e)
+        .unwrap_or(engine.len());
     assert!(
-        engine.contains("repair_sink_files(plan, &mut actions);"),
-        "repair_sink_files left the plan-repair chain — the join owning a file is the \
-         cascaded-Failed, app-never-binds-a-port class (r4 shipped it owning README.md)"
+        engine[chain_start..chain_end].contains("repair_sink_files(plan, &mut actions);"),
+        "repair_sink_files left the plan-repair chain (fn repair_plan_flags) — the join owning a \
+         file is the cascaded-Failed, app-never-binds-a-port class (r4 shipped it owning README.md)"
     );
     for (doc, needle) in [
         ("AGENTS.md", "ONE-DOOR GATE"),
@@ -841,7 +926,30 @@ fn the_value_gate_is_carried() {
 /// `// measured:` on its line and is exempt — a reviewer reads the marker, the ratchet only counts.
 // Restored to the r6h golden 393a99351 + multi-engine layer, 2026-09-05: baseline = measured (27 by
 // this gate's own counter: 23 under commands/swarm{,.rs,_engine.rs} + 4 in goose-swarm/src).
-const LIVE_NUMERIC_LITERAL_BASELINE: usize = 27;
+// VA-164 (2026-09-05): the matcher widened to every integer/float type, to `Duration::from_*(<lit>)`
+// on any live line (a literal duration is a typed absolute whether or not it is a `const`), and to
+// default fns of the form `fn default_x() -> u64 { 30 }` / `{\n 30\n}` (serde defaults are how
+// levers carry their absolutes); and the walker is `live_lines`, which no longer loses swarm.rs from
+// `mod tests` to EOF. Baseline = 68, the number a Python replica of this counter yielded over the
+// worktree (cargo forbidden while the machine served a run): swarm.rs 28 (8 default fns, 13 consts,
+// 7 durations) · swarm_engine.rs 1 · commands/swarm/ 32 (3 of them app_spawn.rs's 50 ms drain
+// cadence / 30 s repro bound / 50 ms bind poll) · goose-swarm/src 7. The old 27 was a
+// count over the first ~2,900 lines of swarm.rs plus the siblings; it was never the run path's count.
+const LIVE_NUMERIC_LITERAL_BASELINE: usize = 68;
+
+const NUMERIC_TYPES: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
+    "f64",
+];
+
+fn is_bare_numeric_literal(val: &str) -> bool {
+    let val = val.trim();
+    !val.is_empty()
+        && val.starts_with(|c: char| c.is_ascii_digit())
+        && val
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+}
 
 fn is_numeric_const_literal(line: &str) -> bool {
     let s = line.trim_start();
@@ -860,55 +968,93 @@ fn is_numeric_const_literal(line: &str) -> bool {
     let Some((ty, val)) = ty_and_val.split_once('=') else {
         return false;
     };
-    let ty = ty.trim();
-    if !matches!(ty, "usize" | "u64" | "u32" | "i64" | "f64" | "f32") {
+    if !NUMERIC_TYPES.contains(&ty.trim()) {
         return false;
     }
     let val = val.trim();
     let Some(val) = val.strip_suffix(';') else {
         return false;
     };
-    let val = val.trim();
-    !val.is_empty()
-        && val
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+    is_bare_numeric_literal(val)
 }
 
-/// Counts live numeric const literals in one file, skipping every `#[cfg(test)]`-attributed block by
-/// brace depth (swarm.rs interleaves several test modules with live code, so "cut at the first
-/// cfg(test)" would hide live constants).
+/// `Duration::from_secs(30)` / `from_millis(50)` / … with a LITERAL argument, on a line that is not
+/// a comment. A variable argument (`from_secs(secs)`) is a derivation and does not match.
+fn carries_literal_duration(line: &str) -> bool {
+    if line.trim_start().starts_with("//") {
+        return false;
+    }
+    let mut rest = line;
+    while let Some(pos) = rest.find("Duration::from_") {
+        let after = &rest[pos + "Duration::from_".len()..];
+        let Some(open) = after.find('(') else {
+            return false;
+        };
+        let unit = &after[..open];
+        let Some(close) = after[open..].find(')') else {
+            return false;
+        };
+        let arg = &after[open + 1..open + close];
+        if matches!(
+            unit,
+            "secs" | "millis" | "micros" | "nanos" | "secs_f64" | "secs_f32"
+        ) && is_bare_numeric_literal(arg)
+        {
+            return true;
+        }
+        rest = &after[open + close..];
+    }
+    false
+}
+
+/// A default fn whose whole body is a numeric literal: `fn default_x() -> u64 { 30 }` on one line, or
+/// `fn default_x() -> u32 {` with the literal alone on the next live line. `next` is that next line.
+fn is_default_fn_literal(line: &str, next: Option<&str>) -> bool {
+    let s = line.trim_start();
+    let s = s
+        .strip_prefix("pub(crate) ")
+        .or_else(|| s.strip_prefix("pub(super) "))
+        .or_else(|| s.strip_prefix("pub "))
+        .unwrap_or(s);
+    let Some(rest) = s.strip_prefix("fn ") else {
+        return false;
+    };
+    let Some((_, after_arrow)) = rest.split_once("->") else {
+        return false;
+    };
+    let Some((ty, body)) = after_arrow.split_once('{') else {
+        return false;
+    };
+    if !NUMERIC_TYPES.contains(&ty.trim()) {
+        return false;
+    }
+    let body = body.trim();
+    if let Some(inline) = body.strip_suffix('}') {
+        return is_bare_numeric_literal(inline);
+    }
+    body.is_empty() && next.is_some_and(is_bare_numeric_literal)
+}
+
+/// Counts live numeric literals in one file over `live_lines` (every `#[cfg(test)]` item skipped):
+/// typed `const`s, literal `Duration::from_*` calls and literal-bodied default fns. A line carrying
+/// `// ratio:` / `// measured:` is exempt — the reviewer reads the receipt, the ratchet only counts.
 fn live_numeric_literals(text: &str) -> Vec<String> {
+    let lines = live_lines(text);
     let mut hits = Vec::new();
-    let mut depth: Option<i64> = None;
-    let mut pending = false;
-    for line in text.lines() {
-        let opens = line.matches('{').count() as i64;
-        let closes = line.matches('}').count() as i64;
-        match depth {
-            Some(d) => {
-                let nd = d + opens - closes;
-                depth = if nd <= 0 { None } else { Some(nd) };
-            }
-            None => {
-                if line.trim_start().starts_with("#[cfg(test)]") {
-                    pending = true;
-                    continue;
-                }
-                if pending {
-                    if opens > 0 {
-                        let nd = opens - closes;
-                        depth = if nd <= 0 { None } else { Some(nd) };
-                        pending = false;
-                    }
-                    continue;
-                }
-                let lower = line.to_ascii_lowercase();
-                let exempt = lower.contains("// ratio:") || lower.contains("// measured:");
-                if is_numeric_const_literal(line) && !exempt {
-                    hits.push(line.trim().to_string());
-                }
-            }
+    let exempt = |l: &str| {
+        let lower = l.to_ascii_lowercase();
+        lower.contains("// ratio:") || lower.contains("// measured:")
+    };
+    for (idx, (n, line)) in lines.iter().enumerate() {
+        if exempt(line) {
+            continue;
+        }
+        let next = lines.get(idx + 1).map(|(_, l)| *l);
+        let hit = is_numeric_const_literal(line)
+            || carries_literal_duration(line)
+            || (is_default_fn_literal(line, next) && !next.is_some_and(exempt));
+        if hit {
+            hits.push(format!("{n}: {}", line.trim()));
         }
     }
     hits
