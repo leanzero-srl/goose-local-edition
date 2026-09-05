@@ -5,6 +5,7 @@ pub mod import;
 pub mod info;
 pub mod plugin;
 pub mod project;
+pub mod recall;
 pub mod recipe;
 pub mod review;
 pub mod schedule;

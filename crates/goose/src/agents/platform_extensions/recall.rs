@@ -13,10 +13,11 @@ use crate::agents::tool_execution::ToolCallContext;
 use crate::config::paths::Paths;
 use crate::conversation::effective_role;
 use crate::conversation::message::{Message, MessageContent};
+use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_memory_store::{
-    rarity_weight, search_terms, term_occurrences, tokenize, MemoryStore, SearchHit,
+    headline, rarity_weight, search_terms, term_occurrences, tokenize, MemoryStore, SearchHit,
 };
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
@@ -119,17 +120,21 @@ pub fn query_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Which hits are worth injecting: an entry that matched at least one RARE term (one found in at most
-/// half of the store) and scores at least half of the best such hit. Entries that only share common
-/// words with the request stay out, however many.
-pub fn select_hits(hits: Vec<SearchHit>) -> Vec<SearchHit> {
+/// Which hits are worth injecting: an entry that COVERS the request — it matches at least half of the
+/// request's terms, at least one of them rare — and scores at least half of the best such hit. Read on
+/// the 171-entry store: a name-term rule kept "list the files in this directory" → note-54c772
+/// (a headline is a sentence, so nearly every entry has a request word in its name) and dropped the one
+/// true hit for "write a blog post about local models" (note-5c9556, 3 of 5 terms, none in
+/// the name); coverage keeps that one and drops the 1-of-5-term note-784cf8.
+pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
+    let covers = |hit: &SearchHit| hit.rare_terms >= 1 && hit.matched_terms * 2 >= term_count;
     let top = hits
         .iter()
-        .filter(|hit| hit.rare_terms >= 1)
+        .filter(|hit| covers(hit))
         .map(|hit| hit.score)
         .fold(0.0_f64, f64::max);
     hits.into_iter()
-        .filter(|hit| hit.rare_terms >= 1 && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
+        .filter(|hit| covers(hit) && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
         .take(RECALL_MAX_MEMORIES)
         .collect()
 }
@@ -194,9 +199,60 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
         .collect()
 }
 
+/// The most recent earlier session whose words cover the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PastSession {
+    pub session_id: String,
+    pub description: String,
+    pub when: String,
+    pub role: String,
+    pub headline: String,
+}
+
+// ratio: the history search is an OR of LIKEs, so it returns every message sharing one word; twenty
+// rows is enough to find one that covers the request when one exists, and cheap when none does.
+const PAST_SESSION_ROWS: usize = 20;
+
+/// From history-search rows (newest first), the first message in another session that covers the
+/// request by the same rule memories use: at least half of the request's terms.
+pub fn select_past_session(
+    results: &[crate::session::chat_history_search::ChatRecallResult],
+    terms: &[String],
+) -> Option<PastSession> {
+    let mut candidates: Vec<(chrono::DateTime<chrono::Utc>, PastSession)> = Vec::new();
+    for result in results {
+        for message in &result.messages {
+            let tokens = tokenize(&message.content);
+            let matched = terms
+                .iter()
+                .filter(|term| term_occurrences(term, &tokens) > 0)
+                .count();
+            if matched * 2 < terms.len() {
+                continue;
+            }
+            candidates.push((
+                message.timestamp,
+                PastSession {
+                    session_id: result.session_id.clone(),
+                    description: result.session_description.clone(),
+                    when: message.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+                    role: message.role.clone(),
+                    headline: headline(&message.content),
+                },
+            ));
+        }
+    }
+    candidates.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    candidates.into_iter().next().map(|(_, past)| past)
+}
+
 /// The turn-context part. None when there is nothing to say.
-pub fn render(memories: &[SearchHit], skills: &[&SourceEntry]) -> Option<String> {
-    if memories.is_empty() && skills.is_empty() {
+pub fn render(
+    memories: &[SearchHit],
+    skills: &[&SourceEntry],
+    past: Option<&PastSession>,
+) -> Option<String> {
+    if memories.is_empty() && skills.is_empty() && past.is_none() {
         return None;
     }
     let mut out = String::new();
@@ -221,6 +277,16 @@ pub fn render(memories: &[SearchHit], skills: &[&SourceEntry]) -> Option<String>
             out.push_str(&format!("- {}: {}\n", skill.name, skill.description));
         }
         out.push_str("</relevant-skills>");
+    }
+    if let Some(past) = past {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "<past-session>\nThis was discussed before — session {} (\"{}\", {}), the {} said: \"{}\". \
+             chatrecall(session_id) loads it if the history matters.\n</past-session>",
+            past.session_id, past.description, past.when, past.role, past.headline
+        ));
     }
     Some(out)
 }
@@ -279,7 +345,7 @@ impl McpClientTrait for RecallClient {
         let memories = if self.extension_enabled("memory").await {
             let store = MemoryStore::new(Paths::config_dir().join("memory"), &session.working_dir);
             match store.search(&query, None) {
-                Ok(hits) => select_hits(hits),
+                Ok(hits) => select_hits(hits, terms.len()),
                 Err(err) => {
                     tracing::warn!(%err, "recall: memory store unreadable, nothing recalled");
                     Vec::new()
@@ -296,7 +362,32 @@ impl McpClientTrait for RecallClient {
         };
         let skills = relevant_skills(&catalogue, &terms);
 
-        let part = render(&memories, &skills);
+        let session_types = match session.session_type {
+            SessionType::Acp => vec![SessionType::Acp],
+            _ => vec![SessionType::User, SessionType::Scheduled],
+        };
+        let history_started = std::time::Instant::now();
+        let past = match self
+            .context
+            .session_manager
+            .search_chat_history(
+                &query,
+                Some(PAST_SESSION_ROWS),
+                None,
+                None,
+                Some(session_id.to_string()),
+                session_types,
+            )
+            .await
+        {
+            Ok(results) => select_past_session(&results.results, &terms),
+            Err(err) => {
+                tracing::warn!(%err, "recall: chat history unreadable, no past session named");
+                None
+            }
+        };
+
+        let part = render(&memories, &skills, past.as_ref());
         let recalled: Vec<String> = memories
             .iter()
             .map(|hit| format!("{}({:.1})", hit.entry.category, hit.score))
@@ -309,6 +400,8 @@ impl McpClientTrait for RecallClient {
             recalled = ?recalled,
             skills = skills.len(),
             suggested = ?suggested,
+            past_session = past.as_ref().map(|p| p.session_id.as_str()),
+            history_ms = history_started.elapsed().as_millis(),
             "recall"
         );
         part
@@ -321,12 +414,23 @@ mod tests {
     use goose_memory_store::MemoryEntry;
 
     fn hit(category: &str, score: f64, rare_terms: usize) -> SearchHit {
+        named_hit(category, score, rare_terms, 1)
+    }
+
+    /// A hit matching `matched` terms, all of them rare.
+    fn covering_hit(category: &str, score: f64, matched: usize) -> SearchHit {
+        let mut hit = named_hit(category, score, matched, 0);
+        hit.matched_terms = matched;
+        hit
+    }
+
+    fn named_hit(category: &str, score: f64, rare_terms: usize, name_terms: usize) -> SearchHit {
         SearchHit {
             score,
             matched_terms: rare_terms.max(1),
             rare_terms,
             phrase: false,
-            name_terms: 0,
+            name_terms,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
                 is_global: true,
@@ -382,21 +486,23 @@ mod tests {
     }
 
     #[test]
-    fn select_hits_needs_a_rare_term_and_half_the_top_score() {
+    fn select_hits_needs_half_coverage_a_rare_term_and_half_the_top_score() {
+        // a five-term request: coverage needs three matched terms
         let hits = vec![
-            hit("best", 4.0, 2),
-            hit("common-words-only", 5.0, 0),
-            hit("half", 2.0, 1),
-            hit("under-half", 1.9, 1),
-            hit("also-fine", 3.0, 1),
-            hit("fourth", 2.5, 1),
+            covering_hit("best", 4.0, 3),
+            covering_hit("one-common-word", 5.0, 1),
+            covering_hit("two-of-five", 4.5, 2),
+            covering_hit("half", 2.0, 3),
+            covering_hit("under-half", 1.9, 3),
+            covering_hit("also-fine", 3.0, 4),
+            covering_hit("fourth", 2.5, 3),
         ];
-        let kept: Vec<String> = select_hits(hits)
+        let kept: Vec<String> = select_hits(hits, 5)
             .into_iter()
             .map(|h| h.entry.category)
             .collect();
         assert_eq!(kept, vec!["best", "half", "also-fine"]);
-        assert!(select_hits(vec![hit("nothing-rare", 9.0, 0)]).is_empty());
+        assert!(select_hits(vec![named_hit("nothing-rare", 9.0, 0, 0)], 1).is_empty());
     }
 
     #[test]
@@ -442,12 +548,57 @@ mod tests {
     }
 
     #[test]
+    fn past_session_is_the_newest_message_that_covers_the_request() {
+        use crate::session::chat_history_search::{ChatRecallMessage, ChatRecallResult};
+        let at = |h: u32| chrono::Utc::now() - chrono::Duration::hours(i64::from(h));
+        let message = |role: &str, content: &str, h: u32| ChatRecallMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            timestamp: at(h),
+        };
+        let results = vec![
+            ChatRecallResult {
+                session_id: "s-old".to_string(),
+                session_description: "vendor port".to_string(),
+                session_working_dir: "/tmp".to_string(),
+                last_activity: at(50),
+                total_messages_in_session: 2,
+                messages: vec![message(
+                    "user",
+                    "which port does the bench vendor answer on?\nsecond line",
+                    50,
+                )],
+            },
+            ChatRecallResult {
+                session_id: "s-new".to_string(),
+                session_description: "unrelated".to_string(),
+                session_working_dir: "/tmp".to_string(),
+                last_activity: at(1),
+                total_messages_in_session: 2,
+                messages: vec![message("assistant", "the port is closed", 1)],
+            },
+        ];
+        let terms = query_terms("Which port does the bench vendor answer on?");
+        let past = select_past_session(&results, &terms).unwrap();
+        assert_eq!(
+            past.session_id, "s-old",
+            "one shared word ('port') does not cover the request"
+        );
+        assert_eq!(past.role, "user");
+        assert_eq!(past.headline, "which port does the bench vendor answer on?");
+        let block = render(&[], &[], Some(&past)).unwrap();
+        assert!(block.starts_with("<past-session>"));
+        assert!(block.contains("session s-old (\"vendor port\","));
+        assert!(select_past_session(&results, &query_terms("bake bread")).is_none());
+    }
+
+    #[test]
     fn render_says_nothing_when_nothing_matched() {
-        assert_eq!(render(&[], &[]), None);
+        assert_eq!(render(&[], &[], None), None);
         let hits = [hit("postgres", 2.0, 1)];
         let skills = [skill("jira-api", "Jira REST")];
         let refs: Vec<&SourceEntry> = skills.iter().collect();
-        let out = render(&hits, &refs).unwrap();
+        let out = render(&hits, &refs, None).unwrap();
         assert!(out.starts_with("<recalled-memories>"));
         assert!(out.contains("## postgres (global [project])\npostgres headline\nbody"));
         assert!(out.contains("<relevant-skills>\n"));

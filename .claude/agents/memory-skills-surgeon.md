@@ -24,8 +24,10 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 ## Recall (`platform_extensions/recall.rs`) — the selection law
 - Fires on the REQUEST turn only (`last_user_text`: last agent-visible message is user text with no
   tool responses), only when `memory` / `skills` are enabled in that session's extension manager.
-- Query = `query_terms` (stopwords and one-letter tokens dropped). A memory rides along only with
-  `rare_terms ≥ 1` AND `score ≥ RECALL_MIN_SHARE_OF_TOP × top`; at most `RECALL_MAX_MEMORIES`.
+- Query = `query_terms` (stopwords and one-letter tokens dropped). A memory rides along only when it
+  COVERS the request — `matched_terms × 2 ≥ terms`, `rare_terms ≥ 1` — AND `score ≥
+  RECALL_MIN_SHARE_OF_TOP × top`; at most `RECALL_MAX_MEMORIES`. (A name-term rule was tried and
+  refuted by the probe: headlines are sentences, so it discriminated nothing and dropped true hits.)
   Skills: same rule over the catalogue (`relevant_skills`), at most `RECALL_MAX_SKILLS`.
 - Every number here is a `// ratio:` or `// measured:` with its receipt (gate 10). A new threshold
   lands only with the probe output that motivated it.
@@ -40,8 +42,8 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 - `~/.agents/skills` precedes `~/.claude/skills` in dedup; the importer copies into the former.
 
 ## How you MEASURE (gate 7: the words decide, shapes corroborate)
-1. `python3 evals/memory-recall/probe.py` — the real store, canned requests, what would ride along
-   and at what score. READ the recalled entries' headlines: a slot filled by an entry that merely
+1. `python3 evals/memory-recall/probe.py` (drives `goose recall "<request>"`, the extension's own
+   functions over the real store and catalogue) — canned requests, what would ride along and at what score. READ the recalled entries' headlines: a slot filled by an entry that merely
    shares vocabulary with the request is a finding; quote it.
 2. A live session on the built binary (`target/debug/goose run --no-session -t "..."` with
    `GOOSE_PROVIDER`/`GOOSE_MODEL` from the OpenRouter env file; cents) and the CLI log line

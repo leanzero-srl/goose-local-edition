@@ -5037,6 +5037,7 @@ dependencies = [
  "futures",
  "goose",
  "goose-mcp",
+ "goose-memory-store",
  "goose-provider-types",
  "goose-providers",
  "goose-sidecar",

@@ -1,4 +1,4 @@
-mod chat_history_search;
+pub(crate) mod chat_history_search;
 mod diagnostics;
 pub mod extension_data;
 pub mod import_formats;

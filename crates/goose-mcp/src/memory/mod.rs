@@ -526,10 +526,11 @@ impl MemoryServer {
         for hit in hits.into_iter().take(limit) {
             let phrase = if hit.phrase { ", exact phrase" } else { "" };
             out.push_str(&format!(
-                "\n{}/{} terms ({} rare){phrase}, score {:.2} — ",
+                "\n{}/{} terms ({} rare, {} in name){phrase}, score {:.2} — ",
                 hit.matched_terms,
                 terms.len(),
                 hit.rare_terms,
+                hit.name_terms,
                 hit.score
             ));
             out.push_str(&hit.entry.render());

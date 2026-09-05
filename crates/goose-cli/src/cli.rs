@@ -1010,6 +1010,14 @@ enum Command {
         command: SkillsCommand,
     },
 
+    /// Show which memories and skills recall would inject for a request
+    #[command(about = "Show which memories and skills recall would inject for a request")]
+    Recall {
+        /// The request text, as the user would type it
+        #[arg(value_name = "TEXT")]
+        text: String,
+    },
+
     /// Manage plugins
     #[command(about = "Manage plugins")]
     Plugin {
@@ -1391,6 +1399,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Recipe { .. }) => "recipe",
         Some(Command::Import { .. }) => "import",
         Some(Command::Skills { .. }) => "skills",
+        Some(Command::Recall { .. }) => "recall",
         Some(Command::Plugin { .. }) => "plugin",
         Some(Command::Term { .. }) => "term",
         #[cfg(feature = "tui")]
@@ -2486,6 +2495,7 @@ pub async fn cli() -> anyhow::Result<()> {
             ImportCommand::ClaudeCode(args) => crate::commands::import::run_claude_code(args).await,
         },
         Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
+        Some(Command::Recall { text }) => crate::commands::recall::run(&text),
         Some(Command::Plugin { command }) => handle_plugin_subcommand(command),
         Some(Command::Term { command }) => handle_term_subcommand(command).await,
         #[cfg(feature = "tui")]
