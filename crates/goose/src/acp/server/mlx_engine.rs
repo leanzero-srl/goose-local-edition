@@ -27,9 +27,20 @@ pub(super) fn align_omlx_host_env() {
     if user_owned {
         return;
     }
+    // No `mlx_engine` block = the default engine on the default port (honest: nothing was
+    // configured). An UNREADABLE block is a different fact: pointing chat at the default port
+    // would impersonate a configuration the operator did write and we could not read — the
+    // 08-31 class in reverse — so the variable is left alone and the failure is named.
     let port = match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
         Ok(settings) => settings.port,
-        Err(_) => EngineSettings::default().port,
+        Err(ConfigError::NotFound(_)) => EngineSettings::default().port,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "mlx_engine config is unreadable; OMLX_HOST left unset instead of pointing chat at the default port"
+            );
+            return;
+        }
     };
     std::env::set_var("OMLX_HOST", format!("http://127.0.0.1:{port}"));
 }
@@ -48,7 +59,15 @@ fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error
         Err(ConfigError::NotFound(_)) => EngineSettings::default(),
         Err(e) => return Err(e).internal_err_ctx("reading mlx_engine config"),
     };
-    if settings.migrate_legacy() {
+    let launcher_moved = settings.migrate_launcher();
+    if let Some(from) = &launcher_moved {
+        tracing::warn!(
+            from = from.join(" "),
+            to = settings.spawn_command.join(" "),
+            "mlx_engine spawn_command was a superseded default; it now follows the shipped launcher (an engine already running on the old pin reports restart_required)"
+        );
+    }
+    if settings.migrate_legacy() || launcher_moved.is_some() {
         Config::global()
             .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
             .internal_err_ctx("persisting migrated mlx_engine config")?;

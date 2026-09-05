@@ -1,5 +1,26 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-05 — THE NAME IS GOOSE SWARM · RAPID-MLX DRAWN TO UPSTREAM HEAD · BRANCH → MAIN
+- Owner: the product is officially **Goose Swarm**. The 2026-09-02 Flock rename (92e2aa4c5, 91f2d6315) is reversed on every
+  rendered label, the provider display name ("Goose Swarm" in the model selector), the sidebar wordmark, the hub title, the CLI
+  verb (`goose swarm`, no alias) and all 16 i18n catalogs. Internal ids never moved, so nothing in config/runs/IPC changed.
+  Proof: typecheck clean, i18n:check green (1643 messages × 15 locales), 204 files / 1728 tests green, dev gates 8/8.
+- Rapid-MLX: fork main fast-forwarded to raullenchai/Rapid-MLX main (0 fork-only commits; 89 upstream commits past our
+  v0.13.1 pin, version 0.13.4), pushed with tags; pin tag **v0.13.4-lz.1** on the head. Consumed surface re-verified at the
+  new head: `/v1/status` carries num_running + num_waiting (routes/health.py:304), `serve` flags --port/--served-model-name/
+  --enable-prefix-cache/--max-concurrent-requests/--resident-model-idle-ttl present. Live mount through the manager on the new
+  pin: running after 13.3 s, context_window 262144, parser hermes, active_requests 0, unmount clean.
+- An engine upgrade now REACHES existing installs: `EngineSettings::migrate_launcher` (engine.rs) — a persisted spawn_command
+  equal to a SUPERSEDED default follows the shipped launcher on load (tracing warn with from → to, persisted once; an
+  owner-edited launcher never matches). Before it every existing config, this machine's included, ran @v0.13.1 forever.
+- Handoff queue item landed: ipcMain `restart-app` quits through `will-quit` (lease cleanup → mesh daemon + engine teardown)
+  and relaunches only when the quit really happens; a refused restart (live-run dialog) arms nothing.
+- Hygiene: ui/desktop/src/bin/tailscale{,d} (37 MB) and ui/desktop/dist (143 files) were TRACKED despite the 09-02
+  .gitignore — untracked now (`just fetch-tailscale` / the build regenerate them).
+- Found in the tree, not branch work: an overlay of origin/local-edition's docs + Cargo.lock/Justfile/.gitignore (27 files,
+  byte-identical to that branch's tip d8202bc89) — stashed as stash@{0}. origin/local-edition carries 825 commits (122 on the
+  engine, incl. the r6h golden 0.4616) that are on neither this branch nor main; merging that line is a separate job.
+
 ## REVIEW + FIX CAMPAIGN (2026-09-02) — COMPLETE; EVERYTHING PROVEN LIVE ON THE PACKAGED APP (12:37 build)
 FINAL LIVE CHECK 12:38-12:44 (works-prover, receipts quoted in the session scratchpad): theme System follows the OS via nativeTheme (IPC theme-set → {dark:true}, class local-edition dark; Light/Dark/System all correct); sidebar = full-width Theme row above an unclipped Settings row; Link Connect → Connected 100.64.0.3, BOTH log lines now in the serve log ('leanzero-link tailscaled ready' pid 52459; 'control service listening on loopback' 127.0.0.1:41226), Headscale node 9 worksmacstudio-lan-6a972f online; MLX Mount → running pid 52701 :8090 (no stray); *** LEAK FIX PROVEN: AppleScript quit → serve log 'stop requested … SIGTERM' → teardown mesh ('1 mesh daemon(s) stopped per-pid … identity and state dir kept') → teardown engine ('SIGTERM, grace, proven group kill, port released') → exit 143; tailscaled/uv/python GONE, socket gone, :8090 free, identity.json kept 0600; relaunch → Connect + Mount with ZERO refusals. Personal Tailscale untouched (3 reads). Click-to-expand: code in the asar (Clipped.tsx/RevealDialog), on-screen proof needs a live run (next benchmark). App LEFT OPEN, CONNECTED (100.64.0.3) and MOUNTED (pid 53086).
 USER-REPORTED FIXES (Mihai, post-remake): Memories/Skills selection invisible (bg-background-accent never existed) → 46ebc237e; theme switch System|Light|Dark default System → 7fdfd5806 + df61a1a20 (nativeTheme); cut-off Settings label → 7f90b01fb + DESIGN.md rule 'a button's own label never truncates' (0b74e2c34); click-to-expand for every clipped prompt/brief/row in the run panel → ebd84d9dc..ef2d79e63 (Clipped + RevealDialog, 24 tests); 'Building' in sessions = the live-pass fixture (removed). Mihai: 'the design is very nice, I love it… reminds me of my website'.
@@ -361,7 +382,7 @@ path, and the pair MERGES (no mask, no halo gap between them).
 - **The model fleet.** LM Studio / the MLX engine and `~/.goose/models` are per-machine. Note
   `LMSTUDIO_API_KEY` is set nowhere on this workhorse, so its LM Studio answers 401 to every probe.
 - **`~/.config/goose/config.yaml`** carries the `swarm` key (the node pool) — per-machine, not in
-  git. Recreate with `goose flock pool`.
+  git. Recreate with `goose swarm pool`.
 - **The loop-state instruments** (`tick.py`, `bench_dispatch.mjs`, `first_tick_r1.sh`) live only on
   the MacBook at `~/goose-builds/loop-state/`; the sync is one-way MacBook -> workhorse.
 - **Fetched/derived artifacts** are gitignored now, so `git status` is quiet on a fresh clone:

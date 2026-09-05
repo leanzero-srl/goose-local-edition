@@ -24,9 +24,20 @@ use crate::{
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
     "rapid-mlx",
 ];
+
+/// Every launcher this crate ever shipped as its default, oldest first. A persisted
+/// `spawn_command` equal to one of these was never chosen by the owner — it is the default
+/// the app wrote on first save — so it follows the current default (`migrate_launcher`).
+/// A launcher NOT in this list is the owner's own and is never touched.
+pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[[
+    "uvx",
+    "--from",
+    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+    "rapid-mlx",
+]];
 
 /// Per-model sampling and context settings. Sampling is per MODEL, not per engine:
 /// each mounted model pulls its own profile from `EngineSettings::model_profiles`.
@@ -100,6 +111,28 @@ impl Default for EngineSettings {
 }
 
 impl EngineSettings {
+    /// A persisted `spawn_command` that is exactly a SUPERSEDED default follows the current
+    /// default; returns the launcher it replaced so the caller can log the move. Without this
+    /// the pin the app wrote on first save (`@v0.13.1`) ran forever on every existing install
+    /// while the shipped default moved on — an engine upgrade that reached only fresh
+    /// configs. An owner-edited launcher never matches and is left alone.
+    pub fn migrate_launcher(&mut self) -> Option<Vec<String>> {
+        let current: Vec<String> = ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect();
+        if self.spawn_command == current {
+            return None;
+        }
+        let superseded = SUPERSEDED_ENGINE_LAUNCHERS.iter().any(|old| {
+            old.iter()
+                .copied()
+                .eq(self.spawn_command.iter().map(String::as_str))
+        });
+        if !superseded {
+            return None;
+        }
+        let replaced = std::mem::replace(&mut self.spawn_command, current);
+        Some(replaced)
+    }
+
     /// One-time migration of the legacy flat sampling/context fields into
     /// `model_profiles[model_id]`. The flats predate profiles, so they only fill
     /// profile fields still unset, and are cleared either way. Without a `model_id`
@@ -686,6 +719,43 @@ pub fn global_manager() -> &'static MlxEngineManager {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_superseded_default_launcher_follows_the_current_default() {
+        let mut settings = super::EngineSettings {
+            spawn_command: super::SUPERSEDED_ENGINE_LAUNCHERS[0]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..Default::default()
+        };
+        let replaced = settings
+            .migrate_launcher()
+            .expect("the old default migrates");
+        assert!(replaced[2].ends_with("@v0.13.1"), "{replaced:?}");
+        assert_eq!(
+            settings.spawn_command,
+            super::ENGINE_LAUNCHER
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            settings.migrate_launcher().is_none(),
+            "a second pass changes nothing"
+        );
+    }
+
+    #[test]
+    fn an_owner_edited_launcher_is_never_migrated() {
+        let own = vec!["/opt/engines/rapid-mlx".to_string()];
+        let mut settings = super::EngineSettings {
+            spawn_command: own.clone(),
+            ..Default::default()
+        };
+        assert!(settings.migrate_launcher().is_none());
+        assert_eq!(settings.spawn_command, own);
+    }
+
     use super::*;
 
     #[test]
@@ -735,7 +805,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -932,7 +1002,7 @@ mod tests {
             "spawn_command": [
                 "uvx",
                 "--from",
-                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
                 "rapid-mlx"
             ]
         }"#;
