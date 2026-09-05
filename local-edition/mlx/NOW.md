@@ -24,6 +24,21 @@ error unchanged; the permit rides the stream and frees on drop; ProviderUsage.mo
 served. Out of scope, stated: a mesh PEER's sidecar (loopback-bound; reachable only through the Link mlx proxy) — LM Link
 already fans LM Studio models across machines.
 
+## 2026-09-05 20:0x — GOLDEN ENGINE RESTORED ON MAIN · RELEASE 2.0.3 NOTARIZED · ONE BRANCH
+- Owner: keep the engine that scored 0.4616, delete everything that might modify it. main's engine is the r6h golden 393a99351 +
+  the multi-engine layer only (45b6a27f9: 40 post-golden engine commits removed, VA-089..118 + r6i-staging; goose-swarm/src byte-identical
+  to the golden; goose-cli 881/881, gates 11/11, scheduler 47/47, router 25/25, sidecar 45/45, clippy/fmt clean; TRACE: inert on an
+  all-LM-Studio pool). Engine docs (AGENTS.md phases line, swarm-engine.md) taken from the golden.
+- origin has ONE branch (main). Every deleted tip is an `archive/*` tag (20). The cloud sb-7 harness from codex/salvage-benchmarks lives
+  under evals/swarm-bench/archive/cloud-sb7-2026-08-23/. The 2.0.2 build (post-golden engine) was retired unpublished.
+- Release 2.0.3 (tag v2.0.3, commit 1e1f1de38): Apple notarization Accepted, app + DMG stapled, `spctl` accepted / Notarized Developer ID;
+  app signature Authority=Developer ID Application: Mihai Perdum (ZZ8MTZ6NRZ). Live pass on that build: Goose Swarm brand, hub mount in
+  ~8 s, `goose swarm pool show` lists the sidecar device under the golden engine, a second-process routed turn answered "golden ok" (node
+  requests 1 → 2, `swarm_router pick{workhorse-mlx, free_slots 8}`), quit tore everything down. GitHub release publish waits on
+  `gh auth login` (the workhorse has no GitHub API login); notes drafted in the session scratchpad.
+- Desktop note: useSwarmRun.ts still folds 8 post-golden event names the golden never emits (harmless dead listeners; VA-138/143 tests
+  cover dead paths) — a panel-surgeon cleanup, not a defect.
+
 ## 2026-09-05 18:2x — local-edition MERGED INTO MAIN (e6523a625); live pass on the MERGED package
 - Merged app (built from the merge commit, cold release build): title/brand/nav "Goose Swarm", hub tabs LeanZero MLX | Cloud Providers |
   Swarm Settings | LeanZero Link, spawn command on v0.13.4-lz.1, Mount → running in ~16 s. The merged CLI routed a turn through the
