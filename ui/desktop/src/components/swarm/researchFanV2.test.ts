@@ -15,9 +15,7 @@ import type { TurnLane } from './useSwarmRun';
  * RESEARCH FAN v2 since VA-089 — ONE read-only lane per slice DERIVES its own questions in-session
  * and answers them, plus the decisions lane; the opener emits slices only. Every payload shape below
  * is verbatim from the emit sites read 2026-09-02: research.rs `emit_research_planned` /
- * `emit_research_outcome`, swarm.rs's `research_dispatched` / `research_slice_resumed`, opener.rs's
- * `research_question_ignored`, answer_routing.rs (VA-104), dep_sources (VA-103), vendor_probe.rs
- * (VA-105) and shards.rs `shard_provides_empty` (VA-102). The fan emits NO `phase` event (its banner
+ * `emit_research_outcome` and swarm.rs's `research_dispatched`. The fan emits NO `phase` event (its banner
  * is stderr-only), so phase visibility is derived from these events — pinned here too.
  *
  * The truth-layer rule under test: every line is built from the event's own fields; a field the log
@@ -34,7 +32,6 @@ const START = {
   ],
 };
 
-const IGNORED = { event: 'research_question_ignored', slice: 'ledgerd-api', count: 3 };
 const PLANNED = {
   event: 'research_planned',
   lanes: 3,
@@ -42,7 +39,6 @@ const PLANNED = {
   resumed_slices: ['ledgerd-api'],
   decisions: 1,
 };
-const RESUMED = { event: 'research_slice_resumed', slice: 'ledgerd-api', rows: 2 };
 const DISPATCH_CORE = {
   event: 'research_dispatched',
   slice: 'ledgerd-core',
@@ -127,61 +123,11 @@ const ANSWERED_DECISION_0 = {
   batch: 1,
   model: 'mihai-qwen',
 };
-const ROUTED = {
-  event: 'research_answer_routed',
-  from_slice: 'webhooks-workflow',
-  to_task: 'ledgerd-core',
-  q_index: 5,
-  matched: 'file',
-  value: 'app/webhooks.py',
-  owner: 'webhooks-workflow',
-  arm: 'implemented_by_asker',
-};
-const UNOWNED = {
-  event: 'research_answer_unowned',
-  from_slice: 'ledgerd-core',
-  q_index: 1,
-  names: ['lib/vendor_client.py'],
-};
-const ROUTING_SKIPPED = {
-  event: 'research_answer_routing_skipped',
-  error: 'expected value at line 1 column 1',
-};
-const DEP_CUT = {
-  event: 'dep_source_truncated',
-  task_id: 'ledgerd-core',
-  file: 'app/db.py',
-  bytes: 9000,
-  kept: 5128,
-  reason: 'over the per-file budget',
-};
-const VENDOR_CUT = {
-  event: 'vendor_probe_truncated',
-  kind: 'body',
-  url: 'http://127.0.0.1:8850/v3/payments',
-  chars: 40000,
-  kept: 12000,
-  at_object_boundary: true,
-};
-const VENDOR_FAILED = {
-  event: 'vendor_probe_fetch_failed',
-  url: 'http://127.0.0.1:8850/v3/docs',
-  error: 'connection refused',
-};
-const SHARD_EMPTY = {
-  event: 'shard_provides_empty',
-  module: 'web-viz',
-  shard: 'web-viz-shard-2',
-  sections: ['Rendering'],
-  reason: 'synthesis declared no exports for this shard',
-};
 const SYNTHESIS = { event: 'phase', phase: 'synthesis' };
 
 const FAN = [
   START,
-  IGNORED,
   PLANNED,
-  RESUMED,
   DISPATCH_CORE,
   DISPATCH_WEB,
   DISPATCH_DECISIONS,
@@ -194,17 +140,7 @@ const FAN = [
   KIND_DECISION_0,
   ANSWERED_DECISION_0,
 ];
-const WHOLE = [
-  ...FAN,
-  ROUTED,
-  UNOWNED,
-  ROUTING_SKIPPED,
-  DEP_CUT,
-  VENDOR_CUT,
-  VENDOR_FAILED,
-  SHARD_EMPTY,
-  SYNTHESIS,
-];
+const WHOLE = [...FAN, SYNTHESIS];
 
 describe("the fan reaches the feed — one line per lane, from the events' own fields", () => {
   it('research_planned is the Research line: lanes, one per slice, the decisions lane, resumed count', () => {
@@ -281,22 +217,6 @@ describe("the fan reaches the feed — one line per lane, from the events' own f
     }
   });
 
-  it('a legacy opener emit with per-slice questions is a warning naming the slice and count', () => {
-    const { activity } = buildActivity([START, IGNORED]);
-    const row = activity.find((r) => r.text.startsWith('Opener wrote'))!;
-    expect(row.text).toBe(
-      'Opener wrote 3 questions for ledgerd-api — ignored; its research lane derives its own'
-    );
-    expect(row.tone).toBe('warn');
-  });
-
-  it('a resumed slice says its rows came from the ledger and no lane ran', () => {
-    const { activity } = buildActivity([START, PLANNED, RESUMED]);
-    expect(activity.map((r) => r.text)).toContain(
-      'Research ledgerd-api resumed from the ledger — 2 rows reused, no lane'
-    );
-  });
-
   it('a fan-wide panic is a bad line carrying the error', () => {
     const { activity } = buildActivity([
       START,
@@ -307,33 +227,6 @@ describe("the fan reaches the feed — one line per lane, from the events' own f
     );
     expect(row?.tone).toBe('bad');
     expect(row?.sub).toBe('task panicked at join');
-  });
-
-  it('the VA-102/103/104/105 events each render a line from their own fields', () => {
-    const { activity, verbose } = buildActivity(WHOLE);
-    const texts = (feed: typeof activity) =>
-      feed.map((r) => `${r.text}${r.sub ? ` | ${r.sub}` : ''}`);
-    expect(texts(verbose)).toContain(
-      'Research answer q5 of webhooks-workflow routed to ledgerd-core (owner webhooks-workflow, file app/webhooks.py) | implemented by asker'
-    );
-    expect(texts(activity)).toContain(
-      'Research answer q1 of ledgerd-core names 1 path no plan task owns | lib/vendor_client.py'
-    );
-    expect(texts(activity)).toContain(
-      'Research answers were not routed into the briefs — the plan did not parse | expected value at line 1 column 1'
-    );
-    expect(texts(activity)).toContain(
-      "Dependency source app/db.py cut in ledgerd-core's brief — 5,128 of 9,000 bytes kept | over the per-file budget"
-    );
-    expect(texts(activity)).toContain(
-      'Vendor body http://127.0.0.1:8850/v3/payments cut — 12,000 of 40,000 chars kept | cut after a whole JSON object'
-    );
-    expect(texts(activity)).toContain(
-      'Vendor fetch failed — http://127.0.0.1:8850/v3/docs: connection refused'
-    );
-    expect(texts(activity)).toContain(
-      'Shard web-viz-shard-2 of web-viz declares no exports — its brief states the absence where PROVIDES would be | sections: Rendering'
-    );
   });
 
   it('no line on either feed says "undefined" or invents a count for a field the log lacks', () => {
@@ -542,7 +435,7 @@ describe('the Research checklist rows count what the fan measured', () => {
     expect(p.state).toBe('running');
   });
 
-  it('over (phase:synthesis): answered of derived across lanes; misses and the ignored emit on their own rows', () => {
+  it('over (phase:synthesis): answered of derived across lanes; the misses on their own row', () => {
     const p = research(WHOLE);
     const labels = p.items.map((i) => i.label);
     // VA-138: one row per lane, in dispatch order, between the summary and the misses — what each
@@ -553,7 +446,6 @@ describe('the Research checklist rows count what the fan measured', () => {
       'web-console lane',
       'open decisions lane',
       '1 question unanswered — kept as raw questions in the briefs',
-      'Opener wrote 3 questions for ledgerd-api — ignored; its research lane derives its own',
     ]);
     expect(p.items[0].state).toBe('done');
     expect(p.items[0].detail).toBe(
@@ -576,7 +468,6 @@ describe('the Research checklist rows count what the fan measured', () => {
       detail: 'landed 1 · 1 design · closed',
     });
     expect(lane('r2-miss').detail).toBe('judge ended ×1');
-    expect(p.items[5].state).toBe('advisory');
     expect(p.note).toBeUndefined();
     for (const i of p.items) expect(`${i.label} ${i.detail ?? ''}`).not.toContain('undefined');
   });

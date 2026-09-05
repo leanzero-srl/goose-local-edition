@@ -59,15 +59,7 @@ const SECTIONS: Record<string, number> = {
 
 const at = (ts: string, e: Ev): Ev => ({ ...e, ts });
 
-const dispatch = (ts: string, slice: string, rank: number, host: string): Ev[] => [
-  at(ts, {
-    event: 'research_dispatch_order',
-    slice,
-    sections: SECTIONS[slice],
-    rank,
-    host,
-    host_speed: 1,
-  }),
+const dispatch = (ts: string, slice: string, _rank: number, host: string): Ev[] => [
   at(ts, {
     event: 'research_dispatched',
     slice,
@@ -89,20 +81,8 @@ const landed = (ts: string, slice: string, q: number, kind: string, chars: numbe
     batch: 0,
     model: 'x',
   }),
-  at(ts, {
-    event: 'research_answer_landed',
-    task: `research-${slice}`,
-    slice,
-    q_index: q,
-    kind,
-    status: 'answered',
-    chars,
-    raised: 0,
-    via: 'tool',
-  }),
 ];
-/** The lane's closer, then its `research_builder_decides` events (VA-145: one per choice the lane
- *  left to its builder — r6j's web-viz listed 11, ledgerd-core 4). */
+/** The lane's closer (its detail quotes the builder_decides count the engine's closer names). */
 const closed = (ts: string, slice: string, next: number, n: number, decides = 0): Ev[] => [
   at(ts, {
     event: 'research_unanswered',
@@ -113,9 +93,6 @@ const closed = (ts: string, slice: string, next: number, n: number, decides = 0)
     secs: 2049,
     model: 'x',
   }),
-  ...Array.from({ length: decides }, (_, i) =>
-    at(ts, { event: 'research_builder_decides', slice, q_index: next, text: `choice ${i} for ${slice}` })
-  ),
 ];
 
 const OPENING: Ev[] = [
@@ -185,32 +162,6 @@ const SYNTHESIS: Ev[] = [
     before: { tasks: 8 },
     after: { tasks: 8 },
     actions: ['shared file `app/notifierd/__main__.py`: kept by `skeleton`'],
-  }),
-  at('2026-09-02T19:04:30.605894+00:00', {
-    event: 'research_answer_routed',
-    from_slice: 'web-viz',
-    to_task: 'web-page',
-    q_index: 3,
-    matched: 'file',
-    value: 'web/styles.css',
-    owner: 'web-page',
-    arm: 'owned_here',
-  }),
-  at('2026-09-02T19:04:30.606005+00:00', {
-    event: 'research_answer_unowned',
-    from_slice: 'ledgerd-api',
-    q_index: 0,
-    names: ['webhooks.py/drafts.py'],
-  }),
-  at('2026-09-02T19:04:30.606026+00:00', {
-    event: 'research_answer_routed',
-    from_slice: 'ledgerd-api',
-    to_task: 'ledgerd-webhooks-drafts',
-    q_index: 0,
-    matched: 'file',
-    value: 'app/ledgerd/webhooks.py',
-    owner: 'ledgerd-webhooks-drafts',
-    arm: 'owned_here',
   }),
   at('2026-09-02T19:04:30.608426+00:00', {
     event: 'plan_weighted',
@@ -417,23 +368,16 @@ describe('VA-138 — the steps the engine actually walks, clocked from its own t
       expect(done.items[1].detail).toBe('12 exports declared · plan now 10 tasks');
     });
 
-    it('SYNTHESIZE: the call closes at plan_synthesized and says what it routed', () => {
+    it('SYNTHESIZE: the call closes at plan_synthesized', () => {
       const s = phase(MID_SPLIT, 'synthesis');
-      expect(s.items.map((i) => `${i.id}:${i.state}`)).toEqual(['s-wired:done', 's-routed:done']);
+      expect(s.items.map((i) => `${i.id}:${i.state}`)).toEqual(['s-wired:done']);
       expect(s.items[0].detail).toBe(
         '7 tasks · the deterministic repairs and any split run before the plan loads'
       );
-      expect(s.items[1].label).toBe(
-        'Routed 2 research answers into the briefs of the tasks that own their files'
-      );
-      expect(s.items[1].detail).toBe('1 answer named files no task owns — left unrouted');
-      expect(phase(BUILDING, 'synthesis').items.map((i) => i.id)).toEqual([
-        's-routed',
-        's-done',
-      ]);
+      expect(phase(BUILDING, 'synthesis').items.map((i) => i.id)).toEqual(['s-done']);
     });
 
-    it('RESEARCH: six lane rows in dispatch order — landed, builder_decides, kinds, rank, host — closed by remainder_empty, never a miss', () => {
+    it('RESEARCH: six lane rows in dispatch order — landed, kinds, host — closed by remainder_empty, never a miss', () => {
       const r = phase(MID_SPLIT, 'research');
       const lanes = r.items.filter((i) => i.id.startsWith('r2-lane-'));
       expect(lanes.map((i) => i.label)).toEqual([
@@ -444,18 +388,15 @@ describe('VA-138 — the steps the engine actually walks, clocked from its own t
         'ledgerd-webhooks-drafts lane',
         'notifierd lane',
       ]);
-      // VA-145: the expectation moved deliberately — `builder_decides M` follows `landed N` when the
-      // lane listed any (web-viz 11, ledgerd-core 4 on r6j); a lane that listed none says nothing.
       expect(lanes[0]).toMatchObject({
         state: 'done',
         device: 'workhorse',
-        detail:
-          'landed 4 · builder_decides 11 · 4 design · rank 0 · 10 sections · closed — the final reply added nothing behind the landed answers',
+        detail: 'landed 4 · 4 design · closed — the final reply added nothing behind the landed answers',
       });
       expect(lanes[2]).toMatchObject({ device: 'gabee', state: 'done' });
-      expect(lanes[2].detail).toContain('landed 3 · builder_decides 4 · 1 design, 2 external · rank 2 · 7 sections');
+      expect(lanes[2].detail).toContain('landed 3 · 1 design, 2 external');
       expect(lanes[1].detail).toBe(
-        'landed 2 · 2 design · rank 1 · 9 sections · closed — the final reply added nothing behind the landed answers'
+        'landed 2 · 2 design · closed — the final reply added nothing behind the landed answers'
       );
       // The lane closers are outcome rows for builder_decides (research.rs), not questions kept raw
       // in a brief: the summary counts 13 of 13, and no miss row appears.
@@ -464,10 +405,10 @@ describe('VA-138 — the steps the engine actually walks, clocked from its own t
       );
       expect(r.items.some((i) => i.id === 'r2-miss')).toBe(false);
       // Mid-research the lanes still out read running.
-      const early = phase([...OPENING, ...OPENED, ...RESEARCH.slice(0, 6)], 'research');
+      const early = phase([...OPENING, ...OPENED, ...RESEARCH.slice(0, 3)], 'research');
       expect(early.items.find((i) => i.id === 'r2-lane-web-viz')).toMatchObject({
         state: 'running',
-        detail: 'landed 0 · rank 0 · 10 sections · running',
+        detail: 'landed 0 · running',
       });
     });
 

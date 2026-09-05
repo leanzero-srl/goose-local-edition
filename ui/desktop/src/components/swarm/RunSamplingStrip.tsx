@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import SamplingKnobs from './SamplingKnobs';
 import { useSaveSamplingDefaults } from './useSamplingDefaults';
+import { SWARM_BUILD_MODEL_ID } from '../settings/models/leanzeroSelectorPolicy';
 import {
   hasAnySampling,
   loadSamplingDefaults,
@@ -18,21 +19,29 @@ import {
  * Resolution order on mount: the file (a pending per-run override survives navigation), else the
  * shared defaults (`swarmSamplingDefaults`), which are then seeded into the file so what is shown
  * is what will ride. While a run is live the strip is read-only on the file the run launched with.
+ *
+ * ONLY FOR A BUILD SESSION. The file feeds `run_sampling_env` on the BUILD run's engine child; a routed
+ * CHAT turn (the `swarm` model) never reads it, so "the next run uses these values" was a false claim on
+ * every chat session. The strip renders only when the session's model is `swarm-build`.
  */
 export default function RunSamplingStrip({
   workingDir,
   active,
+  sessionModel,
   className = '',
 }: {
   workingDir?: string;
   active: boolean;
+  /** The session's model id — the strip exists only for `swarm-build`, the one that launches a run. */
+  sessionModel: string | null | undefined;
   className?: string;
 }) {
   const [values, setValues] = useState<SamplingSettings | null>(null);
   const saveDefaults = useSaveSamplingDefaults();
+  const isBuild = sessionModel === SWARM_BUILD_MODEL_ID;
 
   useEffect(() => {
-    if (!workingDir) return;
+    if (!workingDir || !isBuild) return;
     let alive = true;
     void (async () => {
       let fromFile: SamplingSettings = {};
@@ -60,7 +69,7 @@ export default function RunSamplingStrip({
       alive = false;
     };
     // Re-resolve when the dir changes or a run starts/ends — not on every values edit.
-  }, [workingDir, active]);
+  }, [workingDir, active, isBuild]);
 
   const onChange = useCallback(
     (next: SamplingSettings) => {
@@ -70,7 +79,7 @@ export default function RunSamplingStrip({
     [workingDir]
   );
 
-  if (!workingDir || values === null) return null;
+  if (!isBuild || !workingDir || values === null) return null;
 
   return (
     <SamplingKnobs

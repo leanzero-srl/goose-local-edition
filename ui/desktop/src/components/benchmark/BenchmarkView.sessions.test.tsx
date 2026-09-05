@@ -121,7 +121,9 @@ describe('the benchmark sections and their sessions', () => {
 
     // Every state names itself: the four chips of the current (expanded) era.
     const runningChip = (await screen.findByText('Running')).closest('span')!;
-    expect(runningChip.querySelector('.animate-pulse')).not.toBeNull();
+    // The live mark scales on the motion token (DESIGN.md) — never the fading pulse.
+    expect(runningChip.querySelector('.animate-lz-live')).not.toBeNull();
+    expect(runningChip.querySelector('.animate-pulse')).toBeNull();
     expect(screen.getByText('Finished')).toBeInTheDocument();
     expect(screen.getByText(/· 2\.7%/)).toBeInTheDocument();
     expect(screen.getByText('Did not finish')).toBeInTheDocument();

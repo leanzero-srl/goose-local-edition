@@ -52,6 +52,9 @@ import {
   type RunOverview as RunOverviewData,
   type RunVerdict,
   type KnownBug,
+  type RepairFindingRow,
+  type RepairRepro,
+  type RepairDecision,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -438,21 +441,23 @@ const ReasoningBlock: React.FC<{
   );
 };
 
-/** Solid fill per research question KIND (`research_question_kind.kind`, the lane's own word): the
- *  engine's vocabulary is design | external | unkinded, plus the classifier's spec_restated (VA-118: a
- *  design entry showing fewer than two alternatives); any other word the engine may name gets the
- *  neutral slate rather than no chip. White ink on every fill — no tints. */
-const RESEARCH_KIND_COLOR: Record<string, string> = {
-  design: '#7c3aed',
-  external: '#0e7490',
-  spec_restated: '#c2410c',
-  unkinded: SWARM_STATUS.stopped,
+/** Solid Studio TONE per research question KIND (`research_question_kind.kind`, the lane's own word):
+ *  design → accent, external → ok, the classifier's spec_restated (VA-118) → warn, unkinded and any word
+ *  the engine may name → stopped. Every hue is a token fill (DESIGN.md ban 5) — no hand-written colour,
+ *  white ink on every fill, no tints. */
+const RESEARCH_KIND_TONE: Record<string, Tone> = {
+  design: 'accent',
+  external: 'ok',
+  spec_restated: 'warn',
+  unkinded: 'stopped',
 };
-const researchKindColor = (kind: string) => RESEARCH_KIND_COLOR[kind] ?? SWARM_STATUS.stopped;
-/** VA-031: the solid fills for a question another mini or a decision already COVERED (the q chip and
- *  its provenance chip) and for a question the lane RAISED and folded into its builder's brief. */
-const RESEARCH_COVERED = '#0369a1';
-const RESEARCH_RAISED = '#be185d';
+const researchKindTone = (kind: string): Tone => RESEARCH_KIND_TONE[kind] ?? 'stopped';
+/** The research list's small solid chip: mono, uppercase, a token fill behind white ink. */
+const RESEARCH_CHIP = cx(
+  'inline-flex h-4 shrink-0 items-center px-1.5 font-mono text-lz-mono uppercase',
+  WEIGHT.semibold,
+  RADIUS.control
+);
 
 /** `covered by <slice> q<n>` from the mini the engine named (`research_question_covered.by_mini`, the
  *  file name research.rs research_mini_name wrote: `research-<slice>-q<n>.json`), or `covered by
@@ -496,16 +501,16 @@ const ResearchQuestionRows: React.FC<{
   const covered = questions.filter((q) => q.status === 'covered').length;
   const open = questions.length - answered - missed - covered;
   const raised = raisedFolded?.length ?? 0;
-  const chipColor = (q: ResearchQuestionRow) =>
+  const chipTone = (q: ResearchQuestionRow): Tone =>
     q.status === 'answered'
-      ? STATUS_COLOR.done
+      ? 'ok'
       : q.status === 'unanswered'
-        ? STATUS_COLOR.error
+        ? 'err'
         : q.status === 'covered'
-          ? RESEARCH_COVERED
+          ? 'secondary'
           : live
-            ? STATUS_COLOR.running
-            : CALL_PENDING;
+            ? 'warn'
+            : 'stopped';
   const caption = (q: ResearchQuestionRow) => {
     // A landing's line: the answer's size, what it raised, and the engine's lane clock at the landing
     // (`research_answered.secs`) — absent on a landing-only archive, and then unsaid.
@@ -533,7 +538,11 @@ const ResearchQuestionRows: React.FC<{
         onClick={() => setExpanded((x) => !x)}
         aria-expanded={expanded}
         data-testid="research-questions-toggle"
-        className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary transition-colors mb-1.5"
+        className={cx(
+          'mb-1.5 flex items-center gap-1 uppercase text-lz-meta text-lz-ink-2 hover:text-lz-ink',
+          WEIGHT.semibold,
+          MOTION
+        )}
       >
         <Chevron className="h-3 w-3 shrink-0" />
         <span>
@@ -550,21 +559,19 @@ const ResearchQuestionRows: React.FC<{
           {questions.map((q) => (
             <li
               key={`${q.slice}::${q.qIndex}`}
-              className="flex items-start gap-2 text-[11px] min-w-0"
+              className="flex items-start gap-2 text-lz-meta min-w-0"
               data-testid="research-question"
               data-status={q.status}
               title={q.detail || undefined}
             >
               <span
-                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
-                style={{ background: chipColor(q), borderRadius: 3 }}
+                className={cx(RESEARCH_CHIP, TONE_FILL[chipTone(q)])}
               >
                 q{q.qIndex}
               </span>
               {q.kind ? (
                 <span
-                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
-                  style={{ background: researchKindColor(q.kind), borderRadius: 3 }}
+                  className={cx(RESEARCH_CHIP, TONE_FILL[researchKindTone(q.kind)])}
                   data-testid="research-kind"
                   data-kind={q.kind}
                 >
@@ -577,8 +584,7 @@ const ResearchQuestionRows: React.FC<{
                   no separate reason field — the cite IS the classifier's reading. */}
               {q.kindSource === 'classifier' && q.modelKind ? (
                 <span
-                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
-                  style={{ background: researchKindColor(q.modelKind), borderRadius: 3 }}
+                  className={cx(RESEARCH_CHIP, TONE_FILL[researchKindTone(q.modelKind)])}
                   data-testid="research-kind-reclassified"
                   data-model-kind={q.modelKind}
                   title={`the lane said ${q.modelKind}; reclassified ${q.kind ?? ''} by the classifier${q.cite ? ` — ${q.cite}` : ''}`}
@@ -590,8 +596,7 @@ const ResearchQuestionRows: React.FC<{
                   its answer, as the engine named it. A solid chip: this is a fact, not a dimmed row. */}
               {q.status === 'covered' && q.covered ? (
                 <span
-                  className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0"
-                  style={{ background: RESEARCH_COVERED, borderRadius: 3 }}
+                  className={cx(RESEARCH_CHIP, TONE_FILL.secondary)}
                   data-testid="research-covered-by"
                   data-by={q.covered.by}
                   title={q.covered.mini || undefined}
@@ -599,8 +604,8 @@ const ResearchQuestionRows: React.FC<{
                   {coveredByLabel(q.covered)}
                 </span>
               ) : null}
-              <span className="flex-1 min-w-0 break-words text-text-primary">{q.question}</span>
-              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{caption(q)}</span>
+              <span className="flex-1 min-w-0 break-words text-lz-ink">{q.question}</span>
+              <span className={cx('shrink-0 text-lz-meta text-lz-ink-3', TNUM)}>{caption(q)}</span>
             </li>
           ))}
         </ol>
@@ -617,44 +622,40 @@ const ResearchQuestionRows: React.FC<{
           {raisedFolded.map((r, i) => (
             <li
               key={`${r.qIndex}::${i}`}
-              className="flex items-start gap-2 text-[11px] min-w-0"
+              className="flex items-start gap-2 text-lz-meta min-w-0"
               data-testid="research-raised-folded"
               data-q-index={r.qIndex}
               title={r.raisedBy || undefined}
             >
               <span
-                className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
-                style={{ background: RESEARCH_RAISED, borderRadius: 3 }}
+                className={cx(RESEARCH_CHIP, TONE_FILL.warn)}
               >
                 raised
               </span>
-              <span className="flex-1 min-w-0 break-words text-text-primary">{r.question}</span>
-              <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">
+              <span className="flex-1 min-w-0 break-words text-lz-ink">{r.question}</span>
+              <span className={cx('shrink-0 text-lz-meta text-lz-ink-3', TNUM)}>
                 by q{r.qIndex} · folded into this slice’s brief
               </span>
             </li>
           ))}
         </ol>
       ) : null}
-      {/* VA-143: the lane's close — what it landed and the choices it left to its builder — from the
-          `remainder_empty` closer and the `research_builder_decides` events, clocked by the engine's
-          own lane secs. r6j web-viz: "landed 4 · builder_decides 11 · done 34m", where the closer
-          used to read "q4 · unanswered · remainder empty". */}
+      {/* VA-143: the lane's close — what it landed — from the `remainder_empty` closer, clocked by the
+          engine's own lane secs; the closer used to read "q4 · unanswered · remainder empty". */}
       {close ? (
         <div
-          className="mt-1.5 flex items-center gap-2 text-[11px] min-w-0"
+          className="mt-1.5 flex items-center gap-2 text-lz-meta min-w-0"
           data-testid="research-lane-close"
           data-reason={close.reason}
           title={close.detail || undefined}
         >
           <span
-            className="font-mono text-[10px] font-bold px-1.5 py-px text-white shrink-0 uppercase"
-            style={{ background: STATUS_COLOR.done, borderRadius: 3 }}
+            className={cx(RESEARCH_CHIP, TONE_FILL.ok)}
           >
             closed
           </span>
-          <span className="tabular-nums text-text-primary">
-            landed {close.landed} · builder_decides {close.builderDecides}
+          <span className={cx('text-lz-ink', TNUM)}>
+            landed {close.landed}
             {close.secs != null ? ` · done ${fmtPhaseDuration(close.secs * 1000)}` : ''}
           </span>
         </div>
@@ -5513,6 +5514,106 @@ const KnownActiveBugs: React.FC<{ bugs: KnownBug[]; verdict: RunVerdict | null }
   );
 };
 
+/** REPAIR v2's finding shards (repair_waves.rs): the repro verdict (§1) and the promotion decision (§2)
+ *  the engine emitted for each — solid chips, the engine's own words. A shard that never re-ran its
+ *  finding's check, or whose fix did not flip it, must never read like a landed fix. Nothing renders
+ *  until the first shard dispatches; a row with no verdict yet says "running". */
+const REPRO_WORDS: Record<RepairRepro, string> = {
+  confirmed: 'repro confirmed',
+  edited_first: 'edited before repro',
+  never_ran: 'repro never ran',
+  unobservable: 'repro unobservable',
+};
+const REPRO_TONE: Record<RepairRepro, Tone> = {
+  confirmed: 'ok',
+  edited_first: 'warn',
+  never_ran: 'warn',
+  unobservable: 'stopped',
+};
+const DECISION_WORDS: Record<RepairDecision, string> = {
+  flipped: 'flipped',
+  still_failing: 'still failing',
+  regressed: 'regressed',
+  closed_by_sibling: 'closed by sibling',
+  unverifiable: 'unverifiable',
+};
+const DECISION_TONE: Record<RepairDecision, Tone> = {
+  flipped: 'ok',
+  still_failing: 'warn',
+  regressed: 'err',
+  closed_by_sibling: 'secondary',
+  unverifiable: 'warn',
+};
+const RepairFindings: React.FC<{ rows: RepairFindingRow[] }> = ({ rows }) => {
+  const [open, setOpen] = useState(true);
+  if (rows.length === 0) return null;
+  const promoted = rows.filter((r) => r.promoted === true).length;
+  const running = rows.filter((r) => r.promoted === null).length;
+  return (
+    <div className="border-t border-lz-border" data-testid="repair-findings">
+      <ZoneHeader
+        label="Repair findings"
+        explain={`${promoted} of ${rows.length} shard${rows.length === 1 ? '' : 's'} promoted on the finding's own flip${running > 0 ? ` · ${running} running` : ''}`}
+        collapsed={!open}
+        onToggle={() => setOpen((o) => !o)}
+        right={
+          <span
+            className={cx(BUG_CHIP, TONE_FILL[promoted === rows.length ? 'ok' : promoted > 0 ? 'warn' : 'err'])}
+            data-testid="repair-findings-count-chip"
+          >
+            {promoted}/{rows.length}
+          </span>
+        }
+      />
+      {open ? (
+        <ol className="space-y-1.5 px-3 pb-3">
+          {rows.map((r) => {
+            const fault = r.setupError
+              ? 'harness setup failed'
+              : r.conflicted
+                ? 'merge conflict'
+                : r.unavailable
+                  ? 'merge unavailable'
+                  : r.promotionLost
+                    ? 'promotion lost'
+                    : null;
+            return (
+              <li
+                key={`${r.round}::${r.shard}`}
+                className="flex flex-wrap items-center gap-1.5 text-lz-body text-lz-ink"
+                data-testid="repair-finding"
+                data-repro={r.repro ?? undefined}
+                data-decision={r.decision ?? undefined}
+                data-promoted={r.promoted == null ? undefined : String(r.promoted)}
+              >
+                <span className={cx('font-mono text-lz-meta text-lz-ink-2', TNUM)}>r{r.round}</span>
+                <span className={cx('min-w-0 truncate', WEIGHT.medium)} title={r.finding || undefined}>
+                  {r.shard}
+                </span>
+                {r.repro ? (
+                  <span className={cx(BUG_CHIP, TONE_FILL[REPRO_TONE[r.repro]])}>{REPRO_WORDS[r.repro]}</span>
+                ) : null}
+                {r.decision ? (
+                  <span className={cx(BUG_CHIP, TONE_FILL[DECISION_TONE[r.decision]])}>
+                    {DECISION_WORDS[r.decision]}
+                    {r.decision === 'flipped' && r.failsBefore != null && r.failsAfter != null
+                      ? ` ${r.failsBefore} → ${r.failsAfter}`
+                      : ''}
+                  </span>
+                ) : null}
+                {fault ? <span className={cx(BUG_CHIP, TONE_FILL.err)}>{fault}</span> : null}
+                <span className={cx(BUG_CHIP, r.promoted === true ? TONE_FILL.ok : r.promoted === false ? TONE_FILL.secondary : TONE_FILL.accent)}>
+                  {r.promoted === true ? 'promoted' : r.promoted === false ? 'not promoted' : 'running'}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
+};
+
 // Mid-run Q&A (finding 10): a question dropped into .swarm/questions/ is answered by the engine into
 // a hidden .swarm/answers/ dotfile — the swarm_answer event is the only surface a panel reader ever
 // sees, and until this card existed the app dropped it.
@@ -5712,26 +5813,24 @@ const WrapUpBanner: React.FC<{
     reflect && reflect.phase !== 'done'
       ? 'learning a reusable stack skill from this build'
       : 'writing the final run record (stack skill + overview)';
-  const color = verdict.passed
-    ? verdict.verified
-      ? SWARM_STATUS.solidDone
-      : SWARM_STATUS.solidRunning
-    : SWARM_STATUS.solidError;
+  // Studio tone: a verified pass is ok, an unverified pass warns, a fail is err — a token fill each,
+  // never an inline colour.
+  const tone: Tone = verdict.passed ? (verdict.verified ? 'ok' : 'warn') : 'err';
   const headline = verdict.passed
     ? `Verdict is in — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugCount > 0 ? ` · ${bugCount} known bug${bugCount === 1 ? '' : 's'} ship` : ''}`
     : `Verdict is in — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}${renderClassSuffix(verdict)}`;
   return (
-    <div className="border-b border-border-primary" data-testid="wrapup-banner">
-      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
+    <div className="border-b border-lz-border" data-testid="wrapup-banner" data-tone={tone}>
+      <div className={cx('flex items-center gap-2 px-3 py-2', TONE_FILL[tone])}>
         {verdict.passed ? (
-          <Check className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+          <Check className="size-4 shrink-0" strokeWidth={2.5} />
         ) : (
-          <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+          <AlertTriangle className="size-4 shrink-0" strokeWidth={2.5} />
         )}
-        <span className="text-xs font-semibold">{headline}</span>
+        <span className={cx('text-lz-body', WEIGHT.semibold)}>{headline}</span>
       </div>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" style={{ color: SWARM_STATUS.action }} />
+      <div className="flex items-center gap-1.5 bg-lz-surface-2 px-3 py-1.5 text-lz-meta text-lz-ink-2">
+        <Loader2 className={cx('size-3 shrink-0 animate-spin', TONE_TEXT.accent)} />
         <span>
           Wrapping up — {what}. The run record closes when this lands.
         </span>
@@ -5813,20 +5912,22 @@ const TerminalBanner: React.FC<{
         // The engine's own definition of what "passed" asserts, verbatim — the honesty line that keeps
         // PASSED from over-claiming (criticals closed AND no render-class finding stands — VA-087;
         // the other minors ship as known bugs, listed below).
-        <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+        <div className="bg-lz-surface-2 px-3 py-1.5 text-lz-meta text-lz-ink-2">
           Passed means: {v.passedMeans}
           {v.shipped ? ` · shipped: ${v.shipped}` : ''}
         </div>
       ) : null}
       {v && runCommand ? (
-        <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary min-w-0">
-          <Terminal className="h-3 w-3 shrink-0 text-text-secondary" />
-          <span className="text-text-secondary shrink-0">Run it:</span>
-          <code className="font-mono text-text-primary truncate">{runCommand}</code>
+        <div
+          className="flex min-w-0 items-center gap-1.5 border-t border-lz-border bg-lz-surface-2 px-3 py-1.5 text-lz-meta"
+          data-testid="terminal-run-command"
+        >
+          <Terminal className="size-3 shrink-0 text-lz-ink-2" />
+          <span className="shrink-0 text-lz-ink-2">Run it:</span>
+          <code className="truncate font-mono text-lz-mono text-lz-ink">{runCommand}</code>
           {runCommandVerified ? (
-            <span className="text-[10px] font-semibold shrink-0" style={{ color: STATUS_COLOR.done }}>
-              — goose ran this command itself
-            </span>
+            // The engine ran it — a solid ok chip, never a coloured whisper.
+            <Chip tone="ok">goose ran this command itself</Chip>
           ) : null}
         </div>
       ) : null}
@@ -6392,6 +6493,7 @@ export const SwarmRunPanel: React.FC<{
 
       {/* The imperfections a green run shipped with. Mounted whenever the engine has rated defects — during
           the repair phase as well as at the end, because that is when they are actionable. */}
+      <RepairFindings rows={run.repairFindings} />
       <KnownActiveBugs bugs={run.knownActiveBugs} verdict={run.verdict} />
 
       {/* Mid-run questions the swarm answered (finding 10) — otherwise the answers live only in dotfiles. */}

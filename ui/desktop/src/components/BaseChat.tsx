@@ -600,6 +600,7 @@ export default function BaseChat({
           <RunSamplingStrip
             workingDir={session?.working_dir}
             active={swarmRun.inProgress}
+            sessionModel={sessionModel}
             className="mb-2"
           />
         )}
@@ -682,6 +683,7 @@ export default function BaseChat({
         <RunSamplingStrip
           workingDir={session?.working_dir}
           active={swarmRun.inProgress}
+          sessionModel={sessionModel}
           className="mb-3"
         />
         <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} />
