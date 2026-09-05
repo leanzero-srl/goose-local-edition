@@ -34,7 +34,7 @@ import { getNavigationShortcutText } from '../utils/keyboardShortcuts';
 import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
-import { fetchSwarmContextLimit } from './swarm/useFleet';
+import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { mlxEngineStatus } from '../acp/mlx-engine';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { PersonaChooser } from './swarm/PersonaChooser';
@@ -608,10 +608,11 @@ export default function ChatInput({
         return;
       }
 
-      // Swarm: the local LM Studio fleet. Its context window is whatever the resident models were loaded
-      // with (LM Studio reports it), not the generic 128k fallback for unknown models — read it live.
+      // Swarm: the local fleet. Its context window is whatever the resident models were loaded with —
+      // LM Studio reports it per model, the LeanZero MLX engine reports it on its status — read live from
+      // every engine the POOL runs on and take the min (an MLX-only pool used to fall to the 128k default).
       if (provider === 'swarm') {
-        const swarmLimit = await fetchSwarmContextLimit();
+        const swarmLimit = await fetchSwarmPoolContextLimit();
         setTokenLimit(swarmLimit ?? TOKEN_LIMIT_DEFAULT);
         setIsTokenLimitLoaded(true);
         return;

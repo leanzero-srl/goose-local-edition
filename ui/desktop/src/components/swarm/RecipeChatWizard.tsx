@@ -5,6 +5,7 @@ import { LeanZero } from '../icons';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
+import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
 import {
@@ -104,10 +105,22 @@ export function RecipeChatWizard({
   // LEGACY surface: LM Studio model discovery runs only when 'showLmStudioFleet' is on (default
   // off). Off, the wizard shows its honest offline path — it cannot draft without a served model.
   const fleet = useFleet(5000, undefined, useLmStudioFleetVisible());
+  // The LeanZero MLX engine is the OTHER fleet engine: on an MLX-only machine (measured 2026-09-05)
+  // the wizard read "no fleet model is loaded — start LM Studio" while the sidecar served a model.
+  // Its served alias is offered beside the LM Studio models and drives the chat at ITS base URL.
+  const { status: mlx } = useMlxEngineStatusPoll(isOpen);
+  const mlxModel =
+    mlx?.state === 'running' && !mlx.probeError ? (mlx.servedModelId ?? mlx.modelId ?? null) : null;
+  const mlxBaseUrl = mlxModel ? (mlx?.baseUrl ?? null) : null;
+  const models = mlxModel && mlxBaseUrl ? [...fleet.models, mlxModel] : fleet.models;
   const [picked, setPicked] = useState<string | null>(null);
-  const autoModel = fleet.models.find((m) => /coder/i.test(m)) ?? fleet.models[0] ?? null;
-  // Use the user's pick if it's still loaded, else fall back to the auto-chosen coder model.
-  const model = (picked && fleet.models.includes(picked) ? picked : null) ?? autoModel;
+  const autoModel = models.find((m) => /coder/i.test(m)) ?? models[0] ?? null;
+  // Use the user's pick if it's still served, else fall back to the auto-chosen coder model.
+  const model = (picked && models.includes(picked) ? picked : null) ?? autoModel;
+  // The host that serves the picked model: the sidecar's own base URL for its alias, LM Studio's
+  // configured endpoint for everything else (fleetChat takes the origin of either).
+  const chatEndpoint = model != null && model === mlxModel && mlxBaseUrl ? mlxBaseUrl : fleet.endpoint;
+  const online = models.length > 0 && (model === mlxModel || fleet.online);
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -159,7 +172,7 @@ export function RecipeChatWizard({
   // One chat completion. `format` optionally forces structured JSON output (used to draft the recipe).
   const complete = async (system: string, history: ChatMsg[], format?: unknown): Promise<string> => {
     if (!model) throw new Error('no-model');
-    const r = await window.electron.fleetChat(fleet.endpoint, {
+    const r = await window.electron.fleetChat(chatEndpoint, {
       model,
       messages: [{ role: 'system', content: system }, ...history],
       temperature: format ? 0.3 : 0.5,
@@ -188,7 +201,7 @@ export function RecipeChatWizard({
       e instanceof Error && e.name === 'AbortError'
         ? 'the fleet took too long (is it busy building? free it up and retry)'
         : e instanceof Error && e.message === 'no-model'
-          ? 'no fleet model is loaded — start LM Studio and load a model'
+          ? 'no fleet model is served — load one in LM Studio or mount one in the LeanZero MLX engine'
           : e instanceof Error
             ? e.message
             : String(e);
@@ -285,7 +298,7 @@ export function RecipeChatWizard({
             <h3 className={TYPE.h2}>Build a recipe with the fleet</h3>
           </div>
           <div className="flex items-center gap-2">
-            {fleet.online && fleet.models.length > 0 ? (
+            {online ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -303,7 +316,7 @@ export function RecipeChatWizard({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {fleet.models.map((m) => (
+                  {models.map((m) => (
                     <DropdownMenuItem key={m} onClick={() => setPicked(m)} className="text-xs font-mono">
                       {m === model && <Check className={cx('h-3 w-3 mr-1 shrink-0', TONE_TEXT.accent)} />}
                       {m}
