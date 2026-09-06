@@ -38,8 +38,18 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   entries whose names carry benchmark/run; after: the three named entries, the frontend note 5th. The
   name pair is by COUNT, not rarity — "run" is common (df > 116 of 233) and is the topic's own word; a
   rare-only pair named nothing on this store. The more-than-half floor keeps a 2/4 headline match
-  (`forge-cannot-reliably-read-assets`) from displacing the 4/4 nameless bank-approval note. If a corpus
-  where two common words co-occur in many headlines over-names, the probe is the instrument that shows it.
+  (`forge-cannot-reliably-read-assets`) from displacing the 4/4 nameless bank-approval note. The name is
+  read by `name_tokens` (VA-180): a hyphenated COMPOUND in a headline or tag is ONE word — "goose-local"
+  is not "local", "plan-confidence" is not "plan" — kept as its joined form; its parts count only when
+  the request writes the same compound (`search_terms` gives "load-bearing" as load, bearing, loadbearing,
+  so "load-bearing" in a headline is still reached). Categories are slugs and always split. Measured:
+  "Write a blog post about local models." named `improve-toolcall-reliability` ("the goose-local swarm
+  workers' … weak models", 2 in name, 8.4) — and rarity does NOT separate that from a true name: "local"
+  (60/233) and "models" (25) are both rare and weigh 3.57 together, more than "benchmark"+"run" (3.12) or
+  "run"+"start" (2.52); the compound split was the whole difference. After: 1 in name, 7.1, unnamed; slot 3
+  goes from `swarm-confidence-and-ask-internals` (also "goose-local") to `mold-the-model-not-a-better-one`
+  ("On the local swarm, MOLD the … model"); the twelve other requests keep their recalled sets and order,
+  30/39 slots. If a corpus over-names on two plain co-occurring words, the probe is the instrument.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.

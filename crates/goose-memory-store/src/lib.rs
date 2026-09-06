@@ -55,7 +55,8 @@ impl MemoryEntry {
 /// `named` says the query NAMES the entry: at least [`NAMED_MIN_NAME_TERMS`] of its terms sit in the
 /// entry's name and more than half of its terms match. A named hit ranks above every unnamed one
 /// whatever the body score — a body that happens to contain every query word is a vocabulary match, a
-/// headline carrying two of the query's words is the topic.
+/// headline carrying two of the query's words is the topic. The name is read by [`name_tokens`]: a
+/// hyphenated compound in a headline is one word, so "goose-local" is not "local".
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
     pub score: f64,
@@ -76,6 +77,10 @@ pub struct SearchHit {
 // common word of the pair ("run") is the topic's own word. The more-than-half floor keeps a half-match
 // out of the tier: "forge" + "app" in a note about the Assets API (2/4) must not outrank the
 // whole-request bank-approval note (4/4, nameless) for "deploy the Forge app to production".
+// measured (VA-180, same store): rarity of the pair does NOT separate a false name from a true one —
+// "local" (60 of 233) and "models" (25) are both rare and together weigh 3.57, more than
+// "benchmark" + "run" (18 + 131, 3.12) or "run" + "start" (2.52); what named the tool-call note for
+// "write a blog post about local models" was the compound "goose-local" split into "goose" + "local".
 pub const NAMED_MIN_NAME_TERMS: usize = 2;
 
 /// Rarity weight of a term found in `df` of `n` documents: `ln((n + 1) / (df + 0.5))` — large for a term
@@ -169,6 +174,33 @@ pub fn term_occurrences(term: &str, tokens: &[String]) -> usize {
                 || (term.chars().count() >= PREFIX_MIN_CHARS && token.starts_with(term))
         })
         .count()
+}
+
+/// The words of a headline or tag line as a NAME reads them: a hyphenated compound is one word
+/// ("goose-local" is not "local", "plan-confidence" is not "plan"), kept as its joined form; its
+/// parts count only when the request writes the same compound — `search_terms` gives "load-bearing"
+/// as load, bearing and loadbearing, so the parts reach a headline's "load-bearing" while
+/// "local models" does not reach "goose-local". Measured (VA-180): the compound split named
+/// `improve-toolcall-reliability` ("the goose-local swarm workers' … weak models") for "write a blog
+/// post about local models"; the twelve other probe requests keep their recalled sets and order.
+pub fn name_tokens(text: &str, terms: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for word in text.to_lowercase().split_whitespace() {
+        let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+        let compound = word.contains('-')
+            && word.chars().all(|c| c.is_alphanumeric() || c == '-')
+            && !word.split('-').any(str::is_empty);
+        if compound {
+            let joined: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+            if terms.contains(&joined) {
+                out.extend(word.split('-').map(String::from));
+            }
+            out.push(joined);
+        } else {
+            out.extend(tokenize(word));
+        }
+    }
+    out
 }
 
 /// Lower-cased, de-duplicated alphanumeric terms of a query. A hyphenated compound contributes its
@@ -363,7 +395,12 @@ impl MemoryStore {
                     entry.headline()
                 );
                 let haystack = format!("{} {}", name, entry.content).to_lowercase();
-                let name_tokens = tokenize(&name);
+                let name_tokens = [
+                    tokenize(&entry.category),
+                    name_tokens(&entry.tags.join(" "), &terms),
+                    name_tokens(&entry.headline(), &terms),
+                ]
+                .concat();
                 let tokens = tokenize(&haystack);
                 corpus.push((entry, name_tokens, tokens, haystack));
             }
@@ -895,6 +932,108 @@ mod tests {
         let named = store.search("forge app", None).unwrap();
         assert_eq!(named[0].entry.category, "assets");
         assert!(named[0].named, "two of two terms in the name: {named:?}");
+    }
+
+    /// The VA-180 shape: "write a blog post about local models" must not NAME a note whose headline
+    /// says "goose-local … models" — the compound is one word — while "start a benchmark run" still
+    /// names "During a benchmark run", and a request that writes "load-bearing" still reaches a
+    /// headline's "load-bearing" through the parts.
+    #[test]
+    fn a_compound_in_the_headline_is_one_word_for_naming() {
+        let terms = search_terms("blog post local models write");
+        assert_eq!(
+            name_tokens(
+                "Improve the goose-local swarm workers' tool-call reliability; the weak models.",
+                &terms
+            ),
+            vec![
+                "improve",
+                "the",
+                "gooselocal",
+                "swarm",
+                "workers",
+                "toolcall",
+                "reliability",
+                "the",
+                "weak",
+                "models"
+            ]
+        );
+        let terms = search_terms("which identifiers are load-bearing");
+        assert_eq!(
+            name_tokens("Three load-bearing identifiers.", &terms),
+            vec!["three", "load", "bearing", "loadbearing", "identifiers"]
+        );
+        assert_eq!(
+            name_tokens(
+                "settings.local.json --no-session",
+                &["nosession".to_string()]
+            ),
+            vec!["settings", "local", "json", "no", "session", "nosession"]
+        );
+
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "toolcall",
+                "STANDING: improve the goose-local swarm workers' tool-call reliability — don't blame the weak models.\nWrite deterministic repairs instead.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "observe",
+                "During a benchmark run, tick every five minutes and read the words.\nStart from the judge.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        store
+            .remember(
+                "fleet",
+                "The three node identifiers are load-bearing.\nNever reconfigure them.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        for i in 0..6 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i}: the weather.\nA run, a post, a model of rain."),
+                    &[],
+                    true,
+                )
+                .unwrap();
+        }
+
+        let blog = store.search("blog local models post write", None).unwrap();
+        let toolcall = blog
+            .iter()
+            .find(|h| h.entry.category == "toolcall")
+            .unwrap();
+        assert_eq!(toolcall.matched_terms, 3, "{toolcall:?}");
+        assert_eq!(
+            toolcall.name_terms, 1,
+            "only 'models' is in the name: {toolcall:?}"
+        );
+        assert!(!toolcall.named);
+
+        let bench = store.search("benchmark run start", None).unwrap();
+        assert_eq!(bench[0].entry.category, "observe");
+        assert_eq!(bench[0].name_terms, 2);
+        assert!(bench[0].named);
+
+        let fleet = store.search("identifiers load-bearing node", None).unwrap();
+        assert_eq!(fleet[0].entry.category, "fleet");
+        assert_eq!(
+            fleet[0].name_terms, 4,
+            "load and bearing reach the compound the request writes: {:?}",
+            fleet[0]
+        );
+        assert!(fleet[0].named);
     }
 
     #[test]
