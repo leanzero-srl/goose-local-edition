@@ -13,3 +13,12 @@ How do I start a benchmark run properly?
 Why must I never use killpg to reap the app servers?
 Which git identity do goose commits use?
 What are the LM Studio node names and why are the identifiers load-bearing?
+# tick 6 of the memory vigil (2026-09-06): requests a user asks WITHOUT the note's name; each has a
+# local note about it (swarm-resume-works-now, workhorse-shell-gotchas, macos-notarization-setup,
+# uncapped-runs-judge-decides, goose-mcp-tests-need-goose-crate, implement-dont-document).
+Is swarm resume still broken?
+The grep on the workhorse errors on a backslash-b inside a group — why?
+How do I release a notarized build of the desktop app?
+Can I add a two-hour wall-clock cap so a benchmark run stops on its own?
+Why won't cargo test -p goose-mcp build on its own?
+Should I write a design doc before implementing the fix?
