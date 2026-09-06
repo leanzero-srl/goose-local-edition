@@ -6,7 +6,7 @@ Write a blog post about local models.
 Can you list the files in this directory?
 How do I connect to the workhorse over SSH?
 Deploy the Forge app to production.
-What did Mihai say about hard-coded values?
+What was said about hard-coded values?
 # goose-project requests (judged against the project-local store of goose-written notes)
 What is the golden engine score and which commit is it?
 How do I start a benchmark run properly?
