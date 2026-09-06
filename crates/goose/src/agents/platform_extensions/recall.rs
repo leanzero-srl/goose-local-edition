@@ -582,16 +582,13 @@ mod tests {
                 "Research and draft articles about local models and Atlassian tools",
             ),
             skill(
-                "note-d90573",
-                "Axpo Atlassian operations: Jira issue triage over the REST API",
+                "tenant-a",
+                "Tenant A Atlassian operations: Jira issue triage over the REST API",
             ),
+            skill("tenant-b", "Tenant B Atlassian operations (Jira + JSM)"),
             skill(
-                "note-651f5d",
-                "Siemens Atlassian operations on se-dps (Jira + JSM)",
-            ),
-            skill(
-                "note-6799ed",
-                "E.ON Atlassian operations (Jira Cloud and Data Center)",
+                "tenant-c",
+                "Tenant C Atlassian operations (Jira Cloud and Data Center)",
             ),
         ];
         let terms = query_terms("create a jira issue through the rest api");
@@ -602,7 +599,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["note-d90573", "jira-api"],
+            vec!["jira-api", "tenant-a"],
             "'jira' is in four of five skills and weighs little; rest/api/issue decide"
         );
         assert!(relevant_skills(&skills, &query_terms("bake bread")).is_empty());
@@ -668,8 +665,8 @@ mod tests {
         );
         let skills = vec![
             jql,
-            skill("note-d90573", "Axpo Atlassian operations"),
-            skill("note-6799ed", "E.ON Atlassian operations"),
+            skill("note-d90573", "Tenant A Atlassian operations"),
+            skill("note-6799ed", "Tenant C Atlassian operations"),
         ];
         let names: Vec<&str> = relevant_skills(&skills, &query_terms("write a jql query"))
             .into_iter()

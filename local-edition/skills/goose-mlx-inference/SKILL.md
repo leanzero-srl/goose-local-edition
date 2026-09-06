@@ -13,7 +13,7 @@ workload: the SWARM (N concurrent long-context tool-calling agents). Plan of rec
 
 ## Hard rules (Mihai's, verbatim intent)
 - **Git identity on this repo is ALWAYS leanzero: `leanzero.srl <office@leanzero.net>`** (repo-local
-  `git config`; set on 2026-08-30, matches the other LeanZero repos). Never the personallingus or
+  `git config`; set on 2026-08-30, matches the other LeanZero repos). Never the client or
   personal identities.
 - LM Studio / LM Link / `lms` surfaces are NEVER removed or reconfigured. The engine is additive.
 - Tests use **qwen3.5-9b 4-bit only, freshly downloaded through our own path**. The fleet's 27B is
