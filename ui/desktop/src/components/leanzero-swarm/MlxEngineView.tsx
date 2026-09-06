@@ -78,7 +78,7 @@ import {
 } from '../../acp/mlx-engine';
 import { DownloadProgressRow, formatCount, formatDate, formatGb } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
-import { INPUT, StudioSelect, ToneBanner, type StudioSelectOption } from './studio';
+import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
@@ -148,11 +148,21 @@ export const CONTEXT_LIMIT_FIELD: NumericFieldSpec = {
   integer: true,
 };
 
-export type NumericDrafts = Record<NumericSettingKey, string>;
+/**
+ * The serving-lane overrides, drafted as text like the numbers so one drafts map carries the
+ * whole profile: `speculative` is '' (auto) | 'mtp' | 'off'; `adapterPath` is the directory or
+ * ''; `textOnly` is '' (auto = text lane) | 'true' | 'false'.
+ */
+export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
+export type ProfileDraftKey = NumericSettingKey | LaneSettingKey;
+
+export type NumericDrafts = Record<ProfileDraftKey, string>;
 
 const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIELD].map(
   (f) => f.key
 );
+const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
+const PROFILE_KEYS: ProfileDraftKey[] = [...NUMERIC_KEYS, ...LANE_KEYS];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
   const drafts = {} as NumericDrafts;
@@ -160,6 +170,9 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
     const value = profile?.[key];
     drafts[key] = value == null ? '' : String(value);
   }
+  drafts.speculative = profile?.speculative ?? '';
+  drafts.adapterPath = profile?.adapterPath ?? '';
+  drafts.textOnly = profile?.textOnly == null ? '' : String(profile.textOnly);
   return drafts;
 }
 
@@ -173,11 +186,17 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
     if (Number.isNaN(n)) continue;
     profile[key] = n;
   }
+  const speculative = drafts.speculative.trim();
+  if (speculative === 'mtp' || speculative === 'off') profile.speculative = speculative;
+  const adapterPath = drafts.adapterPath.trim();
+  if (adapterPath !== '') profile.adapterPath = adapterPath;
+  if (drafts.textOnly === 'true') profile.textOnly = true;
+  else if (drafts.textOnly === 'false') profile.textOnly = false;
   return profile;
 }
 
 export function profileHasValues(profile: MlxModelProfile): boolean {
-  return NUMERIC_KEYS.some((key) => profile[key] != null);
+  return PROFILE_KEYS.some((key) => profile[key] != null);
 }
 
 /**
@@ -216,7 +235,7 @@ export function settingsWithProfile(
 }
 
 export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
-  return NUMERIC_KEYS.every((key) => a[key].trim() === b[key].trim());
+  return PROFILE_KEYS.every((key) => a[key].trim() === b[key].trim());
 }
 
 // ---------------------------------------------------------------------------
@@ -818,7 +837,7 @@ interface SamplingSectionProps {
   onSelectModel: (id: string | null) => void;
   drafts: NumericDrafts | null;
   savedDrafts: NumericDrafts | null;
-  setDraft: (key: NumericSettingKey, text: string) => void;
+  setDraft: (key: ProfileDraftKey, text: string) => void;
   onSaveSettings: () => void;
   saving: boolean;
   saveError: string | null;
@@ -921,16 +940,132 @@ function SamplingSection(props: SamplingSectionProps) {
                 text={drafts.contextLimit}
                 onText={(v) => setDraft('contextLimit', v)}
               />
+              <LaneFields drafts={drafts} setDraft={setDraft} />
             </div>
           )}
           <p className={TYPE.meta}>
             A blank field sends nothing — the engine keeps its own default. Profiles apply at mount,
             per model: saving never touches a live process, and the status reports restart required
-            until the mounted model is remounted.
+            until the mounted model is remounted. The serving lane is read from the model folder at
+            mount (an MTP head, a vision config), so a re-download can flip restart required on its
+            own.
           </p>
         </div>
       </Panel>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The serving-lane rows of the profile form: what the engine does with the checkpoint's own
+// extras. Auto is the honest default everywhere — the model folder decides, the profile
+// overrides. Same grid as NumericField so the form reads as one table.
+// ---------------------------------------------------------------------------
+
+interface SpeculativeOption extends StudioSelectOption {
+  value: '' | 'mtp' | 'off';
+}
+
+const SPECULATIVE_OPTIONS: readonly SpeculativeOption[] = [
+  { value: '', label: 'Auto — MTP when the model folder has mtp.safetensors' },
+  { value: 'mtp', label: 'MTP — demand it (skipped with a warning if the head is missing)' },
+  { value: 'off', label: 'Off — never speculate' },
+];
+
+function LaneRow({
+  label,
+  note,
+  children,
+}: {
+  label: string;
+  note: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cx(
+        'grid grid-cols-[minmax(160px,240px)_1fr] items-center gap-4 border-t py-2',
+        SURFACE.hairline
+      )}
+    >
+      <span className={cx('truncate', TYPE.body)}>{label}</span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+        <span className={TYPE.meta}>{note}</span>
+      </div>
+    </div>
+  );
+}
+
+function LaneFields({
+  drafts,
+  setDraft,
+}: {
+  drafts: NumericDrafts;
+  setDraft: (key: ProfileDraftKey, text: string) => void;
+}) {
+  const speculative =
+    SPECULATIVE_OPTIONS.find((o) => o.value === drafts.speculative.trim()) ??
+    SPECULATIVE_OPTIONS[0];
+  const textLane = drafts.textOnly.trim() !== 'false';
+  const adapterSet = drafts.adapterPath.trim() !== '';
+  return (
+    <>
+      <LaneRow
+        label="Speculative decoding"
+        note="MTP drafts 3 tokens per step from the head shipped next to the trunk; the config names the model folder because the engine resolves the head from it."
+      >
+        <div className="w-full max-w-md">
+          <StudioSelect
+            options={SPECULATIVE_OPTIONS}
+            value={speculative}
+            onChange={(o) => setDraft('speculative', o?.value ?? '')}
+            placeholder="Auto"
+            aria-label="Speculative decoding"
+          />
+        </div>
+      </LaneRow>
+      <LaneRow
+        label="LoRA adapter folder"
+        note="An mlx-lm adapter (adapter_config.json + adapters.safetensors) fused into the model at load. A folder missing either file fails the mount and says which."
+      >
+        <input
+          type="text"
+          value={drafts.adapterPath}
+          onChange={(e) => setDraft('adapterPath', e.target.value)}
+          placeholder="~/adapters/my-lora"
+          spellCheck={false}
+          className={cx(INPUT, 'w-full max-w-md font-mono')}
+          aria-label="LoRA adapter folder"
+        />
+        {adapterSet ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<X />}
+            onClick={() => setDraft('adapterPath', '')}
+            title="Clear — mount the bare checkpoint"
+          >
+            Clear
+          </Button>
+        ) : (
+          <span className={TYPE.meta} title="No adapter — the bare checkpoint is served">
+            none
+          </span>
+        )}
+      </LaneRow>
+      <LaneRow
+        label="Text-only lane"
+        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. Off: the engine may route it to its serialized single-request vision lane."
+      >
+        <StudioSwitch
+          checked={textLane}
+          onChange={(v) => setDraft('textOnly', v ? '' : 'false')}
+          aria-label="Text-only lane"
+        />
+        <span className={TYPE.meta}>{textLane ? 'on' : 'off — vision lane allowed'}</span>
+      </LaneRow>
+    </>
   );
 }
 
@@ -2509,7 +2644,7 @@ const MlxEngineView: React.FC = () => {
     samplingModelId != null ? (profileDrafts[samplingModelId] ?? savedDraftsForSelected) : null;
 
   const setProfileDraft = useCallback(
-    (key: NumericSettingKey, text: string) => {
+    (key: ProfileDraftKey, text: string) => {
       if (!samplingModelId || !settings) return;
       setProfileDrafts((prev) => {
         const base =

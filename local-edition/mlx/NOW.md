@@ -1,5 +1,13 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-06 — THE 27B ARTEFACT MOUNTS AS ITSELF: build_serve_command reads the model dir (MTP sidecar, --text-only, --adapter-path)
+Thread: the Qwen3.8-27B MTPLX artefact (qwen3_5, vision_config, mtp.safetensors beside the trunk) mounted as a plain text
+model. Landed: per-model `speculative`/`adapter_path`/`text_only` profile fields end to end (sidecar → DTO → Sampling tab), argv
+built from the directory at mount AND at every status poll (`--speculative-config {"method":"mtp","model":"<dir>","num_speculative_tokens":3}`,
+`--text-only`, validated `--adapter-path`); plain dirs byte-identical. OPEN: (a) live proof on the 27B through gates.py mount —
+no GPU this session; (b) `--adapter-path` is only in the fork's unpushed E1 commit 0f13ba7e, not in pin v0.13.4-lz.1 → push, tag,
+draw the pin (LEDGER 2026-09-06, QUEUED-FIXES #24). Existing installs on the 9B see restart_required once (argv gains --text-only).
+
 ## 2026-09-05 (afternoon) — PROVIDERS = {defined clouds, Swarm}; THE SWARM PROVIDER ROUTES CHAT TURNS TO IDLE NODES
 Owner: "in the providers we can only ever get the providers we have defined — the defined cloud ones and Swarm; if you
 choose Swarm you tap into the nodes automatically; the idle guard should let different sessions access idle nodes as they

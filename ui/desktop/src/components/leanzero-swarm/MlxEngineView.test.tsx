@@ -273,6 +273,49 @@ describe('settings write payloads', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The serving-lane overrides ride the same drafts: blank = auto (the model folder decides),
+// and only an explicit choice reaches the profile.
+// ---------------------------------------------------------------------------
+
+describe('serving-lane profile fields', () => {
+  it('a profile without lane fields drafts as auto and writes none back', () => {
+    const drafts = draftsFromProfile(SETTINGS.modelProfiles[QWEN]);
+    expect(drafts.speculative).toBe('');
+    expect(drafts.adapterPath).toBe('');
+    expect(drafts.textOnly).toBe('');
+    const profile = profileFromDrafts(drafts);
+    expect('speculative' in profile).toBe(false);
+    expect('adapterPath' in profile).toBe(false);
+    expect('textOnly' in profile).toBe(false);
+  });
+
+  it('explicit lane choices round-trip and count as values', () => {
+    const drafts = draftsFromProfile({
+      speculative: 'off',
+      adapterPath: '~/lora',
+      textOnly: false,
+    });
+    expect(drafts.speculative).toBe('off');
+    expect(drafts.adapterPath).toBe('~/lora');
+    expect(drafts.textOnly).toBe('false');
+    const profile = profileFromDrafts(drafts);
+    expect(profile).toEqual({ speculative: 'off', adapterPath: '~/lora', textOnly: false });
+    expect(profileHasValues(profile)).toBe(true);
+    // A lane-only profile survives settingsWithProfile (it is not "all blank").
+    const payload = settingsWithProfile(SETTINGS, HALF, drafts);
+    expect(payload.modelProfiles[HALF]).toEqual(profile);
+  });
+
+  it('an unknown speculative draft and a whitespace adapter path are dropped, not sent', () => {
+    const drafts = draftsFromProfile(undefined);
+    drafts.speculative = 'dflash';
+    drafts.adapterPath = '   ';
+    drafts.textOnly = 'maybe';
+    expect(profileHasValues(profileFromDrafts(drafts))).toBe(false);
+  });
+});
+
 describe('formatGb', () => {
   it('shows sizes in GB with an honest unknown for zero', () => {
     expect(formatGb(17 * GB)).toBe('17 GB');
@@ -779,6 +822,59 @@ describe('MlxEngineView sampling tab', () => {
       expect(screen.getByLabelText('Temperature')).toHaveValue(0.2);
     });
     expect(screen.getByText('unsaved')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('the serving-lane rows render as auto and Save carries only the explicit choices', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Temperature')).toHaveValue(0);
+    });
+    // Auto everywhere: the select shows Auto, the switch is on, no adapter.
+    expect(screen.getByRole('combobox', { name: 'Speculative decoding' })).toHaveTextContent(
+      /^Auto/
+    );
+    expect(screen.getByRole('switch', { name: 'Text-only lane' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(screen.getByLabelText('LoRA adapter folder')).toHaveValue('');
+    expect(screen.queryByText('unsaved')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('combobox', { name: 'Speculative decoding' }));
+    await userEvent.click(await screen.findByRole('option', { name: /^Off/ }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Text-only lane' }));
+    expect(screen.getByRole('switch', { name: 'Text-only lane' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    );
+    await userEvent.type(screen.getByLabelText('LoRA adapter folder'), '~/lora');
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
+    });
+    const payload = mockSettingsUpdate.mock.calls[0][0] as MlxEngineSettings;
+    expect(payload.modelProfiles[QWEN]).toEqual({
+      temperature: 0,
+      topK: 40,
+      speculative: 'off',
+      adapterPath: '~/lora',
+      textOnly: false,
+    });
+
+    // Switching the lane back on drops the key rather than sending true — auto and true
+    // are the same argv, and absent is the honest form.
+    await userEvent.click(screen.getByRole('switch', { name: 'Text-only lane' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(mockSettingsUpdate).toHaveBeenCalledTimes(2);
+    });
+    const second = mockSettingsUpdate.mock.calls[1][0] as MlxEngineSettings;
+    expect('textOnly' in second.modelProfiles[QWEN]).toBe(false);
+    expect(second.modelProfiles[QWEN].speculative).toBe('off');
     unmount();
   });
 

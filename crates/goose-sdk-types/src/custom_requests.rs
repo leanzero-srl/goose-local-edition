@@ -2260,6 +2260,18 @@ pub struct MlxModelProfileDto {
     pub frequency_penalty: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u32>,
+    /// Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
+    /// model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speculative: Option<String>,
+    /// Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.
+    /// The mount fails, naming the missing file, when it is not one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_path: Option<String>,
+    /// `false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins
+    /// the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_only: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]

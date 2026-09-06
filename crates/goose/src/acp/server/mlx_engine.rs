@@ -133,6 +133,9 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
         presence_penalty: profile.presence_penalty,
         frequency_penalty: profile.frequency_penalty,
         context_limit: profile.context_limit,
+        speculative: profile.speculative,
+        adapter_path: profile.adapter_path,
+        text_only: profile.text_only,
     }
 }
 
@@ -146,6 +149,9 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
         presence_penalty: dto.presence_penalty,
         frequency_penalty: dto.frequency_penalty,
         context_limit: dto.context_limit,
+        speculative: dto.speculative,
+        adapter_path: dto.adapter_path,
+        text_only: dto.text_only,
     }
 }
 

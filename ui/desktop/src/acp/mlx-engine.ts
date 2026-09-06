@@ -64,6 +64,21 @@ export interface MlxModelProfile {
   presencePenalty?: number;
   frequencyPenalty?: number;
   contextLimit?: number;
+  /**
+   * Speculative decoding: 'mtp' demands the MTP head (skipped with a warning when the model
+   * dir has no mtp.safetensors), 'off' refuses it; absent = auto (on when the head exists).
+   */
+  speculative?: 'mtp' | 'off';
+  /**
+   * Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.
+   * The mount fails, naming the missing file, when it is not one.
+   */
+  adapterPath?: string;
+  /**
+   * false lets a vision-bearing checkpoint take the engine's MLLM lane; absent/true pins the
+   * text lane (`--text-only`). No effect on a checkpoint that declares no vision.
+   */
+  textOnly?: boolean;
 }
 
 export interface MlxEngineSettings {

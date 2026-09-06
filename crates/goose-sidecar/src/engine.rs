@@ -7,7 +7,7 @@
 //! request count — and never fabricates any of them.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
@@ -44,11 +44,28 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[[
     "rapid-mlx",
 ]];
 
+/// The MTP head file an MTPLX-style artefact ships next to its trunk shards. Its presence
+/// is the whole MTP auto-detection: the engine's injector probes exactly this name first.
+pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
+
+/// Draft depth handed to the engine's MTP speculative decoder (`num_speculative_tokens`).
+/// K=3 is the engine's own intended default for the EV auto-K controller.
+pub const MTP_SPECULATIVE_TOKENS: u32 = 3; // measured: Rapid-MLX cli.py's own MTP default ("K=1 carries draft overhead with no net speedup; default to K=3")
+
+/// The two files an mlx-lm LoRA/DoRA adapter directory must hold (`mlx_lm.lora --train`
+/// writes both). The engine refuses `--adapter-path` without them (exit 2) — we refuse
+/// earlier, at mount, with the missing names in the error.
+pub const ADAPTER_REQUIRED_FILES: [&str; 2] = ["adapter_config.json", "adapters.safetensors"];
+
 /// Per-model sampling and context settings. Sampling is per MODEL, not per engine:
 /// each mounted model pulls its own profile from `EngineSettings::model_profiles`.
 /// `context_limit` is profile state for goose's own context bookkeeping — Rapid-MLX
 /// 0.13.1 has no context-length serve flag (`--max-tokens` caps generation, a
 /// different knob), so it emits no argv.
+///
+/// The three serving-lane fields are OVERRIDES over what the model directory itself says
+/// (`inspect_model_dir`): `None` means "auto" everywhere, so a persisted profile that
+/// predates them keeps loading and keeps mounting the way the checkpoint dictates.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModelProfile {
@@ -60,6 +77,17 @@ pub struct ModelProfile {
     pub presence_penalty: Option<f64>,
     pub frequency_penalty: Option<f64>,
     pub context_limit: Option<u32>,
+    /// `"mtp"` demands MTP speculative decoding (skipped with a warning when the directory
+    /// has no `mtp.safetensors`), `"off"` refuses it, `None` = auto (on when the head file
+    /// is there).
+    pub speculative: Option<String>,
+    /// Directory of an mlx-lm LoRA/DoRA adapter to fuse at load (`--adapter-path`);
+    /// `~` expands. Validated at argv build: missing files fail the mount.
+    pub adapter_path: Option<String>,
+    /// `Some(false)` lets a vision-bearing checkpoint take the engine's MLLM lane;
+    /// `None`/`Some(true)` pin it to the text lane (`--text-only`). No effect on a
+    /// checkpoint whose config.json declares no vision.
+    pub text_only: Option<bool>,
 }
 
 impl ModelProfile {
@@ -153,6 +181,7 @@ impl EngineSettings {
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
             context_limit: self.context_limit,
+            ..Default::default()
         };
         if flats.is_empty() {
             return false;
@@ -205,7 +234,107 @@ pub fn served_model_id(settings: &EngineSettings, model_id: &str) -> String {
         .unwrap_or_else(|| model_id.to_string())
 }
 
-pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<String> {
+/// What the model directory itself says about how it must be served. Read at argv build
+/// time — not persisted — so a re-download (an MTP head appearing, a vision-config
+/// checkpoint replacing a text one) changes the argv, and with it `restart_required`,
+/// without anyone editing a setting.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelDirFacts {
+    /// `<dir>/mtp.safetensors` is a file.
+    pub has_mtp_sidecar: bool,
+    /// config.json declares `vision_config`, or is a `qwen3_5` `*ForConditionalGeneration`
+    /// checkpoint — either way the engine's auto-detection may route it to the serialized
+    /// single-request MLLM lane unless `--text-only` pins the text lane.
+    pub vision_bearing: bool,
+}
+
+pub fn inspect_model_dir(dir: &Path) -> ModelDirFacts {
+    let has_mtp_sidecar = dir.join(MTP_SIDECAR_FILE).is_file();
+    let vision_bearing = match std::fs::read(dir.join("config.json")) {
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(config) => config_declares_vision(&config),
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "config.json is not JSON; assuming a text-only checkpoint");
+                false
+            }
+        },
+        Err(_) => false,
+    };
+    ModelDirFacts {
+        has_mtp_sidecar,
+        vision_bearing,
+    }
+}
+
+fn config_declares_vision(config: &serde_json::Value) -> bool {
+    if config.get("vision_config").is_some() {
+        return true;
+    }
+    let qwen3_5 = config.get("model_type").and_then(|v| v.as_str()) == Some("qwen3_5");
+    let conditional_generation = config
+        .get("architectures")
+        .and_then(|v| v.as_array())
+        .map(|archs| {
+            archs
+                .iter()
+                .filter_map(|a| a.as_str())
+                .any(|a| a.contains("ForConditionalGeneration"))
+        })
+        .unwrap_or(false);
+    qwen3_5 && conditional_generation
+}
+
+/// The `--speculative-config` value for an MTP head living in `model_dir`. The `model`
+/// field is REQUIRED: the engine resolves the MTP sidecar from it (a directory is probed
+/// for `mtp.safetensors` first); a bare `{"method":"mtp"}` on a local directory reaches
+/// the injector with `sidecar=None` and hard-fails at boot.
+fn mtp_speculative_config(model_dir: &Path) -> String {
+    let dir = if model_dir.is_absolute() {
+        model_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(model_dir))
+            .unwrap_or_else(|_| model_dir.to_path_buf())
+    };
+    let dir_json = serde_json::to_string(&dir.to_string_lossy()).expect("a string serializes");
+    format!(
+        r#"{{"method":"mtp","model":{dir_json},"num_speculative_tokens":{MTP_SPECULATIVE_TOKENS}}}"#
+    )
+}
+
+/// The adapter directory the profile names, expanded and PROVEN to be an mlx-lm adapter
+/// (both required files present). A missing directory or file is an error that names it —
+/// mount refuses rather than launching an engine that exits 2 on the same check.
+fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let dir = expand_tilde(raw);
+    ensure!(
+        dir.is_dir(),
+        "adapter_path '{}' is not a directory",
+        dir.display()
+    );
+    let missing: Vec<&str> = ADAPTER_REQUIRED_FILES
+        .iter()
+        .copied()
+        .filter(|name| !dir.join(name).is_file())
+        .collect();
+    ensure!(
+        missing.is_empty(),
+        "adapter_path '{}' is not an mlx-lm adapter directory: missing {} (mlx_lm.lora --train writes both {})",
+        dir.display(),
+        missing.join(" and "),
+        ADAPTER_REQUIRED_FILES.join(" + ")
+    );
+    Ok(Some(dir))
+}
+
+/// The engine argv for `model_id` under `settings`, read together with the model
+/// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
+/// that is not one — every other fact degrades to "flag omitted" with a warning.
+pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<Vec<String>> {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
     let mut argv = settings.spawn_command.clone();
     argv.extend([
@@ -242,7 +371,48 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
         argv.push("--default-top-k".to_string());
         argv.push(top_k.to_string());
     }
-    argv
+
+    let facts = inspect_model_dir(&model_path);
+    let speculative = profile
+        .speculative
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase());
+    let want_mtp = match speculative.as_deref() {
+        Some("off") => false,
+        Some("mtp") => {
+            if !facts.has_mtp_sidecar {
+                tracing::warn!(
+                    model_id,
+                    dir = %model_path.display(),
+                    "profile asks for MTP but {MTP_SIDECAR_FILE} is missing; serving without speculative decoding"
+                );
+            }
+            facts.has_mtp_sidecar
+        }
+        None => facts.has_mtp_sidecar,
+        Some(other) => {
+            tracing::warn!(
+                model_id,
+                value = other,
+                "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
+            );
+            facts.has_mtp_sidecar
+        }
+    };
+    if want_mtp {
+        argv.push("--speculative-config".to_string());
+        argv.push(mtp_speculative_config(&model_path));
+    }
+    if facts.vision_bearing && profile.text_only.unwrap_or(true) {
+        argv.push("--text-only".to_string());
+    }
+    if let Some(raw) = profile.adapter_path.as_deref() {
+        if let Some(dir) = validated_adapter_dir(raw)? {
+            argv.push("--adapter-path".to_string());
+            argv.push(dir.to_string_lossy().into_owned());
+        }
+    }
+    Ok(argv)
 }
 
 /// `mount` refuses to start an engine on a port that something this manager does not
@@ -429,7 +599,7 @@ impl MlxEngineManager {
             bail!("memory gate BLOCK for '{model_id}': {block_message}");
         }
 
-        let argv = build_serve_command(&settings, model_id);
+        let argv = build_serve_command(&settings, model_id)?;
         let mut state = self.state.lock().await;
         if let ManagerState::Mounting { model_id: current } = &*state {
             bail!("mount already in progress for '{current}'");
@@ -614,7 +784,18 @@ impl MlxEngineManager {
         }
         if let Some((running_model, running_argv)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
-            status.restart_required = build_serve_command(&settings, desired_model) != running_argv;
+            // The desired argv is rebuilt from the profile AND the model directory each poll,
+            // so an MTP head that arrived, a vision checkpoint swapped in, or an adapter dir
+            // that vanished all flip this. An adapter the profile names but that no longer
+            // validates cannot be mounted as configured — that IS a restart-required fact,
+            // and the remount says exactly what is missing.
+            status.restart_required = match build_serve_command(&settings, desired_model) {
+                Ok(desired) => desired != running_argv,
+                Err(e) => {
+                    tracing::warn!(model = desired_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
+                    true
+                }
+            };
             let base_url = status.base_url.as_deref().expect("set for running state");
             let (model_info, active_requests) = tokio::join!(
                 self.probe_model_info(base_url),
@@ -776,7 +957,7 @@ mod tests {
             served_model_name: Some("workhorse-qwen3.5-9b-4bit-mlx".to_string()),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
+        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
         let pos = argv
             .iter()
             .position(|a| a == "--served-model-name")
@@ -797,6 +978,7 @@ mod tests {
             presence_penalty: Some(0.5),
             frequency_penalty: Some(0.25),
             context_limit: Some(32768),
+            ..Default::default()
         }
     }
 
@@ -811,7 +993,7 @@ mod tests {
             )]),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
+        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
         assert_eq!(
             argv,
             vec![
@@ -849,7 +1031,7 @@ mod tests {
     #[test]
     fn serve_command_omits_unset_sampling_flags_and_expands_tilde() {
         let settings = EngineSettings::default();
-        let argv = build_serve_command(&settings, "pub/model");
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
         assert!(
             argv.iter().all(|a| !a.starts_with("--default-")),
             "absent profile must emit no sampling flags: {argv:?}"
@@ -870,7 +1052,7 @@ mod tests {
             presence_penalty: Some(1.2),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "pub/model");
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
         assert!(
             argv.iter().all(|a| !a.starts_with("--default-")),
             "legacy flats must not reach argv — profiles are the source of truth: {argv:?}"
@@ -899,8 +1081,8 @@ mod tests {
             ]),
             ..Default::default()
         };
-        let alpha = build_serve_command(&settings, "pub/alpha");
-        let beta = build_serve_command(&settings, "pub/beta");
+        let alpha = build_serve_command(&settings, "pub/alpha").unwrap();
+        let beta = build_serve_command(&settings, "pub/beta").unwrap();
 
         let flag_value = |argv: &[String], flag: &str| {
             argv.iter()
@@ -925,6 +1107,254 @@ mod tests {
         assert_eq!(flag_value(&beta, "--default-top-k"), None);
     }
 
+    // -----------------------------------------------------------------------
+    // Serving-lane flags read from the model DIRECTORY: MTP head, vision config, adapter.
+    // -----------------------------------------------------------------------
+
+    /// A models dir holding `pub/model` with the given files; `config.json` is always
+    /// written (list_local_models requires it) with the given body.
+    fn model_dir_with(
+        config_json: &str,
+        extra_files: &[&str],
+    ) -> (tempfile::TempDir, EngineSettings) {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("pub").join("model");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), config_json).unwrap();
+        for name in extra_files {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let settings = EngineSettings {
+            models_dir: root.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        (root, settings)
+    }
+
+    /// The exact config.json shape of mlx-community/Qwen3.5-9B-MLX-4bit and the
+    /// lmstudio-community Qwen3.8-27B-MLX-8bit artefact (read 2026-09-06): qwen3_5,
+    /// Qwen3_5ForConditionalGeneration, a vision_config block.
+    const QWEN3_5_VISION_CONFIG: &str = r#"{"model_type":"qwen3_5","architectures":["Qwen3_5ForConditionalGeneration"],"vision_config":{"depth":27},"text_config":{"hidden_size":4096}}"#;
+    const PLAIN_TEXT_CONFIG: &str =
+        r#"{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"]}"#;
+
+    fn flag_value(argv: &[String], flag: &str) -> Option<String> {
+        argv.iter()
+            .position(|a| a == flag)
+            .map(|i| argv[i + 1].clone())
+    }
+
+    #[test]
+    fn mtp_head_plus_vision_config_yields_speculative_config_with_the_dir_and_text_only() {
+        let (root, settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[MTP_SIDECAR_FILE]);
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let dir = root.path().join("pub").join("model");
+        let expected_json = format!(
+            r#"{{"method":"mtp","model":"{}","num_speculative_tokens":3}}"#,
+            dir.display()
+        );
+        assert_eq!(
+            flag_value(&argv, "--speculative-config"),
+            Some(expected_json.clone()),
+            "{argv:?}"
+        );
+        // The JSON is one argv element (no shell — the JSON's quotes are literal).
+        let json: serde_json::Value = serde_json::from_str(&expected_json).unwrap();
+        assert_eq!(json["method"], "mtp");
+        assert_eq!(json["model"], dir.to_string_lossy().as_ref());
+        assert_eq!(json["num_speculative_tokens"], 3);
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        assert!(!argv.iter().any(|a| a == "--adapter-path"), "{argv:?}");
+        // The lane flags come AFTER the base argv, which is unchanged.
+        let base = build_serve_command(
+            &EngineSettings {
+                models_dir: settings.models_dir.clone(),
+                ..Default::default()
+            },
+            "pub/model",
+        )
+        .unwrap();
+        assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
+        assert_eq!(
+            &argv[13..],
+            &[
+                "--speculative-config".to_string(),
+                expected_json,
+                "--text-only".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn speculative_off_suppresses_mtp_even_with_the_head_present() {
+        let (_root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[MTP_SIDECAR_FILE]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                speculative: Some("off".to_string()),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn speculative_mtp_without_the_head_file_is_skipped_not_fatal() {
+        let (_root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                speculative: Some("mtp".to_string()),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+    }
+
+    #[test]
+    fn text_only_false_lets_a_vision_checkpoint_take_the_mllm_lane() {
+        let (_root, mut settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                text_only: Some(false),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn a_qwen3_5_conditional_generation_config_without_vision_config_still_pins_the_text_lane() {
+        let cfg = r#"{"model_type":"qwen3_5","architectures":["Qwen3_5ForConditionalGeneration"]}"#;
+        let (_root, settings) = model_dir_with(cfg, &[]);
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert_eq!(
+            facts,
+            ModelDirFacts {
+                has_mtp_sidecar: false,
+                vision_bearing: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_valid_adapter_dir_reaches_argv_expanded() {
+        let (root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        let adapter = root.path().join("lora");
+        std::fs::create_dir_all(&adapter).unwrap();
+        for name in ADAPTER_REQUIRED_FILES {
+            std::fs::write(adapter.join(name), b"x").unwrap();
+        }
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                adapter_path: Some(adapter.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert_eq!(
+            flag_value(&argv, "--adapter-path"),
+            Some(adapter.to_string_lossy().into_owned()),
+            "{argv:?}"
+        );
+    }
+
+    #[test]
+    fn an_adapter_dir_missing_its_files_fails_the_build_naming_them() {
+        let (root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        let adapter = root.path().join("lora");
+        std::fs::create_dir_all(&adapter).unwrap();
+        std::fs::write(adapter.join("adapter_config.json"), b"{}").unwrap();
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                adapter_path: Some(adapter.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        );
+        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("adapters.safetensors"), "{msg}");
+        assert!(!msg.contains("missing adapter_config.json"), "{msg}");
+
+        let missing_dir = root.path().join("nope");
+        settings
+            .model_profiles
+            .get_mut("pub/model")
+            .unwrap()
+            .adapter_path = Some(missing_dir.to_string_lossy().into_owned());
+        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        assert!(format!("{err:#}").contains("not a directory"), "{err:#}");
+
+        // A blank adapter path is "none", never an error.
+        settings
+            .model_profiles
+            .get_mut("pub/model")
+            .unwrap()
+            .adapter_path = Some("   ".to_string());
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(!argv.iter().any(|a| a == "--adapter-path"), "{argv:?}");
+    }
+
+    /// A plain text checkpoint (no MTP head, no vision config, no adapter) mounts with the
+    /// argv this crate produced before the lane flags existed — byte for byte.
+    #[test]
+    fn a_plain_model_dir_keeps_the_pre_lane_argv_byte_identical() {
+        let (root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let model_path = root.path().join("pub").join("model");
+        assert_eq!(
+            argv,
+            vec![
+                "uvx",
+                "--from",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
+                "rapid-mlx",
+                "serve",
+                &model_path.to_string_lossy(),
+                "--port",
+                "8090",
+                "--served-model-name",
+                "pub/model",
+                "--enable-prefix-cache",
+                "--max-concurrent-requests",
+                "8",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_persisted_profile_without_the_lane_fields_loads_as_auto() {
+        let json = r#"{"temperature":0.7,"top_k":40}"#;
+        let profile: ModelProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.speculative, None);
+        assert_eq!(profile.adapter_path, None);
+        assert_eq!(profile.text_only, None);
+        assert_eq!(profile.temperature, Some(0.7));
+        let full: ModelProfile = serde_json::from_str(
+            r#"{"speculative":"mtp","adapter_path":"~/lora","text_only":false}"#,
+        )
+        .unwrap();
+        assert_eq!(full.speculative.as_deref(), Some("mtp"));
+        assert_eq!(full.adapter_path.as_deref(), Some("~/lora"));
+        assert_eq!(full.text_only, Some(false));
+        assert!(!full.is_empty());
+    }
+
     /// `status()` computes `restart_required = build_serve_command(&settings, mounted) != running_argv`;
     /// this test pins that comparison's per-model semantics: editing the MOUNTED model's
     /// profile changes its argv (flips restart_required), editing a DIFFERENT model's
@@ -943,7 +1373,7 @@ mod tests {
             )]),
             ..Default::default()
         };
-        let running_argv = build_serve_command(&settings, mounted);
+        let running_argv = build_serve_command(&settings, mounted).unwrap();
 
         settings.model_profiles.insert(
             "pub/other".to_string(),
@@ -954,7 +1384,7 @@ mod tests {
             },
         );
         assert_eq!(
-            build_serve_command(&settings, mounted),
+            build_serve_command(&settings, mounted).unwrap(),
             running_argv,
             "a different model's profile edit must not require a restart"
         );
@@ -965,7 +1395,7 @@ mod tests {
             .unwrap()
             .temperature = Some(0.9);
         assert_ne!(
-            build_serve_command(&settings, mounted),
+            build_serve_command(&settings, mounted).unwrap(),
             running_argv,
             "the mounted model's profile edit must require a restart"
         );
@@ -1024,7 +1454,7 @@ mod tests {
         let profile = &settings.model_profiles["mlx-community/Qwen3.5-9B-MLX-4bit"];
         assert_eq!(profile.presence_penalty, Some(1.2));
 
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
+        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
         let pos = argv
             .iter()
             .position(|a| a == "--default-presence-penalty")
