@@ -21,6 +21,12 @@
 > scratchpad, pending, daily log), New-agent dialog (writes agent.yaml). main.ts IPC `agent-work-*` spawns
 > `goose swarm agent run` per desk (per-pid stop, never a group kill). Docs: documentation/docs/guides/agent-work.md;
 > example: evals/agent-work/examples/axpo.agent.yaml.
+> VERIFIED SINCE (0244f6169): the no-fleet path live — `goose swarm agent init/check/run --once` on a fresh desk with
+> LM Studio answering 401 and the sidecar down: fleet resolved to the configured sidecar device, the orchestrator's call came
+> back as the agent loop's transport text, and the tick now ends `failed` naming the node and the error (the first cut had
+> laundered it into "answered without a parseable close", outcome done); lock released, events in order. Proof: goose-cli
+> agent_work 19 tests, development_gates 11/11 (swarm.rs 33,922; zero default-on-absence calls in the module), clippy clean,
+> desktop typecheck + 226 test files / 1931 tests green. Commits 99bd9a91e → 97f40dc2a → 0244f6169.
 > NOT DONE / UNVERIFIED (the workhorse is fine-tuning; no model run, no app launch): (1) a real tick on a local node —
 > `goose swarm agent tick <dir>` on a desk dir with a poll script; read `.swarm/agent/run.jsonl` and the lanes' words;
 > (2) the desktop view opened live (typecheck + 12 jsdom tests only); (3) the structured-output parse of ORIENT/SYNTHESIS
