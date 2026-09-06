@@ -29,7 +29,7 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
+    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.2",
     "rapid-mlx",
 ];
 
@@ -37,12 +37,20 @@ pub const ENGINE_LAUNCHER: [&str; 4] = [
 /// `spawn_command` equal to one of these was never chosen by the owner — it is the default
 /// the app wrote on first save — so it follows the current default (`migrate_launcher`).
 /// A launcher NOT in this list is the owner's own and is never touched.
-pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[[
-    "uvx",
-    "--from",
-    "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
-    "rapid-mlx",
-]];
+pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
+    [
+        "uvx",
+        "--from",
+        "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
+        "rapid-mlx",
+    ],
+];
 
 /// The MTP head file an MTPLX-style artefact ships next to its trunk shards. Its presence
 /// is the whole MTP auto-detection: the engine's injector probes exactly this name first.
@@ -999,7 +1007,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.2",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -1322,7 +1330,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.2",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),

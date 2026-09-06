@@ -485,3 +485,4 @@ path, and the pair MERGES (no mask, no halo gap between them).
   `studio.tsx` primitives want promoting into `lz/`; FLEET/nodes/peers want the DataTable;
   meshPollFailures/lastPollError are not in the status DTO; two benign zod eval CSP violations.
 - `icon.ico` (Windows) is still the old goose art — deliberate, Windows is not a target.
+- 2026-09-06 10:18: engine pin v0.13.4-lz.2 (adapter-path); QUEUED-FIXES #24 done; next proof = live mount of Qwen3.8-27B-Forge-Q8-mlx with mtp.safetensors via gates.py.
