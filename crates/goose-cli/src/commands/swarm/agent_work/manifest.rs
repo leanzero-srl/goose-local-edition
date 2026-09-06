@@ -189,8 +189,8 @@ impl AgentManifest {
         let path = Self::path_in(dir);
         let text = std::fs::read_to_string(&path)
             .map_err(|e| anyhow!("reading {}: {e}", path.display()))?;
-        let m: Self = serde_yaml::from_str(&text)
-            .map_err(|e| anyhow!("parsing {}: {e}", path.display()))?;
+        let m: Self =
+            serde_yaml::from_str(&text).map_err(|e| anyhow!("parsing {}: {e}", path.display()))?;
         m.validate()?;
         Ok(m)
     }
@@ -210,11 +210,18 @@ impl AgentManifest {
         }
         super::window::parse_cadence(&self.cadence)
             .ok_or_else(|| anyhow!("agent.yaml: cadence `{}` is not <n>s|m|h", self.cadence))?;
-        self.timezone
-            .parse::<chrono_tz::Tz>()
-            .map_err(|_| anyhow!("agent.yaml: timezone `{}` is not an IANA zone", self.timezone))?;
-        super::window::parse_hm(&self.window.from)
-            .ok_or_else(|| anyhow!("agent.yaml: window.from `{}` is not HH:MM", self.window.from))?;
+        self.timezone.parse::<chrono_tz::Tz>().map_err(|_| {
+            anyhow!(
+                "agent.yaml: timezone `{}` is not an IANA zone",
+                self.timezone
+            )
+        })?;
+        super::window::parse_hm(&self.window.from).ok_or_else(|| {
+            anyhow!(
+                "agent.yaml: window.from `{}` is not HH:MM",
+                self.window.from
+            )
+        })?;
         super::window::parse_hm(&self.window.to)
             .ok_or_else(|| anyhow!("agent.yaml: window.to `{}` is not HH:MM", self.window.to))?;
         for d in &self.window.days {
@@ -227,7 +234,10 @@ impl AgentManifest {
                 return Err(anyhow!("agent.yaml: a surgeon has no name"));
             }
             if !seen.insert(s.name.clone()) {
-                return Err(anyhow!("agent.yaml: surgeon `{}` is declared twice", s.name));
+                return Err(anyhow!(
+                    "agent.yaml: surgeon `{}` is declared twice",
+                    s.name
+                ));
             }
         }
         if let Some(p) = &self.post {

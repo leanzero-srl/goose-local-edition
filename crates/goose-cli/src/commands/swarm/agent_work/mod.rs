@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use manifest::AgentManifest;
-use store::{now_rfc3339, RuntimeDir};
+use store::{now_rfc3339, DeskState, RuntimeDir};
 use window::DeskClock;
 
 #[derive(clap::Subcommand, Debug)]
@@ -65,7 +65,10 @@ fn init(dir: &std::path::Path, name: Option<&str>) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = AgentManifest::path_in(dir);
     if path.exists() {
-        return Err(anyhow!("{} already exists — edit it instead", path.display()));
+        return Err(anyhow!(
+            "{} already exists — edit it instead",
+            path.display()
+        ));
     }
     let name = name
         .map(|s| s.to_string())
@@ -101,15 +104,27 @@ fn check(dir: &std::path::Path) -> Result<()> {
     let now = Utc::now();
     println!("agent {} ({})", m.name, m.display_title());
     println!("  charter: {} chars", m.charter_text(dir).chars().count());
-    println!("  window: {} — open now: {}", clock.local_label(now), clock.is_open(now));
+    println!(
+        "  window: {} — open now: {}",
+        clock.local_label(now),
+        clock.is_open(now)
+    );
     let (next, why) = clock.next_tick(None, now);
     println!(
         "  next tick: {} ({why})",
-        next.map(|t| clock.local_label(t)).unwrap_or_else(|| "never".into())
+        next.map(|t| clock.local_label(t))
+            .unwrap_or_else(|| "never".into())
     );
     println!("  guard: {}", m.guard.len());
     println!("  poll: {}", m.poll.len());
-    println!("  surgeons: {}", m.surgeons.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
+    println!(
+        "  surgeons: {}",
+        m.surgeons
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     println!("  review lenses: {}", m.review.lenses.join(", "));
     println!(
         "  post: {}",
@@ -130,8 +145,12 @@ fn check(dir: &std::path::Path) -> Result<()> {
 fn status(dir: &std::path::Path) -> Result<()> {
     let rt = RuntimeDir::new(dir);
     match rt.read_state() {
-        None => println!("no state at {} — the desk has never run", rt.state_path().display()),
-        Some(st) => {
+        Err(e) => println!("state.json cannot be read: {e}"),
+        Ok(None) => println!(
+            "no state at {} — the desk has never run",
+            rt.state_path().display()
+        ),
+        Ok(Some(st)) => {
             println!("{}", serde_json::to_string_pretty(&st)?);
             if let Some(pid) = rt.lock_holder() {
                 println!("running: pid {pid}");
@@ -156,18 +175,24 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     rt.ensure()?;
     rt.take_lock()?;
     rt.clear_stop();
-    let run_id = format!("agent-{}-{}", manifest.name, Utc::now().format("%Y%m%d-%H%M%S"));
+    let run_id = format!(
+        "agent-{}-{}",
+        manifest.name,
+        Utc::now().format("%Y%m%d-%H%M%S")
+    );
     let sink: Arc<dyn goose_swarm::EventSink> =
         Arc::new(super::JsonlSink::new(&rt.events_path(), run_id.clone())?);
     let env = match &manifest.env_file {
-        Some(rel) => match scripts::load_env_file(&dir.join(rel)) {
-            Ok(v) => v,
-            Err(e) => {
-                sink.write_value(serde_json::json!({"event": "env_file_unreadable", "file": rel, "error": e}));
-                eprintln!("env_file {rel} could not be read: {e} — scripts run without it");
-                Vec::new()
+        Some(rel) => {
+            match scripts::load_env_file(&dir.join(rel)) {
+                Ok(v) => v,
+                Err(e) => {
+                    sink.write_value(serde_json::json!({"event": "env_file_unreadable", "file": rel, "error": e}));
+                    eprintln!("env_file {rel} could not be read: {e} — scripts run without it");
+                    Vec::new()
+                }
             }
-        },
+        }
         None => Vec::new(),
     };
     let charter = Arc::new(manifest.charter_text(&dir));
@@ -180,7 +205,15 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
         "lenses": manifest.review.lenses, "post": manifest.post.is_some(),
     }));
 
-    let mut st = rt.read_state().unwrap_or_default();
+    let mut st = match rt.read_state() {
+        Ok(Some(s)) => s,
+        Ok(None) => DeskState::default(),
+        Err(e) => {
+            sink.write_value(serde_json::json!({"event": "state_unreadable", "error": e}));
+            eprintln!("state.json could not be read ({e}) — the desk starts its count from zero");
+            DeskState::default()
+        }
+    };
     st.agent = manifest.name.clone();
     st.title = manifest.display_title().to_string();
     st.pid = Some(std::process::id());
@@ -196,7 +229,9 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     let fleet = match runtime::resolve_fleet(&dir, sink.clone(), &manifest.extensions).await {
         Ok(f) => Arc::new(f),
         Err(e) => {
-            sink.write_value(serde_json::json!({"event": "fleet_unresolved", "error": e.to_string()}));
+            sink.write_value(
+                serde_json::json!({"event": "fleet_unresolved", "error": e.to_string()}),
+            );
             st.status = "stopped".into();
             st.phase = "idle".into();
             st.hold_reason = Some(format!("no fleet: {e}"));
@@ -233,7 +268,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
             };
             st.next_tick_at = at.map(|t| t.to_rfc3339());
             st.next_tick_reason = why.to_string();
-            st.next_tick_local = at.map(|t| clock.local_label(t)).unwrap_or_default();
+            st.next_tick_local = at.map_or_else(|| "none".to_string(), |t| clock.local_label(t));
             st.window_open = clock.is_open(now);
             st.status = if rt.is_paused() { "paused" } else { "waiting" }.into();
             st.phase = "idle".into();
@@ -293,9 +328,15 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     st.phase = "idle".into();
     st.pid = None;
     st.next_tick_at = None;
-    st.next_tick_reason = if once { "ran once".into() } else { "stopped".into() };
+    st.next_tick_reason = if once {
+        "ran once".into()
+    } else {
+        "stopped".into()
+    };
     rt.write_state(&mut st);
-    sink.write_value(serde_json::json!({"event": "agent_stopped", "ticks": next_tick, "once": once}));
+    sink.write_value(
+        serde_json::json!({"event": "agent_stopped", "ticks": next_tick, "once": once}),
+    );
     rt.clear_stop();
     rt.release_lock();
     result

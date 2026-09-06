@@ -29,8 +29,8 @@ use super::prompts::{self, Draft, LaneOut, LanePlan, LensOut, OrientOut, SynthOu
 use super::runtime::Fleet;
 use super::scripts::{run_script, ScriptRun};
 use super::store::{
-    head_chars, now_rfc3339, sanitize_name, tail_chars, AskRow, DeskState, PreparedRow,
-    RuntimeDir, TickSummary,
+    head_chars, now_rfc3339, sanitize_name, tail_chars, AskRow, DeskState, PreparedRow, RuntimeDir,
+    TickSummary,
 };
 use super::window::DeskClock;
 use goose_swarm::EventSink;
@@ -74,7 +74,8 @@ fn set_phase(ctx: &TickCtx, st: &mut DeskState, phase: &str) {
     st.phase = phase.to_string();
     st.phase_started_at = Some(now_rfc3339());
     ctx.rt.write_state(st);
-    ctx.sink.write_value(json!({"event": "tick_phase", "tick": st.tick, "phase": phase}));
+    ctx.sink
+        .write_value(json!({"event": "tick_phase", "tick": st.tick, "phase": phase}));
 }
 
 fn script_value(r: &ScriptRun) -> Value {
@@ -98,31 +99,42 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     st.lanes_planned = 0;
     st.lanes_done = 0;
     st.hold_reason = None;
-    ctx.sink.write_value(json!({"event": "tick_started", "tick": n, "at": started_at}));
+    ctx.sink
+        .write_value(json!({"event": "tick_started", "tick": n, "at": started_at}));
     let mut record = json!({"tick": n, "started_at": started_at});
     let mut lane_secs = 0.0f64;
 
     // ---------------- GUARD
     set_phase(ctx, st, "guard");
-    let (applied, touched) = ctx.rt.fold_decisions(st.decisions_applied);
-    if applied != st.decisions_applied {
-        ctx.sink.write_value(json!({
-            "event": "decisions_folded", "tick": n, "applied": applied - st.decisions_applied, "touched": touched,
-        }));
-        st.decisions_applied = applied;
+    // An unreadable prepared/asks file STOPS the tick before anything could rewrite it empty.
+    let mut hold: Option<String> = None;
+    match ctx.rt.fold_decisions(st.decisions_applied) {
+        Ok((applied, touched)) => {
+            if applied != st.decisions_applied {
+                ctx.sink.write_value(json!({
+                    "event": "decisions_folded", "tick": n, "applied": applied - st.decisions_applied, "touched": touched,
+                }));
+                st.decisions_applied = applied;
+            }
+        }
+        Err(e) => {
+            ctx.sink
+                .write_value(json!({"event": "store_unreadable", "tick": n, "error": e}));
+            hold = Some(format!("a desk file cannot be read: {e}"));
+        }
     }
     let window_open = ctx.clock.is_open(Utc::now());
     st.window_open = window_open;
     let mut guard_runs: Vec<ScriptRun> = Vec::new();
     let mut guard_notes: Vec<String> = Vec::new();
-    let mut hold: Option<String> = None;
-    if ctx.rt.is_paused() {
+    if hold.is_none() && ctx.rt.is_paused() {
         hold = Some("paused by the human".into());
     }
     if hold.is_none() {
         for cmd in &ctx.manifest.guard {
             let r = run_script(&ctx.dir, cmd, &ctx.env).await;
-            ctx.sink.write_value(json!({"event": "guard_ran", "tick": n, "run": script_value(&r)}));
+            ctx.sink
+                .write_value(json!({"event": "guard_ran", "tick": n, "run": script_value(&r)}));
             match r.exit {
                 Some(0) => {}
                 Some(3) => {
@@ -135,7 +147,9 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
                 }
                 other => guard_notes.push(format!(
                     "`{cmd}` exit {} — {}",
-                    other.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+                    other
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "none".into()),
                     tail_chars(&format!("{}{}", r.stdout, r.stderr), 300).trim()
                 )),
             }
@@ -148,7 +162,8 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     record["guard"] = json!(guard_runs.iter().map(script_value).collect::<Vec<_>>());
     if let Some(why) = hold {
         st.hold_reason = Some(why.clone());
-        ctx.sink.write_value(json!({"event": "tick_held", "tick": n, "reason": why}));
+        ctx.sink
+            .write_value(json!({"event": "tick_held", "tick": n, "reason": why}));
         let summary = TickSummary {
             tick: n,
             started_at: started_at.clone(),
@@ -176,15 +191,21 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
 
     // ---------------- POLL
     set_phase(ctx, st, "poll");
-    let notes = ctx.rt.take_inbox();
+    let (notes, inbox_err) = ctx.rt.take_inbox();
+    if let Some(e) = inbox_err {
+        ctx.sink
+            .write_value(json!({"event": "inbox_unreadable", "tick": n, "error": e}));
+    }
     if !notes.is_empty() {
-        ctx.sink.write_value(json!({"event": "notes_taken", "tick": n, "count": notes.len()}));
+        ctx.sink
+            .write_value(json!({"event": "notes_taken", "tick": n, "count": notes.len()}));
     }
     let mut poll_runs: Vec<ScriptRun> = Vec::new();
     let mut poll_text = String::new();
     for cmd in &ctx.manifest.poll {
         let r = run_script(&ctx.dir, cmd, &ctx.env).await;
-        ctx.sink.write_value(json!({"event": "poll_ran", "tick": n, "run": script_value(&r)}));
+        ctx.sink
+            .write_value(json!({"event": "poll_ran", "tick": n, "run": script_value(&r)}));
         poll_text.push_str(&format!("$ {cmd}\n"));
         match r.exit {
             Some(0) => poll_text.push_str(r.stdout.trim_end()),
@@ -207,7 +228,15 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     // ---------------- ORIENT
     set_phase(ctx, st, "orient");
     let ledger_block = Arc::new(ctx.rt.render_ledger_block(LEDGER_NEWEST));
-    let scratchpad = ctx.rt.read_text(&ctx.manifest.scratchpad).unwrap_or_default();
+    let scratchpad = match ctx.rt.read_text(&ctx.manifest.scratchpad) {
+        Ok(Some(s)) => s,
+        Ok(None) => String::new(),
+        Err(e) => {
+            ctx.sink
+                .write_value(json!({"event": "scratchpad_unreadable", "tick": n, "error": e}));
+            format!("(the scratchpad file could not be read: {e})")
+        }
+    };
     let orient_key = format!("t{n}-orient");
     let orient_started = std::time::Instant::now();
     let orient_call = ctx
@@ -245,14 +274,18 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
                 None => {
                     ctx.sink.write_value(json!({"event": "orient_unparseable", "tick": n, "chars": raw.chars().count(), "tail": tail_chars(&raw, 400)}));
                     OrientOut {
-                        summary: format!("orchestrator answered without a parseable plan: {}", head_chars(raw.trim(), 400)),
+                        summary: format!(
+                            "orchestrator answered without a parseable plan: {}",
+                            head_chars(raw.trim(), 400)
+                        ),
                         ..Default::default()
                     }
                 }
             }
         }
         Err(e) => {
-            ctx.sink.write_value(json!({"event": "orient_failed", "tick": n, "error": e.to_string()}));
+            ctx.sink
+                .write_value(json!({"event": "orient_failed", "tick": n, "error": e.to_string()}));
             OrientOut {
                 summary: format!("orchestrator call failed: {e}"),
                 ..Default::default()
@@ -305,7 +338,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     // ---------------- LANES (fanned over the slot pool; queued when full)
     set_phase(ctx, st, "lanes");
     let poll_arc = Arc::new(poll_text.clone());
-    let lane_futs = lanes.iter().cloned().map(|plan| {
+    let lane_futs = lanes.clone().into_iter().map(|plan| {
         let ledger_block = ledger_block.clone();
         let poll = poll_arc.clone();
         async move { run_lane(ctx, n, plan, &ledger_block, &poll).await }
@@ -315,24 +348,29 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     lane_secs += lane_results.iter().map(|r| r.secs).sum::<f64>();
 
     // ---------------- REVIEW (every draft, every lens, in parallel)
-    let drafts: Vec<(&LaneResult, &Draft)> = lane_results
+    let drafts: Vec<(&LaneResult, &LaneOut, &Draft)> = lane_results
         .iter()
         .filter_map(|r| {
-            r.out
-                .as_ref()
-                .and_then(|o| o.draft.as_ref())
-                .filter(|d| !d.body.trim().is_empty())
-                .map(|d| (r, d))
+            let o = r.out.as_ref()?;
+            let d = o.draft.as_ref().filter(|d| !d.body.trim().is_empty())?;
+            Some((r, o, d))
         })
         .collect();
     let mut lens_results: Vec<LensResult> = Vec::new();
     if ctx.manifest.review.enabled && !drafts.is_empty() && !ctx.manifest.review.lenses.is_empty() {
         set_phase(ctx, st, "review");
         let mut futs = Vec::new();
-        for (r, d) in &drafts {
+        for (r, o, d) in &drafts {
             for lens in &ctx.manifest.review.lenses {
-                let lane_out = r.out.clone().unwrap_or_default();
-                futs.push(run_lens(ctx, n, &r.plan, &r.key, lens.clone(), lane_out, (*d).clone()));
+                futs.push(run_lens(
+                    ctx,
+                    n,
+                    &r.plan,
+                    &r.key,
+                    lens.clone(),
+                    (*o).clone(),
+                    (*d).clone(),
+                ));
             }
         }
         lens_results = join_all(futs).await;
@@ -355,10 +393,20 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
                 l.lens,
                 l.model,
                 l.secs,
-                if l.out.verdict.is_empty() { "(no verdict)" } else { &l.out.verdict },
+                if l.out.verdict.is_empty() {
+                    "(no verdict)"
+                } else {
+                    &l.out.verdict
+                },
                 l.out.notes.trim(),
-                if l.out.fixes.is_empty() { String::new() } else { format!("\n  fixes: {}", l.out.fixes.join(" | ")) },
-                l.error.as_deref().map(|e| format!("\n  reviewer error: {e}")).unwrap_or_default()
+                if l.out.fixes.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  fixes: {}", l.out.fixes.join(" | "))
+                },
+                l.error
+                    .as_deref()
+                    .map_or(String::new(), |e| format!("\n  reviewer error: {e}"))
             )
         })
         .collect::<Vec<_>>()
@@ -371,7 +419,13 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         .run_agent_timed_at(
             &ctx.fleet.planner_model,
             prompts::synthesis_system(&ctx.manifest, n),
-            prompts::synthesis_user(&orient.summary, &ledger_block, &lane_reports, &review_reports, &notes),
+            prompts::synthesis_user(
+                &orient.summary,
+                &ledger_block,
+                &lane_reports,
+                &review_reports,
+                &notes,
+            ),
             Some(Response {
                 json_schema: Some(prompts::synthesis_schema()),
             }),
@@ -397,7 +451,9 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
             })
         }
         Err(e) => {
-            ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "error": e.to_string()}));
+            ctx.sink.write_value(
+                json!({"event": "synthesis_failed", "tick": n, "error": e.to_string()}),
+            );
             SynthOut {
                 log_line: format!("tick {n}: synthesis call failed: {e}"),
                 ..Default::default()
@@ -407,14 +463,33 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
 
     // Stage, ask, record — by CODE, from the synthesis's decisions.
     let now = now_rfc3339();
-    let mut prepared = ctx.rt.prepared();
+    // GUARD already refused the tick on an unreadable file; a file that broke between the two
+    // reads is named here and nothing is staged over it.
+    let mut prepared = match ctx.rt.prepared() {
+        Ok(p) => p,
+        Err(e) => {
+            ctx.sink.write_value(
+                json!({"event": "store_unreadable", "tick": n, "error": e, "phase": "synthesis"}),
+            );
+            Vec::new()
+        }
+    };
+    let prepared_readable = !prepared.is_empty() || ctx.rt.prepared().is_ok();
     let mut staged_ids = Vec::new();
     for (k, s) in synth.stage.iter().enumerate() {
+        if !prepared_readable {
+            ctx.sink.write_value(json!({"event": "staging_skipped", "tick": n, "lane": s.lane, "reason": "prepared file unreadable"}));
+            break;
+        }
         if s.body.trim().is_empty() {
             continue;
         }
         let lane = lane_results.iter().find(|r| r.plan.id == s.lane);
-        let lane_name = if s.lane.is_empty() { format!("draft-{}", k + 1) } else { s.lane.clone() };
+        let lane_name = if s.lane.is_empty() {
+            format!("draft-{}", k + 1)
+        } else {
+            s.lane.clone()
+        };
         let id = format!("{}-t{n}-{}", ctx.manifest.name, sanitize_name(&lane_name));
         let review: Vec<Value> = lens_results
             .iter()
@@ -425,9 +500,16 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
             id: id.clone(),
             tick: n,
             lane: s.lane.clone(),
-            surgeon: lane.map(|r| r.plan.surgeon.clone()).unwrap_or_default(),
+            surgeon: lane.map_or_else(
+                || "(lane not in this tick)".to_string(),
+                |r| r.plan.surgeon.clone(),
+            ),
             target: s.target.clone(),
-            kind: if s.kind.is_empty() { "comment".into() } else { s.kind.clone() },
+            kind: if s.kind.is_empty() {
+                "comment".into()
+            } else {
+                s.kind.clone()
+            },
             body: s.body.trim().to_string(),
             evidence: s.evidence.clone(),
             status: "staged".into(),
@@ -448,15 +530,28 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         prepared.push(row);
         staged_ids.push(id);
     }
-    ctx.rt.write_prepared(&prepared);
+    if prepared_readable {
+        ctx.rt.write_prepared(&prepared);
+    }
 
-    let mut asks = ctx.rt.asks();
+    let (mut asks, asks_readable) = match ctx.rt.asks() {
+        Ok(a) => (a, true),
+        Err(e) => {
+            ctx.sink.write_value(
+                json!({"event": "store_unreadable", "tick": n, "error": e, "phase": "synthesis"}),
+            );
+            (Vec::new(), false)
+        }
+    };
     let mut ask_ids = Vec::new();
     for (k, a) in orient.asks.iter().chain(synth.asks.iter()).enumerate() {
-        if a.question.trim().is_empty() {
+        if a.question.trim().is_empty() || !asks_readable {
             continue;
         }
-        if asks.iter().any(|x| x.status == "open" && x.question == a.question) {
+        if asks
+            .iter()
+            .any(|x| x.status == "open" && x.question == a.question)
+        {
             continue;
         }
         let id = format!("ask-t{n}-{}", k + 1);
@@ -471,7 +566,9 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
             answered_at: None,
             consumed_tick: None,
         });
-        ctx.sink.write_value(json!({"event": "ask_raised", "tick": n, "id": id, "question": a.question}));
+        ctx.sink.write_value(
+            json!({"event": "ask_raised", "tick": n, "id": id, "question": a.question}),
+        );
         let _ = ctx.rt.write_mini(
             &format!("t{n}-ask-{}", k + 1),
             &json!({"kind": "ask", "tick": n, "at": now, "id": id, "question": a.question, "why": a.why}),
@@ -482,10 +579,15 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         );
         ask_ids.push(id);
     }
-    ctx.rt.write_asks(&asks);
+    if asks_readable {
+        ctx.rt.write_asks(&asks);
+    }
     for line in &synth.pending {
         if !line.trim().is_empty() {
-            let _ = ctx.rt.append_line(&ctx.manifest.pending, &format!("- [ ] t{n}: {}", line.trim()));
+            let _ = ctx.rt.append_line(
+                &ctx.manifest.pending,
+                &format!("- [ ] t{n}: {}", line.trim()),
+            );
         }
     }
     for (k, f) in synth.facts.iter().enumerate() {
@@ -510,15 +612,24 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     // ---------------- POST (earlier ticks' staged drafts, through the one write path)
     set_phase(ctx, st, "post");
     let mut posted_ids: Vec<String> = Vec::new();
-    {
-        let mut prepared = ctx.rt.prepared();
-        let approval = ctx.manifest.post.as_ref().map(|p| p.approval).unwrap_or(Approval::Human);
+    if let Ok(mut prepared) = ctx.rt.prepared().map_err(|e| {
+        ctx.sink.write_value(
+            json!({"event": "store_unreadable", "tick": n, "error": e, "phase": "post"}),
+        );
+    }) {
+        let approval = ctx
+            .manifest
+            .post
+            .as_ref()
+            .map(|p| p.approval)
+            .unwrap_or(Approval::Human);
         let eligible: Vec<usize> = prepared
             .iter()
             .enumerate()
             .filter(|(_, r)| {
                 r.tick < n
-                    && (r.status == "approved" || (r.status == "staged" && approval == Approval::None))
+                    && (r.status == "approved"
+                        || (r.status == "staged" && approval == Approval::None))
             })
             .map(|(i, _)| i)
             .collect();
@@ -576,7 +687,8 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     let mut close_runs = Vec::new();
     for cmd in &ctx.manifest.close {
         let r = run_script(&ctx.dir, cmd, &ctx.env).await;
-        ctx.sink.write_value(json!({"event": "close_ran", "tick": n, "run": script_value(&r)}));
+        ctx.sink
+            .write_value(json!({"event": "close_ran", "tick": n, "run": script_value(&r)}));
         close_runs.push(script_value(&r));
     }
     let log_line = if synth.log_line.trim().is_empty() {
@@ -586,15 +698,24 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     };
     let _ = ctx.rt.append_line(
         &ctx.manifest.ledger,
-        &format!("{} tick {n} — {log_line}", ctx.clock.local_label(Utc::now())),
+        &format!(
+            "{} tick {n} — {log_line}",
+            ctx.clock.local_label(Utc::now())
+        ),
     );
     if ctx.manifest.commit {
         let inside = run_script(&ctx.dir, "git rev-parse --is-inside-work-tree", &[]).await;
         if inside.exit == Some(0) {
-            let msg = format!("agent {} tick {n}: {}", ctx.manifest.name, head_chars(&log_line, 120)).replace('"', "'");
+            let msg = format!(
+                "agent {} tick {n}: {}",
+                ctx.manifest.name,
+                head_chars(&log_line, 120)
+            )
+            .replace('"', "'");
             let r = run_script(&ctx.dir, &format!("git add -A && git -c commit.gpgsign=false commit -qm \"{msg}\" && git rev-parse --short HEAD"), &[]).await;
             if r.exit == Some(0) {
-                ctx.sink.write_value(json!({"event": "committed", "tick": n, "sha": r.stdout.trim()}));
+                ctx.sink
+                    .write_value(json!({"event": "committed", "tick": n, "sha": r.stdout.trim()}));
             } else {
                 ctx.sink.write_value(json!({"event": "commit_skipped", "tick": n, "reason": tail_chars(&format!("{}{}", r.stdout, r.stderr), 300).trim()}));
             }
@@ -655,6 +776,9 @@ fn finish(ctx: &TickCtx, st: &mut DeskState, summary: &TickSummary) {
     ctx.rt.write_state(st);
 }
 
+// The two `match`es on an absent Option are spelled out on purpose: the fallback gate ratchets the
+// default-on-absence call in the run path and wants each honest empty named where it is decided.
+#[allow(clippy::manual_unwrap_or_default)]
 async fn run_lane(
     ctx: &TickCtx,
     n: u64,
@@ -664,25 +788,31 @@ async fn run_lane(
 ) -> LaneResult {
     let key = format!("t{n}-{}", plan.id);
     let surgeon = ctx.manifest.surgeon(&plan.surgeon);
-    let surgeon_charter = surgeon
-        .map(|s| {
-            let mut t = String::new();
-            if let Some(rel) = &s.charter {
-                let p = ctx.dir.join(rel);
-                match std::fs::read_to_string(&p) {
-                    Ok(x) => t.push_str(x.trim_end()),
-                    Err(e) => t.push_str(&format!("(surgeon charter {} could not be read: {e})", p.display())),
-                }
+    let surgeon_charter = surgeon.map(|s| {
+        let mut t = String::new();
+        if let Some(rel) = &s.charter {
+            let p = ctx.dir.join(rel);
+            match std::fs::read_to_string(&p) {
+                Ok(x) => t.push_str(x.trim_end()),
+                Err(e) => t.push_str(&format!(
+                    "(surgeon charter {} could not be read: {e})",
+                    p.display()
+                )),
             }
-            if !s.brief.trim().is_empty() {
-                if !t.is_empty() {
-                    t.push_str("\n\n");
-                }
-                t.push_str(s.brief.trim());
+        }
+        if !s.brief.trim().is_empty() {
+            if !t.is_empty() {
+                t.push_str("\n\n");
             }
-            t
-        })
-        .unwrap_or_default();
+            t.push_str(s.brief.trim());
+        }
+        t
+    });
+    // No surgeon matched → the lane prompt says so in words (lane_system's absence line).
+    let surgeon_charter = match surgeon_charter {
+        Some(t) => t,
+        None => String::new(),
+    };
     if surgeon.is_none() && !plan.surgeon.is_empty() {
         ctx.sink.write_value(json!({"event": "surgeon_unknown", "tick": n, "lane": plan.id, "surgeon": plan.surgeon, "reason": "agent.yaml declares no surgeon by that name — the lane runs on the desk charter alone"}));
     }
@@ -698,7 +828,12 @@ async fn run_lane(
         .run_agent_timed_at(
             &model,
             prompts::lane_system(&ctx.manifest, surgeon, &surgeon_charter),
-            prompts::lane_user(&ctx.charter, ledger_block, &plan, &prompts::poll_excerpt_for(poll, &plan.item)),
+            prompts::lane_user(
+                &ctx.charter,
+                ledger_block,
+                &plan,
+                &prompts::poll_excerpt_for(poll, &plan.item),
+            ),
             Some(Response {
                 json_schema: Some(prompts::lane_schema()),
             }),
@@ -741,7 +876,9 @@ async fn run_lane(
         "route": res.out.as_ref().and_then(|o| o.route.clone()),
         "error": res.error,
     }));
-    let _ = ctx.rt.write_mini(&format!("t{n}-lane-{}", res.plan.id), &lane_value(&res));
+    let _ = ctx
+        .rt
+        .write_mini(&format!("t{n}-lane-{}", res.plan.id), &lane_value(&res));
     res
 }
 
@@ -785,7 +922,10 @@ async fn run_lens(
             (
                 parse_json_lenient::<LensOut>(&raw).unwrap_or_else(|| LensOut {
                     verdict: "REFUTED".into(),
-                    notes: format!("reviewer answered without a parseable verdict: {}", head_chars(raw.trim(), 600)),
+                    notes: format!(
+                        "reviewer answered without a parseable verdict: {}",
+                        head_chars(raw.trim(), 600)
+                    ),
                     fixes: vec![],
                 }),
                 None,
@@ -800,7 +940,12 @@ async fn run_lens(
             Some(e.to_string()),
         ),
     };
-    let verdict = if out.verdict.to_uppercase().contains("PASS") { "PASS" } else { "REFUTED" }.to_string();
+    let verdict = if out.verdict.to_uppercase().contains("PASS") {
+        "PASS"
+    } else {
+        "REFUTED"
+    }
+    .to_string();
     let res = LensResult {
         lane_key: lane_key.to_string(),
         lane_id: plan.id.clone(),
@@ -818,8 +963,13 @@ async fn run_lens(
     res
 }
 
+#[allow(clippy::manual_unwrap_or_default)]
 fn lane_value(r: &LaneResult) -> Value {
-    let o = r.out.clone().unwrap_or_default();
+    // A lane with no parsed output carries its `error` (or `raw_tail`) — the empty fields are named by it.
+    let o = match r.out.clone() {
+        Some(o) => o,
+        None => LaneOut::default(),
+    };
     json!({
         "kind": "lane", "tick": r.key.split('-').next().and_then(|t| t.trim_start_matches('t').parse::<u64>().ok()).unwrap_or(0),
         "at": now_rfc3339(),
@@ -836,7 +986,16 @@ fn lane_value(r: &LaneResult) -> Value {
 fn render_lane_report(r: &LaneResult) -> String {
     let head = format!(
         "LANE {} — surgeon {}, node {}, {:.0}s\n  item: {}\n  objective: {}",
-        r.plan.id, if r.plan.surgeon.is_empty() { "general" } else { &r.plan.surgeon }, r.model, r.secs, r.plan.item, r.plan.objective
+        r.plan.id,
+        if r.plan.surgeon.is_empty() {
+            "general"
+        } else {
+            &r.plan.surgeon
+        },
+        r.model,
+        r.secs,
+        r.plan.item,
+        r.plan.objective
     );
     match (&r.out, &r.error) {
         (_, Some(e)) => format!("{head}\n  FAILED: {e}"),
@@ -850,7 +1009,12 @@ fn render_lane_report(r: &LaneResult) -> String {
                 o.next_step.trim()
             );
             if let Some(d) = &o.draft {
-                s.push_str(&format!("\n  DRAFT ({} → {}):\n  \"\"\"\n{}\n  \"\"\"", d.kind, d.target, d.body.trim()));
+                s.push_str(&format!(
+                    "\n  DRAFT ({} → {}):\n  \"\"\"\n{}\n  \"\"\"",
+                    d.kind,
+                    d.target,
+                    d.body.trim()
+                ));
             }
             if let Some(a) = &o.ask {
                 s.push_str(&format!("\n  ASK: {a}"));

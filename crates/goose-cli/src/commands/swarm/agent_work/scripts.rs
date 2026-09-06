@@ -37,13 +37,12 @@ pub fn parse_env(text: &str) -> Vec<(String, String)> {
         if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             continue;
         }
-        let mut v = v.trim().to_string();
-        if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
-            || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
-        {
-            v = v[1..v.len() - 1].to_string();
-        }
-        out.push((k.to_string(), v));
+        let v = v.trim();
+        let unquoted = ['"', '\'']
+            .iter()
+            .find_map(|q| v.strip_prefix(*q).and_then(|s| s.strip_suffix(*q)))
+            .unwrap_or(v);
+        out.push((k.to_string(), unquoted.to_string()));
     }
     out
 }

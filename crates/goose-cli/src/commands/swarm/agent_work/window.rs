@@ -57,10 +57,14 @@ impl DeskClock {
     }
 
     fn days(&self) -> Vec<Weekday> {
-        self.window.days.iter().filter_map(|d| parse_day(d)).collect()
+        self.window
+            .days
+            .iter()
+            .filter_map(|d| parse_day(d))
+            .collect()
     }
 
-    fn from_to(&self) -> (NaiveTime, NaiveTime) {
+    fn bounds(&self) -> (NaiveTime, NaiveTime) {
         (
             parse_hm(&self.window.from).unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
             parse_hm(&self.window.to).unwrap_or(NaiveTime::from_hms_opt(23, 59, 0).unwrap()),
@@ -76,7 +80,7 @@ impl DeskClock {
         if !days.is_empty() && !days.contains(&local.weekday()) {
             return false;
         }
-        let (from, to) = self.from_to();
+        let (from, to) = self.bounds();
         let t = local.time();
         t >= from && t < to
     }
@@ -89,7 +93,7 @@ impl DeskClock {
         }
         let local = at.with_timezone(&self.tz);
         let days = self.days();
-        let (from, _) = self.from_to();
+        let (from, _) = self.bounds();
         for offset in 0..15 {
             let day = local.date_naive() + Duration::days(offset);
             if !days.is_empty() && !days.contains(&day.weekday()) {
@@ -162,7 +166,13 @@ mod tests {
         DeskClock::new(
             "Europe/Zurich",
             &WorkWindow {
-                days: vec!["mon".into(), "tue".into(), "wed".into(), "thu".into(), "fri".into()],
+                days: vec![
+                    "mon".into(),
+                    "tue".into(),
+                    "wed".into(),
+                    "thu".into(),
+                    "fri".into(),
+                ],
                 from: "09:00".into(),
                 to: "18:00".into(),
                 always: false,
@@ -203,7 +213,10 @@ mod tests {
         assert_eq!(t, Some(utc("2026-09-07T08:00:00Z")));
         assert_eq!(why, "cadence");
         // Friday 15:50Z = 17:50 Zurich; +30m lands at 18:20, closed → Monday 09:00 Zurich = 07:00Z.
-        let (t, why) = c.next_tick(Some(utc("2026-09-04T15:50:00Z")), utc("2026-09-04T15:51:00Z"));
+        let (t, why) = c.next_tick(
+            Some(utc("2026-09-04T15:50:00Z")),
+            utc("2026-09-04T15:51:00Z"),
+        );
         assert_eq!(t, Some(utc("2026-09-07T07:00:00Z")));
         assert!(why.starts_with("desk closed"));
         // An overrun tick: the candidate is in the past → now.

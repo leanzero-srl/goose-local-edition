@@ -11,18 +11,18 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+use super::super::fleet_order::aux_candidate_models;
 use super::super::{
     build_worker_extension, load_config, repeat_break_enabled, stream_decode_retry_enabled,
     suppress_inherited_hints, swarm_min_p_resolved, swarm_repeat_penalty_resolved,
     swarm_temp_resolved, swarm_top_k_resolved, swarm_top_p_resolved, GooseAgentDispatcher,
     SamplingParams, SwarmDevice,
 };
-use super::super::fleet_order::aux_candidate_models;
 use super::store::DeviceSlot;
 use crate::commands::swarm_engine::{
     all_resident_unservable_per_engine, device_engine_kind, drop_unservable_devices_per_engine,
-    engines_for_run, exclude_unmountable_sidecar_devices, merge_sidecar_devices,
-    planner_fallback, require_servable, served_by_engine, sidecar_exclusion_events, EngineKind,
+    engines_for_run, exclude_unmountable_sidecar_devices, merge_sidecar_devices, planner_fallback,
+    require_servable, served_by_engine, sidecar_exclusion_events, EngineKind,
 };
 
 pub struct Fleet {
@@ -44,7 +44,8 @@ pub async fn resolve_fleet(
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     suppress_inherited_hints();
     let engines = Arc::new(engines_for_run(&cfg.devices));
-    let (mut fleet_pool, fleet_planner) = super::super::fleet_order::reconcile_pool_with_fleet(&cfg, &engines);
+    let (mut fleet_pool, fleet_planner) =
+        super::super::fleet_order::reconcile_pool_with_fleet(&cfg, &engines);
     for id in merge_sidecar_devices(&mut fleet_pool, &cfg.devices, &engines) {
         sink.write_value(serde_json::json!({
             "event": "sidecar-device-excluded", "id": id, "reason": "engine not registered",
@@ -71,7 +72,9 @@ pub async fn resolve_fleet(
     }
     let (fleet_pool, unservable) = drop_unservable_devices_per_engine(fleet_pool, &served);
     for (id, why) in &unservable {
-        sink.write_value(serde_json::json!({"event": "device_unservable", "id": id, "reason": why}));
+        sink.write_value(
+            serde_json::json!({"event": "device_unservable", "id": id, "reason": why}),
+        );
     }
     let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
         if let Some(p) = fleet_planner {
@@ -79,7 +82,8 @@ pub async fn resolve_fleet(
                 cfg.planner_model = p;
             }
         }
-        if let Some((host, alt)) = planner_fallback(&engines, &fleet_pool, &served, &cfg.planner_model)
+        if let Some((host, alt)) =
+            planner_fallback(&engines, &fleet_pool, &served, &cfg.planner_model)
         {
             sink.write_value(serde_json::json!({
                 "event": "planner_fallback", "from": cfg.planner_model, "to": alt, "host": host,
@@ -88,8 +92,12 @@ pub async fn resolve_fleet(
         }
         fleet_pool
     } else {
-        let configured: Vec<SwarmDevice> =
-            cfg.devices.iter().filter(|d| d.enabled).cloned().collect();
+        let configured: Vec<SwarmDevice> = cfg
+            .devices
+            .iter()
+            .filter(|d| d.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
         sink.write_value(serde_json::json!({
             "event": "fleet_empty_falls_to_config",
             "endpoint": cfg.endpoint,
@@ -211,7 +219,9 @@ pub struct SlotGuard {
 
 impl Drop for SlotGuard {
     fn drop(&mut self) {
-        self.pool.slots[self.index].inflight.fetch_sub(1, Ordering::SeqCst);
+        self.pool.slots[self.index]
+            .inflight
+            .fetch_sub(1, Ordering::SeqCst);
         self.pool.freed.notify_waiters();
     }
 }
@@ -244,7 +254,10 @@ impl SlotPool {
     }
 
     pub fn inflight(&self) -> u32 {
-        self.slots.iter().map(|s| s.inflight.load(Ordering::SeqCst)).sum()
+        self.slots
+            .iter()
+            .map(|s| s.inflight.load(Ordering::SeqCst))
+            .sum()
     }
 
     fn try_take(self: &Arc<Self>) -> Option<SlotGuard> {
@@ -294,7 +307,11 @@ mod tests {
 
     #[tokio::test]
     async fn slots_hand_out_the_freest_device_and_queue_when_full() {
-        let pool = Arc::new(SlotPool::new(&[dev("a", 1, false), dev("b", 2, false), dev("s", 4, true)]));
+        let pool = Arc::new(SlotPool::new(&[
+            dev("a", 1, false),
+            dev("b", 2, false),
+            dev("s", 4, true),
+        ]));
         assert_eq!(pool.capacity(), 3);
         let g1 = pool.acquire().await;
         assert_eq!(g1.model_id, "b-model");
@@ -312,7 +329,8 @@ mod tests {
         assert!(got == "a-model" || got == "b-model");
         drop(g1);
         drop(g3);
-        assert_eq!(pool.inflight(), 1);
+        // The spawned lane returned only the model id, so its guard dropped with the task.
+        assert_eq!(pool.inflight(), 0);
     }
 
     #[test]

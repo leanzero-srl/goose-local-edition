@@ -198,9 +198,10 @@ impl RuntimeDir {
         }
     }
 
-    pub fn read_state(&self) -> Option<DeskState> {
-        let t = std::fs::read_to_string(self.state_path()).ok()?;
-        serde_json::from_str(&t).ok()
+    /// `Ok(None)` = no state yet (a fresh desk); `Err` = a state file exists and cannot be read —
+    /// the caller names that instead of silently starting from zero.
+    pub fn read_state(&self) -> Result<Option<DeskState>, String> {
+        read_json_file(&self.state_path())
     }
 
     // ---- flags the desktop sets by touching a file ----
@@ -227,16 +228,18 @@ impl RuntimeDir {
 
     // ---- the human's notes: <root>/inbox/*.json {text}, consumed once per tick ----
 
-    pub fn take_inbox(&self) -> Vec<String> {
+    /// The notes, plus the inbox directory's own read error when it has one (named, never an
+    /// empty inbox impersonating a readable one).
+    pub fn take_inbox(&self) -> (Vec<String>, Option<String>) {
         let dir = self.root.join("inbox");
-        let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .map(|rd| {
-                rd.flatten()
-                    .map(|e| e.path())
-                    .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut names: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+                .collect(),
+            Err(e) => return (Vec::new(), Some(format!("{}: {e}", dir.display()))),
+        };
         names.sort();
         let mut out = Vec::new();
         for p in names {
@@ -251,18 +254,20 @@ impl RuntimeDir {
                 let _ = std::fs::rename(&p, dir.join("consumed").join(name));
             }
         }
-        out
+        (out, None)
     }
 
     // ---- staged drafts and asks: whole-file JSON arrays ----
 
-    pub fn prepared(&self) -> Vec<PreparedRow> {
+    /// `Err` = the file exists and does not parse. A caller that would WRITE the file must stop
+    /// on Err: rewriting from an empty read would erase every staged draft.
+    pub fn prepared(&self) -> Result<Vec<PreparedRow>, String> {
         read_json_array(&self.prepared_path())
     }
     pub fn write_prepared(&self, rows: &[PreparedRow]) {
         write_json_array(&self.prepared_path(), rows);
     }
-    pub fn asks(&self) -> Vec<AskRow> {
+    pub fn asks(&self) -> Result<Vec<AskRow>, String> {
         read_json_array(&self.asks_path())
     }
     pub fn write_asks(&self, rows: &[AskRow]) {
@@ -282,10 +287,10 @@ impl RuntimeDir {
 
     /// Apply the decisions past `applied` to the prepared rows and asks. Returns how many were
     /// applied and the rows touched (for the events).
-    pub fn fold_decisions(&self, applied: u64) -> (u64, Vec<Value>) {
+    pub fn fold_decisions(&self, applied: u64) -> Result<(u64, Vec<Value>), String> {
         let all = self.decisions();
-        let mut prepared = self.prepared();
-        let mut asks = self.asks();
+        let mut prepared = self.prepared()?;
+        let mut asks = self.asks()?;
         let mut touched = Vec::new();
         let now = now_rfc3339();
         for d in all.iter().skip(applied as usize) {
@@ -330,7 +335,7 @@ impl RuntimeDir {
         }
         self.write_prepared(&prepared);
         self.write_asks(&asks);
-        (all.len() as u64, touched)
+        Ok((all.len() as u64, touched))
     }
 
     // ---- the ledger: minis + the whole-rebuilt roll-up ----
@@ -352,18 +357,23 @@ impl RuntimeDir {
         let dir = self.root.join("ledger");
         let mut rows: Vec<Value> = Vec::new();
         let mut dropped: Vec<Value> = Vec::new();
-        let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .map(|rd| rd.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default();
+        let mut names: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd.flatten().map(|e| e.path()).collect(),
+            Err(e) => {
+                dropped.push(json!({"file": dir.display().to_string(), "error": e.to_string()}));
+                Vec::new()
+            }
+        };
         names.sort();
         for p in names {
             if p.extension().and_then(|x| x.to_str()) != Some("json") {
                 continue;
             }
-            let fname = p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-            match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| {
-                serde_json::from_str::<Value>(&t).map_err(|e| e.to_string())
-            }) {
+            let fname = p.display().to_string();
+            match std::fs::read_to_string(&p)
+                .map_err(|e| e.to_string())
+                .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
+            {
                 Ok(v) => rows.push(v),
                 Err(e) => dropped.push(json!({"file": fname, "error": e})),
             }
@@ -381,7 +391,10 @@ impl RuntimeDir {
             v.sort_by_key(|r| {
                 (
                     r.get("tick").and_then(|t| t.as_u64()).unwrap_or(0),
-                    r.get("at").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    r.get("at")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 )
             });
         }
@@ -413,11 +426,11 @@ impl RuntimeDir {
         let kinds = rollup.get("kinds").cloned().unwrap_or(json!({}));
         let mut out = String::new();
         let take = |k: &str| -> (Vec<Value>, usize) {
-            let all: Vec<Value> = kinds
-                .get(k)
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
+            // An absent kind is "no rows of that kind yet" — the roll-up lists every kind it read.
+            let all: Vec<Value> = match kinds.get(k).and_then(|v| v.as_array()) {
+                Some(rows) => rows.clone(),
+                None => Vec::new(),
+            };
             let total = all.len();
             let start = total.saturating_sub(newest);
             (all[start..].to_vec(), total)
@@ -429,7 +442,9 @@ impl RuntimeDir {
                 "PREVIOUS TICK (#{} of {} so far): {}\n",
                 last.get("tick").and_then(|t| t.as_u64()).unwrap_or(0),
                 total_ticks,
-                last.get("summary").and_then(|s| s.as_str()).unwrap_or("(no summary)")
+                last.get("summary")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("(no summary)")
             ));
             if let Some(h) = last.get("handoff").and_then(|s| s.as_str()) {
                 if !h.trim().is_empty() {
@@ -457,7 +472,15 @@ impl RuntimeDir {
             ));
         }
 
-        let asks = self.asks();
+        let asks = match self.asks() {
+            Ok(a) => a,
+            Err(e) => {
+                out.push_str(&format!(
+                    "\nASKS TO THE HUMAN: the asks file could not be read ({e})\n"
+                ));
+                Vec::new()
+            }
+        };
         let open: Vec<&AskRow> = asks.iter().filter(|a| a.status == "open").collect();
         let answered: Vec<&AskRow> = asks
             .iter()
@@ -480,7 +503,15 @@ impl RuntimeDir {
             ));
         }
 
-        let prepared = self.prepared();
+        let prepared = match self.prepared() {
+            Ok(p) => p,
+            Err(e) => {
+                out.push_str(&format!(
+                    "\nSTAGED DRAFTS: the prepared file could not be read ({e})\n"
+                ));
+                Vec::new()
+            }
+        };
         let by = |s: &str| prepared.iter().filter(|r| r.status == s).count();
         out.push_str(&format!(
             "\nSTAGED DRAFTS: {} staged (awaiting the next tick / approval), {} approved, {} posted, {} declined, {} failed\n",
@@ -501,15 +532,19 @@ impl RuntimeDir {
                 r.kind,
                 r.target,
                 r.body.chars().count(),
-                r.result
-                    .as_deref()
-                    .map(|x| format!(" result: {}", tail_chars(x, 200)))
-                    .unwrap_or_default()
+                r.result.as_deref().map_or(String::new(), |x| format!(
+                    " result: {}",
+                    tail_chars(x, 200)
+                ))
             ));
         }
         let (posted, total_posted) = take("posted");
         if total_posted > 0 {
-            out.push_str(&format!("\nPOSTED (newest {} of {}):\n", posted.len(), total_posted));
+            out.push_str(&format!(
+                "\nPOSTED (newest {} of {}):\n",
+                posted.len(),
+                total_posted
+            ));
             for p in &posted {
                 out.push_str(&format!(
                     "  t{} {} → {}\n",
@@ -535,7 +570,9 @@ impl RuntimeDir {
     }
 
     pub fn mark_asks_consumed(&self, tick: u64) {
-        let mut asks = self.asks();
+        let Ok(mut asks) = self.asks() else {
+            return;
+        };
         for a in asks.iter_mut() {
             if a.status == "answered" && a.consumed_tick.is_none() {
                 a.consumed_tick = Some(tick);
@@ -567,8 +604,14 @@ impl RuntimeDir {
         Ok(())
     }
 
-    pub fn read_text(&self, rel: &str) -> Option<String> {
-        std::fs::read_to_string(self.agent_dir.join(rel)).ok()
+    /// `Ok(None)` = the file does not exist yet; `Err` = it exists and cannot be read.
+    pub fn read_text(&self, rel: &str) -> Result<Option<String>, String> {
+        let p = self.agent_dir.join(rel);
+        match std::fs::read_to_string(&p) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("{}: {e}", p.display())),
+        }
     }
 
     pub fn write_text(&self, rel: &str, text: &str) -> Result<()> {
@@ -635,11 +678,26 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) {
     }
 }
 
-fn read_json_array<T: serde::de::DeserializeOwned>(path: &Path) -> Vec<T> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+/// Missing = `Ok(None)` (the honest empty: nothing was ever written); any other failure is named.
+fn read_json_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(t) => serde_json::from_str(&t)
+            .map(Some)
+            .map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+// Spelled as a match on purpose: the fallback gate ratchets the default-on-absence call in the run
+// path (development_gates::run_path_silent_empty_fallbacks_only_shrink) and wants each honest empty named.
+#[allow(clippy::manual_unwrap_or_default)]
+fn read_json_array<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>, String> {
+    // A file never written is an empty list — the one honest empty here; a broken file is the Err.
+    Ok(match read_json_file::<Vec<T>>(path)? {
+        Some(rows) => rows,
+        None => Vec::new(),
+    })
 }
 
 fn write_json_array<T: Serialize>(path: &Path, rows: &[T]) {
@@ -697,12 +755,17 @@ mod tests {
     #[test]
     fn minis_roll_up_whole_and_a_bad_mini_is_named() {
         let (_d, r) = rt();
-        r.write_mini("t1-fact-1", &json!({"kind":"fact","tick":1,"fact":"A"})).unwrap();
-        r.write_mini("t2-fact-1", &json!({"kind":"fact","tick":2,"fact":"B"})).unwrap();
+        r.write_mini("t1-fact-1", &json!({"kind":"fact","tick":1,"fact":"A"}))
+            .unwrap();
+        r.write_mini("t2-fact-1", &json!({"kind":"fact","tick":2,"fact":"B"}))
+            .unwrap();
         std::fs::write(r.root.join("ledger").join("bad.json"), "{nope").unwrap();
         let roll = r.rebuild_rollup();
         assert_eq!(roll["counts"]["fact"], 2);
-        assert_eq!(roll["dropped"][0]["file"], "bad.json");
+        assert!(roll["dropped"][0]["file"]
+            .as_str()
+            .unwrap()
+            .ends_with("bad.json"));
         let block = r.render_ledger_block(5);
         assert!(block.contains("t1 A"));
         assert!(block.contains("t2 B"));
@@ -745,12 +808,12 @@ mod tests {
             "{\"id\":\"d1\",\"decision\":\"approve\"}\n{\"id\":\"a1\",\"decision\":\"reply\",\"text\":\"the second\"}\n",
         )
         .unwrap();
-        let (n, touched) = r.fold_decisions(0);
+        let (n, touched) = r.fold_decisions(0).unwrap();
         assert_eq!(n, 2);
         assert_eq!(touched.len(), 2);
-        assert_eq!(r.prepared()[0].status, "approved");
-        assert_eq!(r.asks()[0].answer.as_deref(), Some("the second"));
-        let (n2, touched2) = r.fold_decisions(n);
+        assert_eq!(r.prepared().unwrap()[0].status, "approved");
+        assert_eq!(r.asks().unwrap()[0].answer.as_deref(), Some("the second"));
+        let (n2, touched2) = r.fold_decisions(n).unwrap();
         assert_eq!(n2, 2);
         assert!(touched2.is_empty());
         let block = r.render_ledger_block(5);
@@ -760,12 +823,38 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_prepared_file_is_named_and_never_rewritten_empty() {
+        let (_d, r) = rt();
+        std::fs::write(r.prepared_path(), "{not json").unwrap();
+        let err = r.prepared().unwrap_err();
+        assert!(err.contains("prepared.json"));
+        assert!(r.fold_decisions(0).is_err());
+        assert_eq!(
+            std::fs::read_to_string(r.prepared_path()).unwrap(),
+            "{not json"
+        );
+        assert!(r
+            .render_ledger_block(5)
+            .contains("prepared file could not be read"));
+        assert!(r.read_state().unwrap().is_none());
+    }
+
+    #[test]
     fn inbox_notes_are_consumed_once() {
         let (_d, r) = rt();
-        std::fs::write(r.root.join("inbox").join("1.json"), "{\"text\":\"hold ATL-9\"}").unwrap();
-        assert_eq!(r.take_inbox(), vec!["hold ATL-9".to_string()]);
-        assert!(r.take_inbox().is_empty());
-        assert!(r.root.join("inbox").join("consumed").join("1.json").exists());
+        std::fs::write(
+            r.root.join("inbox").join("1.json"),
+            "{\"text\":\"hold ATL-9\"}",
+        )
+        .unwrap();
+        assert_eq!(r.take_inbox().0, vec!["hold ATL-9".to_string()]);
+        assert!(r.take_inbox().0.is_empty());
+        assert!(r
+            .root
+            .join("inbox")
+            .join("consumed")
+            .join("1.json")
+            .exists());
     }
 
     #[test]

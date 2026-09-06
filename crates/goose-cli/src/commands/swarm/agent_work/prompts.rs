@@ -97,7 +97,11 @@ pub fn orient_system(m: &AgentManifest, tick: u64) -> String {
                     } else {
                         format!(" (routes on: {})", s.match_words.join(", "))
                     },
-                    if s.read_only { " — read-only" } else { " — may write files" }
+                    if s.read_only {
+                        " — read-only"
+                    } else {
+                        " — may write files"
+                    }
                 )
             })
             .collect::<Vec<_>>()
@@ -148,7 +152,10 @@ pub fn orient_user(
     let guards = if guard_notes.is_empty() {
         String::new()
     } else {
-        format!("\n\nGUARD NOTES (scripts that warned this tick):\n{}", guard_notes.join("\n"))
+        format!(
+            "\n\nGUARD NOTES (scripts that warned this tick):\n{}",
+            guard_notes.join("\n")
+        )
     };
     format!(
         "THE CHARTER:\n{charter}\n\n---\nSCRATCHPAD (your own note from the previous tick):\n{scratch}\n\n---\nTHE LEDGER (snowballed across ticks):\n{ledger}\n\n---\nNOTES FROM THE HUMAN since the last tick:\n{notes_block}{guards}\n\n---\nTHE POLL — what the desk's read-only scripts returned this tick (this is the inbox; identifiers in it are the ones to use):\n{poll}\n\n---\nDecide the lanes now. JSON only.",
@@ -273,7 +280,9 @@ pub fn lane_user(
 /// lane reads about ITS object, not the whole inbox.
 pub fn poll_excerpt_for(poll: &str, item: &str) -> String {
     let keys: Vec<String> = item
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/' || c == ':' || c == '.'))
+        .split(|c: char| {
+            !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/' || c == ':' || c == '.')
+        })
         .filter(|w| w.len() >= 4)
         .map(|w| w.to_lowercase())
         .collect();
@@ -285,8 +294,8 @@ pub fn poll_excerpt_for(poll: &str, item: &str) -> String {
     for (i, l) in lines.iter().enumerate() {
         let low = l.to_lowercase();
         if keys.iter().any(|k| low.contains(k)) {
-            for j in i.saturating_sub(2)..(i + 3).min(lines.len()) {
-                keep[j] = true;
+            for k in &mut keep[i.saturating_sub(2)..(i + 3).min(lines.len())] {
+                *k = true;
             }
         }
     }
@@ -494,7 +503,14 @@ mod tests {
         let s = orient_system(&m, 7);
         assert!(s.contains("`axpo`"));
         assert!(s.contains("tick #7"));
-        let u = orient_user("CHARTER-TEXT", "", "LEDGER", &["note one".into()], "POLL-ROW", &[]);
+        let u = orient_user(
+            "CHARTER-TEXT",
+            "",
+            "LEDGER",
+            &["note one".into()],
+            "POLL-ROW",
+            &[],
+        );
         for needle in ["CHARTER-TEXT", "LEDGER", "note one", "POLL-ROW"] {
             assert!(u.contains(needle), "{needle}");
         }

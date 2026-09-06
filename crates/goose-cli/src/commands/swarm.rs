@@ -159,8 +159,8 @@ use findings::{
 };
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
-mod fleet_order;
 mod agent_work;
+mod fleet_order;
 use fleet_order::{
     aux_candidate_models, configured_speed_weight, fanout_over_fleet, least_loaded_aux_model,
     measured_rate_for, one_lane_per_host, publish_fleet_speed_weights, rank_fix_target,
