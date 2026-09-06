@@ -50,7 +50,7 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   goes from `swarm-confidence-and-ask-internals` (also "goose-local") to `mold-the-model-not-a-better-one`
   ("On the local swarm, MOLD the … model"); the twelve other requests keep their recalled sets and order,
   30/39 slots. If a corpus over-names on two plain co-occurring words, the probe is the instrument.
-- THE TOPIC WORD (VA-181): an UNNAMED hit rides only when its body carries the WHOLE request or its
+- THE TOPIC WORD (VA-181, 3852af2a0): an UNNAMED hit rides only when its body carries the WHOLE request or its
   name carries the request's TOPIC WORD — `SearchHit::topic_in_name`, the request's rarest term among
   those found in at least one searched entry (a term nobody has names no topic; ties count every tied
   term). `select_hits` = named, or all terms matched, or (topic in name and half the terms), each with
