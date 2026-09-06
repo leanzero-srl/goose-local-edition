@@ -53,10 +53,18 @@ impl MemoryEntry {
 /// matched terms that occur in at most half of the searched entries — the ones that carry information.
 ///
 /// `named` says the query NAMES the entry: at least [`NAMED_MIN_NAME_TERMS`] of its terms sit in the
-/// entry's name and more than half of its terms match. A named hit ranks above every unnamed one
-/// whatever the body score — a body that happens to contain every query word is a vocabulary match, a
-/// headline carrying two of the query's words is the topic. The name is read by [`name_tokens`]: a
-/// hyphenated compound in a headline is one word, so "goose-local" is not "local".
+/// entry's name, more than half of its terms match, and at least half of its SPECIFIC terms match —
+/// the terms no commoner than the query's median term (`specific_terms`, `matched_specific`; a term
+/// no searched entry has is neither). A named hit ranks above every unnamed one whatever the body
+/// score — a body that happens to contain every query word is a vocabulary match, a headline carrying
+/// two of the query's words is the topic. The name is read by [`name_tokens`]: a hyphenated compound
+/// in a headline is one word, so "goose-local" is not "local". The specific half is what refuses a
+/// name made of the query's GENERIC words (VA-182): "search Jira issues with JQL over the Jira Cloud
+/// REST API" matched api, cloud, jira and rest — four of seven terms, the four commonest, one of the
+/// specific four (jql, issues, cloud, search) — in a note on classification licensing named by
+/// "Cloud REST endpoints"; every true name on the probe matches half of its request's specific terms
+/// or more. Ranks, not weights: on a ten-note store one filler adverb ("properly", in one note) is 58%
+/// of the request's weight, and a weight floor un-named "During a benchmark run".
 ///
 /// `topic_in_name` says the entry's name carries the query's TOPIC WORD — its rarest term among those
 /// found in at least one searched entry (a term nobody has names no topic in this store; ties count
@@ -73,6 +81,8 @@ pub struct SearchHit {
     pub rare_terms: usize,
     pub phrase: bool,
     pub name_terms: usize,
+    pub specific_terms: usize,
+    pub matched_specific: usize,
     pub named: bool,
     pub topic_in_name: bool,
     pub occurrences: usize,
@@ -91,6 +101,17 @@ pub struct SearchHit {
 // "local" (60 of 233) and "models" (25) are both rare and together weigh 3.57, more than
 // "benchmark" + "run" (18 + 131, 3.12) or "run" + "start" (2.52); what named the tool-call note for
 // "write a blog post about local models" was the compound "goose-local" split into "goose" + "local".
+// measured (VA-182, same store): a count majority lets a request's common words outvote its specific
+// ones — "search Jira issues with JQL over the Jira Cloud REST API" (jql df 3, issues 10, cloud 20,
+// search 26 | jira 40, api 45, rest 55) named the Guard-Premium classification note on api + cloud +
+// jira + rest, 4 of 7 by count but one of the four terms no commoner than the median (cloud); the
+// thirteen true names match half of their request's specific terms (nine of them exactly half: one
+// of two on a four-term request) to all of them. A rarity-WEIGHT majority was refuted on the way: it
+// drops the same note (43%) but on a ten-note store "properly" in one note is 58% of "start a
+// benchmark run properly" and un-names "During a benchmark run". Neither separates the two notes
+// named fix + test for "fix the failing test in the scheduler" (3/4 each, one of the two specific
+// words each — "scheduler_mock tests" in one, "the exact failing invocation" in the other, the two
+// tie at df 6): by every measurement the store takes they are the same shape.
 pub const NAMED_MIN_NAME_TERMS: usize = 2;
 
 /// Rarity weight of a term found in `df` of `n` documents: `ln((n + 1) / (df + 0.5))` — large for a term
@@ -430,6 +451,22 @@ impl MemoryStore {
             .map(|&df| rarity_weight(n, df))
             .collect();
         let all_weights: f64 = weights.iter().sum();
+        let mut found_df: Vec<usize> = document_frequency
+            .iter()
+            .copied()
+            .filter(|&df| df >= 1)
+            .collect();
+        found_df.sort_unstable();
+        let median_df_doubled = match found_df.len() {
+            0 => 0,
+            k if k % 2 == 1 => found_df[k / 2] * 2,
+            k => found_df[k / 2 - 1] + found_df[k / 2],
+        };
+        let specific: Vec<bool> = document_frequency
+            .iter()
+            .map(|&df| df >= 1 && df * 2 <= median_df_doubled)
+            .collect();
+        let specific_terms = specific.iter().filter(|&&s| s).count();
         let topic_weight = weights
             .iter()
             .zip(&document_frequency)
@@ -448,6 +485,7 @@ impl MemoryStore {
         for (entry, name_tokens, tokens, haystack) in corpus {
             let mut score = 0.0;
             let mut matched_terms = 0;
+            let mut matched_specific = 0;
             let mut rare_terms = 0;
             let mut name_terms = 0;
             let mut occurrences = 0;
@@ -457,6 +495,9 @@ impl MemoryStore {
                     continue;
                 }
                 matched_terms += 1;
+                if specific[i] {
+                    matched_specific += 1;
+                }
                 occurrences += count;
                 score += weights[i];
                 if document_frequency[i] * 2 <= n {
@@ -474,7 +515,9 @@ impl MemoryStore {
             if phrase {
                 score += all_weights;
             }
-            let named = name_terms >= NAMED_MIN_NAME_TERMS && matched_terms * 2 > terms.len();
+            let named = name_terms >= NAMED_MIN_NAME_TERMS
+                && matched_terms * 2 > terms.len()
+                && matched_specific * 2 >= specific_terms;
             let topic_in_name = topic_terms
                 .iter()
                 .any(|term| term_occurrences(term, &name_tokens) > 0);
@@ -484,6 +527,8 @@ impl MemoryStore {
                 rare_terms,
                 phrase,
                 name_terms,
+                specific_terms,
+                matched_specific,
                 named,
                 topic_in_name,
                 occurrences,
@@ -959,6 +1004,113 @@ mod tests {
         let named = store.search("forge app", None).unwrap();
         assert_eq!(named[0].entry.category, "assets");
         assert!(named[0].named, "two of two terms in the name: {named:?}");
+    }
+
+    /// The VA-182 shapes. JQL: "search Jira issues with JQL over the Jira Cloud REST API" matched the
+    /// four commonest of its seven words (api, cloud, jira, rest — two of them in the headline) in a
+    /// note about classification licensing; four of seven by count is a majority, one of the four
+    /// specific words (jql, issues, search, api here) is not half, so it is not named — while the
+    /// note whose headline carries jql/search/issues is. Failing test: the two notes named by
+    /// fix + test, one carrying "scheduler_mock tests" and the other "the exact failing invocation",
+    /// are the SAME shape on every measurement the store takes.
+    #[test]
+    fn a_name_needs_half_of_the_request_specific_words_not_only_a_majority_of_its_words() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "classification",
+                "Data classification needs Guard Premium; plus the Cloud REST endpoints.\nJira mirror: PUT /rest/api/3/project/{key}/classification-level.",
+                &tags(&["reference"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "jql-sweep",
+                "Search Jira issues with JQL only after proving the identity can see the project.\nA count of zero licenses nothing.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        for i in 0..6 {
+            let platform = ["Jira", "Cloud", "REST", "API"]
+                .iter()
+                .take(4 - i.min(3))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ");
+            store
+                .remember(
+                    &format!("client-{i}"),
+                    &format!("Client {i}: a Jira site.\nIts platform: {platform}."),
+                    &tags(&["project"]),
+                    true,
+                )
+                .unwrap();
+        }
+
+        let hits = store
+            .search("api cloud issues jira jql rest search", None)
+            .unwrap();
+        let classification = hits
+            .iter()
+            .find(|h| h.entry.category == "classification")
+            .unwrap();
+        assert_eq!(classification.matched_terms, 4, "{classification:?}");
+        assert_eq!(classification.name_terms, 2);
+        assert_eq!(classification.specific_terms, 4);
+        assert_eq!(
+            classification.matched_specific, 1,
+            "four common words carry one specific word: {classification:?}"
+        );
+        assert!(!classification.named);
+        let sweep = hits
+            .iter()
+            .find(|h| h.entry.category == "jql-sweep")
+            .unwrap();
+        assert_eq!(sweep.matched_terms, 4);
+        assert_eq!(sweep.matched_specific, 3, "{sweep:?}");
+        assert!(sweep.named);
+        assert_eq!(hits[0].entry.category, "jql-sweep");
+
+        let store = store_in(&tempdir().unwrap());
+        store
+            .remember(
+                "loop",
+                "How to restart the autonomous evolve-goose swarm test+fix loop.\nThen cargo test -p goose-swarm (12 scheduler_mock tests = pillar gate).",
+                &tags(&["project"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "sooner",
+                "Never launch a run to validate a fix when a faster test exists.\nReplay the exact failing invocation first.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        for i in 0..4 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i}: a fix landed.\nThe test suite is green."),
+                    &tags(&["project"]),
+                    true,
+                )
+                .unwrap();
+        }
+        let hits = store.search("failing fix scheduler test", None).unwrap();
+        let by = |name: &str| hits.iter().find(|h| h.entry.category == name).unwrap();
+        let (loop_note, sooner) = (by("loop"), by("sooner"));
+        assert!(loop_note.named && sooner.named, "{hits:?}");
+        assert_eq!(loop_note.matched_terms, sooner.matched_terms);
+        assert_eq!(loop_note.name_terms, sooner.name_terms);
+        assert_eq!(loop_note.specific_terms, 2);
+        assert_eq!(loop_note.matched_specific, sooner.matched_specific);
+        assert_eq!(loop_note.matched_specific, 1);
+        assert!((loop_note.score - sooner.score).abs() < 1e-9);
     }
 
     /// The VA-180 shape: "write a blog post about local models" must not NAME a note whose headline

@@ -811,6 +811,8 @@ mod tests {
             rare_terms,
             phrase: false,
             name_terms,
+            specific_terms: 1,
+            matched_specific: 1,
             named: false,
             topic_in_name: false,
             occurrences: rare_terms.max(1),

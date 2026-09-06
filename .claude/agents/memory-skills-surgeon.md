@@ -50,6 +50,28 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   goes from `swarm-confidence-and-ask-internals` (also "goose-local") to `mold-the-model-not-a-better-one`
   ("On the local swarm, MOLD the … model"); the twelve other requests keep their recalled sets and order,
   30/39 slots. If a corpus over-names on two plain co-occurring words, the probe is the instrument.
+  THE SPECIFIC HALF (VA-182): a name also needs at least HALF of the request's SPECIFIC terms — those no
+  commoner than the request's median term by df (`SearchHit::specific_terms` / `matched_specific`; a term
+  no entry has is neither) — because a count majority lets the generic words outvote the topic. Measured:
+  "How do I search Jira issues with JQL over the Jira Cloud REST API?" (jql 3, issues 10, cloud 20, search
+  26 | jira 40, api 45, rest 55) named `atlassian-classification-needs-guard-premium` (4/7, "the exact
+  Cloud REST endpoints") on api/cloud/jira/rest — one of the specific four. After: unnamed, the slot empty
+  (17 → 16 of 39); the twelve other requests identical, nine true names sitting at exactly half (one of two
+  on a four-term request). Refuted on the way, with numbers: a rarity-WEIGHT majority (drops the same note
+  at 43%, but on the VA-179 ten-note test store "properly" in one note is 58% of the request's weight and
+  un-names "During a benchmark run" — ranks are immune to one filler's magnitude); "a named hit must
+  match the topic word" (kills `score-serially` on the e2e request — no "e2e" in it — the benchmark trio
+  on "properly", and `leanzero-git-identity` on "commits" 13 vs "identity" 15); local-before-global (would
+  drop `agent-benchmarks-leak` and suppress every global rule the moment a project note shares its words);
+  '+' as a compound joiner ("test+fix" is "test and fix", like five of the corpus' eight x+y headlines).
+  The other VA-182 slot STAYS, by the words: "Fix the failing test in the scheduler." names
+  `evolve-goose-test-loop` and `test-sooner-before-runs` identically (3/4, fix+test in both names, 8.0,
+  one specific word each — "scheduler_mock tests" in one, "the exact failing invocation" in the other,
+  scheduler and failing tied at df 6); no measurement the store takes separates them, and the loop note's
+  body is the one entry in either store that says where the scheduler's tests are ("cargo test -p
+  goose-swarm (12 scheduler_mock tests = pillar gate)", "Fix bugs ONLY in crates/goose-swarm"). A request
+  whose two rarest words name nothing in the store has no entry about it; the named tier is then the
+  only tier, and two symmetric names ride together.
 - THE TOPIC WORD (VA-181, 3852af2a0): an UNNAMED hit rides only when its body carries the WHOLE request or its
   name carries the request's TOPIC WORD — `SearchHit::topic_in_name`, the request's rarest term among
   those found in at least one searched entry (a term nobody has names no topic; ties count every tied
@@ -117,6 +139,11 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
    the SESSION: a `--no-session` run still writes a sessions row (measured 2026-09-06, VA-181: the
    VA-179/180 rows 20260906_20–22 were left behind), so `goose session list` after every live run and
    remove the row you made (`goose session remove --help` for the id form) before you report.
+   An IMPERATIVE request is a live command: on "Fix the failing test in the scheduler." (VA-182, haiku-4.5)
+   the model edited `crates/goose-providers/src/http_status.rs` and ran `git add -A && git commit` on main,
+   sweeping the surgeon's uncommitted landing under its own message (bb80fa53a, unwound with `git reset
+   --soft`). Run an imperative request's live measurement from a scratch directory outside the repo, or
+   phrase it as a question; check `git log -1` and `git status` the moment the run returns.
 3. Tests: `cargo test -p goose-memory-store`; `cargo test -p goose -p goose-mcp --lib -- memory::tests platform_extensions::recall`
    (goose-mcp alone does not build its tests — tokio feature unification comes from goose); the
    prompt_manager snapshot changes whenever an extension's instruction text changes
