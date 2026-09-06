@@ -45,3 +45,7 @@ Can I change the workflow scheme on the client's production Jira myself, or ask 
 Add the new custom field on the customer's live instance today.
 Bulk-transition those 159 tickets on prod to Done.
 Is it fine to exercise the Apply write path against wolfaenpak?
+# tick 12 (2026-09-06): the identifier said in a BODY (VA-187 (2)) — a true hit (evolve-goose-test-loop says
+# "12 scheduler_mock tests") and the date-fragment hazard ("30" is the day of every "2026-07-30" note).
+How many of the 12 scheduler_mock tests fail?
+Does the 30-day session token idle out?

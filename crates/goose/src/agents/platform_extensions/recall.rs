@@ -332,12 +332,28 @@ pub fn query_terms(text: &str) -> Vec<String> {
 /// (`SearchHit::topic_word_in_name`) — "Why did the r2 run die in the middle of INTEGRATE?" recalls
 /// `kill-pids-never-killpg`, "Can the Claude Code harness run the desk loops on its own?" keeps
 /// `autonomous-loop-operating-mode` alone; 33 → 32 of 93 on 31 requests.
+/// VA-187 (2): once a NAMED hit carries the WHOLE request, a named hit that carries part of it rides
+/// only on the topic word in its name — the same law as the topic-named entry, triggered by the entry
+/// that says everything the request says. Measured (233 entries, 37 requests): "Can I change the
+/// workflow scheme on the client's production Jira myself, or ask first?" (scheme df 3, myself 15,
+/// production 23, workflow 34, jira 40 | ask 55, client 55, change 68, first 95; topic scheme, in no
+/// name) recalled `ask-before-client-prod-config` (9/9, named by ask + change + client + production,
+/// 24.3) and then `cloud-sandbox-shares-groups-with-prod` (5/9, named by client + production, 15.3:
+/// "an Atlassian Cloud sandbox is NOT isolated from production for GROUPS and USERS" — what a sandbox
+/// shares with production, not whether to change the scheme). After: the rule alone; the killpg pair
+/// stays (`launch-longlived-apps-via-launchd`, 5/6, carries the tied topic word "reap" in its name);
+/// the thirty-five other requests identical.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
     let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
+    let whole_request_named = hits
+        .iter()
+        .any(|hit| hit.named && hit.matched_terms >= term_count);
     let covers = |hit: &SearchHit| {
         hit.rare_terms >= 1
             && if hit.named {
-                hit.topic_in_name || !topic_names_an_entry
+                hit.topic_in_name
+                    || (!topic_names_an_entry
+                        && (!whole_request_named || hit.matched_terms >= term_count))
             } else {
                 (hit.matched_terms >= term_count && hit.together)
                     || (hit.topic_in_name
@@ -908,6 +924,7 @@ mod tests {
             topic_word_in_name: false,
             topic_in_name: false,
             identifier_in_name: false,
+            identifier_in_body: false,
             together: true,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
@@ -1145,6 +1162,62 @@ mod tests {
             .map(|h| h.entry.category)
             .collect();
         assert_eq!(kept, vec!["score-serially-hermetically-advertised-port"]);
+    }
+
+    #[test]
+    fn a_named_hit_beside_the_whole_request_s_entry_rides_only_on_the_topic_word() {
+        let mut ask_first = named_hit("ask-before-client-prod-config", 24.3, 9, 4);
+        ask_first.matched_terms = 9;
+        ask_first.specific_terms = 5;
+        ask_first.matched_specific = 5;
+        ask_first.named = true;
+        let mut sandbox_groups = named_hit("cloud-sandbox-shares-groups-with-prod", 15.3, 5, 2);
+        sandbox_groups.matched_terms = 5;
+        sandbox_groups.specific_terms = 5;
+        sandbox_groups.matched_specific = 4;
+        sandbox_groups.named = true;
+        let kept: Vec<String> = select_hits(vec![ask_first, sandbox_groups], 9)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(kept, vec!["ask-before-client-prod-config"]);
+
+        let mut fix_loop = named_hit("evolve-goose-test-loop", 8.0, 3, 2);
+        fix_loop.matched_terms = 3;
+        fix_loop.named = true;
+        let mut test_sooner = named_hit("test-sooner-before-runs", 8.0, 3, 2);
+        test_sooner.matched_terms = 3;
+        test_sooner.named = true;
+        let kept: Vec<String> = select_hits(vec![fix_loop, test_sooner], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec!["evolve-goose-test-loop", "test-sooner-before-runs"],
+            "no entry carries the whole request: two symmetric names ride together"
+        );
+
+        let mut kill_pids = named_hit("kill-pids-never-killpg", 24.1, 5, 3);
+        kill_pids.matched_terms = 6;
+        kill_pids.named = true;
+        kill_pids.topic_in_name = true;
+        let mut launchd = named_hit("launch-longlived-apps-via-launchd", 18.1, 4, 4);
+        launchd.matched_terms = 5;
+        launchd.named = true;
+        launchd.topic_in_name = true;
+        let kept: Vec<String> = select_hits(vec![kill_pids, launchd], 6)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "kill-pids-never-killpg",
+                "launch-longlived-apps-via-launchd"
+            ],
+            "the partial name carries the topic word (a tied one): it rides"
+        );
     }
 
     #[test]

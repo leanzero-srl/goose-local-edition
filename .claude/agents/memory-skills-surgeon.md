@@ -90,6 +90,33 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   `score-serially` on the e2e request — it never says e2e); a one-name-term tier (one name term + a
   majority of the terms + a majority of the specific words: 33 → 43 slots, the blog-post swarm trio back;
   the same tier on `feedback` entries only: 33 → 38, two of the trio back).
+  THE IDENTIFIER SAID IN THE BODY (VA-187 (2), `SearchHit::identifier_in_body`): an identifier said in an
+  entry's BODY names the entry as one in its name does, when the identifier is a SPECIFIC word of the request
+  (no commoner than its median term by df) and the entry matches a MAJORITY of the request's specific words
+  (the set's half floor stays waived only for a name). Measured (probe, 233 entries, 37 requests):
+  "Bulk-transition those 159 tickets on prod to Done." (159 df 3, bulk 6, transition 4 | tickets 15, prod 71;
+  topic 159; "bulktransition" a term no entry has) recalled NOTHING while `ask-before-client-prod-config`
+  (global, feedback, 4/6 — 159, bulk, prod, tickets — "PRODUCTION" in its headline, 2/3 specific, 12.9, the
+  top hit) says "159 real Siemens access-request tickets … on the client's production Jira", "bulk edits —
+  all of it". After: recalled `[named] [identifier]`, and `bank-agent-three-bucket-rule` (4/6, nameless,
+  11.7 — "Bucket 2, ask the BANK then do it: every production config change … any bulk write of any size.
+  No 'small enough' category … that is the 159-ticket scar") beside it, the same rule in the bank's frame,
+  kept by the words; the thirty-five other requests identical. The two guards, each with its receipt:
+  "Does the 30-day session token idle out?" says "30" (df 48 — the day of every "2026-07-30" note), which
+  without the specific-word guard names `blocked-resource-stay-alive-alert-loudly` ("Set 2026-07-30 …
+  mid-session … an expired token", 4/6, 7.0) — a number the store says as often as a common word is not a
+  code (the guard also forgoes `forge-live-ui-testing-facts`, "cloud.session.token idles ~30 days", 4/6,
+  8.0 — stated, not hidden); and the r2 request, where without the majority-of-specific guard "evolve r2,
+  never restart" (`stateless-models-harness-forms-the-message`, 3/5, 1 of 3 specific, 7.3) is named by a
+  code said in passing — out today only because `kill-pids-never-killpg` carries r2 in its NAME and holds
+  the topic. A true body hit rides: "How many of the 12 scheduler_mock tests fail?" recalls
+  `evolve-goose-test-loop` ("cargo test -p goose-swarm (12 scheduler_mock tests = pillar gate)", 4/6, 3/4
+  specific, 13.8); both requests are in the corpus. The `[identifier]` probe marker covers both placements.
+  Live (haiku-4.5, --no-session, from the repo, a question): `memories:2
+  recalled:["ask-before-client-prod-config(12.9)", "bank-agent-three-bucket-rule(11.7)"] suggested:[]`; the
+  answer opened "I need to ask you three clarifying questions before we proceed:" and its third point
+  "A status move is a config change on their production system. I need to ask the *client* (Irvin/Jake/
+  Javier, not Mihai) to approve it". Session row 20260906_20 deleted through sqlite (count 1 → 0).
   THE ATTRIBUTE TAG (VA-187, `plain_tags`): a `key:value` tag — the importer's `imported:claude-code` — is
   provenance, not a word of the name; it stays searched text. Measured: all 233 entries carry it, so
   "claude" and "code" sat in every NAME (df 233, name df 233, weight 0.00) and made a `together` pair in
@@ -116,16 +143,33 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   text as well (claude and code become real terms: killed-run 9.0 and diconium-loop-launchd 7.7 ride);
   `together` for topic riders (kills score-serially on the golden request and no-security-hygiene-nagging on
   rotate — neither says two request words side by side).
-  THE SANDBOX-THEN-PRODUCTION MISS (VA-187 (2), NOT landed): "Deploy the app to the sandbox first, then
-  production." (app 58, first 95 | deploy 9, production 23, sandbox 10; topic deploy) recalls nothing.
-  `ask-before-client-prod-config` (global, feedback, 3/5 — first, production, sandbox — 2/3 specific,
-  "PRODUCTION" in its headline, 8.6) says "Sandbox: go ahead. Production: ask, wait for their yes, then do
-  it" — the rule for a production deploy — and never says deploy; `diconium-skill` has the same numbers
-  ("sandbox-first for config"), `bank-agent-three-bucket-rule` better ones (4/5, 3/3 specific, nameless —
-  "sandbox work … every production config change … Forge deploy", no two request words together),
-  `cloud-sandbox-shares-groups-with-prod` two name words on 2/5. The bridge from "deploy" to "config change"
-  is not in the words, and every rule that reaches the note by its one name word reopens the blog-post
-  trio (above). Waits on a probe corpus with more than one request of this shape.
+  THE RULE THAT APPLIES BY MEANING (VA-187 (2), the recorded LIMIT): `ask-before-client-prod-config` ("Ask
+  the CLIENT (never Mihai) before ANY config change on their PRODUCTION system … Sandbox: go ahead.
+  Production: ask") is the rule for "Deploy the app to the sandbox first, then production." (app 58, first
+  95 | deploy 9, production 23, sandbox 10; topic deploy) and for "Add the new custom field on the customer's
+  live instance today." (add 33, field 29, live 90, new 44 | custom 18, customer 10, instance 10, today 8;
+  topic today), recalls on neither, and NO lexical rule reaches it without reopening a closed ride. The
+  numbers: on the sandbox request the note is 3/5 (first, production, sandbox), 1 in name (production), 2/3
+  specific, 8.6 — `diconium-skill` (project, "sandbox-first for config") has the SAME numbers on the same
+  words plus [together], `bank-agent-three-bucket-rule` better ones (4/5, 3/3 specific, nameless, apart), and
+  the topic word "deploy" is in none of them: the blog-post shape (a feedback note carrying the request's
+  common specific words with its topic word absent). The feedback-kind one-name tier (B5: one name term, a
+  majority of the terms and of the specific words, `feedback` entries only) measures 34 → 41 on the 35
+  requests — `improve-toolcall-reliability` 7.1 and `mold-the-model-not-a-better-one` 6.0 back on the blog
+  post, `rest-first-then-browser` 7.2 beside the rule on the sandbox request, `read-the-words-not-the-shape`
+  8.9 on the strongest-node request, `never-invent-facts-about-mihai` 6.7 on the harness request; the same
+  tier on ALL the specific words (B6) measures 34 → 34, it reaches nothing. On the custom-field request the
+  note is 2/8 (field, new — "fields", "being new"), 0 in name, 0/4 specific, 3.7, rank 37: none of custom,
+  customer, instance, today is in it. On "Is it fine to exercise the Apply write path against wolfaenpak?"
+  `wolfaenpak-is-the-testbed` is 1/7 and the request's rarest word is the verb "exercise" (df 6 <
+  wolfaenpak 8): the store cannot tell a proper noun from a verb, and one name word is not aboutness
+  (VA-181). THE NAMED SIGNAL, measured on a replica copy of the store (the real note is imported and was
+  NOT edited): the note's TAG LINE is name text (`plain_tags`), so its author naming the meanings —
+  `# feedback deploy customer live instance` — recalls it on the sandbox request (4/5, 2 in name, 14.8
+  [named] [topic]), on the custom-field request (6/8, 4 in name, 22.6 [named]) and additionally on "Deploy
+  the Forge app to production." (10.8, beside the bank note — right by the words), every other request
+  unchanged; the 159 request is reached by the identifier said in the body (above). Anything beyond the
+  tag line is an intent classifier, not a word rule.
 - THE TOPIC WORD (VA-181, 3852af2a0): an UNNAMED hit rides only when its body carries the WHOLE request or its
   name carries the request's TOPIC WORD — `SearchHit::topic_in_name`, the request's rarest term among
   those found in at least one searched entry (a term nobody has names no topic; ties count every tied
@@ -177,6 +221,16 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   run). Remove with `sqlite3 ~/.local/share/goose/sessions/sessions.db "delete from messages where
   session_id='<id>'; delete from sessions where id='<id>';"` and prove it with a sqlite count, never with
   `session list`.
+  (c) (VA-187 (2), `select_hits`) The same law once a NAMED hit carries the WHOLE request: a named hit
+  carrying part of it rides only on the topic word in its name. "Can I change the workflow scheme on the
+  client's production Jira myself, or ask first?" (scheme 3, myself 15, production 23, workflow 34, jira 40 |
+  ask 55, client 55, change 68, first 95; topic scheme, in no name) recalled `ask-before-client-prod-config`
+  (9/9, named by ask + change + client + production, 24.3) and `cloud-sandbox-shares-groups-with-prod` (5/9,
+  named by client + production, 15.3 — "an Atlassian Cloud sandbox is NOT isolated from production for
+  GROUPS and USERS", what a sandbox shares with production, not whether to change the scheme). After: the
+  rule alone; the killpg pair stays (`launch-longlived-apps-via-launchd`, 5/6, carries the tied topic word
+  "reap" in its name); the two symmetric 3/4 names on the failing-test request stay (no entry carries the
+  whole request); the thirty-four other requests identical; 34 → 33 of 105.
   THE TOPIC WORD IN ANOTHER FORM (VA-185): the topic word is a WORD, not a spelling — `topic_in_name` also
   holds when a name token and the topic term share a Snowball English stem (`goose_memory_store::stem`,
   crate `rust-stemmers`: rotate/rotation → rotat, models/model, commits/commit, notarized/notarization;
@@ -312,8 +366,9 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
    (goose-mcp alone does not build its tests — tokio feature unification comes from goose); the
    prompt_manager snapshot changes whenever an extension's instruction text changes
    (`INSTA_UPDATE=always`); clippy: goose-mcp and the store must be clean; goose + goose-cli carried 41
-   pre-existing sites on 2026-09-06 (measured by the VA-179 pass; the goose-cli one is a linker
-   `__eh_frame` note) — none may be in a file you touched.
+   pre-existing sites on 2026-09-06 (measured by the VA-179 pass; 29 on the VA-187 (2) pass, all in
+   crates/goose — `cargo clippy -p goose-cli` re-lints goose whenever recall.rs changed; the goose-cli one
+   is a linker `__eh_frame` note) — none may be in a file you touched.
 
 ## Never
 - Never inject bodies into the startup instructions; never add a threshold without its probe receipt;

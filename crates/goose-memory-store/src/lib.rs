@@ -102,6 +102,20 @@ pub struct SearchHit {
     /// INTEGRATE (minute 139)", 10.8, the top hit) sat unrecalled: "die" and "middle" are the request's
     /// specific words by rarity, and no note says them.
     pub identifier_in_name: bool,
+    /// A request identifier said in the entry's BODY, where it names the entry as one in the name
+    /// does — when the identifier is a SPECIFIC word of the request (no commoner than its median
+    /// term) and the entry matches a majority of the request's specific words. Measured (VA-187 (2),
+    /// 233 entries): "Bulk-transition those 159 tickets on prod to Done." (159 df 3, bulk 6,
+    /// transition 4 | tickets 15, prod 71; topic 159) recalled nothing while
+    /// `ask-before-client-prod-config` (4/6 — 159, bulk, prod, tickets — "PRODUCTION" in its headline,
+    /// 12.9, the top hit) says "159 real Siemens access-request tickets on the client's production
+    /// Jira … bulk edits — all of it". The two guards, each with its receipt: "Does the 30-day session
+    /// token idle out?" says "30" (df 48 — the day of every dated note, "2026-07-30"), which would
+    /// name `blocked-resource-stay-alive-alert-loudly` ("Set 2026-07-30 … mid-session … an expired
+    /// token", 4/6) — a number the store says as often as a common word is not a code; and "Why did
+    /// the r2 run die in the middle of INTEGRATE?" says r2 in `stateless-models-harness-forms-the-
+    /// message` ("evolve r2, never restart", 3/5, 1 of 3 specific words) — a code said in passing.
+    pub identifier_in_body: bool,
     /// Two different request terms said TOGETHER in the entry — consecutive tokens, or one function
     /// word between ("Forge deploy", "golden engine", "run or benchmark") — the request's words said
     /// side by side, not each alone in its own sentence. Measured (VA-185, 233 entries): "How should I open a plan when I present it?" rode on
@@ -144,6 +158,11 @@ pub struct SearchHit {
 // answers it; a `key:value` tag is not a name word (every imported entry carries `imported:claude-code`,
 // so "claude" + "code" named 233 entries for "Can the Claude Code harness run the desk loops on its
 // own?"); and a name reached by the topic word's STEM yields to one carrying the word itself.
+// measured (VA-187 (2), 233 entries, 37 requests): an identifier said in the BODY names too, when it is a
+// specific word of the request and the entry matches a majority of the specific words — "Bulk-transition
+// those 159 tickets on prod to Done." names `ask-before-client-prod-config` and
+// `bank-agent-three-bucket-rule` by "159" in their bodies (4/6, 2 of 3 specific each); the other
+// thirty-six requests unchanged.
 pub const NAMED_MIN_NAME_TERMS: usize = 2;
 
 /// The stem of a word (Snowball English): the form a request and a headline share when one says
@@ -635,8 +654,13 @@ impl MemoryStore {
             let identifier_in_name = terms
                 .iter()
                 .any(|term| is_identifier(term) && term_occurrences(term, &name_tokens) > 0);
+            let identifier_in_body = matched_specific * 2 > specific_terms
+                && terms.iter().enumerate().any(|(i, term)| {
+                    is_identifier(term) && specific[i] && term_occurrences(term, &tokens) > 0
+                });
             let named = matched_terms * 2 > terms.len()
                 && (identifier_in_name
+                    || identifier_in_body
                     || (name_terms >= NAMED_MIN_NAME_TERMS
                         && matched_specific * 2 >= specific_terms));
             let topic_word_in_name = topic_terms
@@ -659,6 +683,7 @@ impl MemoryStore {
                 topic_word_in_name,
                 topic_in_name,
                 identifier_in_name,
+                identifier_in_body,
                 together,
                 occurrences,
                 entry,
@@ -1679,8 +1704,102 @@ mod tests {
             .unwrap();
         assert_eq!(stateless.matched_terms, 3);
         assert!(
-            !stateless.identifier_in_name && !stateless.named,
-            "r2 in the body only: {stateless:?}"
+            !stateless.identifier_in_name && !stateless.identifier_in_body && !stateless.named,
+            "r2 in the body, said in passing (2 of 4 specific words): {stateless:?}"
+        );
+    }
+
+    #[test]
+    fn an_identifier_in_the_body_names_the_entry_on_the_request_s_specific_words() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "ask-before-prod-config",
+                "Ask the client before any config change on their PRODUCTION system.\nSandbox: go ahead. Production: ask, wait for their yes. Bulk edits — all of it.\nWhy: on 2026-07-17 I moved the status of 159 real access-request tickets on the client's production Jira.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "bank-three-buckets",
+                "How an agent operates inside a regulated bank: three buckets.\nBucket 2, ask the bank: every production config change, any bulk write of any size. That is the 159-ticket scar.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "forge-browser-auth",
+                "Browser auth for a deployed Forge app.\ncloud.session.token idles ~30 days; fast-fail on redirect.",
+                &tags(&["reference"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "spend-limit-blocked",
+                "A blocked resource: stay alive and alert loudly.\nSet 2026-07-30, the tick loop hit the monthly spend limit mid-session that day; an expired token, a locked-out account.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        for (category, date) in [
+            ("reboot-note", "2026-08-30"),
+            ("audit-note", "2026-06-30"),
+            ("sync-note", "2026-05-30"),
+        ] {
+            store
+                .remember(
+                    category,
+                    &format!("A dated note.\nMeasured {date} on the workhorse."),
+                    &tags(&["project"]),
+                    true,
+                )
+                .unwrap();
+        }
+        let hits = store
+            .search("159 bulk prod tickets transition", None)
+            .unwrap();
+        let ask = hits
+            .iter()
+            .find(|h| h.entry.category == "ask-before-prod-config")
+            .unwrap();
+        assert_eq!(
+            (ask.matched_terms, ask.name_terms, ask.identifier_in_name),
+            (4, 1, false),
+            "159, bulk, prod, tickets — only prod in the headline: {ask:?}"
+        );
+        assert!(
+            ask.identifier_in_body && ask.named,
+            "159 in the body, with a majority of the specific words, names: {ask:?}"
+        );
+        assert_eq!(hits[0].entry.category, "ask-before-prod-config");
+        let bank = hits
+            .iter()
+            .find(|h| h.entry.category == "bank-three-buckets")
+            .unwrap();
+        assert!(
+            bank.identifier_in_body && bank.named && bank.score < ask.score,
+            "the 159-ticket scar names the bank note too, below the one with prod in its name: {bank:?}"
+        );
+        let hits = store
+            .search("30 30day day idle session token", None)
+            .unwrap();
+        for hit in &hits {
+            assert!(
+                !hit.identifier_in_body && !hit.named,
+                "\"30\" is the day of four dated notes, commoner than the request's median word — a number, not a code: {hit:?}"
+            );
+        }
+        let spend = hits
+            .iter()
+            .find(|h| h.entry.category == "spend-limit-blocked")
+            .unwrap();
+        assert_eq!(
+            spend.matched_terms, 4,
+            "30 (from the date), day, session, token: {spend:?}"
         );
     }
 

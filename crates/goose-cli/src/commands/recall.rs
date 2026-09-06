@@ -37,7 +37,7 @@ pub fn run(text: &str) -> Result<()> {
         };
         let named = if hit.named { " [named]" } else { "" };
         let topic = if hit.topic_in_name { " [topic]" } else { "" };
-        let identifier = if hit.identifier_in_name {
+        let identifier = if hit.identifier_in_name || hit.identifier_in_body {
             " [identifier]"
         } else {
             ""
