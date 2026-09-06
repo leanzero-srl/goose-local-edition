@@ -57,6 +57,15 @@ impl MemoryEntry {
 /// whatever the body score — a body that happens to contain every query word is a vocabulary match, a
 /// headline carrying two of the query's words is the topic. The name is read by [`name_tokens`]: a
 /// hyphenated compound in a headline is one word, so "goose-local" is not "local".
+///
+/// `topic_in_name` says the entry's name carries the query's TOPIC WORD — its rarest term among those
+/// found in at least one searched entry (a term nobody has names no topic in this store; ties count
+/// every tied term). It is what separates an entry ABOUT a request from one that shares its words
+/// when only one of the query's terms sits in the name. Measured (VA-181, 233 entries): "connect to the
+/// workhorse over SSH" has the topic "ssh" — the two notes named only by "workhorse" (JACCL cluster,
+/// WindowServer OOM) carry it nowhere in their names; "deploy the Forge app" has the topic "deploy",
+/// which the named Forge-deployment note carries and the bank-desk note ("Forge + DC-to-Cloud
+/// migration engagement", named only by "forge") does not.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
     pub score: f64,
@@ -65,6 +74,7 @@ pub struct SearchHit {
     pub phrase: bool,
     pub name_terms: usize,
     pub named: bool,
+    pub topic_in_name: bool,
     pub occurrences: usize,
     pub entry: MemoryEntry,
 }
@@ -420,6 +430,19 @@ impl MemoryStore {
             .map(|&df| rarity_weight(n, df))
             .collect();
         let all_weights: f64 = weights.iter().sum();
+        let topic_weight = weights
+            .iter()
+            .zip(&document_frequency)
+            .filter(|(_, &df)| df >= 1)
+            .map(|(&weight, _)| weight)
+            .fold(0.0_f64, f64::max);
+        let topic_terms: Vec<&String> = terms
+            .iter()
+            .zip(&document_frequency)
+            .zip(&weights)
+            .filter(|((_, &df), &weight)| df >= 1 && weight == topic_weight)
+            .map(|((term, _), _)| term)
+            .collect();
 
         let mut hits = Vec::new();
         for (entry, name_tokens, tokens, haystack) in corpus {
@@ -452,6 +475,9 @@ impl MemoryStore {
                 score += all_weights;
             }
             let named = name_terms >= NAMED_MIN_NAME_TERMS && matched_terms * 2 > terms.len();
+            let topic_in_name = topic_terms
+                .iter()
+                .any(|term| term_occurrences(term, &name_tokens) > 0);
             hits.push(SearchHit {
                 score,
                 matched_terms,
@@ -459,6 +485,7 @@ impl MemoryStore {
                 phrase,
                 name_terms,
                 named,
+                topic_in_name,
                 occurrences,
                 entry,
             });
@@ -1034,6 +1061,93 @@ mod tests {
             fleet[0]
         );
         assert!(fleet[0].named);
+    }
+
+    /// The topic word is the request's rarest term found somewhere in the store (a term nobody has
+    /// names no topic); an entry named by one OTHER request word does not carry it. The VA-181 shapes:
+    /// "connect ssh workhorse" against a cluster note named by "workhorse" with SSH in its body, and
+    /// "blog … local models" against the goose-local tool-call note.
+    #[test]
+    fn topic_in_name_is_the_rarest_request_term_found_in_the_entry_name() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "cluster",
+                "Distributed mlx-lm inference across the MacBook and the workhorse Mac Studio.\nSSH into every host; the workhorse alias does not resolve.",
+                &tags(&["project"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "sshkeys",
+                "SSH keys and where they live.\nThe workhorse alias uses id_ed25519_workhorse.",
+                &tags(&["reference"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "toolcall",
+                "STANDING: improve the goose-local swarm workers' tool-call reliability — don't blame the weak models.\nWrite deterministic repairs instead.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "article",
+                "Publish the blog post when the draft is read.\nWrite it locally first.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        for i in 0..6 {
+            let body = if i < 3 {
+                format!("Note {i}: connect the workhorse.\nModels of rain.")
+            } else {
+                format!("Note {i}: the workhorse weather.\nModels of rain.")
+            };
+            store
+                .remember(&format!("note-{i}"), &body, &[], true)
+                .unwrap();
+        }
+
+        let by = |hits: &[SearchHit], category: &str| {
+            hits.iter()
+                .find(|h| h.entry.category == category)
+                .cloned()
+                .unwrap()
+        };
+
+        let ssh = store.search("connect ssh workhorse", None).unwrap();
+        let cluster = by(&ssh, "cluster");
+        assert_eq!(cluster.matched_terms, 2);
+        assert_eq!(cluster.name_terms, 1, "{cluster:?}");
+        assert!(!cluster.named);
+        assert!(
+            !cluster.topic_in_name,
+            "'workhorse' is the name term, 'ssh' the topic: {cluster:?}"
+        );
+        let keys = by(&ssh, "sshkeys");
+        assert_eq!(keys.matched_terms, 2);
+        assert_eq!(keys.name_terms, 1);
+        assert!(keys.topic_in_name, "{keys:?}");
+
+        let unknown = store.search("connect ssh workhorse zzzz", None).unwrap();
+        assert!(
+            by(&unknown, "sshkeys").topic_in_name,
+            "a term no entry carries names no topic: {unknown:?}"
+        );
+
+        let blog = store.search("blog local models post write", None).unwrap();
+        let toolcall = by(&blog, "toolcall");
+        assert_eq!(toolcall.matched_terms, 3);
+        assert_eq!(toolcall.name_terms, 1);
+        assert!(!toolcall.topic_in_name, "{toolcall:?}");
+        let article = by(&blog, "article");
+        assert!(article.topic_in_name, "{article:?}");
     }
 
     #[test]

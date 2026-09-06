@@ -50,6 +50,31 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   goes from `swarm-confidence-and-ask-internals` (also "goose-local") to `mold-the-model-not-a-better-one`
   ("On the local swarm, MOLD the … model"); the twelve other requests keep their recalled sets and order,
   30/39 slots. If a corpus over-names on two plain co-occurring words, the probe is the instrument.
+- THE TOPIC WORD (VA-181): an UNNAMED hit rides only when its body carries the WHOLE request or its
+  name carries the request's TOPIC WORD — `SearchHit::topic_in_name`, the request's rarest term among
+  those found in at least one searched entry (a term nobody has names no topic; ties count every tied
+  term). `select_hits` = named, or all terms matched, or (topic in name and half the terms), each with
+  `rare_terms ≥ 1` and the share-of-top floor. One name term is not aboutness. Measured (probe, 233
+  entries): "How do I connect to the workhorse over SSH?" (topic ssh) filled two slots on "workhorse"
+  alone — `distributed-mlx-jaccl-cluster` (9.0, "Distributed mlx-lm inference … over Apple JACCL") and
+  `workhorse-oom-windowserver-kill` (8.2, "WindowServer watchdog-killed by RAM exhaustion"); "Can you list
+  the files in this directory?" (topic directory) one on "files" — `grep-dash-i-skips-binary`; "Write a
+  blog post about local models." (topic blog) three on local/models — the swarm notes. After: all three
+  empty, skills unchanged (15). On the other ten every `[named]` hit and both whole-request bodies
+  (`bank-agent-three-bucket-rule` 4/4 on the Forge deploy, `goose-branch-map` 4/4 on the golden score)
+  stay in order; seven vocabulary slots drop: `killed-run-reports-nothing` (e2e token; "launchd loop
+  guard … a killed tick"), `jira-mentions-indexed-by-accountid` and `endpoint-answered-narrower-question`
+  (JQL; "@mentions by accountId", "user/search returns ACTIVE users only" — the two closest to true, both
+  gotchas named by neither jql nor search), `never-kill-fix-and-ship` (failing test; "never bin work over
+  defects"), `bankofireland-desk` (Forge deploy; "the bankofireland skill … PRE-CREDENTIAL" — the deploy
+  rule itself lives in the kept bank-agent note), `goose-branch-map` and
+  `goose-local-edition-dmg-release-loop` (git identity; branches; a "Code Signing identity").
+  `score-serially-hermetically-advertised-port` keeps slot 3 on the golden request (topic tie
+  golden/score, "score" in its name). 30 → 17 of 39. Refuted on the way: a matched-weight share floor
+  (bankofireland-desk 59% sits between the OOM note 57% and the JACCL note 64%) and a
+  rarest-term-anywhere rule (the JACCL note carries SSH in its body). Live (haiku-4.5, --no-session):
+  `memories:0 recalled:[] suggested:[]` on the SSH request. A `--no-session` run still writes a sessions
+  row (20260906_22, _23) — delete it after a live measurement.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.

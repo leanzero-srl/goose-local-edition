@@ -295,23 +295,29 @@ pub fn query_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Which hits are worth injecting: an entry that COVERS the request — half of its terms when a request
-/// term sits in the entry's name (category, tags, headline), ALL of them when none does — at least one
-/// rare, scoring at least half of the best such hit; taken in the store's order, so the entries the
-/// request NAMES (`SearchHit::named`) fill the slots before a body that merely shares its words.
+/// Which hits are worth injecting: an entry the request NAMES (`SearchHit::named`), an entry whose
+/// body carries EVERY request term, or an entry whose name carries the request's TOPIC WORD
+/// (`SearchHit::topic_in_name`, its rarest term) with half of the terms matched — each with at least
+/// one rare term, scoring at least half of the best such hit; taken in the store's order, so the named
+/// entries fill the slots first.
 /// Read on the goose-native store (62 local + 171
 /// global entries, 13 requests): true hits carry name terms and win by a wide margin (golden engine 14.8
 /// vs 8.8, killpg 24.1, fleet names 31.3); every noise slot was a nameless entry matching half the
 /// request ("list the files" → note-5e3df2), while the nameless entries
 /// worth keeping matched it whole (note-93f4b2, 4/4, for "deploy the Forge app").
+/// Measured (VA-181, same store): a single name term is not aboutness — "connect to the workhorse over
+/// SSH" filled two slots on "workhorse" alone (a JACCL cluster note, a WindowServer-OOM note), "list the
+/// files in this directory" one on "files" (a grep -I note), "write a blog post about local models"
+/// three on "local"/"models" (swarm notes); none carried the request's topic word (ssh, directory,
+/// blog) in its name. Requiring it emptied those three requests and dropped seven shared-vocabulary
+/// slots elsewhere (a launchd-guard note for the e2e probe token, a signing-cert note for the git
+/// identity); every named hit and every whole-request body stayed — 30 → 17 of 39 slots.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
     let covers = |hit: &SearchHit| {
         hit.rare_terms >= 1
-            && if hit.name_terms >= 1 {
-                hit.matched_terms * 2 >= term_count
-            } else {
-                hit.matched_terms >= term_count
-            }
+            && (hit.named
+                || hit.matched_terms >= term_count
+                || (hit.topic_in_name && hit.matched_terms * 2 >= term_count))
     };
     let top = hits
         .iter()
@@ -789,10 +795,12 @@ mod tests {
         named_hit(category, score, rare_terms, 1)
     }
 
-    /// A hit matching `matched` terms, all of them rare, one of them in the name.
+    /// A hit matching `matched` terms, all of them rare, one of them — the request's topic word — in
+    /// the name.
     fn covering_hit(category: &str, score: f64, matched: usize) -> SearchHit {
         let mut hit = named_hit(category, score, matched, 1);
         hit.matched_terms = matched;
+        hit.topic_in_name = true;
         hit
     }
 
@@ -804,6 +812,7 @@ mod tests {
             phrase: false,
             name_terms,
             named: false,
+            topic_in_name: false,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
                 is_global: true,
@@ -880,13 +889,67 @@ mod tests {
         // a nameless entry must cover the whole request; a named one, half of it
         let mut nameless_half = covering_hit("nameless-half", 9.0, 3);
         nameless_half.name_terms = 0;
+        nameless_half.topic_in_name = false;
         let mut nameless_full = covering_hit("nameless-full", 4.0, 5);
         nameless_full.name_terms = 0;
+        nameless_full.topic_in_name = false;
         let kept: Vec<String> = select_hits(vec![nameless_half, nameless_full], 5)
             .into_iter()
             .map(|h| h.entry.category)
             .collect();
         assert_eq!(kept, vec!["nameless-full"]);
+    }
+
+    /// The VA-181 shapes. "connect ssh workhorse": two notes named only by "workhorse" match two of
+    /// three terms and share the request's words, not its topic ("ssh") — neither rides. "deploy forge
+    /// app production": the note the request names rides, the nameless note carrying every term rides,
+    /// the bank-desk note named only by "forge" (topic: "deploy") does not. "benchmark properly run
+    /// start": the named notes ride without the topic word ("properly") in their names.
+    #[test]
+    fn an_unnamed_hit_rides_only_on_the_whole_request_or_the_topic_word_in_its_name() {
+        let mut cluster = covering_hit("distributed-mlx-jaccl-cluster", 9.0, 2);
+        cluster.topic_in_name = false;
+        let mut oom = covering_hit("workhorse-oom-windowserver-kill", 8.2, 2);
+        oom.topic_in_name = false;
+        assert!(select_hits(vec![cluster, oom], 3).is_empty());
+
+        let mut forge_facts = named_hit("forge-live-ui-testing-facts", 13.3, 3, 3);
+        forge_facts.named = true;
+        forge_facts.topic_in_name = true;
+        let mut bank_rule = covering_hit("bank-agent-three-bucket-rule", 8.9, 4);
+        bank_rule.name_terms = 0;
+        bank_rule.topic_in_name = false;
+        let mut bank_desk = covering_hit("bankofireland-desk", 7.3, 2);
+        bank_desk.topic_in_name = false;
+        let kept: Vec<String> = select_hits(vec![forge_facts, bank_rule, bank_desk], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "forge-live-ui-testing-facts",
+                "bank-agent-three-bucket-rule"
+            ]
+        );
+
+        let mut observe = named_hit("swarm-5min-observation-protocol", 8.2, 2, 2);
+        observe.matched_terms = 3;
+        observe.named = true;
+        let mut fleet = named_hit("check-the-fleet-before-you-load-it", 7.6, 2, 2);
+        fleet.matched_terms = 3;
+        fleet.named = true;
+        let kept: Vec<String> = select_hits(vec![observe, fleet], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "swarm-5min-observation-protocol",
+                "check-the-fleet-before-you-load-it"
+            ]
+        );
     }
 
     #[test]
