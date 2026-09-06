@@ -84,10 +84,27 @@ pub struct SearchHit {
     pub specific_terms: usize,
     pub matched_specific: usize,
     pub named: bool,
+    /// The request's topic word sits in the name in the request's own form (letter for letter or as a
+    /// prefix). `topic_in_name` also holds on a shared stem — unless another entry is NAMED by the
+    /// request and carries the word itself: the word said as the request says it outranks its other
+    /// forms. Measured (VA-187, 233 entries): "Can the Claude Code harness run the desk loops on its
+    /// own?" (topic loops) named `autonomous-loop-operating-mode` ("endless autonomous loops") and then
+    /// recalled `never-invent-facts-about-mihai` ("A loop asserted 'I am on leave from tomorrow' …
+    /// four of its own files", 6/7 terms scattered over a long note) on the stem loop/loops alone.
+    pub topic_word_in_name: bool,
     pub topic_in_name: bool,
-    /// Two different request terms in consecutive tokens of the entry — the request's words said
-    /// TOGETHER ("Forge deploy", "golden engine", "engine commits"), not each alone in its own
-    /// sentence. Measured (VA-185, 233 entries): "How should I open a plan when I present it?" rode on
+    /// A request IDENTIFIER — a term written as a code, with a digit: r2, e2e, sb7, a date — sits in
+    /// the entry's name. One identifier names the entry where two plain words are needed: it is the
+    /// request's own name for its subject, so the count-2 and specific-half floors (which keep
+    /// sentence words from naming) do not apply. Measured (VA-187): "Why did the r2 run die in the
+    /// middle of INTEGRATE?" (die df 2, middle 1, r2 6 | integrate 10, run 131) recalled nothing while
+    /// `kill-pids-never-killpg` (3/5, r2 in its headline "(r2, 2026-08-30 01:31)", "during r2's
+    /// INTEGRATE (minute 139)", 10.8, the top hit) sat unrecalled: "die" and "middle" are the request's
+    /// specific words by rarity, and no note says them.
+    pub identifier_in_name: bool,
+    /// Two different request terms said TOGETHER in the entry — consecutive tokens, or one function
+    /// word between ("Forge deploy", "golden engine", "run or benchmark") — the request's words said
+    /// side by side, not each alone in its own sentence. Measured (VA-185, 233 entries): "How should I open a plan when I present it?" rode on
     /// two nameless bodies carrying all three words apart — "a window opens in 20 minutes … not a
     /// phased plan … presenting my own scheduling caution" and "a single OpenAI endpoint … Approved
     /// plan … Toolchain present" — while the two nameless whole-request bodies worth keeping say the
@@ -121,6 +138,12 @@ pub struct SearchHit {
 // named fix + test for "fix the failing test in the scheduler" (3/4 each, one of the two specific
 // words each — "scheduler_mock tests" in one, "the exact failing invocation" in the other, the two
 // tie at df 6): by every measurement the store takes they are the same shape.
+// measured (VA-187, 233 entries, 31 requests): the two-word count does not apply to an IDENTIFIER —
+// "Why did the r2 run die in the middle of INTEGRATE?" names `kill-pids-never-killpg` by "r2" alone in
+// its headline (3/5 terms, "die" and "middle" specific by rarity and in no note), the one entry that
+// answers it; a `key:value` tag is not a name word (every imported entry carries `imported:claude-code`,
+// so "claude" + "code" named 233 entries for "Can the Claude Code harness run the desk loops on its
+// own?"); and a name reached by the topic word's STEM yields to one carrying the word itself.
 pub const NAMED_MIN_NAME_TERMS: usize = 2;
 
 /// The stem of a word (Snowball English): the form a request and a headline share when one says
@@ -141,6 +164,75 @@ pub fn stem(word: &str) -> String {
 /// breaks a tie between entries that share only common words.
 pub fn rarity_weight(n: usize, df: usize) -> f64 {
     ((n as f64 + 1.0) / (df as f64 + 0.5)).ln()
+}
+
+/// Function words that match every memory and rank nothing: dropped from a request's query terms,
+/// and bridged over by [`said_together`].
+pub const STOPWORDS: &[&str] = &[
+    "a", "about", "after", "again", "all", "also", "an", "and", "any", "are", "as", "at", "be",
+    "been", "before", "but", "by", "can", "could", "did", "do", "does", "doing", "done", "for",
+    "from", "get", "give", "had", "has", "have", "he", "her", "here", "him", "his", "how", "i",
+    "if", "in", "into", "is", "it", "its", "just", "let", "like", "make", "me", "more", "most",
+    "my", "need", "no", "not", "now", "of", "on", "one", "only", "or", "other", "our", "out",
+    "over", "please", "same", "she", "should", "so", "some", "than", "that", "the", "their",
+    "them", "then", "there", "these", "they", "this", "those", "to", "too", "up", "us", "use",
+    "very", "want", "was", "we", "were", "what", "when", "where", "which", "who", "why", "will",
+    "with", "would", "you", "your",
+];
+
+/// A term written as a CODE — carrying a digit: r2, e2e, sb7, 20260830. An identifier is the
+/// request's own name for a run, a tier, a date; a word written in capitals is not one (SSH, JQL,
+/// API are ordinary vocabulary — VA-181 refuted a rarest-term-anywhere rule on "SSH" in a JACCL note).
+pub fn is_identifier(term: &str) -> bool {
+    term.chars().any(|c| c.is_ascii_digit())
+}
+
+/// The tags that are words of an entry's name. A `key:value` tag is an ATTRIBUTE — the importer's
+/// `imported:claude-code` — and names nothing. Measured (VA-187, 233 entries): every entry carried
+/// that tag, so "claude" and "code" sat in every name (df 233, name df 233, weight 0.00), and "Can the
+/// Claude Code harness run the desk loops on its own?" named `client-loops-stay-in-sphere` by "loops"
+/// plus the tag and `never-invent-facts-about-mihai` by "own" plus the tag.
+pub fn plain_tags(tags: &[String]) -> String {
+    tags.iter()
+        .filter(|tag| !tag.contains(':'))
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Two different request terms said TOGETHER in a token stream: in consecutive tokens, or with one
+/// function word between them ("Forge deploy", "run or benchmark", "deploy the app") — never the
+/// same word twice, never a content word between. Measured (VA-185, 233 entries): adjacency alone
+/// separated the two nameless whole-request bodies worth keeping ("Forge deploy", "golden engine")
+/// from two notes saying three everyday words each in its own sentence; the one-function-word bridge
+/// (VA-188) changes no memory ride on the 31-request corpus and is what keeps `goose-swarm-campaign`
+/// ("start / watch / kill / measure a swarm run or benchmark unit") suggested for "How do I start a
+/// benchmark run properly?" once a skill's description has to say the request's words together.
+pub fn said_together(tokens: &[String], terms: &[String]) -> bool {
+    let matched_by = |token: &String| -> Vec<usize> {
+        terms
+            .iter()
+            .enumerate()
+            .filter(|(_, term)| term_occurrences(term, std::slice::from_ref(token)) > 0)
+            .map(|(i, _)| i)
+            .collect()
+    };
+    (0..tokens.len()).any(|i| {
+        let first = matched_by(&tokens[i]);
+        if first.is_empty() {
+            return false;
+        }
+        [i + 1, i + 2]
+            .into_iter()
+            .filter(|&j| {
+                j < tokens.len() && (j == i + 1 || STOPWORDS.contains(&tokens[i + 1].as_str()))
+            })
+            .any(|j| {
+                matched_by(&tokens[j])
+                    .iter()
+                    .any(|b| first.iter().any(|a| a != b))
+            })
+    })
 }
 
 // measured: 171 imported entries on the first machine — first-line median 153 chars, p90 234, max 422;
@@ -450,7 +542,7 @@ impl MemoryStore {
                 let haystack = format!("{} {}", name, entry.content).to_lowercase();
                 let name_tokens = [
                     tokenize(&entry.category),
-                    name_tokens(&entry.tags.join(" "), &terms),
+                    name_tokens(&plain_tags(&entry.tags), &terms),
                     name_tokens(&entry.headline(), &terms),
                 ]
                 .concat();
@@ -499,7 +591,9 @@ impl MemoryStore {
             .iter()
             .zip(&document_frequency)
             .zip(&weights)
-            .filter(|((_, &df), &weight)| df >= 1 && weight == topic_weight)
+            .filter(|((term, &df), &weight)| {
+                df >= 1 && (weight == topic_weight || is_identifier(term))
+            })
             .map(|((term, _), _)| term)
             .collect();
         let topic_stems: Vec<String> = topic_terms.iter().map(|term| stem(term)).collect();
@@ -538,24 +632,21 @@ impl MemoryStore {
             if phrase {
                 score += all_weights;
             }
-            let named = name_terms >= NAMED_MIN_NAME_TERMS
-                && matched_terms * 2 > terms.len()
-                && matched_specific * 2 >= specific_terms;
-            let topic_in_name = topic_terms
+            let identifier_in_name = terms
                 .iter()
-                .any(|term| term_occurrences(term, &name_tokens) > 0)
+                .any(|term| is_identifier(term) && term_occurrences(term, &name_tokens) > 0);
+            let named = matched_terms * 2 > terms.len()
+                && (identifier_in_name
+                    || (name_terms >= NAMED_MIN_NAME_TERMS
+                        && matched_specific * 2 >= specific_terms));
+            let topic_word_in_name = topic_terms
+                .iter()
+                .any(|term| term_occurrences(term, &name_tokens) > 0);
+            let topic_in_name = topic_word_in_name
                 || name_tokens
                     .iter()
                     .any(|token| topic_stems.contains(&stem(token)));
-            let together = tokens.windows(2).any(|pair| {
-                terms.iter().enumerate().any(|(i, a)| {
-                    term_occurrences(a, &pair[..1]) > 0
-                        && terms
-                            .iter()
-                            .enumerate()
-                            .any(|(j, b)| j != i && term_occurrences(b, &pair[1..]) > 0)
-                })
-            });
+            let together = said_together(&tokens, &terms);
             hits.push(SearchHit {
                 score,
                 matched_terms,
@@ -565,11 +656,18 @@ impl MemoryStore {
                 specific_terms,
                 matched_specific,
                 named,
+                topic_word_in_name,
                 topic_in_name,
+                identifier_in_name,
                 together,
                 occurrences,
                 entry,
             });
+        }
+        if hits.iter().any(|hit| hit.named && hit.topic_word_in_name) {
+            for hit in &mut hits {
+                hit.topic_in_name = hit.topic_word_in_name;
+            }
         }
         hits.sort_by(|a, b| {
             b.named
@@ -1436,6 +1534,215 @@ mod tests {
         assert!(
             !one_word_twice.together,
             "together needs two DIFFERENT request words: {one_word_twice:?}"
+        );
+        store
+            .remember(
+                "swarm-campaign",
+                "Run a swarm build end to end and hold the vigil.\nUse when the user wants to start / watch / kill / measure a swarm run or benchmark unit.",
+                &tags(&["project"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "prod-config",
+                "Ask the client before any config change on their live system.\nSandbox: go ahead. Production: ask, then do it.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        let bridged = by("benchmark run start", "swarm-campaign");
+        assert!(
+            bridged.together,
+            "'run or benchmark': one function word between is still together: {bridged:?}"
+        );
+        let two_words_between = by("production sandbox", "prod-config");
+        assert!(
+            !two_words_between.together,
+            "'Sandbox: go ahead. Production' — content words between: {two_words_between:?}"
+        );
+        assert!(said_together(
+            &tokenize("deploy the app"),
+            &search_terms("app deploy")
+        ));
+        assert!(!said_together(
+            &tokenize("deploy the whole app"),
+            &search_terms("app deploy")
+        ));
+    }
+
+    #[test]
+    fn an_attribute_tag_is_not_a_name_word() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        let imported = tags(&["feedback", "imported:claude-code"]);
+        store
+            .remember(
+                "client-loops-stay-in-sphere",
+                "The client loops must never acquire reach beyond their own sphere.\nThey work a real client's queue.",
+                &imported,
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "never-invent-facts",
+                "A loop asserted a fact with no source across four of its own files.\nThe other desks; the loops; a run states it.",
+                &imported,
+                true,
+            )
+            .unwrap();
+        for i in 0..3 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i} about the harness.\nA run on its own desk."),
+                    &tags(&["project", "imported:claude-code"]),
+                    true,
+                )
+                .unwrap();
+        }
+        assert_eq!(plain_tags(&imported), "feedback");
+        let hits = store
+            .search("claude code desk harness loops own run", None)
+            .unwrap();
+        let by = |category: &str| hits.iter().find(|h| h.entry.category == category).unwrap();
+        let loops = by("client-loops-stay-in-sphere");
+        assert_eq!(
+            (loops.name_terms, loops.named),
+            (2, false),
+            "'loops' and 'own' from the headline, nothing from the tag; 3/7 is not a majority: {loops:?}"
+        );
+        assert_eq!(
+            loops.matched_terms, 4,
+            "loops, own — and 'claude', 'code' from the tag, still searched text: {loops:?}"
+        );
+        assert_eq!(by("note-0").name_terms, 1, "'harness' alone");
+    }
+
+    #[test]
+    fn an_identifier_in_the_name_names_the_entry() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "kill-pids-never-killpg",
+                "Reaping orphans — kill pids, never killpg; a group kill SIGKILLed the live engine mid-run (r2, 2026-08-30 01:31).\nAt 01:31, during r2's INTEGRATE (minute 139), the reaper took the engine with the orphans.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        store
+            .remember(
+                "stateless-harness",
+                "Models are stateless, so the harness forms the next message from captured facts.\nKeep r2's good parts; INTEGRATE EVERY MODULE is the generic anti-pattern; a run.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        store
+            .remember(
+                "let-it-die",
+                "Never let a draft die in the queue.\nSubmit it.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "running-script",
+                "Never edit a running script in the middle of a run.\nIt reads the file live.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        assert!(is_identifier("r2") && is_identifier("e2e") && is_identifier("20260830"));
+        assert!(!is_identifier("integrate") && !is_identifier("ssh"));
+        let hits = store.search("die integrate middle r2 run", None).unwrap();
+        let killpg = hits
+            .iter()
+            .find(|h| h.entry.category == "kill-pids-never-killpg")
+            .unwrap();
+        assert_eq!(
+            (killpg.matched_terms, killpg.name_terms),
+            (3, 1),
+            "integrate, r2, run — only r2 in the headline: {killpg:?}"
+        );
+        assert!(
+            killpg.identifier_in_name && killpg.named && killpg.topic_in_name,
+            "one identifier in the name is a name and a topic word: {killpg:?}"
+        );
+        assert_eq!(hits[0].entry.category, "kill-pids-never-killpg");
+        let stateless = hits
+            .iter()
+            .find(|h| h.entry.category == "stateless-harness")
+            .unwrap();
+        assert_eq!(stateless.matched_terms, 3);
+        assert!(
+            !stateless.identifier_in_name && !stateless.named,
+            "r2 in the body only: {stateless:?}"
+        );
+    }
+
+    #[test]
+    fn a_stem_only_topic_yields_to_an_exact_topic_name() {
+        let fill = |store: &MemoryStore| {
+            store
+                .remember(
+                    "never-invent-facts",
+                    "A loop asserted a fact with no source across four of its own files.\nThe other desks; for the loops; a run states it; its own thread.",
+                    &tags(&["feedback"]),
+                    true,
+                )
+                .unwrap();
+            for i in 0..3 {
+                store
+                    .remember(
+                        &format!("note-{i}"),
+                        &format!(
+                            "Note {i} on the harness.\nThe desk ran; a run{}.",
+                            if i == 0 { " of its own" } else { "" }
+                        ),
+                        &tags(&["project"]),
+                        true,
+                    )
+                    .unwrap();
+            }
+        };
+        let alone = tempdir().unwrap();
+        let store = store_in(&alone);
+        fill(&store);
+        let hits = store.search("desk harness loops own run", None).unwrap();
+        let invent = hits
+            .iter()
+            .find(|h| h.entry.category == "never-invent-facts")
+            .unwrap();
+        assert!(
+            invent.topic_in_name && !invent.topic_word_in_name && !invent.named,
+            "'loop' reaches the topic word 'loops' by its stem when nothing says 'loops': {invent:?}"
+        );
+        let with_exact = tempdir().unwrap();
+        let store = store_in(&with_exact);
+        fill(&store);
+        store
+            .remember(
+                "autonomous-loop-operating-mode",
+                "How to run the user's endless autonomous loops — self-driving, never idle.\nAct as the user during the loop; decide on its own.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        let hits = store.search("desk harness loops own run", None).unwrap();
+        let by = |category: &str| hits.iter().find(|h| h.entry.category == category).unwrap();
+        let autonomous = by("autonomous-loop-operating-mode");
+        assert!(
+            autonomous.named && autonomous.topic_word_in_name,
+            "named by loops + run, the topic word itself: {autonomous:?}"
+        );
+        let invent = by("never-invent-facts");
+        assert!(
+            !invent.topic_in_name,
+            "the stem yields once an entry is named by the word itself: {invent:?}"
         );
     }
 

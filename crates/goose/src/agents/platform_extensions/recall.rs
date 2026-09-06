@@ -17,7 +17,8 @@ use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_memory_store::{
-    headline, rarity_weight, search_terms, term_occurrences, tokenize, MemoryStore, SearchHit,
+    headline, rarity_weight, said_together, search_terms, term_occurrences, tokenize, MemoryStore,
+    SearchHit, STOPWORDS,
 };
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
@@ -36,19 +37,6 @@ const RECALL_MAX_SKILLS: usize = 3;
 // ratio: a candidate rides along only while it scores at least half of the best candidate — measured
 // on the 171-entry store, the slots below that line were filled by entries sharing six common words.
 const RECALL_MIN_SHARE_OF_TOP: f64 = 0.5;
-
-/// Function words that match every memory and rank nothing.
-const STOPWORDS: &[&str] = &[
-    "a", "about", "after", "again", "all", "also", "an", "and", "any", "are", "as", "at", "be",
-    "been", "before", "but", "by", "can", "could", "did", "do", "does", "doing", "done", "for",
-    "from", "get", "give", "had", "has", "have", "he", "her", "here", "him", "his", "how", "i",
-    "if", "in", "into", "is", "it", "its", "just", "let", "like", "make", "me", "more", "most",
-    "my", "need", "no", "not", "now", "of", "on", "one", "only", "or", "other", "our", "out",
-    "over", "please", "same", "she", "should", "so", "some", "than", "that", "the", "their",
-    "them", "then", "there", "these", "they", "this", "those", "to", "too", "up", "us", "use",
-    "very", "want", "was", "we", "were", "what", "when", "where", "which", "who", "why", "will",
-    "with", "would", "you", "your",
-];
 
 /// Words that open a correction. Read at the head of the message (the first REACTION_WINDOW tokens),
 /// where a reaction lives; deeper in a long request they are ordinary words.
@@ -338,6 +326,12 @@ pub fn query_terms(text: &str) -> Vec<String> {
 /// ("Forge deploy" in its bucket-2 list) and `goose-branch-map-main-vs-local-edition` ("r6h golden
 /// 0.4616 … 14 engine commits … restored to the r6h golden"). After: the plan request keeps only its
 /// named note; the other twenty-four requests identical.
+/// VA-187 lives in the store: an IDENTIFIER (a term with a digit) in the name names the entry by
+/// itself (`SearchHit::identifier_in_name`), a `key:value` tag is not a name word, and a topic
+/// reached only through a stem yields to an entry named by the word itself
+/// (`SearchHit::topic_word_in_name`) — "Why did the r2 run die in the middle of INTEGRATE?" recalls
+/// `kill-pids-never-killpg`, "Can the Claude Code harness run the desk loops on its own?" keeps
+/// `autonomous-loop-operating-mode` alone; 33 → 32 of 93 on 31 requests.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
     let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
     let covers = |hit: &SearchHit| {
@@ -387,6 +381,9 @@ pub struct SkillHit<'a> {
     /// Name terms that are this skill's OWN: in no other skill's name or keywords. A word several
     /// names share — goose, atlassian, api, skill — is a family word and names nothing.
     pub own_name_terms: usize,
+    /// Two request words said together in the skill's name, keywords or description
+    /// (`goose_memory_store::said_together`) — the description path's aboutness.
+    pub together: bool,
     pub about: bool,
     pub skill: &'a SourceEntry,
 }
@@ -455,6 +452,7 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             if matched_terms == 0 {
                 return None;
             }
+            let together = said_together(text, terms);
             // a skill named by the request — a word of its name or keywords that no other skill's
             // carries — is suggested on one rare term; one matched only by its description, or only
             // by a family word its name shares with others, needs two rare terms and half the
@@ -463,11 +461,19 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             // rule (VA-186, 30 skills, 25 requests): "Should I remind him to rotate the API key I was
             // just given?" suggested atlassian-organizations-api-skill, confluence-api-skill and
             // jira-api-skill on "api" alone — 1 of 5 terms, a word in 14 of the 30 descriptions and
-            // 3 of the names, score 1.5 — while the request is about whether to nag.
+            // 3 of the names, score 1.5 — while the request is about whether to nag. The
+            // description path also has to say two of the request's words TOGETHER (VA-188, 30
+            // skills, 31 requests): "Deploy the app to the sandbox first, then production." suggested
+            // the tenant desks alterdomus ("(ET- on production; AHUB-, … on the sandbox) … the
+            // 'Altomata' Forge automations app", 3/5) and bankofireland ("Forge app development, Forge
+            // deployment/approval … every change to a production system", 3/5) — a request naming no
+            // tenant, key or site, matched on the words every desk's description carries apart; the
+            // description suggestions worth keeping say the words side by side: "blog post",
+            // "weekly write-up", "LM Studio", "Jira issues", "Forge deployment", "run or benchmark".
             let about = if own_name_terms >= 1 {
                 rare_terms >= 1
             } else {
-                rare_terms >= 2 && matched_terms * 2 >= terms.len()
+                rare_terms >= 2 && matched_terms * 2 >= terms.len() && together
             };
             Some(SkillHit {
                 score,
@@ -475,6 +481,7 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
                 rare_terms,
                 name_terms,
                 own_name_terms,
+                together,
                 about,
                 skill,
             })
@@ -898,7 +905,9 @@ mod tests {
             specific_terms: 1,
             matched_specific: 1,
             named: false,
+            topic_word_in_name: false,
             topic_in_name: false,
+            identifier_in_name: false,
             together: true,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
@@ -1375,6 +1384,75 @@ mod tests {
                 "bank-agent-three-bucket-rule"
             ],
             "'Forge deploy' in the bucket list says the request's words together"
+        );
+    }
+
+    #[test]
+    fn a_tenant_desk_is_not_suggested_on_a_request_that_names_no_tenant() {
+        let skills = vec![
+            skill(
+                "alterdomus",
+                "Alter Domus Atlassian operations across alterdomus.atlassian.net (PRODUCTION) and alterdomus-sandbox.atlassian.net. Use whenever the task involves an Alter Domus ticket (ET- on production; AHUB- on the sandbox), the Altomata Forge automations app, or any REST automation against them.",
+            ),
+            skill(
+                "bankofireland",
+                "Bank of Ireland Atlassian engagement — Forge app development, Forge deployment/approval. Every change to a production system goes through the bank's change control.",
+            ),
+            skill(
+                "siemens",
+                "Siemens Atlassian operations on se-dps.atlassian.net (PRODUCTION CLIENT). Four sandboxes exist; rehearse in staging.",
+            ),
+            skill(
+                "goose-swarm-campaign",
+                "Run a goose-local-edition swarm build end to end. Use when the user wants to start / watch / kill / measure a swarm run or benchmark unit.",
+            ),
+            skill(
+                "leanzero-tutorial",
+                "Author a tutorial for the website. Use when the user asks to write a tutorial or blog post.",
+            ),
+            skill(
+                "goose-clean",
+                "Reclaim disk by cleaning the goose checkout's build caches.",
+            ),
+        ];
+        let names = |request: &str| -> Vec<String> {
+            relevant_skills(&skills, &query_terms(request))
+                .into_iter()
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        assert!(
+            names("Deploy the app to the sandbox first, then production.").is_empty(),
+            "sandbox, production and app sit apart in every desk's description"
+        );
+        assert_eq!(
+            names("How do I start a benchmark run properly?"),
+            vec!["goose-swarm-campaign"],
+            "'a swarm run or benchmark unit': one function word between is together"
+        );
+        assert_eq!(
+            names("Write a blog post about local models."),
+            vec!["leanzero-tutorial"],
+            "'blog post'"
+        );
+        assert_eq!(
+            names("Deploy the Forge app to production."),
+            vec!["bankofireland"],
+            "a desk whose description says 'Forge app' and 'Forge deployment' is still suggested"
+        );
+        let hits = skill_hits(
+            &skills,
+            &query_terms("Deploy the app to the sandbox first, then production."),
+        );
+        let alterdomus = hits.iter().find(|h| h.skill.name == "alterdomus").unwrap();
+        assert_eq!(
+            (
+                alterdomus.matched_terms,
+                alterdomus.together,
+                alterdomus.about
+            ),
+            (3, false, false),
+            "{alterdomus:?}"
         );
     }
 

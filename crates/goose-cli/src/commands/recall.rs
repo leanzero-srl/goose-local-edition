@@ -37,13 +37,18 @@ pub fn run(text: &str) -> Result<()> {
         };
         let named = if hit.named { " [named]" } else { "" };
         let topic = if hit.topic_in_name { " [topic]" } else { "" };
+        let identifier = if hit.identifier_in_name {
+            " [identifier]"
+        } else {
+            ""
+        };
         let whole = match (hit.matched_terms >= terms.len(), hit.together) {
             (true, true) => " [together]",
             (true, false) => " [apart]",
             _ => "",
         };
         println!(
-            "  {mark} {}/{} terms, {}/{} specific, {} rare, {} in name, score {:5.1}  {} ({}){named}{topic}{whole}",
+            "  {mark} {}/{} terms, {}/{} specific, {} rare, {} in name, score {:5.1}  {} ({}){named}{identifier}{topic}{whole}",
             hit.matched_terms,
             terms.len(),
             hit.matched_specific,
@@ -75,8 +80,13 @@ pub fn run(text: &str) -> Result<()> {
         } else {
             "       "
         };
+        let together = if hit.together {
+            " [together]"
+        } else {
+            " [apart]"
+        };
         println!(
-            "  {mark} {}/{} terms, {} rare, {} in name ({} its own), score {:5.1}  {}",
+            "  {mark} {}/{} terms, {} rare, {} in name ({} its own), score {:5.1}  {}{together}",
             hit.matched_terms,
             terms.len(),
             hit.rare_terms,

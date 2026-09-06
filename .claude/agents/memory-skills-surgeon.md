@@ -73,6 +73,59 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   goose-swarm (12 scheduler_mock tests = pillar gate)", "Fix bugs ONLY in crates/goose-swarm"). A request
   whose two rarest words name nothing in the store has no entry about it; the named tier is then the
   only tier, and two symmetric names ride together.
+  THE IDENTIFIER (VA-187, `goose_memory_store::is_identifier`, `SearchHit::identifier_in_name`): a request
+  term written as a CODE — carrying a digit: r2, e2e, sb7, a date — is the request's own name for its subject.
+  ONE identifier in an entry's name names the entry (with more than half of the terms matched) where two
+  plain words are needed, and the specific-half floor does not apply to it: an identifier is the most
+  specific word a request can say. Identifiers are topic words too. A word in capitals is NOT an identifier
+  (SSH, JQL, API, INTEGRATE are vocabulary — VA-181's JACCL note carries SSH). Measured (probe, 233 entries,
+  31 requests): "Why did the r2 run die in the middle of INTEGRATE?" (die df 2, middle 1, r2 6 | integrate
+  10, run 131; topic by rarity "middle", a word in one note about editing a running script) recalled
+  NOTHING while `kill-pids-never-killpg` (local, feedback, 3/5 — integrate, r2, run — 1 in name: "(r2,
+  2026-08-30 01:31)" in its headline, 10.8, the top hit) sat unrecalled: its body says "during r2's
+  INTEGRATE (minute 139) … the group kill took the engine with them"; "die" and "middle" are the request's
+  specific words by rarity and no note says them. After: recalled, `[named] [identifier] [topic]`; the
+  thirty other requests unchanged (the e2e request's `forge-live-harness-project`, E2E in its headline,
+  is 1/9). Refuted on the way: identifiers as the request's ONLY specific and topic words (un-names
+  `score-serially` on the e2e request — it never says e2e); a one-name-term tier (one name term + a
+  majority of the terms + a majority of the specific words: 33 → 43 slots, the blog-post swarm trio back;
+  the same tier on `feedback` entries only: 33 → 38, two of the trio back).
+  THE ATTRIBUTE TAG (VA-187, `plain_tags`): a `key:value` tag — the importer's `imported:claude-code` — is
+  provenance, not a word of the name; it stays searched text. Measured: all 233 entries carry it, so
+  "claude" and "code" sat in every NAME (df 233, name df 233, weight 0.00) and made a `together` pair in
+  every entry; "Can the Claude Code harness run the desk loops on its own?" (desk 56, harness 30, loops
+  11, own 100 | run 131; topic loops) named `client-loops-stay-in-sphere` by "loops" + the tag (4/7, 6.9,
+  "The diconium/alterdomus/siemens loops must NEVER acquire notoriety-seeking" — the desk loops' reach, not
+  whether the harness can run them) and `never-invent-facts-about-mihai` by "own" + the tag (6/7, 6.7, "A
+  loop asserted 'I am on leave from tomorrow' … four of its own files" — desks, loops, own, run each once in
+  a long note). With the tag rule alone client-loops is unnamed (1 in name, 2/4 specific) and out, while
+  never-invent stays a TOPIC RIDER on the stem loop/loops — hence the next rule.
+  THE WORD ITSELF OUTRANKS ITS STEM (VA-187, `SearchHit::topic_word_in_name`): when an entry is NAMED by
+  the request and carries the topic word in the request's own form, a name reached only through the stem
+  does not hold the topic. Measured: `autonomous-loop-operating-mode` ("How to run the user's endless
+  autonomous loops — self-driving", named by loops + run, 8.0) says "loops"; `never-invent-facts-about-mihai`
+  ("A loop asserted …") and `killed-run-reports-nothing` ("Every launchd loop guard answers 'should I run?'
+  … blocks its own recovery", named by run + own, 6.3) reach it by the stem. After: the harness request
+  recalls `autonomous-loop-operating-mode` alone (3 → 1); the rotate request keeps
+  `no-security-hygiene-nagging` (nothing is named by "rotate" itself); every other request identical;
+  33 → 32 of 93 with the r2 slot. `launch-longlived-apps-via-launchd` (named by desk(top) + harness + run,
+  8.1 — "The harness reaps background-task process trees ~60s after a turn ends", the literal answer) is
+  still excluded by VA-183(b): the topic word by rarity is loops (11), not harness (30). Refuted: dropping
+  every-entry terms from the counts (shifts the specific median, "own" falls out of it, un-names
+  autonomous-loop: killed-run, never-invent and show-the-loop-tail ride); attribute tags out of the searched
+  text as well (claude and code become real terms: killed-run 9.0 and diconium-loop-launchd 7.7 ride);
+  `together` for topic riders (kills score-serially on the golden request and no-security-hygiene-nagging on
+  rotate — neither says two request words side by side).
+  THE SANDBOX-THEN-PRODUCTION MISS (VA-187 (2), NOT landed): "Deploy the app to the sandbox first, then
+  production." (app 58, first 95 | deploy 9, production 23, sandbox 10; topic deploy) recalls nothing.
+  `ask-before-client-prod-config` (global, feedback, 3/5 — first, production, sandbox — 2/3 specific,
+  "PRODUCTION" in its headline, 8.6) says "Sandbox: go ahead. Production: ask, wait for their yes, then do
+  it" — the rule for a production deploy — and never says deploy; `diconium-skill` has the same numbers
+  ("sandbox-first for config"), `bank-agent-three-bucket-rule` better ones (4/5, 3/3 specific, nameless —
+  "sandbox work … every production config change … Forge deploy", no two request words together),
+  `cloud-sandbox-shares-groups-with-prod` two name words on 2/5. The bridge from "deploy" to "config change"
+  is not in the words, and every rule that reaches the note by its one name word reopens the blog-post
+  trio (above). Waits on a probe corpus with more than one request of this shape.
 - THE TOPIC WORD (VA-181, 3852af2a0): an UNNAMED hit rides only when its body carries the WHOLE request or its
   name carries the request's TOPIC WORD — `SearchHit::topic_in_name`, the request's rarest term among
   those found in at least one searched entry (a term nobody has names no topic; ties count every tied
@@ -151,8 +204,11 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   over three lines: production / app / Forge deploy), one-SENTENCE (the branch map's four words never share
   a sentence), a token window (do-all-of-it's three words span ~75 tokens, the branch map's four ~100),
   occurrence density (local-qwen says "plan" four times), an exact-word (no prefix) rule (it fits by the
-  accident of inflection and contradicts the stem rule). Adjacency is computed on raw tokens (a
-  function word between two request words breaks it — "deploy the app" is not together; "Forge app" is).
+  accident of inflection and contradicts the stem rule). Adjacency is computed on raw tokens
+  (`goose_memory_store::said_together`); since VA-188 ONE function word between two request words is
+  bridged ("run or benchmark", "deploy the app" — measured on the 31 requests: no memory ride changes and
+  no whole-request body becomes together), a content word between breaks it ("Sandbox: go ahead.
+  Production" is not together; "Forge app" is).
   The probe marks whole-request hits `[together]` / `[apart]`. 29 → 28 of 75; the twenty-four other
   requests' recalled sets and order identical.
 - THE OWN NAME WORD (VA-186, `SkillHit::own_name_terms`): a request NAMES a skill only by a word of its
@@ -176,7 +232,33 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   in the migration-scripts skill un-names `goose-swarm-campaign` for "Is swarm resume still broken?"); a
   rarity cut between "api" 14/30 and "goose" 7/30 (a threshold fitted to two numbers). 26 → 21 suggestions.
   `goose recall` prints a `candidates:` block under the skills with the same numbers as the memory lines
-  (`m/n terms, rare, in name (its own), score`).
+  (`m/n terms, rare, in name (its own), score`, then `[together]`/`[apart]`).
+  THE WORDS TOGETHER (VA-188, `SkillHit::together`): a skill matched by its description alone (no own name
+  word) is suggested only when its text says two of the request's words TOGETHER (`said_together`, the
+  memory rule) — the request's words as the skill's subject, not as the vocabulary every description of
+  its family carries. Measured (30 skills, 31 requests): "Deploy the app to the sandbox first, then
+  production." suggested `alterdomus` ("(ET- on production; AHUB-, … on the sandbox) … the 'Altomata' Forge
+  automations app", 3/5, 5.2) and `bankofireland` ("Forge app development, Forge deployment/approval …
+  every change to a production system", 3/5, 5.2) — a request naming no tenant, ticket key or site;
+  `siemens` and `leanzero-management` sat below the bar on the same words. After: none. Six other requests
+  change, each by the words: `axpo` on "Fix the failing test in the scheduler." ("actually fix what can be
+  fixed", "battle-tested" — 2/4); `alterdomus` on "Deploy the Forge app to production." (`bankofireland` —
+  "Forge app", "Forge deployment" — and `leanzero-management` — "forge deploy of this app" — stay: a desk
+  whose description says the request's words together is still suggested); `goose-feature-dev` (commit,
+  engine — "the exact gate to pass before commit", "an ACP method the UI can call on the engine") and
+  `goose-swarm-campaign` (engine, score — "then score and verdict it") on the golden-score request;
+  `goose-clean` on the git identity request ("the goose checkout's … never source, .git history" — the
+  VA-186 keep, wrong by the words); `goose-feature-dev` on the notarized-build request ("a desktop panel or
+  view … add / build / wire up"). Kept: `goose-swarm-campaign` on "How do I start a benchmark run properly?"
+  ("a swarm run or benchmark unit" — the one-function-word bridge is what keeps it) and on the LM Studio
+  request ("the 3-node LM Studio fleet"); `atlassian-migration-scripts-skill` on JQL ("Jira issues");
+  `leanzero-tutorial` on the blog post ("blog post") and the weekly write-up ("write/draft");
+  `atlassian-devcommunity-leanzero` ("weekly write-up", "developer community"). 27 → 19 suggestions.
+  Refuted: an own word ANYWHERE (a matched word no other skill's text carries — kills `jira-api-skill` on
+  JQL, since "jql" and "issues" are also in the migration-scripts skill; 27 → 15); the request's topic word
+  in the description ("sandbox" is as rare as "deploy" in the catalogue, 2 of 30 each — alterdomus keeps
+  it); a named skill above the description path (kills jira-api-skill and leanzero-tutorial); strict
+  adjacency (loses goose-swarm-campaign on the benchmark request).
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
