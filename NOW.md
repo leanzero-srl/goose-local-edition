@@ -1,5 +1,44 @@
 # NOW — what we are researching and doing, this week
 
+> **HANDOFF (2026-09-06 14:xx) — LIVE TESTING OF MEMORY / SKILLS / COMPACTION SURVIVAL. Read this first when Mihai asks "what do
+> we have open, what should we test".** Everything is on `main` = origin/main (6569627ae), nothing unmerged. It could not be
+> tested against a LOCAL model today: the workhorse is training a model (mlx_lm.lora) and the fleet must not be loaded; every
+> live receipt so far is haiku 4.5 over OpenRouter (env: `set -a; source ~/.agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env; set +a; GOOSE_PROVIDER=openrouter GOOSE_MODEL=anthropic/claude-haiku-4.5`).
+> The unattended 30-minute vigil (cron, session-only) dies with this session — restart it with `/loop` from the memory-skills-surgeon charter if wanted.
+>
+> WHAT LANDED (receipts in VIGIL-ACTIONS VA-168..178, docs in documentation/docs/guides/context-engineering/surviving-compaction.md and docs/mcp/memory-mcp.md):
+> memory index instead of a dump (40 KB vs 344 KB); `search_memories`; rarity-weighted whole-word search; `recall` platform extension
+> (memories in full + relevant skills + past session + `<recall-line>` shown in the transcript + `goose recall "<request>"` CLI); remember
+> updates in place; `goose-memory-store` crate; SCRATCHPAD (`todo` reframed, `<scratchpad-notice>` before compaction); LEDGER extension
+> (`.goose/ledger.md`, ledger_append/ledger_read, newest five per turn); reaction capture (Strong corrections written by recall to local
+> memory category `corrections`, answered questions nudged); skill `metadata.keywords`; skill auto-load (`autoload_pick`); skill-suggestion
+> coverage rule (29 → 15); 13 upstream ports; the privacy purge (payload corpus gone from history; `.goose/` and `bench/payloads/` ignored).
+>
+> OPEN / UNVERIFIED — the live test plan for the next session, in order (fixtures IN and OUT; never leave a memory, ledger line or session behind):
+> 1. LOCAL MODEL: repeat the four receipts with the LM Studio node once training ends (`lms ps` must show a model YOU did not load, or ask
+>    Mihai): (a) 2-turn correction "No — never use the shell to read files here…" → log `correction captured as a memory: Added` AND does the
+>    27B restate it via remember_memory (haiku did in 2 of 3 runs)? (b) which-file question → answer → `answered:true` + a saved memory?
+>    (c) `ledger_append` then a fresh session reading `<ledger>` with no tool; (d) "set up your scratchpad for …" → Goal/Next/Facts written.
+>    Read `~/.local/state/goose/logs/cli/<date>/*.log` lines `"message":"recall"` (fields recalled/suggested/past_session/autoloaded/correction/answered/history_ms).
+> 2. COMPACTION ITSELF (never exercised live): run a long session with `GOOSE_AUTO_COMPACT_THRESHOLD` low (or `/compact` in the CLI) after
+>    the scratchpad has content; verify `<scratchpad-notice>` appears in the turn context in the last quarter (goose recall does NOT show
+>    it — it is moim's, read the request payload or add a log line), that the scratchpad and `<ledger>` are intact after the summary, and
+>    that the model continues from them. Expect: the summary template is unchanged (shared with swarm workers — golden gate).
+> 3. AUTO-LOAD (VA-177): never fired — installed skill bodies (median 27k chars) exceed a thirty-second of the window. Test with a SMALL
+>    skill (< 6k chars) whose name the request uses twice (e.g. a `goose-clean` request) and read `autoloaded=` in the log; decide whether the
+>    budget share (AUTOLOAD_WINDOW_SHARE) or the two-name-terms bar is what holds it back.
+> 4. DESKTOP: the recall line is an InlineMessage system notice — proven in the CLI, never LOOKED AT in the app; open the desktop, ask a
+>    question a memory covers, confirm the "recalled: …" line renders (adapter: ui/desktop/src/acp/adapter/gooseSessionNotifications.ts).
+>    The Memories view lists memories; corrections land in local `.goose/memory/corrections.txt` — check it shows there.
+> 5. NOISE on generic requests (VA-168): `python3 evals/memory-recall/probe.py` reads 30 of 39 slots; requests with no true memory still
+>    carry loosely related notes. Judge only against goose-WRITTEN memories (the 62 local notes are the right corpus; the 171 global
+>    imported ones are Claude's). Next lever if it matters: weight headline coverage above body coverage.
+> 6. Weak corrections ("why did you…", "no, the other one") only nudge; if the 27B never saves on a nudge, promote the phrases that were
+>    real corrections in the logs to STRONG_MARKERS — read the words first.
+> 7. chatrecall stays default-off; the `<past-session>` line points at it. GitHub support still has to purge cached views of the pre-purge
+>    SHAs (only Mihai can file that).
+> Instruments: `goose recall "<request>"`, `evals/memory-recall/probe.py` (+queries.txt), the CLI log's recall line, `.claude/agents/memory-skills-surgeon.md`.
+
 > **2026-09-06 midday — SURVIVING COMPACTION + SELF-WRITTEN MEMORIES (VA-174..178).** The `todo` extension is the SCRATCHPAD
 > (Goal/Done/In flight/Next/Facts, `<scratchpad>` every turn, a `<scratchpad-notice>` in the last quarter before compaction — only
 > when a scratchpad part exists, so swarm lanes and the shared compaction template are untouched). New `ledger` platform
