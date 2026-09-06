@@ -31,3 +31,11 @@ The desktop opened a second window when I pressed Cmd+Shift+N during a run.
 Should I remind him to rotate the API key I was just given?
 Is it fine to fall back to an empty ledger when the file is missing?
 How do I push my Projects folder to the workhorse from the MacBook?
+# tick 10 (2026-09-06): the `together` rule's known limit (a function word between two request words),
+# global notes asked plainly, and two skill-shaped requests.
+Deploy the app to the sandbox first, then production.
+Why did the r2 run die in the middle of INTEGRATE?
+Which node should carry the strongest model, the supervision one?
+What is the rule about mentioning our apps in community replies?
+Can the Claude Code harness run the desk loops on its own?
+Draft the weekly write-up for the developer community.
