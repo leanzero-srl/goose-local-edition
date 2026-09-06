@@ -113,7 +113,10 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 2. A live session on the built binary (`target/debug/goose run --no-session -t "..."` with
    `GOOSE_PROVIDER`/`GOOSE_MODEL` from the OpenRouter env file; cents) and the CLI log line
    `"message":"recall"` with `recalled=[...]`, `suggested=[...]` — the log is the receipt, the
-   model's answer is the outcome. Fixture memories you write go in and come OUT again.
+   model's answer is the outcome. Fixture memories you write go in and come OUT again — and so does
+   the SESSION: a `--no-session` run still writes a sessions row (measured 2026-09-06, VA-181: the
+   VA-179/180 rows 20260906_20–22 were left behind), so `goose session list` after every live run and
+   remove the row you made (`goose session remove --help` for the id form) before you report.
 3. Tests: `cargo test -p goose-memory-store`; `cargo test -p goose -p goose-mcp --lib -- memory::tests platform_extensions::recall`
    (goose-mcp alone does not build its tests — tokio feature unification comes from goose); the
    prompt_manager snapshot changes whenever an extension's instruction text changes
