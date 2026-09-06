@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use goose::agents::platform_extensions::recall::{
-    query_terms, relevant_skills, render, select_hits,
+    query_terms, relevant_skills, render, select_hits, skill_hits,
 };
 use goose::config::paths::Paths;
 use goose_memory_store::MemoryStore;
@@ -37,8 +37,13 @@ pub fn run(text: &str) -> Result<()> {
         };
         let named = if hit.named { " [named]" } else { "" };
         let topic = if hit.topic_in_name { " [topic]" } else { "" };
+        let whole = match (hit.matched_terms >= terms.len(), hit.together) {
+            (true, true) => " [together]",
+            (true, false) => " [apart]",
+            _ => "",
+        };
         println!(
-            "  {mark} {}/{} terms, {}/{} specific, {} rare, {} in name, score {:5.1}  {} ({}){named}{topic}",
+            "  {mark} {}/{} terms, {}/{} specific, {} rare, {} in name, score {:5.1}  {} ({}){named}{topic}{whole}",
             hit.matched_terms,
             terms.len(),
             hit.matched_specific,
@@ -59,6 +64,27 @@ pub fn run(text: &str) -> Result<()> {
     );
     for skill in &skills {
         println!("  {}", skill.name);
+    }
+    let candidates = skill_hits(&catalogue, &terms);
+    if !candidates.is_empty() {
+        println!("  candidates:");
+    }
+    for hit in candidates.iter().take(6) {
+        let mark = if skills.iter().any(|s| s.name == hit.skill.name) {
+            "SUGGEST"
+        } else {
+            "       "
+        };
+        println!(
+            "  {mark} {}/{} terms, {} rare, {} in name ({} its own), score {:5.1}  {}",
+            hit.matched_terms,
+            terms.len(),
+            hit.rare_terms,
+            hit.name_terms,
+            hit.own_name_terms,
+            hit.score,
+            hit.skill.name
+        );
     }
     match render(&selected, &skills, None) {
         Some(block) => println!("\n--- turn context part (past-session line omitted: it needs the session DB) ---\n{block}"),

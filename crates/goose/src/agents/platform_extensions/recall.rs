@@ -328,6 +328,16 @@ pub fn query_terms(text: &str) -> Vec<String> {
 /// carrying "notarized" anywhere; on the killpg request `launch-longlived-apps-via-launchd` stays,
 /// named by a tied topic word ("reap"). After: the four slots empty, the other seventeen requests
 /// identical — 26 → 22 of 57.
+/// Measured (VA-185, 233 entries, 25 requests): a nameless body carrying EVERY request term also has to
+/// say two of them TOGETHER (`SearchHit::together`). "How should I open a plan when I present it?"
+/// (open, plan, present — 3/3) recalled its named note and then `do-all-of-it-never-defer` ("a window
+/// opens in 20 minutes … not a phased plan … presenting my own scheduling caution", 5.8) and
+/// `local-qwen-swarm-agent` ("a single OpenAI endpoint … Approved plan … Toolchain present", 5.8) —
+/// three everyday words, each alone in its own sentence of a long body. The two nameless
+/// whole-request rides worth keeping say the request's words side by side: `bank-agent-three-bucket-rule`
+/// ("Forge deploy" in its bucket-2 list) and `goose-branch-map-main-vs-local-edition` ("r6h golden
+/// 0.4616 … 14 engine commits … restored to the r6h golden"). After: the plan request keeps only its
+/// named note; the other twenty-four requests identical.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
     let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
     let covers = |hit: &SearchHit| {
@@ -335,7 +345,7 @@ pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
             && if hit.named {
                 hit.topic_in_name || !topic_names_an_entry
             } else {
-                hit.matched_terms >= term_count
+                (hit.matched_terms >= term_count && hit.together)
                     || (hit.topic_in_name
                         && hit.matched_terms * 2 >= term_count
                         && hit.matched_specific * 2 > hit.specific_terms)
@@ -366,9 +376,24 @@ pub fn skill_keywords(skill: &SourceEntry) -> String {
     }
 }
 
-/// Skills the request is about, by the same rule as memories: terms weighted by their rarity across
-/// the catalogue (a name match counts twice), at least one rare term, at least half the best score.
-pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
+/// One skill scored against a request: the same numbers the memory hits carry, so `goose recall`
+/// can say why a skill was or was not suggested.
+#[derive(Debug, Clone)]
+pub struct SkillHit<'a> {
+    pub score: f64,
+    pub matched_terms: usize,
+    pub rare_terms: usize,
+    pub name_terms: usize,
+    /// Name terms that are this skill's OWN: in no other skill's name or keywords. A word several
+    /// names share — goose, atlassian, api, skill — is a family word and names nothing.
+    pub own_name_terms: usize,
+    pub about: bool,
+    pub skill: &'a SourceEntry,
+}
+
+/// Every skill sharing a term with the request, best first: terms weighted by their rarity across
+/// the catalogue (a name or keyword match counts twice), and whether the skill is ABOUT the request.
+pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillHit<'a>> {
     let catalogue: Vec<(&SourceEntry, Vec<String>, Vec<String>)> = skills
         .iter()
         .filter(|s| matches!(s.source_type, SourceType::Skill | SourceType::BuiltinSkill))
@@ -392,54 +417,91 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
                 .count()
         })
         .collect();
-    let mut scored: Vec<(f64, &SourceEntry)> = catalogue
+    let name_frequency: Vec<usize> = terms
+        .iter()
+        .map(|term| {
+            catalogue
+                .iter()
+                .filter(|(_, name, _)| term_occurrences(term, name) > 0)
+                .count()
+        })
+        .collect();
+    let mut hits: Vec<SkillHit<'a>> = catalogue
         .iter()
         .filter_map(|(skill, name, text)| {
             let mut score = 0.0;
-            let mut rare = 0;
-            let mut matched = 0;
+            let mut rare_terms = 0;
+            let mut matched_terms = 0;
             let mut name_terms = 0;
+            let mut own_name_terms = 0;
             for (i, term) in terms.iter().enumerate() {
                 if term_occurrences(term, text) == 0 {
                     continue;
                 }
-                matched += 1;
+                matched_terms += 1;
                 let weight = rarity_weight(n, document_frequency[i]);
                 score += weight;
                 if document_frequency[i] * 2 <= n {
-                    rare += 1;
+                    rare_terms += 1;
                 }
                 if term_occurrences(term, name) > 0 {
                     name_terms += 1;
                     score += weight;
+                    if name_frequency[i] == 1 {
+                        own_name_terms += 1;
+                    }
                 }
             }
-            // a skill named by the request (name or keywords) is suggested on one rare term; one
-            // matched only by its description needs two rare terms and half the request — the
-            // suggestion line ran at 29 skills on 13 probe requests before this, naming a tenant
-            // skill for "set up my scratchpad"
-            let about = if name_terms >= 1 {
-                rare >= 1
+            if matched_terms == 0 {
+                return None;
+            }
+            // a skill named by the request — a word of its name or keywords that no other skill's
+            // carries — is suggested on one rare term; one matched only by its description, or only
+            // by a family word its name shares with others, needs two rare terms and half the
+            // request. The description rule: the suggestion line ran at 29 skills on 13 probe
+            // requests before it, naming a tenant skill for "set up my scratchpad". The own-word
+            // rule (VA-186, 30 skills, 25 requests): "Should I remind him to rotate the API key I was
+            // just given?" suggested atlassian-organizations-api-skill, confluence-api-skill and
+            // jira-api-skill on "api" alone — 1 of 5 terms, a word in 14 of the 30 descriptions and
+            // 3 of the names, score 1.5 — while the request is about whether to nag.
+            let about = if own_name_terms >= 1 {
+                rare_terms >= 1
             } else {
-                rare >= 2 && matched * 2 >= terms.len()
+                rare_terms >= 2 && matched_terms * 2 >= terms.len()
             };
-            about.then_some((score, *skill))
+            Some(SkillHit {
+                score,
+                matched_terms,
+                rare_terms,
+                name_terms,
+                own_name_terms,
+                about,
+                skill,
+            })
         })
         .collect();
-    let top = scored
-        .iter()
-        .map(|(score, _)| *score)
-        .fold(0.0_f64, f64::max);
-    scored.retain(|(score, _)| *score >= top * RECALL_MIN_SHARE_OF_TOP);
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.name.cmp(&b.1.name))
+            .then_with(|| a.skill.name.cmp(&b.skill.name))
     });
-    scored
-        .into_iter()
+    hits
+}
+
+/// Skills the request is about, by the same rule as memories: the hits that are ABOUT it, scoring
+/// at least half the best of them, at most `RECALL_MAX_SKILLS`.
+pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
+    let hits = skill_hits(skills, terms);
+    let top = hits
+        .iter()
+        .filter(|hit| hit.about)
+        .map(|hit| hit.score)
+        .fold(0.0_f64, f64::max);
+    hits.into_iter()
+        .filter(|hit| hit.about && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
         .take(RECALL_MAX_SKILLS)
-        .map(|(_, skill)| skill)
+        .map(|hit| hit.skill)
         .collect()
 }
 
@@ -837,6 +899,7 @@ mod tests {
             matched_specific: 1,
             named: false,
             topic_in_name: false,
+            together: true,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
                 is_global: true,
@@ -1273,6 +1336,104 @@ mod tests {
             vec!["leanzero-tutorial"],
             "the description covers the whole request"
         );
+    }
+
+    #[test]
+    fn a_nameless_whole_request_body_rides_only_when_it_says_two_of_the_words_together() {
+        let mut plans = named_hit("plans-overview-before-after-first", 6.6, 2, 2);
+        plans.named = true;
+        let mut do_all = named_hit("do-all-of-it-never-defer", 5.8, 3, 0);
+        do_all.matched_terms = 3;
+        do_all.together = false;
+        let mut qwen = named_hit("local-qwen-swarm-agent", 5.8, 3, 0);
+        qwen.matched_terms = 3;
+        qwen.together = false;
+        let recalled: Vec<String> = select_hits(vec![plans, do_all, qwen], 3)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            recalled,
+            vec!["plans-overview-before-after-first"],
+            "open/plan/present each alone in a long body is vocabulary, not the request"
+        );
+
+        let mut forge = named_hit("forge-live-ui-testing-facts", 13.3, 3, 3);
+        forge.named = true;
+        forge.topic_in_name = true;
+        let mut bank = named_hit("bank-agent-three-bucket-rule", 8.9, 4, 0);
+        bank.matched_terms = 4;
+        bank.together = true;
+        let recalled: Vec<String> = select_hits(vec![forge, bank], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            recalled,
+            vec![
+                "forge-live-ui-testing-facts",
+                "bank-agent-three-bucket-rule"
+            ],
+            "'Forge deploy' in the bucket list says the request's words together"
+        );
+    }
+
+    #[test]
+    fn a_family_word_in_a_skill_name_does_not_name_the_skill() {
+        let skills = vec![
+            skill(
+                "jira-api-skill",
+                "Atlassian Jira Cloud REST API v3 integration — issues, JQL search, OAuth / API-token auth.",
+            ),
+            skill(
+                "confluence-api-skill",
+                "Atlassian Confluence Cloud REST API v2 integration — pages, blogposts, API-token auth.",
+            ),
+            skill(
+                "atlassian-organizations-api-skill",
+                "Atlassian Organizations REST API. Use when managing organizations, users and groups.",
+            ),
+            skill(
+                "web-search",
+                "Search the web using DuckDuckGo (no API key required), Tavily, or SearXNG.",
+            ),
+            skill(
+                "goose-benchmark-iteration",
+                "Iterate the LeanZero agentic benchmark (sb-N tiers) — build a new tier, fix a scorer.",
+            ),
+            skill(
+                "goose-clean",
+                "Reclaim disk by cleaning the goose checkout's build caches at ~/Projects/goose.",
+            ),
+            skill("tenant-a", "Tenant A Atlassian operations over the REST API."),
+            skill("tenant-b", "Tenant B Atlassian operations over the REST API."),
+        ];
+        let names = |request: &str| -> Vec<String> {
+            relevant_skills(&skills, &query_terms(request))
+                .into_iter()
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        assert!(
+            names("Should I remind him to rotate the API key I was just given?").is_empty(),
+            "'api' sits in three names and most descriptions; it names none of them"
+        );
+        assert_eq!(
+            names("How do I start a benchmark run properly?"),
+            vec!["goose-benchmark-iteration"],
+            "'benchmark' is that skill's own name word: one rare term suffices"
+        );
+        assert_eq!(
+            names("Which git identity do goose commits use?"),
+            Vec::<String>::new(),
+            "'goose' is a family word: goose-clean matches it and nothing else"
+        );
+        let hits = skill_hits(&skills, &query_terms("rotate the api key"));
+        let jira = hits
+            .iter()
+            .find(|h| h.skill.name == "jira-api-skill")
+            .unwrap();
+        assert_eq!((jira.name_terms, jira.own_name_terms), (1, 0), "{jira:?}");
     }
 
     #[test]

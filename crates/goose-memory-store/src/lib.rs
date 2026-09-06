@@ -85,6 +85,15 @@ pub struct SearchHit {
     pub matched_specific: usize,
     pub named: bool,
     pub topic_in_name: bool,
+    /// Two different request terms in consecutive tokens of the entry — the request's words said
+    /// TOGETHER ("Forge deploy", "golden engine", "engine commits"), not each alone in its own
+    /// sentence. Measured (VA-185, 233 entries): "How should I open a plan when I present it?" rode on
+    /// two nameless bodies carrying all three words apart — "a window opens in 20 minutes … not a
+    /// phased plan … presenting my own scheduling caution" and "a single OpenAI endpoint … Approved
+    /// plan … Toolchain present" — while the two nameless whole-request bodies worth keeping say the
+    /// request's words side by side: "Forge deploy" for "deploy the Forge app to production",
+    /// "golden engine" and "engine commits" for "the golden engine score and which commit".
+    pub together: bool,
     pub occurrences: usize,
     pub entry: MemoryEntry,
 }
@@ -113,6 +122,19 @@ pub struct SearchHit {
 // words each — "scheduler_mock tests" in one, "the exact failing invocation" in the other, the two
 // tie at df 6): by every measurement the store takes they are the same shape.
 pub const NAMED_MIN_NAME_TERMS: usize = 2;
+
+/// The stem of a word (Snowball English): the form a request and a headline share when one says
+/// "rotate" and the other "rotation" — rotat; models/model, commits/commit, notarized/notarization.
+/// Measured (VA-185, 233 entries): "Should I remind him to rotate the API key I was just given?"
+/// (topic word rotate) recalled nothing while the one feedback note that answers it — "Mihai does
+/// not want unsolicited security-hygiene nagging (credential rotation, \"you pasted a key\", etc.) …
+/// say nothing about rotation" — scored 14.3 unrecalled: its body says "rotate them", its headline
+/// says "rotation", and the topic-word gate read the headline letter for letter.
+pub fn stem(word: &str) -> String {
+    rust_stemmers::Stemmer::create(rust_stemmers::Algorithm::English)
+        .stem(word)
+        .into_owned()
+}
 
 /// Rarity weight of a term found in `df` of `n` documents: `ln((n + 1) / (df + 0.5))` — large for a term
 /// few documents carry, small but never zero for one every document carries, so a name match still
@@ -480,6 +502,7 @@ impl MemoryStore {
             .filter(|((_, &df), &weight)| df >= 1 && weight == topic_weight)
             .map(|((term, _), _)| term)
             .collect();
+        let topic_stems: Vec<String> = topic_terms.iter().map(|term| stem(term)).collect();
 
         let mut hits = Vec::new();
         for (entry, name_tokens, tokens, haystack) in corpus {
@@ -520,7 +543,19 @@ impl MemoryStore {
                 && matched_specific * 2 >= specific_terms;
             let topic_in_name = topic_terms
                 .iter()
-                .any(|term| term_occurrences(term, &name_tokens) > 0);
+                .any(|term| term_occurrences(term, &name_tokens) > 0)
+                || name_tokens
+                    .iter()
+                    .any(|token| topic_stems.contains(&stem(token)));
+            let together = tokens.windows(2).any(|pair| {
+                terms.iter().enumerate().any(|(i, a)| {
+                    term_occurrences(a, &pair[..1]) > 0
+                        && terms
+                            .iter()
+                            .enumerate()
+                            .any(|(j, b)| j != i && term_occurrences(b, &pair[1..]) > 0)
+                })
+            });
             hits.push(SearchHit {
                 score,
                 matched_terms,
@@ -531,6 +566,7 @@ impl MemoryStore {
                 matched_specific,
                 named,
                 topic_in_name,
+                together,
                 occurrences,
                 entry,
             });
@@ -1300,6 +1336,107 @@ mod tests {
         assert!(!toolcall.topic_in_name, "{toolcall:?}");
         let article = by(&blog, "article");
         assert!(article.topic_in_name, "{article:?}");
+    }
+
+    #[test]
+    fn the_topic_word_in_another_form_still_names_the_entry() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "no-security-hygiene-nagging",
+                "Mihai does not want unsolicited security-hygiene nagging (credential rotation, \"you pasted a key\", etc.). Say nothing about rotation.\nAfter I twice noted he might want to rotate the API keys he pasted: stop bothering me with rotation; the reminders are noise.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        store
+            .remember(
+                "fleet",
+                "Never reconfigure the fleet on my own initiative.\nUse the key he gives; the API is given.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        for i in 0..4 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i}: the API key given to the agent.\nRemind nobody."),
+                    &[],
+                    true,
+                )
+                .unwrap();
+        }
+        let hits = store.search("api given key remind rotate", None).unwrap();
+        let nagging = hits
+            .iter()
+            .find(|h| h.entry.category == "no-security-hygiene-nagging")
+            .unwrap();
+        assert_eq!(nagging.matched_terms, 4, "{nagging:?}");
+        assert_eq!(
+            nagging.name_terms, 1,
+            "only 'key' is in the headline letter for letter"
+        );
+        assert!(
+            nagging.topic_in_name,
+            "'rotate' is the topic word and the headline says 'rotation': {nagging:?}"
+        );
+        assert_eq!(stem("rotate"), stem("rotation"));
+        assert_eq!(stem("models"), stem("model"));
+        assert_ne!(stem("local"), stem("locate"));
+        assert!(
+            !hits
+                .iter()
+                .find(|h| h.entry.category == "fleet")
+                .unwrap()
+                .topic_in_name,
+            "a note without the topic word in any form is not named by it"
+        );
+    }
+
+    #[test]
+    fn together_is_two_request_words_in_consecutive_tokens() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "do-all-of-it",
+                "HARD: do everything he asks in the same turn.\nA window opens in 20 minutes; not a phased plan for later; presenting my own caution as his constraint.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "bank-buckets",
+                "How an agent operates inside a regulated bank.\nBucket 2, ask the bank: every production config change, app install/enable, Forge deploy, any bulk write.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        let by = |query: &str, category: &str| {
+            store
+                .search(query, None)
+                .unwrap()
+                .into_iter()
+                .find(|h| h.entry.category == category)
+                .unwrap()
+        };
+        let apart = by("open plan present", "do-all-of-it");
+        assert_eq!(apart.matched_terms, 3);
+        assert!(
+            !apart.together,
+            "each word alone in its own clause: {apart:?}"
+        );
+        let side_by_side = by("app deploy forge production", "bank-buckets");
+        assert_eq!(side_by_side.matched_terms, 4);
+        assert!(side_by_side.together, "'Forge deploy': {side_by_side:?}");
+        let one_word_twice = by("deploy", "bank-buckets");
+        assert!(
+            !one_word_twice.together,
+            "together needs two DIFFERENT request words: {one_word_twice:?}"
+        );
     }
 
     #[test]

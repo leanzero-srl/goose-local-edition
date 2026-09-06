@@ -17,7 +17,8 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   the kind (user/feedback/project/reference). The instructions and the tool description say so.
 - `search`: whole-word matching (`tokenize` + `term_occurrences`: a word, or a ≥4-char prefix of a
   longer word — never a substring), rarity weights `ln((n+1)/(df+0.5))`, name terms twice, phrase
-  adds all weights; `rare_terms` = matched terms in ≤ half the searched entries.
+  adds all weights; `rare_terms` = matched terms in ≤ half the searched entries; `together` = two
+  different terms in consecutive tokens; `topic_in_name` reads stems (VA-185), nothing else does.
 - The startup instructions carry the INDEX (one headline per entry, both scopes), never bodies —
   measured 344,605 → 40,687 bytes on the 171-entry store. Keep it that way.
 
@@ -123,6 +124,59 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   run). Remove with `sqlite3 ~/.local/share/goose/sessions/sessions.db "delete from messages where
   session_id='<id>'; delete from sessions where id='<id>';"` and prove it with a sqlite count, never with
   `session list`.
+  THE TOPIC WORD IN ANOTHER FORM (VA-185): the topic word is a WORD, not a spelling — `topic_in_name` also
+  holds when a name token and the topic term share a Snowball English stem (`goose_memory_store::stem`,
+  crate `rust-stemmers`: rotate/rotation → rotat, models/model, commits/commit, notarized/notarization;
+  local ≠ locate). Only the topic-word check reads stems; `name_terms`, `term_occurrences` and every
+  weight are letter-for-letter as before, so scores never move. Measured (probe, 233 entries, 25
+  requests): "Should I remind him to rotate the API key I was just given?" (topic rotate) recalled
+  NOTHING while `no-security-hygiene-nagging` (local, feedback, 4/5 terms, 2/3 specific, 1 in name, 14.3
+  — the top hit) sat unrecalled: its body says "rotate them", its headline "credential rotation … say
+  nothing about rotation". After: recalled, [topic]; on the other twenty-four requests the only visible
+  change is the `[topic]` marker on four hits that do not ride (git identity: `golden-engine-is-the-law`
+  3/4, 1/2 specific; `never-destructive-git-in-workflows` 2/4 — "commits" ~ "commit"; wall-clock:
+  `uncapped-runs-judge-decides` already riding, `close-the-loop` 5/12). Live (haiku-4.5, --no-session):
+  `memories:1 recalled:["no-security-hygiene-nagging(14.3)"] skills:0 suggested:[]`; the answer opened
+  "No. Don't mention it."
+  TOGETHER (VA-185, `SearchHit::together`): a NAMELESS body carrying every request term rides only when
+  two different request terms sit in CONSECUTIVE tokens of the entry — the request's words said together,
+  not each alone in its own sentence of a long note. Measured: "How should I open a plan when I present
+  it?" recalled `plans-overview-before-after-first` (named, true) and then `do-all-of-it-never-defer`
+  (3/3, "a window opens in 20 minutes … not a phased plan … presenting my own scheduling caution") and
+  `local-qwen-swarm-agent` (3/3, "a single OpenAI endpoint … Approved plan … Toolchain present") — "open"
+  reached "opens" and "OpenAI" by the prefix rule, "present" reached "presenting". The two nameless
+  whole-request rides worth keeping say the words side by side: `bank-agent-three-bucket-rule` ("Forge
+  deploy" in the bucket-2 list) and `goose-branch-map-main-vs-local-edition` ("golden engine", "engine
+  commits"). Refuted on the way: one-LINE co-occurrence (the bank note's bucket-2 sentence is hard-wrapped
+  over three lines: production / app / Forge deploy), one-SENTENCE (the branch map's four words never share
+  a sentence), a token window (do-all-of-it's three words span ~75 tokens, the branch map's four ~100),
+  occurrence density (local-qwen says "plan" four times), an exact-word (no prefix) rule (it fits by the
+  accident of inflection and contradicts the stem rule). Adjacency is computed on raw tokens (a
+  function word between two request words breaks it — "deploy the app" is not together; "Forge app" is).
+  The probe marks whole-request hits `[together]` / `[apart]`. 29 → 28 of 75; the twenty-four other
+  requests' recalled sets and order identical.
+- THE OWN NAME WORD (VA-186, `SkillHit::own_name_terms`): a request NAMES a skill only by a word of its
+  name or keywords that no other skill's name carries; a word several names share — goose (7 of 30),
+  atlassian, api (3 names, 14 descriptions), skill, leanzero — is a FAMILY word and names nothing, so a
+  skill matched by family words alone takes the description path (two rare terms and half the request).
+  Scores are unchanged (a name match still counts twice); only `about` changed. Measured (30 skills, 25
+  requests): "Should I remind him to rotate the API key I was just given?" suggested
+  `atlassian-organizations-api-skill`, `confluence-api-skill`, `jira-api-skill` on "api" alone — 1 of 5
+  terms, score 1.5 each (the builtin `web-search` matched 2/5 on "no API key required", description-only,
+  under half). After: none. The one other change, by the words: "Why won't cargo test -p goose-mcp build
+  on its own?" keeps `goose-feature-dev` (4/8: build, cargo, goose, test — holds the fmt/build/clippy/test
+  gate) and loses `goose-clean` (3/8: "cleaning the goose checkout's regenerable build caches … cargo
+  target/ balloons" — disk, not a build failure) and `goose-knob-turning` (3/8: "MCP/tool calls
+  misbehave … the DMG build" — the swarm, not the crate), both named by "goose" alone. Kept on their own
+  words: `goose-benchmark-iteration` on "bench"/"benchmark" (e2e, benchmark run, wall-clock),
+  `goose-swarm-campaign` on "swarm" (resume), `goose-doc-guide` on "doc", `diconium-ai-builder` on
+  "builder" (notarized — still a vocabulary suggestion, unchanged by this rule), `goose-clean` on the git
+  identity request by the description path (goose + git, 2/4). Refuted: the memory store's specific-half
+  law on the catalogue (30 documents: a word in ONE unrelated skill is "specific" by accident — "broken"
+  in the migration-scripts skill un-names `goose-swarm-campaign` for "Is swarm resume still broken?"); a
+  rarity cut between "api" 14/30 and "goose" 7/30 (a threshold fitted to two numbers). 26 → 21 suggestions.
+  `goose recall` prints a `candidates:` block under the skills with the same numbers as the memory lines
+  (`m/n terms, rare, in name (its own), score`).
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
@@ -163,8 +217,10 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
    `"message":"recall"` with `recalled=[...]`, `suggested=[...]` — the log is the receipt, the
    model's answer is the outcome. Fixture memories you write go in and come OUT again — and so does
    the SESSION: a `--no-session` run still writes a sessions row (measured 2026-09-06, VA-181: the
-   VA-179/180 rows 20260906_20–22 were left behind), so `goose session list` after every live run and
-   remove the row you made (`goose session remove --help` for the id form) before you report.
+   VA-179/180 rows 20260906_20–22 were left behind), and `goose session list` CANNOT show the hidden row it leaves
+   nor `session remove` delete it (VA-184) — delete it through the sqlite procedure above and prove it
+   with `select count(*) from sessions where id='<id>'` (the table has no `hidden` column to filter on;
+   the id is in the run's banner and the recall log line) before you report.
    An IMPERATIVE request is a live command: on "Fix the failing test in the scheduler." (VA-182, haiku-4.5)
    the model edited `crates/goose-providers/src/http_status.rs` and ran `git add -A && git commit` on main,
    sweeping the surgeon's uncommitted landing under its own message (bb80fa53a, unwound with `git reset
