@@ -5,6 +5,7 @@ pub mod chatrecall;
 pub mod code_execution;
 pub mod developer;
 pub mod ext_manager;
+pub mod ledger;
 pub mod orchestrator;
 pub mod recall;
 pub mod summarize;
@@ -84,6 +85,20 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 unprefixed_tools: false,
                 hidden: false,
                 client_factory: |ctx| Box::new(chatrecall::ChatRecallClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            ledger::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: ledger::EXTENSION_NAME,
+                display_name: "Ledger",
+                description:
+                    "The project's dated log of findings, decisions and dead ends (.goose/ledger.md), newest entries in every turn",
+                default_enabled: true,
+                unprefixed_tools: false,
+                hidden: false,
+                client_factory: |ctx| Box::new(ledger::LedgerClient::new(ctx).unwrap()),
             },
         );
 

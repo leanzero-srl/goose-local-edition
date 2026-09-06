@@ -171,6 +171,17 @@ fn compose_moim(
             {
                 lines.push(tag("compaction", &value));
             }
+            let has_scratchpad = extension_parts
+                .iter()
+                .any(|part| part.starts_with("<scratchpad>"));
+            if has_scratchpad
+                && compaction_is_near(total_tokens, context_limit, compaction_threshold)
+            {
+                lines.push(tag(
+                    "scratchpad-notice",
+                    "Compaction is near: refresh the scratchpad (todo_write) with Goal, Done, In flight, Next and Facts before continuing.",
+                ));
+            }
         }
     }
     if let Some(value) = turn_budget_line(turns_taken, max_turns) {
@@ -207,6 +218,25 @@ fn escape_xml_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+// ratio: the notice fires in the last quarter of the room before compaction — late enough not to
+// nag through a whole session, early enough that one refresh lands before the summary is taken.
+const SCRATCHPAD_NOTICE_SHARE: f64 = 0.75;
+
+fn compaction_is_near(
+    total_tokens: Option<i32>,
+    context_limit: Option<usize>,
+    threshold: f64,
+) -> bool {
+    let (Some(total_tokens), Some(context_limit)) = (total_tokens, context_limit) else {
+        return false;
+    };
+    if total_tokens <= 0 || context_limit == 0 || threshold <= 0.0 || threshold >= 1.0 {
+        return false;
+    }
+    let compaction_at = context_limit as f64 * threshold;
+    total_tokens as f64 >= compaction_at * SCRATCHPAD_NOTICE_SHARE
+}
+
 fn compaction_remaining_line(
     total_tokens: Option<i32>,
     context_limit: Option<usize>,
@@ -236,6 +266,40 @@ fn turn_budget_line(turns_taken: u32, max_turns: u32) -> Option<String> {
     }
 
     Some(format!("{turns_taken}/{max_turns} used"))
+}
+
+#[cfg(test)]
+mod scratchpad_notice_tests {
+    use super::*;
+
+    #[test]
+    fn notice_only_in_the_last_quarter_and_only_with_a_scratchpad() {
+        assert!(!compaction_is_near(Some(50_000), Some(200_000), 0.8));
+        assert!(compaction_is_near(Some(130_000), Some(200_000), 0.8));
+        assert!(!compaction_is_near(None, Some(200_000), 0.8));
+        let with = compose_moim(
+            Path::new("/w"),
+            Some(130_000),
+            Some(200_000),
+            0.8,
+            0,
+            0,
+            vec!["<scratchpad>\nGoal: x\n</scratchpad>".to_string()],
+            None,
+        );
+        assert!(with.contains("<scratchpad-notice>"), "{with}");
+        let without = compose_moim(
+            Path::new("/w"),
+            Some(130_000),
+            Some(200_000),
+            0.8,
+            0,
+            0,
+            vec!["Current tasks".to_string()],
+            None,
+        );
+        assert!(!without.contains("<scratchpad-notice>"));
+    }
 }
 
 #[cfg(test)]

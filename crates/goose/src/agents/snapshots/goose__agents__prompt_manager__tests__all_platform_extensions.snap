@@ -100,6 +100,17 @@ Use write and edit to efficiently make changes. Test and verify as appropriate.
 
 When running Python scripts or commands, always use `python3` instead of `python`.
 
+## ledger
+
+### Instructions
+The project ledger (.goose/ledger.md) is this project's dated log — findings, decisions,
+what was tried and why it is not coming back, facts learned. Its newest entries are in
+every turn's context and it survives compaction and sessions. Append to it with
+ledger_append the moment you learn something a future session would otherwise rediscover:
+a measurement, a dead end, a decision with its reason. Read further back with
+ledger_read. Facts that should be recalled by topic belong in memory; the ledger is
+what happened, in order.
+
 ## orchestrator
 
 ### Instructions
@@ -125,19 +136,16 @@ You have these skills at your disposal, when it is clear they can help you solve
 ## todo
 
 ### Instructions
-Your todo content is automatically available in your context.
-
-Workflow:
-- Start: write initial checklist
-- During: update progress
-- End: verify all complete
-
-Template:
-- [x] Requirement 1
-- [ ] Task
-  - [ ] Sub-task
-- [ ] Requirement 2
-- [ ] Another task
+Your todo content is your SCRATCHPAD: the one thing that survives context compaction
+verbatim, and it is shown to you in every turn's context. Keep it current after every
+meaningful step, not only at the start. Sections that make it recoverable:
+- Goal — the user's request in one line
+- Done — what is finished, with file names
+- In flight — what you are in the middle of, exact next action
+- Next — remaining steps
+- Facts — paths, commands, numbers, decisions and the reasons behind them
+When the turn context says compaction is near, refresh it FIRST. After a compaction,
+trust the scratchpad over the summary where they differ.
 
 ## tom
 

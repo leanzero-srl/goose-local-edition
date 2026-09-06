@@ -35,23 +35,19 @@ impl TodoClient {
             )
             .with_instructions(
                 indoc! {r#"
-                Your todo content is automatically available in your context.
-
-                Workflow:
-                - Start: write initial checklist
-                - During: update progress
-                - End: verify all complete
-
-                Template:
-                - [x] Requirement 1
-                - [ ] Task
-                  - [ ] Sub-task
-                - [ ] Requirement 2
-                - [ ] Another task
+                Your todo content is your SCRATCHPAD: the one thing that survives context compaction
+                verbatim, and it is shown to you in every turn's context. Keep it current after every
+                meaningful step, not only at the start. Sections that make it recoverable:
+                - Goal — the user's request in one line
+                - Done — what is finished, with file names
+                - In flight — what you are in the middle of, exact next action
+                - Next — remaining steps
+                - Facts — paths, commands, numbers, decisions and the reasons behind them
+                When the turn context says compaction is near, refresh it FIRST. After a compaction,
+                trust the scratchpad over the summary where they differ.
             "#}
                 .to_string(),
             );
-
         Ok(Self { info, context })
     }
 
@@ -117,11 +113,10 @@ impl TodoClient {
         vec![Tool::new(
             "todo_write".to_string(),
             indoc! {r#"
-                    Overwrite the entire TODO content.
-
-                    The content persists across conversation turns and compaction. Use this for:
-                    - Task tracking and progress updates
-                    - Important notes and reminders
+                    Overwrite your scratchpad — the notes that survive context compaction verbatim and
+                    are shown to you every turn. Keep Goal, Done, In flight, Next and Facts (paths,
+                    commands, numbers, decisions) current after every meaningful step, and refresh it
+                    first when the turn context says compaction is near.
 
                     WARNING: This operation completely replaces the existing content. Always include
                     all content you want to keep, not just the changes.
@@ -189,11 +184,12 @@ impl McpClientTrait for TodoClient {
             .ok()?;
 
         match extension_data::TodoState::from_extension_data(&metadata.extension_data) {
-            Some(state) if !state.content.trim().is_empty() => {
-                Some(format!("Current tasks and notes:\n{}\n", state.content))
-            }
+            Some(state) if !state.content.trim().is_empty() => Some(format!(
+                "<scratchpad>\nYour notes — they survived every compaction verbatim; trust them over any summary:\n{}\n</scratchpad>\n",
+                state.content
+            )),
             _ => Some(
-                "Current tasks and notes:\nOnce given a task, immediately update your todo with all explicit and implicit requirements\n"
+                "<scratchpad>\nEmpty. Once given a task, write Goal, Next and Facts here with todo_write — it is what survives compaction.\n</scratchpad>\n"
                     .to_string(),
             ),
         }

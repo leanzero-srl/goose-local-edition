@@ -50,6 +50,181 @@ const STOPWORDS: &[&str] = &[
     "with", "would", "you", "your",
 ];
 
+/// Words that open a correction. Read at the head of the message (the first REACTION_WINDOW tokens),
+/// where a reaction lives; deeper in a long request they are ordinary words.
+const CORRECTION_MARKERS: &[&str] = &[
+    "no", "nope", "don't", "dont", "never", "stop", "wrong", "not", "instead", "again", "undo",
+    "revert", "why",
+];
+const CORRECTION_PHRASES: &[&str] = &[
+    "not what i",
+    "i said",
+    "i told you",
+    "that's not",
+    "thats not",
+    "i didn't ask",
+    "i did not ask",
+    "please don't",
+    "do not",
+    "you should have",
+    "should not have",
+    "shouldn't have",
+];
+// ratio: a reaction is said in the first breath — a dozen words; a request that only mentions "no"
+// or "instead" later is a request.
+const REACTION_WINDOW: usize = 12;
+// ratio: a skill body is loaded without a call only while it fits in a thirty-second of the context
+// window — one extra page for a 262k model, nothing for a 32k one — and only on a name match.
+const AUTOLOAD_WINDOW_SHARE: f64 = 1.0 / 32.0;
+// measured: a token is about four characters of English or code across the providers goose runs.
+const CHARS_PER_TOKEN: f64 = 4.0;
+
+/// What the user is reacting to: everything the assistant did in its previous turn — the tool calls,
+/// in order, then its closing words — gathered back to the previous user request. None when an
+/// earlier user request sits between (the assistant did not speak last).
+pub fn previous_assistant_text(messages: &[Message]) -> Option<String> {
+    let mut seen_request = false;
+    let mut parts: Vec<String> = Vec::new();
+    for m in messages.iter().rev() {
+        if !m.is_agent_visible() {
+            continue;
+        }
+        if !seen_request {
+            seen_request = true;
+            continue;
+        }
+        match effective_role(m).as_str() {
+            "assistant" => {
+                let text: Vec<&str> = m
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        MessageContent::Text(t) => Some(t.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let text = text.join("\n");
+                if !text.trim().is_empty() {
+                    parts.push(text);
+                }
+                for c in m.content.iter().rev() {
+                    if let MessageContent::ToolRequest(req) = c {
+                        if let Ok(call) = req.tool_call.as_ref() {
+                            let args = call
+                                .arguments
+                                .as_ref()
+                                .map(|a| serde_json::Value::Object(a.clone()).to_string())
+                                .unwrap_or_default();
+                            parts.push(format!("tool {}({})", call.name, headline(&args)));
+                        }
+                    }
+                }
+            }
+            "user"
+                if m.content
+                    .iter()
+                    .any(|c| matches!(c, MessageContent::Text(_))) =>
+            {
+                break;
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.reverse();
+    Some(parts.join("\n"))
+}
+
+/// How surely the request is a correction of what was just done. Strong: an unambiguous phrase
+/// ("don't", "never", "that's not what I", "stop") in the head — captured as a memory without waiting
+/// for the model. Weak: a marker word that also opens ordinary requests ("why", "not", "again") —
+/// the model is nudged, nothing is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Correction {
+    Strong,
+    Weak,
+}
+
+const STRONG_MARKERS: &[&str] = &[
+    "don't", "dont", "never", "stop", "wrong", "nope", "undo", "revert",
+];
+
+pub fn correction_strength(user_text: &str) -> Option<Correction> {
+    let lower = user_text.to_lowercase();
+    let head: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|t| !t.is_empty())
+        .take(REACTION_WINDOW)
+        .collect();
+    let head_text = head.join(" ");
+    if CORRECTION_PHRASES.iter().any(|p| head_text.contains(p))
+        || head.iter().take(3).any(|t| STRONG_MARKERS.contains(t))
+    {
+        return Some(Correction::Strong);
+    }
+    if head.iter().take(3).any(|t| CORRECTION_MARKERS.contains(t)) {
+        return Some(Correction::Weak);
+    }
+    None
+}
+
+/// Does the request open like a correction of what was just done?
+pub fn is_correction(user_text: &str) -> bool {
+    correction_strength(user_text).is_some()
+}
+
+/// The memory a strong correction becomes, written by recall itself: the user's words are the
+/// headline, the corrected action the body, so the model can refine it in place (same headline).
+pub fn correction_memory(user_text: &str, action: &str) -> (String, Vec<String>) {
+    let content = format!(
+        "Correction: {}\nSaid after goose did: {}\nRefine this into the rule and the reason if the words above are not already it.",
+        headline(user_text),
+        action
+    );
+    (
+        content,
+        vec!["feedback".to_string(), "correction".to_string()],
+    )
+}
+
+/// The question the assistant left open, when its last message asked one.
+pub fn open_question(assistant_text: &str) -> Option<String> {
+    let last = assistant_text
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())?;
+    let lower = last.to_lowercase();
+    let asks = last.ends_with('?')
+        || [
+            "which ",
+            "should i",
+            "do you want",
+            "not sure",
+            "unsure",
+            "assume",
+            "confirm",
+        ]
+        .iter()
+        .any(|m| lower.contains(m));
+    asks.then(|| headline(last))
+}
+
+/// Which skill to load without a call: the best suggestion, when the request names it (two name
+/// terms) and its body fits the auto-load budget.
+pub fn autoload_pick<'a>(
+    ranked: &[(usize, &'a SourceEntry)],
+    context_limit_tokens: usize,
+) -> Option<&'a SourceEntry> {
+    let budget = (context_limit_tokens as f64 * CHARS_PER_TOKEN * AUTOLOAD_WINDOW_SHARE) as usize;
+    ranked
+        .first()
+        .filter(|(name_terms, skill)| *name_terms >= 2 && skill.content.chars().count() <= budget)
+        .map(|(_, skill)| *skill)
+}
+
 pub struct RecallClient {
     info: InitializeResult,
     context: PlatformExtensionContext,
@@ -192,20 +367,33 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
         .filter_map(|(skill, name, text)| {
             let mut score = 0.0;
             let mut rare = 0;
+            let mut matched = 0;
+            let mut name_terms = 0;
             for (i, term) in terms.iter().enumerate() {
                 if term_occurrences(term, text) == 0 {
                     continue;
                 }
+                matched += 1;
                 let weight = rarity_weight(n, document_frequency[i]);
                 score += weight;
                 if document_frequency[i] * 2 <= n {
                     rare += 1;
                 }
                 if term_occurrences(term, name) > 0 {
+                    name_terms += 1;
                     score += weight;
                 }
             }
-            (rare >= 1).then_some((score, *skill))
+            // a skill named by the request (name or keywords) is suggested on one rare term; one
+            // matched only by its description needs two rare terms and half the request — the
+            // suggestion line ran at 29 skills on 13 probe requests before this, naming a tenant
+            // skill for "set up my scratchpad"
+            let about = if name_terms >= 1 {
+                rare >= 1
+            } else {
+                rare >= 2 && matched * 2 >= terms.len()
+            };
+            about.then_some((score, *skill))
         })
         .collect();
     let top = scored
@@ -222,6 +410,24 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
         .into_iter()
         .take(RECALL_MAX_SKILLS)
         .map(|(_, skill)| skill)
+        .collect()
+}
+
+/// The suggested skills with how many request terms sit in their name or keywords, best first.
+pub fn ranked_skills<'a>(
+    skills: &'a [SourceEntry],
+    terms: &[String],
+) -> Vec<(usize, &'a SourceEntry)> {
+    relevant_skills(skills, terms)
+        .into_iter()
+        .map(|skill| {
+            let name = tokenize(&format!("{} {}", skill.name, skill_keywords(skill)));
+            let name_terms = terms
+                .iter()
+                .filter(|term| term_occurrences(term, &name) > 0)
+                .count();
+            (name_terms, skill)
+        })
         .collect()
 }
 
@@ -301,19 +507,50 @@ pub fn recall_line_of(text: &str) -> Option<&str> {
     Some(line)
 }
 
+/// What else the turn carries besides matches: a loaded skill body, a correction to capture, an
+/// answered question to capture.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Extras {
+    pub autoloaded: Option<(String, String)>,
+    pub correction_of: Option<String>,
+    pub answered: Option<(String, String)>,
+}
+
 /// The turn-context part. None when there is nothing to say.
 pub fn render(
     memories: &[SearchHit],
     skills: &[&SourceEntry],
     past: Option<&PastSession>,
 ) -> Option<String> {
-    if memories.is_empty() && skills.is_empty() && past.is_none() {
+    render_with(memories, skills, past, &Extras::default())
+}
+
+pub fn render_with(
+    memories: &[SearchHit],
+    skills: &[&SourceEntry],
+    past: Option<&PastSession>,
+    extras: &Extras,
+) -> Option<String> {
+    if memories.is_empty()
+        && skills.is_empty()
+        && past.is_none()
+        && extras.autoloaded.is_none()
+        && extras.correction_of.is_none()
+        && extras.answered.is_none()
+    {
         return None;
     }
-    let mut sections = vec![format!(
-        "<recall-line>{}</recall-line>",
-        recall_line(memories, skills, past)
-    )];
+    let mut line = recall_line(memories, skills, past);
+    if let Some((name, _)) = &extras.autoloaded {
+        line.push_str(&format!(" · loaded {name}"));
+    }
+    if extras.correction_of.is_some() {
+        line.push_str(" · correction noticed");
+    }
+    if extras.answered.is_some() {
+        line.push_str(" · answer noticed");
+    }
+    let mut sections = vec![format!("<recall-line>{line}</recall-line>")];
     if !memories.is_empty() {
         let mut block = String::from(
             "<recalled-memories>\nSaved memories whose words match this request — recalled by goose, use them if they apply:\n",
@@ -340,6 +577,25 @@ pub fn render(
             "<past-session>\nThis was discussed before — session {} (\"{}\", {}), the {} said: \"{}\". \
              chatrecall(session_id) loads it if the history matters.\n</past-session>",
             past.session_id, past.description, past.when, past.role, past.headline
+        ));
+    }
+    if let Some((name, body)) = &extras.autoloaded {
+        sections.push(format!(
+            "<loaded-skill name=\"{name}\">\nThis skill matches the request by name, so goose loaded it for you — follow it as if you had called load_skill({name}):\n{body}\n</loaded-skill>"
+        ));
+    }
+    if let Some(action) = &extras.correction_of {
+        sections.push(format!(
+            "<correction>\nThe user's message reads as a correction of what you just did (\"{action}\"). \
+             A strong correction is already saved verbatim in local memory (category \"corrections\"); \
+             restate it as the RULE and the REASON with remember_memory — same first line, tags feedback first — \
+             so the saved memory says what to do, not only what was said. Then continue.\n</correction>"
+        ));
+    }
+    if let Some((question, answer)) = &extras.answered {
+        sections.push(format!(
+            "<answered>\nYou asked \"{question}\" and the user answered \"{answer}\". \
+             If that answer is a durable fact — a path, a host, a convention, a preference — save it with remember_memory (tags: project or user first) so you never ask again.\n</answered>"
         ));
     }
     Some(sections.join("\n"))
@@ -414,7 +670,64 @@ impl McpClientTrait for RecallClient {
         } else {
             Vec::new()
         };
-        let skills = relevant_skills(&catalogue, &terms);
+        let ranked = ranked_skills(&catalogue, &terms);
+        let skills: Vec<&SourceEntry> = ranked.iter().map(|(_, s)| *s).collect();
+
+        let mut extras = Extras::default();
+        let context_limit = match (
+            self.context.model_config_for_session(session_id).await,
+            self.context
+                .extension_manager
+                .as_ref()
+                .and_then(|weak| weak.upgrade()),
+        ) {
+            (Ok(model_config), Some(manager)) => {
+                let provider = manager.get_provider().lock().await.clone();
+                match provider {
+                    Some(provider) => Some(
+                        crate::context_mgmt::effective_context_limit(
+                            provider.as_ref(),
+                            &model_config,
+                        )
+                        .await,
+                    ),
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(limit) = context_limit {
+            if let Some(skill) = autoload_pick(&ranked, limit) {
+                extras.autoloaded = Some((skill.name.clone(), skill.content.clone()));
+            }
+        }
+        let messages = session.conversation.as_ref()?.messages();
+        if self.extension_enabled("memory").await {
+            if let Some(assistant) = previous_assistant_text(messages) {
+                if let Some(strength) = correction_strength(&text) {
+                    let action = headline(&assistant);
+                    if strength == Correction::Strong {
+                        let store = MemoryStore::new(
+                            Paths::config_dir().join("memory"),
+                            &session.working_dir,
+                        );
+                        let (content, tags) = correction_memory(&text, &action);
+                        match store.remember("corrections", &content, &tags, false) {
+                            Ok(outcome) => {
+                                tracing::info!(?outcome, "correction captured as a memory")
+                            }
+                            Err(err) => tracing::warn!(%err, "correction not captured"),
+                        }
+                    }
+                    extras.correction_of = Some(action);
+                }
+                if extras.correction_of.is_none() {
+                    if let Some(question) = open_question(&assistant) {
+                        extras.answered = Some((question, headline(&text)));
+                    }
+                }
+            }
+        }
 
         let session_types = match session.session_type {
             SessionType::Acp => vec![SessionType::Acp],
@@ -441,7 +754,7 @@ impl McpClientTrait for RecallClient {
             }
         };
 
-        let part = render(&memories, &skills, past.as_ref());
+        let part = render_with(&memories, &skills, past.as_ref(), &extras);
         let recalled: Vec<String> = memories
             .iter()
             .map(|hit| format!("{}({:.1})", hit.entry.category, hit.score))
@@ -456,6 +769,9 @@ impl McpClientTrait for RecallClient {
             suggested = ?suggested,
             past_session = past.as_ref().map(|p| p.session_id.as_str()),
             history_ms = history_started.elapsed().as_millis(),
+            autoloaded = extras.autoloaded.as_ref().map(|(n, _)| n.as_str()),
+            correction = extras.correction_of.is_some(),
+            answered = extras.answered.is_some(),
             "recall"
         );
         part
@@ -693,6 +1009,180 @@ mod tests {
             recall_line_of("<turn-context>\n<current-time>x</current-time>"),
             None
         );
+    }
+
+    #[test]
+    fn corrections_are_read_at_the_head_of_the_message_and_graded() {
+        assert_eq!(
+            correction_strength("No, don't touch the scheduler."),
+            Some(Correction::Strong)
+        );
+        assert_eq!(
+            correction_strength("That's not what I asked for."),
+            Some(Correction::Strong)
+        );
+        assert_eq!(
+            correction_strength("Wrong file — I said the CLI one."),
+            Some(Correction::Strong)
+        );
+        assert_eq!(
+            correction_strength("Why did you delete the tests?"),
+            Some(Correction::Weak)
+        );
+        assert_eq!(
+            correction_strength("No, the other one."),
+            Some(Correction::Weak)
+        );
+        assert_eq!(
+            correction_strength("Add a flag so users can say no to telemetry, and instead log it."),
+            None
+        );
+        assert_eq!(
+            correction_strength("List the files in this directory."),
+            None
+        );
+        assert_eq!(
+            correction_strength("Why is the sky blue?"),
+            Some(Correction::Weak),
+            "a weak marker only nudges, never writes"
+        );
+        let (content, tags) = correction_memory(
+            "No — don't use the shell for reading files here.",
+            "Ran cat on queries.txt",
+        );
+        assert!(content.starts_with("Correction: No — don't use the shell for reading files here."));
+        assert!(content.contains("Said after goose did: Ran cat on queries.txt"));
+        assert_eq!(tags, vec!["feedback", "correction"]);
+    }
+
+    #[test]
+    fn a_skill_matched_only_by_its_description_must_cover_the_whole_request() {
+        let skills = vec![
+            skill(
+                "tenant-a",
+                "Tenant A Atlassian operations: Jira issue triage over the REST API",
+            ),
+            skill(
+                "leanzero-tutorial",
+                "Author a tutorial or blog post for the website",
+            ),
+        ];
+        let names: Vec<&str> = relevant_skills(
+            &skills,
+            &query_terms("set up my scratchpad for a refactor of the rendering"),
+        )
+        .into_iter()
+        .map(|s| s.name.as_str())
+        .collect();
+        assert!(names.is_empty(), "no skill is about this: {names:?}");
+        let names: Vec<&str> = relevant_skills(&skills, &query_terms("write a blog post"))
+            .into_iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["leanzero-tutorial"],
+            "the description covers the whole request"
+        );
+    }
+
+    #[test]
+    fn an_open_question_is_the_assistant_s_last_line_when_it_asks() {
+        assert_eq!(
+            open_question("I found two configs.\nWhich one should I edit, dev or prod?"),
+            Some("Which one should I edit, dev or prod?".to_string())
+        );
+        assert_eq!(
+            open_question("I'm not sure which port the vendor uses; I will assume 8850"),
+            Some("I'm not sure which port the vendor uses; I will assume 8850".to_string())
+        );
+        assert_eq!(open_question("Done. The tests pass."), None);
+    }
+
+    #[test]
+    fn previous_assistant_text_is_what_the_user_reacts_to() {
+        let messages = vec![
+            Message::user().with_text("first request"),
+            Message::assistant().with_text("Which config, dev or prod?"),
+            Message::user().with_text("prod"),
+        ];
+        assert_eq!(
+            previous_assistant_text(&messages).as_deref(),
+            Some("Which config, dev or prod?")
+        );
+        let two_requests = vec![
+            Message::assistant().with_text("earlier answer"),
+            Message::user().with_text("a request the assistant has not answered"),
+            Message::user().with_text("another request"),
+        ];
+        assert_eq!(previous_assistant_text(&two_requests), None);
+        assert_eq!(
+            previous_assistant_text(&[Message::user().with_text("hello")]),
+            None
+        );
+
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "command".to_string(),
+            serde_json::json!("head -2 queries.txt"),
+        );
+        let with_tool = vec![
+            Message::user().with_text("show me the file"),
+            Message::assistant().with_tool_request(
+                "call-1",
+                Ok(rmcp::model::CallToolRequestParams::new("shell").with_arguments(args)),
+            ),
+            Message::user().with_tool_response(
+                "call-1",
+                Ok(CallToolResult::success(vec![Content::text("line 1")])),
+            ),
+            Message::assistant().with_text("Here is the first line. What next?"),
+            Message::user().with_text("No — never use the shell here."),
+        ];
+        let action = previous_assistant_text(&with_tool).unwrap();
+        assert_eq!(
+            action,
+            "tool shell({\"command\":\"head -2 queries.txt\"})\nHere is the first line. What next?",
+            "the whole previous turn: the call first, then the closing words"
+        );
+    }
+
+    #[test]
+    fn autoload_needs_two_name_terms_and_a_body_within_budget() {
+        let mut small = skill("jira-api", "Jira REST");
+        small.content = "x".repeat(1_000);
+        let mut big = skill("jira-api-big", "Jira REST");
+        big.content = "x".repeat(100_000);
+        assert_eq!(
+            autoload_pick(&[(2, &small)], 262_144).map(|s| s.name.as_str()),
+            Some("jira-api")
+        );
+        assert!(
+            autoload_pick(&[(1, &small)], 262_144).is_none(),
+            "one name term is a hint, not a pick"
+        );
+        assert!(
+            autoload_pick(&[(2, &big)], 262_144).is_none(),
+            "100k chars exceeds a 32k budget"
+        );
+        assert!(
+            autoload_pick(&[(2, &small)], 4_000).is_none(),
+            "a 4k-token window has a 500-char budget"
+        );
+    }
+
+    #[test]
+    fn extras_render_their_sections_and_the_line() {
+        let extras = Extras {
+            autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
+            correction_of: Some("Deleted the tests".to_string()),
+            answered: Some(("Which config?".to_string(), "prod".to_string())),
+        };
+        let out = render_with(&[], &[], None, &extras).unwrap();
+        assert!(out.starts_with("<recall-line>recalled:  · loaded jira-api · correction noticed · answer noticed</recall-line>"), "{out}");
+        assert!(out.contains("<loaded-skill name=\"jira-api\">"));
+        assert!(out.contains("correction of what you just did (\"Deleted the tests\")"));
+        assert!(out.contains("You asked \"Which config?\" and the user answered \"prod\""));
     }
 
     #[test]

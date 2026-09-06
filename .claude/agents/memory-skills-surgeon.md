@@ -40,6 +40,21 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   `developer` + the swarm config's extensions — recall must NEVER reach a benchmark lane. If you
   touch how platform extensions attach, prove this again (grep `add_extension` in swarm.rs).
 
+## Scratchpad, ledger, reactions (2026-09-06)
+- `todo` IS the scratchpad: session extension_data, `<scratchpad>` moim part every turn, survives
+  compaction verbatim; moim adds `<scratchpad-notice>` in the last quarter before the compaction
+  threshold (`compaction_is_near`, SCRATCHPAD_NOTICE_SHARE), only when a scratchpad part is present —
+  swarm lanes (the `measured` arm) never see it.
+- `ledger` (`platform_extensions/ledger.rs`): `.goose/ledger.md`, one dated line per entry
+  (`- <when> [kind] text`, kinds finding/decision/tried/fact); `ledger_append`, `ledger_read`;
+  `<ledger>` moim part = newest TAIL_ENTRIES. It is chronology; memory is facts.
+- recall's extras: `autoload_pick` (two name terms + body ≤ AUTOLOAD_WINDOW_SHARE of the context
+  window in chars), `is_correction` (markers/phrases in the first REACTION_WINDOW tokens),
+  `open_question` (the assistant's last line asks) → `<loaded-skill>`, `<correction>`, `<answered>`
+  sections and the recall line. Detectors are pure and tested; the model writes the memory.
+- The shared compaction template and the post-compaction continuation strings are NOT touched —
+  swarm workers compact through them (golden gate); the guidance lives in the scratchpad part.
+
 ## Skills
 - Listing = name + description in the skills extension instructions; `load_skill` loads the body;
   `skill/path` loads a supporting file, canonicalized and contained in the skill dir, cut at

@@ -1,5 +1,15 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-06 midday — SURVIVING COMPACTION + SELF-WRITTEN MEMORIES (VA-174..178).** The `todo` extension is the SCRATCHPAD
+> (Goal/Done/In flight/Next/Facts, `<scratchpad>` every turn, a `<scratchpad-notice>` in the last quarter before compaction — only
+> when a scratchpad part exists, so swarm lanes and the shared compaction template are untouched). New `ledger` platform
+> extension: `.goose/ledger.md`, dated one-line entries, `ledger_append`/`ledger_read`, newest five in every turn's `<ledger>`.
+> Recall now grades corrections (Strong → written to local memory by recall itself, then the model restates rule + reason;
+> Weak → nudge only), notices answered questions (`<answered>` → the model saved the config-file answer unprompted), can load a
+> small skill without a call (`autoload_pick`, not yet fired: installed skill bodies exceed the budget), and suggests skills
+> under the nameless-needs-two-rare-terms rule (29 → 15 on the probe). All measured live on haiku 4.5 (receipts in
+> VIGIL-ACTIONS VA-174..178); the docs page `surviving-compaction.md` explains the three survivors. Tests 1488/86/12 green.
+
 > **2026-09-06 morning — PRIVACY PURGE DONE.** The frozen promptbench payload corpus (238 captured worker requests embedding the
 > operator's memory store and global hints, public since 08-03) is gone from the tip AND from history: filter-repo on a fresh
 > mirror, note titles and client names word-scrubbed from every text blob, force-pushed to origin (main, the pending branch, 300
