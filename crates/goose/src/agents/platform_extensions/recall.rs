@@ -297,9 +297,10 @@ pub fn query_terms(text: &str) -> Vec<String> {
 
 /// Which hits are worth injecting: an entry the request NAMES (`SearchHit::named`), an entry whose
 /// body carries EVERY request term, or an entry whose name carries the request's TOPIC WORD
-/// (`SearchHit::topic_in_name`, its rarest term) with half of the terms matched — each with at least
-/// one rare term, scoring at least half of the best such hit; taken in the store's order, so the named
-/// entries fill the slots first.
+/// (`SearchHit::topic_in_name`, its rarest term) with half of the terms and a MAJORITY of the request's
+/// specific terms matched — each with at least one rare term, scoring at least half of the best such
+/// hit; taken in the store's order, so the named entries fill the slots first. Once the topic word
+/// names an entry, the entries named by the request's commoner words alone do not ride.
 /// Read on the goose-native store (62 local + 171
 /// global entries, 13 requests): true hits carry name terms and win by a wide margin (golden engine 14.8
 /// vs 8.8, killpg 24.1, fleet names 31.3); every noise slot was a nameless entry matching half the
@@ -312,12 +313,33 @@ pub fn query_terms(text: &str) -> Vec<String> {
 /// blog) in its name. Requiring it emptied those three requests and dropped seven shared-vocabulary
 /// slots elsewhere (a launchd-guard note for the e2e probe token, a signing-cert note for the git
 /// identity); every named hit and every whole-request body stayed — 30 → 17 of 39 slots.
+/// Measured (VA-183, 233 entries, 19 requests): the topic word in ANOTHER SENSE rode below the entry
+/// it names. "Is swarm resume still broken?" (broken df 30, resume 8 | still 68, swarm 71; topic resume)
+/// recalled `swarm-resume-works-now` (4/4, named, 14.3) and then two unnamed notes whose headlines carry
+/// "resume" as continuing after an interruption — `remine-after-compaction` ("I have resumed on the
+/// wrong thread", 3/4, 9.0) and `recovery-is-separate-from-detection` ("whether the loop can RESUME
+/// afterwards", 2/4, 7.9) — both missing "broken", the request's other specific word; the one unnamed
+/// topic rider worth keeping, `score-serially-hermetically-advertised-port` on the golden-score request,
+/// matches both specific words (golden, score). "How do I release a notarized build of the desktop
+/// app?" (notarized df 2, release 9, desktop 17 | app 58, build 79) recalled `macos-notarization-setup`
+/// (5/5, named by notarized + release, 20.5) and then two notes NAMED by the commoner words —
+/// `swarm-shipping-phases` (desktop + release, "Mihai's shipping roadmap", 14.1) and
+/// `swarm-verify-in-the-running-app` (app + desktop, "verify in the running app", 12.2) — neither
+/// carrying "notarized" anywhere; on the killpg request `launch-longlived-apps-via-launchd` stays,
+/// named by a tied topic word ("reap"). After: the four slots empty, the other seventeen requests
+/// identical — 26 → 22 of 57.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
+    let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
     let covers = |hit: &SearchHit| {
         hit.rare_terms >= 1
-            && (hit.named
-                || hit.matched_terms >= term_count
-                || (hit.topic_in_name && hit.matched_terms * 2 >= term_count))
+            && if hit.named {
+                hit.topic_in_name || !topic_names_an_entry
+            } else {
+                hit.matched_terms >= term_count
+                    || (hit.topic_in_name
+                        && hit.matched_terms * 2 >= term_count
+                        && hit.matched_specific * 2 > hit.specific_terms)
+            }
     };
     let top = hits
         .iter()
@@ -952,6 +974,105 @@ mod tests {
                 "check-the-fleet-before-you-load-it"
             ]
         );
+    }
+
+    /// The VA-183 shapes. "broken resume still swarm" (topic "resume", specific broken + resume): the
+    /// note the request names rides; two unnamed notes with "resume" in their headlines in another
+    /// sense (resuming after a compaction, a loop resuming after a rate limit) match the topic word and
+    /// the common words but not "broken" — neither rides; on "commit engine golden score" the unnamed
+    /// scoring note carrying "score" in its name matches both specific words and stays. "app build
+    /// desktop notarized release" (topic "notarized"): once the topic word names the notarization
+    /// note, the shipping-roadmap and verify-in-the-app notes named by desktop/release/app alone do
+    /// not ride; on the killpg request the launchd note named by a tied topic word ("reap") stays,
+    /// and on the e2e request — no entry named by "e2e" — the scoring note named by bench/port/vendor
+    /// rides as before.
+    #[test]
+    fn the_topic_word_in_another_sense_does_not_ride_below_the_entry_it_names() {
+        let mut resume_works = named_hit("swarm-resume-works-now", 14.3, 4, 3);
+        resume_works.matched_terms = 4;
+        resume_works.specific_terms = 2;
+        resume_works.matched_specific = 2;
+        resume_works.named = true;
+        resume_works.topic_in_name = true;
+        let mut remine = covering_hit("remine-after-compaction", 9.0, 3);
+        remine.specific_terms = 2;
+        remine.matched_specific = 1;
+        let mut recovery = covering_hit("recovery-is-separate-from-detection", 7.9, 2);
+        recovery.specific_terms = 2;
+        recovery.matched_specific = 1;
+        let kept: Vec<String> = select_hits(vec![resume_works, remine, recovery], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(kept, vec!["swarm-resume-works-now"]);
+
+        let mut golden = named_hit("golden-engine-is-the-law", 14.8, 4, 3);
+        golden.matched_terms = 4;
+        golden.specific_terms = 2;
+        golden.matched_specific = 2;
+        golden.named = true;
+        golden.topic_in_name = true;
+        let mut scoring = covering_hit("score-serially-hermetically-advertised-port", 8.6, 2);
+        scoring.specific_terms = 2;
+        scoring.matched_specific = 2;
+        let kept: Vec<String> = select_hits(vec![golden, scoring], 4)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "golden-engine-is-the-law",
+                "score-serially-hermetically-advertised-port"
+            ]
+        );
+
+        let mut notarization = named_hit("macos-notarization-setup", 20.5, 5, 2);
+        notarization.matched_terms = 5;
+        notarization.named = true;
+        notarization.topic_in_name = true;
+        let mut shipping = named_hit("swarm-shipping-phases", 14.1, 4, 2);
+        shipping.matched_terms = 4;
+        shipping.named = true;
+        let mut verify = named_hit("swarm-verify-in-the-running-app", 12.2, 4, 2);
+        verify.matched_terms = 4;
+        verify.named = true;
+        let kept: Vec<String> = select_hits(vec![notarization, shipping, verify], 5)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(kept, vec!["macos-notarization-setup"]);
+
+        let mut kill_pids = named_hit("kill-pids-never-killpg", 24.1, 5, 3);
+        kill_pids.matched_terms = 6;
+        kill_pids.named = true;
+        kill_pids.topic_in_name = true;
+        let mut launchd = named_hit("launch-longlived-apps-via-launchd", 18.1, 4, 4);
+        launchd.matched_terms = 5;
+        launchd.named = true;
+        launchd.topic_in_name = true;
+        let kept: Vec<String> = select_hits(vec![kill_pids, launchd], 6)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "kill-pids-never-killpg",
+                "launch-longlived-apps-via-launchd"
+            ]
+        );
+
+        let mut scoring = named_hit("score-serially-hermetically-advertised-port", 19.1, 5, 3);
+        scoring.matched_terms = 5;
+        scoring.named = true;
+        let mut harness = covering_hit("forge-live-harness-project", 9.1, 1);
+        harness.name_terms = 1;
+        let kept: Vec<String> = select_hits(vec![scoring, harness], 9)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(kept, vec!["score-serially-hermetically-advertised-port"]);
     }
 
     #[test]

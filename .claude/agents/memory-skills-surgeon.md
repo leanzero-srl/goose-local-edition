@@ -97,6 +97,32 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   rarest-term-anywhere rule (the JACCL note carries SSH in its body). Live (haiku-4.5, --no-session):
   `memories:0 recalled:[] suggested:[]` on the SSH request. A `--no-session` run still writes a sessions
   row (20260906_22, _23) — delete it after a live measurement.
+  THE TOPIC WORD IN ANOTHER SENSE (VA-183): the topic word is the aboutness discriminator both ways.
+  (a) An unnamed topic rider needs a MAJORITY of the request's specific terms (`matched_specific × 2 >
+  specific_terms`), not only the topic in its name and half the terms: "Is swarm resume still broken?"
+  (broken 30, resume 8 | still 68, swarm 71; topic resume) recalled `swarm-resume-works-now` (4/4,
+  named+topic, 14.3) and then `remine-after-compaction` ("I have resumed on the wrong thread", 3/4, 9.0)
+  and `recovery-is-separate-from-detection` ("whether the loop can RESUME afterwards", 2/4, 7.9) — "resume"
+  as continuing after an interruption, both missing "broken"; the one topic rider worth keeping,
+  `score-serially` on the golden-score request, matches both specific words. (b) Once the topic word
+  NAMES an entry (`named && topic_in_name` among the hits), a named hit whose name lacks it does not ride:
+  "How do I release a notarized build of the desktop app?" (notarized 2, release 9, desktop 17 | app 58,
+  build 79) recalled `macos-notarization-setup` (5/5, named by notarized+release, 20.5) and then
+  `swarm-shipping-phases` (desktop+release, "Mihai's shipping roadmap (Fri 2026-08-14) … the release cut
+  requires Mihai's explicit go" — the ORDER of shipping, nothing on signing or notarizing; dropped on the
+  words) and `swarm-verify-in-the-running-app` (app+desktop, "Compiling/tests passing is NOT evidence a
+  goose desktop change works"). `launch-longlived-apps-via-launchd` keeps its killpg slot: named by a tied
+  topic word ("reap", df 3 = killpg = servers). The named tier without a topic-named entry is untouched
+  (`score-serially` on e2e, the benchmark trio, `leanzero-git-identity`). After: the four slots empty,
+  seventeen requests identical, skills 23 → 23; 26 → 22 of 57. Both halves live in `select_hits`; the
+  store is unchanged. Live (haiku-4.5, --no-session): `memories:1 recalled:["swarm-resume-works-now(14.3)"]
+  suggested:["goose-swarm-campaign"]`, the answer quoted the note. THE SESSION ROW: a `--no-session` run
+  writes a `hidden` session; `goose session list` (text and json, any --limit) does NOT show hidden rows and
+  `goose session remove --session-id <id>` finds it and then fails "Error: not connected" — the VA-179..182
+  rows 20260906_20–23 were still in the DB on 2026-09-06 19:30 with their messages (59 for the failing-test
+  run). Remove with `sqlite3 ~/.local/share/goose/sessions/sessions.db "delete from messages where
+  session_id='<id>'; delete from sessions where id='<id>';"` and prove it with a sqlite count, never with
+  `session list`.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
