@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use super::super::lenient_json::parse_json_lenient;
 use super::super::planner_side_turns;
+use super::super::supervision::said_kind_of;
 use super::manifest::{AgentManifest, Approval};
 use super::prompts::{self, Draft, LaneOut, LanePlan, LensOut, OrientOut, SynthOut};
 use super::runtime::Fleet;
@@ -76,6 +77,58 @@ fn set_phase(ctx: &TickCtx, st: &mut DeskState, phase: &str) {
     ctx.rt.write_state(st);
     ctx.sink
         .write_value(json!({"event": "tick_phase", "tick": st.tick, "phase": phase}));
+}
+
+/// The agent loop yields a provider/transport failure as the assistant's own TEXT and breaks
+/// (agent.rs's error arms), so `run_agent_timed_at` returns Ok(text) for a dead node. The engine's
+/// error-closer reader tells that text from anything a model said; a hit is NEVER parsed as an
+/// answer — it is the failure, named.
+fn transport_error(raw: &str) -> Option<String> {
+    if said_kind_of(raw) == "error" {
+        Some(tail_chars(raw.trim(), 400))
+    } else {
+        None
+    }
+}
+
+/// End the tick before its work (a hold, or the orchestrator's call failing): the record, the
+/// tick mini and the state carry the outcome and its reason, so the ledger shows the tick.
+#[allow(clippy::too_many_arguments)]
+fn close_early(
+    ctx: &TickCtx,
+    st: &mut DeskState,
+    n: u64,
+    record: &mut Value,
+    started: std::time::Instant,
+    started_at: &str,
+    outcome: &str,
+    summary: String,
+    lane_secs: f64,
+) -> TickSummary {
+    let s = TickSummary {
+        tick: n,
+        started_at: started_at.to_string(),
+        ended_at: now_rfc3339(),
+        outcome: outcome.into(),
+        summary,
+        lanes: 0,
+        staged: 0,
+        posted: 0,
+        asks: 0,
+        lane_secs,
+        wall_secs: started.elapsed().as_secs_f64(),
+    };
+    record["outcome"] = json!(outcome);
+    record["summary"] = json!(s.summary);
+    record["ended_at"] = json!(s.ended_at);
+    record["lane_secs"] = json!(lane_secs);
+    ctx.rt.write_tick_record(n, record);
+    let _ = ctx.rt.write_mini(
+        &format!("t{n}-tick"),
+        &json!({"kind": "tick", "tick": n, "at": s.ended_at, "summary": s.summary, "handoff": "", "lanes": 0, "staged": 0, "posted": 0, "lane_secs": lane_secs, "outcome": outcome}),
+    );
+    finish(ctx, st, &s);
+    s
 }
 
 fn script_value(r: &ScriptRun) -> Value {
@@ -164,29 +217,17 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         st.hold_reason = Some(why.clone());
         ctx.sink
             .write_value(json!({"event": "tick_held", "tick": n, "reason": why}));
-        let summary = TickSummary {
-            tick: n,
-            started_at: started_at.clone(),
-            ended_at: now_rfc3339(),
-            outcome: "held".into(),
-            summary: format!("held: {why}"),
-            lanes: 0,
-            staged: 0,
-            posted: 0,
-            asks: 0,
-            lane_secs: 0.0,
-            wall_secs: started.elapsed().as_secs_f64(),
-        };
-        record["outcome"] = json!("held");
-        record["summary"] = json!(summary.summary);
-        record["ended_at"] = json!(summary.ended_at);
-        ctx.rt.write_tick_record(n, &record);
-        let _ = ctx.rt.write_mini(
-            &format!("t{n}-tick"),
-            &json!({"kind": "tick", "tick": n, "at": summary.ended_at, "summary": summary.summary, "handoff": "", "lanes": 0, "staged": 0, "posted": 0, "lane_secs": 0.0}),
-        );
-        finish(ctx, st, &summary);
-        return Ok(summary);
+        return Ok(close_early(
+            ctx,
+            st,
+            n,
+            &mut record,
+            started,
+            &started_at,
+            "held",
+            format!("held: {why}"),
+            0.0,
+        ));
     }
 
     // ---------------- POLL
@@ -269,6 +310,23 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         Ok(out) => {
             let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
             record["orient_raw"] = json!(head_chars(&raw, 20_000));
+            if let Some(err) = transport_error(&raw) {
+                ctx.sink.write_value(json!({"event": "orient_failed", "tick": n, "kind": "transport", "model": ctx.fleet.planner_model, "error": err}));
+                return Ok(close_early(
+                    ctx,
+                    st,
+                    n,
+                    &mut record,
+                    started,
+                    &started_at,
+                    "failed",
+                    format!(
+                        "orchestrator call failed on {}: {err}",
+                        ctx.fleet.planner_model
+                    ),
+                    lane_secs,
+                ));
+            }
             match parse_json_lenient::<OrientOut>(&raw) {
                 Some(o) => o,
                 None => {
@@ -284,12 +342,18 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
             }
         }
         Err(e) => {
-            ctx.sink
-                .write_value(json!({"event": "orient_failed", "tick": n, "error": e.to_string()}));
-            OrientOut {
-                summary: format!("orchestrator call failed: {e}"),
-                ..Default::default()
-            }
+            ctx.sink.write_value(json!({"event": "orient_failed", "tick": n, "kind": "call", "error": e.to_string()}));
+            return Ok(close_early(
+                ctx,
+                st,
+                n,
+                &mut record,
+                started,
+                &started_at,
+                "failed",
+                format!("orchestrator call failed: {e}"),
+                lane_secs,
+            ));
         }
     };
     ctx.rt.mark_asks_consumed(n);
@@ -438,7 +502,25 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         )
         .await;
     lane_secs += synth_started.elapsed().as_secs_f64();
+    let mut tick_failure: Option<String> = None;
     let synth: SynthOut = match synth_call {
+        Ok(out)
+            if transport_error(&out.final_output.clone().unwrap_or_else(|| out.text.clone()))
+                .is_some() =>
+        {
+            let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+            let err = transport_error(&raw).unwrap_or_else(|| "(transport error)".to_string());
+            ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "transport", "model": ctx.fleet.planner_model, "error": err}));
+            let line = format!(
+                "tick {n}: synthesis call failed on {}: {err}",
+                ctx.fleet.planner_model
+            );
+            tick_failure = Some(line.clone());
+            SynthOut {
+                log_line: line,
+                ..Default::default()
+            }
+        }
         Ok(out) => {
             let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
             record["synthesis_raw"] = json!(head_chars(&raw, 20_000));
@@ -451,11 +533,11 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
             })
         }
         Err(e) => {
-            ctx.sink.write_value(
-                json!({"event": "synthesis_failed", "tick": n, "error": e.to_string()}),
-            );
+            ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "call", "error": e.to_string()}));
+            let line = format!("tick {n}: synthesis call failed: {e}");
+            tick_failure = Some(line.clone());
             SynthOut {
-                log_line: format!("tick {n}: synthesis call failed: {e}"),
+                log_line: line,
                 ..Default::default()
             }
         }
@@ -725,11 +807,16 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     }
 
     let ended_at = now_rfc3339();
+    let outcome = if tick_failure.is_some() {
+        "failed"
+    } else {
+        "done"
+    };
     let summary = TickSummary {
         tick: n,
         started_at: started_at.clone(),
         ended_at: ended_at.clone(),
-        outcome: "done".into(),
+        outcome: outcome.into(),
         summary: log_line.clone(),
         lanes: lane_results.len() as u32,
         staged: staged_ids.len() as u32,
@@ -749,7 +836,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     });
     record["posted"] = json!(posted_ids);
     record["close"] = json!(close_runs);
-    record["outcome"] = json!("done");
+    record["outcome"] = json!(outcome);
     record["summary"] = json!(summary.summary);
     record["ended_at"] = json!(ended_at);
     record["lane_secs"] = json!(lane_secs);
@@ -758,7 +845,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     let _ = ctx.rt.write_mini(
         &format!("t{n}-tick"),
         &json!({"kind": "tick", "tick": n, "at": ended_at, "summary": summary.summary, "handoff": synth.handoff,
-                "lanes": summary.lanes, "staged": summary.staged, "posted": summary.posted, "lane_secs": lane_secs}),
+                "lanes": summary.lanes, "staged": summary.staged, "posted": summary.posted, "lane_secs": lane_secs, "outcome": outcome}),
     );
     finish(ctx, st, &summary);
     Ok(summary)
@@ -850,11 +937,15 @@ async fn run_lane(
     let (out, raw, error) = match call {
         Ok(o) => {
             let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
-            let parsed = parse_json_lenient::<LaneOut>(&raw).unwrap_or_else(|| LaneOut {
-                finding: raw.trim().to_string(),
-                ..Default::default()
-            });
-            (Some(parsed), raw, None)
+            if let Some(err) = transport_error(&raw) {
+                (None, raw, Some(format!("transport: {err}")))
+            } else {
+                let parsed = parse_json_lenient::<LaneOut>(&raw).unwrap_or_else(|| LaneOut {
+                    finding: raw.trim().to_string(),
+                    ..Default::default()
+                });
+                (Some(parsed), raw, None)
+            }
         }
         Err(e) => (None, String::new(), Some(e.to_string())),
     };
@@ -917,6 +1008,21 @@ async fn run_lens(
     drop(guard);
     let secs = started.elapsed().as_secs_f64();
     let (out, error) = match call {
+        Ok(o)
+            if transport_error(&o.final_output.clone().unwrap_or_else(|| o.text.clone()))
+                .is_some() =>
+        {
+            let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
+            let err = transport_error(&raw).unwrap_or_else(|| "(transport error)".to_string());
+            (
+                LensOut {
+                    verdict: "REFUTED".into(),
+                    notes: format!("reviewer transport error: {err}"),
+                    fixes: vec![],
+                },
+                Some(format!("transport: {err}")),
+            )
+        }
         Ok(o) => {
             let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
             (
@@ -1025,5 +1131,21 @@ fn render_lane_report(r: &LaneResult) -> String {
             s
         }
         (None, None) => format!("{head}\n  (no output)"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transport_error;
+
+    #[test]
+    fn a_dead_node_reads_as_a_transport_error_never_as_an_answer() {
+        let dead = "Network error: Could not connect to 127.0.0.1:8090 — check your network connection and try again.\n\nPlease resend your message to try again.";
+        assert!(transport_error(dead).unwrap().contains("127.0.0.1:8090"));
+        assert!(transport_error("{\"summary\": \"two lanes\", \"lanes\": []}").is_none());
+        assert!(
+            transport_error("the ticket says: please resend your message to try again later")
+                .is_none()
+        );
     }
 }
