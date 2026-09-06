@@ -129,7 +129,7 @@ fn is_context_length_exceeded(payload: Option<&Value>, message: &str) -> bool {
     payload_exceeded || is_context_length_exceeded_message(message)
 }
 
-fn is_context_length_exceeded_message(text: &str) -> bool {
+pub fn is_context_length_exceeded_message(text: &str) -> bool {
     let text_lower = text.to_lowercase();
 
     let direct_context_phrases = [
