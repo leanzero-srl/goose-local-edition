@@ -297,7 +297,9 @@ pub fn query_terms(text: &str) -> Vec<String> {
 
 /// Which hits are worth injecting: an entry that COVERS the request — half of its terms when a request
 /// term sits in the entry's name (category, tags, headline), ALL of them when none does — at least one
-/// rare, scoring at least half of the best such hit. Read on the goose-native store (62 local + 171
+/// rare, scoring at least half of the best such hit; taken in the store's order, so the entries the
+/// request NAMES (`SearchHit::named`) fill the slots before a body that merely shares its words.
+/// Read on the goose-native store (62 local + 171
 /// global entries, 13 requests): true hits carry name terms and win by a wide margin (golden engine 14.8
 /// vs 8.8, killpg 24.1, fleet names 31.3); every noise slot was a nameless entry matching half the
 /// request ("list the files" → note-5e3df2), while the nameless entries
@@ -801,6 +803,7 @@ mod tests {
             rare_terms,
             phrase: false,
             name_terms,
+            named: false,
             occurrences: rare_terms.max(1),
             entry: MemoryEntry {
                 is_global: true,

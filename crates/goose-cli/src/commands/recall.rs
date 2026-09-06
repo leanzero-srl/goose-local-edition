@@ -35,8 +35,9 @@ pub fn run(text: &str) -> Result<()> {
         } else {
             "      "
         };
+        let named = if hit.named { " [named]" } else { "" };
         println!(
-            "  {mark} {}/{} terms, {} rare, {} in name, score {:5.1}  {} ({})",
+            "  {mark} {}/{} terms, {} rare, {} in name, score {:5.1}  {} ({}){named}",
             hit.matched_terms,
             terms.len(),
             hit.rare_terms,

@@ -51,6 +51,11 @@ impl MemoryEntry {
 /// searched entries weighs more than one found in most; a term in the entry's NAME — category, tags,
 /// headline — counts twice; a whole-phrase match adds every term's weight again). `rare_terms` counts the
 /// matched terms that occur in at most half of the searched entries — the ones that carry information.
+///
+/// `named` says the query NAMES the entry: at least [`NAMED_MIN_NAME_TERMS`] of its terms sit in the
+/// entry's name and more than half of its terms match. A named hit ranks above every unnamed one
+/// whatever the body score — a body that happens to contain every query word is a vocabulary match, a
+/// headline carrying two of the query's words is the topic.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
     pub score: f64,
@@ -58,9 +63,20 @@ pub struct SearchHit {
     pub rare_terms: usize,
     pub phrase: bool,
     pub name_terms: usize,
+    pub named: bool,
     pub occurrences: usize,
     pub entry: MemoryEntry,
 }
+
+// measured: on the 233-entry store (13 probe requests, 2026-09-06) one request term in a headline is a
+// shared word ("goose" names both a release-loop note and the branch map for "which git identity"), two
+// is the request's topic ("benchmark run" in the 5-minute-tick note, "run… starting" in the fleet-check
+// note, for "how do I start a benchmark run properly?" — where a note on screenshotting frontends held
+// slot 1 on body words alone); the same pair the skill auto-load needs, rarity not required because the
+// common word of the pair ("run") is the topic's own word. The more-than-half floor keeps a half-match
+// out of the tier: "forge" + "app" in a note about the Assets API (2/4) must not outrank the
+// whole-request bank-approval note (4/4, nameless) for "deploy the Forge app to production".
+pub const NAMED_MIN_NAME_TERMS: usize = 2;
 
 /// Rarity weight of a term found in `df` of `n` documents: `ln((n + 1) / (df + 0.5))` — large for a term
 /// few documents carry, small but never zero for one every document carries, so a name match still
@@ -323,9 +339,10 @@ impl MemoryStore {
         out
     }
 
-    /// Keyword search over category, tags and content, ranked by rarity-weighted score (see
-    /// [`SearchHit`]): an entry ABOUT the topic — the term in its name, or several rare terms — outranks
-    /// one that shares common words with the query. Ties break on category name.
+    /// Keyword search over category, tags and content: the entries the query NAMES first (see
+    /// [`SearchHit::named`]), then by rarity-weighted score — an entry ABOUT the topic (the term in its
+    /// name, or several rare terms) outranks one that shares common words with the query. Ties break on
+    /// category name.
     pub fn search(&self, query: &str, is_global: Option<bool>) -> io::Result<Vec<SearchHit>> {
         let terms = search_terms(query);
         if terms.is_empty() {
@@ -397,20 +414,26 @@ impl MemoryStore {
             if phrase {
                 score += all_weights;
             }
+            let named = name_terms >= NAMED_MIN_NAME_TERMS && matched_terms * 2 > terms.len();
             hits.push(SearchHit {
                 score,
                 matched_terms,
                 rare_terms,
                 phrase,
                 name_terms,
+                named,
                 occurrences,
                 entry,
             });
         }
         hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            b.named
+                .cmp(&a.named)
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .then_with(|| a.entry.category.cmp(&b.entry.category))
         });
         Ok(hits)
@@ -755,6 +778,123 @@ mod tests {
         assert!(
             rarity_weight(6, 0) > rarity_weight(6, 3) && rarity_weight(6, 3) > rarity_weight(6, 6)
         );
+    }
+
+    /// The VA-179 shape: a body that happens to contain every request word outscored the notes whose
+    /// headlines carry two of the request's words ("How do I start a benchmark run properly?" → a note
+    /// about screenshotting frontends at 8.4 over the 5-minute-tick note, "benchmark run" in its
+    /// headline, at 8.2). "run" is a common word there; it still names the topic.
+    #[test]
+    fn search_ranks_an_entry_the_query_names_above_a_body_that_shares_its_words() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "frontend",
+                "Screenshot the rendered page before claiming done.\nOn the benchmark build, start the dev server properly before each run.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "observe",
+                "During a benchmark run, tick every five minutes and read the words.\nStart from the judge.",
+                &tags(&["feedback"]),
+                false,
+            )
+            .unwrap();
+        for i in 0..8 {
+            let body = if i < 3 {
+                format!("Note {i}: nothing in particular.\nA benchmark run may start late.")
+            } else {
+                format!("Note {i}: unrelated words about the weather.\nEvery run is wet.")
+            };
+            store
+                .remember(&format!("note-{i}"), &body, &[], true)
+                .unwrap();
+        }
+
+        let hits = store.search("benchmark properly run start", None).unwrap();
+
+        let frontend = hits
+            .iter()
+            .find(|h| h.entry.category == "frontend")
+            .unwrap();
+        let observe = hits.iter().find(|h| h.entry.category == "observe").unwrap();
+        assert_eq!(frontend.matched_terms, 4);
+        assert_eq!(frontend.name_terms, 0);
+        assert!(!frontend.named);
+        assert_eq!(observe.matched_terms, 3);
+        assert_eq!(observe.name_terms, 2, "{observe:?}");
+        assert_eq!(
+            observe.rare_terms, 2,
+            "'run' is in every entry: {observe:?}"
+        );
+        assert!(observe.named);
+        assert!(
+            frontend.score > observe.score,
+            "the body-only hit still outscores: {} vs {}",
+            frontend.score,
+            observe.score
+        );
+        assert_eq!(
+            hits[0].entry.category, "observe",
+            "the named entry ranks first regardless: {hits:?}"
+        );
+        assert_eq!(hits[1].entry.category, "frontend");
+    }
+
+    /// The Forge shape: two rare name terms on a HALF match ("forge" + "app" in a note about the
+    /// Assets API) do not name the request; the whole-request body match keeps its rank.
+    #[test]
+    fn two_name_terms_on_a_half_match_do_not_name_the_query() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "assets",
+                "Whether a Forge app can read Assets is contested.\nNever depend on it.",
+                &tags(&["reference"]),
+                true,
+            )
+            .unwrap();
+        store
+            .remember(
+                "bank",
+                "Operate read-only at a bank.\nAsk the bank before any production deploy of the Forge app.",
+                &tags(&["feedback"]),
+                true,
+            )
+            .unwrap();
+        for i in 0..4 {
+            store
+                .remember(
+                    &format!("note-{i}"),
+                    &format!("Note {i}: unrelated words about the weather.\nNothing else."),
+                    &[],
+                    true,
+                )
+                .unwrap();
+        }
+
+        let hits = store.search("app deploy forge production", None).unwrap();
+
+        let assets = hits.iter().find(|h| h.entry.category == "assets").unwrap();
+        assert_eq!(assets.matched_terms, 2);
+        assert_eq!(assets.name_terms, 2);
+        assert!(
+            !assets.named,
+            "two of four is not more than half: {assets:?}"
+        );
+        let bank = hits.iter().find(|h| h.entry.category == "bank").unwrap();
+        assert_eq!(bank.matched_terms, 4);
+        assert!(!bank.named);
+        assert_eq!(hits[0].entry.category, "bank", "{hits:?}");
+
+        let named = store.search("forge app", None).unwrap();
+        assert_eq!(named[0].entry.category, "assets");
+        assert!(named[0].named, "two of two terms in the name: {named:?}");
     }
 
     #[test]
