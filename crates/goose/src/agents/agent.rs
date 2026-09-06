@@ -2116,6 +2116,24 @@ impl Agent {
                     ));
                 }
 
+                if let Some(line) = conversation_with_moim
+                    .messages()
+                    .iter()
+                    .rev()
+                    .find(|m| m.is_agent_visible() && crate::conversation::effective_role(m) == "user")
+                    .and_then(|m| {
+                        m.content.iter().find_map(|c| match c {
+                            MessageContent::Text(t) => super::platform_extensions::recall::recall_line_of(&t.text),
+                            _ => None,
+                        })
+                    })
+                {
+                    yield AgentEvent::Message(Message::assistant().with_system_notification(
+                        SystemNotificationType::InlineMessage,
+                        line.to_string(),
+                    ));
+                }
+
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
                     model_config.clone(),

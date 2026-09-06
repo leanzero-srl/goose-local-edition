@@ -24,10 +24,15 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 ## Recall (`platform_extensions/recall.rs`) — the selection law
 - Fires on the REQUEST turn only (`last_user_text`: last agent-visible message is user text with no
   tool responses), only when `memory` / `skills` are enabled in that session's extension manager.
-- Query = `query_terms` (stopwords and one-letter tokens dropped). A memory rides along only when it
-  COVERS the request — `matched_terms × 2 ≥ terms`, `rare_terms ≥ 1` — AND `score ≥
-  RECALL_MIN_SHARE_OF_TOP × top`; at most `RECALL_MAX_MEMORIES`. (A name-term rule was tried and
-  refuted by the probe: headlines are sentences, so it discriminated nothing and dropped true hits.)
+- Query = `query_terms` (stopwords and one-letter tokens dropped; a hyphenated compound also searches
+  joined). A memory rides along only when it COVERS the request — half of its terms when a request
+  term is in the entry's name, ALL of them when none is — with `rare_terms ≥ 1` AND `score ≥
+  RECALL_MIN_SHARE_OF_TOP × top`; at most `RECALL_MAX_MEMORIES`. Skills: same rule, `metadata.keywords`
+  counted with name strength. The part opens with `<recall-line>`, which the agent loop shows the
+  person as an inline notice. (A pure name-term gate was tried and refuted: headlines are sentences.)
+- The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
+  PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
+  goose requests in queries.txt against the local store.
   Skills: same rule over the catalogue (`relevant_skills`), at most `RECALL_MAX_SKILLS`.
 - Every number here is a `// ratio:` or `// measured:` with its receipt (gate 10). A new threshold
   lands only with the probe output that motivated it.

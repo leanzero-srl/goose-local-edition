@@ -120,14 +120,22 @@ pub fn query_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Which hits are worth injecting: an entry that COVERS the request — it matches at least half of the
-/// request's terms, at least one of them rare — and scores at least half of the best such hit. Read on
-/// the 171-entry store: a name-term rule kept "list the files in this directory" → note-54c772
-/// (a headline is a sentence, so nearly every entry has a request word in its name) and dropped the one
-/// true hit for "write a blog post about local models" (note-5c9556, 3 of 5 terms, none in
-/// the name); coverage keeps that one and drops the 1-of-5-term note-784cf8.
+/// Which hits are worth injecting: an entry that COVERS the request — half of its terms when a request
+/// term sits in the entry's name (category, tags, headline), ALL of them when none does — at least one
+/// rare, scoring at least half of the best such hit. Read on the goose-native store (62 local + 171
+/// global entries, 13 requests): true hits carry name terms and win by a wide margin (golden engine 14.8
+/// vs 8.8, killpg 24.1, fleet names 31.3); every noise slot was a nameless entry matching half the
+/// request ("list the files" → note-5e3df2), while the nameless entries
+/// worth keeping matched it whole (note-93f4b2, 4/4, for "deploy the Forge app").
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
-    let covers = |hit: &SearchHit| hit.rare_terms >= 1 && hit.matched_terms * 2 >= term_count;
+    let covers = |hit: &SearchHit| {
+        hit.rare_terms >= 1
+            && if hit.name_terms >= 1 {
+                hit.matched_terms * 2 >= term_count
+            } else {
+                hit.matched_terms >= term_count
+            }
+    };
     let top = hits
         .iter()
         .filter(|hit| covers(hit))
@@ -139,6 +147,20 @@ pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
         .collect()
 }
 
+/// A skill's `metadata.keywords` (a string or a list of strings in SKILL.md frontmatter) — words the
+/// author wants requests to reach the skill by, matched with name strength.
+pub fn skill_keywords(skill: &SourceEntry) -> String {
+    match skill.properties.get("keywords") {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}
+
 /// Skills the request is about, by the same rule as memories: terms weighted by their rarity across
 /// the catalogue (a name match counts twice), at least one rare term, at least half the best score.
 pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
@@ -146,8 +168,12 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
         .iter()
         .filter(|s| matches!(s.source_type, SourceType::Skill | SourceType::BuiltinSkill))
         .map(|skill| {
-            let name = tokenize(&skill.name);
-            let text = tokenize(&format!("{} {}", skill.name, skill.description));
+            let keywords = skill_keywords(skill);
+            let name = tokenize(&format!("{} {}", skill.name, keywords));
+            let text = tokenize(&format!(
+                "{} {} {}",
+                skill.name, keywords, skill.description
+            ));
             (skill, name, text)
         })
         .collect();
@@ -246,6 +272,35 @@ pub fn select_past_session(
     candidates.into_iter().next().map(|(_, past)| past)
 }
 
+/// One line naming what rode along — shown to the person as a system notice and carried at the top of
+/// the part so the same words reach the model.
+pub fn recall_line(
+    memories: &[SearchHit],
+    skills: &[&SourceEntry],
+    past: Option<&PastSession>,
+) -> String {
+    let mut parts = Vec::new();
+    if !memories.is_empty() {
+        let names: Vec<&str> = memories.iter().map(|h| h.entry.category.as_str()).collect();
+        parts.push(format!("memories {}", names.join(", ")));
+    }
+    if !skills.is_empty() {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        parts.push(format!("skills {}", names.join(", ")));
+    }
+    if let Some(past) = past {
+        parts.push(format!("past session {}", past.session_id));
+    }
+    format!("recalled: {}", parts.join(" · "))
+}
+
+/// The `<recall-line>` text of a turn-context block, if the block carries one.
+pub fn recall_line_of(text: &str) -> Option<&str> {
+    let (_, rest) = text.split_once("<recall-line>")?;
+    let (line, _) = rest.split_once("</recall-line>")?;
+    Some(line)
+}
+
 /// The turn-context part. None when there is nothing to say.
 pub fn render(
     memories: &[SearchHit],
@@ -255,40 +310,39 @@ pub fn render(
     if memories.is_empty() && skills.is_empty() && past.is_none() {
         return None;
     }
-    let mut out = String::new();
+    let mut sections = vec![format!(
+        "<recall-line>{}</recall-line>",
+        recall_line(memories, skills, past)
+    )];
     if !memories.is_empty() {
-        out.push_str("<recalled-memories>\n");
-        out.push_str(
-            "Saved memories whose words match this request — recalled by goose, use them if they apply:\n",
+        let mut block = String::from(
+            "<recalled-memories>\nSaved memories whose words match this request — recalled by goose, use them if they apply:\n",
         );
         for hit in memories {
-            out.push('\n');
-            out.push_str(&hit.entry.render());
+            block.push('\n');
+            block.push_str(&hit.entry.render());
         }
-        out.push_str("</recalled-memories>");
+        block.push_str("</recalled-memories>");
+        sections.push(block);
     }
     if !skills.is_empty() {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str("<relevant-skills>\n");
-        out.push_str("Skills whose description matches this request; load one with load_skill(name) before doing the work it covers:\n");
+        let mut block = String::from(
+            "<relevant-skills>\nSkills whose description matches this request; load one with load_skill(name) before doing the work it covers:\n",
+        );
         for skill in skills {
-            out.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+            block.push_str(&format!("- {}: {}\n", skill.name, skill.description));
         }
-        out.push_str("</relevant-skills>");
+        block.push_str("</relevant-skills>");
+        sections.push(block);
     }
     if let Some(past) = past {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&format!(
+        sections.push(format!(
             "<past-session>\nThis was discussed before — session {} (\"{}\", {}), the {} said: \"{}\". \
              chatrecall(session_id) loads it if the history matters.\n</past-session>",
             past.session_id, past.description, past.when, past.role, past.headline
         ));
     }
-    Some(out)
+    Some(sections.join("\n"))
 }
 
 #[async_trait]
@@ -417,9 +471,9 @@ mod tests {
         named_hit(category, score, rare_terms, 1)
     }
 
-    /// A hit matching `matched` terms, all of them rare.
+    /// A hit matching `matched` terms, all of them rare, one of them in the name.
     fn covering_hit(category: &str, score: f64, matched: usize) -> SearchHit {
-        let mut hit = named_hit(category, score, matched, 0);
+        let mut hit = named_hit(category, score, matched, 1);
         hit.matched_terms = matched;
         hit
     }
@@ -503,6 +557,17 @@ mod tests {
             .collect();
         assert_eq!(kept, vec!["best", "half", "also-fine"]);
         assert!(select_hits(vec![named_hit("nothing-rare", 9.0, 0, 0)], 1).is_empty());
+
+        // a nameless entry must cover the whole request; a named one, half of it
+        let mut nameless_half = covering_hit("nameless-half", 9.0, 3);
+        nameless_half.name_terms = 0;
+        let mut nameless_full = covering_hit("nameless-full", 4.0, 5);
+        nameless_full.name_terms = 0;
+        let kept: Vec<String> = select_hits(vec![nameless_half, nameless_full], 5)
+            .into_iter()
+            .map(|h| h.entry.category)
+            .collect();
+        assert_eq!(kept, vec!["nameless-full"]);
     }
 
     #[test]
@@ -587,9 +652,50 @@ mod tests {
         assert_eq!(past.role, "user");
         assert_eq!(past.headline, "which port does the bench vendor answer on?");
         let block = render(&[], &[], Some(&past)).unwrap();
-        assert!(block.starts_with("<past-session>"));
+        assert!(block.starts_with(
+            "<recall-line>recalled: past session s-old</recall-line>\n<past-session>"
+        ));
         assert!(block.contains("session s-old (\"vendor port\","));
         assert!(select_past_session(&results, &query_terms("bake bread")).is_none());
+    }
+
+    #[test]
+    fn skill_keywords_reach_a_skill_the_description_would_miss() {
+        let mut jql = skill("jira-api", "Atlassian Jira Cloud REST API v3 integration");
+        jql.properties.insert(
+            "keywords".to_string(),
+            serde_json::json!(["jql", "issue search", "webhooks"]),
+        );
+        let skills = vec![
+            jql,
+            skill("note-d90573", "Axpo Atlassian operations"),
+            skill("note-6799ed", "E.ON Atlassian operations"),
+        ];
+        let names: Vec<&str> = relevant_skills(&skills, &query_terms("write a jql query"))
+            .into_iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["jira-api"]);
+        assert_eq!(skill_keywords(&skills[0]), "jql issue search webhooks");
+    }
+
+    #[test]
+    fn recall_line_names_what_rode_along_and_is_extractable() {
+        let hits = [hit("postgres", 2.0, 1)];
+        let skills = [skill("jira-api", "Jira REST")];
+        let refs: Vec<&SourceEntry> = skills.iter().collect();
+        let block = render(&hits, &refs, None).unwrap();
+        assert!(block.starts_with(
+            "<recall-line>recalled: memories postgres · skills jira-api</recall-line>\n"
+        ));
+        assert_eq!(
+            recall_line_of(&block),
+            Some("recalled: memories postgres · skills jira-api")
+        );
+        assert_eq!(
+            recall_line_of("<turn-context>\n<current-time>x</current-time>"),
+            None
+        );
     }
 
     #[test]
@@ -599,7 +705,8 @@ mod tests {
         let skills = [skill("jira-api", "Jira REST")];
         let refs: Vec<&SourceEntry> = skills.iter().collect();
         let out = render(&hits, &refs, None).unwrap();
-        assert!(out.starts_with("<recalled-memories>"));
+        assert!(out.starts_with("<recall-line>"));
+        assert!(out.contains("\n<recalled-memories>\n"));
         assert!(out.contains("## postgres (global [project])\npostgres headline\nbody"));
         assert!(out.contains("<relevant-skills>\n"));
         assert!(out.contains("- jira-api: Jira REST"));

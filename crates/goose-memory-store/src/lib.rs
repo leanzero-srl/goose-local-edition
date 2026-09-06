@@ -155,14 +155,24 @@ pub fn term_occurrences(term: &str, tokens: &[String]) -> usize {
         .count()
 }
 
-/// Lower-cased, de-duplicated alphanumeric terms of a query.
+/// Lower-cased, de-duplicated alphanumeric terms of a query. A hyphenated compound contributes its
+/// parts AND its joined form, so "hard-coded" reaches an entry that says "hardcoded".
 pub fn search_terms(query: &str) -> Vec<String> {
-    let mut terms: Vec<String> = query
-        .to_lowercase()
+    let lower = query.to_lowercase();
+    let mut terms: Vec<String> = lower
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .map(String::from)
         .collect();
+    for word in lower.split_whitespace() {
+        let word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+        if word.contains('-') {
+            let joined: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+            if !joined.is_empty() {
+                terms.push(joined);
+            }
+        }
+    }
     terms.sort();
     terms.dedup();
     terms
@@ -777,6 +787,16 @@ mod tests {
         let hits = store.search("rest api", None).unwrap();
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].entry.category, "rest");
+    }
+
+    #[test]
+    fn hyphenated_compounds_search_as_parts_and_joined() {
+        assert_eq!(
+            search_terms("What about hard-coded values?"),
+            vec!["about", "coded", "hard", "hardcoded", "values", "what"]
+        );
+        let tokens = tokenize("no hardcoded times");
+        assert_eq!(term_occurrences("hardcoded", &tokens), 1);
     }
 
     #[test]

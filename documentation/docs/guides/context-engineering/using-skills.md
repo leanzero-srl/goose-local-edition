@@ -107,7 +107,18 @@ Skills can also come from installed [plugins](/docs/guides/context-engineering/p
 
 ## Automatic Suggestions
 
-When your request's words match a skill's name or description, goose adds a `<relevant-skills>` block to that turn's context naming up to three skills to load — the `recall` extension does this on every request, so a model that would not think to call `load_skill` still hears about the skill that fits. Disable `recall` to turn it off.
+When your request's words match a skill's name, description or keywords, goose adds a `<relevant-skills>` block to that turn's context naming up to three skills to load — the `recall` extension does this on every request, so a model that would not think to call `load_skill` still hears about the skill that fits. Disable `recall` to turn it off.
+
+To make a skill reachable by words its description does not use, add keywords under `metadata` in its frontmatter — they match with the same weight as the skill's name:
+
+```yaml
+---
+name: jira-api
+description: Jira Cloud REST API v3 integration from external apps
+metadata:
+  keywords: [jql, issue search, webhooks]
+---
+```
 
 ## Supporting Files
 
