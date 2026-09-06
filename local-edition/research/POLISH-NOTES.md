@@ -293,7 +293,7 @@ Adversarial-verify (7/7 hard rules PASS) found the LE UI ORPHANED; FIXED the mus
 
 ## PHASE 9 LIVE IMPORT — BENCHMARK MET + memory fixed (2026-07-08)
 Live import into REAL config: 11 skills, hints, playwright MCP, memory. PROVEN goose USES the imports:
-- SKILLS: goose skills list shows all 11 (note-bdca70/note-bca29b/goose-knob-turning/... at ~/.agents/skills w/ token counts).
+- SKILLS: goose skills list shows all 11 (client skills/goose-knob-turning/... at ~/.agents/skills w/ token counts).
 - MEMORY (END-TO-END): goose run "what is my hard UI rule about left-accent rails?" -> answered FROM the imported memory: "Never use a left accent line/colored rail/left border-strip on cards — screams AI-built UI." Goose USES the imported memory. Ran clean at 26K injection (no timeout).
 - MCP: playwright ext enabled:true in config.yaml. HINTS: .goosehints has the fenced CLAUDE.md.
 FIXES that made it work: copy skips node_modules/symlinks (all 11 skills clean, e61aef210); memory SCOPED to primary project (2bea81f82) — 178 memories=486K chars=~123K tokens ALWAYS-injected caused model TIMEOUT/stream-error; scoped to primary project's 32 memories=~26K tokens, now works. --all-projects flag to opt into all.
