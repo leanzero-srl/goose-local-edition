@@ -22,3 +22,12 @@ How do I release a notarized build of the desktop app?
 Can I add a two-hour wall-clock cap so a benchmark run stops on its own?
 Why won't cargo test -p goose-mcp build on its own?
 Should I write a design doc before implementing the fix?
+# tick 8 (2026-09-06): six more unnamed requests — keyring-off-in-config, plans-overview-before-after-first,
+# desktop-must-ignore-stray-shortcuts, no-security-hygiene-nagging, fallbacks-hide-evidence, and one with NO
+# note in either store (the workhorse sync lives in CLAUDE.md) so a miss is visible.
+Where do provider secrets come from now that the keychain is turned off?
+How should I open a plan when I present it?
+The desktop opened a second window when I pressed Cmd+Shift+N during a run.
+Should I remind him to rotate the API key I was just given?
+Is it fine to fall back to an empty ledger when the file is missing?
+How do I push my Projects folder to the workhorse from the MacBook?
