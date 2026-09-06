@@ -1,5 +1,33 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-06 evening — AGENT WORK: the second swarm operation (UI + engine) landed, untested against a model.**
+> Mihai: *"we don't have actual agent work and we don't want simple chat in goose… the ability to run these scripts, to
+> investigate, research, keep ledgers, keep scratchpads… tick information displayed in the UI like when is the next tick
+> happening, click on agents and see what they're doing in realtime… borrow from the swarm the synthetisize logic… snowball
+> logic and present it to orchestrating node."* Studied all seven desk skills (axpo, diconium, eon, siemens, alterdomus, the two
+> community desks + `_agent-commons`) for MECHANICS: one shared spine — guard (kill-switch files, window, lock) → read-only
+> poll → one model-decided action → surgeon (returns a vetted draft, never posts) → refuting red team → STAGE → a LATER tick
+> posts through the ONE gated write script → ledgers (posted/effects, DAILY-LOG, PENDING for the human) → commit.
+> BUILT: `goose swarm agent {init,check,tick,run,status} <dir>` in `crates/goose-cli/src/commands/swarm/agent_work/`
+> (manifest `agent.yaml`, DeskClock with IANA zones + cadence, the runtime store with ledger minis → whole-rebuilt
+> `ledger.json` + `render_ledger_block` = the SNOWBALL the orchestrator reads each tick, prepared/asks/decisions files, a
+> SlotPool that queues lanes on device weight, and the tick: GUARD → POLL → ORIENT → LANES → REVIEW → SYNTHESIS → POST →
+> CLOSE — every model call through the golden engine's own `run_agent_timed_at` door (digests + durable logs for free,
+> swarm.rs untouched except the `Agent` variant; paid for by moving `RunOpts`/`PoolCommand`/`CloudCommand` to
+> `swarm/cli_args.rs`, ratchet tightened 33,985 → 33,922). DESKTOP: `/agent-work` view (nav "Agent Work", local edition):
+> roster, TickClock (countdown + desk-zone time + reason, phase ribbon with elapsed), LaneBoard (node chip, surgeon, live
+> WORDS, inspector with whole think/answer logs + calls), Nodes occupancy + queue, Needs-you (answer asks, approve/decline
+> drafts → `decisions.jsonl`, folded at the next GUARD), note box → inbox, Ledger (ticks with lane-minutes, facts, drafts,
+> scratchpad, pending, daily log), New-agent dialog (writes agent.yaml). main.ts IPC `agent-work-*` spawns
+> `goose swarm agent run` per desk (per-pid stop, never a group kill). Docs: documentation/docs/guides/agent-work.md;
+> example: evals/agent-work/examples/axpo.agent.yaml.
+> NOT DONE / UNVERIFIED (the workhorse is fine-tuning; no model run, no app launch): (1) a real tick on a local node —
+> `goose swarm agent tick <dir>` on a desk dir with a poll script; read `.swarm/agent/run.jsonl` and the lanes' words;
+> (2) the desktop view opened live (typecheck + 12 jsdom tests only); (3) the structured-output parse of ORIENT/SYNTHESIS
+> on the 27B (lenient parser, but the shapes are new); (4) `post` on a real desk script — the example uses
+> `post_comment.py "$AGENT_DRAFT_TARGET" "$AGENT_DRAFT_FILE"`, whose usage was read, not run.
+
+
 > **HANDOFF (2026-09-06 14:xx) — LIVE TESTING OF MEMORY / SKILLS / COMPACTION SURVIVAL. Read this first when Mihai asks "what do
 > we have open, what should we test".** Everything is on `main` = origin/main (6569627ae), nothing unmerged. It could not be
 > tested against a LOCAL model today: the workhorse is training a model (mlx_lm.lora) and the fleet must not be loaded; every

@@ -17,18 +17,21 @@ describe('NAV_ITEMS fixture', () => {
     expect(NAV_ITEMS.map((i) => i.id)).toEqual([
       'skills',
       'memories',
+      'agent-work',
       'benchmark',
       'leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
       '/skills',
       '/memories',
+      '/agent-work',
       '/benchmark',
       '/leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'Skills',
       'Memories',
+      'Agent Work',
       'Benchmark',
       'Goose Swarm',
     ]);

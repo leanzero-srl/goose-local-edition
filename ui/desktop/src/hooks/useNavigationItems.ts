@@ -1,4 +1,4 @@
-import { Brain, Gauge, Settings, Zap } from 'lucide-react';
+import { Bot, Brain, Gauge, Settings, Zap } from 'lucide-react';
 import { Goose } from '../components/icons';
 import type React from 'react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
@@ -31,6 +31,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
+  { id: 'agent-work', path: '/agent-work', label: 'Agent Work', icon: Bot },
   { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
   { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'Goose Swarm', icon: Goose },
 ];
@@ -53,6 +54,10 @@ const navItemMessages = defineMessages({
   memories: {
     id: 'navigation.itemMemories',
     defaultMessage: 'Memories',
+  },
+  'agent-work': {
+    id: 'navigation.itemAgentWork',
+    defaultMessage: 'Agent Work',
   },
   benchmark: {
     id: 'navigation.itemBenchmark',

@@ -160,6 +160,7 @@ use findings::{
 mod pitfalls;
 use pitfalls::relevant_pitfalls;
 mod fleet_order;
+mod agent_work;
 use fleet_order::{
     aux_candidate_models, configured_speed_weight, fanout_over_fleet, least_loaded_aux_model,
     measured_rate_for, one_lane_per_host, publish_fleet_speed_weights, rank_fix_target,
@@ -1592,81 +1593,16 @@ pub enum SwarmCommand {
         about = "Serve the swarm as an MCP extension over stdio (goose session --with-extension)"
     )]
     Serve,
-}
-
-/// Options for a `goose swarm run`.
-pub struct RunOpts {
-    pub prompt: String,
-    pub output_format: String,
-    pub log_file: Option<PathBuf>,
-    pub no_log: bool,
-    pub max_turns: Option<u32>,
-    pub mcp: Vec<String>,
-    pub research: Option<bool>,
-    pub best_of_n: Option<usize>,
-}
-
-#[derive(clap::Subcommand, Debug)]
-pub enum PoolCommand {
-    /// Print the current pool.
-    Show,
-    /// Add a device.
-    Add {
-        id: String,
-        model_id: String,
-        #[arg(default_value_t = 1)]
-        weight: u32,
-        #[arg(default_value_t = 1)]
-        instances: u32,
-    },
-    /// Remove a device by id.
-    Rm { id: String },
-    /// Set a device's weight.
-    Weight { id: String, weight: u32 },
-    /// Enable a device.
-    Enable { id: String },
-    /// Disable a device.
-    Disable { id: String },
-    /// Probe the live fleet (lms ps + the endpoint's model ids).
-    Probe,
-    /// Import every model loaded across the fleet (parses `lms ps`) as pool entries.
-    Import {
-        #[arg(long, default_value_t = 1)]
-        weight: u32,
-        #[arg(long)]
-        disabled: bool,
+    /// AGENT WORK — tick-based desk agents (poll, triage, fan surgeon lanes over the fleet, review,
+    /// stage, post through the one gated script, ledger). See commands/swarm/agent_work.
+    Agent {
+        #[command(subcommand)]
+        command: agent_work::AgentCommand,
     },
 }
 
-#[derive(clap::Subcommand, Debug)]
-pub enum CloudCommand {
-    /// Validate a Bedrock API key against the region, store it (AWS_BEARER_TOKEN_BEDROCK secret +
-    /// AWS_REGION) ONLY if it is good, then print the auto-populated model roster.
-    Key {
-        key: String,
-        /// AWS region the key targets (default: the stored/env AWS_REGION, else us-east-1).
-        #[arg(long)]
-        region: Option<String>,
-        /// Machine-readable output: {"region","models":[...]} on stdout (for the desktop app).
-        #[arg(long)]
-        json: bool,
-    },
-    /// Re-validate the stored/env key and print the usable model ids (the auto-populated roster).
-    Models {
-        /// Machine-readable output: {"region","models":[...],"devices":[...]} on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add a Bedrock model as a swarm device (checked against the live roster first).
-    Add {
-        model_id: String,
-        /// Concurrent tasks this cloud node may run at once.
-        #[arg(long, default_value_t = 2)]
-        weight: u32,
-    },
-    /// Remove a Bedrock swarm device by model id.
-    Rm { model_id: String },
-}
+mod cli_args;
+pub use cli_args::{CloudCommand, PoolCommand, RunOpts};
 
 // The cloud-provider roster cluster — `CloudDef`/`CLOUD_DEFS`, `cloud_def`,
 // `cloud_registry_name`, `cloud_stored_key`, `cloud_roster`, the three provider listings and
@@ -2123,6 +2059,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             )),
         },
         SwarmCommand::Serve => crate::commands::swarm_serve::run().await,
+        SwarmCommand::Agent { command } => agent_work::handle(command).await,
     }
 }
 

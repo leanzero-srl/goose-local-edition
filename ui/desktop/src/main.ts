@@ -35,7 +35,7 @@ import { benchRunArgvTokens, pidsMatchingTokens } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync, spawn, spawnSync, execFile } from 'child_process';
+import { execFileSync, spawn, spawnSync, execFile, type ChildProcess } from 'child_process';
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
 import { startGooseServe, findGooseBinaryPath } from './gooseServe';
@@ -5677,4 +5677,377 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' || !tray) {
     app.quit();
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// AGENT WORK — the desk operation (goose swarm agent). The renderer's Agent Work view reads
+// `<agent dir>/.swarm/agent/` (state.json, run.jsonl, ledger.json, prepared.json, asks.json,
+// ticks/<n>.json) and `<agent dir>/.swarm/activity/` (the lanes' digests — the same files the
+// build panel reads, written by the same engine door). Main owns what the renderer cannot:
+// spawning `goose swarm agent run <dir>`, the registry of agent directories, the directory
+// picker, and the flag/decision files the engine folds on its next tick.
+// ---------------------------------------------------------------------------------------------
+
+const AGENT_WORK_REGISTRY = path.join(os.homedir(), '.config', 'goose', 'agent-work.json');
+
+interface AgentRegistry {
+  agents: { dir: string; addedAt: string }[];
+}
+
+async function readAgentRegistry(): Promise<AgentRegistry> {
+  try {
+    const raw = await fs.readFile(AGENT_WORK_REGISTRY, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<AgentRegistry>;
+    return { agents: Array.isArray(parsed.agents) ? parsed.agents : [] };
+  } catch {
+    return { agents: [] };
+  }
+}
+
+async function writeAgentRegistry(reg: AgentRegistry): Promise<void> {
+  await fs.mkdir(path.dirname(AGENT_WORK_REGISTRY), { recursive: true });
+  await fs.writeFile(AGENT_WORK_REGISTRY, JSON.stringify(reg, null, 2), 'utf8');
+}
+
+const agentRuntimeDir = (dir: string) => path.join(expandTilde(dir), '.swarm', 'agent');
+
+async function readJsonFile<T>(p: string): Promise<T | null> {
+  try {
+    return JSON.parse(await fs.readFile(p, 'utf8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function readTextTail(p: string, maxBytes: number): Promise<{ text: string; bytes: number } | null> {
+  try {
+    const st = await fs.stat(p);
+    const start = Math.max(0, st.size - maxBytes);
+    const fh = await fs.open(p, 'r');
+    try {
+      const buf = Buffer.alloc(st.size - start);
+      await fh.read(buf, 0, buf.length, start);
+      let text = buf.toString('utf8');
+      if (start > 0) {
+        const nl = text.indexOf('\n');
+        if (nl >= 0) text = text.slice(nl + 1);
+      }
+      return { text, bytes: st.size };
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** pid in `<runtime>/lock` when that process is alive. */
+async function agentLockHolder(dir: string): Promise<number | null> {
+  try {
+    const pid = Number.parseInt((await fs.readFile(path.join(agentRuntimeDir(dir), 'lock'), 'utf8')).trim(), 10);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+/** The manifest, parsed just enough for the roster (name, title, cadence, window, timezone). */
+async function readAgentManifest(dir: string): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await fs.readFile(path.join(expandTilde(dir), 'agent.yaml'), 'utf8');
+    return yaml.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+const agentChildren = new Map<string, ChildProcess>();
+
+ipcMain.handle('agent-work-list', async () => {
+  const reg = await readAgentRegistry();
+  const rows = await Promise.all(
+    reg.agents.map(async (a) => {
+      const dir = expandTilde(a.dir);
+      const [manifest, state, pid] = await Promise.all([
+        readAgentManifest(dir),
+        readJsonFile<Record<string, unknown>>(path.join(agentRuntimeDir(dir), 'state.json')),
+        agentLockHolder(dir),
+      ]);
+      const hb = await fs
+        .stat(path.join(agentRuntimeDir(dir), 'heartbeat'))
+        .then((s) => s.mtimeMs)
+        .catch(() => null);
+      return { dir, addedAt: a.addedAt, manifest, state, pid, heartbeatMs: hb, exists: manifest != null };
+    })
+  );
+  return rows;
+});
+
+ipcMain.handle('agent-work-pick-dir', async () => {
+  const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  if (res.canceled || res.filePaths.length === 0) return null;
+  return res.filePaths[0];
+});
+
+ipcMain.handle('agent-work-add', async (_event, dir: string) => {
+  const d = expandTilde(String(dir || '').trim());
+  if (!d) return { ok: false, error: 'no directory given' };
+  const manifest = await readAgentManifest(d);
+  if (!manifest) return { ok: false, error: `${d} has no readable agent.yaml` };
+  const reg = await readAgentRegistry();
+  if (!reg.agents.some((a) => expandTilde(a.dir) === d)) {
+    reg.agents.push({ dir: d, addedAt: new Date().toISOString() });
+    await writeAgentRegistry(reg);
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('agent-work-remove', async (_event, dir: string) => {
+  const d = expandTilde(String(dir || ''));
+  const reg = await readAgentRegistry();
+  reg.agents = reg.agents.filter((a) => expandTilde(a.dir) !== d);
+  await writeAgentRegistry(reg);
+  return true;
+});
+
+/** Write a fresh agent.yaml + the files it names (the New Agent dialog); refuses to overwrite. */
+ipcMain.handle(
+  'agent-work-init',
+  async (_event, dir: string, manifestYaml: string, charter: string) => {
+    const d = expandTilde(String(dir || '').trim());
+    if (!d) return { ok: false, error: 'no directory given' };
+    try {
+      await fs.mkdir(d, { recursive: true });
+      const target = path.join(d, 'agent.yaml');
+      if (await fs.stat(target).catch(() => null)) {
+        return { ok: false, error: `${target} already exists — edit it instead` };
+      }
+      yaml.parse(manifestYaml);
+      await fs.writeFile(target, manifestYaml, 'utf8');
+      for (const [rel, text] of [
+        ['CHARTER.md', charter || '# Charter\n'],
+        ['SCRATCHPAD.md', ''],
+        ['DAILY-LOG.md', ''],
+        ['PENDING.md', '# Pending — things only the human can clear\n'],
+      ] as const) {
+        const p = path.join(d, rel);
+        if (!(await fs.stat(p).catch(() => null))) await fs.writeFile(p, text, 'utf8');
+      }
+      await fs.mkdir(path.join(agentRuntimeDir(d), 'inbox'), { recursive: true });
+      const reg = await readAgentRegistry();
+      if (!reg.agents.some((a) => expandTilde(a.dir) === d)) {
+        reg.agents.push({ dir: d, addedAt: new Date().toISOString() });
+        await writeAgentRegistry(reg);
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) };
+    }
+  }
+);
+
+ipcMain.handle('agent-work-start', async (_event, dir: string, once: boolean) => {
+  const d = expandTilde(String(dir || ''));
+  const holder = await agentLockHolder(d);
+  if (holder) return { ok: false, error: `already running (pid ${holder})` };
+  const binary = findGooseBinaryPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+  });
+  const rt = agentRuntimeDir(d);
+  await fs.mkdir(rt, { recursive: true });
+  await fs.rm(path.join(rt, 'stop'), { force: true });
+  const logPath = path.join(rt, 'engine.log');
+  const out = fsSync.openSync(logPath, 'a');
+  try {
+    const args = ['swarm', 'agent', 'run', d, ...(once ? ['--once'] : [])];
+    const child = spawn(binary, args, {
+      cwd: d,
+      env: { ...process.env, GOOSE_SWARM_AGENT_WORK: '1' },
+      stdio: ['ignore', out, out],
+    });
+    agentChildren.set(d, child);
+    child.on('exit', (code, signal) => {
+      log.info(`[AgentWork] ${d} exited code=${code} signal=${signal}`);
+      agentChildren.delete(d);
+    });
+    child.on('error', (err) => {
+      log.error(`[AgentWork] ${d} failed to start: ${errorMessage(err)}`);
+      agentChildren.delete(d);
+    });
+    return { ok: true, pid: child.pid ?? null };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  } finally {
+    fsSync.closeSync(out);
+  }
+});
+
+/** Stop = the `stop` flag (the engine exits after the current tick), then a per-pid SIGTERM when
+ *  asked to be immediate. Never a group kill (gate 4). */
+ipcMain.handle('agent-work-stop', async (_event, dir: string, immediate: boolean) => {
+  const d = expandTilde(String(dir || ''));
+  const rt = agentRuntimeDir(d);
+  await fs.mkdir(rt, { recursive: true });
+  await fs.writeFile(path.join(rt, 'stop'), new Date().toISOString(), 'utf8');
+  if (immediate) {
+    const pid = await agentLockHolder(d);
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (error) {
+        return { ok: false, error: errorMessage(error) };
+      }
+    }
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('agent-work-tick-now', async (_event, dir: string) => {
+  const rt = agentRuntimeDir(expandTilde(String(dir || '')));
+  await fs.mkdir(rt, { recursive: true });
+  await fs.writeFile(path.join(rt, 'tick-now'), new Date().toISOString(), 'utf8');
+  return true;
+});
+
+ipcMain.handle('agent-work-set-paused', async (_event, dir: string, paused: boolean) => {
+  const rt = agentRuntimeDir(expandTilde(String(dir || '')));
+  await fs.mkdir(rt, { recursive: true });
+  const f = path.join(rt, 'paused');
+  if (paused) await fs.writeFile(f, new Date().toISOString(), 'utf8');
+  else await fs.rm(f, { force: true });
+  return true;
+});
+
+ipcMain.handle('agent-work-note', async (_event, dir: string, text: string) => {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  const inbox = path.join(agentRuntimeDir(expandTilde(String(dir || ''))), 'inbox');
+  await fs.mkdir(inbox, { recursive: true });
+  await fs.writeFile(path.join(inbox, `${Date.now()}.json`), JSON.stringify({ text: t }, null, 2), 'utf8');
+  return true;
+});
+
+/** approve | decline | done | reply | dismiss on a staged draft or an ask — appended to
+ *  decisions.jsonl; the engine folds it at its next tick's GUARD phase. */
+ipcMain.handle(
+  'agent-work-decide',
+  async (_event, dir: string, id: string, decision: string, text: string) => {
+    const rt = agentRuntimeDir(expandTilde(String(dir || '')));
+    if (!id || !decision) return false;
+    await fs.mkdir(rt, { recursive: true });
+    const row = { ts: new Date().toISOString(), id: String(id), decision: String(decision), text: String(text || '') };
+    await fs.appendFile(path.join(rt, 'decisions.jsonl'), `${JSON.stringify(row)}\n`, 'utf8');
+    return true;
+  }
+);
+
+/** Everything the desk view renders, in one read. Bounded by COUNT (events, ticks) and by a
+ *  byte tail for the text files; the durable logs are fetched on demand through
+ *  read-swarm-activity-log with the agent dir as runDir. */
+ipcMain.handle('agent-work-read', async (_event, dir: string) => {
+  const d = expandTilde(String(dir || ''));
+  const rt = agentRuntimeDir(d);
+  const [manifest, state, prepared, asks, ledger, pid] = await Promise.all([
+    readAgentManifest(d),
+    readJsonFile<Record<string, unknown>>(path.join(rt, 'state.json')),
+    readJsonFile<unknown[]>(path.join(rt, 'prepared.json')),
+    readJsonFile<unknown[]>(path.join(rt, 'asks.json')),
+    readJsonFile<Record<string, unknown>>(path.join(rt, 'ledger.json')),
+    agentLockHolder(d),
+  ]);
+  const heartbeatMs = await fs
+    .stat(path.join(rt, 'heartbeat'))
+    .then((s) => s.mtimeMs)
+    .catch(() => null);
+  const eventsTail = await readTextTail(path.join(rt, 'run.jsonl'), 1_500_000);
+  const events: unknown[] = [];
+  if (eventsTail) {
+    for (const line of eventsTail.text.split('\n')) {
+      const l = line.trim();
+      if (!l) continue;
+      try {
+        events.push(JSON.parse(l));
+      } catch {
+        /* a half-written last line is read whole on the next poll */
+      }
+    }
+  }
+  // Tick records: the newest 12 by number.
+  const tickFiles = (await fs.readdir(path.join(rt, 'ticks')).catch(() => [] as string[]))
+    .map((f) => Number.parseInt(f.replace(/\.json$/, ''), 10))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => b - a)
+    .slice(0, 12);
+  const ticks = (
+    await Promise.all(tickFiles.map((n) => readJsonFile<Record<string, unknown>>(path.join(rt, 'ticks', `${n}.json`))))
+  ).filter((t): t is Record<string, unknown> => t != null);
+  // Lane digests: the same files the build panel reads, plus the forming sidecar and the mtime.
+  const actDir = path.join(d, '.swarm', 'activity');
+  const actEntries = await fs.readdir(actDir).catch(() => [] as string[]);
+  const lanes: Record<string, unknown> = {};
+  const laneMtimes: Record<string, number> = {};
+  await Promise.all(
+    actEntries
+      .filter((f) => f.endsWith('.json') && !f.endsWith('.forming.json') && /^t\d+-/.test(f))
+      .map(async (f) => {
+        try {
+          const p = path.join(actDir, f);
+          const st = await fs.stat(p);
+          const parsed = JSON.parse(await fs.readFile(p, 'utf8')) as Record<string, unknown>;
+          try {
+            const fj = JSON.parse(await fs.readFile(p.replace(/\.json$/, '.forming.json'), 'utf8')) as {
+              forming?: unknown[];
+            };
+            if (Array.isArray(fj.forming) && fj.forming.length > 0) parsed.forming = fj.forming;
+          } catch {
+            /* nothing forming */
+          }
+          const [thinkTail, logTail] = await Promise.all([
+            readTextTail(p.replace(/\.json$/, '.think.log'), 24_000),
+            readTextTail(p.replace(/\.json$/, '.log'), 24_000),
+          ]);
+          if (thinkTail) {
+            parsed.full_thinking = thinkTail.text;
+            parsed.thinking_bytes = thinkTail.bytes;
+          }
+          if (logTail) {
+            parsed.full_transcript = logTail.text;
+            parsed.transcript_bytes = logTail.bytes;
+          }
+          const key = f.replace(/\.json$/, '');
+          lanes[key] = parsed;
+          laneMtimes[key] = st.mtimeMs;
+        } catch {
+          /* a digest mid-rewrite is read whole on the next poll */
+        }
+      })
+  );
+  const [scratchpad, pendingText, dailyLog, engineLog] = await Promise.all([
+    readTextTail(path.join(d, String((manifest?.scratchpad as string) || 'SCRATCHPAD.md')), 40_000),
+    readTextTail(path.join(d, String((manifest?.pending as string) || 'PENDING.md')), 40_000),
+    readTextTail(path.join(d, String((manifest?.ledger as string) || 'DAILY-LOG.md')), 40_000),
+    readTextTail(path.join(rt, 'engine.log'), 20_000),
+  ]);
+  return {
+    dir: d,
+    manifest,
+    state,
+    pid,
+    heartbeatMs,
+    events,
+    ticks,
+    lanes,
+    laneMtimes,
+    prepared: prepared ?? [],
+    asks: asks ?? [],
+    ledger,
+    scratchpad: scratchpad?.text ?? '',
+    pending: pendingText?.text ?? '',
+    dailyLog: dailyLog?.text ?? '',
+    engineLog: engineLog?.text ?? '',
+    now: Date.now(),
+  };
 });

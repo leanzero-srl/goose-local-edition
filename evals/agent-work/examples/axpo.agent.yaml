@@ -1,0 +1,52 @@
+# An agent.yaml for the Axpo desk skill directory (~/.claude/skills/axpo) — copy it in as agent.yaml.
+# The desk's own scripts stay the poll, the guard and the one write path; goose supplies the tick,
+# the orchestrator, the surgeon lanes across the fleet, the refuting review, the ledger and the
+# approval gate. Nothing posts until a draft is approved in the Agent Work view.
+name: axpo
+title: Axpo Atlassian desk
+charter: SKILL.md
+timezone: Europe/Zurich
+window:
+  days: [mon, tue, wed, thu, fri]
+  from: "09:00"
+  to: "17:59"
+  always: false
+cadence: 40m
+env_file: references/credentials.env
+# The desk's own kill switches: exit 3 holds the tick and names why.
+guard:
+  - "test ! -f state/DISABLED || { echo 'state/DISABLED is set'; exit 3; }"
+  - "test ! -f state/NO_POST || echo 'state/NO_POST is set: nothing will post this tick'"
+# Read-only: what is assigned/mentioned, newest first.
+poll:
+  - "python3 scripts/aj.py checkin"
+  - "python3 scripts/due_retests.py 2>/dev/null || true"
+close: []
+surgeons:
+  - name: access
+    charter: references/surgeons.md
+    brief: "ACCESS: permissions, seats, groups, spaces, the identity boundary. user -> ugroups -> sperm homework; a seat is granted, shared config waits for a yes; prove every negative on the same object."
+    match: [access, permission, group, seat, licence, license, space]
+    read_only: true
+  - name: content
+    charter: references/surgeons.md
+    brief: "CONTENT: macro/Aura/Comala/embed and migration-defect repair. Read the stored object and its version history before proposing a change; never propose a write without the revert."
+    match: [macro, page, embed, aura, comala, migration]
+    read_only: true
+  - name: programme
+    charter: references/surgeons.md
+    brief: "PROGRAMME: the migration board (ECM/CM/MMUF) — parity passes, conversion at scale, chase or escalate. Colleague-facing."
+    match: [ECM, CM, MMUF, parity, conversion]
+    read_only: true
+review:
+  enabled: true
+  lenses: [factual, duplication, voice]
+# post_comment.py <ISSUE_KEY> <textfile> — the desk's one write path, fed the approved draft.
+post:
+  command: "python3 scripts/post_comment.py \"$AGENT_DRAFT_TARGET\" \"$AGENT_DRAFT_FILE\""
+  approval: human
+ledger: DAILY-LOG.md
+pending: PENDING.md
+scratchpad: SCRATCHPAD.md
+commit: true
+extensions: []

@@ -86,6 +86,8 @@ interface SwarmDelta {
   source: string;
 }
 
+import type { AgentWorkRead, AgentWorkRosterRow } from './components/agent-work/agentWorkModel';
+
 /** Per-run sampling knobs (mirrors components/swarm/sampling.ts — unset = model/config default). */
 interface SwarmSampling {
   temperature?: number;
@@ -283,6 +285,23 @@ type ElectronAPI = {
   swarmSetSampling: (workingDir: string, sampling: SwarmSampling) => Promise<boolean>;
   /** Read the run-sampling file back — during a live run, the values that run launched with. */
   swarmGetSampling: (workingDir: string) => Promise<SwarmSampling>;
+  /** AGENT WORK (goose swarm agent): the roster, the desk read, and the flag/decision writes. */
+  agentWorkList: () => Promise<AgentWorkRosterRow[]>;
+  agentWorkPickDir: () => Promise<string | null>;
+  agentWorkAdd: (dir: string) => Promise<{ ok: boolean; error?: string }>;
+  agentWorkRemove: (dir: string) => Promise<boolean>;
+  agentWorkInit: (
+    dir: string,
+    manifestYaml: string,
+    charter: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  agentWorkStart: (dir: string, once: boolean) => Promise<{ ok: boolean; pid?: number | null; error?: string }>;
+  agentWorkStop: (dir: string, immediate: boolean) => Promise<{ ok: boolean; error?: string }>;
+  agentWorkTickNow: (dir: string) => Promise<boolean>;
+  agentWorkSetPaused: (dir: string, paused: boolean) => Promise<boolean>;
+  agentWorkNote: (dir: string, text: string) => Promise<boolean>;
+  agentWorkDecide: (dir: string, id: string, decision: string, text: string) => Promise<boolean>;
+  agentWorkRead: (dir: string) => Promise<AgentWorkRead>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
   listFiles: (dirPath: string, extension?: string) => Promise<string[]>;
   copyDir: (
@@ -477,6 +496,22 @@ const electronAPI: ElectronAPI = {
   swarmSetSampling: (workingDir: string, sampling: SwarmSampling) =>
     ipcRenderer.invoke('swarm-set-sampling', workingDir, sampling),
   swarmGetSampling: (workingDir: string) => ipcRenderer.invoke('swarm-get-sampling', workingDir),
+  agentWorkList: () => ipcRenderer.invoke('agent-work-list'),
+  agentWorkPickDir: () => ipcRenderer.invoke('agent-work-pick-dir'),
+  agentWorkAdd: (dir: string) => ipcRenderer.invoke('agent-work-add', dir),
+  agentWorkRemove: (dir: string) => ipcRenderer.invoke('agent-work-remove', dir),
+  agentWorkInit: (dir: string, manifestYaml: string, charter: string) =>
+    ipcRenderer.invoke('agent-work-init', dir, manifestYaml, charter),
+  agentWorkStart: (dir: string, once: boolean) => ipcRenderer.invoke('agent-work-start', dir, once),
+  agentWorkStop: (dir: string, immediate: boolean) =>
+    ipcRenderer.invoke('agent-work-stop', dir, immediate),
+  agentWorkTickNow: (dir: string) => ipcRenderer.invoke('agent-work-tick-now', dir),
+  agentWorkSetPaused: (dir: string, paused: boolean) =>
+    ipcRenderer.invoke('agent-work-set-paused', dir, paused),
+  agentWorkNote: (dir: string, text: string) => ipcRenderer.invoke('agent-work-note', dir, text),
+  agentWorkDecide: (dir: string, id: string, decision: string, text: string) =>
+    ipcRenderer.invoke('agent-work-decide', dir, id, decision, text),
+  agentWorkRead: (dir: string) => ipcRenderer.invoke('agent-work-read', dir),
   ensureDirectory: (dirPath: string) => ipcRenderer.invoke('ensure-directory', dirPath),
   listFiles: (dirPath: string, extension?: string) =>
     ipcRenderer.invoke('list-files', dirPath, extension),

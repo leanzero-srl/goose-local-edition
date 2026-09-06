@@ -5024,6 +5024,7 @@ dependencies = [
  "bat",
  "bzip2",
  "chrono",
+ "chrono-tz",
  "clap",
  "clap_complete",
  "clap_complete_nushell",

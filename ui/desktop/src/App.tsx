@@ -37,6 +37,7 @@ import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
 import LeanZeroSwarmView from './components/leanzero-swarm/LeanZeroSwarmView';
 import BenchmarkView from './components/benchmark/BenchmarkView';
+import AgentWorkView from './components/agent-work/AgentWorkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
 import { ConfirmCloseRunDialog } from './components/lz-dialogs/ConfirmCloseRunDialog';
 import type { CloseRunPayload } from './utils/closeGuard';
@@ -299,6 +300,10 @@ const BenchmarkRoute = () => {
 
 const LoopRoute = () => {
   return <LoopView />;
+};
+
+const AgentWorkRoute = () => {
+  return <AgentWorkView />;
 };
 
 const LeanZeroSwarmRoute = () => {
@@ -805,6 +810,7 @@ export function AppInner() {
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
+              <Route path="agent-work" element={<AgentWorkRoute />} />
               <Route path="leanzero-swarm" element={<LeanZeroSwarmRoute />} />
               {/* The old engine-window path stays alive as a redirect — no dead links. */}
               <Route path="mlx-engine" element={<Navigate to="/leanzero-swarm" replace />} />

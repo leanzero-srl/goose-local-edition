@@ -501,7 +501,11 @@ fn swarm_rs_line_count_only_decreases() {
     // VA-113, the r6i-staging merges) are gone with their modules; the count rises from the
     // merge's 33,411 because those commits had also extracted golden code into modules that are
     // deleted with them.
-    const SWARM_RS_LINE_BASELINE: usize = 33_985;
+    // Tightened to 33,922 (agent work, 2026-09-06): `RunOpts` / `PoolCommand` / `CloudCommand`
+    // moved verbatim to commands/swarm/cli_args.rs, paying for the `Agent` sub-command variant,
+    // its handle arm and `mod agent_work;` — the second swarm operation lives entirely in
+    // commands/swarm/agent_work/ and calls the golden engine's worker door without editing it.
+    const SWARM_RS_LINE_BASELINE: usize = 33_922;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

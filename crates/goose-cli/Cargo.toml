@@ -70,6 +70,7 @@ clap_complete_nushell = { version = "4", default-features = false }
 goose-provider-types = { version = "1.41.0", path = "../goose-provider-types" }
 goose-sidecar = { version = "0.1.0", path = "../goose-sidecar" }
 goose-memory-store = { path = "../goose-memory-store" }
+chrono-tz = "0.10"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anstream = { version = "1", default-features = false, features = ["wincon"] }

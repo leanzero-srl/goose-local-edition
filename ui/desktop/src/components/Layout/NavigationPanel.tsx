@@ -95,6 +95,8 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
     return NAV_ITEMS.filter((item) => {
       // Benchmark measures a local fleet, so it has no meaning in an upstream-flavoured build.
       if (item.path === '/benchmark') return isLocal;
+      // Agent work runs desks on the local fleet — the same edition gate as the benchmark.
+      if (item.path === '/agent-work') return isLocal;
       // The Goose Swarm hub carries the swarm settings and cloud credentials for the local edition,
       // and the MLX engine tab whenever the agent advertises that capability — so it shows for
       // either fact, and only vanishes in an upstream-flavoured build with no MLX engine.
