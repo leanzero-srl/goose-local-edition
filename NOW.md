@@ -1,5 +1,78 @@
 # NOW — what we are researching and doing, this week
 
+> **TEST BAGGAGE (written 2026-09-06 ~21:30 — read this FIRST when the fine-tune ends and the fleet is free).** Everything
+> below shipped today with proof that stops short of a local model, a real compaction or the running app. Numbered so a session
+> can pick one and prove it; each step names the command, what PASS looks like, and what must go IN and come OUT again.
+> Standing rules for every step: `lms ps` must show a model YOU did not load (never load one); fixtures come out; a `--no-session`
+> run still writes a HIDDEN sessions row that `goose session list` cannot show and `session remove --session-id` cannot delete
+> (VA-184) — remove it with `sqlite3 ~/.local/share/goose/sessions/sessions.db "delete from messages where session_id='<id>';
+> delete from sessions where id='<id>';"` and prove it with a count; a live request is a QUESTION, never an imperative on the
+> repo (a haiku session once edited and committed on main from "Fix the failing test…"; unwound); the binary is
+> `target/debug/goose` (`nice -n 19 cargo build -p goose-cli --bin goose -j 4`); OpenRouter env for cloud receipts:
+> `set -a; source ~/.agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env; set +a; GOOSE_PROVIDER=openrouter GOOSE_MODEL=anthropic/claude-haiku-4.5`.
+>
+> **A. AGENT WORK — the desk operation (commits 99bd9a91e → d47e977c9; docs documentation/docs/guides/agent-work.md; example
+> evals/agent-work/examples/axpo.agent.yaml).** Verified so far: only the no-fleet path (a dead node fails the tick by name).
+> 1. ONE REAL TICK ON A LOCAL NODE. `goose swarm agent init /tmp/desk-probe --name probe`; edit its agent.yaml: poll →
+>    `["echo 'ITHUB-1: user asks for access to space X'; echo 'ITHUB-2: macro broken on page 42'"]`, one surgeon `general`
+>    read-only, lenses `[factual, voice]`, no post. `goose swarm agent tick /tmp/desk-probe`. PASS = `.swarm/agent/run.jsonl`
+>    shows orient_done with 1–2 lanes → lane_dispatched/lane_done on the fleet model → lens_done → synthesis_done with a staged
+>    draft or an ask; `.swarm/agent/ledger.json` has kinds lane/lens/tick; `.swarm/activity/t1-*.think.log` carry the WORDS
+>    (read them — gate 7). FAIL modes to look for: `orient_unparseable` (the 27B's structured output — schemas in
+>    commands/swarm/agent_work/prompts.rs; the parser is lenient), lanes queued forever (SlotPool vs device weight), a lane
+>    returning prose instead of the handoff JSON. Delete /tmp/desk-probe after.
+> 2. THE DESKTOP VIEW, in the running app (package it or run the dev app; memory `swarm-verify-in-the-running-app`): nav
+>    "Agent Work" → New agent (the dialog writes agent.yaml) or Add existing → Start desk. PASS = the tick clock counts down
+>    with the desk-zone time and reason, the phase ribbon advances during a tick, each lane row shows its node chip and live
+>    line, clicking a lane opens the inspector with the whole think/answer logs, Needs-you shows the staged draft and an
+>    Approve writes `.swarm/agent/decisions.jsonl`, the next tick's GUARD folds it (`decisions_folded` event). Stop = per-pid,
+>    never a group kill. Files: ui/desktop/src/components/agent-work/*, main.ts `agent-work-*` IPC.
+> 3. THE TWO-TICK POST SPINE on a scratch desk with a fake post command (`post: {command: "cat \"$AGENT_DRAFT_FILE\" >>
+>    posted.log", approval: human}`): tick 1 stages, approve in the view (or append `{"id":"<draft id>","decision":"approve"}`
+>    to decisions.jsonl), tick 2 posts. PASS = `posted` event, prepared.json status posted, posted.log holds the body; a
+>    declined draft never posts; a tick outside the window emits `post_skipped{outside the desk's window}`.
+> 4. A REAL DESK: copy evals/agent-work/examples/axpo.agent.yaml into ~/.claude/skills/axpo as agent.yaml, `goose swarm agent
+>    check` (env_file keys count, window), then ONE tick with `post` REMOVED (read-only proof first): PASS = the poll's real
+>    output reaches orient, lanes run the desk's read-only scripts (their calls.jsonl show `aj.py`), nothing is posted. Only
+>    then decide about the post command (`post_comment.py "$AGENT_DRAFT_TARGET" "$AGENT_DRAFT_FILE"` — usage read, never run).
+>
+> **B. RECALL / MEMORY / SKILLS ON A LOCAL MODEL (VA-179..188 landed on haiku receipts; probe corpus 37 requests).**
+> 5. Repeat the probe-backed live receipts on the 27B via the LM Studio node (no OpenRouter): the same four questions, read the
+>    CLI log `"message":"recall"` line (`~/.local/state/goose/logs/cli/<date>/*.log`, fields recalled/suggested/autoloaded/
+>    correction/answered) AND the model's first sentence: "How do I start a benchmark run properly?" (recalled = the three
+>    named benchmark notes; answer = Benchmark view, never chat); "Should I remind him to rotate the API key I was just given?"
+>    (recalled = no-security-hygiene-nagging; answer = no); "Why did the r2 run die in the middle of INTEGRATE?" (recalled =
+>    kill-pids-never-killpg; answer names the killpg reap at minute 139); "Can I bulk-transition those 159 tickets on prod to
+>    Done?" (recalled = ask-before-client-prod-config; answer = ask the client). The question is whether the 27B READS the
+>    `<recalled-memories>` block the way haiku did — quote its words. Delete each hidden session row (sqlite).
+> 6. THE SHAPE LEXICAL RECALL CANNOT REACH (VA-187 (2), the recorded limit in .claude/agents/memory-skills-surgeon.md "THE RULE
+>    THAT APPLIES BY MEANING"): "Add the new custom field on the customer's live instance today." recalls nothing although the
+>    ask-the-client rule applies. The measured signal that would reach it is the note's own tag line (`deploy customer live
+>    instance`, replica only). Decide with Mihai whether feedback rules get an intent/category signal; do not edit the imported
+>    global notes as a fix.
+> 7. Earlier open items (VA-168..178 handoff, below): the 2-turn correction on the 27B (does it restate via remember_memory?),
+>    the answered-question save, ledger_append then a fresh session reading `<ledger>`, the scratchpad setup — same
+>    instruments, the fixtures (`.goose/memory/corrections.txt`, `.goose/ledger.md` lines) removed after.
+> 8. COMPACTION ITSELF (never exercised live): a long session with `GOOSE_AUTO_COMPACT_THRESHOLD` low after the scratchpad has
+>    content; PASS = `<scratchpad-notice>` in the last quarter, scratchpad and `<ledger>` intact after the summary, the model
+>    continues from them; the summary template must stay byte-identical (shared with swarm workers — golden gate).
+> 9. AUTO-LOAD ON A REAL SKILL (VA-177 proved the mechanism on a 921-char fixture): installed skills' bodies (median 27k chars)
+>    exceed the thirty-second budget at a 200k window. Either measure with the 27B's larger window (`autoloaded=` in the log on
+>    a request naming a skill by two terms) or decide the per-skill "autoload body" lever named in VA-177.
+> 10. THE DESKTOP RECALL LINE: open the app, ask a question a memory covers, PASS = the "recalled: …" inline notice renders
+>     above the answer (adapter ui/desktop/src/acp/adapter/gooseSessionNotifications.ts); the Memories view lists corrections.
+>
+> **C. DEFECTS FOUND, NOT ON TODAY'S SURFACES.** VA-184 (goose-cli): `goose session remove --session-id` fails "not connected"
+> on hidden sessions; `session list` cannot show hidden rows; `crates/goose/src/agents/reply_parts.rs` test "test-prepare-tools"
+> writes a session into the REAL sessions.db (a test must use a temp store). f9b0cf7d8 fixed the ported providers test that
+> imported a private fn — rerun `cargo test -p goose-providers` after any provider port.
+>
+> **Instruments:** `python3 evals/memory-recall/probe.py` (37 requests; every landing's before/after diff is in VIGIL-ACTIONS
+> VA-179..188), `goose recall "<request>"`, the CLI log's recall line, `goose swarm agent check/status`, `.swarm/agent/run.jsonl`
+> + `ticks/<n>.json`, `cargo test -p goose-cli --lib agent_work` (19), `-p goose-memory-store` (23), `-p goose --lib recall` (20),
+> `-p goose-swarm --test development_gates` (11), desktop `pnpm test` (226 files).
+
+
 > **2026-09-06 evening — AGENT WORK: the second swarm operation (UI + engine) landed, untested against a model.**
 > Mihai: *"we don't have actual agent work and we don't want simple chat in goose… the ability to run these scripts, to
 > investigate, research, keep ledgers, keep scratchpads… tick information displayed in the UI like when is the next tick
