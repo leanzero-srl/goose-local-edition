@@ -1,5 +1,12 @@
 # NOW — what we are researching and doing, this week
 
+> **2026-09-06 morning — PRIVACY PURGE DONE.** The frozen promptbench payload corpus (238 captured worker requests embedding the
+> operator's memory store and global hints, public since 08-03) is gone from the tip AND from history: filter-repo on a fresh
+> mirror, note titles and client names word-scrubbed from every text blob, force-pushed to origin (main, the pending branch, 300
+> tags) on Mihai's word; backup bundle in ~/goose-purge-backup. `bench/payloads/` is ignored; promptbench reads the local copy;
+> a re-harvest on the current engine rebuilds a clean corpus. Rule (memory `never-track-captured-prompts`): a captured request
+> is never tracked. Remaining: a GitHub support request for cached views of the old SHAs.
+
 > **2026-09-05 night — AUTOMATIC RECALL + RARITY SEARCH LANDED (memories and skills now reach the model without a tool
 > call).** New std-only crate `goose-memory-store` owns the on-disk format, index, search and `remember` (an identical save is
 > Unchanged, a save whose first line matches a stored headline REPLACES it, else Added; scopes optional so small models stop
