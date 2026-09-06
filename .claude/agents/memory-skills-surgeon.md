@@ -30,6 +30,16 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   RECALL_MIN_SHARE_OF_TOP × top`; at most `RECALL_MAX_MEMORIES`. Skills: same rule, `metadata.keywords`
   counted with name strength. The part opens with `<recall-line>`, which the agent loop shows the
   person as an inline notice. (A pure name-term gate was tried and refuted: headlines are sentences.)
+- THE NAMED TIER (VA-179, b509fef47): `SearchHit::named` — the request NAMES an entry when at least
+  `NAMED_MIN_NAME_TERMS` (2) of its terms sit in the entry's name (category/tags/headline) AND more than
+  half of its terms match; `MemoryStore::search` sorts every named hit before every unnamed one, then by
+  score, and `select_hits` takes the store's order. Measured: "How do I start a benchmark run properly?"
+  recalled a global note about screenshotting frontends (4/4 body terms, 0 in name, 8.4) above the two
+  entries whose names carry benchmark/run; after: the three named entries, the frontend note 5th. The
+  name pair is by COUNT, not rarity — "run" is common (df > 116 of 233) and is the topic's own word; a
+  rare-only pair named nothing on this store. The more-than-half floor keeps a 2/4 headline match
+  (`forge-cannot-reliably-read-assets`) from displacing the 4/4 nameless bank-approval note. If a corpus
+  where two common words co-occur in many headlines over-names, the probe is the instrument that shows it.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
@@ -72,7 +82,9 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 3. Tests: `cargo test -p goose-memory-store`; `cargo test -p goose -p goose-mcp --lib -- memory::tests platform_extensions::recall`
    (goose-mcp alone does not build its tests — tokio feature unification comes from goose); the
    prompt_manager snapshot changes whenever an extension's instruction text changes
-   (`INSTA_UPDATE=always`); clippy: goose-mcp and the store must be clean, goose has 30 pre-existing sites.
+   (`INSTA_UPDATE=always`); clippy: goose-mcp and the store must be clean; goose + goose-cli carried 41
+   pre-existing sites on 2026-09-06 (measured by the VA-179 pass; the goose-cli one is a linker
+   `__eh_frame` note) — none may be in a file you touched.
 
 ## Never
 - Never inject bodies into the startup instructions; never add a threshold without its probe receipt;
