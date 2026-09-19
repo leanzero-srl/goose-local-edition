@@ -103,7 +103,7 @@ export default function CloudProvidersSection() {
           </span>
           <button
             type="button"
-            onClick={() => void loadProviders()}
+            onClick={loadProviders}
             className="shrink-0 rounded bg-white/20 px-2.5 py-1 text-xs font-bold hover:bg-white/30"
           >
             {intl.formatMessage(i18n.retry)}

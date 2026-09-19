@@ -1344,6 +1344,11 @@ export default function BenchmarkView() {
             }
           />
 
+          <p className={TYPE.bodyMuted}>
+            New runs use SB-8: a compact 3D gantry with a persistent backend. Its scorer is
+            experimental; model calibration and measured time/token comparisons are pending.
+          </p>
+
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
               launch; while a run is live they freeze on the values that run launched with. EVERY
               unset knob — temperature included — falls through to the config/model default: the 0.2
@@ -1400,8 +1405,8 @@ export default function BenchmarkView() {
           {catalogMismatch && (
             <ToneBand tone="warn">
               The site&rsquo;s current benchmark is {catalogMismatch.siteCurrent}, but this app
-              bundles {catalogMismatch.bundled} — the site&rsquo;s current benchmark needs an app
-              update.
+              bundles {catalogMismatch.bundled}. Runs use the bundled scorer; results from different
+              scorers are shown separately.
             </ToneBand>
           )}
 

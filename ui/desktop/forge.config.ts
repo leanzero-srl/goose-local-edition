@@ -22,14 +22,22 @@ function mirrorSwarmBenchPayload() {
   // vendor_service_v3.py already travelled — but the SPEC, the probe and the thresholds did not, and a
   // packaged app would have died on a missing spec-build-sb7.md the first time anyone picked the tier.
   // In dev this never showed, because resolveBenchPayloadDir() reads the live checkout.
-  for (const spec of ['spec-build.md', 'spec-build-v2.md', 'spec-build-sb7.md']) {
+  for (const spec of [
+    'spec-build.md',
+    'spec-build-v2.md',
+    'spec-build-v3.md',
+    'spec-build-sb7.md',
+    'spec-build-sb8.md',
+  ]) {
     if (fs.existsSync(join(src, spec))) fs.copyFileSync(join(src, spec), join(dest, spec));
   }
+  fs.cpSync(join(src, 'sb8'), join(dest, 'sb8'), { recursive: true });
   const benchSrc = join(src, 'bench');
   for (const name of fs.readdirSync(benchSrc)) {
     if (
       name.endsWith('.py') ||
       name.endsWith('.mjs') ||
+      name === 'sb8-three.module.js' ||
       name.endsWith('.json') ||
       name === 'vendor_docs.md' ||
       name === 'vendor_docs_v3.md'
@@ -46,7 +54,7 @@ function mirrorSwarmBenchPayload() {
 
 let cfg = {
   asar: true,
-  extraResource: ['src/bin', 'src/images', 'src/app-update.yml', 'src/swarm-bench'],
+  extraResource: ['src/bin', 'src/images', 'src/app-update.yml', 'src/swarm-bench', 'bundled-mcps'],
   icon: 'src/images/icon',
   // Windows specific configuration
   win32: {
@@ -118,6 +126,11 @@ module.exports = {
   packagerConfig: cfg,
   hooks: {
     prePackage: async () => {
+      require('child_process').execFileSync(
+        process.execPath,
+        [join(__dirname, 'scripts/bundle-mcps.mjs')],
+        { stdio: 'inherit' }
+      );
       mirrorSwarmBenchPayload();
     },
   },

@@ -1,3 +1,4 @@
+import { RouteFlight } from './RouteFlight';
 import React, { useEffect, useState } from 'react';
 import { IpcRendererEvent } from 'electron';
 import { Outlet, useLocation } from 'react-router-dom';
@@ -108,7 +109,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
         </motion.div>
 
         {/* Main content — no border / no card; just flows on the canvas. */}
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className="relative flex-1 overflow-hidden min-h-0">
+          <RouteFlight />
           <Outlet />
           {/* Always render ChatSessionsContainer to keep SSE connections alive.
               When navigating away from /pair, hide it with CSS */}

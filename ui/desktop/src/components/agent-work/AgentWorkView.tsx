@@ -68,7 +68,7 @@ export default function AgentWorkView() {
             subtitle={<span className="block max-w-[80ch]">Desks that tick: poll, investigate across your nodes, keep a ledger and a scratchpad, draft, get attacked by reviewers, and post through one gated script — asking you when only you can decide.</span>}
             actions={
               <div className="flex items-center gap-2">
-                <Button variant="ghost" icon={<RefreshCw />} onClick={() => { roster.refresh(); desk.refresh(); }} disabled={busy}>Refresh</Button>
+                <Button variant="ghost" icon={<RefreshCw />} onClick={async () => { await Promise.all([roster.refresh(), desk.refresh()]); }} disabled={busy}>Refresh</Button>
                 <Button variant="secondary" icon={<FolderPlus />} onClick={addExisting} disabled={busy}>Add existing</Button>
                 <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)} disabled={busy}>New agent</Button>
               </div>

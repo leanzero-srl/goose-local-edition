@@ -1,4 +1,4 @@
-import { Bot, Brain, Gauge, Settings, Zap } from 'lucide-react';
+import { Bot, Brain, Plug, Gauge, Settings, Zap } from 'lucide-react';
 import { Goose } from '../components/icons';
 import type React from 'react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
@@ -29,6 +29,7 @@ export interface NavItem {
  * route stays reachable (Settings close, error escapes) and renders the project landing.
  */
 export const NAV_ITEMS: NavItem[] = [
+  { id: 'extensions', path: '/extensions', label: 'MCPs', icon: Plug },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
   { id: 'agent-work', path: '/agent-work', label: 'Agent Work', icon: Bot },
@@ -47,6 +48,7 @@ export const SETTINGS_NAV_ITEM: NavItem = {
 // Translation descriptors for nav labels. Kept here next to NAV_ITEMS so the two
 // stay in sync.
 const navItemMessages = defineMessages({
+  extensions: { id: 'navigation.itemMcps', defaultMessage: 'MCPs' },
   skills: {
     id: 'navigation.itemSkills',
     defaultMessage: 'Skills',

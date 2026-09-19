@@ -28,6 +28,10 @@ def _regime():
     """sb-6 gate (--sb6 / BENCH_SB6): spec v3 + vendor_service_v2 + score_sb6. Read at CALL
     time (env-at-import would miss a sweep's per-arm env — the FEATURE_CHECKS precedent).
     Returns (scorer_module, vendor_module, default_spec_name). Default path byte-identical."""
+    if os.environ.get("BENCH_SB8"):
+        import score_sb8
+        import vendor_service_v4
+        return score_sb8, vendor_service_v4, "spec-build-sb8.md"
     if os.environ.get("BENCH_SB7"):
         import score_sb7  # noqa: PLC0415 — deliberately lazy, same as the sb-6 branch
         import vendor_service_v3  # noqa: PLC0415
@@ -246,7 +250,9 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     # builds no fixtures, which silently voids the expectation pack, the probe tokens and the
     # kill placements (the haiku canary measured exactly that: every pack-dependent probe
     # reported "harness failure"). Same hermetic wipes as score_sb7's own CLI.
-    sb7 = bool(os.environ.get("BENCH_SB7"))
+    sb8 = bool(os.environ.get("BENCH_SB8"))
+    sb7 = bool(os.environ.get("BENCH_SB7")) and not sb8
+    seeded = sb7 or sb8
     seed = None
     # REFUSE BEFORE BIND. vendor.serve() is a bare ThreadingHTTPServer: a held port is a traceback
     # in the launching shell and an engine that never starts (2026-08-29: an archive rescore held
@@ -256,14 +262,14 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     held = scorer._port_holder(port) if hasattr(scorer, "_port_holder") else None  # noqa: SLF001
     if held:
         raise SystemExit(f"REFUSED: {held}. Stop it, or launch with --port <free port>.")
-    if sb7 and hasattr(scorer, "_probe_preflight") and not os.environ.get("BENCH_ALLOW_BLIND_PROBE"):
+    if seeded and hasattr(scorer, "_probe_preflight") and not os.environ.get("BENCH_ALLOW_BLIND_PROBE"):
         why = scorer._probe_preflight()  # noqa: SLF001
         if why:
             raise SystemExit("REFUSED: the browser probe cannot run, so the render gate and a third "
                              "of the checks would be blind. Point GOOSE_SWARM_RENDER_NODE at a node "
                              "with playwright (npm root -g), or set BENCH_ALLOW_BLIND_PROBE=1 on "
                              f"purpose.\n  ✗ {why}")
-    if sb7:
+    if seeded:
         seed = scorer._draw_seed()  # noqa: SLF001 — the scorer owns seed policy
         for leftover in ("sb7-tokens.json", "sb7-expect.json"):
             (workdir / leftover).unlink(missing_ok=True)
@@ -288,10 +294,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
         agent = invoke(entrant, workdir, port, load_env(), timeout)
-        db = workdir / ("graded-sb7-db" if sb7 else "graded.db")
+        db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         ctx = scorer.gather(workdir, port, db, trace,
                             mark_phase=vendor.mark_phase,
-                            **({"seed": seed} if sb7 else {}))
+                            **({"seed": seed} if seeded else {}))
     finally:
         server.shutdown()
         # Refresh the run's copy now the vendor has stopped appending (record() is write-through,
@@ -357,11 +363,15 @@ def main() -> int:
     ap.add_argument("--sb7", action="store_true",
                     help="sb-7 regime: spec-build-sb7 + vendor_service_v3 + score_sb7 "
                          "(equivalent to BENCH_SB7=1; wins over --sb6)")
+    ap.add_argument("--sb8", action="store_true", help="SB-8 compact transactional 3D benchmark")
     args = ap.parse_args()
     if args.sb6:
         os.environ["BENCH_SB6"] = "1"
     if args.sb7:
         os.environ["BENCH_SB7"] = "1"
+
+    if args.sb8:
+        os.environ["BENCH_SB8"] = "1"
 
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))

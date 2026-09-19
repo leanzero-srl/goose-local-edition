@@ -252,13 +252,13 @@ export class GitHubUpdater {
       const buffer = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
       log.info(`GitHubUpdater: Buffer created - ${buffer.length} bytes`);
 
-      // Save to Downloads directory
-      const downloadsDir = path.join(os.homedir(), 'Downloads');
+      // A private staging directory prevents archive-name collisions and symlink replacement.
+      const downloadsDir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'goose-update-'));
       const fileName = `${this.bundleName}-${latestVersion}.zip`;
       const downloadPath = path.join(downloadsDir, fileName);
 
       log.info(`GitHubUpdater: Writing file to ${downloadPath}...`);
-      await fs.writeFile(downloadPath, buffer);
+      await fs.writeFile(downloadPath, buffer, { flag: 'wx', mode: 0o600 });
 
       const totalDuration = Date.now() - downloadStartTime;
       log.info(`=== GitHubUpdater: DOWNLOAD COMPLETE in ${totalDuration}ms ===`);

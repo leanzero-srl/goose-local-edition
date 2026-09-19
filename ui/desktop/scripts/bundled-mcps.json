@@ -1,0 +1,4 @@
+[
+  {"id":"leanzero-web-search","repo":"leanzero-srl/mcp-web-search","commit":"67010314e6107ca7bb5e1072caeaa29030a5009d","entry":"dist/index.js","build":true},
+  {"id":"leanzero-documents","repo":"leanzero-srl/leanzero-mcp-doc-processor","commit":"dc6aaeb982c8958dd169b2d47e0a6e27512750cc","entry":"src/index.js","build":false}
+]

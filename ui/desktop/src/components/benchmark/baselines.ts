@@ -7,7 +7,7 @@
  * loudly; it never invents rows.
  */
 
-export type Tier = 'A' | 'B' | 'C' | 'D';
+export type Tier = 'A' | 'B' | 'C' | 'D' | 'E';
 
 export interface BenchmarkRow {
   label: string;
@@ -25,8 +25,8 @@ export interface BenchmarkRow {
  * Which benchmark the user can RUN is the catalog's `current` flag, not a choice made here —
  * the view offers no tier chooser.
  */
-export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7';
-export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7'];
+export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-8';
+export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7', 'sb-8'];
 export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-5.3': 'sb-5.3',
   'sb-6': 'sb-6.0',
@@ -34,6 +34,7 @@ export const TIER_SCORER: Record<BenchTier, string> = {
   // carries "calibrated": false. The rc identity is kept so an rc number is never quietly
   // compared against a calibrated one.
   'sb-7': 'sb-7.0-rc',
+  'sb-8': 'sb-8.0-rc',
 };
 
 export const TIER_LABELS: Record<Tier, string> = {
@@ -41,5 +42,5 @@ export const TIER_LABELS: Record<Tier, string> = {
   B: 'B behaviour',
   C: 'C vendor contract',
   D: 'D finesse',
+  E: 'E excellence',
 };
-

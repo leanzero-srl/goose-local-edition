@@ -1,3 +1,4 @@
+import { BundledMcps } from './BundledMcps';
 import { View, ViewOptions } from '../../utils/navigationUtils';
 import ExtensionsSection from '../settings/extensions/ExtensionsSection';
 import type { ExtensionConfig } from '../../types/extensions';
@@ -22,7 +23,7 @@ import { defineMessages, useIntl } from '../../i18n';
 const i18n = defineMessages({
   heading: {
     id: 'extensionsView.heading',
-    defaultMessage: 'Extensions',
+    defaultMessage: 'MCPs',
   },
   description: {
     id: 'extensionsView.description',
@@ -142,6 +143,7 @@ export default function ExtensionsView({
               {intl.formatMessage(i18n.defaultNote)}
             </p>
 
+            <div className="mb-6"><BundledMcps /></div>
             {/* Action Buttons */}
             <div className="flex gap-4 mb-8">
               <Button

@@ -122,6 +122,17 @@ export interface CreateChatWindowOptions {
 
 // Define the API types in a single place
 type ElectronAPI = {
+  bundledMcps: () => Promise<
+    Array<{
+      name: string;
+      description: string;
+      cmd: string;
+      args: string[];
+      type: 'stdio';
+      envs: Record<string, string>;
+      timeout: number;
+    }>
+  >;
   platform: string;
   arch: string;
   reactReady: () => void;
@@ -154,7 +165,11 @@ type ElectronAPI = {
    *  The legacy 3-arg call (nodes, tier, sampling) is accepted for one release; the tier is
    *  IGNORED — the bridge strips it before invoke. */
   benchmarkRun: ((nodes: number, sampling?: SwarmSampling) => Promise<unknown>) &
-    ((nodes: number, tierIgnored: string | undefined, sampling?: SwarmSampling) => Promise<unknown>);
+    ((
+      nodes: number,
+      tierIgnored: string | undefined,
+      sampling?: SwarmSampling
+    ) => Promise<unknown>);
   /** Every benchmark run this app has launched, honest outcomes only: 'running' is asserted by
    *  the live process (never by the index alone); a crash leftover is re-derived from where its
    *  data lives and stamped. `publishable` = finished AND it is the stored latest result AND its
@@ -187,7 +202,13 @@ type ElectronAPI = {
       title: string;
       current: boolean;
       frozen: boolean;
-      baselines: Array<{ label: string; score: number; model: string; title?: string; url?: string }>;
+      baselines: Array<{
+        label: string;
+        score: number;
+        model: string;
+        title?: string;
+        url?: string;
+      }>;
     }>;
     error?: string;
     detail?: string;
@@ -295,7 +316,10 @@ type ElectronAPI = {
     manifestYaml: string,
     charter: string
   ) => Promise<{ ok: boolean; error?: string }>;
-  agentWorkStart: (dir: string, once: boolean) => Promise<{ ok: boolean; pid?: number | null; error?: string }>;
+  agentWorkStart: (
+    dir: string,
+    once: boolean
+  ) => Promise<{ ok: boolean; pid?: number | null; error?: string }>;
   agentWorkStop: (dir: string, immediate: boolean) => Promise<{ ok: boolean; error?: string }>;
   agentWorkTickNow: (dir: string) => Promise<boolean>;
   agentWorkSetPaused: (dir: string, paused: boolean) => Promise<boolean>;
@@ -431,6 +455,7 @@ type AppConfigAPI = {
 };
 
 const electronAPI: ElectronAPI = {
+  bundledMcps: () => ipcRenderer.invoke('bundled-mcps'),
   platform: process.platform,
   arch: process.arch,
   reactReady: () => ipcRenderer.send('react-ready'),
@@ -519,7 +544,8 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('copy-dir', src, dest, opts),
   skillDrift: (src: string, dest: string) => ipcRenderer.invoke('skill-drift', src, dest),
   importClaudeCode: (args: string[]) => ipcRenderer.invoke('import-claude-code', args),
-  swarmCloud: (provider: string, args: string[]) => ipcRenderer.invoke('swarm-cloud', provider, args),
+  swarmCloud: (provider: string, args: string[]) =>
+    ipcRenderer.invoke('swarm-cloud', provider, args),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getAllowedExtensions: () => ipcRenderer.invoke('get-allowed-extensions'),
   setMenuBarIcon: (show: boolean) => ipcRenderer.invoke('set-menu-bar-icon', show),

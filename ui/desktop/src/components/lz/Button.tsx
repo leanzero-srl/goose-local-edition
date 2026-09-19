@@ -1,3 +1,5 @@
+import { Loader2 } from 'lucide-react';
+import { useButtonAction } from '../../hooks/useButtonAction';
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { DISABLED, FOCUS, MOTION, RADIUS, cx } from './tokens';
 
@@ -53,10 +55,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     className,
     type = 'button',
     children,
+    onClick,
+    disabled,
     ...rest
   },
   ref
 ) {
+  const action = useButtonAction(onClick);
   return (
     <button
       ref={ref}
@@ -74,9 +79,23 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         className
       )}
       {...rest}
+      onClick={action.click}
+      disabled={disabled || action.busy}
+      aria-busy={action.busy || undefined}
+      title={action.error ?? rest.title}
     >
-      {icon != null && <span aria-hidden>{icon}</span>}
+      {action.busy ? (
+        <Loader2 aria-hidden className="animate-spin" />
+      ) : (
+        icon != null && <span aria-hidden>{icon}</span>
+      )}
       {children}
+      {action.error && (
+        <span role="alert" className="text-lz-err">
+          {' '}
+          — {action.error}
+        </span>
+      )}
     </button>
   );
 });

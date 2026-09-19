@@ -29,7 +29,7 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
   it('derives the newest bundled tier from the data — the latest-only launch tier', () => {
     // Latest-only: benchmark-run takes no tier argument and always launches this. Derived by
     // numeric version so it is never a hardcoded name and never depends on TIERS's array order.
-    expect(newestTier()).toBe('sb-7');
+    expect(newestTier()).toBe('sb-8');
     expect(TIERS).toContain(newestTier());
     expect(BENCH_SPEC_FILE[newestTier()]).toBeTruthy();
     expect(BENCH_RENDER_PROBE[newestTier()]).toBeTruthy();

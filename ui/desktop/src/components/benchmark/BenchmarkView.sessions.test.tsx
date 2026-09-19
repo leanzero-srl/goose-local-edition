@@ -250,7 +250,7 @@ describe('the benchmark sections and their sessions', () => {
       scorerVersion: 'sb-7.0-rc',
       catalogMismatch: { siteCurrent: 'sb-8.0', bundled: 'sb-7.0-rc' },
     });
-    const notice = await screen.findByText(/needs an app update/);
+    const notice = await screen.findByText(/Runs use the bundled scorer/);
     expect(notice.textContent).toContain('sb-8.0');
     expect(notice.textContent).toContain('sb-7.0-rc');
 
@@ -260,7 +260,7 @@ describe('the benchmark sections and their sessions', () => {
       startedAt: '2026-08-30T11:00:00.000Z',
       sampling: {},
     });
-    await waitFor(() => expect(screen.queryByText(/needs an app update/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Runs use the bundled scorer/)).toBeNull());
   });
 
   it('states the catalog absence LOUDLY and renders no comparison rows — never invented bars', async () => {

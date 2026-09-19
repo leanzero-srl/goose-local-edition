@@ -73,8 +73,8 @@ interface CreateSessionOptions {
   allExtensions?: FixedExtensionEntry[];
 }
 
-function selectedExtensionConfigs(options?: CreateSessionOptions): ExtensionConfig[] {
-  if (options?.extensionConfigs && options.extensionConfigs.length > 0) {
+function selectedExtensionConfigs(options?: CreateSessionOptions): ExtensionConfig[] | undefined {
+  if (options?.extensionConfigs !== undefined) {
     return options.extensionConfigs;
   }
   if (options?.allExtensions) {
@@ -85,20 +85,21 @@ function selectedExtensionConfigs(options?: CreateSessionOptions): ExtensionConf
         return config as ExtensionConfig;
       });
   }
-  return [];
+  return undefined;
 }
 
 async function createAcpSession(
   workingDir: string,
   options?: CreateSessionOptions
 ): Promise<Session> {
-  const selectedNames = new Set(selectedExtensionConfigs(options).map((config) => config.name));
+  const selection = selectedExtensionConfigs(options);
+  const selectedNames = new Set(selection?.map((config) => config.name));
   const gooseExtensions =
     selectedNames.size > 0
       ? (await getConfiguredGooseExtensions())
           .filter((entry) => selectedNames.has(gooseExtensionName(entry.extension)))
           .map((entry) => entry.extension)
-      : [];
+      : selection === undefined ? undefined : [];
   return acpChatSessionController.createSession(workingDir, gooseExtensions, {
     recipeId: options?.recipeId,
     recipeDeeplink: options?.recipeDeeplink,

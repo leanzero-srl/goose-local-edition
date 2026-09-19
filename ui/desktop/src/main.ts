@@ -35,7 +35,7 @@ import { benchRunArgvTokens, pidsMatchingTokens } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync, spawn, spawnSync, execFile, type ChildProcess } from 'child_process';
+import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process';
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
 import { startGooseServe, findGooseBinaryPath } from './gooseServe';
@@ -2459,93 +2459,41 @@ const resolveBenchPayloadDir = (): string => {
   throw new Error(`benchmark harness not found (looked in ${candidates.join(', ')})`);
 };
 
-// The render gate + scorer probe shell to node via GOOSE_SWARM_RENDER_NODE; a bare "node" dies with
-// the user's PATH under a packaged app, so hand them the bundled shim (src/bin/node) by absolute path.
-// The browser probe (product_probe.mjs) resolves `playwright` via a walk-up-then-global
-// ladder — MEASURED twice: the bundled shim's root had no playwright (run scored J 0.2 /
-// V 0.0, zero screenshots), then a walk-up-local playwright with no downloaded browsers
-// killed a second finished run the same way. The candidate test is therefore the REAL
-// probe end to end (real resolution AND a real Chromium launch; the dummy port never
-// navigates — ERR_UNSAFE_PORT — so launch success alone yields the probe JSON).
-// Holistic-review hardening: (a) ASYNC — the old spawnSync froze the Electron main
-// process (every window, every IPC) for up to 45s per candidate at Run click; (b) the
-// dev probe path is a fallback CHAIN (appPath, cwd variants) instead of one cwd guess —
-// a wrong cwd used to reject every candidate silently and revive the probe-dead class;
-// (c) when the probe file is unlocatable, an inline launch test mirroring the probe's
-// resolution ladder still tests the property; (d) memoized — one resolution per session.
+// Benchmark probes share the exact browser and Playwright shipped for the LeanZero MCPs.
+const bundledBrowserEnv = async (): Promise<Record<string, string>> => {
+  const root = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'bundled-mcps');
+  const manifest = JSON.parse(await fs.readFile(path.join(root, 'browser.json'), 'utf8')) as { executable: string };
+  return {
+    GOOSE_SWARM_PLAYWRIGHT_MODULE: path.join(root, 'leanzero-web-search', 'node_modules', 'playwright'),
+    GOOSE_SWARM_CHROMIUM_EXECUTABLE: path.join(root, manifest.executable),
+  };
+};
+
 let benchNodeMemo: string | null = null;
 const resolveBenchNode = async (): Promise<string> => {
   if (benchNodeMemo) return benchNodeMemo;
-  const probeCandidates = app.isPackaged
-    ? [path.join(process.resourcesPath, 'swarm-bench', 'bench', 'product_probe.mjs')]
-    : [
-        path.join(app.getAppPath(), '..', '..', 'evals', 'swarm-bench', 'bench', 'product_probe.mjs'),
-        path.join(process.cwd(), '..', '..', 'evals', 'swarm-bench', 'bench', 'product_probe.mjs'),
-        path.join(process.cwd(), 'evals', 'swarm-bench', 'bench', 'product_probe.mjs'),
-      ];
-  const probePath = probeCandidates.find((p) => fsSync.existsSync(p));
-  const launchTest =
-    "try{const{createRequire}=require('module');const{execSync}=require('child_process');" +
-    "let pw;try{pw=require('playwright')}catch(e){const g=execSync('npm root -g',{encoding:'utf8'}).trim();" +
-    "pw=createRequire(require('path').join(g,'x.js'))('playwright')}" +
-    'pw.chromium.launch({headless:true}).then(b=>b.close()).then(()=>process.exit(0))' +
-    '.catch(()=>process.exit(1))}catch(e){process.exit(1)}';
-  const runAsync = (cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> =>
-    new Promise((resolve) => {
-      try {
-        const ch = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] });
-        let out = '';
-        const t = setTimeout(() => {
-          try {
-            ch.kill();
-          } catch {
-            /* already gone */
-          }
-          resolve({ ok: false, out });
-        }, 45000);
-        ch.stdout?.on('data', (d) => {
-          out += String(d);
-        });
-        ch.on('exit', (code) => {
-          clearTimeout(t);
-          resolve({ ok: code === 0, out });
-        });
-        ch.on('error', () => {
-          clearTimeout(t);
-          resolve({ ok: false, out });
-        });
-      } catch {
-        resolve({ ok: false, out: '' });
-      }
-    });
-  const candidates: string[] = [];
-  const envNode = process.env.GOOSE_SWARM_RENDER_NODE;
-  if (envNode) candidates.push(envNode);
-  try {
-    const which = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['node'], {
-      encoding: 'utf8',
-    });
-    const sys = which.stdout?.split('\n')[0]?.trim();
-    if (sys) candidates.push(sys);
-  } catch {
-    /* no system node */
-  }
-  for (const c of candidates) {
-    if (!fsSync.existsSync(c)) continue;
-    const r = probePath
-      ? await runAsync(c, [probePath, 'load', 'http://127.0.0.1:9'])
-      : await runAsync(c, ['-e', launchTest]);
-    if (r.ok && (!probePath || r.out.includes('"scenario"'))) {
-      benchNodeMemo = c;
-      return c;
-    }
-  }
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
-  const shim = app.isPackaged
-    ? path.join(process.resourcesPath, 'bin', shimName)
-    : path.join(process.cwd(), 'src', 'bin', shimName);
-  benchNodeMemo = fsSync.existsSync(shim) ? shim : 'node';
-  return benchNodeMemo;
+  const node = path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
+  const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[newestTier()]);
+  const env = { ...process.env, ...await bundledBrowserEnv() };
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(node, [probe, '--preflight'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    let stdout = '';
+    child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
+    child.stderr?.on('data', (chunk) => { output += String(chunk); });
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Bundled benchmark browser did not start.')); }, 45000);
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      let ready = false;
+      try { ready = JSON.parse(stdout).ok === true; } catch { /* missing receipt is a failed preflight */ }
+      if (code === 0 && ready) resolve();
+      else reject(new Error(`Bundled benchmark browser failed: ${output.slice(-1500)}`));
+    });
+  });
+  benchNodeMemo = node;
+  return node;
 };
 
 // Writable ground for every run. resourcesPath is read-only in a packaged app, so the run's
@@ -3189,6 +3137,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const tier = newestTier();
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
+  const sb8 = tier === 'sb-8';
   // Site-vs-bundle drift, from the CACHED catalog only — launching must never wait on the network
   // (the view refreshes the cache via benchmark-catalog). When the site's current benchmark is not
   // the bundled newest, the run still launches the bundled one (the app cannot run a spec it does
@@ -3252,6 +3201,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   };
 
   const benchNode = await resolveBenchNode();
+  const browserEnv = await bundledBrowserEnv();
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(
       'python3',
@@ -3259,7 +3209,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
       // door and cut a run the engine itself would never have stopped.
       ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
-        '--out', outRoot, ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : [])],
+        '--out', outRoot, ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb8 ? ['--sb8'] : [])],
       {
         cwd: workRoot,
         detached: true,
@@ -3271,6 +3221,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           // before a node answers, and those 5 minutes are three idle machines.
           GOOSE_SWARM_BENCHMARK: '1',
           GOOSE_SWARM_RENDER_NODE: benchNode,
+          ...browserEnv,
           // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
           // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
           // switched four env-only, default-ON layers off here. Every one of those layers is DELETED
@@ -6050,4 +6001,58 @@ ipcMain.handle('agent-work-read', async (_event, dir: string) => {
     engineLog: engineLog?.text ?? '',
     now: Date.now(),
   };
+});
+
+ipcMain.handle('bundled-mcps', async () => {
+  const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src');
+  const node = path.join(root, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node');
+  const bundledRoot = path.join(
+    app.isPackaged ? process.resourcesPath : app.getAppPath(),
+    'bundled-mcps'
+  );
+  const browser = JSON.parse(await fs.readFile(path.join(bundledRoot, 'browser.json'), 'utf8')) as {
+    executable: string;
+  };
+  const browserExecutable = path.join(bundledRoot, browser.executable);
+  await fs.access(browserExecutable);
+  const catalog = [
+    {
+      id: 'leanzero-web-search',
+      name: 'LeanZero Web Search',
+      entry: 'dist/index.js',
+      description:
+        'Search the web and extract pages. Configure SERPER_API_KEY for search; page extraction works without a key.',
+    },
+    {
+      id: 'leanzero-documents',
+      name: 'LeanZero Documents',
+      entry: 'src/index.js',
+      description: 'Read, create and edit PDF, Word, Excel and PowerPoint documents locally.',
+    },
+  ];
+  return Promise.all(
+    catalog.map(async (item) => {
+      const entry = path.join(
+        app.isPackaged ? process.resourcesPath : app.getAppPath(),
+        'bundled-mcps',
+        item.id,
+        item.entry
+      );
+      await fs.access(entry);
+      await fs.access(node);
+      return {
+        name: item.name,
+        description: item.description,
+        type: 'stdio' as const,
+        cmd: node,
+        args: [entry],
+        envs: {
+          MCP_CLIENT_TYPE: 'agent',
+          PUPPETEER_EXECUTABLE_PATH: browserExecutable,
+          LEANZERO_BROWSER_EXECUTABLE: browserExecutable,
+        },
+        timeout: 300,
+      };
+    })
+  );
 });

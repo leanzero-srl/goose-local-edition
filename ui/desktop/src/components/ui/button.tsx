@@ -1,3 +1,5 @@
+import { Loader2 } from 'lucide-react';
+import { useButtonAction } from '../../hooks/useButtonAction';
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -85,18 +87,53 @@ const Button = React.forwardRef<
       asChild?: boolean;
       shape?: 'pill' | 'round';
     }
->(({ className, variant, size, asChild = false, shape = 'pill', ...props }, ref) => {
-  const Comp = asChild ? Slot : 'button';
+>(
+  (
+    {
+      className,
+      variant,
+      size,
+      asChild = false,
+      shape = 'pill',
+      onClick,
+      disabled,
+      children,
+      ...props
+    },
+    ref
+  ) => {
+    const Comp = asChild ? Slot : 'button';
+    const action = useButtonAction(onClick);
 
-  return (
-    <Comp
-      data-slot="button"
-      className={cn(buttonVariants({ variant, size, shape, className }))}
-      ref={ref}
-      {...props}
-    />
-  );
-});
+    return (
+      <Comp
+        data-slot="button"
+        className={cn(buttonVariants({ variant, size, shape, className }))}
+        ref={ref}
+        {...props}
+        onClick={action.click}
+        disabled={disabled || action.busy}
+        aria-busy={action.busy || undefined}
+        title={action.error ?? props.title}
+      >
+        {asChild ? (
+          children
+        ) : (
+          <>
+            {action.busy && <Loader2 aria-hidden className="animate-spin" />}
+            {children}
+            {action.error && (
+              <span role="alert" className="text-lz-err">
+                {' '}
+                — {action.error}
+              </span>
+            )}
+          </>
+        )}
+      </Comp>
+    );
+  }
+);
 
 Button.displayName = 'Button';
 

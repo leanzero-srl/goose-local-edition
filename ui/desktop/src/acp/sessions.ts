@@ -237,12 +237,12 @@ export interface AcpRecipeOptions {
 
 export async function acpNewSession(
   cwd: string,
-  gooseExtensions: GooseExtension[],
+  gooseExtensions: GooseExtension[] | undefined,
   recipe?: AcpRecipeOptions
 ): Promise<AcpNewSessionResult> {
   const client = await getAcpClient();
   const meta: Record<string, unknown> = { client: 'goose-desktop' };
-  if (gooseExtensions.length > 0) {
+  if (gooseExtensions !== undefined) {
     meta.enabledExtensions = gooseExtensions;
   }
   if (recipe?.recipeId) {
