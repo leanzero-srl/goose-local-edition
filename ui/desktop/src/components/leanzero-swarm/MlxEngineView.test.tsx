@@ -176,6 +176,7 @@ function withMesh(peers: NodeState[]) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   vi.clearAllMocks();
   mockFeatures.leanzeroLink = false;
   mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
@@ -395,7 +396,9 @@ describe('MlxEngineView engine tab', () => {
     );
     const { unmount } = render(<MlxEngineView />);
     const unknown = await screen.findByTestId('mlx-inflight-unknown');
-    expect(unknown).toHaveTextContent('unknown — GET http://127.0.0.1:9600/v1/status returned HTTP 401');
+    expect(unknown).toHaveTextContent(
+      'unknown — GET http://127.0.0.1:9600/v1/status returned HTTP 401'
+    );
     expect(screen.queryByTestId('mlx-inflight-count')).toBeNull();
     unmount();
   });
@@ -403,7 +406,9 @@ describe('MlxEngineView engine tab', () => {
   it('a stopped engine has no in-flight row value — an absent fact, not unknown', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('stopped'));
+    await waitFor(() =>
+      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('stopped')
+    );
     expect(screen.queryByTestId('mlx-inflight-unknown')).toBeNull();
     expect(screen.queryByTestId('mlx-inflight-count')).toBeNull();
     unmount();
@@ -1039,8 +1044,8 @@ describe('MlxEngineView models tab', () => {
     expect(screen.getByText('42')).toBeInTheDocument();
     expect(screen.getByText('4-bit')).toBeInTheDocument();
     expect(screen.getByText('qwen3')).toBeInTheDocument();
-    // The size ESTIMATE renders with its ~ marker; a hit without one shows no size at all.
-    expect(screen.getByText('~3.2 GB')).toBeInTheDocument();
+    // Manifest bytes use the same units as the model card; unknown sizes stay absent.
+    expect(screen.getByText('3.20 GB')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => {
@@ -1048,6 +1053,29 @@ describe('MlxEngineView models tab', () => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
     unmount();
+  });
+
+  it('reconnects a server-owned download after navigating away and back', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    const first = render(<MlxEngineView />);
+    await openModelsTab();
+    await userEvent.click(await screen.findByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => expect(mockDownload).toHaveBeenCalledOnce());
+    first.unmount();
+    expect(mockDownloadCancel).not.toHaveBeenCalled();
+    expect(mockDownloadPause).not.toHaveBeenCalled();
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 4 * GB,
+      downloadedBytes: 3 * GB,
+      currentFile: 'model.safetensors',
+    });
+    const second = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined));
+    expect(await screen.findByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    expect(mockDownload).toHaveBeenCalledOnce();
+    second.unmount();
   });
 
   it('Load more appends the next page via the cursor; a filter change resets pagination', async () => {

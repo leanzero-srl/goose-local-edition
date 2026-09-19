@@ -164,8 +164,7 @@ export interface MlxBrowseHit {
   quant?: string;
   arch?: string;
   /**
-   * ESTIMATE of the weight payload in bytes, derived from the server's safetensors dtype
-   * counts (excludes tokenizer/config files). Absent = unknown — show nothing, never a dash.
+   * Exact repository download bytes. Wire name retained for older clients.
    */
   sizeBytesEstimate?: number;
 }

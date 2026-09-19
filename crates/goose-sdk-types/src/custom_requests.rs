@@ -2616,10 +2616,7 @@ pub struct MlxBrowseHitDto {
     pub quant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
-    /// ESTIMATE of the weight payload in bytes, derived from the server's safetensors
-    /// dtype counts (measured within 0.003% of the true safetensors byte sum, but it
-    /// excludes tokenizer/config files). Absent when the server carries no safetensors
-    /// info — never a guess.
+    /// Exact repository download bytes; field name retained for wire compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes_estimate: Option<u64>,
 }

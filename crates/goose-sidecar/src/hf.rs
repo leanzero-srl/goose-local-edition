@@ -175,11 +175,8 @@ pub struct BrowseHit {
     /// present; else a DERIVED display fallback from tags/name. Not what the server
     /// filtered on unless the caller also set `BrowseParams::arch`.
     pub arch: Option<String>,
-    /// ESTIMATE of the weight payload in bytes, computed from the server's
-    /// `safetensors.parameters` dtype counts × dtype width (measured within 0.003% of
-    /// the true safetensors byte sum on live repos, but it excludes tokenizer/config
-    /// files and safetensors headers). Absent when the server reports no safetensors
-    /// info or an unknown dtype appears — never a guess.
+    /// Exact repository download bytes from the same file manifest as the model card.
+    /// The wire name is retained for compatibility with older clients.
     pub size_bytes_estimate: Option<u64>,
 }
 
@@ -193,12 +190,6 @@ pub struct BrowsePage {
 struct ApiHitConfig {
     #[serde(default)]
     model_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApiSafetensorsInfo {
-    #[serde(default)]
-    parameters: HashMap<String, u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,31 +207,6 @@ struct BrowseApiHit {
     tags: Vec<String>,
     #[serde(default)]
     config: Option<ApiHitConfig>,
-    #[serde(default)]
-    safetensors: Option<ApiSafetensorsInfo>,
-}
-
-/// safetensors dtype width in BITS (the spec's fixed widths). Unknown dtypes return
-/// None so a size estimate is dropped whole rather than partially fabricated.
-fn dtype_width_bits(dtype: &str) -> Option<u64> {
-    Some(match dtype {
-        "F64" | "I64" | "U64" => 64,
-        "F32" | "I32" | "U32" => 32,
-        "F16" | "BF16" | "I16" | "U16" => 16,
-        "F8_E4M3" | "F8_E5M2" | "I8" | "U8" | "BOOL" => 8,
-        _ => return None,
-    })
-}
-
-fn size_estimate_from_safetensors(info: &ApiSafetensorsInfo) -> Option<u64> {
-    if info.parameters.is_empty() {
-        return None;
-    }
-    let mut total_bits: u64 = 0;
-    for (dtype, count) in &info.parameters {
-        total_bits = total_bits.checked_add(dtype_width_bits(dtype)?.checked_mul(*count)?)?;
-    }
-    Some(total_bits / 8)
 }
 
 /// DISPLAY-FALLBACK architecture tags, measured live on MLX repos (2026-08-31): every
@@ -313,7 +279,11 @@ fn quant_from_name(id: &str) -> Option<String> {
             return Some(format!("{}-bit", &lower[start..end]));
         }
     }
-    None
+    lower.split(['-', '_', '/']).find_map(|part| {
+        let bits = part.strip_prefix('q')?;
+        (!bits.is_empty() && bits.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| format!("{bits}-bit"))
+    })
 }
 
 pub fn derive_quant(id: &str, tags: &[String]) -> Option<String> {
@@ -454,8 +424,7 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
                 }
             }
             query.push(("limit", params.limit.clamp(1, 50).to_string()));
-            // config carries model_type (exact arch), safetensors carries dtype counts
-            // (size estimate); both ride the same LIST call — measured, no per-row calls.
+            // File sizes are resolved from the download manifest below.
             for field in [
                 "downloads",
                 "likes",
@@ -463,7 +432,6 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
                 "lastModified",
                 "tags",
                 "config",
-                "safetensors",
             ] {
                 query.push(("expand[]", field.to_string()));
             }
@@ -481,7 +449,7 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
     let body = read_success_body(resp, "HuggingFace model browse").await?;
     let raw: Vec<BrowseApiHit> =
         serde_json::from_str(&body).context("parsing HuggingFace browse response")?;
-    let hits = raw
+    let mut hits: Vec<BrowseHit> = raw
         .into_iter()
         .map(|h| {
             let quant = derive_quant(&h.id, &h.tags);
@@ -490,10 +458,6 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
                 .as_ref()
                 .and_then(|c| c.model_type.clone())
                 .or_else(|| derive_arch(&h.id, &h.tags));
-            let size_bytes_estimate = h
-                .safetensors
-                .as_ref()
-                .and_then(size_estimate_from_safetensors);
             let author = h.id.split('/').next().unwrap_or_default().to_string();
             BrowseHit {
                 author,
@@ -503,12 +467,25 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
                 last_modified: h.last_modified,
                 quant,
                 arch,
-                size_bytes_estimate,
+                size_bytes_estimate: None,
                 tags: h.tags,
                 id: h.id,
             }
         })
         .collect();
+    let mut sizes = tokio::task::JoinSet::new();
+    for (index, hit) in hits.iter().enumerate() {
+        let id = hit.id.clone();
+        let token = token.map(str::to_owned);
+        sizes.spawn(async move {
+            let files = repo_files(&id, token.as_deref()).await?;
+            Ok::<_, anyhow::Error>((index, files.iter().map(|f| f.size).sum()))
+        });
+    }
+    while let Some(result) = sizes.join_next().await {
+        let (index, bytes) = result.context("model size task failed")??;
+        hits[index].size_bytes_estimate = Some(bytes);
+    }
     Ok(BrowsePage { hits, next_cursor })
 }
 
@@ -1900,38 +1877,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn size_estimate_uses_dtype_widths_and_refuses_unknown_dtypes() {
-        // Real numbers from mlx-community/Qwen3.5-9B-MLX-4bit (measured 2026-08-31):
-        // BF16 736,844,272 + U32 1,119,092,736 + F32 768 → 5,950,062,560 bytes,
-        // within 0.003% of the repo's true safetensors byte sum 5,950,221,072.
-        let info = ApiSafetensorsInfo {
-            parameters: [
-                ("BF16".to_string(), 736_844_272u64),
-                ("U32".to_string(), 1_119_092_736u64),
-                ("F32".to_string(), 768u64),
-            ]
-            .into_iter()
-            .collect(),
-        };
-        assert_eq!(size_estimate_from_safetensors(&info), Some(5_950_062_560));
-
-        let unknown = ApiSafetensorsInfo {
-            parameters: [("BF16".to_string(), 100u64), ("MXFP4".to_string(), 100u64)]
-                .into_iter()
-                .collect(),
-        };
-        assert_eq!(
-            size_estimate_from_safetensors(&unknown),
-            None,
-            "an unknown dtype must drop the whole estimate, not fabricate part of it"
-        );
-        let empty = ApiSafetensorsInfo {
-            parameters: HashMap::new(),
-        };
-        assert_eq!(size_estimate_from_safetensors(&empty), None);
-    }
-
     #[tokio::test]
     async fn browse_cursor_must_be_an_hf_models_url() {
         let params = BrowseParams {
@@ -2083,6 +2028,36 @@ mod tests {
         let again = browse_filter_vocab(None).await.unwrap();
         assert!(started.elapsed() < Duration::from_millis(50), "not cached");
         assert_eq!(again.computed_at_epoch_s, vocab.computed_at_epoch_s);
+    }
+
+    #[tokio::test]
+    #[ignore = "hits Hugging Face; release regression for the reported repository"]
+    async fn live_atlassian_browse_size_matches_download_manifest() {
+        let id = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+        let page = browse_mlx_models(
+            &BrowseParams {
+                query: Some("Qwen3.8-27B-Atlassian-Q8-mlx".into()),
+                author: Some("Mihai-LeanZero".into()),
+                limit: 10,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let hit = page
+            .hits
+            .iter()
+            .find(|hit| hit.id == id)
+            .expect("reported model exists");
+        let card = model_card(id, None).await.unwrap();
+        assert_eq!(hit.size_bytes_estimate, Some(card.total_bytes));
+        assert_eq!(
+            card.total_bytes,
+            card.files.iter().map(|file| file.size).sum::<u64>()
+        );
+        assert_eq!(hit.quant.as_deref(), Some("8-bit"));
+        println!("actual manifest: {} bytes", card.total_bytes);
     }
 
     #[tokio::test]

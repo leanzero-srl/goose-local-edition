@@ -76,7 +76,13 @@ import {
   type MlxLocalModel,
   type MlxModelProfile,
 } from '../../acp/mlx-engine';
-import { DownloadProgressRow, formatCount, formatDate, formatGb } from './primitives';
+import {
+  DownloadProgressRow,
+  formatBytesShort,
+  formatCount,
+  formatDate,
+  formatGb,
+} from './primitives';
 import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
@@ -1418,12 +1424,12 @@ function HfBrowser({
           hit.sizeBytesEstimate != null ? (
             <span
               className={META}
-              title="estimated from tensor dtypes; exact size on the model card"
+              title="Repository download size, including weights, tokenizer and configuration"
             >
-              ~{formatGb(hit.sizeBytesEstimate)}
+              {formatBytesShort(hit.sizeBytesEstimate)}
             </span>
           ) : (
-            <span className="text-lz-ink-4" title="no size estimate for this repo">
+            <span className="text-lz-ink-4" title="Download size unavailable">
               —
             </span>
           ),
@@ -2238,6 +2244,24 @@ const MlxEngineView: React.FC = () => {
   // Download tracking lives in the VIEW SHELL, not the Models tab: switching tabs
   // mid-download must keep the rows live and the poll running while the view is open.
   const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
+  useEffect(() => {
+    let disposed = false;
+    const ids = readTrackedDownloads(activeNodeId ?? 'local');
+    void Promise.all(
+      [...ids].map(async (id) => {
+        const progress = await mlxEngineDownloadProgress(id, activeNodeId);
+        if (!disposed && progress && progress.state !== 'cancelled') {
+          setDownloads((prev) => ({ ...prev, [id]: progress }));
+        }
+      })
+    ).catch((error) => {
+      if (!disposed)
+        setDownloadErrors({ tracking: mlxErrorMessage(error, 'Could not reconnect downloads.') });
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [activeNodeId]);
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
   // A cancel DELETES the partial on disk. On a REMOTE device that is another machine's disk, so
   // it goes through a confirm that names the device; a local cancel stays immediate (as before).
@@ -2306,22 +2330,20 @@ const MlxEngineView: React.FC = () => {
     };
   }, [refreshStatus]);
 
-  const refreshModels = useCallback(() => {
-    void (async () => {
-      try {
-        const list = await mlxEngineModelsList(activeNodeId);
-        if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
-        setModels(list.models);
-        setDisk({ availableBytes: list.diskAvailableBytes, totalBytes: list.diskTotalBytes });
-      } catch (error) {
-        if (activeNodeRef.current !== activeNodeId) return;
-        // The models list failing is a real fact; show it where models are picked.
-        setMountError(mlxErrorMessage(error, 'Could not list local models.'));
-      } finally {
-        // The node's models have landed (or failed loudly) — the switch is done.
-        if (activeNodeRef.current === activeNodeId) setNodeSwitching(false);
-      }
-    })();
+  const refreshModels = useCallback(async () => {
+    try {
+      const list = await mlxEngineModelsList(activeNodeId);
+      if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
+      setModels(list.models);
+      setDisk({ availableBytes: list.diskAvailableBytes, totalBytes: list.diskTotalBytes });
+    } catch (error) {
+      if (activeNodeRef.current !== activeNodeId) return;
+      // The models list failing is a real fact; show it where models are picked.
+      setMountError(mlxErrorMessage(error, 'Could not list local models.'));
+    } finally {
+      // The node's models have landed (or failed loudly) — the switch is done.
+      if (activeNodeRef.current === activeNodeId) setNodeSwitching(false);
+    }
   }, [activeNodeId]);
 
   // Filter vocabularies load once per (device, view-open) (cached backend-side), on the first
@@ -2363,6 +2385,7 @@ const MlxEngineView: React.FC = () => {
     async (repoId: string, opts: { dropIfUntracked?: boolean } = {}) => {
       try {
         const progress = await mlxEngineDownloadProgress(repoId, activeNodeId);
+        if (activeNodeRef.current !== activeNodeId) return;
         if (!progress) {
           if (opts.dropIfUntracked) {
             setDownloads((prev) => {
@@ -2393,6 +2416,10 @@ const MlxEngineView: React.FC = () => {
 
   const startDownload = useCallback(
     async (repoId: string) => {
+      const key = activeNodeId ?? 'local';
+      const tracked = readTrackedDownloads(key);
+      tracked.add(repoId);
+      sessionStorage.setItem(`mlx-downloads:${key}`, JSON.stringify([...tracked]));
       clearDownloadError(repoId);
       setDownloads((prev) => ({
         ...prev,
@@ -2427,6 +2454,10 @@ const MlxEngineView: React.FC = () => {
   /** Also the entry point for UNTRACKED partial residue on disk (incomplete local models). */
   const resumeDownload = useCallback(
     async (repoId: string) => {
+      const key = activeNodeId ?? 'local';
+      const tracked = readTrackedDownloads(key);
+      tracked.add(repoId);
+      sessionStorage.setItem(`mlx-downloads:${key}`, JSON.stringify([...tracked]));
       clearDownloadError(repoId);
       setDownloads((prev) =>
         prev[repoId] != null
@@ -2829,3 +2860,13 @@ const MlxEngineView: React.FC = () => {
 };
 
 export default MlxEngineView;
+
+function readTrackedDownloads(nodeId: string): Set<string> {
+  const stored = sessionStorage.getItem(`mlx-downloads:${nodeId}`);
+  if (!stored) return new Set();
+  const ids: unknown = JSON.parse(stored);
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) {
+    throw new Error('Saved download tracking is invalid.');
+  }
+  return new Set(ids);
+}
