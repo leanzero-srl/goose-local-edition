@@ -327,7 +327,7 @@ release-notarized version:
     cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64 && cd ../..
     echo ""
     echo ">>> DONE. Notarized DMG: ui/desktop/out/make/Goose-{{version}}.dmg — drag-installs on ANY Mac, no Gatekeeper prompt."
-    echo "    Auto-update artifacts (Developer-ID signed): ui/desktop/out/Goose-darwin-arm64/{Goose.zip,latest-mac.yml}"
+    echo "    Auto-update artifacts (Developer-ID signed): ui/desktop/out/Goose-darwin-arm64/{Goose.zip,Goose-darwin-arm64.zip,latest-mac.yml}"
 
 # Publish a notarized release to GitHub: the DMG, the auto-update zip and its manifest, with notes.
 # Runs AFTER `just release-notarized <version>`. gh is logged in as leanzero-srl on this Mac
@@ -344,8 +344,11 @@ publish-release version notes="":
     [ -s "$dmg" ] || { echo "publish-release: REFUSED — $dmg missing; run just release-notarized {{version}} first"; exit 1; }
     /usr/sbin/spctl -a -vvv -t exec ui/desktop/out/Goose-darwin-arm64/Goose.app 2>&1 | grep -q "Notarized Developer ID" || { echo "publish-release: REFUSED — the built app is not a notarized Developer ID build"; exit 1; }
     git rev-parse -q --verify "refs/tags/v{{version}}" >/dev/null || { echo "publish-release: REFUSED — tag v{{version}} does not exist; tag the release commit first"; exit 1; }
+    update_zip=ui/desktop/out/Goose-darwin-arm64/Goose-darwin-arm64.zip
+    [ -s "$update_zip" ] || { echo "publish-release: REFUSED — manifest archive $update_zip missing"; exit 1; }
+    cmp -s ui/desktop/out/Goose-darwin-arm64/Goose.zip "$update_zip" || { echo "publish-release: REFUSED — update archive differs from notarized archive"; exit 1; }
     notes_arg=(--generate-notes); [ -n "{{notes}}" ] && notes_arg=(--notes-file "{{notes}}")
-    gh release create "v{{version}}" "$dmg" ui/desktop/out/Goose-darwin-arm64/Goose.zip ui/desktop/out/Goose-darwin-arm64/latest-mac.yml -R leanzero-srl/goose-local-edition --title "Goose Swarm {{version}}" "${notes_arg[@]}" --latest
+    gh release create "v{{version}}" "$dmg" ui/desktop/out/Goose-darwin-arm64/Goose.zip "$update_zip" ui/desktop/out/Goose-darwin-arm64/latest-mac.yml -R leanzero-srl/goose-local-edition --title "Goose Swarm {{version}}" "${notes_arg[@]}" --latest
     gh release view "v{{version}}" -R leanzero-srl/goose-local-edition --json tagName,assets,url -q '"\(.tagName) assets=\(.assets|map(.name)|join(",")) \(.url)"'
 
 # Run UI with latest (Windows version)
