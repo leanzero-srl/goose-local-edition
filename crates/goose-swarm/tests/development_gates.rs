@@ -505,7 +505,7 @@ fn swarm_rs_line_count_only_decreases() {
     // moved verbatim to commands/swarm/cli_args.rs, paying for the `Agent` sub-command variant,
     // its handle arm and `mod agent_work;` — the second swarm operation lives entirely in
     // commands/swarm/agent_work/ and calls the golden engine's worker door without editing it.
-    const SWARM_RS_LINE_BASELINE: usize = 33_922;
+    const SWARM_RS_LINE_BASELINE: usize = 33_824;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

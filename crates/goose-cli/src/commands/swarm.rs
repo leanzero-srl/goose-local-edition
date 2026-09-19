@@ -108,7 +108,12 @@ use plan_repairs::{
     plan_flags, repair_brief_file_mentions, repair_owning_nothing, repair_sink_deps,
     repair_sink_files, repair_unassigned_endpoints, unassigned_endpoints,
 };
+mod app_spawn;
 mod tree;
+use app_spawn::{
+    boot_invocation, kill_app_tree, own_process_group, run_repro_once, smoke_output,
+    ShellGroupReaper,
+};
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
 mod ledger_block;
 #[cfg(test)]
@@ -1685,7 +1690,7 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     // sink/shard prompt reproduces from an archived tree exactly as it would mid-run — the same
     // renderer over the same file, no live run required. Same round-0 slot every replay:
     // rewritten whole, so a second pass on an unchanged tree is a no-op.
-    if let Some(path) = write_gate_ledger(
+    match write_gate_ledger(
         &tree,
         0,
         "spec_contract_replay",
@@ -1693,7 +1698,11 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
         &r.inconclusive,
         serde_json::json!(r.verified),
     ) {
-        eprintln!("gate replay: ledger written to {}", path.display());
+        Ok(path) => eprintln!("gate replay: ledger written to {}", path.display()),
+        Err(e) => eprintln!(
+            "gate replay: {} — the tree's ledger does NOT carry this verdict: {e}",
+            e.event_name()
+        ),
     }
     if r.findings.is_empty() && r.verified > 0 {
         eprintln!(
@@ -5056,7 +5065,7 @@ mod tests {
     fn spec_run_argv_v2_fills_each_placeholder_by_kind() {
         let tmp = tempfile::TempDir::new().unwrap();
         let spec = "Run `python -m vendorsync --db PATH --port N` to serve.";
-        let (argv, ports) = spec_run_argv_v2(spec, "vendorsync", tmp.path(), 8999);
+        let (argv, ports, _) = spec_run_argv_v2(spec, "vendorsync", tmp.path(), 8999);
         assert_eq!(argv[0], "--db");
         assert!(argv[1].starts_with(&*tmp.path().to_string_lossy()));
         assert_eq!(argv[2], "--port");
@@ -5066,7 +5075,7 @@ mod tests {
         // F910 defect 1, pinned: the sb-7 combined boot — TWO DISTINCT ports, a created
         // scratch dir, the spec's vendor base for URL, a scratch tokens file.
         let sb7 = "Boot: `python -m app --db-dir P --ledger-port N --notifier-port M --vendor URL --tokens-file T`";
-        let (a, p2) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
+        let (a, p2, _) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
         assert_eq!(p2.len(), 2, "each port-flag gets its OWN port: {a:?}");
         assert_ne!(
             p2[0], p2[1],
@@ -5089,7 +5098,7 @@ mod tests {
         );
 
         // Literals survive; no invocation / wrong package = empty.
-        let (lit, _) = spec_run_argv_v2("`python -m app serve --port N`", "app", tmp.path(), 9);
+        let (lit, _, _) = spec_run_argv_v2("`python -m app serve --port N`", "app", tmp.path(), 9);
         assert_eq!(lit[0], "serve");
         assert!(
             spec_run_argv_v2("Build a CLI. It should be fast.", "app", tmp.path(), 9)
@@ -9523,6 +9532,14 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // merge promoter's job (repair_waves.rs), whose path guards have their own test.
         assert_eq!(fs::read_to_string(real.join("a.py")).unwrap(), "real-a");
         assert!(!real.join("c.py").exists());
+        // A failed subtree or file copy must not masquerade as a complete snapshot.
+        let broken = base.path().join("broken");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("sub"), "blocks destination directory").unwrap();
+        assert!(copy_tree_excluding(&real, &broken).is_err());
+        let broken_file = base.path().join("broken_file");
+        fs::create_dir_all(broken_file.join("a.py")).unwrap();
+        assert!(copy_tree_excluding(&real, &broken_file).is_err());
     }
 
     #[test]
@@ -10911,6 +10928,14 @@ struct JsonlSink {
     writer: Mutex<std::io::BufWriter<std::fs::File>>,
     run_id: String,
     seq: AtomicU64,
+    /// Where the sink lives — the `WRITE_FAILED` marker is written beside it.
+    path: PathBuf,
+    /// Lines that never reached disk (a serialize, write or flush Err). Every one of them is
+    /// an event the operator and tick.py will never see; `run_finished` carries the count.
+    write_failures: AtomicU64,
+    /// The failure kinds already announced on stderr — one line per kind, not per event, so a
+    /// full disk does not turn stderr into the log it could not write.
+    failures_announced: Mutex<std::collections::BTreeSet<&'static str>>,
 }
 
 impl JsonlSink {
@@ -10926,6 +10951,9 @@ impl JsonlSink {
             writer: Mutex::new(std::io::BufWriter::new(file)),
             run_id,
             seq: AtomicU64::new(0),
+            path: path.to_path_buf(),
+            write_failures: AtomicU64::new(0),
+            failures_announced: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 
@@ -10939,11 +10967,53 @@ impl JsonlSink {
             obj.insert("run_id".to_string(), serde_json::json!(self.run_id));
             obj.insert("seq".to_string(), serde_json::json!(seq));
         }
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = serde_json::to_writer(&mut *w, &value);
-            let _ = w.write_all(b"\n");
-            let _ = w.flush();
+        let outcome = match self.writer.lock() {
+            Ok(mut w) => serde_json::to_writer(&mut *w, &value)
+                .map_err(|e| ("serialize", e.to_string()))
+                .and_then(|_| w.write_all(b"\n").map_err(|e| ("write", e.to_string())))
+                .and_then(|_| w.flush().map_err(|e| ("flush", e.to_string()))),
+            Err(_) => Err(("lock", "writer mutex poisoned".to_string())),
+        };
+        if let Err((kind, error)) = outcome {
+            self.note_write_failure(kind, &error, seq);
         }
+    }
+
+    /// The sink is the run's memory; a line it drops is evidence gone with nothing saying so
+    /// (gate 1). Before this the three `let _ =` above swallowed every Err. Now each failure is
+    /// counted (`run_finished.sink_write_failures`), the first per kind is said once on stderr,
+    /// and a stat-able marker — `<sink>.WRITE_FAILED`, beside the log tick.py reads — carries the
+    /// error, so a run whose log stopped growing can be told apart from a run that went quiet.
+    /// The marker write is itself best-effort: the disk that refused the log may refuse this too,
+    /// and stderr is the last channel left.
+    fn note_write_failure(&self, kind: &'static str, error: &str, seq: u64) {
+        self.write_failures.fetch_add(1, Ordering::SeqCst);
+        let first_of_kind = self
+            .failures_announced
+            .lock()
+            .map(|mut set| set.insert(kind))
+            .unwrap_or(true);
+        if !first_of_kind {
+            return;
+        }
+        eprintln!(
+            "  {} run log WRITE FAILED ({kind}, seq {seq}) at {}: {error} — every later event of \
+             this run may be missing from the log; see the WRITE_FAILED marker beside it",
+            style("!").red().bold(),
+            self.path.display()
+        );
+        let marker = PathBuf::from(format!("{}.WRITE_FAILED", self.path.display()));
+        let _ = std::fs::write(
+            &marker,
+            format!(
+                "{}\t{kind}\tseq={seq}\t{error}\n",
+                chrono::Utc::now().to_rfc3339()
+            ),
+        );
+    }
+
+    fn write_failures(&self) -> u64 {
+        self.write_failures.load(Ordering::SeqCst)
     }
 }
 
@@ -13423,9 +13493,21 @@ impl GooseAgentDispatcher {
                                                 activity_key,
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
-                                            let _ = std::fs::write(p, d.to_string());
+                                            if let Err(e) = std::fs::write(p, d.to_string()) {
+                                                self.note_transcript_write_failure(
+                                                    p,
+                                                    "digest",
+                                                    &e.to_string(),
+                                                );
+                                            }
                                             if let Some(m) = &activity_mirror {
-                                                let _ = std::fs::write(m, d.to_string());
+                                                if let Err(e) = std::fs::write(m, d.to_string()) {
+                                                    self.note_transcript_write_failure(
+                                                        p,
+                                                        "digest_mirror",
+                                                        &e.to_string(),
+                                                    );
+                                                }
                                             }
                                             let mirror = activity_mirror.as_deref();
                                             let (at, mut werrs) = append_reasoning_transcript(
@@ -14514,9 +14596,16 @@ impl GooseAgentDispatcher {
                         &said,
                         activity_key,
                     );
-                    let _ = std::fs::write(p, digest.to_string());
+                    // C2 (gate 1): the rolling digest is what the desktop's live line and the
+                    // judge's look read; a write that fails leaves them on a FROZEN digest with
+                    // nothing saying so. Same one-event-per-kind door the durable transcripts use.
+                    if let Err(e) = std::fs::write(p, digest.to_string()) {
+                        self.note_transcript_write_failure(p, "digest", &e.to_string());
+                    }
                     if let Some(m) = &activity_mirror {
-                        let _ = std::fs::write(m, digest.to_string());
+                        if let Err(e) = std::fs::write(m, digest.to_string()) {
+                            self.note_transcript_write_failure(p, "digest_mirror", &e.to_string());
+                        }
                     }
                     let mirror = activity_mirror.as_deref();
                     let (at, mut werrs) =
@@ -14570,7 +14659,9 @@ impl GooseAgentDispatcher {
             if let Some(obj) = digest.as_object_mut() {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
-            let _ = std::fs::write(p, digest.to_string());
+            if let Err(e) = std::fs::write(p, digest.to_string()) {
+                self.note_transcript_write_failure(p, "digest", &e.to_string());
+            }
             let mirror = activity_mirror.as_deref();
             let (_, mut werrs) = append_reasoning_transcript(p, mirror, &texts, transcript_at);
             werrs.extend(append_thinking_transcript(p, mirror, &mut think_unflushed));
@@ -14612,7 +14703,9 @@ impl GooseAgentDispatcher {
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
             // moment the round ends, so the mirror is the only copy left to correct.
             if let Some(m) = &activity_mirror {
-                let _ = std::fs::write(m, digest.to_string());
+                if let Err(e) = std::fs::write(m, digest.to_string()) {
+                    self.note_transcript_write_failure(p, "digest_mirror", &e.to_string());
+                }
             }
         }
 
@@ -15733,20 +15826,6 @@ async fn run_pillar_checks(root: &Path) -> Vec<String> {
     findings
 }
 
-/// Run a smoke subcommand with a HARD TIMEOUT + null stdin, so a produced server/REPL/daemon that ignores
-/// `--help` (or a build that waits on input) can never hang the whole run at the finish line. Returns None on
-/// spawn error OR timeout (inconclusive — never a finding); the child is killed on drop when the timeout fires.
-async fn smoke_output(mut cmd: tokio::process::Command, secs: u64) -> Option<std::process::Output> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    match tokio::time::timeout(std::time::Duration::from_secs(secs), cmd.output()).await {
-        Ok(Ok(out)) => Some(out),
-        _ => None, // spawn error or timed out -> inconclusive
-    }
-}
-
 /// stdout+stderr of a finished smoke process, lossily decoded.
 fn combined_output(out: &std::process::Output) -> String {
     format!(
@@ -16326,46 +16405,25 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
     }
 }
 
-/// Run ONE repro command in `cwd` with a hard timeout, capturing combined stdout+stderr and success. A
-/// timeout or spawn error yields `("", false)` — NOT a crash (empty output has no traceback), so a hang is
-/// never mistaken for a reproduced defect. The repro runs as its own process group and the whole group is
-/// killed with it, so a repro that spawns children cannot outlive us — the old `timeout(output())` dropped
-/// the `Child` on expiry, which kills ONE pid and leaked the rest. The timeout is on the repro command,
-/// which is not a model.
-async fn run_repro_once(argv: &[String], cwd: &Path) -> (String, bool) {
-    let mut c = tokio::process::Command::new(&argv[0]);
-    c.args(&argv[1..]).current_dir(cwd);
-    let Ok(mut app) = spawn_grouped(&mut c) else {
-        return (String::new(), false);
-    };
-    let status = tokio::time::timeout(std::time::Duration::from_secs(30), app.child.wait())
-        .await
-        .ok()
-        .and_then(|s| s.ok());
-    let out = app.kill_tree().await;
-    match status {
-        Some(st) => (out, st.success()),
-        None => (String::new(), false),
-    }
-}
-
-/// Best-effort `--help` of the produced app's entry, to ground the Lever B repro author. Python only in v1:
-/// find a package dir (one containing `__main__.py`) and run `python3 -m <pkg> --help`. Empty on any miss or
-/// for a non-Python tree. Bounded (20s) + fail-open.
-async fn entry_help(root: &Path, lang: TargetLang) -> String {
+/// `--help` of the produced app's entry, to ground the sink's brief. Python only in v1: find a package dir
+/// (one containing `__main__.py`) and run `python3 -m <pkg> --help` in a throwaway snapshot.
+///
+/// C3 (gate 1): `Ok("")` is the by-design absence (a non-Python tree — the brief is byte-identical);
+/// `Err(reason)` is a MEASURED miss the caller emits as `entry_help_unavailable{reason}` before the
+/// brief renders without the section: the snapshot could not be made or copied, no package was found,
+/// or the entry produced no output (spawn failure, the repro timeout, or a silent exit — `run_repro_once`
+/// folds those three into one empty string). Before this every miss was "" and the sink's brief lost its
+/// "ACTUAL INTERFACE" section with nothing in the event stream.
+async fn entry_help(root: &Path, lang: TargetLang) -> Result<String, String> {
     if !matches!(lang, TargetLang::Python) {
-        return String::new();
+        return Ok(String::new());
     }
     // Run in a SNAPSHOT, not the live tree: `--help` still imports the package (executes produced module-level
     // code), which should not touch the real working tree.
-    let Ok(tmp) = tempfile::TempDir::new() else {
-        return String::new();
-    };
-    if copy_tree_excluding(root, tmp.path()).is_err() {
-        return String::new();
-    }
+    let tmp = tempfile::TempDir::new().map_err(|e| format!("snapshot tempdir: {e}"))?;
+    copy_tree_excluding(root, tmp.path()).map_err(|e| format!("snapshot copy: {e}"))?;
     let Some(pkg) = python_package(tmp.path()) else {
-        return String::new();
+        return Err("no python package (a dir with __main__.py) in the tree".to_string());
     };
     let argv = [
         "python3".to_string(),
@@ -16373,7 +16431,13 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
         pkg.clone(),
         "--help".to_string(),
     ];
-    let top = run_repro_once(&argv, tmp.path()).await.0;
+    let (top, ok) = run_repro_once(&argv, tmp.path()).await;
+    if top.trim().is_empty() {
+        return Err(format!(
+            "`python3 -m {pkg} --help` produced no output (exit ok: {ok}; spawn failure, timeout or \
+             silent exit)"
+        ));
+    }
     // Enrich with PER-SUBCOMMAND help: top-level --help lists the subcommands but not their required args, so a
     // repro-author aiming at a SUBCOMMAND crash omits the args and the app argparse-errors before it reproduces.
     // Fetch `<pkg> <sub> --help` for each parsed subcommand (capped); drop any that argparse-errors (a false
@@ -16393,7 +16457,7 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
             out.push_str(&format!("\n\n### `python3 -m {pkg} {sub} --help`\n{ht}"));
         }
     }
-    out
+    Ok(out)
 }
 
 /// Result of the deterministic spec-contract check (#120). HARD `findings` gate `passed` (red + fix loop);
@@ -16437,7 +16501,17 @@ struct SpecContractResult {
 async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     let pkg = spec_python_entry(spec)?;
     let scratch = std::env::temp_dir().join(format!("goose-boot-probe-{}", std::process::id()));
-    let (argv, ports) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    let (argv, ports, bind_inconclusive) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    // C4: a port placeholder the harness could not fill (ephemeral bind refused) makes the
+    // floor unprobeable — refuse to conclude, say why on stderr (this probe has no sink), and
+    // let the ship-best restore decide, exactly as the pre-bound-port arm below does.
+    if let Some(reason) = bind_inconclusive.first() {
+        eprintln!(
+            "  {} boot floor NOT probed — {reason}",
+            style("!").red().bold()
+        );
+        return None;
+    }
     // No port placeholder substituted: the app boots on its OWN advertised literal port —
     // and when that port is already bound pre-spawn (vendor mock, squatter) the bind cannot
     // be attributed, so the probe refuses to conclude rather than concluding wrong. A spec
@@ -16455,409 +16529,6 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
         ports
     };
     Some(boot_invocation(root, &pkg, &argv, &probe_ports, &scratch).await)
-}
-
-/// Spawn an app entry as the LEADER of its own process group, so everything it forks — r0's
-/// wrapper `Popen`'d ledgerd and notifierd with inherited stdio — can be killed as one unit.
-fn own_process_group(cmd: &mut tokio::process::Command) {
-    #[cfg(unix)]
-    cmd.process_group(0);
-    #[cfg(not(unix))]
-    let _ = cmd;
-}
-
-/// Whether anything in the group still exists (signal 0 is the existence check). No group id, or
-/// a platform without process groups, counts as gone: there is nothing left to wait for.
-fn process_group_alive(pgid: Option<i32>) -> bool {
-    #[cfg(unix)]
-    {
-        pgid.is_some_and(|g| unsafe { libc::kill(-g, 0) } == 0)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pgid;
-        false
-    }
-}
-
-/// SIGKILL the child's whole process group (pgid == pid under `own_process_group`), then reap the
-/// child. tokio's `Child::kill` signals ONE pid: the wrapper dies and the services it `Popen`'d
-/// with inherited stdio survive it, each holding our pipe write-ends open and its port bound —
-/// which is how one probe's leak poisoned the next probe's "port already bound" refusal.
-async fn kill_app_tree(child: &mut tokio::process::Child, pgid: Option<i32>) {
-    #[cfg(unix)]
-    if let Some(g) = pgid {
-        unsafe { libc::kill(-g, libc::SIGKILL) };
-    }
-    #[cfg(not(unix))]
-    let _ = pgid;
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-}
-
-/// Read one of a child's pipes on its own task, keeping the last 8-16 KiB in `buf`. The buffer
-/// is shared rather than returned so a reader aborted mid-stream still yields what it captured.
-fn spawn_pipe_tail(
-    stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
-    buf: Arc<Mutex<Vec<u8>>>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let Some(mut s) = stream else {
-            return;
-        };
-        let mut chunk = [0u8; 4096];
-        while let Ok(n) = s.read(&mut chunk).await {
-            if n == 0 {
-                break;
-            }
-            let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
-            b.extend_from_slice(&chunk[..n]);
-            if b.len() > 16384 {
-                let cut = b.len() - 8192;
-                b.drain(..cut);
-            }
-        }
-    })
-}
-
-fn captured(buf: &Mutex<Vec<u8>>) -> String {
-    String::from_utf8_lossy(&buf.lock().unwrap_or_else(|e| e.into_inner())).into_owned()
-}
-
-/// Kill the child's group, reap it, then release its pipe readers on the GROUP's liveness.
-///
-/// DRAIN AFTER THE KILL — this is not a model cap: the process is already dead. Its whole group
-/// is SIGKILLed and the child reaped before the loop starts; all that is bounded is how long we
-/// keep reading pipes nothing of ours can still write to. Pipe EOF arrives only when the LAST
-/// write-end closes, and every write-end we can reach closes with the group — so the wait is on
-/// group liveness, never on EOF: a member that left the group (`setsid`, a double-forked daemon)
-/// can hold the write-end forever and no signal we send will close it. An EOF-only wait is
-/// exactly what parked r0's run for good after its verdict was in. The 50ms cadence is the one
-/// the bind poll already uses; no new time constant.
-async fn kill_app_tree_and_drain(
-    child: &mut tokio::process::Child,
-    pgid: Option<i32>,
-    readers: [tokio::task::JoinHandle<()>; 2],
-) {
-    kill_app_tree(child, pgid).await;
-    let mut ticks_after_group_gone = 0u8;
-    while !readers.iter().all(|r| r.is_finished()) {
-        if !process_group_alive(pgid) {
-            // One more tick lets the readers take what the kernel already buffered (a pipe holds
-            // at most 64 KiB; one wake drains it). After that, whoever still holds the write-end
-            // is not ours to wait for.
-            ticks_after_group_gone += 1;
-            if ticks_after_group_gone > 1 {
-                for r in &readers {
-                    r.abort();
-                }
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    for r in readers {
-        let _ = r.await;
-    }
-}
-
-/// Sweeps the process groups a worker attempt's OWN shell calls spawned, at the attempt's end.
-///
-/// Invariant 5 covers the ENGINE's spawns via `spawn_grouped`/`kill_app_tree`; this closes the
-/// other half: the MODEL boots app servers through its developer shell tool, and on r2 the sink's
-/// dead attempt 0 left 3 of them as PPID-1 orphans in the ENGINE's process group — the task_retry
-/// path killed nothing, and the operator's `killpg` reap took the engine down at INTEGRATE minute
-/// 139. With `process_groups::enable()`, every shell spawn leads its own group registered under
-/// the attempt's session; this guard kills whatever of them survives the attempt.
-///
-/// It is a DROP guard on purpose: the attempt has many exits (completion, the stream-decode
-/// Transient at the #121 branch, ContentRetry, judge termination, an `?` error, cancellation of
-/// the whole dispatch future) and each of them unwinds through here — patching the branches one by
-/// one is how the retry path got missed. `reap_now()` at the normal exit reports what was killed;
-/// the Drop arm is the net for every other path and never signals the engine's own group (the
-/// registry's reaper guards that even against a pathological registration).
-struct ShellGroupReaper {
-    session_id: String,
-    armed: bool,
-}
-
-impl ShellGroupReaper {
-    fn armed(session_id: String) -> Self {
-        Self {
-            session_id,
-            armed: true,
-        }
-    }
-
-    fn reap_now(&mut self) -> Vec<i32> {
-        self.armed = false;
-        goose::agents::platform_extensions::developer::process_groups::reap_session(
-            &self.session_id,
-        )
-    }
-}
-
-impl Drop for ShellGroupReaper {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let killed = goose::agents::platform_extensions::developer::process_groups::reap_session(
-            &self.session_id,
-        );
-        if !killed.is_empty() {
-            eprintln!(
-                "  {} reaped {} leaked shell process group(s) on an early attempt exit: {:?}",
-                style("⚠").yellow().bold(),
-                killed.len(),
-                killed
-            );
-        }
-    }
-}
-
-/// A child running as its own group leader with both pipes tailed into shared buffers.
-struct GroupedChild {
-    child: tokio::process::Child,
-    pgid: Option<i32>,
-    out: Arc<Mutex<Vec<u8>>>,
-    err: Arc<Mutex<Vec<u8>>>,
-    readers: [tokio::task::JoinHandle<()>; 2],
-}
-
-impl GroupedChild {
-    /// Kill the group, reap the child, release the readers on group liveness, and hand back the
-    /// combined stdout+stderr tail — whatever was captured, even if a reader had to be released.
-    async fn kill_tree(self) -> String {
-        let GroupedChild {
-            mut child,
-            pgid,
-            out,
-            err,
-            readers,
-        } = self;
-        kill_app_tree_and_drain(&mut child, pgid, readers).await;
-        format!("{}{}", captured(&out), captured(&err))
-    }
-}
-
-/// Spawn `cmd` with null stdin and piped, tailed stdout/stderr as the leader of its own process
-/// group. The one way to start anything that may fork: `Command::output()` reads to EOF, and
-/// EOF never comes while a grandchild holds the inherited write-end.
-fn spawn_grouped(cmd: &mut tokio::process::Command) -> std::io::Result<GroupedChild> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    own_process_group(cmd);
-    let mut child = cmd.spawn()?;
-    let pgid = child.id().map(|p| p as i32);
-    let out = Arc::new(Mutex::new(Vec::new()));
-    let err = Arc::new(Mutex::new(Vec::new()));
-    let readers = [
-        spawn_pipe_tail(child.stdout.take(), Arc::clone(&out)),
-        spawn_pipe_tail(child.stderr.take(), Arc::clone(&err)),
-    ];
-    Ok(GroupedChild {
-        child,
-        pgid,
-        out,
-        err,
-        readers,
-    })
-}
-
-/// Spawn ONE `python3 -m pkg argv` and decide bind-or-die: `None` = some probe port bound
-/// (alive), `Some(tail)` = it never bound, with the normalized output tail as evidence. The
-/// shared core of the boot floor AND the gate's every-advertised-invocation check (F910
-/// defect 2). Pipes are drained during the poll (an undrained pipe wedges a chatty child at
-/// ~64KB and misreads as dead) and released on the PROCESS GROUP's liveness after the kill,
-/// never on pipe EOF — `kill_app_tree_and_drain` carries the r0 hang that rule comes from.
-/// Per-probe randomness (ports, scratch paths) is normalized OUT of the tail so the repair
-/// loop's identical-traceback stop can actually stop.
-async fn boot_invocation(
-    root: &Path,
-    pkg: &str,
-    argv: &[String],
-    probe_ports: &[u16],
-    scratch: &Path,
-) -> Option<String> {
-    let mut cmd = tokio::process::Command::new("python3");
-    cmd.args(["-m", pkg])
-        .args(argv)
-        .current_dir(root)
-        .env("PYTHONPATH", "src");
-    let app = match spawn_grouped(&mut cmd) {
-        Ok(a) => a,
-        Err(e) => return Some(format!("spawn failed: {e}")),
-    };
-    let mut up = false;
-    'poll: for _ in 0..80 {
-        for p in probe_ports {
-            if tokio::net::TcpStream::connect(("127.0.0.1", *p))
-                .await
-                .is_ok()
-            {
-                up = true;
-                break 'poll;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let combined = app.kill_tree().await;
-    if up {
-        return None;
-    }
-    let tail: String = combined
-        .chars()
-        .rev()
-        .take(1200)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    let mut tail = tail.replace(&*scratch.to_string_lossy(), "SCRATCH");
-    for p in probe_ports {
-        tail = tail.replace(&p.to_string(), "PORT");
-    }
-    if tail.trim().is_empty() {
-        Some("no output captured".to_string())
-    } else {
-        Some(tail)
-    }
-}
-
-#[cfg(test)]
-mod boot_invocation_tests {
-    use super::*;
-
-    /// A fake app with EXACTLY r0's wrapper shape: it `Popen`s a grandchild with no `stdout=`/
-    /// `stderr=` kwargs, so the grandchild inherits the pipe write-ends `boot_invocation` is
-    /// reading, prints the grandchild's pid so the test can check it died, and never binds a port.
-    /// `popen_kwargs` lets one test move the grandchild out of the process group. The sleeps are
-    /// a test-fixture bound on a fake app, not model work.
-    fn fake_app(name: &str, popen_kwargs: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("goose_bootinv_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("fakeapp")).unwrap();
-        std::fs::write(root.join("fakeapp/__init__.py"), "").unwrap();
-        std::fs::write(
-            root.join("fakeapp/__main__.py"),
-            format!(
-                "import subprocess, sys, time\n\
-                 p = subprocess.Popen([sys.executable, \"-c\", \"import time; time.sleep(60)\"]{popen_kwargs})\n\
-                 print(f\"grandchild={{p.pid}}\", flush=True)\n\
-                 time.sleep(60)\n"
-            ),
-        )
-        .unwrap();
-        root
-    }
-
-    fn have_python3() -> bool {
-        std::process::Command::new("python3")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
-    /// A port nobody will bind during the test: taken from the kernel and released at once.
-    fn never_bound_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    }
-
-    fn pid_alive(pid: i32) -> bool {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    fn grandchild_pid(tail: &str) -> i32 {
-        tail.split("grandchild=")
-            .nth(1)
-            .and_then(|s| s.split_whitespace().next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("no grandchild pid in the captured tail: {tail:?}"))
-    }
-
-    /// The probe against the fake app, under a TEST-HARNESS bound: the fake app never binds, so
-    /// the 80x50ms bind poll ends in ~4s and anything past 30s is the hang itself. Not a model cap.
-    async fn probe(root: &Path, port: u16) -> Result<Option<String>, tokio::time::error::Elapsed> {
-        let scratch = root.join("scratch");
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            boot_invocation(root, "fakeapp", &[], &[port], &scratch),
-        )
-        .await
-    }
-
-    /// THE r0 EXIT HANG. The wrapper was SIGKILLed after the bind poll, but the services it
-    /// `Popen`'d with inherited stdio outlived tokio's one-pid kill and held the pipe write-ends
-    /// open, so the readers never saw EOF and `stdout_task.await` parked the whole run — the
-    /// heartbeat ticked, CPU sat at 0%, and no result was ever emitted. The probe must return once
-    /// its child is dead, and the grandchild must die with it.
-    #[tokio::test]
-    async fn boot_invocation_returns_when_a_grandchild_holds_the_pipe() {
-        if !have_python3() {
-            return;
-        }
-        let root = fake_app("inherits", "");
-        let res = probe(&root, never_bound_port()).await;
-        let tail = res
-            .expect("boot_invocation must return once the child is killed even though a grandchild inherited the pipe")
-            .expect("the fake app never binds, so this must be Some(tail)");
-        assert!(
-            tail.contains("grandchild="),
-            "the wrapper's own output must survive the group kill: {tail}"
-        );
-        let pid = grandchild_pid(&tail);
-        // `kill -0` still succeeds on a zombie until launchd reaps it, so give it a moment.
-        for _ in 0..40 {
-            if !pid_alive(pid) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        let leaked = pid_alive(pid);
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status();
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            !leaked,
-            "grandchild {pid} outlived the probe — the process group was not killed"
-        );
-    }
-
-    /// The other half of the guarantee, independent of the group kill: a grandchild that left the
-    /// group (`setsid`, a double-forked daemon) cannot be reached by any signal we send and holds
-    /// the write-end for as long as it likes. The probe must STILL return, because the wait is on
-    /// the group's liveness and never on pipe EOF.
-    #[tokio::test]
-    async fn boot_invocation_returns_when_the_grandchild_escaped_the_group() {
-        if !have_python3() {
-            return;
-        }
-        let root = fake_app("escapes", ", start_new_session=True");
-        let res = probe(&root, never_bound_port()).await;
-        let tail = res
-            .expect("boot_invocation must return once its process group is gone even though an escaped grandchild still holds the pipe")
-            .expect("the fake app never binds, so this must be Some(tail)");
-        let pid = grandchild_pid(&tail);
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status();
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }
 
 /// The `python3 -m PKG` entry package the spec literally advertises, if any — skipping tool
@@ -17427,14 +17098,17 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
 /// Rules, all generic: each port-flag gets its OWN fresh free port; a dir-flag gets a created
 /// scratch DIRECTORY; a vendor/url-flag gets the spec's own advertised vendor base; a
 /// token/file-flag gets a scratch file; anything else keeps the scratch db path. Returns the
-/// substituted ports so the caller accepts ANY of them binding as boot proof. Pure aside from
-/// scratch-dir/file creation and ephemeral port allocation.
+/// substituted ports so the caller accepts ANY of them binding as boot proof, and (C4) the
+/// INCONCLUSIVE reasons — an ephemeral bind the kernel refused used to `expect(...)` and panic
+/// inside the sink's worker future; now the port-flag is filled with `0`, left out of `ports`,
+/// and the reason rides to the caller's `inconclusive` list. Pure aside from scratch-dir/file
+/// creation and ephemeral port allocation.
 fn spec_run_argv_v2(
     spec: &str,
     pkg: &str,
     scratch_base: &Path,
     spec_vendor_port: u16,
-) -> (Vec<String>, Vec<u16>) {
+) -> (Vec<String>, Vec<u16>, Vec<String>) {
     let needle = format!("-m {pkg}");
     let span = spec
         .split('`')
@@ -17442,16 +17116,27 @@ fn spec_run_argv_v2(
         .unwrap_or_default();
     let mut it = span.split_whitespace().skip_while(|t| *t != pkg);
     if it.next().is_none() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
     let _ = std::fs::create_dir_all(scratch_base);
     // Listeners stay alive until the end so every allocated port is DISTINCT.
     let mut holders: Vec<std::net::TcpListener> = Vec::new();
-    let mut fresh_port = || -> u16 {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral bind");
-        let p = l.local_addr().map(|a| a.port()).unwrap_or(0);
-        holders.push(l);
-        p
+    let mut inconclusive: Vec<String> = Vec::new();
+    let mut fresh_port = |inconclusive: &mut Vec<String>| -> Option<u16> {
+        match std::net::TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => {
+                let p = l.local_addr().map(|a| a.port()).unwrap_or(0);
+                holders.push(l);
+                Some(p)
+            }
+            Err(e) => {
+                inconclusive.push(format!(
+                    "spec-contract: ephemeral bind failed for a `{pkg}` port placeholder: {e} — \
+                     bind unverifiable"
+                ));
+                None
+            }
+        }
     };
     let mut out: Vec<String> = Vec::new();
     let mut ports: Vec<u16> = Vec::new();
@@ -17470,9 +17155,13 @@ fn spec_run_argv_v2(
         let filled = if !is_placeholder {
             tok.to_string()
         } else if prev_flag.contains("port") {
-            let p = fresh_port();
-            ports.push(p);
-            p.to_string()
+            match fresh_port(&mut inconclusive) {
+                Some(p) => {
+                    ports.push(p);
+                    p.to_string()
+                }
+                None => "0".to_string(),
+            }
         } else if prev_flag.contains("vendor") || prev_flag.contains("url") || tok == "URL" {
             format!("http://127.0.0.1:{spec_vendor_port}")
         } else if prev_flag.contains("dir") {
@@ -17492,7 +17181,7 @@ fn spec_run_argv_v2(
         out.push(filled);
     }
     drop(holders);
-    (out, ports)
+    (out, ports, inconclusive)
 }
 
 /// The boot-repair brief's extra diagnosis when the probe's tail shows NO crash: the process ran
@@ -17988,11 +17677,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         std::process::id(),
         SPEC_DB_SEQ.load(std::sync::atomic::Ordering::Relaxed)
     ));
-    let (advertised, advertised_ports) = if free_port.is_some() {
+    let (advertised, advertised_ports, bind_inconclusive) = if free_port.is_some() {
         spec_run_argv_v2(spec, &pkg, &contract_scratch, spec_port(spec))
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new())
     };
+    // C4: an ephemeral bind the kernel refused is an abstention the verdict must carry — it
+    // narrows `established()` like every other inconclusive reason instead of panicking here.
+    inconclusive.extend(bind_inconclusive);
     let port = advertised_ports
         .first()
         .copied()
@@ -19267,7 +18959,12 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             if other == pkg {
                 continue;
             }
-            let (oargv, oports) = spec_run_argv_v2(spec, &other, &inv_scratch, spec_port(spec));
+            let (oargv, oports, obind_inconclusive) =
+                spec_run_argv_v2(spec, &other, &inv_scratch, spec_port(spec));
+            if !obind_inconclusive.is_empty() {
+                inconclusive.extend(obind_inconclusive);
+                continue;
+            }
             if oports.is_empty() {
                 inconclusive.push(format!(
                     "spec-contract: `python -m {other}` is advertised without a port placeholder \
@@ -21618,11 +21315,40 @@ impl PreReviewer for GooseAgentDispatcher {
             inflight.insert(q.to_string_lossy().to_string());
             q
         };
-        let question = std::fs::read_to_string(&q_path).unwrap_or_default();
         let stem = q_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "question.txt".to_string());
+        let adir = self.working_dir.join(".swarm").join("answers");
+        // B2 (gate 1): an unreadable question file used to dispatch an EMPTY operator question
+        // to the model and hand back an answer to nothing. Now the model is not called; the
+        // reply file states the read error. If the answered-marker cannot be persisted,
+        // report that too: the question remains eligible for a later tick.
+        let question = match std::fs::read_to_string(&q_path) {
+            Ok(q) => q,
+            Err(e) => {
+                let reply = format!("(question file unreadable: {e})");
+                if let Err(error) = std::fs::create_dir_all(&adir)
+                    .and_then(|_| std::fs::write(adir.join(&stem), &reply))
+                {
+                    self.events.write_value(serde_json::json!({
+                        "event": "ask_answer_write_failed", "question_file": stem,
+                        "path": adir.join(&stem), "error": error.to_string(),
+                    }));
+                }
+                self.events.write_value(serde_json::json!({
+                    "event": "ask_question_unreadable",
+                    "file": stem,
+                    "path": q_path.display().to_string(),
+                    "error": e.to_string(),
+                }));
+                self.qa_inflight
+                    .lock()
+                    .unwrap()
+                    .remove(&q_path.to_string_lossy().to_string());
+                return;
+            }
+        };
         let system = "You are the SUPERVISOR of a running multi-agent code build. The OPERATOR \
             (the human who started the run) asked a question mid-run. Answer it directly and \
             briefly from the run state you are given — what is done, running, pending, failed — \
@@ -21644,9 +21370,14 @@ impl PreReviewer for GooseAgentDispatcher {
             .ok()
             .and_then(|o| supervised_reply_text(&o.text).ok())
             .unwrap_or_else(|| "(the answerer failed — ask again)".to_string());
-        let adir = self.working_dir.join(".swarm").join("answers");
-        let _ = std::fs::create_dir_all(&adir);
-        let _ = std::fs::write(adir.join(&stem), &reply);
+        if let Err(error) =
+            std::fs::create_dir_all(&adir).and_then(|_| std::fs::write(adir.join(&stem), &reply))
+        {
+            self.events.write_value(serde_json::json!({
+                "event": "ask_answer_write_failed", "question_file": stem,
+                "path": adir.join(&stem), "error": error.to_string(),
+            }));
+        }
         self.events.write_value(serde_json::json!({
             "event": "swarm_answer",
             "question_file": stem,
@@ -23246,8 +22977,16 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
 }
 
 /// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
-/// twin gets the source to read but the copy stays cheap. Best-effort — an unreadable entry is skipped, never
-/// fatal. Used only on the speculative path (GOOSE_SWARM_SPECULATE); never touches the real tree.
+/// twin gets the source to read but the copy stays cheap. Used on the speculative/REPAIR-shard path
+/// (`make_shadow`) and for `entry_help`'s throwaway snapshot; never touches the real tree.
+///
+/// B1 (gate 1): a failed copy PROPAGATES. Before this the recursion and the per-file copy were
+/// `let _ =`, so a shadow with a missing subtree returned Ok and the twin built against a partial
+/// tree — while `make_shadow`'s documented bail and `run_task_inner`'s
+/// `Transient("speculative shadow setup failed")` were unreachable. The one tolerated miss is a
+/// file that VANISHED between the directory listing and its copy (NotFound): the source tree is
+/// alive under other lanes, and a snapshot of a tree in motion legitimately lacks a file that no
+/// longer exists — that is a fact about the tree, not a failure of the copy.
 fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
     const SKIP: &[&str] = &[
         "node_modules",
@@ -23260,20 +22999,28 @@ fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
         "build",
     ];
     std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)?.flatten() {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
         let name = entry.file_name();
         if SKIP.iter().any(|s| **s == *name.to_string_lossy()) {
             continue;
         }
         let from = entry.path();
         let to = dst.join(&name);
-        match entry.file_type() {
-            Ok(ft) if ft.is_dir() => {
-                let _ = copy_tree_excluding(&from, &to);
-            }
-            Ok(ft) if ft.is_file() => {
-                let _ = std::fs::copy(&from, &to);
-            }
+        match entry.file_type()? {
+            ft if ft.is_dir() => copy_tree_excluding(&from, &to)?,
+            ft if ft.is_file() => match std::fs::copy(&from, &to) {
+                Ok(_) => {}
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::NotFound
+                        && matches!(from.try_exists(), Ok(false)) => {}
+                Err(e) => {
+                    return Err(std::io::Error::new(
+                        e.kind(),
+                        format!("copy {} -> {}: {e}", from.display(), to.display()),
+                    ))
+                }
+            },
             _ => {} // skip symlinks / other
         }
     }
@@ -24142,39 +23889,65 @@ async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
 
 const LEDGER_DIR: &str = ".swarm/ledger";
 
-/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
-/// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
-/// failure — the caller emits `ledger_written` only for a write that actually happened.
-fn write_ledger_mini(
-    root: &Path,
-    file_name: &str,
-    row: &serde_json::Value,
-) -> Option<std::path::PathBuf> {
-    write_ledger_mini_checked(root, file_name, row).ok()
+/// Why a ledger write did not land WHOLE (A2/A3, gate 1). `Mini`: the row itself never reached
+/// disk. `Rollup`: the row is on disk but `.swarm/ledger.json` was NOT rebuilt from it, so every
+/// consumer of the roll-up — the sink's read-before-act block, REPAIR's history, the desktop —
+/// reads a STALE ledger. Before this the rebuild's Option was discarded inside the funnel, the
+/// funnel returned Ok, and `ledger_written` fired over the stale file. One event name per arm
+/// (`event_name`), so tick.py can tell a row that never landed from a roll-up that went stale.
+#[derive(Debug)]
+enum LedgerWriteError {
+    Mini(String),
+    Rollup(String),
 }
 
-/// The same funnel with the failure NAMED (VA-030 D10-5, gate 1): the research fan's four writers
-/// emit `research_mini_write_failed` from this error instead of discarding an Option — a fact mini
-/// that failed to write was counted in `research_planned.facts` and rendered from memory while
-/// resume, cover and the snowball never saw it, with no event.
+impl LedgerWriteError {
+    fn event_name(&self) -> &'static str {
+        match self {
+            LedgerWriteError::Mini(_) => "ledger_write_failed",
+            LedgerWriteError::Rollup(_) => "ledger_rollup_write_failed",
+        }
+    }
+}
+
+impl std::fmt::Display for LedgerWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LedgerWriteError::Mini(e) => write!(f, "mini: {e}"),
+            LedgerWriteError::Rollup(e) => write!(f, "roll-up rebuild: {e}"),
+        }
+    }
+}
+
+/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
+/// here so the roll-up can never drift from its parts — and the failure is NAMED (VA-030 D10-5,
+/// gate 1): the research fan's writers emit `research_mini_write_failed` from this error, the
+/// task/gate/repair legs emit `error.event_name()` — never a discarded Option. A fact mini that
+/// failed to write was once counted in `research_planned.facts` and rendered from memory while
+/// resume, cover and the snowball never saw it, with no event; and a roll-up rebuild that failed
+/// was once invisible behind a `ledger_written` (A2). The caller emits `ledger_written` only for
+/// a write whose row AND roll-up both landed.
 fn write_ledger_mini_checked(
     root: &Path,
     file_name: &str,
     row: &serde_json::Value,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<std::path::PathBuf, LedgerWriteError> {
     let dir = root.join(LEDGER_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| LedgerWriteError::Mini(format!("create {}: {e}", dir.display())))?;
     let path = dir.join(file_name);
-    let bytes = serde_json::to_string_pretty(row).map_err(|e| format!("serialize: {e}"))?;
+    let bytes = serde_json::to_string_pretty(row)
+        .map_err(|e| LedgerWriteError::Mini(format!("serialize: {e}")))?;
     // Finding 9: an unchanged row is a byte-AND-mtime no-op, so a gate replay over an archived
     // tree leaves its ledger looking exactly as archived ("freshest 0s ago" was a replay
     // artifact, not run activity). The roll-up write below makes the same comparison.
     if std::fs::read_to_string(&path).is_ok_and(|old| old == bytes) {
-        rebuild_ledger_rollup(root);
+        rebuild_ledger_rollup(root).map_err(LedgerWriteError::Rollup)?;
         return Ok(path);
     }
-    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
-    rebuild_ledger_rollup(root);
+    std::fs::write(&path, &bytes)
+        .map_err(|e| LedgerWriteError::Mini(format!("write {}: {e}", path.display())))?;
+    rebuild_ledger_rollup(root).map_err(LedgerWriteError::Rollup)?;
     Ok(path)
 }
 
@@ -24183,7 +23956,10 @@ fn write_ledger_mini_checked(
 /// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
 /// (verify_tree_imports + each task's owned-file stat), so a defect fixed since its task
 /// completed vanishes instead of haunting every later prompt.
-fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
+/// Err names the step that failed (A2): the ledger dir unreadable, the roll-up unserializable,
+/// or the atomic write refused — each one leaves `.swarm/ledger.json` STALE, which the funnel
+/// turns into `LedgerWriteError::Rollup` and the writers into `ledger_rollup_write_failed`.
+fn rebuild_ledger_rollup(root: &Path) -> Result<serde_json::Value, String> {
     let dir = root.join(LEDGER_DIR);
     let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     let mut gates: Vec<serde_json::Value> = Vec::new();
@@ -24194,7 +23970,10 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     // in the roll-up itself; render_ledger_block states them and the writers emit
     // `ledger_row_unreadable`. Sorted for the roll-up's idempotence (read_dir order is not).
     let mut rows_dropped: Vec<serde_json::Value> = Vec::new();
-    for e in std::fs::read_dir(&dir).ok()?.flatten() {
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    for e in entries {
+        let e = e.map_err(|e| format!("read_dir entry {}: {e}", dir.display()))?;
         if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
         }
@@ -24337,14 +24116,16 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
         rollup["spec_set_exceeded"] = serde_json::Value::from(spec_set_exceeded);
     }
     let out_path = root.join(".swarm").join("ledger.json");
-    let bytes = serde_json::to_string_pretty(&rollup).ok()?;
-    // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
+    let bytes = serde_json::to_string_pretty(&rollup).map_err(|e| format!("serialize: {e}"))?;
+    // Finding 9: identical roll-up bytes keep the archived file's mtime (see
+    // write_ledger_mini_checked).
     if !std::fs::read_to_string(&out_path).is_ok_and(|old| old == bytes) {
         // tmp+rename (the forming capture's own atomic writer): the roll-up is read on a poll
         // by every dispatch's render and by the desktop, so a torn read must be impossible.
-        write_forming_atomic(&out_path, &bytes).ok()?;
+        write_forming_atomic(&out_path, &bytes)
+            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
     }
-    Some(rollup)
+    Ok(rollup)
 }
 
 /// The spec's own boot invocation for `pkg`, verbatim with its placeholders — the SHAPE of the
@@ -24556,6 +24337,9 @@ struct SinkBrief {
     /// What the ledger block's budget removed, `(section, chars)` — the caller emits one
     /// `ledger_block_section_dropped` per entry (VA-030 D11).
     ledger_sections_dropped: Vec<(&'static str, usize)>,
+    /// A4: the roll-up file exists and is unreadable/unparseable — `ledger_empty` is then a
+    /// corrupt ledger, not an absent one; the caller emits `ledger_unparseable{error}`.
+    ledger_unparseable: Option<String>,
 }
 
 fn sink_semantic_description(
@@ -24575,6 +24359,7 @@ fn sink_semantic_description(
         ledger_empty: block.text.is_empty(),
         spec_surface_empty,
         ledger_sections_dropped: block.dropped,
+        ledger_unparseable: block.unparseable,
     }
 }
 
@@ -24654,8 +24439,7 @@ impl GooseAgentDispatcher {
                 "error": err,
             }));
             eprintln!(
-                "  {} transcript write FAILED for {key}: {err} — the durable log is frozen; \
-                 the rolling digest is the only record until this clears",
+                "  {} transcript write FAILED for {key}: {err} — this record may be incomplete",
                 style("!").red().bold()
             );
         }
@@ -24789,8 +24573,9 @@ impl GooseAgentDispatcher {
     /// is done (or fails) — the same free pass emit_delivery_defects rides. Speculative attempts
     /// are skipped on purpose: a shadow's bytes may be discarded at grade time, and recording
     /// them as tree state would put a lie in every later prompt; the repair leg
-    /// (write_repair_ledger) is the shadow world's recorder. Best-effort: a failed write emits
-    /// nothing and changes nothing.
+    /// (write_repair_ledger) is the shadow world's recorder. A failed write changes nothing in
+    /// the run and is SAID (A3, gate 1): `ledger_write_failed` when the row never landed,
+    /// `ledger_rollup_write_failed` when it landed but `.swarm/ledger.json` went stale.
     fn record_task_ledger(
         &self,
         req: &DispatchRequest,
@@ -24804,7 +24589,7 @@ impl GooseAgentDispatcher {
         if req.speculative {
             return;
         }
-        if let Some(path) = write_task_ledger(
+        let written = write_task_ledger(
             root,
             TaskLedgerWrite {
                 task_id: &req.task_id,
@@ -24815,26 +24600,36 @@ impl GooseAgentDispatcher {
                 calls_mirror_dir: self.fix_shard_mirror_dir(&req.task_id, root),
                 extra,
             },
-        ) {
-            self.events.write_value(serde_json::json!({
-                "event": "ledger_written",
+        );
+        match written {
+            Err(e) => self.events.write_value(serde_json::json!({
+                "event": e.event_name(),
                 "kind": "task",
                 "task_id": req.task_id,
                 "status": status,
-                "path": path.display().to_string(),
-            }));
-            // GEN-6a #3: the write just rebuilt the roll-up, so its dropped-row list is the
-            // freshest statement of what the ledger CANNOT read — put it in the event stream
-            // where tick.py counts absences, not only in the file.
-            if let Some(dropped) = read_ledger_rollup(root)
-                .and_then(|r| r.get("rows_dropped").cloned())
-                .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()))
-            {
+                "error": e.to_string(),
+            })),
+            Ok(path) => {
                 self.events.write_value(serde_json::json!({
-                    "event": "ledger_row_unreadable",
+                    "event": "ledger_written",
+                    "kind": "task",
                     "task_id": req.task_id,
-                    "rows": dropped,
+                    "status": status,
+                    "path": path.display().to_string(),
                 }));
+                // GEN-6a #3: the write just rebuilt the roll-up, so its dropped-row list is the
+                // freshest statement of what the ledger CANNOT read — put it in the event stream
+                // where tick.py counts absences, not only in the file.
+                if let Some(dropped) = read_ledger_rollup(root)
+                    .and_then(|r| r.get("rows_dropped").cloned())
+                    .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()))
+                {
+                    self.events.write_value(serde_json::json!({
+                        "event": "ledger_row_unreadable",
+                        "task_id": req.task_id,
+                        "rows": dropped,
+                    }));
+                }
             }
         }
     }
@@ -24923,24 +24718,35 @@ impl GooseAgentDispatcher {
             // (non-Python / no advertised surface returns in microseconds), so this adds seconds,
             // never a wall, and its absence from the ledger is a measured absence, not silence.
             let gate0 = run_spec_contract(&root, &spec, lang).await;
-            let ledger_path = write_gate_ledger(
+            match write_gate_ledger(
                 &root,
                 0,
                 "completion",
                 &gate0.findings,
                 &gate0.inconclusive,
                 serde_json::json!(gate0.verified),
-            );
-            self.events.write_value(serde_json::json!({
-                "event": "ledger_written",
-                "kind": "gate",
-                "round": 0,
-                "source": "completion",
-                "findings": gate0.findings.len(),
-                "inconclusive": gate0.inconclusive.len(),
-                "verified": gate0.verified,
-                "path": ledger_path.as_ref().map(|p| p.display().to_string()),
-            }));
+            ) {
+                Ok(ledger_path) => self.events.write_value(serde_json::json!({
+                    "event": "ledger_written",
+                    "kind": "gate",
+                    "round": 0,
+                    "source": "completion",
+                    "findings": gate0.findings.len(),
+                    "inconclusive": gate0.inconclusive.len(),
+                    "verified": gate0.verified,
+                    "path": ledger_path.display().to_string(),
+                })),
+                // A3: this event used to fire with `path: null` on a failed write — the one
+                // ledger row the sink's brief is built from, reported as written.
+                Err(e) => self.events.write_value(serde_json::json!({
+                    "event": e.event_name(),
+                    "kind": "gate",
+                    "round": 0,
+                    "source": "completion",
+                    "task_id": req.task_id,
+                    "error": e.to_string(),
+                })),
+            }
             let collect_only = collect_only_import_health(&root).await;
             let brief = sink_semantic_description(
                 &root,
@@ -24951,11 +24757,23 @@ impl GooseAgentDispatcher {
                 lang,
                 collect_only.as_deref(),
             );
+            // A4 (gate 1): a roll-up that EXISTS and cannot be parsed is not an empty ledger —
+            // said by name, with the parse error, before the empty-ledger event below.
+            if let Some(error) = &brief.ledger_unparseable {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_unparseable",
+                    "task_id": req.task_id,
+                    "path": root.join(".swarm").join("ledger.json").display().to_string(),
+                    "error": error,
+                }));
+            }
             if brief.ledger_empty {
                 // NEAR-UNREACHABLE BY CONSTRUCTION, kept deliberately: the gate-round-0 write
                 // just above guarantees a ledger row exists before the brief is built, so this
-                // fires only when that write itself FAILED (write_ledger_mini returning None on
-                // a degraded tree) — which is exactly when the operator needs to hear it.
+                // fires only when that write itself FAILED (write_ledger_mini_checked's Err,
+                // emitted as ledger_write_failed / ledger_rollup_write_failed above) or the
+                // roll-up file is unparseable (`ledger_unparseable`, A4) — which is exactly when
+                // the operator needs to hear it.
                 self.events.write_value(serde_json::json!({
                     "event": "ledger_empty_at_sink",
                     "task_id": req.task_id,
@@ -25355,7 +25173,18 @@ impl GooseAgentDispatcher {
             let owned_part = if req.task_id == "integrate-verify"
                 && swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild)
             {
-                let help = entry_help(std::path::Path::new(&cwd), lang).await;
+                let help = match entry_help(std::path::Path::new(&cwd), lang).await {
+                    Ok(help) => help,
+                    // C3 (gate 1): the brief keeps its shape (no section) — the absence is SAID.
+                    Err(reason) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "entry_help_unavailable",
+                            "task_id": req.task_id,
+                            "reason": reason,
+                        }));
+                        String::new()
+                    }
+                };
                 if help.trim().is_empty() {
                     owned_part
                 } else {
@@ -27629,14 +27458,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .join(format!("run-{run_id}.jsonl"))
         }))
     };
-    let sink: Arc<dyn EventSink> = match &log_path {
+    // The concrete sink is kept beside the trait object so `run_finished` can read how many
+    // lines it failed to write (A1, gate 1) — the trait carries no such counter.
+    let jsonl_sink: Option<Arc<JsonlSink>> = match &log_path {
         Some(p) => match JsonlSink::new(p, run_id.clone()) {
-            Ok(s) => Arc::new(s),
+            Ok(s) => Some(Arc::new(s)),
             Err(e) => {
                 eprintln!("(swarm log disabled: {e})");
-                Arc::new(NullSink)
+                None
             }
         },
+        None => None,
+    };
+    let sink: Arc<dyn EventSink> = match &jsonl_sink {
+        Some(s) => s.clone(),
         None => Arc::new(NullSink),
     };
 
@@ -29681,7 +29516,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // decided on. Round 0 belongs to the COMPLETION gate at the sink's dispatch (III-1's
             // hook), so the tail's rounds start at 1 — the ledger reads as one history:
             // gate-r0 = the tree the sink received, gate-rN = the tree after wave N-1.
-            if let Some(path) = write_gate_ledger(
+            match write_gate_ledger(
                 &cwd,
                 round as u64 + 1,
                 "smoke",
@@ -29689,12 +29524,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 &verdict.inconclusive,
                 serde_json::json!(verdict.established()),
             ) {
-                sink.write_value(serde_json::json!({
+                Ok(path) => sink.write_value(serde_json::json!({
                     "event": "ledger_written",
                     "kind": "gate",
                     "round": round + 1,
                     "path": path.display().to_string(),
-                }));
+                })),
+                Err(e) => sink.write_value(serde_json::json!({
+                    "event": e.event_name(),
+                    "kind": "gate",
+                    "round": round + 1,
+                    "error": e.to_string(),
+                })),
             }
             // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
             // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
@@ -30183,7 +30024,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         shard_of: None,
                         merger_of: None,
                     };
-                    let _ = smoke_fix_dispatcher.run(boot_req).await;
+                    // C1 (gate 1): a boot-repair lane that never ran used to be indistinguishable
+                    // from one that ran and changed nothing — the next probe then sees the same
+                    // traceback and `boot_repair_exhausted` says "no progress". The dispatch
+                    // failure is named here so that exhaustion reads as what it was.
+                    if let Err(e) = smoke_fix_dispatcher.run(boot_req).await {
+                        sink.write_value(serde_json::json!({
+                            "event": "smoke_fix_dispatch_failed",
+                            "lane": format!("boot-repair-{attempts}"),
+                            "transient": !matches!(e, DispatchError::Terminal(_)),
+                            "error": e.to_string(),
+                        }));
+                        eprintln!(
+                            "{} boot-repair-{attempts}: the fix lane did NOT run ({e})",
+                            style("!").red().bold()
+                        );
+                    }
                 } else {
                     break;
                 }
@@ -30293,7 +30149,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     shard_of: None,
                     merger_of: None,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                // C1 (gate 1): the fix lane's Result was discarded, so a dispatch that never
+                // reached a model read on stderr as "N finding(s) remain after one fix attempt"
+                // — an attempt that was never made. Named, and the verdict line says which.
+                let fix_lane = smoke_fix_dispatcher.run(fix_req).await;
+                if let Err(e) = &fix_lane {
+                    sink.write_value(serde_json::json!({
+                        "event": "smoke_fix_dispatch_failed",
+                        "lane": "smoke-fix",
+                        "transient": !matches!(e, DispatchError::Terminal(_)),
+                        "error": e.to_string(),
+                    }));
+                }
                 let after =
                     run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
@@ -30305,6 +30172,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     eprintln!(
                         "{}",
                         style("smoke gate: corrective fix RESOLVED the findings").green()
+                    );
+                } else if let Err(e) = &fix_lane {
+                    eprintln!(
+                        "{} ({} finding(s) remain — the fix lane did NOT run: {e})",
+                        style("smoke gate: still failing").red().bold(),
+                        after.findings.len()
                     );
                 } else {
                     eprintln!(
@@ -30455,7 +30328,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     shard_of: None,
                     merger_of: None,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                // C1 (gate 1): same as the smoke fix above — a wire-fix that never dispatched
+                // is said, and the verdict line below says the lane did not run.
+                let fix_lane = smoke_fix_dispatcher.run(fix_req).await;
+                if let Err(e) = &fix_lane {
+                    sink.write_value(serde_json::json!({
+                        "event": "smoke_fix_dispatch_failed",
+                        "lane": "wire-fix",
+                        "transient": !matches!(e, DispatchError::Terminal(_)),
+                        "error": e.to_string(),
+                    }));
+                }
                 // Re-derive the scope: the wire-fix worker may have written a NEW module.
                 let after =
                     run_ast_review(&ov_root, &app_scope_py(&ov_root, &smoke_all_files)).await;
@@ -30476,6 +30359,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     eprintln!(
                         "{}",
                         style("AST review: wire-fix RESOLVED the unwired findings").green()
+                    );
+                } else if let Err(e) = &fix_lane {
+                    eprintln!(
+                        "{} ({} new finding(s) remain — the wire-fix lane did NOT run: {e})",
+                        style("AST review: still unwired").yellow().bold(),
+                        after_new.len()
                     );
                 } else {
                     eprintln!(
@@ -30612,11 +30501,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             occ_execute, occ_run, fleet_size, busy_node_min
         );
     }
-    sink.write_value(serde_json::json!({
+    let mut run_finished = serde_json::json!({
         "event": "run_finished",
         "report": report_value,
         "phases": phases_value,
-    }));
+    });
+    // A1 (gate 1): the lines the log itself dropped. Absent when zero, so a run whose log held
+    // every event is byte-identical; when present, the number says how much of the record above
+    // is missing and the `<log>.WRITE_FAILED` marker beside the log says why.
+    let sink_write_failures = jsonl_sink.as_ref().map_or(0, |s| s.write_failures());
+    if sink_write_failures > 0 {
+        run_finished["sink_write_failures"] = serde_json::json!(sink_write_failures);
+        eprintln!(
+            "{} the run log dropped {sink_write_failures} event line(s) — the record is INCOMPLETE \
+             (see the WRITE_FAILED marker beside it)",
+            style("!").red().bold()
+        );
+    }
+    sink.write_value(run_finished);
 
     if json {
         println!(
@@ -33320,7 +33222,7 @@ mod audit_regressions {
         );
     }
 
-    /// The ledger round-trip: a research mini rides `write_ledger_mini`'s funnel into the
+    /// The ledger round-trip: a research mini rides `write_ledger_mini_checked`'s funnel into the
     /// rollup's new `research` arm (without which it would be silently invisible), renders as
     /// the FIRST-dropped droppable in the ledger block, and never outranks a gate finding.
     #[test]

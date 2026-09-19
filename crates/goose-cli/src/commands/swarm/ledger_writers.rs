@@ -19,7 +19,10 @@ pub(super) struct TaskLedgerWrite<'a> {
     pub(super) extra: Option<serde_json::Value>,
 }
 
-pub(super) fn write_task_ledger(root: &Path, w: TaskLedgerWrite<'_>) -> Option<std::path::PathBuf> {
+pub(super) fn write_task_ledger(
+    root: &Path,
+    w: TaskLedgerWrite<'_>,
+) -> Result<PathBuf, super::LedgerWriteError> {
     let TaskLedgerWrite {
         task_id,
         status,
@@ -43,7 +46,7 @@ pub(super) fn write_task_ledger(root: &Path, w: TaskLedgerWrite<'_>) -> Option<s
             obj.insert(k, v);
         }
     }
-    super::write_ledger_mini(
+    super::write_ledger_mini_checked(
         root,
         &format!("{}.json", super::activity_digest_key(task_id)),
         &row,
@@ -62,7 +65,7 @@ pub(super) fn write_gate_ledger(
     findings: &[String],
     inconclusive: &[String],
     verified: serde_json::Value,
-) -> Option<std::path::PathBuf> {
+) -> Result<PathBuf, super::LedgerWriteError> {
     let row = serde_json::json!({
         "kind": "gate",
         "round": round,
@@ -71,7 +74,7 @@ pub(super) fn write_gate_ledger(
         "inconclusive": inconclusive,
         "verified": verified,
     });
-    super::write_ledger_mini(root, &format!("gate-r{round}.json"), &row)
+    super::write_ledger_mini_checked(root, &format!("gate-r{round}.json"), &row)
 }
 
 /// What one repair shard reported, verdict lines parsed and PAIRED with the findings they judge
@@ -98,7 +101,7 @@ pub(super) struct RepairLedgerRow<'a> {
 pub(super) fn write_repair_ledger(
     root: &Path,
     row: RepairLedgerRow<'_>,
-) -> Option<std::path::PathBuf> {
+) -> Result<PathBuf, super::LedgerWriteError> {
     let findings = super::parse_numbered_findings(row.description);
     // r6c: the brief tells a shard to HAND OFF a fix it cannot land by name in its final
     // message; the app.js lane did ("HANDOFF — Files touched: `app/drafts.py` only") and the
@@ -134,7 +137,7 @@ pub(super) fn write_repair_ledger(
         "agent_ok": row.agent_ok,
         "edited": row.edited,
     });
-    super::write_ledger_mini(
+    super::write_ledger_mini_checked(
         root,
         &format!(
             "repair-r{}-{}.json",
@@ -143,4 +146,29 @@ pub(super) fn write_repair_ledger(
         ),
         &mini,
     )
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn mini_and_rollup_failures_are_not_successful_ledger_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".swarm"), "blocked").unwrap();
+        let error = write_gate_ledger(dir.path(), 0, "test", &[], &[], true.into()).unwrap_err();
+        assert_eq!(error.event_name(), "ledger_write_failed");
+        std::fs::remove_file(dir.path().join(".swarm")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarm/ledger.json")).unwrap();
+        for _ in 0..2 {
+            let error =
+                write_gate_ledger(dir.path(), 0, "test", &[], &[], true.into()).unwrap_err();
+            assert_eq!(error.event_name(), "ledger_rollup_write_failed");
+            assert!(dir.path().join(".swarm/ledger/gate-r0.json").is_file());
+        }
+        std::fs::remove_dir(dir.path().join(".swarm/ledger.json")).unwrap();
+        write_gate_ledger(dir.path(), 0, "test", &[], &[], true.into()).unwrap();
+        let ledger = super::super::read_ledger_rollup(dir.path()).unwrap();
+        assert_eq!(ledger["gate"][0]["source"], "test");
+    }
 }

@@ -1348,6 +1348,7 @@ pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Result<Pa
         );
     }
     super::write_ledger_mini_checked(root, &research_mini_name(&row.slice, row.q_index), &v)
+        .map_err(|e| e.to_string())
 }
 
 /// The fan's ONE way to land a row (VA-030 D10-5, gate 1): the mini is written, and a write that
