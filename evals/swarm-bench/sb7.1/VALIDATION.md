@@ -39,3 +39,11 @@ Mac screen lock currently prevents the required installed Benchmark UI launch. N
 The final structured scene and every S/Q/M visual row passed in the combined seed5a05d7631d9276e3 run. All X/R backend checks passed; critical multiplier1.0. Earned score0.9583, admission ceiling1.0, but reference acceptance was REFUSED because p_stream_apply and e_stream_apply_latency recorded no application time. The raw stream observation independently shows one batch,28uploadedbytes,no reallocations,digestOktrue and the correct changed pixel. This discrepancy is being traced; no timing credit is fabricated.
 
 Evidence is retained under `evals/swarm-bench/runs/sb71-validation/20260920/sb71-full-reference-e7e7b8d81-evidence/`, including raw API/browser observations, screenshots, video and logs. The signed staged payload receipt is retained beside it. This remains reference validation, not a Gemini result or measured cost saving.
+
+## Accepted full reference 5eedf954a
+
+Full combined reference exited0 with score0.9940, critical multiplier1.0, no unsuppressed critical failures, and all visual/backend admissions true. Actual135ms receipt-to-pixel application earns0.75 on the100ms excellence rung while satisfying the normal250ms requirement; no threshold was relaxed. The accepted raw API/probe observations, screenshots, WebM and verdict are preserved in `runs/sb71-validation/20260920/sb71-full-reference-5eedf954a-evidence/`.
+
+Four independent real-browser stream controls passed: drop-D1 policy133.0ms; allowed retained-D1 policy132.5ms; delayedGPU1384.2ms after an uncredited wrong128.9ms frame; omittedGPU hasnull latency despite a134.4ms wrong frame. Each control begins with another record selected and proves it is cleared before target-only arming. The scorer readiness handshake fires the same vendor mutation once; missing readiness refuses grading. Fifteen scorer tests now pass, including cleanup on abnormal/unstarted paths. The measured MessageChannel busy polling was removed from the SB7.1 probe.
+
+The Mac is now accessible; an APFS backup of the installed app was captured before replacement. No Gemini run has started. A negative-only starter absence correction and its baseline remain before the launch; the accepted reference is explicitly associated with its own scorer hashes rather than future source.
