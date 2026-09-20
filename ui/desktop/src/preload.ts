@@ -191,6 +191,8 @@ type ElectronAPI = {
       tiers?: Record<string, number>;
       nodes?: number;
       publishable: boolean;
+      retryScoring?: { ready: boolean; reason?: string };
+      scoringError?: string;
     }>;
   }>;
   /** Delete one session's data and its index row. Refuses the running session; never touches the
@@ -219,7 +221,8 @@ type ElectronAPI = {
     error?: string;
     detail?: string;
   }>;
-  /** Kill the active benchmark run — the runner's process group AND the detached engine. */
+  /** Stop the active benchmark by its owned process IDs. */
+  benchmarkRetryScoring: (runId: string) => Promise<unknown>;
   benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
   benchmarkStatus: () => Promise<{
@@ -231,7 +234,7 @@ type ElectronAPI = {
     startedAt?: string;
     /** The sampling knobs the live run launched with (empty object = engine defaults). */
     sampling?: SwarmSampling;
-    /** Main-owned pipeline fact: the scorer reached its verdict (rep0 line seen). A re-attaching
+    /** Main-owned pipeline fact: the canonical scored verdict was read. A re-attaching
      *  view restores this instead of re-deriving it from log lines it will never see again. */
     scored?: boolean;
     /** The newest harness output line, for the same re-attach. */
@@ -241,7 +244,12 @@ type ElectronAPI = {
     runId?: string | null;
   }>;
   /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
-  benchmarkMedia: (workdir: string) => Promise<{ videos: Array<{ url: string; caption: string; sha256: string; bytes: number }>; error?: string }>;
+  benchmarkMedia: (
+    workdir: string
+  ) => Promise<{
+    videos: Array<{ url: string; caption: string; sha256: string; bytes: number }>;
+    error?: string;
+  }>;
   benchmarkShots: (
     workdir?: string
   ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
@@ -509,6 +517,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('benchmark-run', 1, undefined, { provider, model, tier }),
   // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the
   // dead tier choice: strip it so main's (nodes, sampling) contract holds for both call shapes.
+  benchmarkRetryScoring: (runId: string) => ipcRenderer.invoke('benchmark-retry-scoring', runId),
   benchmarkRun: (nodes: number, tierOrSampling?: SwarmSampling | string, legacy?: SwarmSampling) =>
     ipcRenderer.invoke(
       'benchmark-run',

@@ -83,10 +83,28 @@ describe('benchmark screenshot evidence', () => {
 });
 
 it('keeps SB71 field, currency inspection and live update evidence', async () => {
-  const names = ['sb71-field', 'sb71-inspect-usd', 'sb71-inspect-xyz', 'sb71-live-update', 'sb71-final-inspector'];
+  const names = [
+    'sb71-field',
+    'sb71-inspect-usd',
+    'sb71-inspect-xyz',
+    'sb71-live-update',
+    'sb71-final-inspector',
+  ];
   const dir = await fixture(names.map((name, i) => `${100 + i}-${name}.png`));
   const shots = await pickBenchShots(dir);
   expect(new Set(shots.map((shot) => shot.name))).toEqual(new Set(names));
-  expect(shots.find((shot) => shot.name === 'sb71-inspect-xyz')?.caption).toBe('XYZ payment inspection');
-  expect(shots.find((shot) => shot.name === 'sb71-live-update')?.caption).toBe('Committed payment update');
+  expect(shots.find((shot) => shot.name === 'sb71-inspect-xyz')?.caption).toBe(
+    'XYZ payment inspection'
+  );
+  expect(shots.find((shot) => shot.name === 'sb71-live-update')?.caption).toBe(
+    'Committed payment update'
+  );
+});
+
+it('reads standalone retry captures from the attempt evidence directory without borrowing original media', async () => {
+  const original = await fixture(['100-loaded.png']);
+  const attempt = await fixture(['200-sb71-field.png']);
+  await fs.rename(path.join(attempt, 'bench-shots'), path.join(attempt, 'sb7-shots'));
+  expect((await pickBenchShots(attempt)).map((shot) => shot.name)).toEqual(['sb71-field']);
+  expect((await pickBenchShots(original)).map((shot) => shot.name)).toEqual(['loaded']);
 });

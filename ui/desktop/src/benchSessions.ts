@@ -28,6 +28,8 @@ export interface BenchSessionRow {
   /** Data still lives in the live-run slot, not yet moved to sessions/<runId>. */
   slot?: boolean;
   slotDir?: string;
+  completionReceipt?: string;
+  scoringError?: string;
 }
 
 /** The one rule for what a slot's contents testify: a verdict is a finished run; engine events
@@ -87,6 +89,8 @@ export const upsertArchivedRow = (
         : {}),
     ...(archived.tiers ? { tiers: archived.tiers } : prior?.tiers ? { tiers: prior.tiers } : {}),
     ...(prior?.nodes != null ? { nodes: prior.nodes } : {}),
+    ...(prior?.completionReceipt ? { completionReceipt: prior.completionReceipt } : {}),
+    ...(prior?.scoringError ? { scoringError: prior.scoringError } : {}),
     slot: false,
   };
   const next = rows.slice();

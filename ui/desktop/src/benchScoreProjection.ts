@@ -39,6 +39,7 @@ export function projectBenchScore(v: {
           'contract_sha256',
           'agent',
           'scoring',
+          'scoring_attempt',
           'calibration',
           'inner',
           'excellence_gate',

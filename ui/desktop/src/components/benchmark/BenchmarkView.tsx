@@ -189,7 +189,7 @@ function ToneBand({ tone, children }: { tone: Tone; children: ReactNode }) {
 /** The tone a status line carries, read from its own words — the words are the fact, the fill
  *  only agrees with them. */
 function statusTone(status: string): Tone {
-  if (/failed/i.test(status)) return 'err';
+  if (/failed|did not finish/i.test(status)) return 'err';
   if (/cancelled/i.test(status)) return 'stopped';
   if (/complete|published/i.test(status)) return 'ok';
   return 'accent';
@@ -481,6 +481,22 @@ function SessionRow({
  * only within its own era. Every outcome renders its own truth: a run that died before scoring
  * says so in words; it never borrows the look of a finished one.
  */
+function FailureDetails({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="min-w-0">
+      <Button variant="ghost" size="sm" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {open ? 'Hide technical details' : 'Technical details'}
+      </Button>
+      {open && (
+        <pre className="mt-2 max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-all text-xs">
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function SessionDetail({
   session,
   baselines,
@@ -490,6 +506,8 @@ function SessionDetail({
   mineMatched,
   shots,
   publishSlot,
+  onRetryScoring,
+  retryBusy,
 }: {
   session: BenchSession;
   baselines: CatalogBaseline[];
@@ -499,6 +517,8 @@ function SessionDetail({
   mineMatched: boolean;
   shots: BenchShot[];
   publishSlot: ReactNode;
+  onRetryScoring: () => void;
+  retryBusy: boolean;
 }) {
   const when = fmtWhen(session.startedAt) ?? session.startedAt;
 
@@ -519,10 +539,24 @@ function SessionDetail({
   }
   if (session.outcome === 'did_not_finish') {
     return (
-      <ToneBand tone="err">
-        Started {when} — this run did not finish: it ended before the scorer reached a verdict, so
-        it has no score.
-      </ToneBand>
+      <div className="min-w-0 space-y-3">
+        <ToneBand tone="err">
+          {session.retryScoring?.ready
+            ? 'Model build completed. Scoring did not finish.'
+            : `Started ${when} — this run ended without a score.`}
+        </ToneBand>
+        {session.retryScoring?.ready ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={onRetryScoring} disabled={retryBusy}>
+              Retry scoring
+            </Button>
+            <p className={TYPE.bodyMuted}>Uses the saved build. No new model run.</p>
+          </div>
+        ) : session.retryScoring?.reason ? (
+          <p className={TYPE.bodyMuted}>{session.retryScoring.reason}</p>
+        ) : null}
+        {session.scoringError && <FailureDetails text={session.scoringError} />}
+      </div>
     );
   }
 
@@ -743,6 +777,7 @@ export default function BenchmarkView() {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [pub, setPub] = useState<PublishState>({ kind: 'idle' });
   const [status, setStatus] = useState<string | null>(null);
+  const [failureDetails, setFailureDetails] = useState<string | null>(null);
   const [mine, setMine] = useState<MineRow | null>(null);
   const [title, setTitle] = useState('');
   const [shots, setShots] = useState<BenchShot[]>([]);
@@ -894,6 +929,7 @@ export default function BenchmarkView() {
         setLaunchedSampling(sanitizeSampling(p.sampling));
         setScored(false);
         setActivity(emptyBenchmarkActivity());
+        setFailureDetails(null);
         setShots([]);
         // The new session appears in its era's list the moment main registers it.
         void loadSessions();
@@ -919,7 +955,7 @@ export default function BenchmarkView() {
     };
     const onFinished = (_e: unknown, payload: unknown) => {
       lifecycleRevision.current++;
-      const p = payload as { row?: MineRow; error?: string; cancelled?: boolean };
+      const p = payload as { row?: MineRow; error?: string; details?: string; cancelled?: boolean };
       setRunning(false);
       setCancelling(false);
       setActiveWorkdir(null);
@@ -930,9 +966,11 @@ export default function BenchmarkView() {
       } else if (p?.row) {
         setMine(p.row);
         setStatus('Run complete.');
+        setFailureDetails(null);
         void loadShots(p.row.workdir);
       } else if (p?.error) {
-        setStatus(`The run failed: ${p.error}`);
+        setStatus('Benchmark did not finish.');
+        setFailureDetails(p.details ?? p.error);
       }
       // The terminating event also updates the session row — running must flip to its real
       // outcome, never linger because only a feed line changed.
@@ -1055,6 +1093,7 @@ export default function BenchmarkView() {
     setHarnessStage('boot');
     setScored(false);
     setStatus(null);
+    setFailureDetails(null);
     setLaunchedSampling(sampling);
     try {
       // Swarms use the stable default; cloud launches carry their explicit tier.
@@ -1065,11 +1104,13 @@ export default function BenchmarkView() {
       if (result) {
         setMine(result as MineRow);
         setStatus('Run complete.');
+        setFailureDetails(null);
         void loadShots((result as MineRow).workdir);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setStatus(/cancelled/i.test(msg) ? 'Run cancelled.' : `The run failed: ${msg}`);
+      setStatus(/cancelled/i.test(msg) ? 'Run cancelled.' : 'Benchmark did not finish.');
+      setFailureDetails(msg);
     } finally {
       setRunning(false);
       setCancelling(false);
@@ -1079,6 +1120,35 @@ export default function BenchmarkView() {
       void loadSessions();
     }
   }, [nodes, sampling, entrant, cloudProvider, cloudModel, cloudTier, loadShots, loadSessions]);
+
+  const retryScoring = useCallback(
+    async (session: BenchSession) => {
+      if (!session.runId || !session.retryScoring?.ready) return;
+      setRunning(true);
+      setHarnessStage('score');
+      setScored(false);
+      setStatus(null);
+      setFailureDetails(null);
+      try {
+        const result = (await window.electron.benchmarkRetryScoring(session.runId)) as MineRow;
+        setMine(result);
+        setStatus('Run complete.');
+        setFailureDetails(null);
+        void loadShots(result.workdir);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(/cancelled/i.test(message) ? 'Scoring cancelled.' : 'Scoring did not finish.');
+        setFailureDetails((previous) => previous ?? message);
+      } finally {
+        setRunning(false);
+        setCancelling(false);
+        setActiveWorkdir(null);
+        setRunStartedAt(null);
+        void loadSessions();
+      }
+    },
+    [loadShots, loadSessions]
+  );
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -1459,6 +1529,7 @@ export default function BenchmarkView() {
           )}
 
           {status && <ToneBand tone={statusTone(status)}>{status}</ToneBand>}
+          {failureDetails && <FailureDetails text={failureDetails} />}
 
           {sections.map((sec) => {
             const selInSection =
@@ -1538,6 +1609,8 @@ export default function BenchmarkView() {
                           mineMatched={sessionKey(selectedSession) === mineSessionKey}
                           shots={shots}
                           publishSlot={publishSection}
+                          onRetryScoring={() => void retryScoring(selectedSession)}
+                          retryBusy={running || !runtimeReady}
                         />
                       </div>
                     )}
@@ -1575,7 +1648,7 @@ export default function BenchmarkView() {
       <ConfirmationModal
         isOpen={confirmCancel}
         title="Cancel this benchmark run?"
-        message="The engine, the vendor sim and the scorer are all stopped. Nothing is scored and nothing is published — the run is simply gone."
+        message="The engine, the vendor sim and the scorer are all stopped. No result is published. Saved build files and earlier scoring evidence are preserved."
         confirmLabel="Cancel the run"
         cancelLabel="Keep running"
         confirmVariant="destructive"

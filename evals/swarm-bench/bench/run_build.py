@@ -459,6 +459,18 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         if provider and "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
+        completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
+        if os.environ.get("BENCH_SB71") and completion_path and agent.get("exit") == 0:
+            from bench_rescore import write_completion
+            try:
+                run_id = os.environ.get("BENCH_RUN_ID")
+                if not run_id:
+                    run_id = json.loads((workdir / ".swarm/current-run.json").read_text())["run_id"]
+                write_completion(workdir, Path(completion_path), agent, run_id=run_id,
+                                 started_at=os.environ.get("BENCH_STARTED_AT"), seed=seed,
+                                 port=port, provider=provider, model=model)
+            except (ValueError, OSError, KeyError) as error:
+                print(f"Scoring retry unavailable: {error}", file=sys.stderr, flush=True)
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         scoring_started = time.monotonic()
         print('BENCH_PHASE ' + json.dumps({'phase': 'score'}), flush=True)

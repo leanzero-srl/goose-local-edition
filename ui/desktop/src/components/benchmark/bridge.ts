@@ -50,6 +50,8 @@ export interface BenchSession {
   nodes?: number;
   /** finished AND the stored latest result AND its benchmark is not frozen per the cached catalog. */
   publishable: boolean;
+  retryScoring?: { ready: boolean; reason?: string };
+  scoringError?: string;
 }
 
 /** The 'benchmark-started' payload's version skew fact: the site's current benchmark is newer

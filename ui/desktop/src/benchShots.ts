@@ -30,8 +30,18 @@ const SB71_CAPTIONS: Record<string, string> = {
 
 /** Read probe evidence for local viewing; upload constraints must not hide local captures. */
 export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
-  const dir = path.join(workdir, 'bench-shots');
-  const files = await fs.readdir(dir).catch(() => [] as string[]);
+  let dir = path.join(workdir, 'bench-shots');
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    dir = path.join(workdir, 'sb7-shots');
+    files = await fs.readdir(dir).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
+      throw error;
+    });
+  }
   type Capture = { file: string; epoch: number; scenario: string; legacy?: boolean };
   const captures: Capture[] = [];
   for (const file of files) {
@@ -63,7 +73,14 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
     flow: 'Payment workflow',
     viz: '3D visualization',
     ...SB71_CAPTIONS,
-    ...Object.fromEntries(captures.filter((capture) => capture.scenario.startsWith('sb71-inspect-')).map((capture) => [capture.scenario, `${capture.scenario.slice('sb71-inspect-'.length).toUpperCase()} payment inspection`])),
+    ...Object.fromEntries(
+      captures
+        .filter((capture) => capture.scenario.startsWith('sb71-inspect-'))
+        .map((capture) => [
+          capture.scenario,
+          `${capture.scenario.slice('sb71-inspect-'.length).toUpperCase()} payment inspection`,
+        ])
+    ),
     ...Object.fromEntries(
       Object.entries(SB8_CAPTIONS).map(([key, label]) => [`sb8-${key}`, label])
     ),

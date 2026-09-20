@@ -249,7 +249,10 @@ describe('BenchmarkView — LeanZero Studio', () => {
     const err = await screen.findByTestId('tone-band');
     expect(err.getAttribute('data-tone')).toBe('err');
     expect(err.className).toContain('bg-lz-err-solid');
-    expect(err.textContent).toContain('The run failed: vendor sim never bound its port');
+    expect(err.textContent).toBe('Benchmark did not finish.');
+    expect(screen.queryByText('vendor sim never bound its port')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Technical details' }));
+    expect(screen.getByText('vendor sim never bound its port')).toBeVisible();
 
     handlers.get('benchmark-finished')?.(null, { cancelled: true });
     await waitFor(() =>
