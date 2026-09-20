@@ -1,0 +1,72 @@
+{
+  "status": "reference_correctness_passed_performance_shortfall",
+  "scorerVersion": "sb-7.1",
+  "sourceCommit": "51af43d2bfb92fc31dd56b02120bab544061f903",
+  "fixtureSeed": "5a05d7631d9276e3",
+  "result": "runs/sb71-validation/20260920/sb71-stable-reference-51af43d2b-192601.json",
+  "resultSha256": "bc5f1a91f8df789c7f0e52bc960e7b94b1e1c9ab1c896c35cdc7ece2316d9e48",
+  "commandReceipt": "runs/sb71-validation/20260920/sb71-stable-reference-51af43d2b-192601-command.json",
+  "commandReceiptSha256": "29c3bde6f7f4b4ff2581e4680d1bf6c8bdb074ee98b05ef0aa37945342e9ef2a",
+  "returncode": 0,
+  "wallSeconds": 242.35035091708414,
+  "score": 0.994,
+  "inner": 1.0,
+  "criticalMultiplier": 1.0,
+  "unsuppressedCriticals": [],
+  "harnessMissing": [],
+  "probeUnavailable": [],
+  "unreachedSchedules": [],
+  "admission": {
+    "visible": true,
+    "matching": true,
+    "good": true,
+    "excellence": {
+      "visual": true,
+      "backend": true
+    },
+    "ceiling": 1.0,
+    "reasons": [],
+    "failedChecksByBand": []
+  },
+  "shortfall": {
+    "check": "e_stream_apply_latency",
+    "tier": "E",
+    "score": 0.75,
+    "detail": "batch visible in 131.3 ms (excellence rungs)",
+    "consequence": "",
+    "parts": {
+      "ms": 131.3
+    }
+  },
+  "runtime": {
+    "chromium": {
+      "executable": "/Applications/Goose.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "version": "Google Chrome for Testing 153.0.8010.36"
+    },
+    "node": {
+      "executable": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/bin/node",
+      "version": "v22.22.0"
+    },
+    "playwright": {
+      "module": "/Applications/Goose.app/Contents/Resources/bundled-mcps/leanzero-web-search/node_modules/playwright",
+      "version": "1.63.0"
+    },
+    "python": {
+      "executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "version": "Python 3.14.6"
+    }
+  },
+  "scorerFilesSha256": {
+    "score_sb71.py": "ea0330e7741e095a19f6eac98a20485ed0d13f547ff0ef2bf324b9294d0182d8",
+    "score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
+    "product_probe_sb71.mjs": "429df8ddf8997d11a524263a63826706a7058359d0ea65e2ad6a56a3ea18331f",
+    "product_probe_v3.mjs": "d4c4aa49ab7c68f783f16cd627a35828b8ab86d68323f413d43fe21c14da1074"
+  },
+  "contractSha256": {
+    "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
+    "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
+  },
+  "specSha256": "6396dc40551a513068695e90b6555108be31b379c3bd3f9279242de02013a9e8",
+  "mediaManifest": "runs/sb71-validation/20260920/sb71-stable-reference-51af43d2b-192601-evidence/bench-media/media-manifest.json",
+  "mediaManifestSha256": "8eb1d2b187ebb451969486b75ac35b2ce19a05c0b0705cb5c86dc233257e0c0a"
+}
