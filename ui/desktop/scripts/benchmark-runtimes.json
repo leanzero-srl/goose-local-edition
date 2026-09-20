@@ -1,0 +1,25 @@
+{
+  "darwin-arm64": {
+    "python": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "integrity": "sha256:81a359f1cfadd4da11766534c5913791cea55f26e1bb902cacd2a531bb1e4b2b",
+      "executable": "python/bin/python3",
+      "stripComponents": 0,
+      "downloadBytes": 24981445
+    },
+    "ffmpeg": {
+      "url": "https://registry.npmjs.org/@ffmpeg-installer/darwin-arm64/-/darwin-arm64-4.1.5.tgz",
+      "integrity": "sha512:hYqTiP63mXz7wSQfuqfFwfLOfwwFChUedeCVKkBtl/cliaTM7/ePI9bVzfZ2c+dWu3TqCwLDRWNSJ5pqZl8otA==",
+      "executable": "ffmpeg/ffmpeg",
+      "stripComponents": 1,
+      "downloadBytes": 15712439
+    },
+    "ffprobe": {
+      "url": "https://registry.npmjs.org/@ffprobe-installer/darwin-arm64/-/darwin-arm64-5.0.1.tgz",
+      "integrity": "sha512:vwNCNjokH8hfkbl6m95zICHwkSzhEvDC3GVBcUp5HX8+4wsX10SP3B+bGur7XUzTIZ4cQpgJmEIAx6TUwRepMg==",
+      "executable": "ffprobe/ffprobe",
+      "stripComponents": 1,
+      "downloadBytes": 8398999
+    }
+  }
+}
