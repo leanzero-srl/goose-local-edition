@@ -13,7 +13,7 @@
   "finalBrowserControls": {
     "test_raf_clock_with_callback_work_is_accepted": {
       "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_raf_clock_with_callback_work_is_accepted/result.json",
-      "sha256": "1eebb8f217927bd5692aa35f9ab7ff66fa5cc0cbe2a60549c50b6c25c70599fd",
+      "sha256": "c7826a5e63a1de3ded60b5cc091e7a9511917f97cd8b26870d1c333af746d4ff",
       "scores": {
         "s_visible_surface": 1,
         "s_tower_geometry": 1,
@@ -21,7 +21,25 @@
         "q_payment_context": 1,
         "q_legible_presentation": 1,
         "m_committed_event_replay": 1
-      }
+      },
+      "chosenClock": "raf",
+      "livePhaseCoverage": [
+        {
+          "start": 0,
+          "end": 300,
+          "observed": true
+        },
+        {
+          "start": 300,
+          "end": 600,
+          "observed": true
+        },
+        {
+          "start": 600,
+          "end": 900,
+          "observed": true
+        }
+      ]
     },
     "test_two_frame_hold_does_not_impersonate_a_trajectory": {
       "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_two_frame_hold_does_not_impersonate_a_trajectory/result.json",
@@ -33,7 +51,25 @@
         "q_payment_context": 1,
         "q_legible_presentation": 1,
         "m_committed_event_replay": 0
-      }
+      },
+      "chosenClock": "draw",
+      "livePhaseCoverage": [
+        {
+          "start": 0,
+          "end": 300,
+          "observed": true
+        },
+        {
+          "start": 300,
+          "end": 600,
+          "observed": false
+        },
+        {
+          "start": 600,
+          "end": 900,
+          "observed": false
+        }
+      ]
     },
     "test_uncut_corners_lose_structural_credit": {
       "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_uncut_corners_lose_structural_credit/result.json",
@@ -45,7 +81,25 @@
         "q_payment_context": 1,
         "q_legible_presentation": 0,
         "m_committed_event_replay": 0.6667
-      }
+      },
+      "chosenClock": "draw",
+      "livePhaseCoverage": [
+        {
+          "start": 0,
+          "end": 300,
+          "observed": true
+        },
+        {
+          "start": 300,
+          "end": 600,
+          "observed": true
+        },
+        {
+          "start": 600,
+          "end": 900,
+          "observed": true
+        }
+      ]
     }
   },
   "earlierStructuralControlsNote": "The six structural/semantic controls preceded the final stable phase-coverage gate and indexed overview; their primary evidence remains preserved. The final RAF control re-exercises all six rows on current production sources.",
