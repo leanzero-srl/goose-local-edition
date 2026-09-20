@@ -4,11 +4,13 @@ Status: implementation validation; no fresh Gemini pilot has started yet.
 
 ## Entrant boundary and scoring controls
 
-Fourteen Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
+Sixteen Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
 
 The starter serves its assets and returns HTTP 501 for unimplemented API behavior. It contains transport, DOM and matrix helpers; no persistence, synchronization, financial consistency, picking or rendered solution. Its full scoring baseline is pending.
 
 Admission controls independently withhold each requested score band, preserve earned behavioral credit, and require every backend X/R leg. Missing infrastructure/probe evidence refuses an official score and preserves partial diagnostics. Prelaunch public-input hashes remain in parent memory, outside candidate control. Animation target exclusion derives from the actual seeded recovery schedule.
+
+The first starter scoring attempt was stopped without a verdict while investigating inherited unread process-output pipes. An independent default HTTP logger control stalled after 819 requests; the actual SB7.1 file-output proxy completed 1,500 and retained 120,000 log bytes. This proves the reproduced backpressure mechanism, not the stopped run's exact syscall. SB7.1 preserves process logs and leaves captured browser probe output unchanged. Explicit HTTP 501 ends synchronization waits immediately; other statuses retain the original behavior. The original SB7 scorer is unchanged.
 
 ## Visual reader finding
 
