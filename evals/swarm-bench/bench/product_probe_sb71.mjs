@@ -2648,6 +2648,38 @@ function geometryEvidence(it,pose,samples) {
   }
   return groups;
 }
+function pagePresentationEvidence(id) {
+    const ids=[id];
+    const rgb=value=>{const n=value.match(/[\d.]+/g);return n?n.map(Number):[0,0,0,0];};
+    const luminance=color=>color.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
+    const background=element=>{
+      const parents=[];for(let e=element;e;e=e.parentElement)parents.unshift(e);
+      let color=[255,255,255];
+      for(const e of parents){const layer=rgb(getComputedStyle(e).backgroundColor),alpha=layer.length>3?layer[3]:1;color=color.map((v,i)=>layer[i]*alpha+v*(1-alpha));}
+      return color;
+    };
+    return ids.map(id=>{
+      const root=document.getElementById(id);if(!root)return {id,ok:false};
+      const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];
+      while(walker.nextNode())if(!walker.currentNode.parentElement.closest('textarea')&&/[\p{L}\p{N}]/u.test(walker.currentNode.textContent))nodes.push({node:walker.currentNode});
+      for(const control of root.querySelectorAll('input,textarea'))if((control.tagName==='TEXTAREA'||['text','search','email','url','tel','number'].includes(control.type))&&control.value.trim())nodes.push({control});
+      const elements=nodes.map(({node,control})=>{
+        const e=control||node.parentElement,s=getComputedStyle(e);
+        let boxes;
+        if(control){
+          const r=e.getBoundingClientRect(),left=r.left+parseFloat(s.borderLeftWidth)+parseFloat(s.paddingLeft),top=r.top+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop);
+          const right=r.right-parseFloat(s.borderRightWidth)-parseFloat(s.paddingRight),bottom=r.bottom-parseFloat(s.borderBottomWidth)-parseFloat(s.paddingBottom);
+          boxes=right>left&&bottom>top?[{left,top,right,bottom,width:right-left,height:bottom-top}]:[];
+        }else{const range=document.createRange();range.selectNodeContents(node);boxes=Array.from(range.getClientRects());}
+        const front=luminance(rgb(s.color)),back=luminance(background(e)),contrast=(Math.max(front,back)+.05)/(Math.min(front,back)+.05);
+        const noClip=boxes.every(r=>{for(let p=e;p;p=p.parentElement){const b=p.getBoundingClientRect(),style=getComputedStyle(p);if(/hidden|clip|scroll|auto/.test(style.overflow)&& (r.left<b.left-1||r.right>b.right+1||r.top<b.top-1||r.bottom>b.bottom+1))return false;}return r.left>=0&&r.right<=innerWidth;});
+        const exposed=boxes.every(r=>[.2,.5,.8].every(f=>{const x=r.left+r.width*f,y=r.top+r.height/2;if(y<0||y>=innerHeight)return false;const top=document.elementFromPoint(x,y);return getComputedStyle(e).pointerEvents==='none'||top===e||e.contains(top);}));
+        return {boxes:boxes.map(r=>({left:r.left,top:r.top,width:r.width,height:r.height})),color:rgb(s.color).slice(0,3),source:control?'control-value':'text-node',text:(control?control.value:node.textContent).trim(),fontSize:parseFloat(s.fontSize),contrast,noClip,exposed,ok:boxes.length>0&&s.visibility!=='hidden'&&Number(s.opacity)>0&&parseFloat(s.fontSize)>=12&&contrast>=4.5&&noClip&&exposed};
+      });
+      return {id,elements,ok:elements.length>0&&elements.every(e=>e.ok)};
+    });
+}
+
 function pageInspectorExitState() {
   const root=document.getElementById('tower-annotations'),visibleAnnotations=[];
   const hasColor=value=>!!value&&!(/^transparent$/.test(value)||/^rgba\(.*,[ ]*0[ ]*\)$/.test(value)||/\/[ ]*0[ ]*\)$/.test(value));
@@ -2853,31 +2885,7 @@ async function sb71VisualScenario(page,model,H,pack) {
   const presentation=[];
   for(const presentationId of ['tower-legend','inspect-details','inspector-controls','tower-annotations']) {
     await page.locator('#'+presentationId).scrollIntoViewIfNeeded().catch(()=>{});
-    const evidence=await page.evaluate((id)=>{
-    const ids=[id];
-    const rgb=value=>{const n=value.match(/[\d.]+/g);return n?n.map(Number):[0,0,0,0];};
-    const luminance=color=>color.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
-    const background=element=>{
-      const parents=[];for(let e=element;e;e=e.parentElement)parents.unshift(e);
-      let color=[255,255,255];
-      for(const e of parents){const layer=rgb(getComputedStyle(e).backgroundColor),alpha=layer.length>3?layer[3]:1;color=color.map((v,i)=>layer[i]*alpha+v*(1-alpha));}
-      return color;
-    };
-    return ids.map(id=>{
-      const root=document.getElementById(id);if(!root)return {id,ok:false};
-      const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];
-      while(walker.nextNode())if(/[\p{L}\p{N}]/u.test(walker.currentNode.textContent))nodes.push(walker.currentNode);
-      const elements=nodes.map(node=>{
-        const e=node.parentElement,s=getComputedStyle(e),range=document.createRange();range.selectNodeContents(node);
-        const boxes=Array.from(range.getClientRects());
-        const front=luminance(rgb(s.color)),back=luminance(background(e)),contrast=(Math.max(front,back)+.05)/(Math.min(front,back)+.05);
-        const noClip=boxes.every(r=>{for(let p=e;p;p=p.parentElement){const b=p.getBoundingClientRect(),style=getComputedStyle(p);if(/hidden|clip|scroll|auto/.test(style.overflow)&& (r.left<b.left-1||r.right>b.right+1||r.top<b.top-1||r.bottom>b.bottom+1))return false;}return r.left>=0&&r.right<=innerWidth;});
-        const exposed=boxes.every(r=>[.2,.5,.8].every(f=>{const x=r.left+r.width*f,y=r.top+r.height/2;if(y<0||y>=innerHeight)return false;const top=document.elementFromPoint(x,y);return getComputedStyle(e).pointerEvents==='none'||top===e||e.contains(top);}));
-        return {boxes:boxes.map(r=>({left:r.left,top:r.top,width:r.width,height:r.height})),color:rgb(s.color).slice(0,3),text:node.textContent.trim(),fontSize:parseFloat(s.fontSize),contrast,noClip,exposed,ok:boxes.length>0&&s.visibility!=='hidden'&&Number(s.opacity)>0&&parseFloat(s.fontSize)>=12&&contrast>=4.5&&noClip&&exposed};
-      });
-      return {id,elements,ok:elements.length>0&&elements.every(e=>e.ok)};
-    });
-  },presentationId);
+    const evidence=await page.evaluate(pagePresentationEvidence,presentationId);
     const bitmap=screenshotPixels(await page.screenshot());
     for(const row of evidence)for(const e of row.elements||[]) {
       let ink=0;for(const r of e.boxes)for(let y=Math.ceil(r.top);y<r.top+r.height;y++)for(let x=Math.ceil(r.left);x<r.left+r.width;x++)if(rgbNear(bitmap.at(x,y),e.color))ink++;

@@ -125,6 +125,39 @@ console.log(JSON.stringify({pixel:point,oldPickDepthGap:strictPick.depthGap,chec
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser semantic controls')
 class AnnotationSemanticControls(unittest.TestCase):
+    def test_control_values_are_readable_and_border_is_not_text_ink(self):
+        source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text()
+        helper = source[source.index('function pagePresentationEvidence('):source.index('function pageInspectorExitState()')]
+        decoder = source[source.index('function screenshotPixels('):source.index('// SB7.1 geometry and animation evidence:')]
+        script = "import {createRequire} from 'module';\nimport {inflateSync} from 'zlib';\n" + helper + decoder + r'''
+const require=createRequire(import.meta.url),pw=require(process.env.GOOSE_SWARM_PLAYWRIGHT_MODULE);
+const browser=await pw.chromium.launch({headless:true,executablePath:process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
+try{
+ const page=await browser.newPage();
+ await page.setContent(`<style>input,textarea{font:16px monospace;color:rgb(255,255,255);background:rgb(0,0,0);border:8px solid white;padding:12px;width:200px;height:40px;box-sizing:content-box}</style><div id="controls"><input value="pay_01412"><textarea>stale default</textarea><input type="hidden" value="secret"><input type="checkbox" value="checkbox"></div>`);
+ await page.locator('textarea').fill('pay_09999');
+ const read=async()=>{
+  const [row]=await page.evaluate(pagePresentationEvidence,'controls');
+  const bitmap=screenshotPixels(await page.screenshot());
+  for(const e of row.elements){let ink=0;for(const r of e.boxes)for(let y=Math.ceil(r.top);y<r.top+r.height;y++)for(let x=Math.ceil(r.left);x<r.left+r.width;x++){const p=bitmap.at(x,y);if(p&&p.every((v,i)=>Math.abs(v-e.color[i])<=8))ink++;}e.ink=ink;e.ok=e.ok&&ink>=3;}
+  return row.elements;
+ };
+ let values=await read();
+ if(values.length!==2||values.some(v=>!v.ok||v.source!=='control-value')||values[1].text!=='pay_09999')throw Error('Actual entered values missing '+JSON.stringify(values));
+ await page.locator('input[type=text],input:not([type])').evaluate(e=>e.style.color='black');
+ values=await read();if(values[0].ok)throw Error('Same-color input accepted');
+ await page.locator('input:not([type])').evaluate(e=>{e.style.color='white';e.style.webkitTextFillColor='transparent';});
+ values=await read();if(values[0].ink!==0||values[0].ok)throw Error('Border impersonated missing glyphs '+JSON.stringify(values));
+ console.log('Actual input/textarea values pass; same-color and absent-glyph values fail; stale textarea and non-text inputs excluded');
+}finally{await browser.close();}
+'''
+        with tempfile.TemporaryDirectory(prefix='sb71-control-values-') as directory:
+            path = Path(directory) / 'control.mjs'
+            path.write_text(script)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(path)],
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_empty_hidden_clipped_and_painted_annotations(self):
         source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text()
         helper = source[source.index('function pageInspectorExitState()'):source.index('function pageArmSb71Capture(')]
