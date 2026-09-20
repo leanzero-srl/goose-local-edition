@@ -875,8 +875,8 @@ function pageArmStreamPixels(arg) {
   if(!gl)throw new Error('Stream pixel witness has no visible WebGL canvas');
   const rect=canvas.getBoundingClientRect(),W=canvas.width,H=canvas.height;
   const x=Math.round(arg.cx*W/rect.width),y=H-1-Math.round(arg.cy*H/rect.height);
-  let readCompleted=0;
-  const read=()=>{const rgba=new Uint8Array(3*3*4);gl.readPixels(x-1,y-1,3,3,gl.RGBA,gl.UNSIGNED_BYTE,rgba);readCompleted=performance.now();return Array.from({length:9},(_,i)=>Array.from(rgba.slice(i*4,i*4+3)));};
+  let readStarted=0,readCompleted=0;
+  const read=()=>{const rgba=new Uint8Array(3*3*4);readStarted=performance.now();gl.readPixels(x-1,y-1,3,3,gl.RGBA,gl.UNSIGNED_BYTE,rgba);readCompleted=performance.now();return Array.from({length:9},(_,i)=>Array.from(rgba.slice(i*4,i*4+3)));};
   const before=read();
   let entry=null;
   P.sb71ArmStreamPixels=e=>{
@@ -896,7 +896,12 @@ function pageArmStreamPixels(arg) {
     const camera=window.vs7dbg.camera();
     const cameraFixed=Math.abs(((camera.yaw-arg.pose[0]+540)%360)-180)<.01&&Math.abs(camera.pitch-arg.pose[1])<.01&&Math.abs(camera.distance-arg.pose[2])<.01;
     const matched=cameraFixed&&got.every(c=>c.every((v,i)=>Math.abs(v-entry.pixelWitness.expected[i])<=8));
-    entry.pixelWitness.samples.push({elapsed,got,matched,camera,cameraFixed});
+    const draw=P.sb71LastFrames.get(canvas);
+    const timing={receiptToDrawStartMs:draw?draw.drawTime-entry.t0:null,
+      drawSubmissionMs:draw?draw.completedAt-draw.drawTime:null,
+      readStartElapsedMs:readStarted-entry.t0,readCompleteElapsedMs:readCompleted-entry.t0,
+      readPixelsMs:readCompleted-readStarted};
+    entry.pixelWitness.samples.push({elapsed,got,matched,camera,cameraFixed,timing});
     if(matched&&entry.pixelWitness.discriminating){entry.applyMs=elapsed;entry.pixelWitness.applied=true;}
   };
   return {before,point:{x,y},id:arg.id};
