@@ -57,7 +57,7 @@ for (const [name, pin] of Object.entries(selected)) {
   const args =
     name === 'python'
       ? ['-B', '-c', 'import sqlite3,ssl,zoneinfo; print("Python runtime ready")']
-      : ['-version'];
+      : name === 'node' ? ['--version'] : ['-version'];
   const proof = execFileSync(executable, args, {
     env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' },
     encoding: 'utf8',
