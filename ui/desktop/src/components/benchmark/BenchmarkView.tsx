@@ -610,8 +610,7 @@ function SessionDetail({
   if (session.outcome === 'did_not_start') {
     return (
       <ToneBand tone="stopped">
-        Started {when} — this run did not start: the engine never launched, so nothing was built and
-        there is no score.
+        Started {when} — this session has no recorded engine launch evidence and no scored verdict.
       </ToneBand>
     );
   }

@@ -1,3 +1,6 @@
+import { hasScoredVerdict } from './benchSessions';
+import { cloudRunStarted } from './benchCloudEvidence';
+import { benchmarkPythonLaunch } from './benchPython';
 import { uploadBenchmarkVideo } from './benchVideoUpload';
 import { BenchMediaServer, readBenchMedia } from './benchMedia';
 import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
@@ -35,7 +38,7 @@ import {
   decideClose,
 } from './utils/closeGuard';
 import type { CloseRunPayload } from './utils/closeGuard';
-import { benchRunArgvTokens, pidsMatchingTokens } from './utils/benchReap';
+import { benchmarkCancellationPids } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -2760,7 +2763,8 @@ const readCurrentRunId = async (workdir: string): Promise<string | null> => {
 /** What a session's data dir testifies, verdict first: a verdict.json is a finished run (carry its
  *  score/tiers), engine events without one are did_not_finish, neither is did_not_start. */
 const deriveSlotOutcome = async (
-  dataDir: string
+  dataDir: string,
+  cloud = false
 ): Promise<{
   outcome: BenchSessionOutcome;
   score?: number;
@@ -2774,6 +2778,7 @@ const deriveSlotOutcome = async (
       scorer_version?: string;
       scorerVersion?: string;
     };
+    if (!hasScoredVerdict(v)) throw new Error('Verdict has no valid score');
     const scoring = projectBenchScore(v);
     return {
       outcome: outcomeFromSlot(true, true),
@@ -2790,7 +2795,8 @@ const deriveSlotOutcome = async (
     const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
     hasEvents = raw.split('\n').some((l) => l.trim().length > 0);
   }
-  return { outcome: outcomeFromSlot(false, hasEvents) };
+  const started = hasEvents || (cloud && await cloudRunStarted(dataDir));
+  return { outcome: outcomeFromSlot(false, started) };
 };
 
 /** endedAt for an archived slot: the newest mtime among the run's own write targets. */
@@ -2936,7 +2942,8 @@ ipcMain.handle('benchmark-sessions', async () => {
       }
       continue;
     }
-    if (r.outcome === 'running') {
+    const cloud = r.runId?.startsWith('cloud-') === true;
+    if (r.outcome === 'running' || (r.outcome === 'did_not_start' && cloud)) {
       const dataDir =
         r.slot && r.slotDir
           ? r.slotDir
@@ -2950,12 +2957,13 @@ ipcMain.handle('benchmark-sessions', async () => {
           )
         : false;
       if (exists && dataDir) {
-        const d = await deriveSlotOutcome(dataDir);
+        const d = await deriveSlotOutcome(dataDir, cloud);
+        if (r.outcome === 'did_not_start' && d.outcome === 'did_not_start') continue;
         r.outcome = d.outcome;
         if (d.score != null) r.score = d.score;
         if (d.tiers) r.tiers = d.tiers;
         if (d.scorerVersion) r.scorerVersion = d.scorerVersion;
-        r.endedAt = await newestSlotMtimeIso(dataDir);
+        r.endedAt ??= await newestSlotMtimeIso(dataDir);
       } else {
         // It launched and its data is gone — finished cannot be proven, so it is not claimed.
         r.outcome = 'did_not_finish';
@@ -3152,18 +3160,19 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const benchNode = await resolveBenchNode(tier);
   const browserEnv = await bundledBrowserEnv();
   return await new Promise((resolvePromise, reject) => {
+    const python = benchmarkPythonLaunch(runner, [], process.env);
     const child = spawn(
       'python3',
       // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
       // door and cut a run the engine itself would never have stopped.
-      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
+      [...python.args, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
         '--out', outRoot, ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []), ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb71 ? ['--sb71'] : []), ...(sb8 ? ['--sb8'] : [])],
       {
         cwd: workRoot,
         detached: true,
         env: {
-          ...process.env,
+          ...python.env,
           BENCH_GOOSE: engineBinary,
           // A benchmark run is by definition unattended: nobody is sitting in front of the app
           // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
@@ -3335,6 +3344,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       try {
         const verdictPath = path.join(workdir, 'verdict.json');
         const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
+        if (!hasScoredVerdict(v)) throw new Error('Verdict has no valid score');
         const counts = await benchRunCounts(workdir);
         const scoring = projectBenchScore(v);
         const row = {
@@ -3428,12 +3438,19 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
         activeBenchRun = null;
         // No verdict. The slot decides between did_not_finish (engine events exist) and
         // did_not_start (the run never reached OPEN) — the same rule archival applies.
-        const derived = await deriveSlotOutcome(workdir);
-        await stampBenchLaunchRow(launchKey, {
-          ...(sessionRunId ? { runId: sessionRunId } : {}),
-          outcome: derived.outcome,
-          endedAt: finishedAt,
-        });
+        try {
+          const derived = await deriveSlotOutcome(workdir, !!cloud);
+          await stampBenchLaunchRow(launchKey, {
+            ...(sessionRunId ? { runId: sessionRunId } : {}),
+            outcome: derived.outcome,
+            endedAt: finishedAt,
+          });
+        } catch (error) {
+          const message = `Run evidence could not be read: ${String(error)}`;
+          sendSafe('benchmark-finished', { error: message });
+          reject(new Error(message));
+          return;
+        }
         sendSafe('benchmark-finished', { error: `no verdict produced. ${tail.slice(-400)}` });
         reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
       }
@@ -3451,47 +3468,24 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
 const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
   const run = activeBenchRun;
   if (!run) return { ok: false, error: 'no benchmark run is active' };
-  run.cancelled = true;
   const pid = run.child.pid;
-  // The runner's own process group (python + the in-process vendor sim). The runner is spawned
-  // `detached`, so it is its own session and group leader — pgid == pid by construction — and this
-  // is the kill_app_tree model: a group WE created. It is the only group kill here.
-  if (pid) {
-    try {
-      process.kill(-pid, 'SIGKILL');
-    } catch {
-      try {
-        run.child.kill('SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }
+  if (!pid) return { ok: false, error: 'The benchmark runner has no process id' };
+  let snapshot: string;
+  try {
+    snapshot = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 4000 });
+  } catch (error) {
+    run.cancelled = false;
+    return { ok: false, error: `Could not inspect benchmark processes: ${String(error)}` };
   }
-  // Then the engine and the scorer child, PER PID by the run-unique argv tokens (benchReap.ts).
-  // run_build starts `goose swarm run` with start_new_session=True, so it is NOT in the runner's
-  // group and would keep the fleet generating for a dead run. This used to be `pkill -9 -f
-  // <workdir>` — a substring that also killed any tail/less/tick.py holding the path. Never killpg
-  // on those: they share nobody's group that we own (the REAPING gate, paid for by r2).
-  const stray: number[] = [];
-  if (process.platform !== 'win32') {
-    let ps = '';
-    try {
-      ps = execFileSync('ps', ['-axo', 'pid=,args='], { encoding: 'utf8', timeout: 4000 });
-    } catch (err) {
-      log.warn(`[benchmark-cancel] ps failed; engine/scorer pids not reaped: ${String(err)}`);
-    }
-    for (const p of pidsMatchingTokens(ps, benchRunArgvTokens(run.workdir), process.pid)) {
-      try {
-        process.kill(p, 'SIGKILL');
-        stray.push(p);
-      } catch {
-        /* exited between the scan and the kill */
-      }
-    }
+  run.cancelled = true;
+  const owned = benchmarkCancellationPids(snapshot, pid, run.workdir, process.pid);
+  const errors: string[] = [];
+  for (const ownedPid of owned) {
+    try { process.kill(ownedPid, 'SIGKILL'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') errors.push(`${ownedPid}: ${String(error)}`); }
   }
-  log.info(
-    `[benchmark-cancel] ${why}: runner group ${pid ?? '?'}; by-token pids ${stray.join(',') || 'none'}`
-  );
+  log.info(`[benchmark-cancel] ${why}: per-pid ${owned.join(',')}`);
+  if (errors.length) return { ok: false, error: `Some benchmark processes could not be stopped: ${errors.join('; ')}` };
   return { ok: true };
 };
 

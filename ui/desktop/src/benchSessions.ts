@@ -141,3 +141,10 @@ export const frozenPublishRefusal = (
   const message = `benchmark ${hit.title || hit.scorerVersion} is frozen — submissions closed`;
   return { ok: false, status: 'error', message, error: message };
 };
+
+/** A diagnostic or malformed JSON object is not a scored verdict. */
+export function hasScoredVerdict(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const score = (value as { score?: unknown }).score;
+  return typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 1;
+}

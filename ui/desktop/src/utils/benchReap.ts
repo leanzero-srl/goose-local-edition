@@ -48,3 +48,46 @@ export function pidsMatchingTokens(psOutput: string, tokens: string[], selfPid: 
   }
   return pids;
 }
+
+/** Capture ancestry before killing the runner; descendants may have their own sessions/groups. */
+export function descendantPids(snapshot: string, rootPid: number, selfPid: number): number[] {
+  const rows = snapshot.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)(?:\s|$)/.exec(line);
+    return match ? [{ pid: Number(match[1]), parent: Number(match[2]) }] : [];
+  });
+  const owned = new Set([rootPid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows)
+      if (
+        row.pid !== selfPid &&
+        row.pid !== rootPid &&
+        owned.has(row.parent) &&
+        !owned.has(row.pid)
+      ) {
+        owned.add(row.pid);
+        changed = true;
+      }
+  }
+  return [...owned].filter((pid) => pid !== rootPid).reverse();
+}
+
+export function benchmarkCancellationPids(
+  snapshot: string,
+  runnerPid: number,
+  workdir: string,
+  selfPid: number
+): number[] {
+  const argvOnly = snapshot
+    .split('\n')
+    .map((line) => line.replace(/^(\s*\d+)\s+\d+\s+/, '$1 '))
+    .join('\n');
+  return [
+    ...new Set([
+      ...descendantPids(snapshot, runnerPid, selfPid),
+      ...pidsMatchingTokens(argvOnly, benchRunArgvTokens(workdir), selfPid),
+      runnerPid,
+    ]),
+  ].filter((pid) => pid !== selfPid);
+}

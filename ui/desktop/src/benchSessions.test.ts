@@ -38,7 +38,9 @@ describe('findLaunchRow — a launch is named by startedAt + slotDir, never runI
       provisional(),
     ];
     expect(findLaunchRow(rows, { startedAt: '2026-08-31T10:00:00.000Z', slotDir: SLOT })).toBe(1);
-    expect(findLaunchRow(rows, { startedAt: '2026-08-31T10:00:00.000Z', slotDir: '/elsewhere' })).toBe(-1);
+    expect(
+      findLaunchRow(rows, { startedAt: '2026-08-31T10:00:00.000Z', slotDir: '/elsewhere' })
+    ).toBe(-1);
   });
 });
 
@@ -174,4 +176,21 @@ describe('frozenPublishRefusal — the server-shaped refusal, without burning th
     expect(frozenPublishRefusal(null, 'sb-6.0')).toBeNull();
     expect(frozenPublishRefusal(CATALOG, '')).toBeNull();
   });
+});
+
+import { hasScoredVerdict } from './benchSessions';
+it('only a finite bounded explicit score is a completed verdict', () => {
+  for (const value of [
+    null,
+    {},
+    { status: 'unavailable' },
+    { score: NaN },
+    { score: Infinity },
+    { score: -1 },
+    { score: 1.1 },
+    { score: '0.4' },
+  ])
+    expect(hasScoredVerdict(value)).toBe(false);
+  expect(hasScoredVerdict({ score: 0 })).toBe(true);
+  expect(hasScoredVerdict({ score: 1 })).toBe(true);
 });
