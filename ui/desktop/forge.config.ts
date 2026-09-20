@@ -33,7 +33,13 @@ function mirrorSwarmBenchPayload() {
     if (fs.existsSync(join(src, spec))) fs.copyFileSync(join(src, spec), join(dest, spec));
   }
   fs.mkdirSync(join(dest, 'sb7.1'), { recursive: true });
-  fs.cpSync(join(src, 'sb7.1', 'starter'), join(dest, 'sb7.1', 'starter'), { recursive: true });
+  fs.cpSync(join(src, 'sb7.1', 'starter'), join(dest, 'sb7.1', 'starter'), {
+    recursive: true,
+    filter: (source) =>
+      !source.split(/[\\/]/).includes('__pycache__') &&
+      !source.endsWith('.pyc') &&
+      !source.endsWith('/.DS_Store'),
+  });
   fs.copyFileSync(
     join(src, 'sb7.1', 'VISUAL-CONTRACT.md'),
     join(dest, 'sb7.1', 'VISUAL-CONTRACT.md')
