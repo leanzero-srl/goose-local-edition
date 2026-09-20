@@ -493,6 +493,18 @@ def evaluate(ctx):
     if raw.get('probe_unavailable'):
         raise UnavailableEvidence(ctx, raw, 'required benchmark observations unavailable: ' + ', '.join(raw['probe_unavailable']))
     rows = {row['check']: row for row in raw['checks']}
+    workflow = rows.get('j_workflow_journey')
+    flow = ctx.probes.get('flow', {})
+    if workflow and (flow.get('approveCausal') or {}).get('reachedApproved') and not flow.get('paymentInTable'):
+        workflow['consequence'] = 'approval completed, but the created payment did not appear in the UI table'
+        for critical in raw.get('critical', {}).get('rows', []):
+            if critical.get('check') == 'j_workflow_journey':
+                critical['why'] = workflow['consequence']
+    camera = rows.get('t_camera_math')
+    wheel = ctx.probes.get('viz', {}).get('cameraMath', {}).get('wheel', {})
+    if camera and wheel.get('pageScrolled'):
+        targets = [event.get('target', {}) for event in wheel.get('events', [])]
+        camera['detail'] += '; wheel over the field scrolled the page; actual event targets=' + json.dumps(targets)
     layout = rows.get('t_layout_basis')
     if layout and layout['score'] == 1 and (layout.get('parts') or {}).get('unmoved_after_stream') is not True:
         layout['admission_evidence_complete'] = False

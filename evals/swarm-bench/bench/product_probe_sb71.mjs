@@ -72,6 +72,11 @@ function summarizeAnimationFrames(frames,minMoving=9) {
   const settled=!!rest&&rest.renderElapsed>=1000&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
   return {ok:motionOk&&settled,phaseCoverage,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),distinctMovingDraws:new Set(eligible.map(f=>f.renderElapsed)).size,frames};
 }
+function approvalCompletionEvidence(id,visibleState,response) {
+  const record=Array.isArray(response?.data)?response.data.find(row=>row.id===id):null;
+  const rank={approved:1,sent:2};
+  return {ok:!!record&&!!rank[visibleState]&&rank[record.state]>=rank[visibleState],id,visibleState,backendState:record?.state??null};
+}
 function parseVisibleMoney(raw,currency) {
   const exponent={EUR:2,USD:2,JPY:0,KWD:3}[currency];
   if(typeof raw!=='string'||exponent===undefined)return null;
@@ -655,12 +660,12 @@ const blockApi = args.includes('--block-api');
 const positional = args.filter((a) => !a.startsWith('--'));
 const scenario = positional[0];
 const baseUrl = positional[1];
-const SCENARIOS = ['boot', 'load', 'sync', 'flow', 'error', 'viz', 'feed', 'sb71-visual', 'sb71-stream'];
+const SCENARIOS = ['boot', 'load', 'sync', 'flow', 'error', 'viz', 'feed', 'sb71-visual', 'sb71-stream', 'sb71-camera'];
 if (!SCENARIOS.includes(scenario) || !baseUrl) {
   err(`usage: node product_probe_v3.mjs <${SCENARIOS.join('|')}> <baseUrl> [--block-api] | --selfcheck`);
   process.exit(2);
 }
-const isViz = scenario === 'viz' || scenario === 'sb71-visual' || scenario === 'sb71-stream';
+const isViz = scenario === 'viz' || scenario === 'sb71-visual' || scenario === 'sb71-stream' || scenario === 'sb71-camera';
 
 // F18 lineage: viz carries SwiftShader startup at N=12,288 plus the full scripted battery.
 const HARD_MS = isViz ? 230000 : scenario === 'flow' ? 110000 : 90000;
@@ -1353,7 +1358,7 @@ function pageSyncTruth({payments,summary}) {
     return {id,ok:!!record&&currencyShown(cells[1],record.currency)
       &&numbers(cells[1]).some(number=>minor(number,record.currency)===record.amount_minor)
       &&cells[2].toLowerCase()===record.status
-      &&(record.note?note===record.note:['','—','-'].includes(note))};
+      &&(record.note?note===record.note:(!note||['—','-'].includes(note)||/^(?:click\s+to\s+)?(?:add|edit)\s+(?:a\s+)?note(?:\.{3}|…)?$/i.test(note)))};
   });
   const currencies=(summary.by_currency||[]).map(record=>{
     const card=Array.from(document.querySelectorAll('.cur-total[data-currency]')).find(e=>e.dataset.currency===record.currency&&visible(e));
@@ -2187,6 +2192,21 @@ async function main() {
       merge({restorationControl:{initial,caught,background,after}});
     }
     await finalizeMedia();emit({consoleErrors:consoleErrors()});
+  } else if (scenario === 'sb71-camera') {
+    const navigationError=await safeGoto(25000);if(navigationError)throw new Error(navigationError);
+    await page.waitForFunction(()=>window.vs7dbg?.sceneDigest()?.count>0,null,{timeout:15000});
+    await page.evaluate(pageScrollCanvasIntoView);
+    await page.evaluate(()=>{window.__sb71WheelEvents=[];document.addEventListener('wheel',event=>{const record={target:{tag:event.target.tagName,id:event.target.id,className:event.target.className},x:event.clientX,y:event.clientY};window.__sb71WheelEvents.push(record);queueMicrotask(()=>record.defaultPrevented=event.defaultPrevented);},true);});
+    const samples=[];
+    for(const [dy,settled] of [[400,false],[-400,false],[400,true]]){
+      if(settled){await page.evaluate(pageScrollCanvasIntoView);await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));}
+      const rect=await page.evaluate(pageCanvasRect),x=rect.left+rect.w/2,y=rect.top+rect.h/2;
+      await page.mouse.move(x,y);
+      const before=await page.evaluate(({x,y})=>{const hit=document.elementFromPoint(x,y),c=document.getElementById('viz3d');return {camera:window.vs7dbg.camera(),hit:hit?{tag:hit.tagName,id:hit.id,className:hit.className}:null,rect:c.getBoundingClientRect().toJSON(),viewport:{width:innerWidth,height:innerHeight,scrollY}};},{x,y});
+      await page.mouse.wheel(0,dy);await sleep(300);
+      samples.push({dy,settled,x,y,before,after:await page.evaluate(()=>({camera:window.vs7dbg.camera(),rect:document.getElementById('viz3d').getBoundingClientRect().toJSON(),scrollY,events:window.__sb71WheelEvents}))});
+    }
+    merge({cameraDiagnostic:samples});await finalizeMedia();emit({consoleErrors:consoleErrors()});
   } else if (scenario === 'sb71-visual') {
     const navigationError=await safeGoto(25000);
     if(navigationError) throw new Error(navigationError);
@@ -2201,8 +2221,66 @@ async function main() {
   }
 }
 // §4.5 F1/F2 through the UI: maker creates+submits in #draft-form/#draft-list, checker
-// approves via #approve-btn (the approve POST is HELD 800 ms so optimistic paint is causal
-// fact, not a race), F2 is rejected, D2 probes resubmit-after-reject. Facts only.
+// approves via #approve-btn (held approval observations remain diagnostic), F2 is rejected,
+// D2 probes resubmit-after-reject. The separate held-note exercise measures required optimism.
+async function measureOptimisticNote(page,baseUrl,pack,saveShot) {
+  const excluded=pack?.sb71_reserved_payment_ids||[];
+  const id=await page.evaluate(excluded=>Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(row=>!excluded.includes(row.dataset.id))?.dataset.id,excluded);
+  if(!id)return {paintedWhileHeld:false,error:'No payment row available for note edit'};
+  const endpoint=baseUrl+'/api/payments/'+encodeURIComponent(id)+'/note';
+  const before=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(id)).then(r=>r.json());
+  const note='SB7.1 optimistic note '+Date.now(),held={requests:0,releasedAt:null};
+  const handler=async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    held.requests++;await sleep(800);held.releasedAt=Date.now();await route.continue();
+  };
+  await page.route(endpoint,handler);
+  try {
+    const row=page.locator('tbody tr[data-id="'+id+'"], [role="row"][data-id="'+id+'"]'),cell=row.locator('td,[role="cell"],[role="gridcell"]').nth(4);
+    await cell.click();const input=cell.locator('input,textarea').first();
+    if(!await input.count())return {id,paintedWhileHeld:false,error:'Note editor did not expose a text input'};
+    await input.fill(note);
+    await page.evaluate(({id,note})=>{
+      const row=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(e=>e.dataset.id===id),cell=row.querySelectorAll('td,[role="cell"],[role="gridcell"]')[4];
+      const watch=window.__sb71NoteWatch={id,note,confirmedAt:null,paintMs:null,observations:[]};
+      const observe=()=>{
+        const elapsed=performance.now()-watch.confirmedAt,r=cell.getBoundingClientRect();
+        const visible=r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&cell.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
+        const correct=cell.textContent.trim()===note&&row.dataset.state==='saving'&&visible&&!cell.querySelector('input,textarea');
+        if(correct&&watch.paintMs===null)watch.paintMs=elapsed;
+        watch.observations.push({elapsed,state:row.dataset.state,text:cell.textContent.trim(),visible,correct});
+        if(elapsed<750)requestAnimationFrame(observe);
+      };
+      const confirm=event=>{
+        if(event.type==='keydown'&&event.key!=='Enter')return;
+        if(event.type==='click'&&!event.target.closest('button,[role=button],input[type=submit]'))return;
+        if(watch.confirmedAt!==null)return;
+        watch.confirmedAt=performance.now();requestAnimationFrame(observe);
+        cell.removeEventListener('keydown',confirm,true);cell.removeEventListener('click',confirm,true);
+      };
+      cell.addEventListener('keydown',confirm,true);cell.addEventListener('click',confirm,true);
+    },{id,note});
+    const responsePromise=page.waitForResponse(r=>r.url()===endpoint&&r.request().method()==='POST',{timeout:12000});
+    const save=cell.getByRole('button',{name:/^(save|confirm|update|apply)(?:\s+note)?$/i});
+    if(await save.count())await save.first().click();
+    else if(await cell.locator('button[type=submit],input[type=submit]').count())await cell.locator('button[type=submit],input[type=submit]').first().click();
+    else await input.press('Enter');
+    await sleep(650);
+    const capture=await page.evaluate(()=>window.__sb71NoteWatch);
+    const heldDuringCheck=held.requests>0&&held.releasedAt===null;
+    const backendHeld=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(id)).then(r=>r.json());
+    await saveShot('optimistic-note-held');
+    const response=await responsePromise;
+    const after=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(id)).then(r=>r.json());
+    await page.waitForFunction(({id,note})=>{const row=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(e=>e.dataset.id===id);return row?.dataset.state==='saved'&&row.querySelectorAll('td,[role="cell"],[role="gridcell"]')[4].textContent.trim()===note;},{id,note},{timeout:3000}).catch(()=>{});
+    const state=await row.getAttribute('data-state'),text=await cell.textContent();
+    return {id,note,holdMs:800,requestSeen:held.requests,heldDuringCheck,backendUnchangedWhileHeld:backendHeld.note===before.note&&backendHeld.version===before.version,
+      paintedWhileHeld:heldDuringCheck&&backendHeld.note===before.note&&backendHeld.version===before.version&&capture.paintMs!==null,paintMs:capture.paintMs,
+      savedAfterRelease:response.ok()&&after.note===note&&after.version>before.version&&text.trim()===note&&state==='saved',
+      responseStatus:response.status(),before:{note:before.note,version:before.version},after:{note:after.note,version:after.version},capture};
+  }finally{await page.unroute(endpoint,handler);}
+}
+
 async function flowScenario(page, tokens, pack, H) {
   const { saveShot, consoleErrors, safeGoto, waitIdle, pollFirstData } = H;
   const drafts = (pack && pack.approval && Array.isArray(pack.approval.drafts) && pack.approval.drafts.length >= 2)
@@ -2254,7 +2332,7 @@ async function flowScenario(page, tokens, pack, H) {
       const l = await page.evaluate(pageDraftList).catch(() => ({ rows: [] }));
       const row = (l.rows || []).find((r) => r.id === id);
       last = row ? row.state : null;
-      if (row && row.state === want) return { reached: true, state: row.state, ms: Date.now() - t0 };
+      if (row && (Array.isArray(want)?want.includes(row.state):row.state===want)) return { reached: true, state: row.state, ms: Date.now() - t0 };
       await sleep(300);
     }
     return { reached: false, state: last, ms: capMs };
@@ -2307,8 +2385,8 @@ async function flowScenario(page, tokens, pack, H) {
   await setRole(tokens.checker);
   const approveClick = await page.evaluate(pageDraftAction, { id: f1Id, kind: 'approve' })
     .catch(() => ({ clicked: false }));
-  // optimistic paint, measured: poll the list inside the hold window; paintMs is the time to
-  // the first 'approved' row seen while the POST is still provably held.
+  // Retain the historical held-approval observation diagnostically; only note-edit
+  // optimism below contributes to the published performance check.
   const tApprove = Date.now();
   let paintMs = null, midRow = null;
   while (Date.now() - tApprove < HOLD_MS - 60) {
@@ -2322,8 +2400,11 @@ async function flowScenario(page, tokens, pack, H) {
     await sleep(60);
   }
   const heldDuringCheck = held.approves > 0 && held.releasedAt == null;
-  const approved = await pollState(f1Id, 'approved', 12000);
-  merge({ optimistic: {
+  const approved = await pollState(f1Id, ['approved','sent'], 12000);
+  const approvalResponse=await page.request.get(baseUrl+'/api/drafts',{headers:{Authorization:'Bearer '+tokens.checker}});
+  const approvalBackend=approvalCompletionEvidence(f1Id,approved.state,approvalResponse.ok()?await approvalResponse.json():null);
+  approved.reached=approved.reached&&approvalBackend.ok;
+  merge({ approvalOptimisticDiagnostic: {
     holdMs: HOLD_MS, requestSeen: held.approves, heldDuringCheck,
     stateWhileHeld: midRow ? midRow.state : null,
     paintedWhileHeld: paintMs != null,
@@ -2347,7 +2428,7 @@ async function flowScenario(page, tokens, pack, H) {
   const notifTexts = (notifMid.texts || []).join(' | ');
   merge({ approveCausal: {
     clicked: !!approveClick.clicked, used: approveClick.used || null,
-    requestSeen: held.approves > 0, stateAfter: approved.state, reachedApproved: approved.reached,
+    requestSeen: held.approves > 0, stateAfter: approved.state, reachedApproved: approved.reached, approvalBackend,
     paymentAppeared, rowsBefore: tableBefore ? tableBefore.rowCount : null, rowsAfter,
     notificationSeen: /approv/i.test(notifTexts), submittedNotificationSeen: /submit/i.test(notifTexts),
   },
@@ -2409,6 +2490,10 @@ async function flowScenario(page, tokens, pack, H) {
   const finalList = await page.evaluate(pageDraftList).catch(() => ({ found: false, rows: [] }));
   merge({ draftListStates: finalList });
   await saveShot('flow');
+  let optimistic;
+  try{optimistic=await measureOptimisticNote(page,baseUrl,pack,saveShot);}
+  catch(error){optimistic={paintedWhileHeld:false,error:String(error)};}
+  merge({optimistic});
   emit({ consoleErrors: consoleErrors() });
 }
 // ── viz probe-side helpers ───────────────────────────────────────────────────────────────────
@@ -2675,11 +2760,15 @@ function pagePresentationEvidence(id) {
     const ids=[id];
     const rgb=value=>{const n=value.match(/[\d.]+/g);return n?n.map(Number):[0,0,0,0];};
     const luminance=color=>color.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
-    const background=element=>{
-      const parents=[];for(let e=element;e;e=e.parentElement)parents.unshift(e);
-      let color=[255,255,255];
-      for(const e of parents){const layer=rgb(getComputedStyle(e).backgroundColor),alpha=layer.length>3?layer[3]:1;color=color.map((v,i)=>layer[i]*alpha+v*(1-alpha));}
-      return color;
+    const over=(front,back)=>{
+      const alpha=front[3]+back[3]*(1-front[3]);
+      return alpha?[...front.slice(0,3).map((v,i)=>(v*front[3]+back[i]*back[3]*(1-front[3]))/alpha),alpha]:[0,0,0,0];
+    };
+    const rgba=value=>{const color=rgb(value);return color.length===3?[...color,1]:color;};
+    const composite=(element,foreground)=>{
+      let pixel=foreground;
+      for(let e=element;e;e=e.parentElement){const style=getComputedStyle(e);pixel=over(pixel,rgba(style.backgroundColor));pixel[3]*=Number(style.opacity);}
+      return over(pixel,[255,255,255,1]).slice(0,3);
     };
     return ids.map(id=>{
       const root=document.getElementById(id);if(!root)return {id,ok:false};
@@ -2694,10 +2783,11 @@ function pagePresentationEvidence(id) {
           const right=r.right-parseFloat(s.borderRightWidth)-parseFloat(s.paddingRight),bottom=r.bottom-parseFloat(s.borderBottomWidth)-parseFloat(s.paddingBottom);
           boxes=right>left&&bottom>top?[{left,top,right,bottom,width:right-left,height:bottom-top}]:[];
         }else{const range=document.createRange();range.selectNodeContents(node);boxes=Array.from(range.getClientRects());}
-        const front=luminance(rgb(s.color)),back=luminance(background(e)),contrast=(Math.max(front,back)+.05)/(Math.min(front,back)+.05);
+        const foreground=rgba(s.webkitTextFillColor||s.color),effectiveColor=composite(e,foreground),effectiveBackground=composite(e,[0,0,0,0]);
+        const front=luminance(effectiveColor),back=luminance(effectiveBackground),contrast=(Math.max(front,back)+.05)/(Math.min(front,back)+.05);
         const noClip=boxes.every(r=>{for(let p=e;p;p=p.parentElement){const b=p.getBoundingClientRect(),style=getComputedStyle(p);if(/hidden|clip|scroll|auto/.test(style.overflow)&& (r.left<b.left-1||r.right>b.right+1||r.top<b.top-1||r.bottom>b.bottom+1))return false;}return r.left>=0&&r.right<=innerWidth;});
         const exposed=boxes.every(r=>[.2,.5,.8].every(f=>{const x=r.left+r.width*f,y=r.top+r.height/2;if(y<0||y>=innerHeight)return false;const top=document.elementFromPoint(x,y);return getComputedStyle(e).pointerEvents==='none'||top===e||e.contains(top);}));
-        return {boxes:boxes.map(r=>({left:r.left,top:r.top,width:r.width,height:r.height})),color:rgb(s.color).slice(0,3),source:control?'control-value':'text-node',text:(control?control.value:node.textContent).trim(),fontSize:parseFloat(s.fontSize),contrast,noClip,exposed,ok:boxes.length>0&&s.visibility!=='hidden'&&Number(s.opacity)>0&&parseFloat(s.fontSize)>=12&&contrast>=4.5&&noClip&&exposed};
+        return {boxes:boxes.map(r=>({left:r.left,top:r.top,width:r.width,height:r.height})),color:effectiveColor.map(Math.round),declaredColor:foreground,effectiveBackground,source:control?'control-value':'text-node',text:(control?control.value:node.textContent).trim(),fontSize:parseFloat(s.fontSize),contrast,noClip,exposed,ok:boxes.length>0&&s.visibility!=='hidden'&&Number(s.opacity)>0&&parseFloat(s.fontSize)>=12&&contrast>=4.5&&noClip&&exposed};
       });
       return {id,elements,ok:elements.length>0&&elements.every(e=>e.ok)};
     });
@@ -2803,7 +2893,7 @@ function visibleMotionEvidence(it,pose,capture,clockModel=null) {
     trials.push(animationEvidence(it,pose,{frames:[{...first,...moving},{...rest,...settled}]},1,clockModel));
   }
   const selected=trials.find(t=>t.ok)||trials.sort((a,b)=>b.frames[0].witnessMatches-a.frames[0].witnessMatches)[0];
-  return {...selected,ok:!!selected?.ok,clockModel,captureIntervals:capture.frames.map(f=>({start:f.captureStart,end:f.captureEnd,duration:f.captureDuration,renderCandidates:f.renderCandidates})),timing:'Actual recorded draws during screenshot interval plus the last draw before capture; same declared animation clock'};
+  return {...selected,ok:!!selected?.ok,clockModel,captureIntervals:capture.frames.map(f=>({start:f.captureStart,end:f.captureEnd,duration:f.captureDuration,renderCandidates:f.renderCandidates,canvasBefore:f.canvasBefore,canvasAfter:f.canvasAfter,viewport:f.viewport,canvasFullyInViewport:f.canvasFullyInViewport})),timing:'Actual recorded draws during screenshot interval plus the last draw before capture; same declared animation clock'};
 }
 async function captureVisibleMotion(page,points) {
   await page.waitForFunction(()=>window.__p7?.sb71Capture?.event,null,{timeout:8000});
@@ -2813,10 +2903,10 @@ async function captureVisibleMotion(page,points) {
     if(desired>elapsed)await sleep(desired-elapsed);
     const before=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,camera:window.vs7dbg.camera(),last:window.__p7.sb71LastFrames.get(document.getElementById('viz3d'))}));
     const rect=await page.evaluate(pageCanvasRect),image=await cdp.send('Page.captureScreenshot',{format:'png',fromSurface:true,optimizeForSpeed:true}),bitmap=screenshotPixels(Buffer.from(image.data,'base64'));
-    const afterState=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,draws:window.__p7.sb71Capture.rendered,t0:window.__p7.sb71Capture.event.t0})),after=afterState.elapsed;
+    const afterState=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,draws:window.__p7.sb71Capture.rendered,t0:window.__p7.sb71Capture.event.t0,rect:document.getElementById('viz3d').getBoundingClientRect().toJSON(),viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}})),after=afterState.elapsed;
     const candidates=[before.last,...afterState.draws.filter(d=>d.drawTime-afterState.t0>=before.elapsed)].filter(Boolean);
     const renderCandidates=candidates.map(d=>({renderElapsed:d.drawTime-afterState.t0,rafElapsed:Number.isFinite(d.rafTime)?d.rafTime-afterState.t0:null,drawCompletedElapsed:d.completedAt-afterState.t0}));
-    frames.push({elapsed:(before.elapsed+after)/2,captureStart:before.elapsed,captureEnd:after,captureDuration:after-before.elapsed,camera:before.camera,renderCandidates,
+    frames.push({elapsed:(before.elapsed+after)/2,captureStart:before.elapsed,captureEnd:after,captureDuration:after-before.elapsed,camera:before.camera,renderCandidates,canvasBefore:rect,canvasAfter:afterState.rect,viewport:afterState.viewport,canvasFullyInViewport:rect.top>=0&&rect.bottom<=rect.viewportH&&rect.left>=0&&rect.right<=rect.viewportW,
       samples:points.map(p=>({...p,rayX:Math.round(rect.left+p.cx)+.5-rect.left,rayY:Math.round(rect.top+p.cy)+.5-rect.top,got:bitmap.at(rect.left+p.cx,rect.top+p.cy)}))});
   }
   await cdp.detach();
@@ -2916,7 +3006,10 @@ async function sb71VisualScenario(page,model,H,pack) {
     for(const row of evidence)row.ok=!!row.elements?.length&&row.elements.every(e=>e.ok);
     presentation.push(...evidence);
   }
-  add('q_legible_presentation','Q',(presentation.filter(p=>p.ok).length/4)*(framing.length===8?framing.filter(f=>f.ok).length/8:0),'Visible child text: anatomy, payment context, controls and part callouts are readable',{elements:presentation,framing});
+  const unreadable=presentation.flatMap(group=>(group.elements||[]).filter(e=>!e.ok).map(e=>({group:group.id,text:e.text,
+    failures:[e.fontSize<12?'font below 12px':null,e.contrast<4.5?'effective contrast '+e.contrast.toFixed(2)+' below 4.5':null,!e.noClip?'clipped':null,!e.exposed?'covered':null,e.visibleInkPixels<3?'insufficient visible text pixels':null].filter(Boolean)})));
+  const presentationDetail=unreadable.length?'Presentation failures: '+unreadable.map(e=>e.group+' / '+e.text+': '+e.failures.join(', ')).join('; '):'All measured presentation text is readable';
+  add('q_legible_presentation','Q',(presentation.filter(p=>p.ok).length/4)*(framing.length===8?framing.filter(f=>f.ok).length/8:0),presentationDetail+'; framing '+framing.filter(f=>f.ok).length+'/8',{elements:presentation,framing,unreadable});
   markMediaPhase('motionStart');
   let live={ok:false},replay={ok:false},corroboration={ok:false},semantics={ok:false};
   const target=candidates[3];
@@ -2947,6 +3040,7 @@ async function sb71VisualScenario(page,model,H,pack) {
       const replayWrites=[],onReplayRequest=request=>{if(['POST','PUT','PATCH','DELETE'].includes(request.method()))replayWrites.push({method:request.method(),url:request.url()});};
       page.on('request',onReplayRequest);
       await page.locator('#replay-event').click();
+      await page.evaluate(pageScrollCanvasIntoView);
       const replayVisible=await captureVisibleMotion(page,points);
       await page.waitForFunction(()=>window.__p7?.sb71Capture?.frames?.length>=11,null,{timeout:5000}).catch(()=>{});
       replay=animationEvidence(target,pose,await page.evaluate(()=>window.__p7.sb71Capture));
@@ -3002,7 +3096,8 @@ async function sb71VisualScenario(page,model,H,pack) {
     semantics.ok=semantics.restart.ok&&semantics.restart.corroborated&&semantics.suppression.every(s=>s.ok)&&semantics.exit.ok;
   }
   markMediaPhase('motionEnd');
-  add('m_committed_event_replay','M',(Number(corroboration.ok&&live.ok)+Number(corroboration.ok&&replay.ok)+Number(semantics.ok))/3,'Actual vendor-backed note update triggers collar motion; replay reproduces it without camera movement',{corroboration,live,replay,semantics,clockEvidence});
+  const motionLegs={'committed live update':!!(corroboration.ok&&live.ok),'replay without writes':!!(corroboration.ok&&replay.ok),'newer/stale versions and exit':!!semantics.ok};
+  add('m_committed_event_replay','M',Object.values(motionLegs).filter(Boolean).length/3,Object.entries(motionLegs).map(([name,passed])=>name+': '+(passed?'passed':'failed')).join('; '),{corroboration,live,replay,semantics,clockEvidence,motionLegs});
   await H.saveShot('sb71-final-inspector');
   merge({sb71:{checks,oracleCoverageUnavailable}});
 }
@@ -3310,7 +3405,15 @@ async function vizScenario(page, pack, H) {
     };
     if (inViewport) {
       const cx = rect.left + rect.w / 2, cy = rect.top + rect.h / 2;
+      await page.evaluate(()=>{
+        const events=[];const listener=event=>{const record={target:{tag:event.target.tagName,id:event.target.id,className:event.target.className},x:event.clientX,y:event.clientY,deltaY:event.deltaY};events.push(record);queueMicrotask(()=>record.defaultPrevented=event.defaultPrevented);};
+        window.__p7.wheelEvidence={events,listener};document.addEventListener('wheel',listener,true);
+      });
       await page.mouse.move(cx, cy);
+      cameraMath.wheelTarget=await page.evaluate(({x,y})=>{
+        const hit=document.elementFromPoint(x,y),canvas=document.getElementById('viz3d');
+        return {x,y,hit:hit?{tag:hit.tagName,id:hit.id,className:hit.className}:null,canvas:canvas.getBoundingClientRect().toJSON(),viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}};
+      },{x:cx,y:cy});
       await page.mouse.wheel(0, 400);
       await sleep(300);
       const r1 = await page.evaluate(pageCanvasRect).catch(() => null);
@@ -3323,6 +3426,7 @@ async function vizScenario(page, pack, H) {
       const cam2 = c2.camera && !c2.camera.__err ? c2.camera : null;
       const want2 = clamp(want1 * Math.exp(V7.wheelK * -400), V7.distMin, V7.distMax);
       cameraMath.wheel = {
+        events:await page.evaluate(()=>{const evidence=window.__p7.wheelEvidence;document.removeEventListener('wheel',evidence.listener,true);return evidence.events;}),
         pageScrolled: !!(r1 && rect && Math.abs(r1.top - rect.top) > 1),
         step1: { expected: +want1.toFixed(3), got: cam1 ? cam1.distance : null,
                  clampHit: want1 === V7.distMax },

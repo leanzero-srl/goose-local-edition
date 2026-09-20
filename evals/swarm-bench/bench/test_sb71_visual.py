@@ -32,6 +32,21 @@ def fetch(url):
 
 
 class PixelAndVersionOracleControls(unittest.TestCase):
+    def test_approval_completion_requires_real_same_draft_progression(self):
+        source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
+        script = source + r'''
+for(const [visible,backend,want] of [['approved','approved',true],['approved','sent',true],['sent','sent',true],['sent','approved',false],['submitted','submitted',false],['rejected','sent',false]]){
+ const got=approvalCompletionEvidence('d1',visible,{data:[{id:'d1',state:backend}]});if(got.ok!==want)throw Error(JSON.stringify(got));
+}
+for(const response of [null,{data:[]},{data:[{id:'other',state:'sent'}]}])if(approvalCompletionEvidence('d1','sent',response).ok)throw Error('Missing/wrong backend identity accepted');
+'''
+        with tempfile.TemporaryDirectory(prefix='sb71-approved-sent-') as directory:
+            path = Path(directory) / 'control.mjs'
+            path.write_text(script)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(path)],
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_visible_money_preserves_signed_minor_and_currency(self):
         source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
         script = source + r'''
@@ -167,7 +182,11 @@ try{
  await page.locator('input[type=text],input:not([type])').evaluate(e=>e.style.color='black');
  values=await read();if(values[0].ok)throw Error('Same-color input accepted');
  await page.locator('input:not([type])').evaluate(e=>{e.style.color='white';e.style.webkitTextFillColor='transparent';});
- values=await read();if(values[0].ink!==0||values[0].ok)throw Error('Border impersonated missing glyphs '+JSON.stringify(values));
+ values=await read();if(values[0].ok||values[0].contrast!==1)throw Error('Border impersonated missing glyphs '+JSON.stringify(values));
+ await page.locator('input:not([type])').evaluate(e=>{e.style.webkitTextFillColor='white';e.style.opacity='.5';});
+ values=await read();if(values[0].ok||values[0].contrast>=4.5||values[0].ink<3)throw Error('Opacity was not composited '+JSON.stringify(values));
+ await page.locator('input:not([type])').evaluate(e=>e.style.opacity='.8');
+ values=await read();if(!values[0].ok||values[0].ink<3)throw Error('Readable translucent text rejected '+JSON.stringify(values));
  console.log('Actual input/textarea values pass; same-color and absent-glyph values fail; stale textarea and non-text inputs excluded');
 }finally{await browser.close();}
 '''
@@ -215,14 +234,14 @@ try{
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
-    def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual', restore_control=False):
+    def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual', restore_control=False, candidate_tree=None):
         bench = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix='sb71-visual-control-') as temporary:
             root = Path(temporary)
             tree = root / 'candidate'
             tree.mkdir()
             for directory in ('app', 'web'):
-                shutil.copytree(bench / 'golden-sb71' / directory, tree / directory,
+                shutil.copytree((Path(candidate_tree) if candidate_tree else bench / 'golden-sb71') / directory, tree / directory,
                                 ignore=shutil.ignore_patterns('__pycache__'))
             if mutation:
                 file, old, new = mutation
@@ -292,7 +311,7 @@ class VisualControls(unittest.TestCase):
                                 shutil.copytree(root / artifact, destination / artifact, dirs_exist_ok=True)
                     self.assertFalse(data.get('timedOut'), data)
                     self.assertEqual(data.get('consoleErrors', {}).get('count'), 0, data.get('consoleErrors'))
-                    if scenario == 'sb71-stream':
+                    if scenario in ('sb71-stream','sb71-camera'):
                         return data
                     media = data.get('sb71', {}).get('media', {})
                     self.assertEqual(media.get('recording'), 'graded-browser')

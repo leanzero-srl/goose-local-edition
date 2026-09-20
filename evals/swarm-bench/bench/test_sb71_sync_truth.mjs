@@ -20,7 +20,12 @@ try {
   const read=()=>page.evaluate(({helper,expected})=>(0,eval)('('+helper+')')(expected),{helper,expected});
   await page.setContent(html);
   assert.equal((await read()).ok,true,'correct financial truth with no mandated table ID');
+  await page.locator('tr[data-id="usd"] td:nth-child(5)').evaluate(e=>e.textContent='Click to add note...');
+  assert.equal((await read()).ok,true,'explicit empty-note editor affordance');
+  await page.locator('tr[data-id="eur"] td:nth-child(5)').evaluate(e=>e.textContent='Click to add note...');
+  assert.equal((await read()).ok,false,'placeholder must not erase actual retained note');
   const mutations=[
+    ['invented empty note',()=>document.querySelector('tr[data-id="usd"] td:nth-child(5)').textContent='invented text'],
     ['shifted decimal',()=>document.querySelector('tr[data-id="eur"] td:nth-child(2)').textContent='EUR 1234'],
     ['wrong currency',()=>document.querySelector('tr[data-id="eur"] td:nth-child(2)').textContent='USD 12.34'],
     ['wrong sign',()=>document.querySelector('tr[data-id="eur"] td:nth-child(2)').textContent='EUR -12.34'],
