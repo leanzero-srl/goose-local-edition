@@ -37,6 +37,7 @@ const STATUS_TONE: Record<DeskLane['status'], Tone> = {
   running: 'ok',
   done: 'accent',
   failed: 'err',
+  interrupted: 'warn',
 };
 
 /** A node's hue is its position in the desk's device list — the same ramp everywhere in this view. */
@@ -171,9 +172,11 @@ function LaneRow({
           className={cx(TYPE.mono, 'line-clamp-2 break-words', active && 'text-lz-accent-ink')}
           data-testid="lane-live-line"
         >
-          {lane.status === 'queued'
-            ? 'waiting for a free node'
-            : lane.liveLine || (lane.status === 'done' ? summaryOf(lane) : '(no words yet)')}
+          {lane.status === 'interrupted'
+            ? 'Stopped before completion · open activity to inspect the last recorded output'
+            : lane.status === 'queued'
+              ? 'waiting for a free node'
+              : lane.liveLine || (lane.status === 'done' ? summaryOf(lane) : '(no words yet)')}
         </div>
         {(lane.status === 'done' || lane.status === 'failed') && (
           <div className="flex flex-wrap gap-1.5">
@@ -283,7 +286,7 @@ export function LaneInspector({
         </div>
         <Button variant="ghost" iconOnly icon={<X />} aria-label="Close" onClick={onClose} />
       </div>
-      {lane.forming.length > 0 && (
+      {lane.status === 'running' && lane.forming.length > 0 && (
         <div
           className={cx(
             'mx-5 mt-3 rounded-lz-control px-3 py-2 text-[12px]',
@@ -346,7 +349,9 @@ export function LaneInspector({
                             ? 'Failed'
                             : c.ok === true
                               ? 'Completed'
-                              : 'Awaiting result'}
+                              : lane.status === 'interrupted'
+                                ? 'No result received'
+                                : 'Awaiting result'}
                         </span>
                       </span>
                     }

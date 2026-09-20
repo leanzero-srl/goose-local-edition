@@ -1,3 +1,4 @@
+import { normalizeAcpError } from './errors';
 import type {
   RecipeDto,
   SaveRecipeResponse_unstable,
@@ -7,36 +8,6 @@ import type {
 import { getAcpClient } from './acpConnection';
 
 let inFlightListRecipes: Promise<RecipeListEntryDto[]> | null = null;
-
-function acpErrorMessage(error: unknown): string | null {
-  if (typeof error !== 'object' || error === null) {
-    return null;
-  }
-
-  const candidate = 'error' in error && isRecord(error.error) ? error.error : error;
-  if (!isRecord(candidate)) {
-    return null;
-  }
-  if (typeof candidate.data === 'string') {
-    return candidate.data;
-  }
-  return typeof candidate.message === 'string' ? candidate.message : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function normalizeAcpError(error: unknown, fallback: string): Error {
-  const message = acpErrorMessage(error);
-  if (message) {
-    return new Error(message);
-  }
-  if (error instanceof Error) {
-    return error;
-  }
-  return new Error(fallback);
-}
 
 export async function encodeRecipe(recipe: RecipeDto): Promise<string> {
   try {

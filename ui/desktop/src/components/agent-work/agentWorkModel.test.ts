@@ -258,6 +258,16 @@ describe('agentWorkModel', () => {
     expect(m.phase).toBe('idle');
     expect(m.nextTickInMs).toBeNull();
     expect(m.nodes.every((n) => n.running.length === 0)).toBe(true);
+    expect(m.queue).toEqual([]);
+    expect(m.lanes.map((lane) => lane.status)).toEqual(['done', 'interrupted', 'interrupted']);
+  });
+
+  it('uses recorded completion summaries while retaining the full stream for inspection', () => {
+    const data = read();
+    data.events.push({ event: 'orient_done', tick: 3, summary: 'One public page to read.' });
+    const model = foldDesk(data, NOW)!;
+    expect(model.lanes[0].liveLine).toBe('One public page to read.');
+    expect(model.lanes[0].answerTail).toBe('planned two lanes');
   });
 
   it('the clock counts down to the next tick', () => {

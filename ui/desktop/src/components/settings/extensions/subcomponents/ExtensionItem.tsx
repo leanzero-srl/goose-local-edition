@@ -100,7 +100,7 @@ export default function ExtensionItem({
   return (
     <Card
       id={`extension-${kebabCase(extension.name)}`}
-      className="transition-all duration-200 min-h-[120px] overflow-hidden"
+      className="transition-colors duration-200 min-h-[120px] overflow-hidden border-lz-border bg-lz-surface text-lz-ink"
     >
       <CardHeader>
         <CardTitle>{getFriendlyTitle(extension)}</CardTitle>
@@ -109,7 +109,7 @@ export default function ExtensionItem({
           <div className="flex items-center justify-end gap-2">
             {editable && (
               <button
-                className="text-text-secondary hover:text-text-primary"
+                className="text-lz-ink-2 hover:text-lz-ink"
                 aria-label={intl.formatMessage(i18n.configureExtension, {
                   name: getFriendlyTitle(extension),
                 })}
@@ -130,7 +130,7 @@ export default function ExtensionItem({
           </div>
         </CardAction>
       </CardHeader>
-      <CardContent className="px-4 overflow-hidden text-sm break-words text-text-secondary">
+      <CardContent className="px-4 overflow-hidden text-sm break-words text-lz-ink-2">
         {renderSubtitle()}
         {['stdio', 'sse', 'streamable_http'].includes(extension.type) && (
           <div className="mt-4 space-y-3">

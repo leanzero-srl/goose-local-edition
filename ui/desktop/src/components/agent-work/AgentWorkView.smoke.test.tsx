@@ -5,6 +5,7 @@ import { foldDesk, type AgentWorkRead, type DeskState } from './agentWorkModel';
 import { TickClock } from './TickClock';
 import { LaneBoard } from './LaneBoard';
 import { NeedsYou } from './NeedsYou';
+import { AgentResults } from './AgentResults';
 import { LedgerPanel } from './LedgerPanel';
 
 const NOW = Date.parse('2026-09-07T08:00:00Z');
@@ -173,6 +174,21 @@ describe('Agent Work desk surfaces', () => {
     expect((screen.getByText('Tick now').closest('button') as HTMLButtonElement).disabled).toBe(
       true
     );
+  });
+
+  it('a stopped incomplete attempt is never presented as running or a first assignment', () => {
+    const model = foldDesk({ ...read, pid: null, ticks: [] }, NOW)!;
+    render(
+      <>
+        <AgentResults model={model} />
+        <LaneBoard model={model} dir={read.dir} selected={null} onSelect={vi.fn()} />
+      </>
+    );
+    expect(screen.getByText('Stopped without a result')).toBeTruthy();
+    expect(screen.queryByText('Ready for the first assignment')).toBeNull();
+    expect(screen.getByTestId('lane-row').textContent).toContain('Stopped before completion');
+    expect(screen.getByLabelText('interrupted')).toBeTruthy();
+    expect(screen.queryByLabelText('running')).toBeNull();
   });
 
   it('the clock counts down when the desk waits', () => {

@@ -115,22 +115,20 @@ export default function ExtensionsView({
   };
 
   return (
-    <MainPanelLayout>
+    <MainPanelLayout backgroundColor="bg-lz-bg text-lz-ink">
       <div
         className="flex flex-col min-w-0 flex-1 overflow-y-auto relative"
         data-search-scroll-area
       >
-        <div className="bg-background-primary px-6 pb-4 pt-8">
+        <div className="bg-lz-bg px-6 pb-4 pt-8">
           <div className="flex flex-col page-transition">
             <div className="flex justify-between items-center mb-1">
               <h1 className="text-3xl font-semibold">{intl.formatMessage(i18n.heading)}</h1>
             </div>
-            <p className="text-sm text-text-secondary mb-2">
+            <p className="text-sm text-lz-ink-2 mb-2">
               {intl.formatMessage(i18n.description, { searchShortcut: getSearchShortcutText() })}
             </p>
-            <p className="text-sm text-text-secondary mb-6">
-              {intl.formatMessage(i18n.defaultNote)}
-            </p>
+            <p className="text-sm text-lz-ink-2 mb-6">{intl.formatMessage(i18n.defaultNote)}</p>
 
             <div className="mb-6">
               <BundledMcps />
@@ -138,7 +136,7 @@ export default function ExtensionsView({
             <label className="mb-5 block">
               <span className="mb-2 block text-sm font-medium">Find an extension</span>
               <input
-                className="w-full rounded-lg border border-border-primary bg-background-primary px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-lz-border-strong bg-lz-surface px-3 py-2 text-sm"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="Search installed extensions"

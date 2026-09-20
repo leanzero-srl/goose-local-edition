@@ -1,3 +1,4 @@
+import { normalizeAcpError } from './errors';
 import type { ExtensionConfig, ExtensionEntry } from '../types/extensions';
 import type { GooseExtension, GooseExtensionEntry } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
@@ -182,6 +183,10 @@ export async function inspectConfigExtension(
   sourceUrl?: string,
   settingsOnly = false
 ) {
-  const client = await getAcpClient();
-  return client.goose.configExtensionsInspect_unstable({ name, sourceUrl, settingsOnly });
+  try {
+    const client = await getAcpClient();
+    return await client.goose.configExtensionsInspect_unstable({ name, sourceUrl, settingsOnly });
+  } catch (error) {
+    throw normalizeAcpError(error, 'Could not inspect the MCP server.');
+  }
 }

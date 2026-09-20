@@ -39,6 +39,18 @@ describe('bundled MCP setup', () => {
     expect(result.envs).toMatchObject({ OUTPUT_DIR: '/research', OTHER_VALUE: 'kept' });
     expect(result.cmd).toBe('/bundle/node');
   });
+  it.each(['~/corpus', 'relative/corpus'])(
+    'rejects a folder that the MCP would resolve differently: %s',
+    async (folder) => {
+      render(<BundledMcps />);
+      fireEvent.change(await screen.findByLabelText(/Research corpus folder/), {
+        target: { value: folder },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save and enable' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('full absolute path');
+      expect(add).not.toHaveBeenCalled();
+    }
+  );
   it('saves actual entered settings and does not claim an unsaved connection was tested', async () => {
     render(<BundledMcps />);
     fireEvent.change(await screen.findByLabelText(/Search API key/), {

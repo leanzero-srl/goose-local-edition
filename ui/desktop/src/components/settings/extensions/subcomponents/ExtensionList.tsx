@@ -73,7 +73,7 @@ export default function ExtensionList({
     <div className="space-y-8">
       {sortedEnabledExtensions.length > 0 && (
         <div>
-          <h2 className="text-lg font-medium text-text-primary mb-4 flex items-center gap-2">
+          <h2 className="text-lg font-medium text-lz-ink mb-4 flex items-center gap-2">
             <span className="w-2 h-2 bg-green-500 rounded-full"></span>
             {intl.formatMessage(i18n.defaultExtensions, { count: sortedEnabledExtensions.length })}
           </h2>
@@ -93,7 +93,7 @@ export default function ExtensionList({
 
       {sortedDisabledExtensions.length > 0 && (
         <div>
-          <h2 className="text-lg font-medium text-text-secondary mb-4 flex items-center gap-2">
+          <h2 className="text-lg font-medium text-lz-ink-2 mb-4 flex items-center gap-2">
             <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
             {intl.formatMessage(i18n.availableExtensions, {
               count: sortedDisabledExtensions.length,
@@ -114,7 +114,7 @@ export default function ExtensionList({
       )}
 
       {extensions.length === 0 && (
-        <div className="text-center text-text-secondary py-8">
+        <div className="text-center text-lz-ink-2 py-8">
           {intl.formatMessage(i18n.noExtensions)}
         </div>
       )}

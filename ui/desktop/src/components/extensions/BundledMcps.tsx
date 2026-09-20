@@ -70,7 +70,17 @@ function ServerSetup({ entry, saved }: { entry: BundledMcp; saved?: FixedExtensi
     setStatus('');
     setResult(null);
   };
-  const config = () => mergeMcpSettings(entry, saved, values);
+  const config = () => {
+    for (const key of ['OUTPUT_DIR', 'DOC_OUTPUT_DIR', 'CRAWL_CACHE_DIR']) {
+      const folder = values[key]?.trim();
+      if (folder && !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(folder)) {
+        throw new Error(
+          'Choose a folder or enter its full absolute path. Relative paths and ~ are not supported.'
+        );
+      }
+    }
+    return mergeMcpSettings(entry, saved, values);
+  };
   const perform = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -144,7 +154,7 @@ function ServerSetup({ entry, saved }: { entry: BundledMcp; saved?: FixedExtensi
               folderKey,
               web ? 'Research corpus folder' : 'Document output folder',
               web
-                ? 'Collected sources are saved here with provenance. Choose this folder when working with your research in a project.'
+                ? 'Sources are saved under docs/research-output with provenance, and are available through the server’s list/read cached document tools. Use Choose or enter a full absolute path.'
                 : 'New documents are written here. Existing documents are read from paths supplied in chat.'
             )}
           </div>

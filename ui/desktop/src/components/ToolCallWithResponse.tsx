@@ -138,7 +138,12 @@ function getSubagentSessionId(
 function getToolResultContent(toolResult: Record<string, unknown>): ContentBlock[] {
   if (toolResult.status === 'error') {
     const error = toolResult.error;
-    return [{ type: 'text', text: typeof error === 'string' ? error : JSON.stringify(error ?? toolResult) }];
+    return [
+      {
+        type: 'text',
+        text: typeof error === 'string' ? error : JSON.stringify(error ?? toolResult),
+      },
+    ];
   }
   const value = toolResult.value as ToolResultValue | undefined;
   if (!Array.isArray(value?.content)) return [];
@@ -252,7 +257,9 @@ export default function ToolCallWithResponse({
       <div
         className={cn(
           'w-full text-sm font-sans rounded-lg overflow-hidden border',
-          showInlineApproval ? 'border-amber-500/50 bg-amber-50/5' : 'border-border-primary'
+          showInlineApproval
+            ? 'border-lz-warn bg-lz-surface text-lz-ink'
+            : 'border-lz-border bg-lz-surface text-lz-ink'
         )}
       >
         <ToolCallView
@@ -515,13 +522,13 @@ function ToolCallView({
     switch (toolName) {
       case 'text_editor':
         if (args.command === 'write' && args.path) {
-          return `writing ${getStringValue(args.path)}`;
+          return `Write · ${getStringValue(args.path)}`;
         }
         if (args.command === 'view' && args.path) {
-          return `reading ${getStringValue(args.path)}`;
+          return `Read · ${getStringValue(args.path)}`;
         }
         if (args.command === 'str_replace' && args.path) {
-          return `editing ${getStringValue(args.path)}`;
+          return `Edit · ${getStringValue(args.path)}`;
         }
         if (args.command && args.path) {
           return `${getStringValue(args.command)} ${getStringValue(args.path)}`;
@@ -530,40 +537,43 @@ function ToolCallView({
 
       case 'shell':
         if (args.command) {
-          return `running ${getStringValue(args.command)}`;
+          return `Shell · ${getStringValue(args.command).split('\n')[0]}`;
         }
         break;
 
       case 'search':
         if (args.name) {
-          return `searching for "${getStringValue(args.name)}"`;
+          return `Search · "${getStringValue(args.name)}"`;
         }
         if (args.mimeType) {
-          return `searching for ${getStringValue(args.mimeType)} files`;
+          return `Search · ${getStringValue(args.mimeType)} files`;
         }
         break;
 
+      case 'write':
+      case 'edit':
       case 'read': {
+        if (args.path) return `${snakeToTitleCase(toolName)} · ${getStringValue(args.path)}`;
         if (args.uri) {
           const uri = getStringValue(args.uri);
           const fileId = uri.replace('gdrive:///', '');
-          return `reading file ${fileId}`;
+          return `Read · file ${fileId}`;
         }
         if (args.url) {
-          return `reading ${getStringValue(args.url)}`;
+          return `Read · ${getStringValue(args.url)}`;
         }
         break;
       }
 
       case 'create_file':
         if (args.name) {
-          return `creating ${getStringValue(args.name)}`;
+          return `Create · ${getStringValue(args.name)}`;
         }
         break;
 
       case 'update_file':
         if (args.fileId) {
-          return `updating file ${getStringValue(args.fileId)}`;
+          return `Update · ${getStringValue(args.fileId)}`;
         }
         break;
 
@@ -587,31 +597,31 @@ function ToolCallView({
 
       case 'web_scrape':
         if (args.url) {
-          return `scraping ${getStringValue(args.url)}`;
+          return `Read page · ${getStringValue(args.url)}`;
         }
         break;
 
       case 'remember_memory':
         if (args.category && args.data) {
-          return `storing ${getStringValue(args.category)}: ${getStringValue(args.data)}`;
+          return `Store · ${getStringValue(args.category)}: ${getStringValue(args.data)}`;
         }
         break;
 
       case 'retrieve_memories':
         if (args.category) {
-          return `retrieving ${getStringValue(args.category)} memories`;
+          return `Retrieve · ${getStringValue(args.category)} memories`;
         }
         break;
 
       case 'screen_capture':
         if (args.window_title) {
-          return `capturing window "${getStringValue(args.window_title)}"`;
+          return `Capture window · "${getStringValue(args.window_title)}"`;
         }
-        return `capturing screen`;
+        return `Capture screen`;
 
       case 'automation_script':
         if (args.language) {
-          return `running ${getStringValue(args.language)} script`;
+          return `${getStringValue(args.language)} script`;
         }
         break;
 
@@ -619,26 +629,26 @@ function ToolCallView({
         if (args.instructions) {
           const instr = getStringValue(args.instructions);
           const truncated = instr.length > 80 ? instr.substring(0, 80) + '…' : instr;
-          return `delegating: ${truncated}`;
+          return `Delegate · ${truncated}`;
         }
         if (args.source) {
-          return `delegating to ${getStringValue(args.source)}`;
+          return `Delegate · ${getStringValue(args.source)}`;
         }
-        return 'delegating task';
+        return 'Delegate task';
       }
 
       case 'load': {
         if (args.source) {
-          return `loading ${getStringValue(args.source)}`;
+          return `Load · ${getStringValue(args.source)}`;
         }
-        return 'loading source';
+        return 'Load source';
       }
 
       case 'final_output':
         return 'final output';
 
       case 'computer_control':
-        return `poking around...`;
+        return `Computer action`;
 
       case 'execute_typescript': {
         const toolGraph = args.tool_graph as unknown as ToolGraphNode[] | undefined;
@@ -651,7 +661,7 @@ function ToolCallView({
           }
           return `${toolGraph.length} tools used`;
         }
-        return 'executing code';
+        return 'Execute code';
       }
 
       default: {

@@ -214,7 +214,7 @@ export interface AgentWorkRead {
 export type Liveness = 'running' | 'stale' | 'stopped';
 
 export type LaneKind = 'orient' | 'lane' | 'lens' | 'synthesis';
-export type LaneStatus = 'queued' | 'running' | 'done' | 'failed';
+export type LaneStatus = 'queued' | 'running' | 'done' | 'failed' | 'interrupted';
 
 export interface DeskLane {
   key: string;
@@ -455,10 +455,15 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
     if (c.kind === 'orient' || c.kind === 'synthesis') {
       const phase = st?.phase ?? 'idle';
       const done =
-        c.kind === 'orient'
-          ? phaseIndex(phase) > phaseIndex('orient') || phase === 'idle'
-          : phase === 'idle' || phaseIndex(phase) > phaseIndex('synthesis');
+        events.some((e) => e.event === `${c.kind}_done`) ||
+        (c.kind === 'orient'
+          ? phaseIndex(phase) > phaseIndex('orient') || (phase === 'idle' && live !== 'stopped')
+          : (phase === 'idle' && live !== 'stopped') ||
+            phaseIndex(phase) > phaseIndex('synthesis'));
       r.status = done ? 'done' : 'running';
+      const completion = [...events].reverse().find((event) => event.event === `${c.kind}_done`);
+      const summary = c.kind === 'orient' ? completion?.summary : completion?.log_line;
+      if (typeof summary === 'string' && summary.trim()) r.liveLine = summary.trim();
       r.model = r.model || st?.planner_model || '';
     }
   }
@@ -478,6 +483,11 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
   const lanes = Array.from(rows.values()).sort(
     (a, b) => order[a.kind] - order[b.kind] || a.key.localeCompare(b.key)
   );
+  if (live === 'stopped') {
+    for (const lane of lanes) {
+      if (lane.status === 'running' || lane.status === 'queued') lane.status = 'interrupted';
+    }
+  }
   const queue = lanes.filter((l) => l.status === 'queued');
   const running = lanes.filter((l) => l.status === 'running' && live === 'running');
   const nodes: NodeOccupancy[] = (st?.devices ?? []).map((d) => {
