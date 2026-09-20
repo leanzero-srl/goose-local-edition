@@ -64,6 +64,13 @@ import { join, dirname, relative, resolve } from 'path';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
 
 const err = (...a) => console.error('[probe]', ...a);
+function parseVisibleVersion(raw) {
+  if(typeof raw!=='string')return null;
+  const match=/^\s*(?:(?:v|version)\s*:?\s*)?(\d+)\s*$/i.exec(raw);
+  if(!match)return null;
+  const version=Number(match[1]);
+  return Number.isSafeInteger(version)?version:null;
+}
 function measuredApplicationSurfaceAbsent(glBeforePixelProbe, observations) {
   return !!glBeforePixelProbe && Array.isArray(glBeforePixelProbe.contexts) &&
     !glBeforePixelProbe.contexts.some(context=>!context.offscreen) && glBeforePixelProbe.defDraws===0 &&
@@ -394,6 +401,27 @@ function decisiveAt(ctx, sx, sy) {
     : ndcDepth(second.zc) - ndcDepth(center[0].zc);
   const decisive = unanimous9 && lateral3 && (front == null || depthGap >= V7.depthGapNdc);
   return { front, hit: center[0] || null, second, unanimous9, lateral3, depthGap, decisive, hits: center };
+}
+// Pixel latency needs one homogeneous 3x3 framebuffer patch. GPU-pick identity
+// tests separately retain their larger ring and depth-separation requirements.
+function pixelWitnessAt(ctx, n, sx, sy) {
+  const x=Math.round(sx),y=Math.round(sy),center=castPixel(ctx,x+.5,y+.5)[0];
+  if(!center||center.n!==n)return null;
+  if(!O9.every(([dx,dy])=>{const hit=castPixel(ctx,x+.5+dx,y+.5+dy)[0];return hit&&hit.n===n&&hit.factor===center.factor;}))return null;
+  return {sx:x,sy:y,factor:center.factor,top:Math.abs(center.hitY-ctx.model.items[n].h)<=1e-6};
+}
+function findPixelWitnessFor(ctx, model, n) {
+  const it=model.items[n];
+  const candidates=[[it.x,it.h,it.z],[it.x,it.h*.5,it.z],
+    [it.x-.3,it.h,it.z],[it.x+.3,it.h,it.z],[it.x,it.h,it.z+.3],[it.x,it.h,it.z-.3],
+    [it.x,it.h*.75,it.z],[it.x,it.h*.25,it.z],[it.x-.3,it.h*.5,it.z],[it.x+.3,it.h*.5,it.z]];
+  for(const world of candidates){
+    const p=projectPt(ctx.eye,ctx.basis,ctx.W,ctx.H,world);
+    if(!p||p.x<8||p.x>ctx.W-8||p.y<8||p.y>ctx.H-8)continue;
+    const witness=pixelWitnessAt(ctx,n,p.x,p.y);
+    if(witness)return witness;
+  }
+  return null;
 }
 // ── label-culling expectation (§3.5): candidates, eligibility, priority-order culling ────────
 function labelCandidates(model, packList) {
@@ -2680,8 +2708,9 @@ async function sb71VisualScenario(page,model,H,pack) {
     const amount=fields.amount.replace(/[^0-9.,]/g,''),digits=amount.replace(/[^0-9]/g,'').replace(/^0+(?=\d)/,'');
     const exponent=V7.exp[it.cur],decimals=exponent===0?!/[.,]\d{1,2}$/.test(amount):new RegExp('[.,]\\d{'+exponent+'}$').test(amount);
     const moneyOk=digits===String(Math.abs(backend.amount_minor))&&decimals;
-    contexts.push({id:it.id,currency:it.cur,fields,expected:{id:backend.id,currency:backend.currency,status:backend.status,version:backend.version,amount_minor:backend.amount_minor},moneyOk,
-      ok:fields.id===backend.id&&fields.currency===backend.currency&&fields.status===backend.status&&fields.version===String(backend.version)&&moneyOk});
+    const parsedVersion=parseVisibleVersion(fields.version);
+    contexts.push({id:it.id,currency:it.cur,fields,parsedVersion,expected:{id:backend.id,currency:backend.currency,status:backend.status,version:backend.version,amount_minor:backend.amount_minor},moneyOk,
+      ok:fields.id===backend.id&&fields.currency===backend.currency&&fields.status===backend.status&&parsedVersion===backend.version&&moneyOk});
   }
   const groups=cases.flatMap(c=>Object.entries(c.groups).filter(([name])=>name!=='collar').map(([name,g])=>({currency:c.currency,name,...g})));
   const partScore=groups.length===32?groups.reduce((sum,g)=>sum+(g.total>=3?g.matched/g.total:0),0)/32:0;
@@ -2787,10 +2816,10 @@ async function sb71VisualScenario(page,model,H,pack) {
       },event);
       await sleep(350);
       const after=await page.evaluate(pageGlCounters),pixels=await page.evaluate(pageSamplePixels,{points}),groups=geometryEvidence(target,pose,pixels.samples||[]);
-      const details=await page.locator('#inspect-version').textContent();
+      const details=await page.locator('#inspect-version').textContent(),parsedVersion=parseVisibleVersion(details);
       const unchanged=Object.values(groups).every(g=>g.total>=3&&g.matched/g.total>=.97);
-      suppression.push({version:event.record.version,delivered,before,after,unchanged,visibleVersion:details,
-        ok:delivered&&unchanged&&details===String(backend.version)});
+      suppression.push({version:event.record.version,delivered,before,after,unchanged,visibleVersion:details,parsedVersion,
+        ok:delivered&&unchanged&&parsedVersion===backend.version});
     }
     await page.locator('#replay-event').click();await sleep(150);await page.locator('#field-view').click();await sleep(250);
     const idleBefore=await page.evaluate(pageGlCounters);await sleep(350);const idleAfter=await page.evaluate(pageGlCounters);
@@ -2818,7 +2847,7 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
         const poses=[[V7.yaw0,V7.pitch0,V7.dist0]];
         for(let k=0;k<100;k++){const pitch=16+rng()*32;poses.push([az+(rng()-.5)*50,pitch,clamp((radius+15+rng()*65)/Math.cos(deg(pitch)),16,340)]);}
         for(const pose of poses) {
-          const ctx=poseCtx(model,...pose,Wc,Hcs),point=findDecisivePointFor(ctx,model,n);
+          const ctx=poseCtx(model,...pose,Wc,Hcs),point=findPixelWitnessFor(ctx,model,n);
           if(!point)continue;
           await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
           let brush=(await vs7({want:['brush']})).brush;

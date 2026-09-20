@@ -31,6 +31,39 @@ def fetch(url):
         return json.load(response)
 
 
+class PixelAndVersionOracleControls(unittest.TestCase):
+    def test_actual_seed_pixel_witness_and_rejected_boundary_samples(self):
+        bench = Path(__file__).resolve().parent
+        fixture = fixtures_v3.build('5cd00e961d80464f')
+        rows = sorted(fixture.payments, key=lambda row: (row['_instant'], row['id']))
+        pack = {'seed': '5cd00e961d80464f', 'records': {
+            key: [row[key if key != 'day' else '_day'] for row in rows]
+            for key in ('id', 'amount_minor', 'currency', 'status', 'day')}}
+        prefix = (bench / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
+        assertions = r"""
+const model=buildModel(PACK),n=model.byId.get('pay_01412');
+const ctx=poseCtx(model,-143.95862832828607,21.12591926008463,175.77850862014003,1190,480);
+const require=(condition,message)=>{if(!condition)throw Error(message);};
+const point=findPixelWitnessFor(ctx,model,n);
+require(point?.sx===500&&point.sy===442&&point.factor===1,'Actual paid seed has no valid pixel witness');
+const strictPick=decisiveAt(ctx,500.5,442.5);
+require(strictPick.unanimous9&&!strictPick.decisive&&strictPick.depthGap<.002,'Pick oracle must remain stricter');
+for(const [x,y,why] of [[501,441,'different identity'],[501,442,'mixed face factors'],[499,448,'background edge']])
+  require(pixelWitnessAt(ctx,n,x,y)===null,'Accepted '+why);
+for(const text of ['1','v1','V 1','version 1','Version: 1','  v: 1  '])require(parseVisibleVersion(text)===1,'Valid version rejected '+text);
+for(const text of ['1.0','1e0','version1 stale2','v1/v2','v-1','version','9007199254740992','',null])require(parseVisibleVersion(text)===null,'Malformed version accepted '+text);
+require(parseVisibleVersion('v2')===2&&parseVisibleVersion('v2')!==1,'Wrong version matched');
+console.log(JSON.stringify({pixel:point,oldPickDepthGap:strictPick.depthGap,checks:'passed'}));
+"""
+        with tempfile.TemporaryDirectory(prefix='sb71-oracle-control-') as directory:
+            script = Path(directory) / 'control.mjs'
+            script.write_text(prefix + '\nconst PACK=' + json.dumps(pack) + ';\n' + assertions)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(script)],
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['checks'], 'passed')
+
+
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
     def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual'):
