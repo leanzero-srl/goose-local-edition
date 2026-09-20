@@ -126,12 +126,12 @@ describe('the benchmark sections and their sessions', () => {
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Cloud model' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cloud provider' })).toBeEnabled());
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Cloud provider' }), { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('button', { name: 'Single model' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
     expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Cloud model ID' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
       target: { value: 'gemini-3.8-flash' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
@@ -369,11 +369,11 @@ it('can cancel a cloud run while its launch IPC promise remains pending', async 
       <BenchmarkView />
     </IntlTestWrapper>
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Cloud model' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cloud provider' })).toBeEnabled());
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Cloud provider' }), { key: 'ArrowDown' });
+  fireEvent.click(screen.getByRole('button', { name: 'Single model' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Cloud model ID' }), {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
     target: { value: 'gemini-3.8-flash' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));

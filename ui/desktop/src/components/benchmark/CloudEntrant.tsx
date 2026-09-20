@@ -34,7 +34,7 @@ export function CloudEntrant({
         setProviders(
           rows.filter(
             (row) =>
-              row.is_configured && !['local', 'swarm', 'lmstudio', 'ollama'].includes(row.name)
+              row.is_configured && !['local', 'swarm'].includes(row.name)
           )
         );
         setError(null);
@@ -60,7 +60,7 @@ export function CloudEntrant({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Cloud provider"
+              aria-label="Model provider"
               disabled={disabled || loading || !!error}
               className="flex items-center gap-3 rounded-lg border border-lz-border bg-lz-surface px-3 py-2 text-lz-ink"
             >
@@ -98,13 +98,13 @@ export function CloudEntrant({
       )}
       {!loading && !error && providers.length === 0 && (
         <p className={TYPE.bodyMuted}>
-          No configured cloud providers. Add a provider in Goose Swarm, then return and refresh.
+          No configured providers. Add a provider in Goose Swarm, then return and refresh.
         </p>
       )}
       <label className="flex flex-col gap-2 text-sm">
         Model ID
         <input
-          aria-label="Cloud model ID"
+          aria-label="Model ID"
           value={model}
           onChange={(event) => onChange(provider, event.target.value)}
           disabled={disabled || !selected || !!error}

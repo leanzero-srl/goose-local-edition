@@ -1391,7 +1391,7 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            SB7.1 payments runs on your local swarm or a configured cloud provider.
+            SB7.1 payments runs on your local swarm or a configured model provider.
             Earlier experiments remain separate in your session history.
           </p>
 
@@ -1409,7 +1409,7 @@ export default function BenchmarkView() {
               value={entrant}
               options={[
                 { value: 'swarm', label: 'Local swarm' },
-                { value: 'cloud', label: 'Cloud model' },
+                { value: 'cloud', label: 'Single model' },
               ]}
               onChange={(value) => setEntrant(value as 'swarm' | 'cloud')}
               disabled={running}
@@ -1418,7 +1418,7 @@ export default function BenchmarkView() {
               <>
                 <Segmented
                   as="buttons"
-                  aria-label="Cloud benchmark"
+                  aria-label="Single model benchmark"
                   value={cloudTier}
                   options={[
                     { value: 'sb-7.1', label: 'SB7.1 payments' },

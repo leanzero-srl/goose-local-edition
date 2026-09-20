@@ -1,3 +1,4 @@
+import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
 import { benchmarkProfileDirectory } from './benchProfile';
 import { inspectBenchmarkRuntime, installBenchmarkRuntime } from './benchRuntimeInstaller';
@@ -2483,11 +2484,12 @@ const bundledBrowserEnv = async (): Promise<Record<string, string>> => {
 };
 
 const benchNodeMemo = new Map<string, string>();
-const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>): Promise<string> => {
-  const cached = benchNodeMemo.get(tier);
+const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>, nodeOverride?: string): Promise<string> => {
+  const memoKey = `${tier}:${nodeOverride ?? 'legacy'}`;
+  const cached = benchNodeMemo.get(memoKey);
   if (cached) return cached;
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
-  const node = path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
+  const node = nodeOverride ?? path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
   const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[tier]);
   const env = { ...process.env, ...await bundledBrowserEnv() };
   await new Promise<void>((resolve, reject) => {
@@ -2506,7 +2508,7 @@ const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>): 
       else reject(new Error(`Bundled benchmark browser failed: ${output.slice(-1500)}`));
     });
   });
-  benchNodeMemo.set(tier, node);
+  benchNodeMemo.set(memoKey, node);
   return node;
 };
 
@@ -3130,8 +3132,8 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
   const runtime = sb71
     ? await resolveBenchmarkRuntime(benchWorkRoot())
-    : { python: 'python3', env: {} };
-  const benchNode = await resolveBenchNode(tier);
+    : { python: 'python3', node: undefined, env: {} };
+  const benchNode = await resolveBenchNode(tier, runtime.node);
   const browserEnv = await bundledBrowserEnv();
   // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
   // lookup. run_build.py honors BENCH_GOOSE for the engine path.
@@ -3660,6 +3662,7 @@ ipcMain.handle(
         }
       | undefined;
     if (verdict) {
+      Object.assign(payload, publicScoreDetails(verdict));
       if (verdict.admission) payload.admission = verdict.admission;
       if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
       const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])

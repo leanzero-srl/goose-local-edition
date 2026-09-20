@@ -51,7 +51,7 @@ export function BenchmarkRuntimeSetup({
   return (
     <Panel title="Benchmark tools">
       <p className={TYPE.bodyMuted}>
-        Python and video tools are optional downloads required to run SB7.1. The app checks its
+        Python, Node and video tools are optional downloads required to run SB7.1. The app checks its
         browser before each launch.
       </p>
       {status?.state === 'ready' ? (

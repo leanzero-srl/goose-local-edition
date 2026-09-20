@@ -41,21 +41,23 @@ it('runs every installed tool preflight and returns absolute child-process paths
     platform: 'darwin',
     arch: 'arm64',
     python: 'python',
+    node: 'node',
     ffmpeg: 'ffmpeg',
     ffprobe: 'ffprobe',
   };
   await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify(manifest));
-  for (const name of ['python', 'ffmpeg', 'ffprobe']) {
+  for (const name of ['python', 'node', 'ffmpeg', 'ffprobe']) {
     await fs.writeFile(path.join(dir, name), '#!/bin/sh\nprintf called > "$0.receipt"\n', {
       mode: 0o755,
     });
   }
   const runtime = await resolveBenchmarkRuntime(root);
+  expect(runtime.node).toBe(path.join(dir, 'node'));
   expect(runtime.python).toBe(path.join(dir, 'python'));
   expect(runtime.env.BENCH_FFMPEG).toBe(path.join(dir, 'ffmpeg'));
   expect(runtime.env.BENCH_FFPROBE).toBe(path.join(dir, 'ffprobe'));
   expect(runtime.env.PATH.split(path.delimiter)[0]).toBe(dir);
-  for (const name of ['python', 'ffmpeg', 'ffprobe'])
+  for (const name of ['python', 'node', 'ffmpeg', 'ffprobe'])
     expect(await fs.readFile(path.join(dir, `${name}.receipt`), 'utf8')).toBe('called');
   await fs.writeFile(path.join(dir, 'ffprobe'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   await expect(resolveBenchmarkRuntime(root)).rejects.toThrow('preflight failed');

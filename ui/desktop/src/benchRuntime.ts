@@ -8,7 +8,7 @@ const execute = promisify(execFile);
 
 export async function resolveBenchmarkRuntime(
   installParent: string
-): Promise<{ python: string; env: Record<string, string> }> {
+): Promise<{ python: string; node: string; env: Record<string, string> }> {
   if (process.platform !== 'darwin' || process.arch !== 'arm64')
     throw new Error('SB7.1 isolation currently requires macOS on Apple Silicon.');
   const root = path.join(installParent, 'runtime');
@@ -25,7 +25,7 @@ export async function resolveBenchmarkRuntime(
       'Benchmark runtime does not match this platform. Install Benchmark tools for this platform.'
     );
   const binaries: Record<string, string> = {};
-  for (const name of ['python', 'ffmpeg', 'ffprobe']) {
+  for (const name of ['python', 'node', 'ffmpeg', 'ffprobe']) {
     const relative = manifest[name];
     if (typeof relative !== 'string' || !relative || path.isAbsolute(relative))
       throw new Error(`Benchmark runtime has an invalid ${name} path.`);
@@ -46,7 +46,7 @@ export async function resolveBenchmarkRuntime(
   const env = {
     BENCH_FFMPEG: binaries.ffmpeg,
     BENCH_FFPROBE: binaries.ffprobe,
-    PATH: path.dirname(binaries.python) + path.delimiter + (process.env.PATH ?? ''),
+    PATH: [path.dirname(binaries.python), path.dirname(binaries.node), process.env.PATH ?? ''].join(path.delimiter),
   };
   try {
     await execute(
@@ -58,6 +58,7 @@ export async function resolveBenchmarkRuntime(
       ],
       { env: { ...process.env, ...env, PYTHONDONTWRITEBYTECODE: '1' }, timeout: 15000 }
     );
+    await execute(binaries.node, ['-e', 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)'], { env: { ...process.env, ...env }, timeout: 15000 });
     await execute(binaries.ffmpeg, ['-version'], {
       env: { ...process.env, ...env },
       timeout: 15000,
@@ -68,8 +69,8 @@ export async function resolveBenchmarkRuntime(
     });
   } catch {
     throw new Error(
-      'Installed benchmark runtime preflight failed (Python 3.11+, sqlite3, SSL, timezone support or video tools). Install or retry Benchmark tools in the Benchmark view.'
+      'Installed benchmark runtime preflight failed (Python 3.11+, sqlite3, SSL, timezone support, Node 22+ or video tools). Install or retry Benchmark tools in the Benchmark view.'
     );
   }
-  return { python: binaries.python, env };
+  return { python: binaries.python, node: binaries.node, env };
 }
