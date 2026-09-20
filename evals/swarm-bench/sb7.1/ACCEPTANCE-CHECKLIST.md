@@ -25,3 +25,11 @@ This is a release checklist, not a declaration that SB7.1 has passed. The latest
 | Merge into the fork's main and delete Codex branch | Authorized by user | Only after benchmark and release acceptance; preserve unrelated dirty work and verify remote main before deleting the branch. |
 
 Independent read-only review confirmed the contract mappings above. It did not run a model, change the scorer, or judge the current candidate's unfinished product. A completed run alone does not satisfy this checklist.
+
+## Installed-runtime finding from the real run
+
+Gemini completed its implementation and browser self-tests. Automatic scoring then failed during cleanup on the optional runtime's Python 3.12: the inherited `_ReadStream` assigned an Event to `Thread._stop`, so `join()` raised `TypeError: 'Event' object is not callable`. Earlier reference validation on Python 3.14 did not expose this. There is no valid score from that failed attempt.
+
+Commit `84670846f` supplies an SB7.1-only compatible sampler, preserving sample order, timestamps, HTTP calls and cadence. The frozen SB7 scorer and all scoring thresholds remain unchanged. All 20 scorer tests passed on the actual installed Python 3.12, including real HTTP sampling and thread shutdown, with independent source review. The completed candidate and original evidence are preserved at `runs/sb71-validation/20260920/gemini-20940258-original`, alongside a file-hash receipt. The corrected scorer is being run against that preserved build with its original seed `4aaad9cc95c55bd7` and vendor port `8850`; no second paid model invocation is needed.
+
+The installed app's signature still passes strict verification after this run. Release acceptance must exercise the installed Python version for both the candidate and reference. The failed attempt also exposed the poor cloud-activity presentation: raw console fragments and an overflowing path. That UI is being corrected and must receive a rendered visual check before delivery.
