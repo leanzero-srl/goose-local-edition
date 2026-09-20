@@ -4,5 +4,7 @@
   "isolation_sha256": "dabc382b30e67343477d8e5acc412ac06e28a74adcec66e0929cbeab1598e5f4",
   "signature_verified": false,
   "invalid_environment_run": "cloud-6f5f5b75-4699-494f-858c-a31a51e03000",
-  "corrected_app_launched_run": "cloud-b3c625d6-1c5e-4c3f-8b5b-e2b154d7ae59"
+  "corrected_app_launched_run": "cloud-b3c625d6-1c5e-4c3f-8b5b-e2b154d7ae59",
+  "signature_verified_before_launch": true,
+  "post_launch_signature_failure": "Python rewrote packaged __pycache__/bench_isolation.cpython-314.pyc; source SHA unchanged. Repair packaging after run without interrupting entrant."
 }
