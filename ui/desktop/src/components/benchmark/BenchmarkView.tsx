@@ -372,7 +372,7 @@ function ShotLightbox({
   );
 }
 
-/** Before/after screenshot strip from the run's bench-shots — the product story of the build. */
+/** Captured app states from this run, with captions supplied by the evidence reader. */
 function ShotsStrip({ shots }: { shots: BenchShot[] }) {
   const [open, setOpen] = useState<number | null>(null);
   if (shots.length === 0) return null;
@@ -390,7 +390,7 @@ function ShotsStrip({ shots }: { shots: BenchShot[] }) {
             <img
               src={`data:image/png;base64,${s.b64}`}
               alt={s.caption}
-              className={cx('block h-[160px] w-full object-cover object-top', SURFACE.inset)}
+              className={cx('block h-[180px] w-full object-contain', SURFACE.inset)}
             />
             <figcaption className={cx('border-t px-2.5 py-1.5', SURFACE.hairline, TYPE.meta)}>
               {s.caption}
@@ -671,13 +671,15 @@ function SessionDetail({
         )}
       </div>
 
-      {mineMatched && shots.length > 0 && (
+      {mineMatched && (
         <Panel
           title="What it built"
           count={shots.length}
-          headerRight={<span className={TYPE.meta}>before and after repairs</span>}
+          headerRight={<span className={TYPE.meta}>captured app evidence</span>}
         >
-          <ShotsStrip shots={shots} />
+          {shots.length > 0 ? <ShotsStrip shots={shots} /> : (
+            <p className={TYPE.bodyMuted}>No app screenshots were recorded or could be read for this result.</p>
+          )}
         </Panel>
       )}
 
@@ -773,7 +775,7 @@ const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}
 /**
  * The benchmark page: one expand/collapse section per benchmark era, RETRIEVED from the site's
  * catalog — never baked. The CURRENT era is the only one a run can enter (the user cannot choose a
- * benchmark — the header's launch runs the newest bundled one); every era lists its own sessions
+ * benchmark — the header's launch runs the active benchmark); every era lists its own sessions
  * with honest outcomes, and a session's result compares only against its own era's published
  * baselines.
  */
@@ -1084,7 +1086,7 @@ export default function BenchmarkView() {
     setStatus(null);
     setLaunchedSampling(sampling);
     try {
-      // No tier argument — the user cannot choose a benchmark; main runs the newest bundled one.
+      // No tier argument — the user cannot choose a benchmark; main runs the active benchmark.
       const result =
         entrant === 'google'
           ? await window.electron.benchmarkRunCloud(cloudModel.trim())
@@ -1363,8 +1365,8 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            New runs use SB-8: a compact 3D gantry with a persistent backend. Its scorer is
-            experimental; model calibration and measured time/token comparisons are pending.
+            New runs use SB-7: Meridian Payments Console. Earlier SB-8 experiments remain in
+            your session history.
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until

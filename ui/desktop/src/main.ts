@@ -1,3 +1,4 @@
+import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
 import type { OpenDialogOptions, OpenDialogReturnValue } from 'electron';
 import {
@@ -43,7 +44,7 @@ import { startGooseServe, findGooseBinaryPath } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
-import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, newestTier, newestTierScorer } from './benchTierPayload';
+import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, defaultBenchmarkTier, defaultBenchmarkScorer } from './benchTierPayload';
 import {
   outcomeFromSlot,
   findLaunchRow,
@@ -2475,7 +2476,7 @@ const resolveBenchNode = async (): Promise<string> => {
   if (benchNodeMemo) return benchNodeMemo;
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
   const node = path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
-  const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[newestTier()]);
+  const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[defaultBenchmarkTier()]);
   const env = { ...process.env, ...await bundledBrowserEnv() };
   await new Promise<void>((resolve, reject) => {
     const child = spawn(node, [probe, '--preflight'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -2695,83 +2696,6 @@ const benchNodeName = (deviceId: string): string => {
   // (modelIdx 0) or no model portion at all falls back to the full id.
   if (modelIdx > 0) return segs[modelIdx - 1].slice(0, 40);
   return deviceId.slice(0, 40);
-};
-
-// The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
-// sets BENCH_SHOTS_DIR). The publisher's story: the FIRST loaded shot (the page before repairs)
-// plus the LAST epoch's loaded/synced/mobile (the shipped quality). Cap 5, skip >1.4MB each —
-// the server magic-sniffs PNG and rejects >1.5MB decoded, so stay under with margin — AND cap
-// the decoded TOTAL at 3.5MB: the contract assigns that gate to the desktop publisher (the
-// site's SSR lambda rejects ~6MB invocations before the route even runs).
-const BENCH_SHOT_MAX_BYTES = Math.floor(1.4 * 1024 * 1024);
-const BENCH_SHOT_TOTAL_MAX_BYTES = Math.floor(3.5 * 1024 * 1024);
-
-interface BenchShot {
-  name: string;
-  caption: string;
-  b64: string;
-}
-
-const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
-  const dir = path.join(workdir, 'bench-shots');
-  const entries = await fs.readdir(dir).catch(() => [] as string[]);
-  const shots: Array<{ epoch: number; scenario: string; file: string; size: number }> = [];
-  for (const f of entries) {
-    const m = f.match(/^(\d+)-(loaded|synced|error|empty|mobile)\.png$/);
-    if (!m) continue;
-    // Size-gate BEFORE picking, so an oversize final shot falls back to the newest one that
-    // fits instead of silently dropping the "after" half of the story.
-    const file = path.join(dir, f);
-    const size = await fs.stat(file).then((s) => s.size).catch(() => Number.MAX_SAFE_INTEGER);
-    if (size > BENCH_SHOT_MAX_BYTES) continue;
-    shots.push({ epoch: Number(m[1]), scenario: m[2], file, size });
-  }
-  if (shots.length === 0) return [];
-  const byScenario = (s: string) => shots.filter((x) => x.scenario === s);
-  const minBy = (xs: typeof shots) =>
-    xs.length ? xs.reduce((a, b) => (b.epoch < a.epoch ? b : a)) : null;
-  const maxBy = (xs: typeof shots) =>
-    xs.length ? xs.reduce((a, b) => (b.epoch > a.epoch ? b : a)) : null;
-
-  const firstLoaded = minBy(byScenario('loaded'));
-  const lastLoaded = maxBy(byScenario('loaded'));
-  const picks: Array<{ name: string; caption: string; file: string }> = [];
-  // ONE loaded epoch means there is no before/after story — that single shot IS the final
-  // render, and captioning it "before repairs" publishes the shipped page under a label that
-  // says it was later fixed.
-  if (firstLoaded && lastLoaded && lastLoaded.file !== firstLoaded.file) {
-    picks.push({
-      name: 'loaded-before',
-      caption: 'First render — before repairs',
-      file: firstLoaded.file,
-    });
-    picks.push({ name: 'loaded', caption: 'Final render', file: lastLoaded.file });
-  } else if (lastLoaded) {
-    picks.push({ name: 'loaded', caption: 'Final render', file: lastLoaded.file });
-  }
-  const lastSynced = maxBy(byScenario('synced'));
-  if (lastSynced) picks.push({ name: 'synced', caption: 'After sync', file: lastSynced.file });
-  const lastMobile = maxBy(byScenario('mobile'));
-  if (lastMobile) picks.push({ name: 'mobile', caption: 'Mobile · 375px', file: lastMobile.file });
-
-  const out: BenchShot[] = [];
-  // TOTAL cap, not only per-file: Amplify's SSR lambda rejects ~6MB invocations before the
-  // route ever runs (website integration finding), so the whole batch stays ≤3.5MB decoded
-  // (~4.7MB as base64 + JSON overhead). Order matters — picks are story-ordered, so the
-  // before/after pair survives and the extras are what get dropped.
-  let totalBytes = 0;
-  for (const p of picks) {
-    if (out.length >= 5) break;
-    try {
-      const buf = await fs.readFile(p.file);
-      if (totalBytes + buf.length > BENCH_SHOT_TOTAL_MAX_BYTES) continue;
-      totalBytes += buf.length;
-      out.push({ name: p.name, caption: p.caption, b64: buf.toString('base64') });
-    } catch {
-      /* a shot mid-write or gone — skip it */
-    }
-  }
-  return out;
 };
 
 // ── Benchmark sessions — the on-disk index + slot archival ──────────────────────────────────────
@@ -3142,11 +3066,11 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   if (cloud) nodes = 1;
   const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
   const runSampling = cleanSampling(cloud ? undefined : sampling);
-  // LATEST-ONLY (2026-08-31): the renderer no longer chooses a tier — the app always runs the
-  // newest benchmark it bundles, derived from the tier data (numeric version, never a hardcoded
-  // name). The payload carries every scorer; the tier switches which spec/probe/scorer the harness
+  // Both cloud and local runs use the explicit active benchmark. Bundled experimental scorers
+  // remain available for historical evidence; they do not change the launch default.
+  // The tier switches which spec/probe/scorer the harness
   // wires up, so a run is always scored by exactly one frozen version end to end.
-  const tier = newestTier();
+  const tier = defaultBenchmarkTier();
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
   const sb8 = tier === 'sb-8';
@@ -3156,7 +3080,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   // not ship) and benchmark-started carries the mismatch so the view can say an update is needed.
   const catalogMismatch = catalogMismatchOf(
     (await readBenchCatalogCache())?.benchmarks,
-    newestTierScorer()
+    defaultBenchmarkScorer()
   );
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
@@ -3189,7 +3113,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
     const rows = await readBenchSessionRows();
     rows.push({
       runId: cloudRunId,
-      scorerVersion: newestTierScorer(),
+      scorerVersion: defaultBenchmarkScorer(),
       startedAt,
       outcome: 'running',
       nodes,
@@ -3334,7 +3258,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       scored: false,
       lastLine: null,
       tier,
-      scorerVersion: newestTierScorer(),
+      scorerVersion: defaultBenchmarkScorer(),
       ...(catalogMismatch ? { catalogMismatch } : {}),
     });
 
@@ -3621,11 +3545,11 @@ ipcMain.handle(
       }
       return out;
     })();
-    const screenshots = snapshotShots.length
+    const screenshots = limitBenchShotsForPublish(snapshotShots.length
       ? snapshotShots
       : typeof stored.workdir === 'string'
         ? await pickBenchShots(stored.workdir)
-        : [];
+        : []);
     const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
     // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
     // is built key by key (never a spread of the stored row, which carries mine/workdir).

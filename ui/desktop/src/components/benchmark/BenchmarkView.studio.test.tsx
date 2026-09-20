@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { IntlTestWrapper } from '../../i18n/test-utils';
@@ -268,4 +268,30 @@ describe('BenchmarkView — LeanZero Studio', () => {
     const missing = await missingUtilities(utilitiesOf(ownedClasses(container)));
     expect(missing).toEqual([]);
   }, 30_000);
+
+  it('shows every captured stage and opens the actual image at full size', async () => {
+    const shots = ['Initial app view', 'Front camera', 'Top camera', 'Isometric camera', 'Crane movement', 'Cargo lifted', 'Cargo rotated', 'Final app view'].map((caption, index) => ({ name: `stage-${index}`, caption, b64: 'AA==' }));
+    mockElectron({ running: false, shots });
+    renderView();
+    const initial = await screen.findByAltText('Initial app view');
+    const panel = initial.closest<HTMLElement>('[data-testid="lz-panel"]')!;
+    expect(within(panel).getByTestId('lz-section-count')).toHaveTextContent('8');
+    expect(within(panel).getByText('captured app evidence')).toBeInTheDocument();
+    expect(within(panel).queryByText('before and after repairs')).toBeNull();
+    fireEvent.click(initial);
+    expect(screen.getByText('1 / 8')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(screen.getByText('2 / 8')).toBeInTheDocument();
+    expect(screen.getAllByAltText('Front camera')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText('2 / 8')).toBeNull();
+  });
+
+  it('states missing screenshot evidence explicitly for the matched result', async () => {
+    mockElectron({ running: false, shots: [] });
+    renderView();
+    expect(await screen.findByText('No app screenshots were recorded or could be read for this result.')).toBeInTheDocument();
+    expect(screen.getByText(/New runs use SB-7/)).toBeInTheDocument();
+  });
+
 });

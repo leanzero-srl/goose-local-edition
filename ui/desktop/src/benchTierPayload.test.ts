@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, newestTier, newestTierScorer } from './benchTierPayload';
+import {
+  BENCH_SPEC_FILE,
+  BENCH_RENDER_PROBE,
+  defaultBenchmarkTier,
+  defaultBenchmarkScorer,
+} from './benchTierPayload';
 import { TIERS, TIER_SCORER } from './components/benchmark/baselines';
 
 describe('every benchmark tier carries its OWN spec and probe', () => {
@@ -18,7 +23,9 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     const specs = TIERS.map((t) => BENCH_SPEC_FILE[t]);
     const probes = TIERS.map((t) => BENCH_RENDER_PROBE[t]);
     expect(new Set(specs).size, `two tiers share a spec: ${specs.join(', ')}`).toBe(TIERS.length);
-    expect(new Set(probes).size, `two tiers share a probe: ${probes.join(', ')}`).toBe(TIERS.length);
+    expect(new Set(probes).size, `two tiers share a probe: ${probes.join(', ')}`).toBe(
+      TIERS.length
+    );
   });
 
   it('sb-7 gets the Meridian spec and the v3 probe, not VendorSync’s', () => {
@@ -26,13 +33,12 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_RENDER_PROBE['sb-7']).toBe('product_probe_v3.mjs');
   });
 
-  it('derives the newest bundled tier from the data — the latest-only launch tier', () => {
-    // Latest-only: benchmark-run takes no tier argument and always launches this. Derived by
-    // numeric version so it is never a hardcoded name and never depends on TIERS's array order.
-    expect(newestTier()).toBe('sb-8');
-    expect(TIERS).toContain(newestTier());
-    expect(BENCH_SPEC_FILE[newestTier()]).toBeTruthy();
-    expect(BENCH_RENDER_PROBE[newestTier()]).toBeTruthy();
-    expect(newestTierScorer()).toBe(TIER_SCORER[newestTier()]);
+  it('launches SB7 for local and cloud entrants while retaining the SB8 experiment payload', () => {
+    expect(defaultBenchmarkTier()).toBe('sb-7');
+    expect(BENCH_SPEC_FILE[defaultBenchmarkTier()]).toBe('spec-build-sb7.md');
+    expect(BENCH_RENDER_PROBE[defaultBenchmarkTier()]).toBe('product_probe_v3.mjs');
+    expect(defaultBenchmarkScorer()).toBe(TIER_SCORER['sb-7']);
+    expect(TIERS).toContain('sb-8');
+    expect(BENCH_SPEC_FILE['sb-8']).toBe('spec-build-sb8.md');
   });
 });
