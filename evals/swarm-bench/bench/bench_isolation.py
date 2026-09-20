@@ -9,15 +9,30 @@ import subprocess
 import sys
 
 
-def profile(workdir: Path, engine: Path, runtime: Path) -> str:
+def node_runtime() -> Path | None:
+    executable = shutil.which('node')
+    if executable is None:
+        return None
+    result = subprocess.run([executable, '-p', 'process.execPath'], capture_output=True,
+                            text=True, timeout=20)
+    actual = Path(result.stdout.strip())
+    if result.returncode or not actual.is_absolute() or not actual.is_file():
+        raise RuntimeError('REFUSED: could not resolve the actual Node runtime')
+    return actual.resolve()
+
+
+def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None) -> str:
     def quote(value):
         return json.dumps(str(Path(value).resolve()))
     read_dirs = ['/System', '/usr', '/bin', '/sbin', '/Library/Apple',
                  '/Library/Developer', '/Library/Frameworks', '/opt/homebrew',
                  '/private/etc', '/dev', str(workdir), str(runtime)]
-    node = shutil.which('node')
-    if node:
-        read_dirs.append(str(Path(node).resolve().parent.parent))
+    node = node or node_runtime()
+    if node is not None:
+        read_dirs.append(str(node.parent))
+        node_lib = node.parent.parent / 'lib'
+        if node_lib.is_dir():
+            read_dirs.append(str(node_lib))
     python = Path(sys.executable).resolve()
     if not any(str(python).startswith(p + '/') for p in read_dirs):
         read_dirs.append(str(python.parent.parent))
@@ -42,7 +57,8 @@ def prepare(workdir: Path, engine: Path, private_root: Path) -> tuple[list[str],
     runtime = workdir.parent / ('.' + workdir.name + '-runtime')
     runtime.mkdir(mode=0o700)
     (runtime / 'tmp').mkdir()
-    policy = profile(workdir, engine, runtime)
+    node = node_runtime()
+    policy = profile(workdir, engine, runtime, node)
     prefix = ['/usr/bin/sandbox-exec', '-p', policy]
     # These are actual forbidden and allowed reads, not an assertion about policy text.
     control = private_root / ('isolation-control-' + os.urandom(8).hex())
@@ -51,16 +67,17 @@ def prepare(workdir: Path, engine: Path, private_root: Path) -> tuple[list[str],
     allowed.write_text('candidate workspace')
     probe = '''import pathlib,sys
 assert pathlib.Path(sys.argv[1]).read_text() == 'candidate workspace'
-try:
- pathlib.Path(sys.argv[2]).read_text()
-except PermissionError:
- pass
-else:
- raise SystemExit('private reference readable')
+for name in sys.argv[2:]:
+ try:
+  pathlib.Path(name).read_bytes()
+ except PermissionError:
+  pass
+ else:
+  raise SystemExit('private benchmark file readable')
 pathlib.Path(sys.argv[1]).write_text('candidate write works')
 '''
     try:
-        result = subprocess.run(prefix + [sys.executable, '-c', probe, str(allowed), str(control)],
+        result = subprocess.run(prefix + [sys.executable, '-c', probe, str(allowed), str(control), str(Path(__file__).resolve())],
                                 cwd=workdir, capture_output=True, text=True, timeout=20)
         if result.returncode:
             raise RuntimeError('REFUSED: entrant isolation control failed: ' + result.stderr[-1000:])
@@ -72,7 +89,8 @@ pathlib.Path(sys.argv[1]).write_text('candidate write works')
         'mechanism': 'macOS sandbox-exec', 'private_reference_read': 'denied',
         'candidate_read_write': 'passed', 'runtime': str(runtime),
     }, indent=2))
-    return prefix, {'GOOSE_PATH_ROOT': str(runtime / 'goose'), 'TMPDIR': str(runtime / 'tmp'),
+    return prefix, {'PATH': (str(node.parent) + os.pathsep + os.environ.get('PATH', ''))
+                    if node is not None else os.environ.get('PATH', ''), 'GOOSE_PATH_ROOT': str(runtime / 'goose'), 'TMPDIR': str(runtime / 'tmp'),
                     'GOOSE_ADDITIONAL_CONFIG_FILES': '', 'BENCH_SB71_RUNTIME': str(runtime)}
 
 

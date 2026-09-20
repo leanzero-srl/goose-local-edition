@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import bench_isolation
 
@@ -33,6 +34,29 @@ print('real isolation passed')
                                      cwd=work, env={**os.environ, **env}, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
             self.assertIn('real isolation passed', process.stdout)
+
+    def test_packaged_node_cannot_expose_packaged_private_scorer(self):
+        wrapper = Path('/Applications/Goose.app/Contents/Resources/bin/node')
+        scorer = wrapper.parent.parent / 'swarm-bench/bench/score_sb7.py'
+        if not wrapper.is_file() or not scorer.is_file():
+            self.skipTest('Installed packaged benchmark required for this integration control')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / 'candidate'
+            work.mkdir()
+            with patch.object(bench_isolation.shutil, 'which', return_value=str(wrapper)):
+                prefix, env = bench_isolation.prepare(work, Path(sys.executable), root)
+            program = """import pathlib,subprocess,sys
+try:pathlib.Path(sys.argv[1]).read_bytes()
+except PermissionError:pass
+else:raise SystemExit('actual packaged scorer readable')
+assert subprocess.check_output(['node','-p','1+1'],text=True).strip() == '2'
+print('actual Node works; packaged scorer denied')
+"""
+            result = subprocess.run(prefix + [sys.executable, '-c', program, str(scorer)],
+                                    cwd=work, env={**os.environ, **env}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertIn('packaged scorer denied', result.stdout)
 
 
 if __name__ == '__main__':
