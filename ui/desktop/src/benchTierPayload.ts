@@ -28,6 +28,7 @@ export const BENCH_SPEC_FILE: Record<BenchTier, string> = {
   'sb-5.3': 'spec-build-v2.md',
   'sb-6': 'spec-build-v3.md',
   'sb-7': 'spec-build-sb7.md',
+  'sb-7.1': 'spec-build-sb71.md',
   'sb-8': 'spec-build-sb8.md',
 };
 
@@ -35,6 +36,7 @@ export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
   'sb-5.3': 'product_probe.mjs',
   'sb-6': 'product_probe_v2.mjs',
   'sb-7': 'product_probe_v3.mjs',
+  'sb-7.1': 'product_probe_sb71.mjs',
   'sb-8': 'product_probe_v4.mjs',
 };
 

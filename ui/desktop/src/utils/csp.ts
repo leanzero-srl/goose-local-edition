@@ -102,7 +102,7 @@ export function buildCSP(externalGoosed?: ExternalGoosedConfig): string {
     "object-src 'none';" +
     "frame-src 'self' https: http:;" +
     "font-src 'self' data: https:;" +
-    "media-src 'self' mediastream:;" +
+    "media-src 'self' mediastream: http://127.0.0.1:*;" +
     "form-action 'none';" +
     "base-uri 'self';" +
     "manifest-src 'self';" +

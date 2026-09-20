@@ -1,3 +1,4 @@
+import { ScoreAdmission, type Admission } from './ScoreAdmission';
 import { useMemo, useState } from 'react';
 import { SB8_TIERS, isSb8 } from './baselines';
 import { sb8CompositionSchema } from '../../sb8ScoreSchema';
@@ -40,6 +41,15 @@ export interface VerdictCheck {
 }
 
 interface LegacyVerdictDetail {
+  inner?: number;
+  critical?: { multiplier: number; rows: Array<{ check: string; factor?: number; why?: string }> };
+  excellence?: { fraction: number; e_mean: number; conditions: Record<string, unknown> };
+  probe_unavailable?: unknown[];
+  vacuous?: unknown[];
+  harness_missing?: unknown[];
+  sched_unreached?: unknown[];
+  rawScore?: number;
+  admission?: Admission;
   checks: VerdictCheck[];
   tiers: Record<string, { mean: number; checks: number; weight: number }>;
   core?: number;
@@ -64,7 +74,23 @@ export interface Sb8VerdictDetail {
 
 export type VerdictDetail = LegacyVerdictDetail | Sb8VerdictDetail;
 
-const TIER_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'J', 'V', 'P'] as const;
+const TIER_ORDER = [
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'J',
+  'V',
+  'P',
+  'T',
+  'X',
+  'R',
+  'S',
+  'Q',
+  'M',
+] as const;
 
 const TIER_INFO: Record<string, { name: string; desc: string }> = {
   A: { name: 'Structure', desc: 'The files and structure the spec names' },
@@ -77,6 +103,13 @@ const TIER_INFO: Record<string, { name: string; desc: string }> = {
   J: { name: 'Journey', desc: 'The user journey in a real browser' },
   V: { name: 'Visual', desc: 'Visual/design quality of the served page' },
   P: { name: 'Performance', desc: 'Measured performance budgets' },
+  T: { name: 'Transactions', desc: 'Cross-service transaction correctness' },
+  X: { name: 'Concurrency', desc: 'Concurrent requests and consistent reads' },
+  R: { name: 'Recovery', desc: 'Restart and failure recovery' },
+  E: { name: 'Excellence', desc: 'Scorer-recorded excellence checks' },
+  S: { name: '3D structure', desc: 'Required payment scene geometry and mapping' },
+  Q: { name: 'Presentation', desc: 'Readable hierarchy and interaction' },
+  M: { name: 'Animation', desc: 'Motion grounded in payment state transitions' },
 };
 
 // The six checks scored OUTSIDE their home tier as the standalone 10% hard block — mirrors the
@@ -524,6 +557,46 @@ export function ScoringDetail({
       <>
         {sb8Verdict ? (
           <Sb8Composition verdict={sb8Verdict} score={score} />
+        ) : scorerVersion?.startsWith('sb-7.1') ||
+          ('scorerVersion' in rawVerdict && rawVerdict.scorerVersion.startsWith('sb-7.1')) ? (
+          <>
+            <ScoreAdmission
+              admission={verdict.admission}
+              rawScore={verdict.rawScore}
+              score={score}
+            />
+            {typeof verdict.inner === 'number' && verdict.critical && verdict.excellence ? (
+              <section className="flex flex-col gap-2" aria-label="Earned score composition">
+                <p className={TYPE.body}>
+                  Earned credit: (0.88 × behavioral score {verdict.inner.toFixed(4)} + 0.12 ×
+                  excellence admission {verdict.excellence.fraction.toFixed(4)} × excellence mean{' '}
+                  {verdict.excellence.e_mean.toFixed(4)}) × critical multiplier{' '}
+                  {verdict.critical.multiplier.toFixed(4)}.
+                </p>
+                {verdict.critical.rows.map((row) => (
+                  <p key={row.check} className={TYPE.bodyMuted}>
+                    {row.check}: factor {row.factor ?? 'unavailable'} · {row.why}
+                  </p>
+                ))}
+                <details>
+                  <summary className={TYPE.body}>Excellence evidence</summary>
+                  <pre className="whitespace-pre-wrap break-words">
+                    {JSON.stringify(verdict.excellence.conditions, null, 2)}
+                  </pre>
+                </details>
+              </section>
+            ) : (
+              <p className={TYPE.bodyMuted}>Earned-score composition evidence is unavailable.</p>
+            )}
+            {(['probe_unavailable', 'vacuous', 'harness_missing', 'sched_unreached'] as const).map(
+              (key) =>
+                verdict[key]?.length ? (
+                  <p key={key} role="status" className={TYPE.body}>
+                    {key.replace(/_/g, ' ')}: {JSON.stringify(verdict[key])}
+                  </p>
+                ) : null
+            )}
+          </>
         ) : (
           <CompositionBar verdict={verdict} score={score} />
         )}

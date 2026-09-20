@@ -233,6 +233,7 @@ type ElectronAPI = {
     runId?: string | null;
   }>;
   /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
+  benchmarkMedia: (workdir: string) => Promise<{ videos: Array<{ url: string; caption: string; sha256: string; bytes: number }>; error?: string }>;
   benchmarkShots: (
     workdir?: string
   ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
@@ -509,6 +510,7 @@ const electronAPI: ElectronAPI = {
   benchmarkCatalog: () => ipcRenderer.invoke('benchmark-catalog'),
   benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
+  benchmarkMedia: (workdir: string) => ipcRenderer.invoke('benchmark-media', workdir),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
   benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),

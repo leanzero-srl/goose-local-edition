@@ -31,7 +31,27 @@ export function projectBenchScore(v: {
       ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
       ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
       ...(typeof v.solid === 'boolean' ? { solid: v.solid } : {}),
+      ...Object.fromEntries(
+        [
+          'fixture_seed',
+          'calibration',
+          'inner',
+          'excellence_gate',
+          'excellence',
+          'critical',
+          'gamma',
+          'k_p',
+          'probe_unavailable',
+          'vacuous',
+          'harness_missing',
+          'sched_unreached',
+        ]
+          .filter((key) => key in v)
+          .map((key) => [key, v[key]])
+      ),
       root_causes: v.root_causes ?? {},
+      ...('admission' in v ? { admission: v.admission } : {}),
+      ...(typeof v.rawScore === 'number' ? { rawScore: v.rawScore } : {}),
       ...('weights' in v ? { weights: v.weights } : {}),
       ...('core_tiers' in v ? { core_tiers: v.core_tiers } : {}),
       ...('scorer_files_sha256' in v ? { scorer_files_sha256: v.scorer_files_sha256 } : {}),

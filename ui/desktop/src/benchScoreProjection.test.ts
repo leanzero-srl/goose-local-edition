@@ -109,3 +109,45 @@ it('preserves metadata from the actual planning scorer output across disk serial
   });
   expect(stored.verdict.scoreInner).toBe(0.75);
 });
+
+it('preserves SB7.1 earned formula, ceilings and missing evidence through storage', () => {
+  const canonical = {
+    scorer_version: 'sb-7.1-rc',
+    score: 0.4,
+    rawScore: 0.4,
+    inner: 0.6,
+    critical: { multiplier: 0.8, rows: [{ check: 'dupe', factor: 0.8 }] },
+    excellence: { fraction: 0.5, e_mean: 0.8, conditions: { backend: false } },
+    gamma: 2,
+    k_p: 1,
+    probe_unavailable: ['viz'],
+    vacuous: ['dupe'],
+    harness_missing: ['scene'],
+    sched_unreached: ['after'],
+    admission: {
+      visible: true,
+      matching: true,
+      good: true,
+      excellence: { visual: true, backend: false },
+      ceiling: 0.899,
+      reasons: ['Backend excellence not met'],
+    },
+    tiers: { S: { mean: 0.5, weight: 0 } },
+  };
+  const persisted = JSON.parse(JSON.stringify(projectBenchScore(canonical)));
+  for (const key of [
+    'rawScore',
+    'inner',
+    'critical',
+    'excellence',
+    'gamma',
+    'k_p',
+    'probe_unavailable',
+    'vacuous',
+    'harness_missing',
+    'sched_unreached',
+    'admission',
+  ])
+    expect(persisted.verdict[key]).toEqual(canonical[key as keyof typeof canonical]);
+  expect(persisted.tiers.S).toBe(0.5);
+});

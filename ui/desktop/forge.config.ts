@@ -27,10 +27,17 @@ function mirrorSwarmBenchPayload() {
     'spec-build-v2.md',
     'spec-build-v3.md',
     'spec-build-sb7.md',
+    'spec-build-sb71.md',
     'spec-build-sb8.md',
   ]) {
     if (fs.existsSync(join(src, spec))) fs.copyFileSync(join(src, spec), join(dest, spec));
   }
+  fs.mkdirSync(join(dest, 'sb7.1'), { recursive: true });
+  fs.cpSync(join(src, 'sb7.1', 'starter'), join(dest, 'sb7.1', 'starter'), { recursive: true });
+  fs.copyFileSync(
+    join(src, 'sb7.1', 'VISUAL-CONTRACT.md'),
+    join(dest, 'sb7.1', 'VISUAL-CONTRACT.md')
+  );
   fs.cpSync(join(src, 'sb8'), join(dest, 'sb8'), { recursive: true });
   const benchSrc = join(src, 'bench');
   for (const name of fs.readdirSync(benchSrc)) {

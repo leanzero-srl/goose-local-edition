@@ -1,3 +1,5 @@
+import { uploadBenchmarkVideo } from './benchVideoUpload';
+import { BenchMediaServer, readBenchMedia } from './benchMedia';
 import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
 import type { OpenDialogOptions, OpenDialogReturnValue } from 'electron';
@@ -3042,6 +3044,15 @@ ipcMain.handle('benchmark-status', async () => {
   return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId };
 });
 
+const benchMediaServer = new BenchMediaServer();
+app.on('will-quit', () => benchMediaServer.close());
+ipcMain.handle('benchmark-media', async (_event, workdir: string) => {
+  if (typeof workdir !== 'string' || !workdir) return { videos: [], error: 'Missing run directory' };
+  const media = await readBenchMedia(workdir);
+  if (media.error) return media;
+  return { videos: await Promise.all(media.videos.map(async ({ file: _file, ...video }) => ({ ...video, url: await benchMediaServer.expose({ ...video, file: _file }) }))) };
+});
+
 ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   let dir = typeof workdir === 'string' && workdir ? workdir : '';
   if (!dir) {
@@ -3073,6 +3084,8 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const tier = defaultBenchmarkTier();
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
+  const sb71 = tier === 'sb-7.1';
+  if (sb71 && !cloud) throw new Error('SB7.1 local swarm validation pending; use the Google cloud entrant for this pilot.');
   const sb8 = tier === 'sb-8';
   // Site-vs-bundle drift, from the CACHED catalog only — launching must never wait on the network
   // (the view refreshes the cache via benchmark-catalog). When the site's current benchmark is not
@@ -3145,7 +3158,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
       // door and cut a run the engine itself would never have stopped.
       ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
-        '--out', outRoot, ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []), ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb8 ? ['--sb8'] : [])],
+        '--out', outRoot, ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []), ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb71 ? ['--sb71'] : []), ...(sb8 ? ['--sb8'] : [])],
       {
         cwd: workRoot,
         detached: true,
@@ -3156,6 +3169,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
           // before a node answers, and those 5 minutes are three idle machines.
           GOOSE_SWARM_BENCHMARK: '1',
+          BENCH_MEDIA_DIR: path.join(workdir, 'bench-media'),
           GOOSE_SWARM_RENDER_NODE: benchNode,
           ...browserEnv,
           // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
@@ -3328,6 +3342,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           score: v.score,
           tiers: scoring.tiers,
           nodes: v.actual_nodes ?? nodes,
+          ...(cloud ? { provider: cloud.provider } : {}),
           mine: true,
           scorerVersion: scoring.scorerVersion,
           // sb-4 additions — the site's endpoint stores these when present and older
@@ -3555,12 +3570,13 @@ ipcMain.handle(
     // is built key by key (never a spread of the stored row, which carries mine/workdir).
     // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node local fleet", never the in-app
     // first-person "Your fleet · N nodes".
-    const nodeCount = typeof stored.nodes === 'number' ? stored.nodes : null;
+    const cloudEntrant = typeof stored.provider === 'string' || (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
+    const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
     const payload: Record<string, unknown> = {
-      label: nodeCount != null ? `${nodeCount}-node local fleet` : 'local fleet',
+      label: cloudEntrant ? `${model} · single agent` : nodeCount != null ? `${nodeCount}-node local fleet` : 'local fleet',
       score: stored.score,
       tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
-      ...(typeof stored.nodes === 'number' ? { nodes: stored.nodes } : {}),
+      ...(nodeCount != null ? { nodes: nodeCount } : {}),
       ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
       ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
       ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
@@ -3576,6 +3592,13 @@ ipcMain.handle(
         ? { telemetry: stored.telemetry }
         : {}),
     };
+    if (typeof stored.scorerVersion === 'string' && stored.scorerVersion.startsWith('sb-7.1')) {
+      if (typeof stored.workdir !== 'string') return { ok: false, error: 'SB7.1 recording has no run directory' };
+      const media = await readBenchMedia(stored.workdir);
+      if (media.error || media.videos.length !== 1) return { ok: false, error: `SB7.1 publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}` };
+      try { payload.videoReceipt = await uploadBenchmarkVideo(media.videos[0], BENCH_PUBLISH_URL, identity.installId, stored.scorerVersion); }
+      catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+    }
     // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
     // the run's log had no pool_resolved (legacy results store no poolDevices).
     const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
@@ -3599,12 +3622,16 @@ ipcMain.handle(
           checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
           tiers?: Record<string, { mean?: unknown } | undefined>;
           core?: unknown;
+          admission?: unknown;
+          rawScore?: unknown;
           hard?: unknown;
           findingsHeld?: unknown;
           repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
         }
       | undefined;
     if (verdict) {
+      if (verdict.admission) payload.admission = verdict.admission;
+      if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
       const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
         .filter(
           (c) =>
@@ -3612,9 +3639,6 @@ ipcMain.handle(
             typeof c?.tier === 'string' &&
             typeof c?.score === 'number'
         )
-        // Mirrors the server's MAX_CHECKS (raised to 91 for sb-7's full check set in site
-        // commit 07cc27b); a lower client cap silently drops scorer evidence.
-        .slice(0, 91)
         .map((c) => ({
           check: (c.check as string).slice(0, 60),
           tier: c.tier as string,

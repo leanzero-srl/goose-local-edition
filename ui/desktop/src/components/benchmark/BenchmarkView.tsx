@@ -1,3 +1,4 @@
+import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -682,6 +683,8 @@ function SessionDetail({
           )}
         </Panel>
       )}
+
+      {mineMatched && session.scorerVersion.startsWith('sb-7.1') && <Panel title="Graded browser recording"><RunVideoEvidence workdir={mine?.workdir} /></Panel>}
 
       <Panel
         title="Board"
