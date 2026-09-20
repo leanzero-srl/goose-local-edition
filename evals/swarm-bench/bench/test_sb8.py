@@ -28,6 +28,16 @@ class ScoringTests(unittest.TestCase):
     def context(self):
         return {'fixture_seed':7123,'checks':[dict(name=n,tier=t,score=1) for t,names in scorer.BACKEND.items() for n in names]}
 
+    def test_evaluation_preserves_raw_evidence_and_effective_critical_checks(self):
+        ctx=self.context()
+        next(row for row in ctx['checks'] if row['name']=='webgl_geometry')['score']=0
+        original=copy.deepcopy(ctx)
+        result=scorer.evaluate(ctx)
+        self.assertEqual(ctx,original)
+        self.assertEqual(result['tiers']['C'],0)
+        self.assertAlmostEqual(result['criticalMultiplier'],.36)
+        self.assertEqual(scorer.evaluate(ctx),result)
+
     def test_missing_checks_never_shrink_denominator(self):
         self.assertEqual(scorer.evaluate({'fixture_seed':1,'checks':[]})['score'],0)
 

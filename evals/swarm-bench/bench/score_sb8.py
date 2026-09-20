@@ -1,6 +1,6 @@
 """SB-8.0: compact transactional 3D benchmark; no partial-probe scores, no self-reports."""
 from __future__ import annotations
-import argparse, concurrent.futures, copy, json, math, os, secrets, shutil, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import argparse, concurrent.futures, copy, hashlib, json, math, os, secrets, shutil, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from pathlib import Path
 import gantry_oracle as oracle
 import vendor_service_v4 as vendor
@@ -24,6 +24,7 @@ def request(base,path,body=None):
     except urllib.error.HTTPError as e:
         try: return e.code,json.load(e)
         except Exception: return e.code,{}
+        finally: e.close()
 def equivalent(a,b):
     if isinstance(a,dict) and isinstance(b,dict): return a.keys()==b.keys() and all(equivalent(a[k],b[k]) for k in a)
     if isinstance(a,list) and isinstance(b,list): return len(a)==len(b) and all(equivalent(x,y) for x,y in zip(a,b))
@@ -127,7 +128,24 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         heavy=sc['boxes'][-1]
         command('overload_align','move',dict(x=heavy['x'],z=heavy['z'],y=heavy['h'],yaw=0))
         command('overload','grip',{'boxId':heavy['id']})
+        # Transaction rungs start independently of the geometry trajectory's state.
+        stop(child);child=None
+        db=db.with_name(db.name+'-transactions')
+        state=oracle.initial(sc);receipts.clear()
+        child=start(f'http://127.0.0.1:{port}')
+        first,_=command('transaction_baseline','move',dict(x=5,z=5,y=6,yaw=0))
         command('stale_revision','move',dict(x=5,z=5,y=5,yaw=0),revision=0)
+        for op,values in [('move',dict(x=-1,z=5,y=5,yaw=0)),('grip',{'boxId':'absent'}),('release',{})]:
+            command('stale_before_'+op,op,values,revision=0)
+        for name,op,values,revision in [
+            ('semantic','release',{},None),
+            ('malformed','move',dict(x=None,z=5,y=6,yaw=0),None),
+            ('stale','move',dict(x=5,z=5,y=6,yaw=0),0),
+        ]:
+            ident='retry-'+name
+            command('retry_setup_'+name,op,values,revision=revision,ident=ident)
+            command('retry_after_'+name,'move',dict(x=5,z=5,y=6,yaw=0),ident=ident)
+
         replay=request(base,'/api/commands',first)
         check('idempotent_replay','B',replay[0]==200 and equivalent(replay[1],receipts[first['id']][1]) and equivalent(request(base,'/api/state')[1],state))
         conflict=dict(first,x=first['x']+.2);check('id_conflict','B',request(base,'/api/commands',conflict)==(409,{'error':'id_conflict'}) and equivalent(request(base,'/api/state')[1],state))
@@ -139,10 +157,22 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         winners=[i for i,r in enumerate(result) if r[0]==200]
         check('concurrent_revision','B',sorted(r[0] for r in result)==[200,409] and len(winners)==1 and equivalent(request(base,'/api/state')[1],oracle.apply(sc,state,cmds[winners[0]])[1]))
         if len(winners)==1:state=oracle.apply(sc,state,cmds[winners[0]])[1]
+        same=dict(id='same-command-race',revision=state['revision'],op='move',x=5,z=5,y=6,yaw=0)
+        expected=oracle.apply(sc,state,same)
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            duplicates=list(pool.map(lambda _:request(base,'/api/commands',same),range(2)))
+        check('concurrent_identical_retry','B',all(code==200 and equivalent(body,expected[1]) for code,body in duplicates) and equivalent(request(base,'/api/state')[1],expected[1]))
+        state=expected[1]
         before=request(base,'/api/state')[1];stop(child);child=None
         child=start('http://127.0.0.1:1')
         check('durable_state','A',equivalent(request(base,'/api/state')[1],before))
+        check('durable_scene','A',request(base,'/api/scene')[0]==200 and equivalent(request(base,'/api/scene')[1],sc))
         check('durable_receipt','B',equivalent(request(base,'/api/commands',first)[1],receipts[first['id']][1]) and equivalent(request(base,'/api/state')[1],before))
+        reordered=dict(reversed(list(first.items())))
+        replay=request(base,'/api/commands',reordered)
+        check('durable_reordered_receipt','B',replay[0]==200 and equivalent(replay[1],receipts[first['id']][1]) and equivalent(request(base,'/api/state')[1],before))
+        conflict=dict(first,x=-1)
+        check('durable_conflict_precedence','B',request(base,'/api/commands',conflict)==(409,{'error':'id_conflict'}) and equivalent(request(base,'/api/state')[1],before))
         # Browser starts from fresh state so every visual scenario has known, exposed targets.
         stop(child);child=None
         visual=db.with_name(db.name+'-visual');shutil.rmtree(visual,ignore_errors=True);db=visual
@@ -150,6 +180,8 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         p=subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE','node'),str(HERE/'product_probe_v4.mjs'),'--base='+base],capture_output=True,text=True,timeout=90)
         if p.returncode: raise RuntimeError('REFUSED: browser probe crashed: '+p.stderr[-1500:])
         rows+=json.loads(p.stdout)['checks']
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError('REFUSED: browser probe did not complete; no comparable score') from e
     except Exception as e:
         if str(e).startswith('REFUSED'):raise
         check('boot_state','A',False,str(e))
@@ -158,9 +190,9 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         log.close()
     return dict(checks=rows,fixture_seed=seed)
 
-BACKEND={'A':['boot_state','seeded_scene','empty_move','lift','durable_state'], 'B':['empty_release','unknown_box','misaligned_grip','grip','already_holding','reject_bounds','atomic_rejection','swept_collision','sat_disjoint_aabbs_overlap','rotated_support_overhang','unsupported_release','held_bounds','supported_release','regrip_preserves_yaw','short_arc_wrap','floor_release','overload','stale_revision','idempotent_replay','id_conflict','invalid_number_None','invalid_number_True','invalid_number_1','concurrent_revision','durable_receipt'], 'C':['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','bracing','crane_tracks_state','cargo_tracks_external_backend'], 'D':['real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],'E':['clean_console']}
+BACKEND={'A':['boot_state','seeded_scene','empty_move','lift','durable_state','durable_scene'], 'B':['empty_release','unknown_box','misaligned_grip','grip','already_holding','reject_bounds','atomic_rejection','swept_collision','sat_disjoint_aabbs_overlap','rotated_support_overhang','unsupported_release','held_bounds','supported_release','regrip_preserves_yaw','short_arc_wrap','floor_release','overload','stale_revision','idempotent_replay','id_conflict','invalid_number_None','invalid_number_True','invalid_number_1','concurrent_revision','durable_receipt','stale_before_move','stale_before_grip','stale_before_release','retry_after_semantic','retry_after_malformed','retry_after_stale','concurrent_identical_retry','durable_reordered_receipt','durable_conflict_precedence'], 'C':['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','crane_tracks_state','cargo_tracks_external_backend'], 'D':['scene_canvas_size','real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],'E':['clean_console']}
 def evaluate(ctx):
-    by={r['name']:r for r in ctx['checks']};rows=[by.get(n,dict(name=n,tier=t,score=0,detail='not reached')) for t,names in BACKEND.items() for n in names]
+    by={r['name']:copy.deepcopy(r) for r in ctx['checks']};rows=[by.get(n,dict(name=n,tier=t,score=0,detail='not reached')) for t,names in BACKEND.items() for n in names]
     if by.get('webgl_geometry', {}).get('score', 0) != 1:
         for row in rows:
             if row['tier'] == 'C' or row['name'] == 'real_3d_pick':
@@ -171,7 +203,8 @@ def evaluate(ctx):
     # Excellence is earned only while every core category works, never by a quiet empty page.
     excellence=min(tiers[t] for t in ['A','B','C','D'])*tiers['E']
     score=(inner-WEIGHTS['E']*tiers['E']+WEIGHTS['E']*excellence)*critical
-    return dict(scorerVersion=VERSION,scorer_version=VERSION,score=score,scoreInner=inner,tiers=tiers,checks=rows,criticalMultiplier=critical,fixture_seed=ctx['fixture_seed'],calibrated=False)
+    provenance={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in ('score_sb8.py','product_probe_v4.mjs','gantry_oracle.py')}
+    return dict(scorerVersion=VERSION,scorer_version=VERSION,scorer_files_sha256=provenance,score=score,scoreInner=inner,tiers=tiers,checks=rows,criticalMultiplier=critical,fixture_seed=ctx['fixture_seed'],calibrated=False)
 def format_report(v,label=''):return f"{label} {VERSION}: {v['score']:.4f} (uncalibrated)"
 def main():
     p=argparse.ArgumentParser();p.add_argument('--tree',type=Path,required=True);p.add_argument('--port',type=int,default=8899);p.add_argument('--seed',type=int,required=True);p.add_argument('--json-out',type=Path);p.add_argument('--reference',action='store_true');a=p.parse_args()
