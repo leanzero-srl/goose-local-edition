@@ -14,6 +14,7 @@ import subprocess
 import signal
 import math
 import threading
+import time
 import urllib.request
 import urllib.error
 from urllib.parse import urlsplit
@@ -148,6 +149,84 @@ class StreamHandshake:
 
 
 @contextmanager
+def resync_runtime(mark_phase):
+    """Hold the next response so the scheduled kill really occurs during a resync."""
+    old_send = vendor.Handler._send
+    old_spawn, old_kill, old_tail = base._spawn_ledgerd, base._kill, base._TraceTail
+    lock, held, release = threading.Lock(), threading.Event(), threading.Event()
+    state = {'phase': None, 'armed': False, 'completed': [], 'held': [], 'kill': None}
+
+    def mark(name, reset=None):
+        state['phase'] = name
+        if name != 'sync2':
+            state['armed'] = False
+            release.set()
+        if mark_phase:
+            return mark_phase(name, reset) if reset is not None else mark_phase(name)
+
+    def spawn(*args, **kwargs):
+        if state['phase'] == 'sync2':
+            state['target'] = vendor.STATE.sch.sigkill_after_list
+            state['armed'] = True
+            held.clear()
+            release.clear()
+        return old_spawn(*args, **kwargs)
+
+    def send(handler, code, *args, **kwargs):
+        eligible = (state['armed'] and handler.command == 'GET'
+                    and urlsplit(handler.path).path == vendor.LIST_PATH
+                    and handler.headers.get('Authorization') == f'Bearer {vendor.API_KEY}'
+                    and code in (200, 304))
+        if not eligible:
+            return old_send(handler, code, *args, **kwargs)
+        with lock:
+            if not state['armed']:
+                handler.close_connection = True
+                return
+            if len(state['completed']) < state['target']:
+                result = old_send(handler, code, *args, **kwargs)
+                handler.wfile.flush()
+                state['completed'].append({'status': code, 'path': handler.path,
+                                           'response_sent_at': time.monotonic()})
+                return result
+            state['held'].append({'status': code, 'path': handler.path,
+                                  'held_before_send_at': time.monotonic()})
+            held.set()
+        release.wait()
+        handler.close_connection = True
+
+    class ResyncTail(old_tail):
+        def wait_for(self, count_fn, want, timeout):
+            if not state['armed']:
+                return super().wait_for(count_fn, want, timeout)
+            if want != state['target']:
+                raise RuntimeError('B3 response schedule disagrees with the armed vendor gate')
+            reached = held.wait(timeout)
+            return reached, len(state['completed'])
+
+    def kill(proc):
+        interrupting = state['armed'] and held.is_set() and proc is not None
+        result = old_kill(proc)
+        if interrupting:
+            state['kill'] = {'pid': proc.pid, 'returncode': proc.poll(),
+                             'terminated_at': time.monotonic(),
+                             'response_still_held': not release.is_set()}
+            if proc.poll() is None:
+                raise RuntimeError('B3 ledger process survived the requested kill')
+        return result
+
+    vendor.Handler._send, base._spawn_ledgerd = send, spawn
+    base._kill, base._TraceTail = kill, ResyncTail
+    try:
+        yield mark, state
+    finally:
+        state['armed'] = False
+        release.set()
+        vendor.Handler._send, base._spawn_ledgerd = old_send, old_spawn
+        base._kill, base._TraceTail = old_kill, old_tail
+
+
+@contextmanager
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
     old_pack = base._write_expect_pack
@@ -227,11 +306,14 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     os.environ['BENCH_MEDIA_DIR'] = str(media_dir)
     try:
         with probe_runtime() as absences:
-            ctx = base.gather(root, vendor_port, db_dir, trace_path, mark_phase, seed)
+            with resync_runtime(mark_phase) as (mark, resync):
+                ctx = base.gather(root, vendor_port, db_dir, trace_path, mark, seed)
+        ctx.sb71_resync = resync
         ctx.sb71_endpoint_absences = absences
         (Path(root) / 'api-observations.json').write_text(json.dumps({
             'endpoint_absences': absences, 'stream_head': ctx.stream_head,
-            'workflow': ctx.workflow, 'api_lat': ctx.api_lat}, indent=2))
+            'workflow': ctx.workflow, 'api_lat': ctx.api_lat,
+            'resync_interruption': resync}, indent=2))
         (Path(root) / 'probe-observations.json').write_text(json.dumps(ctx.probes, indent=2))
         return ctx
     finally:
@@ -359,6 +441,12 @@ def evaluate(ctx):
     finally:
         base.SB7_CHECKS = original_checks
     observation = ctx.probes.get('viz', {}).get('sb71', {})
+    resync = getattr(ctx, 'sb71_resync', None)
+    if resync is not None and (ctx.b3_result or {}).get('kill_fired'):
+        receipt = resync.get('kill') or {}
+        if (not resync['held'] or receipt.get('returncode') is None
+                or not receipt.get('response_still_held')):
+            raise UnavailableEvidence(ctx, raw, 'B3 mid-resync interruption was not proven')
     if raw.get('harness_missing'):
         raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(raw['harness_missing']))
     if raw.get('probe_unavailable'):
