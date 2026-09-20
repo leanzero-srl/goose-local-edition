@@ -1,3 +1,4 @@
+import type { BenchmarkActivity } from './benchActivity';
 import type { BenchmarkRuntimeStatus } from './benchRuntimeTypes';
 import type { CloudBenchmarkTier } from './benchTierPayload';
 import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
@@ -235,6 +236,7 @@ type ElectronAPI = {
     scored?: boolean;
     /** The newest harness output line, for the same re-attach. */
     lastLine?: string | null;
+    activity?: BenchmarkActivity;
     /** The engine's run id, null until .swarm/current-run.json appears in the workdir. */
     runId?: string | null;
   }>;

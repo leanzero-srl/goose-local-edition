@@ -1,3 +1,8 @@
+import {
+  appendBenchmarkActivity,
+  emptyBenchmarkActivity,
+  type BenchmarkActivity,
+} from './benchActivity';
 import { spawnBenchmarkWithPower } from './benchPower';
 import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
@@ -2565,6 +2570,7 @@ const samplingEnv = (s: RunSampling): Record<string, string> => ({
 });
 
 interface ActiveBenchRun {
+  activity: BenchmarkActivity;
   releasePower: () => void;
   phase: BenchmarkPhase;
   provider?: string;
@@ -3076,8 +3082,8 @@ ipcMain.handle('benchmark-delete-session', async (_event, runId: string) => {
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
   if (!activeBenchRun) return { running: false };
-  const { workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider } = activeBenchRun;
-  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider };
+  const { workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider, activity } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider, activity };
 });
 
 const benchMediaServer = new BenchMediaServer();
@@ -3272,6 +3278,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       }
     ));
     activeBenchRun = {
+      activity: emptyBenchmarkActivity(),
       releasePower,
       phase: 'boot',
       ...(cloud ? { provider: cloud.provider } : {}),
@@ -3329,17 +3336,24 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       const lines = buffers[stream].split('\n');
       buffers[stream] = lines.pop() ?? '';
       for (const line of lines) {
-        if (line.trim().length === 0) continue;
-        // MAIN owns the scored fact (finding 17): the rep0 verdict line is matched here, once, and
-        // shipped on every payload — the renderer no longer pattern-matches scorer stdout, so a
-        // recreated window restores 'done' from status instead of regressing to a spinning 'score'.
+        // Console text reports observations; only the canonical verdict read below asserts scored.
         if (activeBenchRun) {
-          activeBenchRun.lastLine = line;
+          if (line.trim()) activeBenchRun.lastLine = line;
+          activeBenchRun.activity = appendBenchmarkActivity(
+            activeBenchRun.activity, line, stream, Date.now()
+          );
           const nextPhase = stream === 'stdout' ? harnessPhase(line) : null;
           if (nextPhase) activeBenchRun.phase = nextPhase;
-          if (!activeBenchRun.scored && /rep0 \(/.test(line)) activeBenchRun.scored = true;
         }
-        sendSafe('benchmark-log', { line, stream, scored: activeBenchRun?.scored === true, phase: activeBenchRun?.phase });
+      }
+      if (lines.length) {
+        sendSafe('benchmark-log', {
+          line: activeBenchRun?.lastLine,
+          stream,
+          activity: activeBenchRun?.activity,
+          scored: activeBenchRun?.scored === true,
+          phase: activeBenchRun?.phase,
+        });
       }
     };
     child.stdout?.on('data', onData('stdout'));
@@ -3383,6 +3397,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
         const verdictPath = path.join(workdir, 'verdict.json');
         const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
         if (!hasScoredVerdict(v)) throw new Error('Verdict has no valid score');
+        if (activeBenchRun?.workdir === workdir) activeBenchRun.scored = true;
         const counts = await benchRunCounts(workdir);
         const scoring = projectBenchScore(v);
         const row = {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
@@ -25,7 +25,12 @@ import BenchmarkView from './BenchmarkView';
 
 const POOL = [{ id: 'local-mihai-qwen3.6-27b', model_id: 'mihai-qwen3.6-27b', weight: 2 }];
 const EVENTS = [
-  { event: 'run_started', prompt: '# Build `vendorsync`', pool: POOL, ts: '2026-08-17T13:54:13.000000+00:00' },
+  {
+    event: 'run_started',
+    prompt: '# Build `vendorsync`',
+    pool: POOL,
+    ts: '2026-08-17T13:54:13.000000+00:00',
+  },
   { event: 'phase', phase: 'open' },
 ];
 
@@ -74,9 +79,10 @@ describe('BenchmarkView — the scored fact survives a window recreation', () =>
     );
 
     // The restored last output line renders without a single fresh benchmark-log event.
+    fireEvent.click(await screen.findByRole('button', { name: 'Console details' }));
     expect(await screen.findByText(LAST_LINE)).toBeInTheDocument();
     // 'Done' is the ACTIVE chip (it carries the spinner glyph); 'Scoring' is settled — no spinner.
-    const done = (await screen.findByText('Done')).closest('span')!;
+    const done = (await screen.findByText('Finalize')).closest('span')!;
     const scoring = screen.getByText('Scoring').closest('span')!;
     await waitFor(() => expect(done.querySelector('.animate-spin')).not.toBeNull());
     expect(scoring.querySelector('.animate-spin')).toBeNull();
@@ -98,8 +104,9 @@ describe('BenchmarkView — the scored fact survives a window recreation', () =>
       </IntlTestWrapper>
     );
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Console details' }));
     expect(await screen.findByText('building…')).toBeInTheDocument();
-    const done = screen.getByText('Done').closest('span')!;
+    const done = screen.getByText('Finalize').closest('span')!;
     expect(done.querySelector('.animate-spin')).toBeNull();
   });
 
@@ -125,12 +132,55 @@ describe('BenchmarkView — the scored fact survives a window recreation', () =>
     await screen.findByText('Scoring');
     // A line that MATCHES the old renderer regex but carries scored:false must not flip the strip —
     // main is the only matcher left.
-    handlers.get('benchmark-log')?.(null, { line: 'echo rep0 (not the verdict)', stream: 'stdout', scored: false });
-    expect(screen.getByText('Done').closest('span')!.querySelector('.animate-spin')).toBeNull();
+    handlers.get('benchmark-log')?.(null, {
+      line: 'echo rep0 (not the verdict)',
+      stream: 'stdout',
+      scored: false,
+    });
+    expect(screen.getByText('Finalize').closest('span')!.querySelector('.animate-spin')).toBeNull();
 
     handlers.get('benchmark-log')?.(null, { line: LAST_LINE, stream: 'stdout', scored: true });
     await waitFor(() =>
-      expect(screen.getByText('Done').closest('span')!.querySelector('.animate-spin')).not.toBeNull()
+      expect(
+        screen.getByText('Finalize').closest('span')!.querySelector('.animate-spin')
+      ).not.toBeNull()
     );
+  });
+
+  it('does not replace a newer live action and phase with a delayed reattachment snapshot', async () => {
+    let resolveStatus!: (value: unknown) => void;
+    electron().benchmarkStatus = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        })
+    );
+    const handlers = new Map<string, (e: unknown, p: unknown) => void>();
+    electron().on = vi.fn((channel: string, cb: (e: unknown, p: unknown) => void) =>
+      handlers.set(channel, cb)
+    );
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    act(() =>
+      handlers.get('benchmark-log')?.(null, {
+        line: '  ▸ read_image',
+        stream: 'stdout',
+        phase: 'score',
+      })
+    );
+    await act(async () =>
+      resolveStatus({
+        running: true,
+        workdir: '/tmp/bench',
+        phase: 'build',
+        scored: false,
+        lastLine: '}',
+      })
+    );
+    expect(screen.getByText('Inspect image')).toBeVisible();
+    expect(screen.getByText('Scorer running')).toBeVisible();
   });
 });

@@ -1,6 +1,6 @@
 export type BenchmarkPhase = 'boot' | 'build' | 'score' | 'done';
 
-/** Only the harness lifecycle marker changes the phase, never model-authored prose. */
+/** Recognizes the harness-format lifecycle marker in the shared console stream. */
 export function harnessPhase(line: string): 'build' | 'score' | null {
   if (!line.startsWith('BENCH_PHASE ')) return null;
   try {

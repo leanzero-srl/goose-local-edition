@@ -1,13 +1,14 @@
+import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
+import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
 import type { CloudBenchmarkTier } from '../../benchTierPayload';
 import { RunVideoEvidence } from './RunVideoEvidence';
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   BadgeCheck,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -43,7 +44,6 @@ import {
   Chip,
   DataTable,
   EmptyState,
-  KeyValue,
   PageHeader,
   Panel,
   Segmented,
@@ -81,7 +81,6 @@ export function nodeCapFor(cfg: SwarmConfig | null): NodeChoice {
   const capped = Math.max(1, Math.min(max, enabled));
   return (NODE_CHOICES.find((n) => n === capped) ?? max) as NodeChoice;
 }
-
 
 /** Why this result's ENGINE-TRUTH model id cannot be published, or null when it can. The field is
  *  read-only — a user-editable model id publishes a lie — so the only problem left is absence:
@@ -126,13 +125,6 @@ interface BenchShot {
 }
 
 type BenchPhase = 'boot' | 'build' | 'score' | 'done';
-
-const PHASES: Array<{ key: BenchPhase; label: string }> = [
-  { key: 'boot', label: 'Boot' },
-  { key: 'build', label: 'Model build' },
-  { key: 'score', label: 'Scoring' },
-  { key: 'done', label: 'Done' },
-];
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -201,86 +193,6 @@ function statusTone(status: string): Tone {
   if (/cancelled/i.test(status)) return 'stopped';
   if (/complete|published/i.test(status)) return 'ok';
   return 'accent';
-}
-
-/**
- * BENCHMARK PIPELINE panel — the harness AROUND the swarm: which phase is live, what already
- * finished, the run's own facts and the harness's latest output line — never a bare spinner. The
- * swarm-build phase gets its full live panel below; this panel covers the phases that are NOT the
- * swarm (vendor sim boot, scoring). Started and the run directory come from main's status — the
- * tier and node count of a re-attached run are NOT known here and are deliberately not claimed.
- */
-function PhaseStrip({
-  phase,
-  lastLine,
-  elapsedMs,
-  startedAt,
-  workdir,
-}: {
-  phase: BenchPhase;
-  lastLine: string | null;
-  elapsedMs: number;
-  startedAt: number | null;
-  workdir: string | null;
-}) {
-  const activeIdx = PHASES.findIndex((p) => p.key === phase);
-  return (
-    <Panel
-      title="Benchmark pipeline"
-      headerRight={
-        <>
-          <StatusDot tone="accent" live label="run in progress" />
-          <span className={cx(TYPE.meta, TNUM)}>{fmtElapsed(elapsedMs)}</span>
-        </>
-      }
-    >
-      <p className={TYPE.bodyMuted}>
-        The harness records model build and scoring separately. Swarm runs also show their
-        live agent panel below.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {PHASES.map((p, i) => {
-          const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
-          return (
-            <Chip
-              key={p.key}
-              tone={state === 'done' ? 'ok' : state === 'active' ? 'accent' : undefined}
-              icon={
-                state === 'done' ? (
-                  <Check />
-                ) : state === 'active' ? (
-                  <Loader2 className="animate-spin" />
-                ) : undefined
-              }
-            >
-              {p.label}
-            </Chip>
-          );
-        })}
-      </div>
-      <KeyValue
-        dense
-        className="mt-4"
-        aria-label="Run facts"
-        items={[
-          { key: 'started', label: 'Started', value: fmtWhen(startedAt) ?? '—' },
-          { key: 'workdir', label: 'Run directory', value: workdir ?? '—', mono: true },
-        ]}
-      />
-      {lastLine && (
-        <div
-          title={lastLine}
-          className={cx(
-            'mt-3 truncate px-3 py-2 font-mono text-lz-mono text-lz-ink-2',
-            SURFACE.inset,
-            RADIUS.control
-          )}
-        >
-          {lastLine.length > 200 ? lastLine.slice(0, 197) + '…' : lastLine}
-        </div>
-      )}
-    </Panel>
-  );
 }
 
 /**
@@ -470,7 +382,7 @@ function boardColumns(own: {
       key: 'duration',
       header: 'Model build',
       numeric: true,
-      cell: (r) => typeof r.wallSecs === 'number' ? fmtElapsed(r.wallSecs * 1000) : ABSENT,
+      cell: (r) => (typeof r.wallSecs === 'number' ? fmtElapsed(r.wallSecs * 1000) : ABSENT),
     },
   ];
 }
@@ -652,8 +564,14 @@ function SessionDetail({
           value={session.score != null ? `${(session.score * 100).toFixed(1)}%` : 'missing'}
           tone={session.score != null ? 'accent' : 'err'}
         />
-        {mineMatched && mine?.wallSecs != null ? <StatCell label="Model build" value={fmtElapsed(mine.wallSecs * 1000)} /> : wallMs != null && <StatCell label="Run elapsed" value={fmtElapsed(wallMs)} />}
-        {mineMatched && mine?.scoringSecs != null && <StatCell label="Scoring" value={fmtElapsed(mine.scoringSecs * 1000)} />}
+        {mineMatched && mine?.wallSecs != null ? (
+          <StatCell label="Model build" value={fmtElapsed(mine.wallSecs * 1000)} />
+        ) : (
+          wallMs != null && <StatCell label="Run elapsed" value={fmtElapsed(wallMs)} />
+        )}
+        {mineMatched && mine?.scoringSecs != null && (
+          <StatCell label="Scoring" value={fmtElapsed(mine.scoringSecs * 1000)} />
+        )}
         {mineMatched && mine?.runMeta && !mine.provider && (
           <StatCell label="Repair rounds" value={String(mine.runMeta.repairRounds)} />
         )}
@@ -830,7 +748,9 @@ export default function BenchmarkView() {
   const [shots, setShots] = useState<BenchShot[]>([]);
   const [activeWorkdir, setActiveWorkdir] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
-  const [lastLine, setLastLine] = useState<string | null>(null);
+  const [activity, setActivity] = useState(emptyBenchmarkActivity);
+  const lifecycleRevision = useRef(0);
+  const activityRevision = useRef(0);
   const [scored, setScored] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [catalog, setCatalog] = useState<CatalogState>({ kind: 'loading' });
@@ -914,11 +834,17 @@ export default function BenchmarkView() {
     void loadCatalog();
     void loadSessions();
     // Re-attach to a run started before this mount — a run takes hours and must survive navigation.
+    const lifecycleAtRequest = lifecycleRevision.current;
+    const activityAtRequest = activityRevision.current;
     void window.electron.benchmarkStatus?.().then((s) => {
+      if (lifecycleRevision.current !== lifecycleAtRequest) return;
       if (s?.running && s.workdir) {
         setRunning(true);
-        setHarnessStage(s.phase ?? 'boot');
-        if (s.provider) { setEntrant('cloud'); setCloudProvider(s.provider); }
+        if (activityRevision.current === activityAtRequest) setHarnessStage(s.phase ?? 'boot');
+        if (s.provider) {
+          setEntrant('cloud');
+          setCloudProvider(s.provider);
+        }
         setActiveWorkdir(s.workdir);
         setRunStartedAt(s.startedAt ? Date.parse(s.startedAt) : Date.now());
         // main.ts kept the launched knobs with the run — the strip shows the truth, not this
@@ -927,8 +853,15 @@ export default function BenchmarkView() {
         // FINDING 17: scored/lastLine are MAIN's facts now. They used to be component state fed by a
         // log-line regex, so this re-attach restored neither and a recreated window's strip dropped a
         // finished 'done' back to a spinning 'score' until the child exited.
-        setScored(s.scored === true);
-        setLastLine(typeof s.lastLine === 'string' ? s.lastLine : null);
+        if (activityRevision.current === activityAtRequest) {
+          setScored(s.scored === true);
+          setActivity(
+            s.activity ?? {
+              ...emptyBenchmarkActivity(),
+              raw: typeof s.lastLine === 'string' ? s.lastLine : '',
+            }
+          );
+        }
         setStatus(null);
       }
     });
@@ -948,30 +881,44 @@ export default function BenchmarkView() {
         catalogMismatch?: CatalogMismatch;
       };
       if (p?.workdir) {
+        lifecycleRevision.current++;
         setRunning(true);
         setHarnessStage(p.phase ?? 'boot');
-        if (p.provider) { setEntrant('cloud'); setCloudProvider(p.provider); }
+        if (p.provider) {
+          setEntrant('cloud');
+          setCloudProvider(p.provider);
+        }
         setCatalogMismatch(p.catalogMismatch ?? null);
         setActiveWorkdir(p.workdir);
         setRunStartedAt(p.startedAt ? Date.parse(p.startedAt) : Date.now());
         setLaunchedSampling(sanitizeSampling(p.sampling));
         setScored(false);
-        setLastLine(null);
+        setActivity(emptyBenchmarkActivity());
         setShots([]);
         // The new session appears in its era's list the moment main registers it.
         void loadSessions();
       }
     };
     const onLog = (_e: unknown, payload: unknown) => {
-      // The regex is gone from the renderer: `scored` rides every log payload from main, which owns
-      // the fact (finding 17) — a scorer output change breaks ONE matcher in one process, and the
-      // strip can never re-derive a stale answer from lines it happened to see.
-      const p = payload as { line?: string; scored?: boolean; phase?: BenchPhase };
+      activityRevision.current++;
+      // Main owns verdict completion; console observations never establish a scored result.
+      const p = payload as {
+        line?: string;
+        stream?: 'stdout' | 'stderr';
+        activity?: ReturnType<typeof emptyBenchmarkActivity>;
+        scored?: boolean;
+        phase?: BenchPhase;
+      };
       if (p.phase) setHarnessStage(p.phase);
-      if (typeof p?.line === 'string') setLastLine(p.line);
+      if (p.activity) setActivity(p.activity);
+      else if (typeof p.line === 'string')
+        setActivity((previous) =>
+          appendBenchmarkActivity(previous, p.line!, p.stream ?? 'stdout', Date.now())
+        );
       if (p?.scored === true) setScored(true);
     };
     const onFinished = (_e: unknown, payload: unknown) => {
+      lifecycleRevision.current++;
       const p = payload as { row?: MineRow; error?: string; cancelled?: boolean };
       setRunning(false);
       setCancelling(false);
@@ -1234,8 +1181,8 @@ export default function BenchmarkView() {
     mine && selectedSession && sessionKey(selectedSession) === mineSessionKey ? (
       <Panel title="Publish to leanzero.net">
         <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
-          Posts your score, the check-by-check breakdown and graded app evidence under
-          the title you choose. The result appears on the leanzero.net board immediately.
+          Posts your score, the check-by-check breakdown and graded app evidence under the title you
+          choose. The result appears on the leanzero.net board immediately.
         </p>
         <div className="mt-4 flex flex-col gap-4">
           <div className="max-w-[560px]">
@@ -1382,7 +1329,10 @@ export default function BenchmarkView() {
                   variant="primary"
                   onClick={run}
                   icon={<Play />}
-                  disabled={(entrant === 'swarm' || cloudTier === 'sb-7.1') && !runtimeReady || entrant === 'cloud' && (!cloudProvider || !cloudModel.trim())}
+                  disabled={
+                    ((entrant === 'swarm' || cloudTier === 'sb-7.1') && !runtimeReady) ||
+                    (entrant === 'cloud' && (!cloudProvider || !cloudModel.trim()))
+                  }
                 >
                   Run benchmark
                 </Button>
@@ -1391,8 +1341,8 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            SB7.1 payments runs with Swarm or a single model. Swarm nodes can mix local and cloud providers.
-            Earlier experiments remain separate in your session history.
+            SB7.1 payments runs with Swarm or a single model. Swarm nodes can mix local and cloud
+            providers. Earlier experiments remain separate in your session history.
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
@@ -1427,8 +1377,15 @@ export default function BenchmarkView() {
                   onChange={(value) => setCloudTier(value as CloudBenchmarkTier)}
                   disabled={running}
                 />
-                <CloudEntrant provider={cloudProvider} model={cloudModel} disabled={running}
-                  onChange={(provider, model) => { setCloudProvider(provider); setCloudModel(model); }} />
+                <CloudEntrant
+                  provider={cloudProvider}
+                  model={cloudModel}
+                  disabled={running}
+                  onChange={(provider, model) => {
+                    setCloudProvider(provider);
+                    setCloudModel(model);
+                  }}
+                />
               </>
             ) : (
               <>
@@ -1490,10 +1447,10 @@ export default function BenchmarkView() {
 
           {running && (
             <section className="flex flex-col gap-4">
-              <PhaseStrip
+              <BenchmarkActivityPanel
                 phase={phase}
-                lastLine={lastLine}
-                elapsedMs={runStartedAt ? now - runStartedAt : 0}
+                activity={activity}
+                now={now}
                 startedAt={runStartedAt}
                 workdir={activeWorkdir}
               />

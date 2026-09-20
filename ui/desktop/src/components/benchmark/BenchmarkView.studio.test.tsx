@@ -53,7 +53,13 @@ const MINE = {
   verdict: {
     checks: [
       { check: 'modules_present', tier: 'A', score: 1, detail: '5/5 named files' },
-      { check: 'sync_completeness', tier: 'B', score: 0.5, detail: '123/247', consequence: 'no sync' },
+      {
+        check: 'sync_completeness',
+        tier: 'B',
+        score: 0.5,
+        detail: '123/247',
+        consequence: 'no sync',
+      },
     ],
     tiers: { A: { mean: 1, checks: 1, weight: 0.25 }, B: { mean: 0.5, checks: 1, weight: 0.3 } },
     core: 0.4,
@@ -200,15 +206,22 @@ describe('BenchmarkView — LeanZero Studio', () => {
   });
 
   it('marks the live run with the live dot, keeps the locked selection readable, and never makes Cancel the primary', async () => {
-    mockElectron({ running: true, mine: null, sessions: [], lastLine: 'rep0 (swarm-3node) score=61.0' });
+    mockElectron({
+      running: true,
+      mine: null,
+      sessions: [],
+      lastLine: 'rep0 (swarm-3node) score=61.0',
+    });
     renderView();
-    const pipeline = (await screen.findByText('Benchmark pipeline')).closest<HTMLElement>(
+    const pipeline = (await screen.findByText('Benchmark activity')).closest<HTMLElement>(
       '[data-testid="lz-panel"]'
     )!;
     const live = within(pipeline).getByRole('img', { name: 'run in progress' });
     expect(live.getAttribute('data-live')).toBe('true');
     expect(live.className).toContain('bg-lz-accent');
+    fireEvent.click(within(pipeline).getByRole('button', { name: 'Console details' }));
     expect(within(pipeline).getByText('rep0 (swarm-3node) score=61.0')).toBeTruthy();
+    fireEvent.click(within(pipeline).getByRole('button', { name: 'Run location' }));
     expect(within(pipeline).getByText('/tmp/bench')).toBeTruthy();
 
     // The node strip is the locked Segmented: the selection stays the accent fill — a solid, never
@@ -230,7 +243,7 @@ describe('BenchmarkView — LeanZero Studio', () => {
   it('status bands carry the tone their words mean: failure err, cancellation stopped', async () => {
     const handlers = mockElectron({ running: true, mine: null, sessions: [] });
     renderView();
-    await screen.findByText('Benchmark pipeline');
+    await screen.findByText('Benchmark activity');
 
     handlers.get('benchmark-finished')?.(null, { error: 'vendor sim never bound its port' });
     const err = await screen.findByTestId('tone-band');
@@ -270,7 +283,16 @@ describe('BenchmarkView — LeanZero Studio', () => {
   }, 30_000);
 
   it('shows every captured stage and opens the actual image at full size', async () => {
-    const shots = ['Initial app view', 'Front camera', 'Top camera', 'Isometric camera', 'Crane movement', 'Cargo lifted', 'Cargo rotated', 'Final app view'].map((caption, index) => ({ name: `stage-${index}`, caption, b64: 'AA==' }));
+    const shots = [
+      'Initial app view',
+      'Front camera',
+      'Top camera',
+      'Isometric camera',
+      'Crane movement',
+      'Cargo lifted',
+      'Cargo rotated',
+      'Final app view',
+    ].map((caption, index) => ({ name: `stage-${index}`, caption, b64: 'AA==' }));
     mockElectron({ running: false, shots });
     renderView();
     const initial = await screen.findByAltText('Initial app view');
@@ -290,8 +312,9 @@ describe('BenchmarkView — LeanZero Studio', () => {
   it('states missing screenshot evidence explicitly for the matched result', async () => {
     mockElectron({ running: false, shots: [] });
     renderView();
-    expect(await screen.findByText('No app screenshots were recorded or could be read for this result.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No app screenshots were recorded or could be read for this result.')
+    ).toBeInTheDocument();
     expect(screen.getByText(/SB7.1 payments runs with Swarm/)).toBeInTheDocument();
   });
-
 });

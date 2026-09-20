@@ -419,7 +419,7 @@ it('updates cloud pipeline stages from harness events, not model prose', async (
   electron().on = vi.fn((channel: string, cb: (event: unknown, payload: unknown) => void) => handlers.set(channel, cb));
   render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
   await act(async () => handlers.get('benchmark-started')?.(null, { workdir:'/cloud/run', provider:'google', phase:'boot' }));
-  expect(screen.getByText('Boot').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
+  expect(screen.getByText('Prepare').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
   await act(async () => handlers.get('benchmark-log')?.(null, { line:'model says done', phase:'build' }));
   expect(screen.getByText('Model build').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
   await act(async () => handlers.get('benchmark-log')?.(null, { line:'harness scoring', phase:'score' }));
