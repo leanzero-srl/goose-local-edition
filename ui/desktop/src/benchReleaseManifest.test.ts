@@ -1,0 +1,13 @@
+import { createRequire } from 'node:module';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { afterEach, expect, it } from 'vitest';
+const copy = createRequire(import.meta.url)('../scripts/copy-bench-release-manifest.cjs');
+const roots: string[] = [];
+afterEach(()=>roots.splice(0).forEach(root=>rmSync(root,{recursive:true,force:true})));
+const fixture=()=>{const root=mkdtempSync(join(tmpdir(),'bench-release-'));roots.push(root);const src=join(root,'source'),dest=join(root,'packaged');for(const dir of[src,dest])mkdirSync(join(dir,'sb7.1'),{recursive:true});return{src,dest};};
+it('refuses packaging without the actual release manifest',()=>{const{src,dest}=fixture();expect(()=>copy(src,dest)).toThrow();});
+it('copies exact manifest bytes only when packaged inputs match',()=>{const{src,dest}=fixture();writeFileSync(join(dest,'spec.md'),'actual spec');const bytes=JSON.stringify({scorerVersion:'sb-7.1',files:{'spec.md':createHash('sha256').update('actual spec').digest('hex')}})+'\n';writeFileSync(join(src,'sb7.1/release-manifest.json'),bytes);copy(src,dest);expect(readFileSync(join(dest,'sb7.1/release-manifest.json'),'utf8')).toBe(bytes);writeFileSync(join(dest,'spec.md'),'stale spec');expect(()=>copy(src,dest)).toThrow('differs from release manifest');});
+it('refuses circular manifest hashing',()=>{const{src,dest}=fixture();writeFileSync(join(src,'sb7.1/release-manifest.json'),JSON.stringify({scorerVersion:'sb-7.1',files:{'sb7.1/release-manifest.json':'a'.repeat(64)}}));expect(()=>copy(src,dest)).toThrow('circular');});

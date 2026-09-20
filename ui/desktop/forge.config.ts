@@ -64,6 +64,7 @@ function mirrorSwarmBenchPayload() {
       fs.copyFileSync(join(benchSrc, 'probes', name), join(dest, 'bench', 'probes', name));
     }
   }
+  require('./scripts/copy-bench-release-manifest.cjs')(src, dest);
 }
 
 let cfg = {
