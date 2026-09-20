@@ -37,7 +37,7 @@ use super::swarm_engine::{
     rewarm_on_transient, served_by_engine, settle_prewarm, sidecar_exclusion_events, EngineKind,
     Engines,
 };
-mod cloud;
+pub(crate) mod cloud;
 use cloud::{
     bedrock_stored_region, cloud_def, cloud_registry_name, cloud_roster, cloud_stored_key, CloudDef,
 };

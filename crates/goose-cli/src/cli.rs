@@ -819,6 +819,14 @@ enum Command {
     #[command(about = "Configure goose settings")]
     Configure {},
 
+    #[command(hide = true)]
+    BenchmarkConfig {
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
+
     /// Display goose configuration information
     #[command(about = "Display goose information")]
     Info {
@@ -1382,6 +1390,7 @@ pub struct InputConfig {
 fn get_command_name(command: &Option<Command>) -> &'static str {
     match command {
         Some(Command::Configure {}) => "configure",
+        Some(Command::BenchmarkConfig { .. }) => "benchmark-config",
         Some(Command::Doctor {}) => "doctor",
         Some(Command::Info { .. }) => "info",
         Some(Command::Mcp { .. }) => "mcp",
@@ -2397,6 +2406,9 @@ pub async fn cli() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Configure {}) => handle_configure().await,
+        Some(Command::BenchmarkConfig { provider, output }) => {
+            crate::commands::benchmark_config::export(provider.as_deref(), &output).await
+        }
         Some(Command::Doctor {}) => crate::commands::doctor::handle_doctor().await,
         Some(Command::Info { verbose, check }) => handle_info(verbose, check).await,
         Some(Command::Mcp { server }) => handle_mcp_command(server).await,

@@ -60,7 +60,7 @@ pub(super) fn cloud_def(name: &str) -> Option<&'static CloudDef> {
 
 /// goose provider-registry key for a swarm cloud provider name; identity for anything unmapped
 /// (the local "lmstudio" and forward-compat names pass through).
-pub(super) fn cloud_registry_name(name: &str) -> &str {
+pub(crate) fn cloud_registry_name(name: &str) -> &str {
     cloud_def(name).map(|d| d.registry).unwrap_or(name)
 }
 

@@ -1,3 +1,4 @@
+pub mod benchmark_config;
 pub mod configure;
 pub mod doctor;
 pub mod gateway;
