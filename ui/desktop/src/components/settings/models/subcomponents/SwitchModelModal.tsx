@@ -530,9 +530,7 @@ export const SwitchModelModal = ({
         const activeProviders = providersResponse.filter((provider) => provider.is_configured);
         setActiveProvidersList(activeProviders);
         if (isLocal) {
-          // Owner's rule: only the defined cloud families and Swarm. Swarm needs no credentials,
-          // so its rows are always offered; a cloud family is offered once it is configured.
-          // No omlx row, no "use other provider" escape.
+          // Swarm needs no credentials; every configured cloud provider is available.
           const swarmRows: ProviderOption[] = [
             {
               value: SWARM_PROVIDER_ID,
@@ -558,6 +556,11 @@ export const SwitchModelModal = ({
                 label: metadata.display_name,
                 provider: name,
               })),
+            {
+              value: 'configure_providers',
+              label: intl.formatMessage(i18n.useOtherProvider),
+              provider: 'configure_providers',
+            },
           ]);
           return;
         }
@@ -908,10 +911,7 @@ export const SwitchModelModal = ({
                   formatOptionLabel={(raw: unknown, meta: { context: 'menu' | 'value' }) => {
                     const option = raw as ProviderOption;
                     return (
-                      <span
-                        className="flex flex-col"
-                        data-testid={`provider-row-${option.value}`}
-                      >
+                      <span className="flex flex-col" data-testid={`provider-row-${option.value}`}>
                         <span>{option.label}</span>
                         {meta.context === 'menu' && option.description && (
                           <span className="text-xs text-text-secondary">{option.description}</span>
@@ -957,9 +957,10 @@ export const SwitchModelModal = ({
                       )}
                     </div>
                   ) : provider === 'local' &&
-                  !loadingModels &&
-                  filteredModelOptions.flatMap((g) => g.options).filter((o) => o.value !== 'custom')
-                    .length === 0 ? (
+                    !loadingModels &&
+                    filteredModelOptions
+                      .flatMap((g) => g.options)
+                      .filter((o) => o.value !== 'custom').length === 0 ? (
                     /* Show special UI for local provider when no models are downloaded */
                     <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-4">
                       <div className="flex flex-col gap-3">

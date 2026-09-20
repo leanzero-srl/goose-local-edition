@@ -62,7 +62,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('CloudProvidersSection', () => {
-  it("shows EXACTLY the swarm's four cloud families by registry id — no upstream cloud, no local backend, no swarm, no custom card", async () => {
+  it('shows all registry cloud providers and custom setup, excluding local engines', async () => {
     mockList.mockResolvedValue([
       provider('anthropic', true),
       provider('openai', false),
@@ -79,18 +79,25 @@ describe('CloudProvidersSection', () => {
     await waitFor(() => {
       expect(screen.getByTestId('provider-grid')).toBeInTheDocument();
     });
-    for (const allowed of ['aws_bedrock', 'zai', 'google', 'custom_deepseek']) {
+    for (const allowed of [
+      'anthropic',
+      'openai',
+      'aws_bedrock',
+      'zai',
+      'google',
+      'custom_deepseek',
+    ]) {
       expect(screen.getByTestId(`grid-provider-${allowed}`)).toBeInTheDocument();
     }
-    for (const hidden of ['anthropic', 'openai', 'lmstudio', 'ollama', 'omlx', 'swarm']) {
+    for (const hidden of ['lmstudio', 'ollama', 'omlx', 'swarm']) {
       expect(screen.queryByTestId(`grid-provider-${hidden}`)).not.toBeInTheDocument();
     }
     expect(gridSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ allowCustomProvider: false })
+      expect.objectContaining({ allowCustomProvider: true })
     );
-    expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(4);
-    // the count chip counts what the grid shows: 2 of the 4 families are configured
-    expect(screen.getByText('2 of 4 configured')).toBeInTheDocument();
+    expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(6);
+    // The count describes the visible registry rows.
+    expect(screen.getByText('3 of 6 configured')).toBeInTheDocument();
   });
 
   it('a failed provider list renders the failure twin with a working Retry — never a clean empty grid', async () => {

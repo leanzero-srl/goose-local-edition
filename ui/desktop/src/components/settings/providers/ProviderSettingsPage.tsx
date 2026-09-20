@@ -43,8 +43,7 @@ export default function ProviderSettings({
 }: ProviderSettingsProps) {
   const intl = useIntl();
   const navigate = useNavigate();
-  // Goose Swarm (local) edition: this route used to be an unfiltered escape hatch to the whole
-  // registry; it now shows exactly the allow-list (the four swarm cloud families + Swarm).
+  // Local engines are selected through Swarm; cloud providers come from the registry.
   const { isLocal } = useEdition();
   const [loading, setLoading] = useState(true);
   const [providers, setProviders] = useState<ProviderDetails[]>([]);
@@ -121,7 +120,7 @@ export default function ProviderSettings({
                   refreshProviders={refreshProviders}
                   setView={setView}
                   onModelSelected={onProviderLaunched}
-                  allowCustomProvider={!isLocal}
+                  allowCustomProvider
                 />
               )}
             </div>

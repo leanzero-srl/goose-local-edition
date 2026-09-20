@@ -41,7 +41,18 @@ const p = (name: string) =>
     metadata: { name, display_name: name, config_keys: [], known_models: [] },
   }) as unknown as ProviderDetails;
 
-const REGISTRY = ['anthropic', 'openai', 'ollama', 'omlx', 'lmstudio', 'swarm', 'google', 'zai', 'aws_bedrock', 'custom_deepseek'].map(p);
+const REGISTRY = [
+  'anthropic',
+  'openai',
+  'ollama',
+  'omlx',
+  'lmstudio',
+  'swarm',
+  'google',
+  'zai',
+  'aws_bedrock',
+  'custom_deepseek',
+].map(p);
 
 const render = () =>
   rtlRender(
@@ -58,13 +69,23 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ProviderSettingsPage (/configure-providers)', () => {
-  it('local edition: the grid is the allow-list (swarm + four cloud families) with no custom card', async () => {
+  it('local edition: the grid includes all cloud providers and custom setup', async () => {
     mockIsLocal = true;
     render();
     await waitFor(() => expect(screen.getByTestId('provider-grid')).toBeInTheDocument());
     const shown = (gridSpy.mock.lastCall?.[0].providers as ProviderDetails[]).map((x) => x.name);
-    expect(shown.sort()).toEqual(['aws_bedrock', 'custom_deepseek', 'google', 'swarm', 'zai']);
-    expect(gridSpy).toHaveBeenLastCalledWith(expect.objectContaining({ allowCustomProvider: false }));
+    expect(shown.sort()).toEqual([
+      'anthropic',
+      'aws_bedrock',
+      'custom_deepseek',
+      'google',
+      'openai',
+      'swarm',
+      'zai',
+    ]);
+    expect(gridSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowCustomProvider: true })
+    );
   });
 
   it('standard edition: every provider, custom card allowed', async () => {
@@ -72,6 +93,8 @@ describe('ProviderSettingsPage (/configure-providers)', () => {
     render();
     await waitFor(() => expect(screen.getByTestId('provider-grid')).toBeInTheDocument());
     expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(REGISTRY.length);
-    expect(gridSpy).toHaveBeenLastCalledWith(expect.objectContaining({ allowCustomProvider: true }));
+    expect(gridSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowCustomProvider: true })
+    );
   });
 });

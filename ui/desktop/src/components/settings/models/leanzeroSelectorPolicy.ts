@@ -1,19 +1,5 @@
-/**
- * Goose Swarm (local edition) provider POLICY — presentation only, nothing is unregistered.
- *
- * Owner's rule (2026-09-05): "in the providers, we can only ever get the providers we have
- * defined — which is only the defined cloud ones and Swarm. If you choose Swarm you tap into the
- * nodes automatically." So in the local edition every provider picker (the chat selector, the
- * onboarding selector, the credentials grids) offers EXACTLY `LOCAL_EDITION_PROVIDER_IDS` — an
- * allow-list of registry ids derived from the swarm's CLOUD_PROVIDERS table plus the Goose Swarm
- * provider — and nothing else: no omlx/lmstudio/ollama rows, no upstream catalog, no
- * "other provider" escape. The standard edition is untouched.
- */
+/** Provider visibility follows the engine registry; local engines are selected through Swarm. */
 import { SWARM_PROVIDER_ID } from '../../../branding';
-import {
-  LOCAL_EDITION_CLOUD_PROVIDER_IDS,
-  LOCAL_EDITION_PROVIDER_IDS,
-} from '../../leanzero-swarm/cloudProviders';
 import type { Edition } from '../../../contexts/EditionContext';
 
 /** The provider id the MLX engine serves chat through (sessions on it still exist; the bottom bar
@@ -40,14 +26,23 @@ export function isLocalProviderName(name: string): boolean {
   return p === 'local' || LOCAL_PROVIDER_FRAGMENTS.some((frag) => p.includes(frag));
 }
 
-/** Exact allow-list test on the registry id: the four swarm cloud families + Goose Swarm. */
+/** All registered cloud providers remain available in the Goose Swarm edition. */
 export function keepProviderInLocalEdition(registryId: string): boolean {
-  return LOCAL_EDITION_PROVIDER_IDS.includes(registryId);
+  return registryId === SWARM_PROVIDER_ID || isLocalEditionCloudProvider(registryId);
 }
 
-/** The credential-bearing subset of the allow-list (Swarm needs no key). */
+/** Exact local IDs: cloud services such as ollama_cloud must not be hidden by substring. */
 export function isLocalEditionCloudProvider(registryId: string): boolean {
-  return LOCAL_EDITION_CLOUD_PROVIDER_IDS.includes(registryId);
+  return ![
+    'swarm',
+    'omlx',
+    'lmstudio',
+    'ollama',
+    'llama_swap',
+    'local',
+    'localai',
+    'mlx-sidecar',
+  ].includes(registryId);
 }
 
 /** The providers a migrated install may still carry as its ACTIVE provider: the MLX sidecar and the

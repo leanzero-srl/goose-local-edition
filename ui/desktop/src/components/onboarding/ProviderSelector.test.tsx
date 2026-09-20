@@ -109,18 +109,25 @@ describe('ProviderSelector (onboarding) — Goose Swarm (local) edition', () => 
     expect(screen.queryByText('Use a Local Model')).not.toBeInTheDocument();
     expect(screen.getByText('Connect to a Provider')).toBeInTheDocument();
     expect(
-      screen.getByText('Connect Amazon Bedrock, Z.ai, Google Gemini, DeepSeek')
+      await screen.findByText('Connect Amazon Bedrock, Anthropic, DeepSeek, Google Gemini, OpenAI, Z.ai')
     ).toBeInTheDocument();
   });
 
-  it('the cloud select lists ONLY the four swarm families and has no custom-provider affordance', async () => {
+  it('the cloud select lists registry cloud providers and permits custom setup', async () => {
     mockIsLocal = true;
     render(<ProviderSelector onConfigured={vi.fn()} />);
     await waitFor(() => expect(mockList).toHaveBeenCalled());
     await openCloudSelect();
     const names = screen.getAllByRole('option').map((o) => o.textContent);
-    expect(names).toEqual(['Amazon Bedrock', 'DeepSeek', 'Google Gemini', 'Z.ai']);
-    expect(screen.queryByText('Add a custom provider')).not.toBeInTheDocument();
+    expect(names).toEqual([
+      'Amazon Bedrock',
+      'Anthropic',
+      'DeepSeek',
+      'Google Gemini',
+      'OpenAI',
+      'Z.ai',
+    ]);
+    expect(screen.getByText('Add a custom provider')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: 'Google Gemini' }));
     expect(await screen.findByTestId('config-form-google')).toBeInTheDocument();
   });

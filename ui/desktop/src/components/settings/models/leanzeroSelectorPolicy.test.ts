@@ -9,54 +9,38 @@ import {
   SWARM_BUILD_MODEL_ID,
   SWARM_CHAT_MODEL_ID,
 } from './leanzeroSelectorPolicy';
-import {
-  CLOUD_PROVIDERS,
-  LOCAL_EDITION_PROVIDER_IDS,
-} from '../../leanzero-swarm/cloudProviders';
-
 describe('leanzeroSelectorPolicy', () => {
-  it('the allow-list is EXACTLY the four swarm cloud registry ids plus swarm, derived from CLOUD_PROVIDERS', () => {
-    expect([...LOCAL_EDITION_PROVIDER_IDS].sort()).toEqual(
-      ['swarm', 'aws_bedrock', 'zai', 'google', 'custom_deepseek'].sort()
-    );
-    for (const c of CLOUD_PROVIDERS) {
-      expect(LOCAL_EDITION_PROVIDER_IDS).toContain(c.registry);
-    }
-    expect(LOCAL_EDITION_PROVIDER_IDS).toHaveLength(CLOUD_PROVIDERS.length + 1);
-  });
-
-  it('keepProviderInLocalEdition passes exactly the allowed ids', () => {
-    for (const id of ['aws_bedrock', 'zai', 'google', 'custom_deepseek', 'swarm']) {
-      expect(keepProviderInLocalEdition(id), `${id} must pass`).toBe(true);
-    }
+  it('admits registry cloud providers without a second fixed catalog', () => {
     for (const id of [
-      'openai',
+      'aws_bedrock',
+      'zai',
+      'google',
+      'custom_deepseek',
       'anthropic',
-      'omlx',
-      'lmstudio',
-      'ollama',
-      'ollama_cloud',
-      'llama_swap',
-      'local',
+      'openai',
       'openrouter',
-      // the CLI family names are NOT registry ids — the join is on registry id only
-      'bedrock',
-      'deepseek',
+      'ollama_cloud',
+      'custom_new_vendor',
     ]) {
-      expect(keepProviderInLocalEdition(id), `${id} must fail`).toBe(false);
-    }
-  });
-
-  it('isLocalEditionCloudProvider is the allow-list minus swarm', () => {
-    for (const id of ['aws_bedrock', 'zai', 'google', 'custom_deepseek']) {
+      expect(keepProviderInLocalEdition(id)).toBe(true);
       expect(isLocalEditionCloudProvider(id)).toBe(true);
     }
-    expect(isLocalEditionCloudProvider('swarm')).toBe(false);
-    expect(isLocalEditionCloudProvider('anthropic')).toBe(false);
+    expect(keepProviderInLocalEdition('swarm')).toBe(true);
+    for (const id of ['swarm', 'omlx', 'lmstudio', 'ollama', 'llama_swap', 'local']) {
+      expect(isLocalEditionCloudProvider(id)).toBe(false);
+    }
   });
 
   it('isLocalProviderName stays the edition-derivation fragment test (mainBrand parity)', () => {
-    for (const name of ['ollama', 'lmstudio', 'LMStudio', 'swarm', 'omlx', 'mlx-sidecar', 'local']) {
+    for (const name of [
+      'ollama',
+      'lmstudio',
+      'LMStudio',
+      'swarm',
+      'omlx',
+      'mlx-sidecar',
+      'local',
+    ]) {
       expect(isLocalProviderName(name), `${name} should class as local`).toBe(true);
     }
     for (const name of ['anthropic', 'openai', 'google', 'zai', 'aws_bedrock', 'custom_deepseek']) {

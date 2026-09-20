@@ -110,31 +110,36 @@ const rowIds = () =>
     .getAllByTestId(/^provider-row-/)
     .map((el) => el.getAttribute('data-testid')!.replace('provider-row-', ''));
 
-describe('SwitchModelModal — Goose Swarm (local) edition: only the defined providers', () => {
-  it('lists the two Goose Swarm rows FIRST, then the configured swarm cloud families — nothing else', async () => {
+describe('SwitchModelModal — Goose Swarm (local) edition: all configured cloud providers', () => {
+  it('lists the two Goose Swarm rows FIRST, then the configured cloud providers', async () => {
     mockIsLocal = true;
     render(
-      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
+      <SwitchModelModal
+        sessionId={null}
+        onClose={vi.fn()}
+        setView={vi.fn()}
+        initialProvider={null}
+      />
     );
     await openProviderMenu();
-    expect(rowIds()).toEqual(['swarm', 'swarm:swarm-build', 'google', 'zai', 'aws_bedrock']);
+    expect(rowIds()).toEqual([
+      'anthropic',
+      'swarm',
+      'swarm:swarm-build',
+      'anthropic',
+      'openai',
+      'google',
+      'zai',
+      'aws_bedrock',
+      'configure_providers',
+    ]);
     expect(screen.getByText('Goose Swarm · Build')).toBeInTheDocument();
     expect(
       screen.getByText('chat — each turn goes to an idle node of your pool, or waits for one')
     ).toBeInTheDocument();
     expect(screen.getByText('plan and fan out a build across the pool')).toBeInTheDocument();
-    // the unconfigured family is not offered yet; no upstream cloud, no local backend, no escape
-    for (const absent of [
-      'DeepSeek',
-      'Anthropic',
-      'OpenAI',
-      'Ollama',
-      'LM Studio',
-      'Local',
-      'oMLX',
-      'Leanzero MLX',
-      'Use other provider',
-    ]) {
+    // Unconfigured providers and direct local backends stay out of the model picker.
+    for (const absent of ['DeepSeek', 'Ollama', 'LM Studio', 'Local', 'oMLX', 'Leanzero MLX']) {
       expect(screen.queryByText(absent)).not.toBeInTheDocument();
     }
   });
@@ -171,7 +176,12 @@ describe('SwitchModelModal — Goose Swarm (local) edition: only the defined pro
   it('the chat row submits provider swarm + model swarm', async () => {
     mockIsLocal = true;
     render(
-      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
+      <SwitchModelModal
+        sessionId={null}
+        onClose={vi.fn()}
+        setView={vi.fn()}
+        initialProvider={null}
+      />
     );
     await openProviderMenu();
     await userEvent.click(screen.getByTestId('provider-row-swarm'));
@@ -225,7 +235,12 @@ describe('SwitchModelModal — standard edition is untouched', () => {
   it('lists every configured provider plus "Use other provider"; no Goose Swarm helper rows', async () => {
     mockIsLocal = false;
     render(
-      <SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} initialProvider={null} />
+      <SwitchModelModal
+        sessionId={null}
+        onClose={vi.fn()}
+        setView={vi.fn()}
+        initialProvider={null}
+      />
     );
     await openProviderMenu();
     expect(screen.getByText('Ollama')).toBeInTheDocument();
@@ -243,7 +258,12 @@ describe('SwitchModelModal — standard edition is untouched', () => {
     const setView = vi.fn();
     const onClose = vi.fn();
     render(
-      <SwitchModelModal sessionId={null} onClose={onClose} setView={setView} initialProvider={null} />
+      <SwitchModelModal
+        sessionId={null}
+        onClose={onClose}
+        setView={setView}
+        initialProvider={null}
+      />
     );
     await openProviderMenu();
     await userEvent.click(screen.getByTestId('provider-row-configure_providers'));

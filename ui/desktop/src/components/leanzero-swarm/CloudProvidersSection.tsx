@@ -25,13 +25,7 @@ const i18n = defineMessages({
   },
 });
 
-/**
- * The Cloud Providers tab — the provider-credential experience relocated from Settings, filtered
- * to the swarm's FOUR cloud families (`isLocalEditionCloudProvider`, joined on registry id: the
- * only cloud providers this edition can chat through; Swarm itself needs no credentials). REUSES ProviderGrid wholesale — the cards, ProviderConfigurationModal
- * (key entry / authenticate / delete over the acp provider-config surface) and the custom-provider
- * form are the exact components Settings used; nothing is forked.
- */
+/** Reuse the registry's credential cards for every supported cloud provider. */
 export default function CloudProvidersSection() {
   const intl = useIntl();
   const navigate = useNavigate();
@@ -117,7 +111,7 @@ export default function CloudProvidersSection() {
           isOnboarding={false}
           refreshProviders={() => void refreshProviders()}
           setView={setView}
-          allowCustomProvider={false}
+          allowCustomProvider
         />
       )}
     </div>

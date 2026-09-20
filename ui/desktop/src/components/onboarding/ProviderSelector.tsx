@@ -12,7 +12,6 @@ import { useFeatures } from '../../contexts/FeaturesContext';
 import { useEdition } from '../../contexts/EditionContext';
 import { LeanZero } from '../icons';
 import { SWARM_DISPLAY_NAME, SWARM_PROVIDER_ID } from '../../branding';
-import { CLOUD_PROVIDERS } from '../leanzero-swarm/cloudProviders';
 import {
   isLocalEditionCloudProvider,
   SWARM_CHAT_MODEL_ID,
@@ -84,7 +83,7 @@ export default function ProviderSelector({
   const intl = useIntl();
   const { localInference: localInferenceCapability } = useFeatures();
   // Goose Swarm (local) edition: onboarding offers Swarm straight through (no credentials) and the
-  // four swarm cloud families — no local-model download, no custom provider, no upstream catalog.
+  // supported cloud providers from the registry.
   const { isLocal } = useEdition();
   const localInference = localInferenceCapability && !isLocal;
   const [providerList, setProviderList] = useState<ProviderDetails[]>([]);
@@ -214,7 +213,7 @@ export default function ProviderSelector({
           <p className="text-text-muted text-sm mt-1">
             {isLocal
               ? intl.formatMessage(i18n.connectCloudProviderDescription, {
-                  providers: CLOUD_PROVIDERS.map((c) => c.label).join(', '),
+                  providers: options.map((option) => option.label).join(', '),
                 })
               : intl.formatMessage(i18n.connectProviderDescription)}
           </p>
@@ -242,7 +241,7 @@ export default function ProviderSelector({
             />
           </div>
 
-          {!isLocal && (
+          {
             <button
               onClick={() => setShowCustomModal(true)}
               className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors mb-6"
@@ -250,7 +249,7 @@ export default function ProviderSelector({
               <Plus size={14} />
               <span>{intl.formatMessage(i18n.addCustomProvider)}</span>
             </button>
-          )}
+          }
 
           {selectedProvider && (
             <ProviderConfigForm

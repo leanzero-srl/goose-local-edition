@@ -23,15 +23,12 @@ export function cloudCliErr(r: { stdout: string; stderr: string; error: string |
   return (r.stderr || r.error || 'the goose engine call failed').trim();
 }
 
-/** The provider table and its derived allow-list live in ./cloudProviders (data only, importable
- *  from the main process); re-exported here so every panel surface keeps its one import site. */
+/** Swarm node adapter metadata is shared with the pool controls. */
 export {
   CLOUD_PROVIDERS,
   chipFor,
   LOCAL_CHIP,
   MLX_CHIP,
-  LOCAL_EDITION_CLOUD_PROVIDER_IDS,
-  LOCAL_EDITION_PROVIDER_IDS,
   type CloudProviderDef,
 } from './cloudProviders';
 import type { CloudProviderDef } from './cloudProviders';
