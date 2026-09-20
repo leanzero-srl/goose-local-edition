@@ -116,15 +116,16 @@ class StreamHandshake:
     def start(self):
         def watch():
             try:
-                while not self.stop.wait(.05):
+                while True:
                     if not self.path.exists():
+                        if self.stop.wait(.05) and not self.path.exists():
+                            raise RuntimeError('SB7.1 stream probe ended without a readiness signal')
                         continue
                     signal = json.loads(self.path.read_text())
                     if signal.get('state') not in {'armed', 'app_surface_absent'}:
                         raise RuntimeError('SB7.1 stream witness unavailable: ' + str(signal))
                     self.receipt = {'signal': signal, 'delivery': self.fire()}
                     return
-                raise RuntimeError('SB7.1 stream probe ended without a readiness signal')
             except Exception as error:
                 self.error = error
             finally:
@@ -328,6 +329,18 @@ def observed_absence_result(name, original, ctx):
     if name in {'p_stream_apply', 't_stream_diff', 'e_stream_apply_latency'}:
         if (ctx.stream_head or {}).get('status') == 501:
             return base._absent('payment stream: exercised /api/stream returned HTTP 501')
+    if name in base.ROOT_BLOCKS['t_vs7dbg_truth']:
+        viz = ctx.probes.get('viz', {})
+        observations = viz.get('debugSurfaceObservations', [])
+        signal = viz.get('sb71StreamHandshake', {}).get('signal', {})
+        if (signal.get('state') == 'app_surface_absent' and viz.get('ready', {}).get('draws') == 0
+                and 'contextType' in viz.get('contextReal', {})
+                and viz['contextReal']['contextType'] is None
+                and len(observations) >= 2
+                and all(o.get('evaluationSucceeded') is True and o.get('present') is False
+                        for o in observations)):
+            return base._absent('required 3D interaction: no application scene or debug surface observed',
+                                root='t_vs7dbg_truth')
     if name == 't_vs7dbg_truth':
         viz = ctx.probes.get('viz', {})
         observations = viz.get('debugSurfaceObservations', [])

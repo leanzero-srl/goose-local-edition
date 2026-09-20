@@ -4,7 +4,7 @@ Status: implementation validation; no fresh Gemini pilot has started yet.
 
 ## Entrant boundary and scoring controls
 
-Twenty Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
+Twenty-six Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
 
 The starter serves its assets and returns HTTP 501 for unimplemented API behavior. It contains transport, DOM and matrix helpers; no persistence, synchronization, financial consistency, picking or rendered solution. Its first completed scoring attempt preserved 91 partial checks but refused a numeric score: legacy functions misclassified exercised HTTP501 failures and an observed missing debug surface as missing harness observations. SB7.1 now retains API witnesses and applies narrow missing-app zeroes before composition. A new baseline is pending.
 
@@ -47,3 +47,13 @@ Full combined reference exited0 with score0.9940, critical multiplier1.0, no uns
 Four independent real-browser stream controls passed: drop-D1 policy133.0ms; allowed retained-D1 policy132.5ms; delayedGPU1384.2ms after an uncredited wrong128.9ms frame; omittedGPU hasnull latency despite a134.4ms wrong frame. Each control begins with another record selected and proves it is cleared before target-only arming. The scorer readiness handshake fires the same vendor mutation once; missing readiness refuses grading. Fifteen scorer tests now pass, including cleanup on abnormal/unstarted paths. The measured MessageChannel busy polling was removed from the SB7.1 probe.
 
 The Mac is now accessible; an APFS backup of the installed app was captured before replacement. No Gemini run has started. A negative-only starter absence correction and its baseline remain before the launch; the accepted reference is explicitly associated with its own scorer hashes rather than future source.
+
+## Final absent-scene classification and packaged isolation
+
+The last full starter run retained three unavailable interaction rows after proving that the app had no scene: 150 successful debug-absence observations, zero application draws, explicit null application context type, and the real absence-handshake receipt. The classifier now attributes only unavailable dependent rows to that measured missing surface. Missing or contradictory witnesses still refuse grading; measured interaction results remain unchanged. The committed fixture preserves the real observations and source SHA.
+
+Replaying those recorded rows through the actual classifier, composition and admission functions yields 0.0253. This is a diagnostic replay, not a fresh full baseline: the original refusal remains preserved and its unretained schedule metadata is explicitly marked unknown. The accepted full reference remains the separately recorded 0.9940 run. A readiness file already published before immediate probe exit is no longer discarded by a polling race.
+
+Packaged Node selection previously granted access to the entire Resources parent while the sibling isolation control still passed. Actual Node resolution now grants only runtime bin/lib paths, and the prelaunch control also checks a real private harness file. The actual packaged-scorer read is denied while Node execution succeeds. An independent reader reran both sandbox tests successfully.
+
+Final release verification: 26 Python tests pass in 12.168 seconds, including the real browser no-change sync journey, recorded absence counter-controls, readiness lifecycle, actual sandbox boundaries, starter behavior and Google dispatch. Receipt: `runs/sb71-validation/20260920/sb71-release-tests.log`. No paid Gemini call has been made. The Mac locked again before installation; unlock was requested.

@@ -163,6 +163,46 @@ class ScorerRuntimeTests(unittest.TestCase):
             self.assertEqual(calls, ['actual mutation'])
             handshake.finish()
 
+    def test_observed_missing_scene_attributes_unreached_interactions_to_root(self):
+        import fixtures_sb71_absence
+        ctx = SimpleNamespace(probes={'viz': fixtures_sb71_absence.VIZ})
+        for row in fixtures_sb71_absence.ROWS:
+            def original(_):
+                return copy.deepcopy(row)
+            name = row['check']
+            result = score.observed_absence_result(name, original, ctx)
+            self.assertNotIn('unavailable', result)
+            self.assertEqual(result['score'], 0)
+            self.assertEqual(result['parts']['vacuous_root'], 't_vs7dbg_truth')
+            for key in ['sb71StreamHandshake', 'debugSurfaceObservations', 'ready', 'contextReal']:
+                incomplete = copy.deepcopy(ctx.probes)
+                incomplete['viz'].pop(key)
+                self.assertTrue(score.observed_absence_result(
+                    name, original, SimpleNamespace(probes=incomplete))['unavailable'])
+            for contradictory in ['evaluation', 'context', 'draws']:
+                changed = copy.deepcopy(ctx.probes)
+                if contradictory == 'evaluation':
+                    changed['viz']['debugSurfaceObservations'][0]['evaluationSucceeded'] = False
+                elif contradictory == 'context':
+                    changed['viz']['contextReal']['contextType'] = 'webgl2'
+                else:
+                    changed['viz']['ready']['draws'] = 1
+                self.assertTrue(score.observed_absence_result(
+                    name, original, SimpleNamespace(probes=changed))['unavailable'])
+            observed = {'score': .5, 'parts': {}, 'detail': 'actual interaction result'}
+            self.assertEqual(score.observed_absence_result(name, lambda _: observed, ctx), observed)
+
+    def test_published_absence_signal_survives_immediate_probe_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'ready.json'
+            path.write_text(json.dumps({'state': 'app_surface_absent'}))
+            calls = []
+            handshake = score.StreamHandshake(path, lambda: calls.append('delivered'))
+            handshake.start()
+            handshake.finish()
+            self.assertIsNone(handshake.result())
+            self.assertEqual(calls, ['delivered'])
+
     def test_unstarted_stream_handshake_cleanup_is_safe(self):
         handshake = score.StreamHandshake(Path('/unused'), lambda: None)
         handshake.finish()
