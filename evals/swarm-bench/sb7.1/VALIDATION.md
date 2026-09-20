@@ -4,9 +4,9 @@ Status: implementation validation; no fresh Gemini pilot has started yet.
 
 ## Entrant boundary and scoring controls
 
-Sixteen Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
+Twenty Python tests pass across test_score_sb71, test_bench_isolation, test_starter_sb71 and test_run_build_cloud. Actual macOS sandbox controls permit candidate reads/writes and a child shell, deny private reference and operator-log reads, and omit unrelated credentials. The bundled Goose executable also boots inside this boundary. This is bootstrap proof, not proof of the paid provider path.
 
-The starter serves its assets and returns HTTP 501 for unimplemented API behavior. It contains transport, DOM and matrix helpers; no persistence, synchronization, financial consistency, picking or rendered solution. Its full scoring baseline is pending.
+The starter serves its assets and returns HTTP 501 for unimplemented API behavior. It contains transport, DOM and matrix helpers; no persistence, synchronization, financial consistency, picking or rendered solution. Its first completed scoring attempt preserved 91 partial checks but refused a numeric score: legacy functions misclassified exercised HTTP501 failures and an observed missing debug surface as missing harness observations. SB7.1 now retains API witnesses and applies narrow missing-app zeroes before composition. A new baseline is pending.
 
 Admission controls independently withhold each requested score band, preserve earned behavioral credit, and require every backend X/R leg. Missing infrastructure/probe evidence refuses an official score and preserves partial diagnostics. Prelaunch public-input hashes remain in parent memory, outside candidate control. Animation target exclusion derives from the actual seeded recovery schedule.
 
@@ -25,3 +25,11 @@ A real graded reference WebM (383,481 bytes, VP9, 960x600, 7.48 seconds) passed 
 ## Outstanding acceptance
 
 Full reference and starter scores; adversarial visual controls; fresh installed-app Gemini 3.8 Flash run; independent exact-seed score; actual app/video inspection; usage/time/cost evidence; publication readback. No dollar saving or frontier score is claimed before those measurements.
+
+## Combined validation repairs
+
+The first full reference (seed `5a05d7631d9276e3`) earned 0.9907 but was correctly refused at admission ceiling0.699. Its all-X/R backend recovery pass did not excuse visual failures. The follow-up preserves perfectly aligned dy=0 labels, uses independent seeded surface pixels instead of a sparse blind grid, and brings selected payment rows into the browser viewport. A legitimate no-change synchronization is proven by an actual POST, strictly advanced backend timestamp, and exact fresh table/summary truth; changing arbitrary DOM text cannot pass it. The real unchanged-table journey passes, including a deliberately unchanged human-readable last-sync label. Nine wrong DOM cases fail the truth control.
+
+Animation adversaries include a collar disappearing during the middle of the motion. Both occupied moving pixels and vacated pixels are now required at observed draw times; the disappearing control fails all47–59 occupied witnesses while the real reference passes them. Solid geometry, static/stepped motion, and a second fixture seed passed the final four control tests. Full combined reference rerun remains pending. Original SB7 files remain unchanged.
+
+Mac screen lock currently prevents the required installed Benchmark UI launch. No paid Gemini call has been made. The staged signed app requires a final harness refresh after these scorer changes.

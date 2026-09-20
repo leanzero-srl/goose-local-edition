@@ -85,6 +85,68 @@ class AdmissionTests(unittest.TestCase):
 
 
 class ScorerRuntimeTests(unittest.TestCase):
+    def test_only_observed_app_absence_replaces_unavailability(self):
+        absent = lambda _: score.base.unavail('observation not reached')
+        ctx = SimpleNamespace(workflow={}, api_lat={}, stream_head={}, probes={}, sb71_endpoint_absences=[])
+        names = ['r_workflow_durability', 'r_notification_multiset', 'p_api_latency',
+                 'p_stream_apply', 't_stream_diff', 'e_stream_apply_latency', 't_vs7dbg_truth']
+        for name in names:
+            self.assertTrue(score.observed_absence_result(name, absent, ctx)['unavailable'])
+        ctx.workflow = {'create_status': 501}
+        ctx.api_lat = {'payments': {'n_ok': 0, 'errors': ['status 501']}}
+        ctx.stream_head = {'status': 501}
+        ctx.sb71_endpoint_absences = [{'url': 'http://localhost:123/notify/notifications?limit=200',
+                                      'status': 501, 'body': {'error': {'code': 'not_implemented'}}}]
+        ctx.probes = {'viz': {'debugSurfaceObservations': [
+            {'present': False, 'evaluationSucceeded': True},
+            {'present': False, 'evaluationSucceeded': True}]}}
+        for name in names:
+            result = score.observed_absence_result(name, absent, ctx)
+            self.assertEqual(result['score'], 0)
+            self.assertIn('absent_surface', result['parts'])
+            self.assertNotIn('unavailable', result)
+        for malformed in [[], 'error', {'error': 'not_implemented'}]:
+            ctx.sb71_endpoint_absences[0]['body'] = malformed
+            self.assertTrue(score.observed_absence_result('r_notification_multiset', absent, ctx)['unavailable'])
+        ctx.probes['viz']['debugSurfaceObservations'][0] = {'evaluationSucceeded': False}
+        self.assertTrue(score.observed_absence_result('t_vs7dbg_truth', absent, ctx)['unavailable'])
+        ctx.api_lat['payments']['errors'] = ['TimeoutError']
+        ctx.stream_head = {'status': None, 'error': 'HTTPError'}
+        ctx.probes = {'viz': {'timedOut': True}}
+        ctx.sb71_endpoint_absences[0]['url'] = 'http://localhost:123/wrong'
+        for name in names[1:]:
+            self.assertTrue(score.observed_absence_result(name, absent, ctx)['unavailable'])
+
+    def test_real_stream_http_status_is_preserved(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        class Missing(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(501)
+                self.end_headers()
+                self.wfile.write(b'not implemented')
+            def log_message(self, *_):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Missing)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            with score.probe_runtime():
+                observed = score.base._sse_head('http://127.0.0.1:' + str(server.server_port))
+            self.assertEqual(observed['status'], 501)
+            self.assertEqual(observed['head'], 'not implemented')
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_zero_label_offset_is_not_missing_and_missing_stays_missing(self):
+        for dy, expected in [(0, 1), (None, .9), (3, .9), (float('nan'), .9)]:
+            ctx = SimpleNamespace(probes={'viz': {'labels': {'perLabel': [{'dx': 0, 'dy': dy}]}}})
+            original = lambda _: {'score': .9, 'parts': {'offset': 0}, 'detail': 'observed'}
+            with self.subTest(dy=dy):
+                self.assertEqual(score.label_offset_result(original, ctx)['score'], expected)
+
     def test_chatty_app_completes_and_full_output_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             with score.probe_runtime():

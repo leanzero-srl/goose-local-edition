@@ -12,6 +12,10 @@ import shutil
 import tempfile
 import subprocess
 import signal
+import math
+import urllib.request
+import urllib.error
+from urllib.parse import urlsplit
 from dataclasses import asdict
 
 import score_sb7 as base
@@ -104,6 +108,24 @@ def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
     old_pack = base._write_expect_pack
     old_subprocess, old_wait_total = base.subprocess, base._wait_total
+    old_get, old_sse_head = base._get, base._sse_head
+    endpoint_absences = []
+    def get(url, *args, **kwargs):
+        response = old_get(url, *args, **kwargs)
+        if response[0] == 501:
+            endpoint_absences.append({'url': url, 'status': response[0], 'body': response[1]})
+        return response
+    def sse_head(url, timeout=5):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url + '/api/stream'), timeout=timeout) as response:
+                return {'status': response.status, 'ctype': response.headers.get('Content-Type', ''),
+                        'head': response.read(160).decode(errors='replace')}
+        except urllib.error.HTTPError as error:
+            with error:
+                return {'status': error.code, 'ctype': error.headers.get('Content-Type', ''),
+                        'error': 'HTTPError', 'head': error.read(160).decode(errors='replace')}
+        except Exception as error:
+            return {'status': None, 'ctype': '', 'error': type(error).__name__}
     def wait_total(url, want, seconds):
         status, _body, _raw, _headers = base._get(url + '/api/payments?limit=1', timeout=8)
         if status == 501:
@@ -119,12 +141,14 @@ def probe_runtime():
     base._write_expect_pack = write_pack
     base.subprocess = ScorerProcesses()
     base._wait_total = wait_total
+    base._get, base._sse_head = get, sse_head
     try:
-        yield
+        yield endpoint_absences
     finally:
         base.PROBE_SCRIPT, base._kill = old_probe, old_kill
         base._write_expect_pack = old_pack
         base.subprocess, base._wait_total = old_subprocess, old_wait_total
+        base._get, base._sse_head = old_get, old_sse_head
 
 
 def _probe_preflight():
@@ -139,8 +163,14 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     old_media = os.environ.get('BENCH_MEDIA_DIR')
     os.environ['BENCH_MEDIA_DIR'] = str(media_dir)
     try:
-        with probe_runtime():
-            return base.gather(root, vendor_port, db_dir, trace_path, mark_phase, seed)
+        with probe_runtime() as absences:
+            ctx = base.gather(root, vendor_port, db_dir, trace_path, mark_phase, seed)
+        ctx.sb71_endpoint_absences = absences
+        (Path(root) / 'api-observations.json').write_text(json.dumps({
+            'endpoint_absences': absences, 'stream_head': ctx.stream_head,
+            'workflow': ctx.workflow, 'api_lat': ctx.api_lat}, indent=2))
+        (Path(root) / 'probe-observations.json').write_text(json.dumps(ctx.probes, indent=2))
+        return ctx
     finally:
         if old_media is None:
             os.environ.pop('BENCH_MEDIA_DIR', None)
@@ -149,7 +179,8 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
 
 
 def passed(row):
-    return bool(row and row.get('score') == 1 and not row.get('unavailable')
+    return bool(row and isinstance(row.get('score'), (int, float))
+                and math.isclose(row['score'], 1, rel_tol=0, abs_tol=1e-12) and not row.get('unavailable')
                 and not (row.get('parts') or {}).get('vacuous_root')
                 and row.get('admission_evidence_complete', True))
 
@@ -197,8 +228,61 @@ def admit(raw, visual_rows):
     return result
 
 
+def label_offset_result(original, ctx):
+    outcome = original(ctx)
+    if 'offset' not in outcome.get('parts', {}):
+        return outcome
+    rows = ctx.probes.get('viz', {}).get('labels', {}).get('perLabel', [])
+    rows = [r for r in rows if isinstance(r, dict) and isinstance(r.get('dx'), (int, float))]
+    if not rows:
+        return outcome
+    old_offset = sum(abs(r['dx']) <= 2.5 and abs(r.get('dy') or 99) <= 2.5 for r in rows) / len(rows)
+    offset = sum(isinstance(r.get('dy'), (int, float)) and math.isfinite(r['dx'])
+                 and math.isfinite(r['dy']) and abs(r['dx']) <= 2.5 and abs(r['dy']) <= 2.5
+                 for r in rows) / len(rows)
+    outcome['score'] = round(outcome['score'] + .1 * (offset - old_offset), 12)
+    outcome['parts']['offset'] = round(offset, 3)
+    outcome['detail'] += '; SB7.1: zero label offset is valid evidence'
+    return outcome
+
+
+def observed_absence_result(name, original, ctx):
+    outcome = label_offset_result(original, ctx) if name == 't_labels_culling' else original(ctx)
+    if not outcome.get('unavailable'):
+        return outcome
+    if name == 'r_workflow_durability' and (ctx.workflow or {}).get('create_status') == 501:
+        return base._absent('drafts endpoints: exercised create returned HTTP 501')
+    if name == 'r_notification_multiset' and any(
+            urlsplit(w['url']).path == '/notify/notifications' and w['status'] == 501
+            and isinstance(w.get('body'), dict) and isinstance(w['body'].get('error'), dict)
+            and w['body']['error'].get('code') == 'not_implemented'
+            for w in getattr(ctx, 'sb71_endpoint_absences', [])):
+        return base._absent('notifier notifications: exercised endpoint returned HTTP 501 not_implemented')
+    if name == 'p_api_latency':
+        measurements = list((ctx.api_lat or {}).values())
+        if measurements and all(isinstance(m, dict) and m.get('n_ok') == 0 and m.get('errors')
+                                and all(e == 'status 501' for e in m['errors']) for m in measurements):
+            return base._absent('API latency: measured requests all returned HTTP 501')
+    if name in {'p_stream_apply', 't_stream_diff', 'e_stream_apply_latency'}:
+        if (ctx.stream_head or {}).get('status') == 501:
+            return base._absent('payment stream: exercised /api/stream returned HTTP 501')
+    if name == 't_vs7dbg_truth':
+        viz = ctx.probes.get('viz', {})
+        observations = viz.get('debugSurfaceObservations', [])
+        if len(observations) >= 2 and all(o.get('evaluationSucceeded') is True
+                                         and o.get('present') is False for o in observations):
+            return base._absent('window.vs7dbg: repeated successful page evaluations found no required surface')
+    return outcome
+
+
 def evaluate(ctx):
-    raw = base.evaluate(ctx)
+    original_checks = base.SB7_CHECKS
+    base.SB7_CHECKS = [(name, tier, lambda c, name=name, original=fn:
+                       observed_absence_result(name, original, c)) for name, tier, fn in original_checks]
+    try:
+        raw = base.evaluate(ctx)
+    finally:
+        base.SB7_CHECKS = original_checks
     observation = ctx.probes.get('viz', {}).get('sb71', {})
     if raw.get('harness_missing'):
         raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(raw['harness_missing']))
@@ -279,6 +363,8 @@ def main():
             if (candidate / name).exists():
                 shutil.copytree(candidate / name, evidence / name)
         shutil.copy2(trace, evidence / 'vendor-trace.jsonl')
+        for name in ['probe-observations.json', 'api-observations.json']:
+            shutil.copy2(candidate / name, evidence / name)
         result['evidence_dir'] = str(evidence.resolve())
         a.json_out.write_text(json.dumps(result, indent=2))
         if unavailable:

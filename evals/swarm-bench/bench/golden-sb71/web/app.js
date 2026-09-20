@@ -310,13 +310,12 @@
     return loadTable().then(function () {
       var row = document.querySelector('tr[data-id="' + id + '"]');
       if (row) {
-        // Scroll the table's OWN pane only — never the page (the 3D panel must not
-        // move under the user's pointer mid-interaction).
         var cont = row.closest('.table-scroll');
         if (cont) {
           cont.scrollTop += row.getBoundingClientRect().top -
             cont.getBoundingClientRect().top - 26;
         }
+        row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
       return true;
     });

@@ -628,7 +628,7 @@ function glInstrument() {
   const P = { contexts: [], contextLost: 0,
               defDraws: 0, offDraws: 0, defReads: 0, offReads: 0,
               bufDataBytes: 0, bufSubBytes: 0, reallocs: 0, bufDataCalls: 0, bufSubCalls: 0,
-              drawTs: [], rafTicks: 0, stream: [] };
+              drawTs: [], sb71DrawTimes:new WeakMap(), rafTicks: 0, stream: [] };
   window.__p7 = P;
   const byteLen = (x) => (typeof x === 'number' ? x
     : x && typeof x.byteLength === 'number' ? x.byteLength : 0);
@@ -637,6 +637,7 @@ function glInstrument() {
   function countDraw(gl) {
     if (gl.__p7fbo == null) {
       P.defDraws++;
+      P.sb71DrawTimes.set(gl.canvas,performance.now());
       if (P.drawTs.length < 20000) P.drawTs.push(performance.now());
     } else P.offDraws++;
   }
@@ -886,7 +887,7 @@ function pageSamplePixels(arg) {
   };
   return { found: true, glReadable: true, dpr: window.devicePixelRatio,
            rect: { w: rect.width, h: rect.height }, backing: { w: W, h: H },
-           samples: (arg.points || []).map((p) => ({ ...p, got: at(p.cx, p.cy) })) };
+           samples: (arg.points || []).map((p) => ({ ...p, rayX:(Math.round(p.cx*W/rect.width)+.5)*rect.width/W, rayY:(Math.round(p.cy*H/rect.height)+.5)*rect.height/H, got: at(p.cx, p.cy) })) };
 }
 // ---------- carried page functions (product_probe_v2 house style, proven) ----------
 
@@ -1195,6 +1196,51 @@ function pageViewSnapshot() {
   const text = rows.map((r) => r.innerText || '').join('|');
   for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
   return { rowCount: rows.length, lastSyncText, tableHash: hash };
+}
+
+function pageSyncTruth({payments,summary}) {
+  const exponent={EUR:2,USD:2,JPY:0,KWD:3},symbol={EUR:'€',USD:'$',JPY:'¥',KWD:'د.ك'};
+  const visible=e=>e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
+  const numbers=text=>String(text).match(/[+−-]?\d[\d,. \u00a0\u202f]*/g)||[];
+  const integer=text=>{
+    const s=text.trim();
+    if(!/^\d+$/.test(s)&&!/^\d{1,3}([,. \u00a0\u202f])\d{3}(?:\1\d{3})*$/.test(s))return null;
+    return Number(s.replace(/[^0-9]/g,''));
+  };
+  const minor=(text,currency)=>{
+    let s=text.trim(),negative=/^[-−]/.test(s);s=s.replace(/^[+−-]/,'');
+    const e=exponent[currency];let whole,fraction='';
+    if(e){const m=s.match(new RegExp('^(.*)[.,](\\d{'+e+'})$'));if(!m)return null;whole=integer(m[1]);fraction=m[2];}
+    else whole=integer(s);
+    return whole===null?null:(negative?-1:1)*(whole*10**e+Number(fraction));
+  };
+  const currencyShown=(text,currency)=>{
+    const codes=text.match(/\b(?:EUR|USD|JPY|KWD)\b/g)||[];
+    return !codes.some(code=>code!==currency)&&(codes.includes(currency)||text.includes(symbol[currency]));
+  };
+  const rows=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]'))
+    .filter(row=>row.querySelectorAll('td,[role="cell"],[role="gridcell"]').length>=5&&visible(row));
+  const ids=rows.map(r=>r.getAttribute('data-id'));
+  const membership=ids.length===payments.data.length&&new Set(ids).size===ids.length
+    &&ids.every((id,i)=>id===payments.data[i].id);
+  const observations=rows.map(row=>{
+    const id=row.getAttribute('data-id'),record=payments.data.find(r=>r.id===id);
+    const cells=Array.from(row.querySelectorAll('td,[role="cell"],[role="gridcell"]')).map(cell=>(cell.innerText||'').trim());
+    const note=cells[4]||'';
+    return {id,ok:!!record&&currencyShown(cells[1],record.currency)
+      &&numbers(cells[1]).some(number=>minor(number,record.currency)===record.amount_minor)
+      &&cells[2].toLowerCase()===record.status
+      &&(record.note?note===record.note:['','—','-'].includes(note))};
+  });
+  const currencies=(summary.by_currency||[]).map(record=>{
+    const card=Array.from(document.querySelectorAll('.cur-total[data-currency]')).find(e=>e.dataset.currency===record.currency&&visible(e));
+    if(!card)return {currency:record.currency,ok:false};
+    const text=card.innerText||'',values=numbers(text);
+    return {currency:record.currency,ok:currencyShown(text,record.currency)&&values.some((amount,i)=>
+      minor(amount,record.currency)===record.total_minor&&values.some((count,j)=>i!==j&&integer(count)===record.count))};
+  });
+  return {rows:observations,currencies,membership,ok:payments.data.length>0&&membership
+    &&observations.every(r=>r.ok)&&currencies.length>0&&currencies.every(r=>r.ok)};
 }
 
 function pageSyncState() {
@@ -1820,8 +1866,15 @@ async function main() {
       return;
     }
     err('sync button found:', JSON.stringify(state.text));
-    const clicked = await page.evaluate(pageClickSync).catch(() => false);
+    const summaryBefore=await page.request.get(baseUrl+'/api/summary').then(r=>r.ok()?r.json():null).catch(()=>null);
     const clickAt = Date.now();
+    let observedSyncPost=false;
+    const observeSync=request=>{
+      const url=new URL(request.url());
+      if(request.method()==='POST'&&url.origin===new URL(baseUrl).origin&&url.pathname==='/api/sync')observedSyncPost=true;
+    };
+    page.on('request',observeSync);
+    const clicked = await page.evaluate(pageClickSync).catch(() => false);
     if (!clicked) {
       emit({ found: true, buttonText: state.text, clicked: false,
              syncCausal: { found: true, clicked: false }, consoleErrors: consoleErrors() });
@@ -1835,12 +1888,7 @@ async function main() {
     }
     let completed = false, completedWithinMs = null, failedAfterMs = null, errorBanner = null;
     let everDisabled = disabledDuringSync, buttonPresentAfter = true, syncRequested = false;
-    const syncRequestSeen = () =>
-      page.evaluate((sinceEpochMs) => {
-        const origin = performance.timeOrigin;
-        return performance.getEntriesByType('resource').some(
-          (e) => /\/api\/sync(\?|#|$)/.test(e.name) && origin + e.startTime >= sinceEpochMs - 100);
-      }, clickAt).catch(() => false);
+    const syncRequestSeen = () => Promise.resolve(observedSyncPost);
     const capMs = Math.min(70000, Math.max(budgetLeft() - 8000, 2000));
     while (Date.now() - clickAt < capMs) {
       const s = await page.evaluate(pageSyncState).catch(() => null);
@@ -1876,7 +1924,19 @@ async function main() {
     const tableHashChanged =
       !!(before2 && after) && after.tableHash !== before2.tableHash && !tableSelfMutates;
     if (!viewRefreshed && tableHashChanged) viewRefreshed = true;
+    const paymentsUrl=await page.evaluate(()=>performance.getEntriesByType('resource')
+      .filter(e=>{const u=new URL(e.name);return u.origin===location.origin&&u.pathname==='/api/payments';}).at(-1)?.name);
+    const refreshed={};
+    if(paymentsUrl)refreshed.payments=await page.request.get(paymentsUrl).then(r=>r.ok()?r.json():null).catch(()=>null);
+    refreshed.summary=await page.request.get(baseUrl+'/api/summary').then(r=>r.ok()?r.json():null).catch(()=>null);
+    let refreshedTruth={ok:false};
+    if(refreshed.payments?.data?.length&&refreshed.summary?.last_sync
+       &&Date.parse(refreshed.summary.last_sync)>Date.parse(summaryBefore?.last_sync)) {
+      refreshedTruth=await page.evaluate(pageSyncTruth,refreshed);
+    }
     if (!syncRequested) syncRequested = await syncRequestSeen();
+    page.off('request',observeSync);
+    viewRefreshed=syncRequested&&refreshedTruth.ok;
     if (completed && !(everDisabled || syncRequested || viewRefreshed || tableHashChanged)) {
       completed = false;
       completedWithinMs = null;
@@ -1889,7 +1949,8 @@ async function main() {
       rowCountBefore: before ? before.rowCount : null,
       rowCountAfter: after ? after.rowCount : null,
       syncCausal: { found: true, clicked: true, everDisabled, syncRequested, completed,
-                    viewRefreshed, tableHashChanged },
+                    viewRefreshed, tableHashChanged:tableHashChanged&&refreshedTruth.ok, refreshedTruth,
+                    lastSyncBefore:summaryBefore?.last_sync,lastSyncAfter:refreshed.summary?.last_sync },
       consoleErrors: consoleErrors(),
     });
   } else if (scenario === 'error') {
@@ -2370,11 +2431,27 @@ function inspectorGrid(it,pose) {
   return points;
 }
 const rgbNear=(a,b)=>Array.isArray(a)&&a.length>=3&&a.slice(0,3).every((v,i)=>Math.abs(v-b[i])<=8);
+function seededSurfacePoints(ctx,skip=()=>false) {
+  const points=[];
+  for(let y=10;y<ctx.H;y+=7)for(let x=10;x<ctx.W;x+=7){
+    if(skip(x,y))continue;
+    const hit=castPixel(ctx,x+.5,y+.5)[0];if(!hit)continue;
+    const expected=surfColor(ctx,hit);
+    const stable=[[-.45,0],[.45,0],[0,-.45],[0,.45]].every(([dx,dy])=>{
+      const nearby=castPixel(ctx,x+.5+dx,y+.5+dy)[0];
+      return nearby&&nearby.n===hit.n&&rgbNear(surfColor(ctx,nearby),expected);
+    });
+    if(stable)points.push({cx:x,cy:y,n:hit.n,expected});
+    if(points.length>=120)return points;
+  }
+  return points;
+}
 function geometryEvidence(it,pose,samples) {
   const groups=Object.fromEntries(['pedestal','shaft','cap','collar','void'].map(k=>[k,{matched:0,total:0,examples:[]}]));
   for(const sample of samples) {
-    const expected=towerRay(it,pose,sample.cx,sample.cy);
-    const neighbors=[[-1,0],[1,0],[0,-1],[0,1]].map(([dx,dy])=>towerRay(it,pose,sample.cx+dx,sample.cy+dy));
+    const x=sample.rayX,y=sample.rayY;
+    const expected=towerRay(it,pose,x,y);
+    const neighbors=O9.map(([dx,dy])=>towerRay(it,pose,x+dx,y+dy));
     if(neighbors.some(n=>n.part!==expected.part||!rgbNear(n.rgb,expected.rgb))) continue;
     const group=groups[expected.part],ok=rgbNear(sample.got,expected.rgb);
     group.total++;group.matched+=Number(ok);
@@ -2402,9 +2479,9 @@ function pageArmSb71Capture({id,points,source}) {
       gl.readPixels(0,0,W,H,gl.RGBA,gl.UNSIGNED_BYTE,px);
       const samples=points.map(p=>{
         const x=Math.round(p.cx*W/rect.width),y=H-1-Math.round(p.cy*H/rect.height),o=(y*W+x)*4;
-        return {...p,got:Array.from(px.subarray(o,o+3))};
+        return {...p,rayX:(x+.5)*rect.width/W,rayY:(H-y-.5)*rect.height/H,got:Array.from(px.subarray(o,o+3))};
       });
-      P.sb71Capture.frames.push({elapsed:at-event.t0,samples,camera:window.vs7dbg?.camera()});
+      P.sb71Capture.frames.push({elapsed:at-event.t0,renderElapsed:P.sb71DrawTimes.has(canvas)?P.sb71DrawTimes.get(canvas)-event.t0:null,samples,camera:window.vs7dbg?.camera()});
     },delay);
   };
   if(source==='live') P.sb71ArmCapture=(entry)=>{
@@ -2421,33 +2498,37 @@ function pageArmSb71Capture({id,points,source}) {
 function animationEvidence(it,pose,capture,minMoving=9) {
   const frames=[];
   for(const frame of capture?.frames||[]) {
-    const phase=clamp(frame.elapsed/1000,0,1),offset=-.56*(1-phase*phase*(3-2*phase));
-    let compared=0,matched=0,witnesses=0,witnessMatches=0;
+    const renderTime=frame.renderElapsed;
+    if(!Number.isFinite(renderTime)){frames.push({elapsed:frame.elapsed,validTiming:false,compared:0,matched:0,witnesses:0,positiveWitnesses:0,cameraFixed:false});continue;}
+    const phase=clamp(renderTime/1000,0,1),offset=-.56*(1-phase*phase*(3-2*phase));
+    let compared=0,matched=0,witnesses=0,witnessMatches=0,positiveWitnesses=0,positiveMatches=0;
     const examples=[];
     for(const sample of frame.samples) {
-      const desired=towerRay(it,pose,sample.cx,sample.cy,offset);
-      const stationary=towerRay(it,pose,sample.cx,sample.cy,0);
-      const robust=[-60,60].every(dt=>{
-        const t=clamp((frame.elapsed+dt)/1000,0,1),off=-.56*(1-t*t*(3-2*t));
-        return [[0,0],[-1,0],[1,0],[0,-1],[0,1]].every(([dx,dy])=>
-          rgbNear(towerRay(it,pose,sample.cx+dx,sample.cy+dy,off).rgb,desired.rgb));
+      const x=sample.rayX,y=sample.rayY;
+      const desired=towerRay(it,pose,x,y,offset);
+      const stationary=towerRay(it,pose,x,y,0);
+      const robust=[-16,16].every(dt=>{
+        const t=clamp((renderTime+dt)/1000,0,1),off=-.56*(1-t*t*(3-2*t));
+        return O9.every(([dx,dy])=>
+          rgbNear(towerRay(it,pose,x+dx,y+dy,off).rgb,desired.rgb));
       });
       if(!robust) continue;
       const ok=rgbNear(sample.got,desired.rgb); compared++;matched+=Number(ok);
       if(!rgbNear(desired.rgb,stationary.rgb)) {
         witnesses++;witnessMatches+=Number(ok);
+        if(desired.part==='collar'){positiveWitnesses++;positiveMatches+=Number(ok);}
         if(examples.length<4) examples.push({x:sample.cx,y:sample.cy,got:sample.got,expected:desired.rgb,stationary:stationary.rgb,ok});
       }
     }
     const camera=frame.camera;
     const cameraFixed=!!camera&&Math.abs(camera.yaw-35)<.01&&Math.abs(camera.pitch-25)<.01&&Math.abs(camera.distance-6)<.01;
-    frames.push({elapsed:frame.elapsed,compared,matched,witnesses,witnessMatches,cameraFixed,examples});
+    frames.push({elapsed:frame.elapsed,renderElapsed:renderTime,frameAge:frame.elapsed-renderTime,compared,matched,witnesses,witnessMatches,positiveWitnesses,positiveMatches,cameraFixed,examples});
   }
   const moving=frames.filter(f=>f.elapsed<900),rest=frames.find(f=>f.elapsed>=1050);
-  const eligible=moving.filter(f=>f.witnesses>=3);
-  const motionOk=eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
+  const eligible=moving.filter(f=>f.witnesses>=3&&f.positiveWitnesses>=3);
+  const motionOk=eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
   const settled=!!rest&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
-  return {ok:motionOk&&settled,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,reason:'No stable analytic motion witnesses'})),frames,event:capture?.event||null};
+  return {ok:motionOk&&settled,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),frames,event:capture?.event||null};
 }
 function visibleMotionEvidence(it,pose,capture) {
   const first=capture.frames[0],rest=capture.frames[1],trials=[];
@@ -2455,7 +2536,7 @@ function visibleMotionEvidence(it,pose,capture) {
   // Chromium screenshot returns asynchronously. Its actual compositor instant is inside
   // the measured request interval, never the arbitrary midpoint of that interval.
   for(let elapsed=first.captureStart;elapsed<=first.captureEnd;elapsed+=16) {
-    const evidence=animationEvidence(it,pose,{frames:[{...first,elapsed},rest]},1);
+    const evidence=animationEvidence(it,pose,{frames:[{...first,elapsed,renderElapsed:elapsed},{...rest,renderElapsed:rest.elapsed}]},1);
     trials.push(evidence);
   }
   const selected=trials.find(t=>t.ok)||trials.sort((a,b)=>b.frames[0].witnessMatches-a.frames[0].witnessMatches)[0];
@@ -2471,7 +2552,7 @@ async function captureVisibleMotion(page,points) {
     const rect=await page.evaluate(pageCanvasRect),image=await cdp.send('Page.captureScreenshot',{format:'png',fromSurface:true,optimizeForSpeed:true}),bitmap=screenshotPixels(Buffer.from(image.data,'base64'));
     const after=await page.evaluate(()=>performance.now()-window.__p7.sb71Capture.event.t0);
     frames.push({elapsed:(before.elapsed+after)/2,captureStart:before.elapsed,captureEnd:after,captureDuration:after-before.elapsed,camera:before.camera,
-      samples:points.map(p=>({...p,got:bitmap.at(rect.left+p.cx,rect.top+p.cy)}))});
+      samples:points.map(p=>({...p,rayX:Math.round(rect.left+p.cx)+.5-rect.left,rayY:Math.round(rect.top+p.cy)+.5-rect.top,got:bitmap.at(rect.left+p.cx,rect.top+p.cy)}))});
   }
   await cdp.detach();
   return {frames};
@@ -2496,19 +2577,8 @@ async function sb71VisualScenario(page,model,H,pack) {
   const labelRects=await page.evaluate(()=>Array.from(document.querySelectorAll('#viz-labels .viz-label')).filter(e=>e.getClientRects().length&&getComputedStyle(e).display!=='none').map(e=>{const r=e.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};}));
   let rootFacts={dom,matched:0,total:0,ids:[],labelRects};
   if(rect?.w&&rect?.h) {
-    const ctx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,rect.w,rect.h),points=[];
-    overview: for(let y=10;y<rect.h;y+=7)for(let x=10;x<rect.w;x+=7){
-      if(labelRects.some(r=>rect.left+x>=r.left-1&&rect.left+x<=r.right+1&&rect.top+y>=r.top-1&&rect.top+y<=r.bottom+1))continue;
-      const hits=castPixel(ctx,x+.5,y+.5),hit=hits[0]; if(!hit)continue;
-      const expected=surfColor(ctx,hit);
-      const stable=[[-.45,0],[.45,0],[0,-.45],[0,.45]].every(([dx,dy])=>{
-        const nearby=castPixel(ctx,x+.5+dx,y+.5+dy)[0];
-        return nearby&&nearby.n===hit.n&&rgbNear(surfColor(ctx,nearby),expected);
-      });
-      if(!stable)continue;
-      points.push({cx:x,cy:y,n:hit.n,expected});
-      if(points.length>=120)break overview;
-    }
+    const ctx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,rect.w,rect.h);
+    const points=seededSurfacePoints(ctx,(x,y)=>labelRects.some(r=>rect.left+x>=r.left-1&&rect.left+x<=r.right+1&&rect.top+y>=r.top-1&&rect.top+y<=r.bottom+1));
     const sampled=await page.evaluate(pageSamplePixels,{points});
     rootFacts.total=points.length;
     rootFacts.framebufferMatched=(sampled.samples||[]).filter(s=>rgbNear(s.got,s.expected)).length;
@@ -2694,7 +2764,19 @@ async function vizScenario(page, pack, H) {
     streamApplied = entries.length;
     return log;
   };
-  const vs7 = (arg) => page.evaluate(pageVs7, arg || {}).catch(() => ({ present: false }));
+  const debugSurfaceObservations = [];
+  const vs7 = async (arg) => {
+    try {
+      const result = await page.evaluate(pageVs7, arg || {});
+      debugSurfaceObservations.push({present: result.present, evaluationSucceeded: true});
+      merge({debugSurfaceObservations});
+      return result;
+    } catch (error) {
+      debugSurfaceObservations.push({evaluationSucceeded: false, error: String(error)});
+      merge({debugSurfaceObservations});
+      return {evaluationError: String(error)};
+    }
+  };
   const setCam = async (yaw, pitch, distance) => {
     await page.evaluate(pageVs7, { want: [], setCamera: [yaw, pitch, distance] }).catch(() => {});
     await sleep(250);                                    // re-render + label re-cull settle
@@ -2735,6 +2817,11 @@ async function vizScenario(page, pack, H) {
     const got = grid && grid.samples ? grid.samples.map((s) => s.got) : [];
     const isBg = (c) => c && c.every((v, i) => Math.abs(v - V7.bg[i]) <= V7.tol);
     const nonBg = got.filter((c) => !isBg(c));
+    await syncModelWithStream();
+    const coverageCtx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,W,Hc);
+    const seededPoints=seededSurfacePoints(coverageCtx);
+    const seededPixels=await page.evaluate(pageSamplePixels,{points:seededPoints});
+    const seededMatched=(seededPixels.samples||[]).filter(s=>rgbNear(s.got,s.expected));
     const mainCtx = (glc0 ? glc0.contexts : []).find((c) => !c.offscreen && c.canvasId === 'viz3d')
       || (glc0 ? glc0.contexts : []).find((c) => !c.offscreen);
     const backingOk = Math.abs(pre.backing.w - Math.round(W * pre.dpr)) <= 1 &&
@@ -2746,8 +2833,10 @@ async function vizScenario(page, pack, H) {
       askedAttrs: mainCtx ? mainCtx.askedAttrs : null,
       offscreenContexts: (glc0 ? glc0.contexts : []).filter((c) => c.offscreen).length,
       contextLost: glc0 ? glc0.contextLost : null,
-      gridNonBg: nonBg.length, gridTotal: got.length,
-      gridDistinct: new Set(nonBg.map((c) => c.join(','))).size,
+      coarseGrid:{nonBg:nonBg.length,total:got.length,distinct:new Set(nonBg.map(c=>c.join(','))).size},
+      coverageMethod:'Independently predicted seeded surface pixels; blind grid retained diagnostically',
+      gridNonBg:seededMatched.length,gridTotal:seededPoints.length,gridDistinct:new Set(seededMatched.map(s=>s.got.join(','))).size,
+      seededCoverage:{ids:[...new Set(seededMatched.map(s=>model.items[s.n].id))],samples:seededPixels.samples},
     };
   } else {
     contextReal = { canvasFound: !!(pre && pre.found), glReadable: !!(pre && pre.glReadable) };
@@ -2857,6 +2946,8 @@ async function vizScenario(page, pack, H) {
         const custom = att.pose[0] !== V7.yaw0 || att.pose[1] !== V7.pitch0 ||
           att.pose[2] !== V7.dist0;
         if (custom) await setCam(att.pose[0], att.pose[1], att.pose[2]);
+        await page.evaluate(pageScrollCanvasIntoView);
+        rect=await page.evaluate(pageCanvasRect);
         await page.mouse.click(rect.left + att.pt.sx, rect.top + att.pt.sy);
         await sleep(400);
         const bA = await vs7({ want: ['brush'] });
@@ -2866,7 +2957,9 @@ async function vizScenario(page, pack, H) {
           break;
         }
         if (arr.length) {                                 // undo the mistoggle
-          await page.mouse.click(rect.left + att.pt.sx, rect.top + att.pt.sy);
+          await page.evaluate(pageScrollCanvasIntoView);
+        rect=await page.evaluate(pageCanvasRect);
+        await page.mouse.click(rect.left + att.pt.sx, rect.top + att.pt.sy);
           await sleep(250);
         }
       }
@@ -2883,6 +2976,8 @@ async function vizScenario(page, pack, H) {
     if (d1.brushed) model.brush.add(d1TargetId);
   }
   merge({ d1Arm: d1 });
+  await page.evaluate(pageScrollCanvasIntoView);
+  rect=await page.evaluate(pageCanvasRect);
 
   // cameraMath (§3.4): defaults, wheel law with the distance clamp, wheel-consumed guard.
   {
@@ -3507,8 +3602,9 @@ async function vizScenario(page, pack, H) {
         for (let i = 0; i < fls.length; i++) {
           const got = samples[i] ? samples[i].got : null;
           const it = model.items[fls[i].frontN];
-          const exp = expectPx(it, fls[i].factor);
-          if (got && got.every((v, k2) => Math.abs(v - exp[k2]) <= V7.tol)) okCount++;
+          const hit=castPixel(ctxR,samples[i]?.rayX,samples[i]?.rayY)[0];
+          const exp=hit?surfColor(ctxR,hit):null;
+          if (got && exp && got.every((v, k2) => Math.abs(v - exp[k2]) <= V7.tol)) okCount++;
         }
         restPixel = { points: fls.length, okCount,
                       got: samples[0] ? samples[0].got : null,
