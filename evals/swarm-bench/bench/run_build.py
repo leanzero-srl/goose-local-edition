@@ -12,10 +12,10 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -87,7 +87,11 @@ def build_prompt(port: int) -> str:
     spec_file = os.environ.get("BENCH_AMEND_SPEC", "") or os.environ.get("BENCH_SPEC", "")
     _sc, _vn, default_spec = _regime()
     spec = (Path(spec_file) if spec_file else ROOT / default_spec).read_text()
-    return render_public_contract(spec, port, _vn)
+    prompt = render_public_contract(spec, port, _vn)
+    if os.environ.get('BENCH_SB71'):
+        prompt += ('\n\nA bundled browser is available for your own tests. Read BROWSER-TESTING.md '
+                   'for the runtime paths and screenshot command. It contains no private tests.\n')
+    return prompt
 
 
 def render_public_contract(spec: str, port: int, vendor_module) -> str:
@@ -98,11 +102,28 @@ def render_public_contract(spec: str, port: int, vendor_module) -> str:
 
 
 def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int,
-           provider: str | None = None, model: str | None = None) -> Dict:
+           provider: str | None = None, model: str | None = None,
+           snapshot: dict | None = None) -> Dict:
     prompt = build_prompt(port)
     (workdir / "benchmark-prompt.md").write_text(prompt)
-    credential_values = tuple(value for name, value in env.items()
-                              if value and re.search(r"(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD)$", name))
+    def secret_strings(value):
+        if isinstance(value, str) and value:
+            yield value
+        elif isinstance(value, dict):
+            for nested in value.values():
+                yield from secret_strings(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from secret_strings(nested)
+    if snapshot:
+        redactions = set(secret_strings(snapshot['secrets']))
+        # Custom authentication headers need not use any standardized header name.
+        for definition in snapshot['custom_providers'].values():
+            redactions.update(secret_strings(definition.get('headers', {})))
+    else:
+        redactions = {value for name, value in env.items() if value and
+                      re.search(r"(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD)$", name)}
+    credential_values = tuple(sorted(redactions, key=len, reverse=True))
     # Every entrant records per-call token telemetry into the tree's own .swarm — the same
     # file the swarm engine defaults to, so telemetry_summary() finds it at scoring time and
     # cloud entries publish MEASURED rates instead of session-store recoveries. Truncated per
@@ -128,10 +149,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # re-prompts, and a benchmark is by definition the run with nobody watching it. Seventy-six minutes
     # vanished from the wall-clock and the run log recorded nothing at all in the gap.
     #
-    # Safe here because the bench never reads a secret from the keychain in the first place: cloud
-    # credentials come from ~/.config/agent-board/bedrock.env via load_env() above, and the local
-    # entrants talk to LM Studio, which needs no key. Secrets fall back to ~/.config/goose/secrets.yaml
-    # (base.rs:99-101), which this path does not use either.
+    # The parent resolves the selected provider through Goose's normal credential store before
+    # isolation. The entrant receives only that snapshot and never opens the user's keychain.
     env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath), "GOOSE_DISABLE_KEYRING": "1"}
     if provider:
         if not model:
@@ -184,15 +203,20 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
 
     child_env = {**os.environ, **env}
     if os.environ.get("BENCH_SB71"):
-        if provider != "google":
-            raise RuntimeError("REFUSED: SB7.1 pilot currently requires the validated Google single-agent path")
         import bench_isolation
-        prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent)
+        prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot)
         cmd = prefix + cmd
         child_env = {key: value for key, value in os.environ.items()
-                     if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL"}}
+                     if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL",
+                                "GOOSE_SWARM_BENCHMARK", "GOOSE_SWARM_PROBE_ADVERTISED_POST",
+                                "GOOSE_SWARM_SHIP_BEST", "GOOSE_SWARM_TESTGEN", "GOOSE_SWARM_DOC_PREFETCH",
+                                "GOOSE_SWARM_DIVERSE_PLAN", "GOOSE_SWARM_TEMP", "GOOSE_SWARM_TOP_P",
+                                "GOOSE_SWARM_TOP_K", "GOOSE_SWARM_MIN_P", "GOOSE_SWARM_REPEAT_PENALTY"}}
         child_env.update(env)
         child_env.update(isolated_env)
+        if not provider:
+            child_env['GOOSE_SWARM_RENDER_PROBE'] = str(workdir / 'browser-self-test.mjs')
+            child_env['GOOSE_SWARM_RENDER_NODE'] = str(bench_isolation.node_runtime())
     started = time.time()
     # F924: stream the engine's console to a file INSTEAD of buffering it to exit.
     # `capture_output=True` held every byte in memory until the process ended, so during a live
@@ -202,7 +226,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     console = workdir / "engine-console.log"
     try:
         with console.open("w", buffering=1) as fh:
-            if provider:
+            if provider or snapshot is not None:
                 proc = subprocess.Popen(cmd, cwd=workdir, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True,
                                         env={**child_env, "GOOSE_MODE": "auto"},
@@ -230,22 +254,44 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     return result
 
 
-def cloud_env(provider: str) -> Dict[str, str]:
-    if provider != "google":
-        raise ValueError(f"No benchmark credential loader for provider {provider!r}")
-    key = os.environ.get("GOOGLE_API_KEY")
-    if not key:
-        secret_file = Path.home() / ".agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env"
-        if secret_file.is_file():
-            for line in secret_file.read_text().splitlines():
-                name, sep, value = line.strip().removeprefix("export ").partition("=")
-                if sep and name.strip() == "GOOGLE_API_KEY":
-                    values = shlex.split(value, comments=True)
-                    key = values[0] if values else None
-                    break
-    if not key:
-        raise ValueError("Google benchmark credentials are missing (GOOGLE_API_KEY)")
-    return {"GOOGLE_API_KEY": key}
+def entrant_config(provider: str | None) -> dict:
+    """Use the installed engine's own config/keychain semantics, before sandboxing."""
+    with tempfile.TemporaryDirectory(prefix="goose-benchmark-config-") as directory:
+        output = Path(directory) / "selected.json"
+        command = [str(GOOSE), "benchmark-config", "--output", str(output)]
+        if provider:
+            command.extend(["--provider", provider])
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode:
+            if 'Benchmark isolation cannot attach the managed MLX swarm engine' in result.stderr:
+                raise RuntimeError('Managed MLX swarm attachment is not supported in benchmark isolation. '
+                                   'Use Single model with the configured running MLX API endpoint.')
+            if 'Benchmarks require a Bedrock API key or explicit AWS credentials' in result.stderr:
+                raise RuntimeError('Bedrock benchmark setup requires an API key or explicit AWS credentials. '
+                                   'AWS profile/SSO files are not transferred into benchmark isolation.')
+            # Provider errors can include endpoint credentials; never relay raw engine output.
+            raise RuntimeError("Benchmark provider configuration could not be loaded. "
+                               "Check the selected provider or swarm pool in Settings.")
+        snapshot = json.loads(output.read_text())
+    if snapshot.get("version") != 1 or not all(
+            isinstance(snapshot.get(key), dict) for key in ("config", "secrets", "custom_providers")):
+        raise RuntimeError("Unsupported benchmark configuration snapshot")
+    return snapshot
+
+
+def cloud_env(provider: str, snapshot: dict) -> Dict[str, str]:
+    if provider not in snapshot["providers"]:
+        raise ValueError("Selected provider is absent from benchmark configuration")
+    return snapshot_environment(snapshot)
+
+
+def snapshot_environment(snapshot: dict) -> Dict[str, str]:
+    # Local HTTP discovery reads LMSTUDIO_HOST from the environment, while provider
+    # construction reads Config. Preserve the same selected values on both paths.
+    values = {key: value for key, value in snapshot['config'].items()
+              if re.fullmatch(r'[A-Z][A-Z0-9_]*', key) and isinstance(value, (str, int, float, bool))}
+    values.update(snapshot['secrets'])
+    return {key: value if isinstance(value, str) else json.dumps(value) for key, value in values.items()}
 
 
 def google_model_limits(model: str, credentials: Dict[str, str]) -> Dict[str, int]:
@@ -267,8 +313,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     workdir = out_root / f"{entrant}-r{rep}"
     if workdir.exists():
         raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
-    credentials = cloud_env(provider) if provider else load_env()
-    model_limits = google_model_limits(model, credentials) if provider else None
+    snapshot = entrant_config(provider) if provider or os.environ.get("BENCH_SB71") else None
+    credentials = (cloud_env(provider, snapshot) if provider else
+                   snapshot_environment(snapshot) if snapshot else load_env())
+    model_limits = google_model_limits(model, credentials) if provider == "google" else None
     if model_limits:
         credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": str(model_limits["inputTokenLimit"]),
                        "GOOSE_MAX_TOKENS": str(model_limits["outputTokenLimit"])}
@@ -332,7 +380,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                 shutil.copy2(child, workdir / child.name)
     if os.environ.get("BENCH_SB71"):
         if resume_from or seed:
-            raise RuntimeError("REFUSED: SB7.1 pilot starts from its public starter only")
+            raise RuntimeError("REFUSED: SB7.1 starts from its public starter only")
         starter = ROOT / "sb7.1" / "starter"
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
@@ -342,6 +390,17 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             text = render_public_contract(source.read_text(), port, _regime()[1])
             (workdir / name).write_text(text)
         (workdir / "benchmark-prompt.md").write_text(build_prompt(port))
+        shutil.copy2(HERE / 'browser-self-test.mjs', workdir / 'browser-self-test.mjs')
+        (workdir / 'BROWSER-TESTING.md').write_text(
+            '# Browser self-testing\n\n'
+            'Python 3, Node, Playwright and a headless Chromium browser are supplied. '
+            'Start your app with its documented command, then run '
+            '`node browser-self-test.mjs http://127.0.0.1:PORT screenshot.png`. '
+            'The helper reports page errors and saves a screenshot. '
+            'You may modify it or write your own Playwright tests. '
+            'Load Playwright with `require(process.env.BENCH_BROWSER_MODULE)` and launch Chromium '
+            'with `executablePath: process.env.BENCH_BROWSER_EXECUTABLE`. '
+            'These paths work inside the same isolation boundary as your app.\n')
         manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in workdir.rglob('*') if path.is_file()}
         (workdir / "input-manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -395,12 +454,14 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     # environ too so score_build's in-process probe runs inherit it.
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
-        agent = invoke(entrant, workdir, port, credentials, timeout, provider, model)
+        print('BENCH_PHASE ' + json.dumps({'phase': 'build'}), flush=True)
+        agent = invoke(entrant, workdir, port, credentials, timeout, provider, model, snapshot)
         if provider and "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         scoring_started = time.monotonic()
+        print('BENCH_PHASE ' + json.dumps({'phase': 'score'}), flush=True)
         ctx = scorer.gather(workdir, port, db, trace,
                             mark_phase=vendor.mark_phase,
                             **({"seed": seed} if seeded else {}))
@@ -417,6 +478,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
 
     verdict = scorer.evaluate(ctx)
     verdict["scorer_seconds"] = scoring_seconds
+    verdict["scoring"] = {"secs": scoring_seconds}
     if os.environ.get("BENCH_SB71"):
         verdict["starter_assisted"] = True
         verdict["input_manifest"] = manifest
@@ -466,7 +528,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--entrant", default="opus-5")
-    ap.add_argument("--provider", choices=["google"], help="Single cloud agent instead of a local swarm")
+    ap.add_argument("--provider", help="Configured provider ID for a single agent instead of a swarm")
     ap.add_argument("--model", help="Exact cloud model ID")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--only-rep", type=int,

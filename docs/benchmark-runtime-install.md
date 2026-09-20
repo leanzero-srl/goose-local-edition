@@ -4,6 +4,12 @@ SB7.1 requires macOS on Apple Silicon. Open Benchmark and choose **Install bench
 
 Installation reports download, extraction and verification progress. Run remains unavailable until the tools are ready. Interrupted or corrupt downloads can be retried; the installer does not replace an existing installation until all new tools pass verification. Settings/provider credentials are separate: configure the selected provider in the normal app settings.
 
+The benchmark transfers only the chosen providers' declared configuration and credentials into its isolated runtime. It does not copy profiles, memories or other providers' secrets. Bedrock API keys and explicit AWS credentials are supported by this transfer; AWS profile/SSO files are deliberately not copied, and that setup fails before model dispatch with a specific setup message.
+
+Managed MLX swarm attachment is not yet supported inside the isolated entrant. The app refuses that topology before dispatch; a configured running local API endpoint can instead be selected through Single model. This limitation does not apply to ordinary LM Studio API devices.
+
+Custom provider header values are redacted from captured engine output as well as declared secrets. Because arbitrary header names may carry authentication, all configured header values receive this treatment; very short nonsecret values can therefore obscure matching log text. Header names are not injected as environment variables.
+
 The installed runtime lives at `<Electron userData>/benchmark/runtime`. Results and install identity follow the configured Goose profile. A clean-profile acceptance test must isolate both `GOOSE_PATH_ROOT` and Electron `--user-data-dir`; changing only one can borrow the other profile's data.
 
 Runtime pins and download sizes live in `ui/desktop/scripts/benchmark-runtimes.json`. The installer checks SHA-256/SHA-512 before extraction. `sources.json` and upstream package notices travel with the installed tools. The developer-only `bundle-benchmark-runtimes.mjs` prepares a local cache for runtime tests; it is not a packaging hook and the runtime is not included in the app download.

@@ -11,6 +11,13 @@ import bench_isolation
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS sandbox integration')
 class IsolationTests(unittest.TestCase):
+    def test_packaged_node_is_selected_with_no_node_on_path(self):
+        actual = bench_isolation.node_runtime()
+        if actual is None:
+            self.skipTest('Node required for executable positive control')
+        with patch.dict(os.environ, {'GOOSE_SWARM_RENDER_NODE': str(actual), 'PATH': '/usr/bin:/bin'}):
+            self.assertEqual(bench_isolation.node_runtime(), actual)
+
     def test_real_reads_writes_reference_and_operator_log_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

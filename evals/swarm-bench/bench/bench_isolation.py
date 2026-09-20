@@ -11,7 +11,7 @@ import zoneinfo
 
 
 def node_runtime() -> Path | None:
-    executable = shutil.which('node')
+    executable = os.environ.get('GOOSE_SWARM_RENDER_NODE') or shutil.which('node')
     if executable is None:
         return None
     result = subprocess.run([executable, '-p', 'process.execPath'], capture_output=True,
@@ -22,13 +22,19 @@ def node_runtime() -> Path | None:
     return actual.resolve()
 
 
-def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None) -> str:
+def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None,
+            browser: dict | None = None) -> str:
     def quote(value):
         return json.dumps(str(Path(value).resolve()))
     read_dirs = ['/System', '/usr', '/bin', '/sbin', '/Library/Apple',
                  '/Library/Developer', '/Library/Frameworks', '/opt/homebrew',
-                 '/private/etc', '/dev', str(workdir), str(runtime)]
+                 '/private/etc', '/private/var/db/timezone', '/dev', str(workdir), str(runtime)]
     read_dirs.extend(str(Path(path).resolve()) for path in zoneinfo.TZPATH if Path(path).is_dir())
+    if browser:
+        # Grant only the installed browser and its libraries, never the Resources parent
+        # which also contains private scorer code and fixtures.
+        read_dirs.extend([str(Path(browser['BENCH_BROWSER_EXECUTABLE']).parent),
+                          str(Path(browser['BENCH_BROWSER_MODULE']).parent)])
     node = node or node_runtime()
     if node is not None:
         read_dirs.append(str(node.parent))
@@ -43,6 +49,10 @@ def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None
         '(version 1)', '(deny default)',
         '(allow process-fork)', '(allow process-exec)', '(allow signal (target same-sandbox))',
         '(allow sysctl-read)', '(allow mach-lookup)', '(allow ipc-posix*)',
+        # Chromium initializes AppKit preferences even in headless mode.
+        '(allow user-preference-read)' if browser else '',
+        '(allow iokit-open (iokit-user-client-class "RootDomainUserClient"))' if browser else '',
+        '(allow mach-register (global-name-regex #"^org\\.chromium\\."))' if browser else '',
         '(allow network*)', '(allow system-socket)',
         '(allow file-read-metadata)', '(allow file-read-data (literal "/"))',
         '(allow file-read* ' + read_rules + ' (literal ' + quote(engine) + '))',
@@ -52,15 +62,41 @@ def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None
     ])
 
 
-def prepare(workdir: Path, engine: Path, private_root: Path) -> tuple[list[str], dict[str, str]]:
+def browser_environment() -> dict[str, str]:
+    names = {'BENCH_BROWSER_MODULE': 'GOOSE_SWARM_PLAYWRIGHT_MODULE',
+             'BENCH_BROWSER_EXECUTABLE': 'GOOSE_SWARM_CHROMIUM_EXECUTABLE'}
+    values = {public: str(Path(os.environ[source]).resolve())
+              for public, source in names.items() if os.environ.get(source)}
+    if values and len(values) != len(names):
+        raise RuntimeError('REFUSED: incomplete bundled browser configuration')
+    if values and (not Path(values['BENCH_BROWSER_MODULE']).is_dir() or
+                   not Path(values['BENCH_BROWSER_EXECUTABLE']).is_file()):
+        raise RuntimeError('REFUSED: bundled browser runtime is missing')
+    return values
+
+
+def prepare(workdir: Path, engine: Path, private_root: Path,
+            snapshot: dict | None = None) -> tuple[list[str], dict[str, str]]:
     if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').exists():
         raise RuntimeError('REFUSED: SB7.1 requires the tested macOS entrant isolation runtime')
     workdir = workdir.resolve()
     runtime = workdir.parent / ('.' + workdir.name + '-runtime')
     runtime.mkdir(mode=0o700)
     (runtime / 'tmp').mkdir()
+    if snapshot is not None:
+        config = runtime / 'goose' / 'config'
+        config.mkdir(parents=True, mode=0o700)
+        # JSON is a YAML subset; no extra Python dependency or original profile is needed.
+        (config / 'config.yaml').write_text(json.dumps(snapshot['config']))
+        definitions = config / 'custom_providers'
+        definitions.mkdir()
+        for name, definition in snapshot['custom_providers'].items():
+            if not name or any(character not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for character in name):
+                raise ValueError('Invalid custom provider ID in benchmark snapshot')
+            (definitions / (name + '.json')).write_text(json.dumps(definition))
     node = node_runtime()
-    policy = profile(workdir, engine, runtime, node)
+    browser = browser_environment()
+    policy = profile(workdir, engine, runtime, node, browser)
     prefix = ['/usr/bin/sandbox-exec', '-p', policy]
     # These are actual forbidden and allowed reads, not an assertion about policy text.
     control = private_root / ('isolation-control-' + os.urandom(8).hex())
@@ -88,13 +124,32 @@ pathlib.Path(sys.argv[1]).write_text('candidate write works')
         control.unlink(missing_ok=True)
         allowed.unlink(missing_ok=True)
     (runtime / 'profile.sb').write_text(policy)
+    if browser:
+        if node is None:
+            raise RuntimeError('REFUSED: entrant browser requires bundled Node')
+        script = runtime / 'browser-preflight.cjs'
+        script.write_text('''const {chromium}=require(process.env.BENCH_BROWSER_MODULE);
+(async()=>{const b=await chromium.launch({headless:true,executablePath:process.env.BENCH_BROWSER_EXECUTABLE,args:['--enable-unsafe-swiftshader']});
+try {const page=await b.newPage();await page.setContent('<canvas></canvas>');
+if(!await page.evaluate(()=>!!document.querySelector('canvas').getContext('webgl2')))throw new Error('WebGL2 unavailable');
+await page.screenshot({path:process.argv[2]});} finally {await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1});''')
+        result = subprocess.run(prefix + [str(node), str(script), str(runtime / 'browser-preflight.png')],
+                                cwd=workdir, env={**os.environ, **browser, 'TMPDIR': str(runtime / 'tmp')},
+                                capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise RuntimeError('REFUSED: entrant browser self-test failed: ' + result.stderr[-1000:])
     (workdir / 'isolation.json').write_text(json.dumps({
         'mechanism': 'macOS sandbox-exec', 'private_reference_read': 'denied',
         'candidate_read_write': 'passed', 'runtime': str(runtime),
+        'candidate_browser': 'WebGL2 and screenshot passed' if browser else 'not configured',
     }, indent=2))
-    return prefix, {'PATH': (str(node.parent) + os.pathsep + os.environ.get('PATH', ''))
-                    if node is not None else os.environ.get('PATH', ''), 'GOOSE_PATH_ROOT': str(runtime / 'goose'), 'TMPDIR': str(runtime / 'tmp'),
-                    'GOOSE_ADDITIONAL_CONFIG_FILES': '', 'BENCH_SB71_RUNTIME': str(runtime)}
+    paths = [str(Path(sys.executable).resolve().parent)]
+    if node is not None:
+        paths.append(str(node.parent))
+    paths.append(os.environ.get('PATH', '/usr/bin:/bin'))
+    return prefix, {'PATH': os.pathsep.join(paths), 'GOOSE_PATH_ROOT': str(runtime / 'goose'),
+                    'TMPDIR': str(runtime / 'tmp'), 'GOOSE_ADDITIONAL_CONFIG_FILES': '',
+                    'BENCH_SB71_RUNTIME': str(runtime), **browser}
 
 
 def usage(runtime: Path) -> dict:
