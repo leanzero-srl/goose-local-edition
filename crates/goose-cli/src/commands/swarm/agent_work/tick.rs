@@ -59,6 +59,7 @@ struct LaneResult {
     out: Option<LaneOut>,
     raw: String,
     error: Option<String>,
+    structured: bool,
 }
 
 struct LensResult {
@@ -426,108 +427,135 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     }
 
     // ---------------- SYNTHESIS
-    set_phase(ctx, st, "synthesis");
-    let lane_reports = lane_results
-        .iter()
-        .map(render_lane_report)
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let review_reports = lens_results
-        .iter()
-        .map(|l| {
-            format!(
-                "REVIEW of {} by {} ({}, {:.0}s): {}\n  notes: {}{}{}",
-                l.lane_id,
-                l.lens,
-                l.model,
-                l.secs,
-                if l.out.verdict.is_empty() {
-                    "(no verdict)"
-                } else {
-                    &l.out.verdict
-                },
-                l.out.notes.trim(),
-                if l.out.fixes.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n  fixes: {}", l.out.fixes.join(" | "))
-                },
-                l.error
-                    .as_deref()
-                    .map_or(String::new(), |e| format!("\n  reviewer error: {e}"))
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let synth_key = format!("t{n}-synthesis");
-    let synth_started = std::time::Instant::now();
-    let synth_call = ctx
-        .fleet
-        .dispatcher
-        .run_agent_timed_at(
-            &ctx.fleet.planner_model,
-            prompts::synthesis_system(&ctx.manifest, n),
-            prompts::synthesis_user(
-                &orient.summary,
-                &ledger_block,
-                &lane_reports,
-                &review_reports,
-                &notes,
-            ),
-            Some(Response {
-                json_schema: Some(prompts::synthesis_schema()),
-            }),
-            planner_side_turns(),
-            &[],
-            None,
-            Some(&synth_key),
-            true,
-            false,
-        )
-        .await;
-    lane_secs += synth_started.elapsed().as_secs_f64();
-    let mut tick_failure: Option<String> = None;
-    let synth: SynthOut = match synth_call {
-        Ok(out)
-            if transport_error(&out.final_output.clone().unwrap_or_else(|| out.text.clone()))
-                .is_some() =>
-        {
-            let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
-            let err = transport_error(&raw).unwrap_or_else(|| "(transport error)".to_string());
-            ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "transport", "model": ctx.fleet.planner_model, "error": err}));
-            let line = format!(
-                "tick {n}: synthesis call failed on {}: {err}",
-                ctx.fleet.planner_model
+    let pending_state_clear = match (ctx.rt.prepared(), ctx.rt.asks()) {
+        (Ok(prepared), Ok(asks)) => prepared.is_empty() && asks.is_empty(),
+        (Err(error), _) | (_, Err(error)) => {
+            ctx.sink.write_value(
+                json!({"event": "store_unreadable", "tick": n, "phase": "handoff", "error": error}),
             );
-            tick_failure = Some(line.clone());
-            SynthOut {
-                log_line: line,
-                ..Default::default()
-            }
+            false
         }
-        Ok(out) => {
-            let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
-            record["synthesis_raw"] = json!(head_chars(&raw, 20_000));
-            parse_json_lenient::<SynthOut>(&raw).unwrap_or_else(|| {
+    };
+    let mut tick_failure: Option<String> = None;
+    let (synth, delivery_source) = if let Some((report, source)) = direct_read_only_report(
+        &ctx.manifest,
+        &orient,
+        &lane_results,
+        &lens_results,
+        &notes,
+        pending_state_clear,
+    ) {
+        set_phase(ctx, st, "handoff");
+        ctx.sink.write_value(json!({"event": "synthesis_not_needed", "tick": n, "source": source,
+            "reason": "one completed read-only research report; no drafts, questions, reviews or pending actions to reconcile"}));
+        (report, source)
+    } else {
+        set_phase(ctx, st, "synthesis");
+        let lane_reports = lane_results
+            .iter()
+            .map(render_lane_report)
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let review_reports = lens_results
+            .iter()
+            .map(|l| {
+                format!(
+                    "REVIEW of {} by {} ({}, {:.0}s): {}\n  notes: {}{}{}",
+                    l.lane_id,
+                    l.lens,
+                    l.model,
+                    l.secs,
+                    if l.out.verdict.is_empty() {
+                        "(no verdict)"
+                    } else {
+                        &l.out.verdict
+                    },
+                    l.out.notes.trim(),
+                    if l.out.fixes.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n  fixes: {}", l.out.fixes.join(" | "))
+                    },
+                    l.error
+                        .as_deref()
+                        .map_or(String::new(), |e| format!("\n  reviewer error: {e}"))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let synth_key = format!("t{n}-synthesis");
+        let synth_started = std::time::Instant::now();
+        let synth_call = ctx
+            .fleet
+            .dispatcher
+            .run_agent_timed_at(
+                &ctx.fleet.planner_model,
+                prompts::synthesis_system(&ctx.manifest, n),
+                prompts::synthesis_user(
+                    &orient.summary,
+                    &ledger_block,
+                    &lane_reports,
+                    &review_reports,
+                    &notes,
+                ),
+                Some(Response {
+                    json_schema: Some(prompts::synthesis_schema()),
+                }),
+                planner_side_turns(),
+                &[],
+                None,
+                Some(&synth_key),
+                true,
+                false,
+            )
+            .await;
+        lane_secs += synth_started.elapsed().as_secs_f64();
+        let synth: SynthOut = match synth_call {
+            Ok(out)
+                if transport_error(
+                    &out.final_output.clone().unwrap_or_else(|| out.text.clone()),
+                )
+                .is_some() =>
+            {
+                let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+                let err = transport_error(&raw).unwrap_or_else(|| "(transport error)".to_string());
+                ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "transport", "model": ctx.fleet.planner_model, "error": err}));
+                let line = format!(
+                    "tick {n}: synthesis call failed on {}: {err}",
+                    ctx.fleet.planner_model
+                );
+                tick_failure = Some(line.clone());
+                SynthOut {
+                    log_line: line,
+                    ..Default::default()
+                }
+            }
+            Ok(out) => {
+                let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+                record["synthesis_raw"] = json!(head_chars(&raw, 20_000));
+                parse_json_lenient::<SynthOut>(&raw).unwrap_or_else(|| {
                 ctx.sink.write_value(json!({"event": "synthesis_unparseable", "tick": n, "tail": tail_chars(&raw, 400)}));
                 SynthOut {
                     log_line: format!("tick {n}: synthesis answered without a parseable close ({} chars)", raw.chars().count()),
                     ..Default::default()
                 }
             })
-        }
-        Err(e) => {
-            ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "call", "error": e.to_string()}));
-            let line = format!("tick {n}: synthesis call failed: {e}");
-            tick_failure = Some(line.clone());
-            SynthOut {
-                log_line: line,
-                ..Default::default()
             }
-        }
+            Err(e) => {
+                ctx.sink.write_value(json!({"event": "synthesis_failed", "tick": n, "kind": "call", "error": e.to_string()}));
+                let line = format!("tick {n}: synthesis call failed: {e}");
+                tick_failure = Some(line.clone());
+                SynthOut {
+                    log_line: line,
+                    ..Default::default()
+                }
+            }
+        };
+
+        (synth, json!({"mode": "model"}))
     };
 
-    // Stage, ask, record — by CODE, from the synthesis's decisions.
+    // Stage, ask, record — by CODE, from the synthesis's decisions or the source report.
     let now = now_rfc3339();
     // GUARD already refused the tick on an unreadable file; a file that broke between the two
     // reads is named here and nothing is staged over it.
@@ -649,7 +677,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     }
     ctx.sink.write_value(json!({
         "event": "synthesis_done", "tick": n, "staged": staged_ids, "asks": ask_ids,
-        "facts": synth.facts.len(), "log_line": synth.log_line, "handoff": synth.handoff,
+        "facts": synth.facts.len(), "log_line": synth.log_line, "handoff": synth.handoff, "source": delivery_source,
     }));
 
     // ---------------- POST (earlier ticks' staged drafts, through the one write path)
@@ -794,6 +822,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     record["synthesis"] = json!({
         "staged": staged_ids, "asks": ask_ids, "facts": synth.facts, "log_line": log_line,
         "handoff": synth.handoff, "pending": synth.pending,
+        "source": delivery_source,
     });
     record["posted"] = json!(posted_ids);
     record["close"] = json!(close_runs);
@@ -895,20 +924,23 @@ async fn run_lane(
         .await;
     drop(guard);
     let secs = started.elapsed().as_secs_f64();
-    let (out, raw, error) = match call {
+    let (out, raw, error, structured) = match call {
         Ok(o) => {
+            let collected = o.final_output.is_some();
             let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
             if let Some(err) = transport_error(&raw) {
-                (None, raw, Some(format!("transport: {err}")))
+                (None, raw, Some(format!("transport: {err}")), false)
             } else {
-                let parsed = parse_json_lenient::<LaneOut>(&raw).unwrap_or_else(|| LaneOut {
+                let parsed = parse_json_lenient::<LaneOut>(&raw);
+                let structured = collected && parsed.is_some();
+                let parsed = parsed.unwrap_or_else(|| LaneOut {
                     finding: raw.trim().to_string(),
                     ..Default::default()
                 });
-                (Some(parsed), raw, None)
+                (Some(parsed), raw, None, structured)
             }
         }
-        Err(e) => (None, String::new(), Some(e.to_string())),
+        Err(e) => (None, String::new(), Some(e.to_string()), false),
     };
     let res = LaneResult {
         plan,
@@ -918,6 +950,7 @@ async fn run_lane(
         out,
         raw,
         error,
+        structured,
     };
     ctx.sink.write_value(json!({
         "event": if res.error.is_some() { "lane_failed" } else { "lane_done" },
@@ -1050,6 +1083,56 @@ fn lane_value(r: &LaneResult) -> Value {
     })
 }
 
+fn direct_read_only_report(
+    manifest: &AgentManifest,
+    orient: &OrientOut,
+    lanes: &[LaneResult],
+    reviews: &[LensResult],
+    notes: &[String],
+    pending_state_clear: bool,
+) -> Option<(SynthOut, Value)> {
+    let [lane] = lanes else { return None };
+    if !pending_state_clear
+        || !notes.is_empty()
+        || !reviews.is_empty()
+        || !orient.asks.is_empty()
+        || !orient.drop.is_empty()
+        || manifest.post.is_some()
+        || !manifest.close.is_empty()
+        || lane.plan.kind != "research"
+        || lane.error.is_some()
+        || !manifest
+            .surgeon(&lane.plan.surgeon)
+            .is_some_and(|surgeon| surgeon.read_only)
+        || !lane.structured
+    {
+        return None;
+    }
+    let output = lane.out.as_ref()?;
+    if output.finding.trim().is_empty()
+        || output.draft.is_some()
+        || output.ask.is_some()
+        || output.route.is_some()
+    {
+        return None;
+    }
+    let report = render_lane_report(lane);
+    Some((
+        SynthOut {
+            facts: vec![report.clone()],
+            log_line: format!(
+                "Delivered the read-only report from lane {} without rewriting it.",
+                lane.plan.id
+            ),
+            handoff: report,
+            // The existing scratchpad retains standing constraints; the completed report is on the ledger.
+            scratchpad: None,
+            ..Default::default()
+        },
+        json!({"mode": "lane_report", "lane": lane.plan.id, "key": lane.key}),
+    ))
+}
+
 fn prepare_stage_row(
     stage: &prompts::StagePlan,
     lanes: &[LaneResult],
@@ -1143,6 +1226,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_only_delivery_preserves_the_report_and_keeps_decisions_on_synthesis() {
+        let mut manifest: AgentManifest =
+            serde_yaml::from_str(&AgentManifest::starter("demo")).unwrap();
+        let orient = OrientOut::default();
+        let raw = json!({"homework": "Fetched the assigned source", "finding": "Exact source finding <marker>",
+            "confidence": 2, "evidence": ["https://example.com/source"], "next_step": "Exact title is unavailable; preserve this caveat."}).to_string();
+        let mut lanes = vec![LaneResult {
+            plan: serde_json::from_value(
+                json!({"id": "source-read", "surgeon": "general", "kind": "research"}),
+            )
+            .unwrap(),
+            key: "t1-source-read".into(),
+            model: "test".into(),
+            secs: 1.0,
+            out: Some(serde_json::from_str(&raw).unwrap()),
+            raw,
+            error: None,
+            structured: true,
+        }];
+        let (report, source) =
+            direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).unwrap();
+        assert_eq!(report.handoff, render_lane_report(&lanes[0]));
+        assert_eq!(report.facts, vec![report.handoff.clone()]);
+        assert!(report.handoff.contains("Exact source finding <marker>"));
+        assert!(report
+            .handoff
+            .contains("Exact title is unavailable; preserve this caveat."));
+        assert!(report.stage.is_empty() && report.asks.is_empty() && report.pending.is_empty());
+        assert!(report.scratchpad.is_none());
+        assert_eq!(
+            source,
+            json!({"mode": "lane_report", "lane": "source-read", "key": "t1-source-read"})
+        );
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], false).is_none());
+        assert!(direct_read_only_report(
+            &manifest,
+            &orient,
+            &lanes,
+            &[],
+            &["new decision".into()],
+            true
+        )
+        .is_none());
+        lanes[0].structured = false;
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).is_none());
+        lanes[0].structured = true;
+        lanes[0].out.as_mut().unwrap().draft = Some(Draft {
+            target: "DEMO-1".into(),
+            kind: "comment".into(),
+            body: "Review this".into(),
+        });
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).is_none());
+        lanes[0].out.as_mut().unwrap().draft = None;
+        lanes[0].out.as_mut().unwrap().ask = Some("Need human decision".into());
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).is_none());
+        lanes[0].out.as_mut().unwrap().ask = None;
+        manifest.surgeons[0].read_only = false;
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).is_none());
+        manifest.surgeons[0].read_only = true;
+        lanes[0].error = Some("transport failed".into());
+        assert!(direct_read_only_report(&manifest, &orient, &lanes, &[], &[], true).is_none());
+    }
+
+    #[test]
     fn staging_requires_this_ticks_draft_and_preserves_its_destination() {
         let mut lanes = vec![LaneResult {
             plan: serde_json::from_value(json!({"id": "page-read", "surgeon": "researcher"}))
@@ -1153,6 +1300,7 @@ mod tests {
             out: Some(LaneOut::default()),
             raw: String::new(),
             error: None,
+            structured: true,
         }];
         let mut stage: prompts::StagePlan = serde_json::from_value(json!({
             "lane": "invented", "target": "DEMO-1", "kind": "comment", "body": "Reviewed text"
