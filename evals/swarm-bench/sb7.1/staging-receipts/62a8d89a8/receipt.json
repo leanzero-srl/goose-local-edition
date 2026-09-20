@@ -1,0 +1,14 @@
+{
+  "source_commit": "62a8d89a8",
+  "source_method": "git archive (committed files only)",
+  "payload_files": 84,
+  "asar_file_sha256": "bba4b6e286ac7701b82bf898ae569d7109a93301edaaa84fa1c2813887d805bb",
+  "manifest_sha256": "49346ad4aa9789c06c302077f8fa1a186e7aceec09f47cec5e518049f9e00573",
+  "installed": false,
+  "codesign": {
+    "CDHash": "11f08772d53ae65e6e009eed1dd0b5a18aea18c5",
+    "TeamIdentifier": "ZZ8MTZ6NRZ",
+    "Timestamp": "20 Sep 2026 at 19:43:49",
+    "strict_deep_verification": "passed"
+  }
+}
