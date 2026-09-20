@@ -1,0 +1,8 @@
+{
+  "source_commit": "b01caa495",
+  "installed": true,
+  "isolation_sha256": "dabc382b30e67343477d8e5acc412ac06e28a74adcec66e0929cbeab1598e5f4",
+  "signature_verified": false,
+  "invalid_environment_run": "cloud-6f5f5b75-4699-494f-858c-a31a51e03000",
+  "corrected_app_launched_run": "cloud-b3c625d6-1c5e-4c3f-8b5b-e2b154d7ae59"
+}
