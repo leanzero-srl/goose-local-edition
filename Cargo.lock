@@ -4865,7 +4865,7 @@ dependencies = [
 
 [[package]]
 name = "goose"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-http",
@@ -5005,7 +5005,7 @@ dependencies = [
 
 [[package]]
 name = "goose-acp-macros"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -5013,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "goose-cli"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anstream",
  "anyhow",
@@ -5074,7 +5074,7 @@ dependencies = [
 
 [[package]]
 name = "goose-download-manager"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -5087,7 +5087,7 @@ dependencies = [
 
 [[package]]
 name = "goose-local-inference"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5123,7 +5123,7 @@ dependencies = [
 
 [[package]]
 name = "goose-mcp"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5154,7 +5154,7 @@ dependencies = [
 
 [[package]]
 name = "goose-memory-store"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "rust-stemmers",
  "tempfile",
@@ -5162,7 +5162,7 @@ dependencies = [
 
 [[package]]
 name = "goose-provider-types"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5192,7 +5192,7 @@ dependencies = [
 
 [[package]]
 name = "goose-providers"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5225,7 +5225,7 @@ dependencies = [
 
 [[package]]
 name = "goose-sdk"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -5238,7 +5238,7 @@ dependencies = [
 
 [[package]]
 name = "goose-sdk-types"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -5249,7 +5249,7 @@ dependencies = [
 
 [[package]]
 name = "goose-server"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5305,7 +5305,7 @@ dependencies = [
 
 [[package]]
 name = "goose-swarm"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5317,7 +5317,7 @@ dependencies = [
 
 [[package]]
 name = "goose-test"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "clap",
  "serde_json",
@@ -5325,7 +5325,7 @@ dependencies = [
 
 [[package]]
 name = "goose-test-support"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "axum",
  "env-lock",
