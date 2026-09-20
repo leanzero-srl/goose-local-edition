@@ -1,6 +1,6 @@
 # SB7.1: requirements and measured cost audit
 
-Status: implementation under reference validation, 2026-09-20. No SB7.1 model run has started. The staged app explicitly selects SB7.1 for the Google pilot; SB7 remains available and remains the local-run default. SB8 artifacts are retained as experiments; its 100% score is not evidence of SB7-equivalent difficulty.
+Status: Gemini pilot completed implementation on 2026-09-20; external scoring exposed measurement defects under correction. This is not a release or a published model ranking. The installed app explicitly selects SB7.1 for the Google pilot; SB7 remains available and remains the local-run default. SB8 artifacts are retained as experiments; its 100% score is not evidence of SB7-equivalent difficulty.
 
 ## User requirements
 
