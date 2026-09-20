@@ -2,7 +2,7 @@
 // Arguments: isolated Goose configuration root, agent directory, local model ID.
 import { spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -12,6 +12,18 @@ const [root, agentDir, modelId] = process.argv.slice(2);
 if (!root || !agentDir || !modelId) throw new Error('Supply an isolated configuration root, demo directory and model ID.');
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const env = { ...process.env, GOOSE_PATH_ROOT: root, GOOSE_DISABLE_KEYRING: '1' };
+// The demo's shell must not inherit account tokens, CLI profiles or SSH agents.
+// This is environment isolation, not a filesystem sandbox.
+const demoHome = path.join(root, 'demo-home');
+await mkdir(demoHome, { recursive: true });
+const demoEnv = Object.fromEntries(Object.entries(env).filter(([name]) =>
+  !/TOKEN|KEY|SECRET|PASS|AUTH/i.test(name)
+));
+Object.assign(demoEnv, {
+  HOME: demoHome, XDG_CONFIG_HOME: path.join(demoHome, '.config'),
+  GH_CONFIG_DIR: path.join(demoHome, '.config/gh'), GIT_CONFIG_GLOBAL: '/dev/null',
+  GOOSE_DISABLE_KEYRING: '1',
+});
 const binary = path.join(repo, 'target/debug/goose');
 const backend = spawn(binary, ['acp'], { env, stdio: ['pipe', 'pipe', 'ignore'] });
 const client = new GooseClient(() => ({ sessionUpdate() {}, requestPermission: async () => ({ outcome: { outcome: 'cancelled' } }) }), ndJsonStream(Writable.toWeb(backend.stdin), Readable.toWeb(backend.stdout)));
@@ -26,7 +38,7 @@ try {
   } while (status.state !== 'running');
   assert.ok(status.toolCallParser, 'The actual mounted engine must report a tool parser.');
   console.log(JSON.stringify({ mounted: true, parser: status.toolCallParser, pid: status.pid }));
-  const run = spawn(binary, ['swarm', 'agent', 'run', agentDir, '--once'], { env, stdio: ['ignore', 'inherit', 'inherit'] });
+  const run = spawn(binary, ['swarm', 'agent', 'run', agentDir, '--once'], { env: demoEnv, stdio: ['ignore', 'inherit', 'inherit'] });
   const code = await new Promise((resolve, reject) => { run.once('error', reject); run.once('exit', resolve); });
   assert.equal(code, 0);
   const events = (await readFile(path.join(agentDir, '.swarm/agent/run.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);

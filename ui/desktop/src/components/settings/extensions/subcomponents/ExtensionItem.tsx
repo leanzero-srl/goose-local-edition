@@ -152,7 +152,7 @@ export default function ExtensionItem({
           </div>
         )}
         {error && (
-          <p role="alert" className="mt-2 text-status-error">
+          <p role="alert" className="mt-2 text-lz-err">
             {error}
           </p>
         )}

@@ -46,8 +46,9 @@ try {
   assert.match(body, /JavaScript/);
   assert.match(body, /Source: https:\/\/developer.mozilla.org/);
   assert.match(body, /Collected:/);
+  const beforeInvalidSource = await readdir(env.OUTPUT_DIR);
   await assert.rejects(client.goose.configExtensionsInspect_unstable({ name: 'LeanZero Web Search', sourceUrl: 'file:///etc/passwd' }));
-  assert.deepEqual(await readdir(env.OUTPUT_DIR), [path.basename(collected.savedFile)]);
+  assert.deepEqual(await readdir(env.OUTPUT_DIR), beforeInvalidSource);
   await client.goose.configExtensionsAdd_unstable({ enabled: false, extension: { type: 'mcp', server: {
     name: 'LeanZero Documents', command: process.execPath,
     args: [path.join(bundle, 'leanzero-documents/src/index.js')],
