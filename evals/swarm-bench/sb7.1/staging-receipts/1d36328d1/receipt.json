@@ -1,0 +1,30 @@
+{
+  "source_commit": "1d36328d1",
+  "source_method": "git archive (committed files only)",
+  "payload_files": 83,
+  "asar_file_sha256": "bba4b6e286ac7701b82bf898ae569d7109a93301edaaa84fa1c2813887d805bb",
+  "manifest_sha256": "d5d8e2a2d384949882021bf9d417bace46b773bd7d35421592305a8586d6e62d",
+  "key_files": {
+    "bench/run_build.py": "bb72f9ecc498ef51f14b619c3934685a65ec558a2b9646828f5219f755e5907d",
+    "bench/bench_isolation.py": "29e06a5d265d79a5a5ed17471787cae6c421397a53f16c1971bf8f5d0b1b4f60",
+    "bench/score_sb71.py": "42577fa27d9b09de1e692a9596d2cfc379225f5349c5829436885eb2a825f9c7",
+    "bench/product_probe_sb71.mjs": "c35f07eb12fb5f294ee9cbd9130581a3b4636608555a6cf55e40138126ecdc73"
+  },
+  "installed": false,
+  "codesign": {
+    "CDHash": "f5338288a8e2c925ea294cc06447e7d80efd15c3",
+    "TeamIdentifier": "ZZ8MTZ6NRZ",
+    "Timestamp": "20 Sep 2026 at 19:32:27",
+    "strict_deep_verification": "passed"
+  },
+  "ui_source_commits": [
+    "3b71756f5",
+    "cac6b0924",
+    "205925a17"
+  ],
+  "ui_validation": {
+    "test_files": 238,
+    "tests": 1997,
+    "typecheck": "passed"
+  }
+}
