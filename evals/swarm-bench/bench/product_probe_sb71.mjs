@@ -72,6 +72,29 @@ function summarizeAnimationFrames(frames,minMoving=9) {
   const settled=!!rest&&rest.renderElapsed>=1000&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
   return {ok:motionOk&&settled,phaseCoverage,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),distinctMovingDraws:new Set(eligible.map(f=>f.renderElapsed)).size,frames};
 }
+function parseVisibleMoney(raw,currency) {
+  const exponent={EUR:2,USD:2,JPY:0,KWD:3}[currency];
+  if(typeof raw!=='string'||exponent===undefined)return null;
+  let text=raw.trim(),accounting=false;
+  if(text.startsWith('(')&&text.endsWith(')')){accounting=true;text=text.slice(1,-1).trim();}
+  const markers={EUR:['EUR','€'],USD:['USD','$'],JPY:['JPY','¥','￥'],KWD:['KWD','د.ك']};
+  for(const [code,tokens] of Object.entries(markers))for(const token of tokens){
+    if(text.includes(token)){
+      if(code!==currency)return null;
+      const at=text.indexOf(token);
+      if(/\d/.test(text.slice(0,at))&&/\d/.test(text.slice(at+token.length)))return null;
+      text=text.split(token).join('').trim();
+    }
+  }
+  const sign=/^[-−]/.test(text)?-1:1;
+  if(accounting&&/^[+−-]/.test(text))return null;
+  text=text.replace(/^[+−-]/,'').trim();
+  let whole=text,fraction='';
+  if(exponent){const match=new RegExp('^(.*)([.,])(\\d{'+exponent+'})$').exec(text);if(!match||match[1].includes(match[2]))return null;whole=match[1];fraction=match[3];}
+  if(!/^\d+$/.test(whole)&&!/^\d{1,3}([,. \u00a0\u202f])\d{3}(?:\1\d{3})*$/.test(whole))return null;
+  const minor=Number(whole.replace(/[^0-9]/g,'')+fraction)*(accounting?-1:sign);
+  return Number.isSafeInteger(minor)?minor:null;
+}
 function parseVisibleVersion(raw) {
   if(typeof raw!=='string')return null;
   const match=/^\s*(?:(?:v|version)\s*:?\s*)?(\d+)\s*$/i.exec(raw);
@@ -2868,11 +2891,10 @@ async function sb71VisualScenario(page,model,H,pack) {
     }
     const backend=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(it.id)).then(r=>r.json());
     const fields=await page.evaluate(()=>Object.fromEntries(['id','currency','amount','status','version'].map(k=>[k,document.getElementById('inspect-'+k)?.textContent?.trim()||''])));
-    const amount=fields.amount.replace(/[^0-9.,]/g,''),digits=amount.replace(/[^0-9]/g,'').replace(/^0+(?=\d)/,'');
-    const exponent=V7.exp[it.cur],decimals=exponent===0?!/[.,]\d{1,2}$/.test(amount):new RegExp('[.,]\\d{'+exponent+'}$').test(amount);
-    const moneyOk=digits===String(Math.abs(backend.amount_minor))&&decimals;
+    const parsedAmountMinor=parseVisibleMoney(fields.amount,backend.currency);
+    const moneyOk=parsedAmountMinor!==null&&parsedAmountMinor===backend.amount_minor;
     const parsedVersion=parseVisibleVersion(fields.version);
-    contexts.push({id:it.id,currency:it.cur,fields,parsedVersion,expected:{id:backend.id,currency:backend.currency,status:backend.status,version:backend.version,amount_minor:backend.amount_minor},moneyOk,
+    contexts.push({id:it.id,currency:it.cur,fields,parsedVersion,parsedAmountMinor,expected:{id:backend.id,currency:backend.currency,status:backend.status,version:backend.version,amount_minor:backend.amount_minor},moneyOk,
       ok:fields.id===backend.id&&fields.currency===backend.currency&&fields.status===backend.status&&parsedVersion===backend.version&&moneyOk});
   }
   const groups=cases.flatMap(c=>Object.entries(c.groups).filter(([name])=>name!=='collar').map(([name,g])=>({currency:c.currency,name,...g})));

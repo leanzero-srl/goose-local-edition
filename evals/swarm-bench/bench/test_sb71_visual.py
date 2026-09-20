@@ -32,6 +32,26 @@ def fetch(url):
 
 
 class PixelAndVersionOracleControls(unittest.TestCase):
+    def test_visible_money_preserves_signed_minor_and_currency(self):
+        source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
+        script = source + r'''
+const cases=[
+ ['91.700','KWD',91700],['KWD 91.700','KWD',91700],['-KWD 91.700','KWD',-91700],['KWD −91.700','KWD',-91700],['(KWD 91.700)','KWD',-91700],
+ ['$1,234.50','USD',123450],['1.234,50 EUR','EUR',123450],['1\u202f234,50 €','EUR',123450],['¥1,234','JPY',1234],['￥0','JPY',0],['€0.01','EUR',1],
+ ['91.70','KWD',null],['¥1.00','JPY',null],['USD 91.700','KWD',null],['$91.700 KWD','KWD',null],['91.700 / 92.700','KWD',null],
+ ['1.234.50','USD',null],['1.234.567','KWD',null],['9KWD1.700','KWD',null],['1,23.45','USD',null],['1e2','JPY',null],['--91.700','KWD',null],['(-91.700)','KWD',null],['9007199254740992','JPY',null]
+];
+for(const [raw,currency,want] of cases){const got=parseVisibleMoney(raw,currency);if(got!==want)throw Error(JSON.stringify({raw,currency,want,got}));}
+if(parseVisibleMoney('-91.700','KWD')===91700)throw Error('Wrong sign accepted');
+console.log('Signed amounts, precision, grouping, currency markers and ambiguous/unsafe negatives verified');
+'''
+        with tempfile.TemporaryDirectory(prefix='sb71-money-controls-') as directory:
+            path = Path(directory) / 'control.mjs'
+            path.write_text(script)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(path)],
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_detailed_oracle_has_each_feature_at_minimum_desktop_size(self):
         bench = Path(__file__).resolve().parent
         source = (bench / 'product_probe_sb71.mjs').read_text()
