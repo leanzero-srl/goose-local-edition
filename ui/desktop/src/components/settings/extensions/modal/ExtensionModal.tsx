@@ -50,7 +50,8 @@ const i18n = defineMessages({
   },
   unsavedChangesMessage: {
     id: 'extensionModal.unsavedChangesMessage',
-    defaultMessage: 'You have unsaved changes to the extension configuration. Are you sure you want to close without saving?',
+    defaultMessage:
+      'You have unsaved changes to the extension configuration. Are you sure you want to close without saving?',
   },
   closeWithoutSaving: {
     id: 'extensionModal.closeWithoutSaving',
@@ -62,8 +63,8 @@ interface ExtensionModalProps {
   title: string;
   initialData: ExtensionFormData;
   onClose: () => void;
-  onSubmit: (formData: ExtensionFormData) => void;
-  onDelete?: (name: string) => void;
+  onSubmit: (formData: ExtensionFormData) => void | Promise<void>;
+  onDelete?: (name: string) => void | Promise<void>;
   submitLabel: string;
   modalType: 'add' | 'edit';
 }
@@ -78,6 +79,8 @@ export default function ExtensionModal({
   modalType,
 }: ExtensionModalProps) {
   const intl = useIntl();
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [formData, setFormData] = useState<ExtensionFormData>(initialData);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -132,6 +135,7 @@ export default function ExtensionModal({
 
   // Handle backdrop close with confirmation if needed
   const handleClose = () => {
+    if (saving) return;
     if (hasFormChanges()) {
       setShowCloseConfirmation(true);
     } else {
@@ -334,9 +338,12 @@ export default function ExtensionModal({
 
   // Handle submit with validation and secret storage
   const handleSubmit = async () => {
+    if (saving) return;
     setSubmitAttempted(true);
+    setSaveError('');
 
     if (isFormValid()) {
+      setSaving(true);
       const finalFormData = {
         ...formData,
         envVars: getFinalEnvVars(),
@@ -361,19 +368,23 @@ export default function ExtensionModal({
                 ? Number(finalFormData.timeout)
                 : finalFormData.timeout,
           };
-          onSubmit(dataToSubmit);
+          await onSubmit(dataToSubmit);
           onClose();
         } else {
-          console.error('Failed to store one or more secrets');
+          setSaveError('Could not save credentials. Your changes are still here; try again.');
         }
       } catch (error) {
-        console.error('Error during submission:', error);
+        setSaveError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setSaving(false);
       }
     }
   };
 
   // Update title based on current state
-  const modalTitle = showDeleteConfirmation ? intl.formatMessage(i18n.deleteExtensionTitle, { name: formData.name }) : title;
+  const modalTitle = showDeleteConfirmation
+    ? intl.formatMessage(i18n.deleteExtensionTitle, { name: formData.name })
+    : title;
 
   return (
     <>
@@ -385,17 +396,13 @@ export default function ExtensionModal({
               {modalTitle}
             </DialogTitle>
             {showDeleteConfirmation && (
-              <DialogDescription>
-                {intl.formatMessage(i18n.deleteDescription)}
-              </DialogDescription>
+              <DialogDescription>{intl.formatMessage(i18n.deleteDescription)}</DialogDescription>
             )}
           </DialogHeader>
 
           {showDeleteConfirmation ? (
             <div className="py-4">
-              <p className="text-text-primary">
-                {intl.formatMessage(i18n.deleteDescription)}
-              </p>
+              <p className="text-text-primary">{intl.formatMessage(i18n.deleteDescription)}</p>
             </div>
           ) : (
             <div className="py-4 space-y-6">
@@ -480,6 +487,11 @@ export default function ExtensionModal({
             </div>
           )}
 
+          {saveError && (
+            <p role="alert" className="text-sm text-lz-err">
+              {saveError}
+            </p>
+          )}
           <DialogFooter className="pt-2">
             {showDeleteConfirmation ? (
               <>
@@ -487,10 +499,18 @@ export default function ExtensionModal({
                   {intl.formatMessage(i18n.cancel)}
                 </Button>
                 <Button
-                  onClick={() => {
-                    if (onDelete) {
-                      onDelete(formData.name);
+                  disabled={saving}
+                  onClick={async () => {
+                    if (!onDelete) return;
+                    setSaving(true);
+                    setSaveError('');
+                    try {
+                      await onDelete(formData.name);
                       onClose();
+                    } catch (error) {
+                      setSaveError(error instanceof Error ? error.message : String(error));
+                    } finally {
+                      setSaving(false);
                     }
                   }}
                   variant="destructive"
@@ -517,7 +537,7 @@ export default function ExtensionModal({
                 <Button
                   data-testid="extension-submit-btn"
                   onClick={handleSubmit}
-                  disabled={!isFormValid()}
+                  disabled={saving || !isFormValid()}
                 >
                   {submitLabel}
                 </Button>

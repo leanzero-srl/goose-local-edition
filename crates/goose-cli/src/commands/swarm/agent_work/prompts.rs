@@ -109,8 +109,8 @@ pub fn orient_system(m: &AgentManifest, tick: u64) -> String {
     };
     format!(
         "You are the ORCHESTRATOR of the desk `{name}` ({title}), tick #{tick}. You do not do the \
-         work yourself: you read what this tick polled, what the ledger already knows and what the \
-         human said, and you decide the LANES — one per item that needs a surgeon — then hand each \
+         work yourself: you read the charter's concrete tasks, what this tick polled, what the ledger \
+         already knows and what the human said, and you decide the LANES — one per item that needs a surgeon — then hand each \
          lane a sharp objective. Every lane costs a node's time, so a lane exists only when its \
          result will be consumed: a draft the desk will post, a fact the ledger lacks, a verification \
          a staged draft needs. Restating what the poll already says is not a lane.\n\n\
@@ -121,9 +121,12 @@ pub fn orient_system(m: &AgentManifest, tick: u64) -> String {
          the human can make, raise an ASK with the exact question and why, and do not lane it. An \
          item already handled on the ledger (a staged or posted draft, an open ask) is DROPPED with \
          that reason, not re-laned.\n\n\
-         Output JSON only: {{summary, lanes:[{{id, surgeon, item, objective, kind}}], asks:[{{question, why}}], \
+         Complete this call with the provided final_output tool using all required fields: \
+         summary, lanes, asks, drop (empty arrays are valid). The runtime stores the plan; do not \
+         search for or write a plan/output file. The output shape is \
+         {{summary, lanes:[{{id, surgeon, item, objective, kind}}], asks:[{{question, why}}], \
          drop:[{{item, why}}], scratchpad}}. `id` is a short kebab-case handle unique in this tick \
-         (e.g. `ithub-4821-access`). `item` names the exact object (ticket key, thread URL, page \
+         (e.g. `demo-4821-access`). `item` names the exact object (ticket key, thread URL, page \
          id). `objective` states what the surgeon must find or draft and the concrete next step. \
          `kind` is research | draft | verify. `scratchpad` is the desk's short running note for the \
          NEXT tick (goal, in flight, facts) — rewrite it whole.",
@@ -158,11 +161,11 @@ pub fn orient_user(
         )
     };
     format!(
-        "THE CHARTER:\n{charter}\n\n---\nSCRATCHPAD (your own note from the previous tick):\n{scratch}\n\n---\nTHE LEDGER (snowballed across ticks):\n{ledger}\n\n---\nNOTES FROM THE HUMAN since the last tick:\n{notes_block}{guards}\n\n---\nTHE POLL — what the desk's read-only scripts returned this tick (this is the inbox; identifiers in it are the ones to use):\n{poll}\n\n---\nDecide the lanes now. JSON only.",
+        "THE CHARTER:\n{charter}\n\n---\nSCRATCHPAD (your own note from the previous tick):\n{scratch}\n\n---\nTHE LEDGER (snowballed across ticks):\n{ledger}\n\n---\nNOTES FROM THE HUMAN since the last tick:\n{notes_block}{guards}\n\n---\nTHE POLL — what the desk's read-only scripts returned this tick (this is the inbox; identifiers in it are the ones to use):\n{poll}\n\n---\nDecide the lanes now, then submit the complete plan through final_output.",
         scratch = if scratchpad.trim().is_empty() { "(empty)" } else { scratchpad.trim() },
         ledger = ledger_block.trim(),
         poll = if poll_text.trim().is_empty() {
-            "(the poll returned nothing — say so in the summary and plan no lanes unless a note or an answered ask needs one)"
+            "(the poll returned nothing — an unfinished concrete task in the charter, a human note or an answered ask can still need a lane. Check the ledger first: do not repeat completed work or invent work from general operating rules. If none needs action, return no lanes.)"
         } else {
             poll_text.trim()
         },
@@ -233,7 +236,12 @@ pub fn lane_system(m: &AgentManifest, surgeon: Option<&Surgeon>, surgeon_charter
          counts only after the same probe is shown to find something on that object. A number you did \
          not measure this call is not evidence.\n\n\
          YOUR CHARTER:\n{charter}\n\n\
-         Output JSON only: {{homework, finding, draft:{{target, kind, body}}?, ask?, route?, confidence, evidence, next_step}}.\n\
+         Finish with the provided final_output tool: supply homework, finding, confidence, evidence \
+         and next_step, plus draft/ask/route only when needed. The runtime records your answer \
+         automatically. There is no output or handoff file to find or create; \
+         .swarm is runtime bookkeeping. Once the requested evidence is collected, submit the result \
+         and stop. The output shape is \
+         {{homework, finding, draft:{{target, kind, body}}?, ask?, route?, confidence, evidence, next_step}}.\n\
          - homework: what you ran and what it returned, with the exact identifiers.\n\
          - finding: the conclusion, one paragraph, specific.\n\
          - draft: ONLY when the objective asked for one. `target` is the exact object (ticket key, \
@@ -266,7 +274,7 @@ pub fn lane_user(
     poll_excerpt: &str,
 ) -> String {
     format!(
-        "THE DESK CHARTER (binding):\n{charter}\n\n---\nTHE LEDGER SO FAR:\n{ledger}\n\n---\nYOUR ITEM: {item}\nKIND: {kind}\nOBJECTIVE: {objective}\n\n---\nWHAT THE POLL SAID ABOUT IT (excerpt):\n{poll}\n\n---\nDo the homework now, then answer. JSON only.",
+        "THE DESK CHARTER (binding):\n{charter}\n\n---\nTHE LEDGER SO FAR:\n{ledger}\n\n---\nYOUR ITEM: {item}\nKIND: {kind}\nOBJECTIVE: {objective}\n\n---\nWHAT THE POLL SAID ABOUT IT (excerpt):\n{poll}\n\n---\nDo the homework, then submit all required fields through final_output. The runtime saves the handoff.",
         charter = desk_charter.trim(),
         ledger = ledger_block.trim(),
         item = lane.item,
@@ -488,20 +496,20 @@ mod tests {
 
     #[test]
     fn poll_excerpt_keeps_the_lines_about_the_item_with_context() {
-        let poll = "a\nb\nITHUB-4821 needs access\nc\nd\ne\nf\nITHUB-9 other\n";
-        let ex = poll_excerpt_for(poll, "ITHUB-4821 access");
-        assert!(ex.contains("ITHUB-4821 needs access"));
+        let poll = "a\nb\nDEMO-4821 needs access\nc\nd\ne\nf\nDEMO-9 other\n";
+        let ex = poll_excerpt_for(poll, "DEMO-4821 access");
+        assert!(ex.contains("DEMO-4821 needs access"));
         assert!(ex.contains("a\n"));
         assert!(ex.contains("d"));
-        assert!(!ex.contains("ITHUB-9 other"));
+        assert!(!ex.contains("DEMO-9 other"));
         assert!(poll_excerpt_for(poll, "x").is_empty());
     }
 
     #[test]
     fn every_prompt_carries_this_ticks_facts_not_a_template() {
-        let m: AgentManifest = serde_yaml::from_str(&AgentManifest::starter("axpo")).unwrap();
+        let m: AgentManifest = serde_yaml::from_str(&AgentManifest::starter("demo")).unwrap();
         let s = orient_system(&m, 7);
-        assert!(s.contains("`axpo`"));
+        assert!(s.contains("`demo`"));
         assert!(s.contains("tick #7"));
         let u = orient_user(
             "CHARTER-TEXT",
@@ -514,6 +522,28 @@ mod tests {
         for needle in ["CHARTER-TEXT", "LEDGER", "note one", "POLL-ROW"] {
             assert!(u.contains(needle), "{needle}");
         }
+        let empty_inbox = orient_user(
+            "Read https://example.com/source",
+            "",
+            "No prior work",
+            &[],
+            "",
+            &[],
+        );
+        assert!(empty_inbox.contains("Read https://example.com/source"));
+        assert!(empty_inbox.contains("unfinished concrete task in the charter"));
+        assert!(!empty_inbox.contains("plan no lanes unless"));
+        let lane = lane_system(&m, None, "Read the assigned page");
+        for (prompt, schema) in [(&s, orient_schema()), (&lane, lane_schema())] {
+            assert!(prompt.contains("final_output"));
+            for field in schema["required"].as_array().unwrap() {
+                assert!(
+                    prompt.contains(field.as_str().unwrap()),
+                    "missing output field {field}"
+                );
+            }
+        }
+        assert!(lane.contains("There is no output or handoff file to find or create"));
         assert!(lens_system(&m, "voice").contains("VOICE"));
         assert!(lens_system(&m, "gdpr").contains("GDPR lens"));
     }

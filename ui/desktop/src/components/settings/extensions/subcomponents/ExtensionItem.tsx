@@ -6,6 +6,10 @@ import { FixedExtensionEntry } from '../../../ConfigContext';
 import { getSubtitle, getFriendlyTitle } from './ExtensionList';
 import { Card, CardHeader, CardTitle, CardContent, CardAction } from '../../../ui/card';
 import { defineMessages, useIntl } from '../../../../i18n';
+import { inspectConfigExtension } from '../../../../acp/extensions';
+import { McpCapabilities } from '../../../extensions/McpCapabilities';
+import { Button } from '../../../lz';
+import type { McpToolInfo } from '../../../../types/mcpSetup';
 
 const i18n = defineMessages({
   configureExtension: {
@@ -36,12 +40,15 @@ export default function ExtensionItem({
   const [visuallyEnabled, setVisuallyEnabled] = useState(extension.enabled);
   // Track if we're in the process of toggling
   const [isToggling, setIsToggling] = useState(false);
+  const [error, setError] = useState('');
+  const [tools, setTools] = useState<McpToolInfo[] | null>(null);
 
   const handleToggle = async (ext: FixedExtensionEntry) => {
     // Prevent multiple toggles while one is in progress
     if (isToggling) return;
 
     setIsToggling(true);
+    setError('');
 
     // Immediately update visual state
     const newState = !ext.enabled;
@@ -49,9 +56,11 @@ export default function ExtensionItem({
 
     try {
       // Call the actual toggle function that performs the async operation
-      await onToggle(ext);
+      const result = await onToggle(ext);
+      if (result === false) throw new Error('The extension could not be updated.');
       // Success case is handled by the useEffect below when extension.enabled changes
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       // If there was an error, revert the visual state
       setVisuallyEnabled(!newState);
     } finally {
@@ -71,8 +80,12 @@ export default function ExtensionItem({
     return (
       <>
         {description && <span>{description}</span>}
-        {description && command && <br />}
-        {command && <span className="font-mono text-xs">{command}</span>}
+        {command && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium">Connection details</summary>
+            <code className="mt-2 block break-all text-xs">{command}</code>
+          </details>
+        )}
       </>
     );
   };
@@ -119,6 +132,30 @@ export default function ExtensionItem({
       </CardHeader>
       <CardContent className="px-4 overflow-hidden text-sm break-words text-text-secondary">
         {renderSubtitle()}
+        {['stdio', 'sse', 'streamable_http'].includes(extension.type) && (
+          <div className="mt-4 space-y-3">
+            <Button
+              onClick={async () => {
+                setError('');
+                setTools(null);
+                try {
+                  const result = await inspectConfigExtension(extension.name);
+                  setTools(result.tools as unknown as McpToolInfo[]);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                }
+              }}
+            >
+              Test connection & discover tools
+            </Button>
+            {tools && <McpCapabilities tools={tools} />}
+          </div>
+        )}
+        {error && (
+          <p role="alert" className="mt-2 text-status-error">
+            {error}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

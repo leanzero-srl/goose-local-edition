@@ -79,14 +79,14 @@ describe('createSession ACP session extensions', () => {
     });
   });
 
-  it('falls back to enabled configured extensions when extension configs are empty', async () => {
+  it('honors an explicitly empty extension selection', async () => {
     await createSession('/tmp', {
       extensionConfigs: [],
       allExtensions: [configuredExtension('developer', true), configuredExtension('memory', false)],
     });
 
-    expect(mockedGetConfiguredGooseExtensions).toHaveBeenCalledOnce();
-    expect(mockedCreateAcpSession).toHaveBeenCalledWith('/tmp', [gooseExtension('developer')], {
+    expect(mockedGetConfiguredGooseExtensions).not.toHaveBeenCalled();
+    expect(mockedCreateAcpSession).toHaveBeenCalledWith('/tmp', [], {
       recipeDeeplink: undefined,
       recipeId: undefined,
     });

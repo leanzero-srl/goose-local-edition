@@ -3168,7 +3168,7 @@ verbatim:
 ```
 ### Global Hints
 <!-- goose:import claude-code hash=2ec7165db11dc541 -->
-## Wolfaenpak Atlassian is a TEST environment (GLOBAL — set by the user 2026-07-13)
+## Demo sandbox Atlassian is a TEST environment (GLOBAL — set by the user 2026-07-13)
 ## Autonomy — MANDATORY rules (ALL projects, no exceptions)
 ## Production config on a CLIENT system — MANDATORY rules
 ## Verifying test results — MANDATORY rules

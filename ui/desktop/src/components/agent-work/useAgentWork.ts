@@ -1,16 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { foldDesk, type AgentWorkRead, type AgentWorkRosterRow, type DeskModel } from './agentWorkModel';
+import {
+  foldDesk,
+  type AgentWorkRead,
+  type AgentWorkRosterRow,
+  type DeskModel,
+} from './agentWorkModel';
 
 /** The roster: every registered agent dir with its manifest, state and liveness. */
 export function useAgentRoster(intervalMs = 5_000) {
   const [rows, setRows] = useState<AgentWorkRosterRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const r = await window.electron.agentWorkList();
       setRows(r);
+      setError(null);
     } catch (e) {
-      console.error('agent-work-list failed', e);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoaded(true);
     }
@@ -20,7 +27,7 @@ export function useAgentRoster(intervalMs = 5_000) {
     const id = setInterval(refresh, intervalMs);
     return () => clearInterval(id);
   }, [refresh, intervalMs]);
-  return { rows, loaded, refresh };
+  return { rows, loaded, error, refresh };
 }
 
 /**
@@ -31,14 +38,14 @@ export function useDesk(dir: string | null) {
   const [read, setRead] = useState<AgentWorkRead | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
-  const inflight = useRef(false);
+  const inflight = useRef(new Set<string>());
   const dirRef = useRef(dir);
   dirRef.current = dir;
 
   const refresh = useCallback(async () => {
     const d = dirRef.current;
-    if (!d || inflight.current) return;
-    inflight.current = true;
+    if (!d || inflight.current.has(d)) return;
+    inflight.current.add(d);
     try {
       const r = await window.electron.agentWorkRead(d);
       if (dirRef.current === d) {
@@ -46,14 +53,15 @@ export function useDesk(dir: string | null) {
         setError(null);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (dirRef.current === d) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      inflight.current = false;
+      inflight.current.delete(d);
     }
   }, []);
 
   useEffect(() => {
     setRead(null);
+    setError(null);
     if (!dir) return;
     refresh();
   }, [dir, refresh]);

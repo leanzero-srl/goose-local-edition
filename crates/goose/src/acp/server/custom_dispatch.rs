@@ -173,6 +173,14 @@ impl GooseAcpAgent {
         self.on_delete_session(req).await
     }
 
+    #[custom_method(InspectConfigExtensionRequest)]
+    async fn dispatch_inspect_config_extension(
+        &self,
+        req: InspectConfigExtensionRequest,
+    ) -> Result<InspectConfigExtensionResponse, agent_client_protocol::Error> {
+        self.on_inspect_config_extension(req).await
+    }
+
     #[custom_method(GetConfigExtensionsRequest)]
     async fn dispatch_get_config_extensions(
         &self,

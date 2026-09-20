@@ -1,9 +1,31 @@
+import { AgentResults } from './AgentResults';
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, FolderPlus, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
-import { Button, Chip, EmptyState, KeyValue, PageHeader, Panel, StatusDot, SURFACE, TNUM, TYPE, WEIGHT, cx, nodeClasses, type Tone } from '../lz';
+import {
+  Button,
+  Chip,
+  EmptyState,
+  KeyValue,
+  PageHeader,
+  Panel,
+  StatusDot,
+  SURFACE,
+  TNUM,
+  TYPE,
+  WEIGHT,
+  cx,
+  nodeClasses,
+  type Tone,
+} from '../lz';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
-import { countdown, liveness, scheduleLine, type AgentWorkRosterRow, type DeskModel } from './agentWorkModel';
+import {
+  countdown,
+  liveness,
+  scheduleLine,
+  type AgentWorkRosterRow,
+  type DeskModel,
+} from './agentWorkModel';
 import { useAgentRoster, useDesk } from './useAgentWork';
 import { TickClock } from './TickClock';
 import { LaneBoard, nodeIndexOf } from './LaneBoard';
@@ -30,7 +52,8 @@ export default function AgentWorkView() {
 
   useEffect(() => {
     if (!selected && roster.rows.length > 0) setSelected(roster.rows[0].dir);
-    if (selected && roster.loaded && !roster.rows.some((r) => r.dir === selected)) setSelected(roster.rows[0]?.dir ?? null);
+    if (selected && roster.loaded && !roster.rows.some((r) => r.dir === selected))
+      setSelected(roster.rows[0]?.dir ?? null);
   }, [roster.rows, roster.loaded, selected]);
 
   const act = useCallback(
@@ -39,11 +62,17 @@ export default function AgentWorkView() {
       setNotice(null);
       try {
         const r = await fn();
-        if (typeof r === 'object' && !r.ok) setNotice(r.error ?? 'that did not work');
+        if (r === false || (typeof r === 'object' && !r.ok))
+          throw new Error(
+            typeof r === 'object'
+              ? (r.error ?? 'The action could not be completed.')
+              : 'The action could not be completed.'
+          );
         await desk.refresh();
         await roster.refresh();
       } catch (e) {
         setNotice(e instanceof Error ? e.message : String(e));
+        throw e;
       } finally {
         setBusy(false);
       }
@@ -61,48 +90,115 @@ export default function AgentWorkView() {
   return (
     <MainPanelLayout>
       <div className={cx('flex min-h-0 flex-1 flex-col', SURFACE.page)}>
-        <div className={cx('border-b px-lz-page pb-5 pt-16', SURFACE.hairline)}>
+        <div className={cx('border-b px-lz-page pb-5 pt-6', SURFACE.hairline)}>
           <PageHeader
             className="page-transition"
             title="Agent Work"
-            subtitle={<span className="block max-w-[80ch]">Desks that tick: poll, investigate across your nodes, keep a ledger and a scratchpad, draft, get attacked by reviewers, and post through one gated script — asking you when only you can decide.</span>}
+            subtitle={
+              <span>
+                Give agents recurring assignments. Follow their research, read the results, and
+                review decisions in one workspace.
+              </span>
+            }
             actions={
               <div className="flex items-center gap-2">
-                <Button variant="ghost" icon={<RefreshCw />} onClick={async () => { await Promise.all([roster.refresh(), desk.refresh()]); }} disabled={busy}>Refresh</Button>
-                <Button variant="secondary" icon={<FolderPlus />} onClick={addExisting} disabled={busy}>Add existing</Button>
-                <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)} disabled={busy}>New agent</Button>
+                <Button
+                  variant="ghost"
+                  icon={<RefreshCw />}
+                  onClick={async () => {
+                    await Promise.all([roster.refresh(), desk.refresh()]);
+                  }}
+                  disabled={busy}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  variant="secondary"
+                  icon={<FolderPlus />}
+                  onClick={addExisting}
+                  disabled={busy}
+                >
+                  Add existing
+                </Button>
+                <Button
+                  variant="primary"
+                  icon={<Plus />}
+                  onClick={() => setCreating(true)}
+                  disabled={busy}
+                >
+                  New agent
+                </Button>
               </div>
             }
           />
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-0">
-          <aside className={cx('flex min-h-0 flex-col overflow-auto border-r', SURFACE.hairline)} aria-label="Agents">
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-0">
+          <aside
+            className={cx(
+              'flex min-h-0 max-h-40 md:max-h-none flex-col overflow-auto border-r',
+              SURFACE.hairline
+            )}
+            aria-label="Agents"
+          >
             {roster.loaded && roster.rows.length === 0 ? (
-              <div className="p-4"><EmptyState icon={<Bot />} title="No agents yet" body="Create one, or add a directory that already has an agent.yaml." /></div>
+              <div className="p-4">
+                <EmptyState
+                  icon={<Bot />}
+                  title="No agents yet"
+                  body="Create one, or add a directory that already has an agent.yaml."
+                />
+              </div>
             ) : (
               <ul className="flex flex-col gap-px p-2" data-testid="agent-roster">
                 {roster.rows.map((r) => (
-                  <RosterCard key={r.dir} row={r} active={r.dir === selected} now={desk.now} onClick={() => setSelected(r.dir)} />
+                  <RosterCard
+                    key={r.dir}
+                    row={r}
+                    active={r.dir === selected}
+                    now={desk.now}
+                    onClick={() => setSelected(r.dir)}
+                  />
                 ))}
               </ul>
             )}
           </aside>
           <main className="flex min-h-0 flex-col gap-4 overflow-auto p-lz-page">
-            {notice && <div className={cx('rounded-lz-control bg-lz-err-solid px-3 py-2 text-lz-body text-white', WEIGHT.medium)} role="alert">{notice}</div>}
+            {roster.error && (
+              <p role="alert" className="text-lz-err">
+                {roster.error}
+              </p>
+            )}
+            {notice && (
+              <div
+                className={cx(
+                  'rounded-lz-control bg-lz-err-solid px-3 py-2 text-lz-body text-white',
+                  WEIGHT.medium
+                )}
+                role="alert"
+              >
+                {notice}
+              </div>
+            )}
             {!selected || !desk.model || !desk.read ? (
-              selected ? <p className={TYPE.bodyMuted}>{desk.error ?? 'reading the desk…'}</p> : null
+              selected ? (
+                <p className={TYPE.bodyMuted}>{desk.error ?? 'reading the desk…'}</p>
+              ) : null
             ) : (
               <Desk
+                key={selected}
                 dir={selected}
                 model={desk.model}
                 read={desk.read}
                 busy={busy}
                 onStart={() => act(() => window.electron.agentWorkStart(selected, false))}
+                onRunOnce={() => act(() => window.electron.agentWorkStart(selected, true))}
                 onStop={() => act(() => window.electron.agentWorkStop(selected, true))}
                 onTickNow={() => act(() => window.electron.agentWorkTickNow(selected))}
                 onPause={(p) => act(() => window.electron.agentWorkSetPaused(selected, p))}
                 onNote={(t) => act(() => window.electron.agentWorkNote(selected, t))}
-                onDecide={async (id, decision, text) => { await act(() => window.electron.agentWorkDecide(selected, id, decision, text)); }}
+                onDecide={async (id, decision, text) => {
+                  await act(() => window.electron.agentWorkDecide(selected, id, decision, text));
+                }}
                 onRemove={() => setRemoving(selected)}
               />
             )}
@@ -135,19 +231,42 @@ export default function AgentWorkView() {
   );
 }
 
-function RosterCard({ row, active, now, onClick }: { row: AgentWorkRosterRow; active: boolean; now: number; onClick: () => void }) {
+function RosterCard({
+  row,
+  active,
+  now,
+  onClick,
+}: {
+  row: AgentWorkRosterRow;
+  active: boolean;
+  now: number;
+  onClick: () => void;
+}) {
   const live = liveness(row.pid, row.heartbeatMs, now);
   const st = row.state;
   const next = st?.next_tick_at && live !== 'stopped' ? Date.parse(st.next_tick_at) - now : null;
   const name = row.manifest?.title || row.manifest?.name || row.dir.split('/').pop() || row.dir;
-  const status = live === 'stopped' ? 'stopped' : live === 'stale' ? 'stale' : (st?.status ?? 'unknown');
+  const status =
+    live === 'stopped' ? 'stopped' : live === 'stale' ? 'stale' : (st?.status ?? 'unknown');
   const needs = live !== 'stopped' || st ? '' : '';
   return (
     <li>
-      <button type="button" onClick={onClick} aria-current={active ? 'true' : undefined} className={cx('flex w-full flex-col gap-1 rounded-lz-control px-3 py-2.5 text-left', active ? 'bg-lz-accent text-lz-accent-ink' : 'hover:bg-lz-surface-2')}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={active ? 'true' : undefined}
+        className={cx(
+          'flex w-full flex-col gap-1 rounded-lz-control px-3 py-2.5 text-left',
+          active ? 'bg-lz-accent text-lz-accent-ink' : 'hover:bg-lz-surface-2'
+        )}
+      >
         <div className="flex items-center gap-2">
           <StatusDot tone={LIVE_TONE[live]} live={status === 'ticking'} label="" />
-          <span className={cx(TYPE.body, WEIGHT.semibold, 'truncate', active && 'text-lz-accent-ink')}>{name}</span>
+          <span
+            className={cx(TYPE.body, WEIGHT.semibold, 'truncate', active && 'text-lz-accent-ink')}
+          >
+            {name}
+          </span>
           {!row.exists && <Chip tone="err">no agent.yaml</Chip>}
         </div>
         <div className={cx(TYPE.meta, TNUM, active && 'text-lz-accent-ink')}>
@@ -155,27 +274,55 @@ function RosterCard({ row, active, now, onClick }: { row: AgentWorkRosterRow; ac
           {status === 'ticking' && st ? ` · tick ${st.tick} · ${st.phase}` : ''}
           {next != null && status !== 'ticking' ? ` · next ${countdown(next)}` : ''}
         </div>
-        <div className={cx(TYPE.meta, 'truncate', active && 'text-lz-accent-ink')}>{scheduleLine(row.manifest)}{needs}</div>
+        <div className={cx(TYPE.meta, 'truncate', active && 'text-lz-accent-ink')}>
+          {scheduleLine(row.manifest)}
+          {needs}
+        </div>
       </button>
     </li>
   );
 }
 
-function Desk({ dir, model, read, busy, onStart, onStop, onTickNow, onPause, onNote, onDecide, onRemove }: {
+function Desk({
+  dir,
+  model,
+  read,
+  busy,
+  onStart,
+  onRunOnce,
+  onStop,
+  onTickNow,
+  onPause,
+  onNote,
+  onDecide,
+  onRemove,
+}: {
   dir: string;
   model: DeskModel;
   read: NonNullable<ReturnType<typeof useDesk>['read']>;
   busy: boolean;
   onStart: () => void;
+  onRunOnce: () => void;
   onStop: () => void;
   onTickNow: () => void;
   onPause: (p: boolean) => void;
-  onNote: (t: string) => void;
+  onNote: (t: string) => Promise<void>;
   onDecide: (id: string, decision: string, text: string) => Promise<void>;
   onRemove: () => void;
 }) {
   const [lane, setLane] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState('');
   const [note, setNote] = useState('');
+  const sendNote = async () => {
+    if (busy || !note.trim()) return;
+    setNoteError('');
+    try {
+      await onNote(note.trim());
+      setNote('');
+    } catch (e) {
+      setNoteError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const m = read.manifest;
   const title = m?.title || m?.name || dir;
   return (
@@ -183,23 +330,45 @@ function Desk({ dir, model, read, busy, onStart, onStop, onTickNow, onPause, onN
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className={TYPE.h1}>{title}</h2>
-          <p className={cx(TYPE.meta, 'mt-1')}>{scheduleLine(m)} · {dir}</p>
+          <p className={cx(TYPE.meta, 'mt-1')}>
+            {scheduleLine(m)} · {dir}
+          </p>
         </div>
-        <Button variant="ghost" size="sm" icon={<Trash2 />} onClick={onRemove} disabled={busy}>Remove from roster</Button>
+        <Button variant="ghost" size="sm" icon={<Trash2 />} onClick={onRemove} disabled={busy}>
+          Remove from roster
+        </Button>
       </div>
       <Panel padded>
-        <TickClock model={model} busy={busy} onStart={onStart} onStop={onStop} onTickNow={onTickNow} onPause={onPause} />
+        <TickClock
+          model={model}
+          busy={busy}
+          onStart={onStart}
+          onRunOnce={onRunOnce}
+          onStop={onStop}
+          onTickNow={onTickNow}
+          onPause={onPause}
+        />
       </Panel>
-      <div className="grid grid-cols-[1fr_380px] gap-4">
+      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_340px] gap-4">
         <div className="flex min-h-0 flex-col gap-4">
+          <AgentResults model={model} />
           <LaneBoard model={model} dir={dir} selected={lane} onSelect={setLane} />
           <LedgerPanel model={model} read={read} />
         </div>
         <div className="flex flex-col gap-4">
-          <NeedsYou model={model} onDecide={onDecide} requiresApproval={(m?.post?.approval ?? 'human') === 'human'} hasPostCommand={Boolean(m?.post?.command)} />
+          <NeedsYou
+            model={model}
+            onDecide={onDecide}
+            requiresApproval={(m?.post?.approval ?? 'human') === 'human'}
+            hasPostCommand={Boolean(m?.post?.command)}
+          />
           <Panel title="Nodes" count={model.nodes.length} padded={false}>
             {model.nodes.length === 0 ? (
-              <p className={cx(TYPE.bodyMuted, 'p-4')}>{model.liveness === 'stopped' ? 'The fleet is resolved when the desk starts.' : 'No node resolved — read the engine log below.'}</p>
+              <p className={cx(TYPE.bodyMuted, 'p-4')}>
+                {model.liveness === 'stopped'
+                  ? 'The fleet is resolved when the desk starts.'
+                  : 'No node resolved — read the engine log below.'}
+              </p>
             ) : (
               <ul className="divide-y divide-lz-border" data-testid="node-list">
                 {model.nodes.map((n) => (
@@ -207,25 +376,64 @@ function Desk({ dir, model, read, busy, onStart, onStop, onTickNow, onPause, onN
                     <div className="flex items-center gap-2">
                       <Chip node={nodeIndexOf(model, n.model_id)}>{n.model_id}</Chip>
                       {n.supervision && <Chip tone="secondary">orchestrator</Chip>}
-                      <span className={cx(TYPE.meta, TNUM, 'ml-auto')}>{n.running.length}/{n.weight} busy</span>
+                      <span className={cx(TYPE.meta, TNUM, 'ml-auto')}>
+                        {n.running.length}/{n.weight} busy
+                      </span>
                     </div>
                     <div className="flex gap-1">
                       {Array.from({ length: n.weight }).map((_, i) => (
-                        <span key={i} className={cx('h-2 flex-1 rounded-lz-pill', i < n.running.length ? nodeClasses(nodeIndexOf(model, n.model_id), 'dot') : 'bg-lz-surface-2')} />
+                        <span
+                          key={i}
+                          className={cx(
+                            'h-2 flex-1 rounded-lz-pill',
+                            i < n.running.length
+                              ? nodeClasses(nodeIndexOf(model, n.model_id), 'dot')
+                              : 'bg-lz-surface-2'
+                          )}
+                        />
                       ))}
                     </div>
-                    {n.running.map((l) => <div key={l.key} className={cx(TYPE.meta, 'truncate')}>{l.kind === 'lens' ? `${l.laneId} · ${l.lens} lens` : l.item || l.laneId} — {l.liveLine || '…'}</div>)}
+                    {n.running.map((l) => (
+                      <div key={l.key} className={cx(TYPE.meta, 'truncate')}>
+                        {l.kind === 'lens' ? `${l.laneId} · ${l.lens} lens` : l.item || l.laneId} —{' '}
+                        {l.liveLine || '…'}
+                      </div>
+                    ))}
                   </li>
                 ))}
               </ul>
             )}
           </Panel>
           <Panel title="Tell the desk" padded>
-            <p className={cx(TYPE.bodyMuted, 'mb-2')}>A note the orchestrator reads at its next tick — a hold, a steer, a fact it lacks.</p>
+            <p className={cx(TYPE.bodyMuted, 'mb-2')}>
+              A note the orchestrator reads at its next tick — a hold, a steer, a fact it lacks.
+            </p>
             <div className="flex gap-2">
-              <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && note.trim()) { onNote(note.trim()); setNote(''); } }} aria-label="Note to the desk" placeholder="hold ITHUB-4821 until Jake answers" className="h-8 min-w-0 flex-1 rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink" />
-              <Button variant="primary" size="sm" icon={<Send />} disabled={busy || !note.trim()} onClick={() => { onNote(note.trim()); setNote(''); }}>Send</Button>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void sendNote();
+                }}
+                aria-label="Note to the desk"
+                placeholder="Focus the next run on the sources I shared"
+                className="h-8 min-w-0 flex-1 rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink"
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Send />}
+                disabled={busy || !note.trim()}
+                onClick={sendNote}
+              >
+                Send
+              </Button>
             </div>
+            {noteError && (
+              <p role="alert" className="mt-2 text-sm text-lz-err">
+                {noteError}
+              </p>
+            )}
           </Panel>
           <Panel title="This desk" padded>
             <KeyValue
@@ -234,17 +442,37 @@ function Desk({ dir, model, read, busy, onStart, onStop, onTickNow, onPause, onN
                 { key: 'ticks', label: 'Ticks', value: String(model.totals.ticks) },
                 { key: 'lanes', label: 'Lanes run', value: String(model.totals.lanes) },
                 { key: 'staged', label: 'Drafts staged', value: String(model.totals.staged) },
-                { key: 'posted', label: 'Posted', value: String(model.totals.posted), tone: model.totals.posted > 0 ? 'ok' : undefined },
+                {
+                  key: 'posted',
+                  label: 'Posted',
+                  value: String(model.totals.posted),
+                  tone: model.totals.posted > 0 ? 'ok' : undefined,
+                },
                 { key: 'asks', label: 'Asks raised', value: String(model.totals.asks) },
                 { key: 'cost', label: 'Lane-minutes', value: model.totals.laneMinutes.toFixed(1) },
-                { key: 'planner', label: 'Orchestrator model', value: read.state?.planner_model || '—', mono: true },
-                { key: 'last', label: 'Last tick', value: model.lastTick ? `#${model.lastTick.tick} ${model.lastTick.outcome} — ${model.lastTick.summary}` : '—' },
+                {
+                  key: 'planner',
+                  label: 'Orchestrator model',
+                  value: read.state?.planner_model || '—',
+                  mono: true,
+                },
+                {
+                  key: 'last',
+                  label: 'Last tick',
+                  value: model.lastTick
+                    ? `#${model.lastTick.tick} ${model.lastTick.outcome} — ${model.lastTick.summary}`
+                    : '—',
+                },
               ]}
             />
           </Panel>
           {read.engineLog.trim() && (
             <Panel title="Engine log" padded>
-              <pre className={cx(TYPE.mono, 'max-h-48 overflow-auto whitespace-pre-wrap break-words')}>{read.engineLog.trim().split('\n').slice(-40).join('\n')}</pre>
+              <pre
+                className={cx(TYPE.mono, 'max-h-48 overflow-auto whitespace-pre-wrap break-words')}
+              >
+                {read.engineLog.trim().split('\n').slice(-40).join('\n')}
+              </pre>
             </Panel>
           )}
         </div>

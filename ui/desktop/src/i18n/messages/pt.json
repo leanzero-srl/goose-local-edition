@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Redefinir Provedor e Modelo"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "Trabalho dos agentes"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

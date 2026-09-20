@@ -108,7 +108,7 @@ pub struct SearchHit {
     /// 233 entries): "Bulk-transition those 159 tickets on prod to Done." (159 df 3, bulk 6,
     /// transition 4 | tickets 15, prod 71; topic 159) recalled nothing while
     /// `ask-before-client-prod-config` (4/6 — 159, bulk, prod, tickets — "PRODUCTION" in its headline,
-    /// 12.9, the top hit) says "159 real Siemens access-request tickets on the client's production
+    /// 12.9, the top hit) says "159 real customer access-request tickets on the client's production
     /// Jira … bulk edits — all of it". The two guards, each with its receipt: "Does the 30-day session
     /// token idle out?" says "30" (df 48 — the day of every dated note, "2026-07-30"), which would
     /// name `blocked-resource-stay-alive-alert-loudly` ("Set 2026-07-30 … mid-session … an expired

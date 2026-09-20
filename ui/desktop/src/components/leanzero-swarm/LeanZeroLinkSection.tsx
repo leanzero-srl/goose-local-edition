@@ -78,7 +78,7 @@ function emailOf(auth: AuthState): string {
   return 'email' in auth ? auth.email : '';
 }
 
-/** `mihai@wolfaenpak.com` → `m****@wolfaenpak.com`. Never invents; empty stays empty. */
+/** `user@example.com` → `u***@example.com`. Never invents; empty stays empty. */
 function maskEmail(email: string): string {
   const at = email.indexOf('@');
   if (at <= 0) return email;

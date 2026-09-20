@@ -347,7 +347,7 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
-/// that is not one — every other fact degrades to "flag omitted" with a warning.
+/// that is not one, or when checkpoint parser metadata cannot be read.
 pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<Vec<String>> {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
     let mut argv = settings.spawn_command.clone();
@@ -386,6 +386,7 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<
         argv.push(top_k.to_string());
     }
 
+    crate::model_parsers::append_checkpoint_parser_flags(&model_path, &mut argv)?;
     let facts = inspect_model_dir(&model_path);
     let speculative = profile
         .speculative

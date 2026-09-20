@@ -68,7 +68,7 @@ function codeSent(secondsAhead = 300): LinkState {
   return {
     auth: {
       state: 'codeSent',
-      email: 'mihai@wolfaenpak.com',
+      email: 'user@example.com',
       expiresAt: new Date(Date.now() + secondsAhead * 1000).toISOString(),
     },
     nodeCount: 0,
@@ -76,12 +76,12 @@ function codeSent(secondsAhead = 300): LinkState {
 }
 
 const LOGGED_IN: LinkState = {
-  auth: { state: 'loggedIn', email: 'mihai@wolfaenpak.com' },
+  auth: { state: 'loggedIn', email: 'user@example.com' },
   nodeCount: 0,
 };
 
 const CONNECTED: LinkState = {
-  auth: { state: 'connected', email: 'mihai@wolfaenpak.com', meshIp: '100.64.0.1' },
+  auth: { state: 'connected', email: 'user@example.com', meshIp: '100.64.0.1' },
   mesh: {
     selfIp: '100.64.0.1',
     selfHostname: 'works-mac-studio',
@@ -187,7 +187,7 @@ describe('LeanZeroLinkSection — each AuthState renders its card', () => {
     currentState = codeSent(300);
     render();
     expect(await screen.findByTestId('link-code-input')).toBeInTheDocument();
-    expect(screen.getByTestId('link-masked-email')).toHaveTextContent('m****@wolfaenpak.com');
+    expect(screen.getByTestId('link-masked-email')).toHaveTextContent('u***@example.com');
     expect(screen.getByTestId('link-countdown').textContent).toMatch(/^[45]:\d\d$/);
   });
 
@@ -199,7 +199,7 @@ describe('LeanZeroLinkSection — each AuthState renders its card', () => {
   });
 
   it('connecting renders the benchmark connecting state', async () => {
-    currentState = { auth: { state: 'connecting', email: 'mihai@wolfaenpak.com' }, nodeCount: 0 };
+    currentState = { auth: { state: 'connecting', email: 'user@example.com' }, nodeCount: 0 };
     render();
     expect(await screen.findByTestId('link-connecting')).toBeInTheDocument();
     expect(screen.getByText(/joining your private mesh/i)).toBeInTheDocument();
@@ -220,13 +220,13 @@ describe('LeanZeroLinkSection — login flow', () => {
     render();
     await screen.findByTestId('link-login-card');
 
-    mockRequestCode.mockResolvedValue({ email: 'mihai@wolfaenpak.com', expiresInSeconds: 300 });
+    mockRequestCode.mockResolvedValue({ email: 'user@example.com', expiresInSeconds: 300 });
     currentState = codeSent(300);
 
-    await userEvent.type(screen.getByTestId('link-email-input'), 'mihai@wolfaenpak.com');
+    await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');
     await userEvent.click(screen.getByTestId('link-send-code'));
 
-    expect(mockRequestCode).toHaveBeenCalledWith('mihai@wolfaenpak.com');
+    expect(mockRequestCode).toHaveBeenCalledWith('user@example.com');
     expect(await screen.findByTestId('link-code-input')).toBeInTheDocument();
     expect(screen.getByTestId('link-countdown').textContent).toMatch(/^[45]:\d\d$/);
   });
@@ -238,7 +238,7 @@ describe('LeanZeroLinkSection — login flow', () => {
 
     mockVerify.mockResolvedValue({
       state: 'loggedIn',
-      email: 'mihai@wolfaenpak.com',
+      email: 'user@example.com',
       audienceSync: 'synced',
     });
     currentState = LOGGED_IN;
@@ -246,7 +246,7 @@ describe('LeanZeroLinkSection — login flow', () => {
     await userEvent.type(screen.getByTestId('link-code-input'), '123456');
     await userEvent.click(screen.getByTestId('link-verify'));
 
-    expect(mockVerify).toHaveBeenCalledWith('mihai@wolfaenpak.com', '123456');
+    expect(mockVerify).toHaveBeenCalledWith('user@example.com', '123456');
     expect(await screen.findByTestId('link-connect-card')).toBeInTheDocument();
   });
 
@@ -257,7 +257,7 @@ describe('LeanZeroLinkSection — login flow', () => {
 
     mockVerify.mockResolvedValue({
       state: 'loggedIn',
-      email: 'mihai@wolfaenpak.com',
+      email: 'user@example.com',
       audienceSync: 'failed',
     });
     currentState = LOGGED_IN;
@@ -411,7 +411,7 @@ describe('LeanZeroLinkSection — health + error surfacing', () => {
     const verbatim = 'rate limited on request-code; retry after 42s (worker said: too many requests)';
     mockRequestCode.mockRejectedValue(rpcError(verbatim));
 
-    await userEvent.type(screen.getByTestId('link-email-input'), 'mihai@wolfaenpak.com');
+    await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');
     await userEvent.click(screen.getByTestId('link-send-code'));
 
     expect(await screen.findByText(verbatim)).toBeInTheDocument();
@@ -428,7 +428,7 @@ describe('LeanZeroLinkSection — health + error surfacing', () => {
       )
     );
 
-    await userEvent.type(screen.getByTestId('link-email-input'), 'mihai@wolfaenpak.com');
+    await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');
     await userEvent.click(screen.getByTestId('link-send-code'));
 
     expect(

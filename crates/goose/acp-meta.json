@@ -91,6 +91,11 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/config/extensions/inspect",
+      "requestType": "InspectConfigExtensionRequest_unstable",
+      "responseType": "InspectConfigExtensionResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/config/extensions/list",
       "requestType": "GetConfigExtensionsRequest_unstable",
       "responseType": "GetConfigExtensionsResponse_unstable"
@@ -559,6 +564,126 @@
       "method": "_goose/unstable/local-inference/chat-templates/builtin/list",
       "requestType": "LocalInferenceBuiltinChatTemplatesListRequest_unstable",
       "responseType": "LocalInferenceBuiltinChatTemplatesListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/status",
+      "requestType": "MlxEngineStatusRequest_unstable",
+      "responseType": "MlxEngineStatusResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/mount",
+      "requestType": "MlxEngineMountRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/unmount",
+      "requestType": "MlxEngineUnmountRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/settingsRead",
+      "requestType": "MlxEngineSettingsReadRequest_unstable",
+      "responseType": "MlxEngineSettingsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/settingsUpdate",
+      "requestType": "MlxEngineSettingsUpdateRequest_unstable",
+      "responseType": "MlxEngineSettingsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/modelsList",
+      "requestType": "MlxEngineModelsListRequest_unstable",
+      "responseType": "MlxEngineModelsListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/modelDelete",
+      "requestType": "MlxEngineModelDeleteRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/hfSearch",
+      "requestType": "MlxEngineHfSearchRequest_unstable",
+      "responseType": "MlxEngineHfSearchResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/browse",
+      "requestType": "MlxEngineBrowseRequest_unstable",
+      "responseType": "MlxEngineBrowseResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/download",
+      "requestType": "MlxEngineDownloadRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/downloadProgress",
+      "requestType": "MlxEngineDownloadProgressRequest_unstable",
+      "responseType": "MlxEngineDownloadProgressResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/browseFilters",
+      "requestType": "MlxEngineBrowseFiltersRequest_unstable",
+      "responseType": "MlxEngineBrowseFiltersResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/modelCard",
+      "requestType": "MlxEngineModelCardRequest_unstable",
+      "responseType": "MlxEngineModelCardResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/downloadPause",
+      "requestType": "MlxEngineDownloadPauseRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/downloadResume",
+      "requestType": "MlxEngineDownloadResumeRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/downloadCancel",
+      "requestType": "MlxEngineDownloadCancelRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/health",
+      "requestType": "LeanzeroLinkHealthRequest_unstable",
+      "responseType": "LeanzeroLinkHealthResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/requestCode",
+      "requestType": "LeanzeroLinkRequestCodeRequest_unstable",
+      "responseType": "LeanzeroLinkRequestCodeResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/verify",
+      "requestType": "LeanzeroLinkVerifyRequest_unstable",
+      "responseType": "LeanzeroLinkVerifyResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/connect",
+      "requestType": "LeanzeroLinkConnectRequest_unstable",
+      "responseType": "LeanzeroLinkStateResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/status",
+      "requestType": "LeanzeroLinkStatusRequest_unstable",
+      "responseType": "LeanzeroLinkStateResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/logout",
+      "requestType": "LeanzeroLinkLogoutRequest_unstable",
+      "responseType": "LeanzeroLinkStateResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/nodes",
+      "requestType": "LeanzeroLinkNodesRequest_unstable",
+      "responseType": "LeanzeroLinkNodesResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/remoteExecute",
+      "requestType": "LeanzeroLinkRemoteExecuteRequest_unstable",
+      "responseType": "LeanzeroLinkRemoteExecuteResponse_unstable"
     }
   ],
   "notifications": [

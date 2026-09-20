@@ -765,6 +765,23 @@ export type DeleteSessionRequest = {
 };
 
 /**
+ * Connect a saved MCP using its stored credentials and discover its actual tools.
+ */
+export type InspectConfigExtensionRequest_unstable = {
+    name: string;
+    settingsOnly?: boolean;
+    sourceUrl?: string | null;
+};
+
+export type InspectConfigExtensionResponse_unstable = {
+    settings: {
+        [key: string]: string;
+    };
+    tools: Array<unknown>;
+    savedFile?: string | null;
+};
+
+/**
  * List configured extensions and any warnings.
  */
 export type GetConfigExtensionsRequest_unstable = {
@@ -2534,6 +2551,710 @@ export type LocalInferenceBuiltinChatTemplatesListResponse_unstable = {
 };
 
 /**
+ * Read the MLX engine's live status, including a `/v1/models` probe when running.
+ */
+export type MlxEngineStatusRequest_unstable = {
+    /**
+     * LeanZero Link mesh target. Absent or equal to the local node → runs on THIS node's
+     * MLX engine exactly as before. A peer's `nodeId` forwards the operation over the mesh
+     * to that node's control service, which runs it against ITS local engine and returns
+     * the result. A named peer must be Connected on the mesh, else a loud
+     * `not connected to the mesh` error — never a local fallback.
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineStatusResponse_unstable = {
+    status: MlxEngineStatusDto;
+};
+
+/**
+ * Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
+ * `context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never
+ * fabricated: a failed probe leaves them unset and reports `probe_error` instead.
+ */
+export type MlxEngineStatusDto = {
+    state: string;
+    modelId?: string | null;
+    baseUrl?: string | null;
+    pid?: number | null;
+    contextWindow?: number | null;
+    toolCallParser?: string | null;
+    /**
+     * The id the live engine serves on its API (/v1/models) — the id chat requests must use;
+     * differs from `model_id` (the HF directory) when `served_model_name` aliases it.
+     */
+    servedModelId?: string | null;
+    probeError?: string | null;
+    /**
+     * Requests the engine has accepted and not finished (`/v1/status` `num_running +
+     * num_waiting`), read on the same probe as `served_model_id`. Absent when the engine did
+     * not report it — never a fabricated 0; `active_requests_error` says why. `> 0` is the
+     * node's BUSY fact for the fleet corroboration; an explicit `0` is idle.
+     */
+    activeRequests?: number | null;
+    activeRequestsError?: string | null;
+    gateMessage?: string | null;
+    /**
+     * The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
+     */
+    gateVerdict?: string | null;
+    /**
+     * Something already listens on the configured port while the manager supervises
+     * nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
+     */
+    strayListenerPort?: number | null;
+    availableMemoryGb: number;
+    totalMemoryGb: number;
+    /**
+     * True when the persisted settings would spawn the running engine differently
+     * (model, port, sampling): the engine keeps running with its old arguments until
+     * the user remounts.
+     */
+    restartRequired: boolean;
+    lastError?: string | null;
+};
+
+/**
+ * Mount a local model into the MLX engine. Returns once mounting has started;
+ * poll status for running/failed.
+ */
+export type MlxEngineMountRequest_unstable = {
+    modelId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh.
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Stop the MLX engine and unmount its model.
+ */
+export type MlxEngineUnmountRequest_unstable = {
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh.
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Read the persisted MLX engine settings.
+ */
+export type MlxEngineSettingsReadRequest_unstable = {
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh.
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineSettingsResponse_unstable = {
+    settings: MlxEngineSettingsDto;
+};
+
+export type MlxEngineSettingsDto = {
+    modelId?: string | null;
+    modelsDir: string;
+    port: number;
+    /**
+     * LEGACY flat sampling/context fields, accepted inbound for old UI states and
+     * migrated server-side into `model_profiles[model_id]`. Responses carry them
+     * only until that one-time migration has run; profiles are the source of truth.
+     */
+    contextLimit?: number | null;
+    temperature?: number | null;
+    topP?: number | null;
+    topK?: number | null;
+    minP?: number | null;
+    repetitionPenalty?: number | null;
+    presencePenalty?: number | null;
+    frequencyPenalty?: number | null;
+    /**
+     * Swarm-facing model id advertised by the engine (`--served-model-name`); the HF
+     * directory id is served when unset.
+     */
+    servedModelName?: string | null;
+    spawnCommand: Array<string>;
+    /**
+     * Per-model sampling/context profiles keyed by HF model id — the source of truth
+     * for the flags each model mounts with.
+     */
+    modelProfiles?: {
+        [key: string]: MlxModelProfileDto;
+    };
+};
+
+/**
+ * Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
+ * mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
+ */
+export type MlxModelProfileDto = {
+    temperature?: number | null;
+    topP?: number | null;
+    topK?: number | null;
+    minP?: number | null;
+    repetitionPenalty?: number | null;
+    presencePenalty?: number | null;
+    frequencyPenalty?: number | null;
+    contextLimit?: number | null;
+    /**
+     * Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
+     * model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+     */
+    speculative?: string | null;
+    /**
+     * Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.
+     * The mount fails, naming the missing file, when it is not one.
+     */
+    adapterPath?: string | null;
+    /**
+     * `false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins
+     * the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
+     */
+    textOnly?: boolean | null;
+};
+
+/**
+ * Persist MLX engine settings. A running engine keeps its old arguments; status reports
+ * `restartRequired` until the model is remounted.
+ */
+export type MlxEngineSettingsUpdateRequest_unstable = {
+    settings: MlxEngineSettingsDto;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (the settings persist on THAT node).
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * List models present in the configured models dir.
+ */
+export type MlxEngineModelsListRequest_unstable = {
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (the models + disk space are THAT node's).
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineModelsListResponse_unstable = {
+    models: Array<MlxLocalModelDto>;
+    /**
+     * Free bytes an unprivileged writer can use on the models dir's volume.
+     */
+    diskAvailableBytes: number;
+    diskTotalBytes: number;
+};
+
+export type MlxLocalModelDto = {
+    id: string;
+    sizeBytes: number;
+    complete: boolean;
+    /**
+     * Files provably missing or unfinished — shards the model's safetensors index
+     * names that are absent/empty, plus `.part` leftovers. 0 when complete.
+     */
+    missingFiles: number;
+};
+
+/**
+ * Delete a downloaded model from the models dir.
+ */
+export type MlxEngineModelDeleteRequest_unstable = {
+    modelId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh. DESTRUCTIVE remotely too: the model is deleted from THAT
+     * node's disk and the op is logged loudly there.
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Search HuggingFace for MLX models, sorted by downloads.
+ */
+export type MlxEngineHfSearchRequest_unstable = {
+    query: string;
+    limit?: number | null;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (runs the HF search from THAT node's network/token).
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineHfSearchResponse_unstable = {
+    hits: Array<MlxHfModelHitDto>;
+};
+
+export type MlxHfModelHitDto = {
+    id: string;
+    downloads: number;
+    likes: number;
+    updatedAt: string;
+};
+
+/**
+ * Paginated MLX-only HuggingFace browse. All filters apply server-side: `query`
+ * searches names, `author` restricts the publisher, `quant` ("4-bit", "8-bit", …)
+ * and `arch` ("qwen3_5", "llama", …) AND-combine as HF tag filters — so a quant
+ * filter cannot see repos whose bit width appears only in the repo NAME. `sort` is
+ * "downloads" or "newest" (createdAt descending). Pass `nextCursor` from a response
+ * back as `cursor` for the next page; other parameters are baked into it.
+ */
+export type MlxEngineBrowseRequest_unstable = {
+    query?: string | null;
+    author?: string | null;
+    quant?: string | null;
+    arch?: string | null;
+    /**
+     * "downloads" | "newest"
+     */
+    sort: string;
+    cursor?: string | null;
+    /**
+     * Page size, default 20, capped at 50.
+     */
+    limit?: number | null;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (browses from THAT node's network/token).
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineBrowseResponse_unstable = {
+    hits: Array<MlxBrowseHitDto>;
+    /**
+     * Opaque continuation for the next page; absent on the last page.
+     */
+    nextCursor?: string | null;
+};
+
+/**
+ * One MLX browse hit. `quant`/`arch` are DERIVED display fields (the repo's tags
+ * first, name patterns as fallback) — they describe the hit, they are not proof the
+ * server filtered on them unless the request set the corresponding filter.
+ */
+export type MlxBrowseHitDto = {
+    id: string;
+    /**
+     * The `publisher` prefix of `id`.
+     */
+    author: string;
+    downloads: number;
+    likes: number;
+    createdAt?: string | null;
+    lastModified?: string | null;
+    tags: Array<string>;
+    quant?: string | null;
+    arch?: string | null;
+    /**
+     * Exact repository download bytes; field name retained for wire compatibility.
+     */
+    sizeBytesEstimate?: number | null;
+};
+
+/**
+ * Start a background snapshot download of a HuggingFace repo into the models dir.
+ */
+export type MlxEngineDownloadRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (the download runs on THAT node; poll its progress with the
+     * same `nodeId`).
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Poll download progress for a repo. `progress` is unset when no download was tracked.
+ */
+export type MlxEngineDownloadProgressRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (reads progress from THAT node's tracker).
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineDownloadProgressResponse_unstable = {
+    progress?: MlxDownloadProgressDto | null;
+};
+
+/**
+ * Snapshot download progress. `state` is one of
+ * "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled".
+ * A cancelled download has no on-disk claim (its partial repo dir is deleted), so a
+ * "cancelled" row may simply be dropped from the UI.
+ */
+export type MlxDownloadProgressDto = {
+    state: string;
+    totalBytes: number;
+    downloadedBytes: number;
+    currentFile?: string | null;
+    /**
+     * Files this attempt restarted from zero because their on-disk `.part` or the
+     * server's range answer disagreed with the repo tree's size.
+     */
+    restartedFiles?: Array<string>;
+    error?: string | null;
+};
+
+/**
+ * Filter vocabularies for the browse UI, aggregated live from HuggingFace (a bounded
+ * crawl of MLX listings, cached in-process with a ~1h TTL — the first call pays the
+ * crawl, later calls are instant). Values are raw filterable tag/author strings; free
+ * text beyond them still passes to the browse filters.
+ */
+export type MlxEngineBrowseFiltersRequest_unstable = {
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh.
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineBrowseFiltersResponse_unstable = {
+    /**
+     * Quant tags observed live ("4-bit", "8-bit", "bf16", "mxfp4", …), ordered by
+     * observed frequency.
+     */
+    quants: Array<string>;
+    /**
+     * Architectures (`config.model_type` values) observed live, each also usable as a
+     * server-side tag filter; ordered by observed frequency.
+     */
+    archs: Array<string>;
+    /**
+     * Publishers observed live, ordered by observed frequency.
+     */
+    authors: Array<string>;
+    /**
+     * Distinct repos the vocabulary was aggregated from — a top-N sample of the MLX
+     * corpus (by downloads plus by newest), not an exhaustive census.
+     */
+    sampledRepos: number;
+    /**
+     * Unix epoch seconds when the crawl ran.
+     */
+    computedAt: number;
+    /**
+     * Present when this vocabulary is served stale because a TTL refresh failed;
+     * carries the refresh failure.
+     */
+    refreshError?: string | null;
+};
+
+/**
+ * Everything the fullscreen model-card modal needs for one repo: README markdown,
+ * the file listing with sizes, and repo metadata. A repo without a README yields no
+ * `readmeMarkdown` — that is an absent field, not an error.
+ */
+export type MlxEngineModelCardRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh.
+     */
+    nodeId?: string | null;
+};
+
+export type MlxEngineModelCardResponse_unstable = {
+    readmeMarkdown?: string | null;
+    /**
+     * True when the README exceeded the 1 MiB cap and was cut.
+     */
+    readmeTruncated: boolean;
+    files: Array<MlxRepoFileDto>;
+    /**
+     * Exact sum of every file size the repo tree lists.
+     */
+    totalBytes: number;
+    tags: Array<string>;
+    downloads: number;
+    likes: number;
+    license?: string | null;
+    createdAt?: string | null;
+    lastModified?: string | null;
+};
+
+export type MlxRepoFileDto = {
+    path: string;
+    sizeBytes: number;
+};
+
+/**
+ * Pause an active download: the task stops cleanly between chunks and every `.part`
+ * stays on disk for a later resume. Loud on an unknown or inactive repo.
+ */
+export type MlxEngineDownloadPauseRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (pauses the download on THAT node).
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Resume a paused/failed/cancelled download — or partial files left on disk by an
+ * earlier session. Complete files are skipped, `.part` files continue via HTTP Range;
+ * a file whose partial no longer matches the repo tree restarts from zero and is
+ * reported in `restartedFiles`. Loud on an unknown repo with nothing on disk.
+ */
+export type MlxEngineDownloadResumeRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh (resumes the download on THAT node).
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * Cancel a download AND delete its on-disk claim: every `.part` and the whole partial
+ * repo directory are removed. Works on active and paused/failed downloads; the state
+ * becomes "cancelled" once the deletion has run.
+ */
+export type MlxEngineDownloadCancelRequest_unstable = {
+    repoId: string;
+    /**
+     * Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer
+     * forwards over the mesh. DESTRUCTIVE remotely too: the partial repo is deleted on
+     * THAT node and the op is logged loudly there.
+     */
+    nodeId?: string | null;
+};
+
+/**
+ * `GET /v1/health` on the auth worker — what the deployment supports.
+ */
+export type LeanzeroLinkHealthRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type LeanzeroLinkHealthResponse_unstable = {
+    ok: boolean;
+    version: string;
+    capabilities: LeanzeroLinkCapabilitiesDto;
+};
+
+/**
+ * Which auth-worker capabilities the deployment has configured (from env presence).
+ */
+export type LeanzeroLinkCapabilitiesDto = {
+    mail: boolean;
+    audience: boolean;
+    mesh: boolean;
+};
+
+/**
+ * Request an email OTP → `codeSent`.
+ */
+export type LeanzeroLinkRequestCodeRequest_unstable = {
+    email: string;
+};
+
+export type LeanzeroLinkRequestCodeResponse_unstable = {
+    /**
+     * The worker-normalized email the code was sent to.
+     */
+    email: string;
+    expiresInSeconds: number;
+};
+
+/**
+ * Verify the OTP → persist identity, `loggedIn`.
+ */
+export type LeanzeroLinkVerifyRequest_unstable = {
+    email: string;
+    code: string;
+};
+
+export type LeanzeroLinkVerifyResponse_unstable = {
+    /**
+     * The auth state after a successful verify (`"loggedIn"`).
+     */
+    state: string;
+    /**
+     * The worker-normalized account email.
+     */
+    email: string;
+    /**
+     * Worker contact-sync verdict: `"synced" | "skipped" | "failed"`.
+     */
+    audienceSync: string;
+};
+
+/**
+ * Bring up the mesh + control service (requires a verified identity).
+ */
+export type LeanzeroLinkConnectRequest_unstable = {
+    [key: string]: unknown;
+};
+
+/**
+ * What goosed surfaces for the Link tab: auth + live mesh + total node count
+ * (self + reachable peers) + the last error (never swallowed).
+ */
+export type LeanzeroLinkStateResponse_unstable = {
+    auth: LeanzeroLinkAuthStateDto;
+    mesh?: LeanzeroLinkMeshStatusDto | null;
+    nodeCount: number;
+    lastError?: string | null;
+    /**
+     * The user's remote-execution switch (goose config key
+     * `LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`) as configured NOW — what a toggle shows.
+     * Default `false`: the node is observe-only (peers get `403` on `/execute` and `/mlx*`).
+     */
+    remoteExecutionAllowed?: boolean;
+    /**
+     * The value the RUNNING control service enforces, present only while connected. When
+     * it differs from `remote_execution_allowed`, the change applies at the next connect.
+     */
+    remoteExecutionAllowedLive?: boolean | null;
+    /**
+     * Discovery's verdict on the mesh binaries at manager build — shown before any click.
+     */
+    meshBinaries: LeanzeroLinkMeshBinariesDto;
+    /**
+     * Whether this goosed injected a remote executor at boot. `false` means every
+     * `/v1/swarm/execute` (own or a peer's) answers `501` — "not wired", not "busy".
+     */
+    remoteExecutionWired?: boolean;
+    /**
+     * Whether this goosed injected the local MLX control at boot. `false` means every
+     * `/v1/swarm/mlx*` op answers `501`.
+     */
+    mlxControlWired?: boolean;
+};
+
+/**
+ * The auth lifecycle state. Internally tagged on `state`:
+ * `loggedOut | codeSent | loggedIn | connecting | connected`.
+ */
+export type LeanzeroLinkAuthStateDto = {
+    state: 'loggedOut';
+} | {
+    email: string;
+    expiresAt: string;
+    state: 'codeSent';
+} | {
+    email: string;
+    state: 'loggedIn';
+} | {
+    email: string;
+    state: 'connecting';
+} | {
+    email: string;
+    meshIp: string;
+    state: 'connected';
+};
+
+/**
+ * Live mesh status from the goose-owned tailscaled.
+ */
+export type LeanzeroLinkMeshStatusDto = {
+    selfIp?: string | null;
+    selfHostname?: string | null;
+    backendState: string;
+    online: boolean;
+    peers?: Array<LeanzeroLinkMeshPeerDto>;
+};
+
+/**
+ * One raw Tailscale peer seen by the local mesh daemon (status-panel diagnostics —
+ * distinct from a swarm `NodeState`).
+ */
+export type LeanzeroLinkMeshPeerDto = {
+    hostname: string;
+    ip?: string | null;
+    online: boolean;
+    lastSeen?: string | null;
+};
+
+/**
+ * The two binaries the goose-owned mesh needs.
+ */
+export type LeanzeroLinkMeshBinariesDto = {
+    tailscaled: LeanzeroLinkBinaryDto;
+    tailscale: LeanzeroLinkBinaryDto;
+};
+
+/**
+ * One mesh binary as discovered when the Link manager was built: `found` at `path`, or
+ * `missing` with the full text of where discovery looked (the env override, every PATH
+ * directory, the known install locations) — so the UI can show a broken bundle BEFORE
+ * the connect click, and `connect` is refused with the same text.
+ */
+export type LeanzeroLinkBinaryDto = {
+    path: string;
+    status: 'found';
+} | {
+    error: string;
+    status: 'missing';
+};
+
+/**
+ * The composed auth + mesh state.
+ */
+export type LeanzeroLinkStatusRequest_unstable = {
+    [key: string]: unknown;
+};
+
+/**
+ * Tear down the connection, clear the stored identity, drop to `loggedOut`.
+ * `wipe` also removes the mesh state dir (slower re-login).
+ */
+export type LeanzeroLinkLogoutRequest_unstable = {
+    wipe?: boolean;
+};
+
+/**
+ * The swarm node view (`self` + peers). Proxies the local control service's
+ * `GET /v1/swarm/nodes`. The `self` and `peers` objects are the snake_case wire
+ * `NodeState` shared with peer nodes + the iOS companion — passed through verbatim:
+ * `{ node_id, hostname, mesh_ip, status: { type, session_id? }, sessions_active,
+ * updated_at }`.
+ */
+export type LeanzeroLinkNodesRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type LeanzeroLinkNodesResponse_unstable = {
+    self: unknown;
+    peers?: Array<unknown>;
+};
+
+/**
+ * Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
+ * there. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks
+ * `targetNodeId` from `leanzeroLink/nodes` (filter to `status == "Idle"`); the receive
+ * side's idle guard on the peer is the backstop, so a busy/disabled/unwired target
+ * surfaces its status text verbatim as an `invalid_params` error. Requires the manager
+ * be `connected` — otherwise `invalid_params` "not connected to the mesh". The returned
+ * `sessionId` is the session on the TARGET node, mirrored over `/v1/swarm/stream`.
+ */
+export type LeanzeroLinkRemoteExecuteRequest_unstable = {
+    targetNodeId: string;
+    prompt: string;
+    workingDir?: string | null;
+};
+
+export type LeanzeroLinkRemoteExecuteResponse_unstable = {
+    /**
+     * The session id created on the target node — mirror it over the swarm stream.
+     */
+    sessionId: string;
+};
+
+/**
  * Goose-custom session update notification — a parallel to ACP's
  * `session/update` carrying goose-specific update variants.
  */
@@ -2600,14 +3321,14 @@ export type RecipeParamsAction = 'submit' | 'cancel';
 export type ExtRequest = {
     id: string;
     method: string;
-    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | {
+    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDownloadCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkNodesRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | {
         [key: string]: unknown;
     } | null;
 };
 
 export type ExtResponse = {
     id: string;
-    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | unknown;
+    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | unknown;
 } | {
     error: {
         code: number;

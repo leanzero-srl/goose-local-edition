@@ -179,38 +179,22 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     let window_open = ctx.clock.is_open(Utc::now());
     st.window_open = window_open;
     let mut guard_runs: Vec<ScriptRun> = Vec::new();
-    let mut guard_notes: Vec<String> = Vec::new();
     if hold.is_none() && ctx.rt.is_paused() {
         hold = Some("paused by the human".into());
     }
     if hold.is_none() {
-        for cmd in &ctx.manifest.guard {
-            let r = run_script(&ctx.dir, cmd, &ctx.env).await;
+        hold = super::scripts::run_guards(&ctx.dir, &ctx.manifest.guard, &ctx.env, |r, reason| {
             ctx.sink
-                .write_value(json!({"event": "guard_ran", "tick": n, "run": script_value(&r)}));
-            match r.exit {
-                Some(0) => {}
-                Some(3) => {
-                    let why = r.stdout.lines().next().unwrap_or("").trim().to_string();
-                    hold = Some(if why.is_empty() {
-                        format!("guard `{cmd}` said hold (exit 3)")
-                    } else {
-                        why
-                    });
-                }
-                other => guard_notes.push(format!(
-                    "`{cmd}` exit {} — {}",
-                    other
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "none".into()),
-                    tail_chars(&format!("{}{}", r.stdout, r.stderr), 300).trim()
-                )),
+                .write_value(json!({"event": "guard_ran", "tick": n, "run": script_value(r)}));
+            if !matches!(r.exit, Some(0) | Some(3)) {
+                ctx.sink.write_value(json!({
+                    "event": "guard_failed", "tick": n, "reason": reason,
+                    "run": script_value(r),
+                }));
             }
-            guard_runs.push(r);
-            if hold.is_some() {
-                break;
-            }
-        }
+            guard_runs.push(r.clone());
+        })
+        .await;
     }
     record["guard"] = json!(guard_runs.iter().map(script_value).collect::<Vec<_>>());
     if let Some(why) = hold {
@@ -292,7 +276,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
                 &ledger_block,
                 &notes,
                 &poll_text,
-                &guard_notes,
+                &[],
             ),
             Some(Response {
                 json_schema: Some(prompts::orient_schema()),

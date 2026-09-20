@@ -18,25 +18,25 @@ An agent is a directory with an `agent.yaml`. Create one from the desktop (**Age
 agent**) or on the command line:
 
 ```bash
-goose swarm agent init ~/desks/axpo --name axpo
-goose swarm agent check ~/desks/axpo     # validates the manifest, prints what would run
-goose swarm agent tick ~/desks/axpo      # one tick now
-goose swarm agent run ~/desks/axpo       # tick on the cadence inside the window until stopped
-goose swarm agent status ~/desks/axpo
+goose swarm agent init ~/desks/web-research --name web-research
+goose swarm agent check ~/desks/web-research     # validates the manifest, prints what would run
+goose swarm agent tick ~/desks/web-research      # one tick now
+goose swarm agent run ~/desks/web-research       # tick on the cadence inside the window until stopped
+goose swarm agent status ~/desks/web-research
 ```
 
 ```yaml
-name: axpo
-title: Axpo Atlassian desk
+name: web-research
+title: Research Atlassian desk
 charter: CHARTER.md            # the desk's rules, read whole into the orchestrator's prompt
 timezone: Europe/Zurich
 window: { days: [mon, tue, wed, thu, fri], from: "09:00", to: "18:00", always: false }
 cadence: 30m                   # between tick STARTS; a tick is never cut
 env_file: references/credentials.env
-guard:                         # run first; exit 3 = hold this tick (say why on stdout)
+guard:                         # run first; exit 0 = proceed; any failure holds this tick (say why on stdout)
   - "test ! -f state/DISABLED || { echo 'DISABLED'; exit 3; }"
 poll:                          # read-only; stdout is the tick's inbox
-  - "python3 scripts/aj.py checkin"
+  - "python3 scripts/inbox.py"
 surgeons:
   - name: access
     brief: "permissions, seats, groups — do the user→groups→permission homework, prove every negative on the same object"
@@ -53,7 +53,7 @@ scratchpad: SCRATCHPAD.md
 commit: true
 ```
 
-A full example for one of the operator's desks is in `evals/agent-work/examples/axpo.agent.yaml`.
+A neutral public-web research example is in `evals/agent-work/examples/web-research.agent.yaml`.
 
 ## One tick
 
@@ -62,7 +62,7 @@ A full example for one of the operator's desks is in `evals/agent-work/examples/
 | **guard** | the human's decisions are folded in (approve / decline / answer), the `paused` flag and the guard scripts are checked; a hold ends the tick with its reason |
 | **poll** | the poll scripts run in the agent directory with the env file sourced; their stdout is the inbox |
 | **orient** | the orchestrator (the planner / supervision node) reads the charter, the scratchpad, the **ledger snowball**, your notes and the inbox, and decides the lanes, the asks and the drops |
-| **lanes** | one surgeon call per item, fanned across the fleet's slots (a device serves `weight` lanes at once; the rest queue). Read-only surgeons have no file-writing tools. Each returns a handoff: homework, finding, an optional draft, an ask, a route, a 0–3 confidence, evidence, the next step |
+| **lanes** | one surgeon call per item, fanned across the fleet's slots (a device serves `weight` lanes at once; the rest queue). Restricted workers omit direct file-writing tools; shell commands and selected MCPs keep their own permissions, so this is not a sandbox. Each returns a handoff: homework, finding, an optional draft, an ask, a route, a 0–3 confidence, evidence, the next step |
 | **review** | every draft is attacked by every lens in parallel (`factual` re-derives the claims from the object, `duplication` reads the live thread and the ledger, `voice` checks it reads as the person); each says PASS or REFUTED with quotes |
 | **synthesis** | the orchestrator closes the tick: what to stage, what to ask, what facts the ledger keeps, the daily-log line, the scratchpad rewritten whole, the handoff to the next tick |
 | **post** | drafts staged on an **earlier** tick and approved (or, with `approval: none`, any staged draft) go out through the post command, one by one, inside the window only |
@@ -91,3 +91,16 @@ whole reasoning and answer channels and its tool calls), the node occupancy and 
 (answer an ask, approve / decline a draft), a note box the orchestrator reads next tick, and the
 ledger: every tick with its cost in lane-minutes beside what it delivered, the facts, every draft's
 fate, the scratchpad, the pending file and the daily log.
+
+## MCP configuration
+
+Configure and test the LeanZero servers in **MCPs** before selecting them in the agent editor.
+The manifest stores saved extension names, not copies of credentials. Missing selections stop
+startup with a named error. The connection test loads the same saved configuration as an agent.
+
+**Run once** starts one tick without scheduling future runs. Read the final handoff in
+**Conversation & results**, then expand the activity for tool inputs and outputs.
+
+Existing external agent workflows need an adapter for their inbox, identity, prepared queue and
+approval rules. Copying an existing script directory is not sufficient. In particular, review
+and posting must retain the original body, target, audience and freshness safeguards.

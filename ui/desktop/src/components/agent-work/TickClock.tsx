@@ -1,6 +1,13 @@
 import { Clock, Pause, Play, Square, Zap } from 'lucide-react';
 import { Button, Chip, StatusDot, TNUM, TONE_FILL, TYPE, WEIGHT, cx, type Tone } from '../lz';
-import { PHASES, countdown, fmtClock, fmtDuration, phaseIndex, type DeskModel } from './agentWorkModel';
+import {
+  PHASES,
+  countdown,
+  fmtClock,
+  fmtDuration,
+  phaseIndex,
+  type DeskModel,
+} from './agentWorkModel';
 
 const STATUS_TONE: Record<string, Tone> = {
   ticking: 'ok',
@@ -21,6 +28,7 @@ const STATUS_TONE: Record<string, Tone> = {
 export function TickClock({
   model,
   onStart,
+  onRunOnce,
   onStop,
   onTickNow,
   onPause,
@@ -28,6 +36,7 @@ export function TickClock({
 }: {
   model: DeskModel;
   onStart: () => void;
+  onRunOnce?: () => void;
   onStop: () => void;
   onTickNow: () => void;
   onPause: (paused: boolean) => void;
@@ -47,8 +56,15 @@ export function TickClock({
         <div className="flex items-end gap-6">
           <div>
             <div className={TYPE.zone}>Next tick</div>
-            <div className={cx('text-lz-display text-lz-ink leading-none', TNUM)} data-testid="next-tick-countdown">
-              {stopped ? 'stopped' : ticking ? `tick ${model.tick} live` : countdown(model.nextTickInMs)}
+            <div
+              className={cx('text-lz-display text-lz-ink leading-none', TNUM)}
+              data-testid="next-tick-countdown"
+            >
+              {stopped
+                ? 'stopped'
+                : ticking
+                  ? `tick ${model.tick} live`
+                  : countdown(model.nextTickInMs)}
             </div>
             <div className={cx(TYPE.meta, 'mt-1')}>
               {stopped
@@ -67,12 +83,24 @@ export function TickClock({
         </div>
         <div className="flex items-center gap-2">
           {stopped ? (
-            <Button variant="primary" icon={<Play />} onClick={onStart} disabled={busy}>
-              Start desk
-            </Button>
+            <>
+              {onRunOnce && (
+                <Button variant="secondary" icon={<Zap />} onClick={onRunOnce} disabled={busy}>
+                  Run once
+                </Button>
+              )}
+              <Button variant="primary" icon={<Play />} onClick={onStart} disabled={busy}>
+                Start schedule
+              </Button>
+            </>
           ) : (
             <>
-              <Button variant="secondary" icon={<Zap />} onClick={onTickNow} disabled={busy || ticking}>
+              <Button
+                variant="secondary"
+                icon={<Zap />}
+                onClick={onTickNow}
+                disabled={busy || ticking}
+              >
                 Tick now
               </Button>
               <Button
@@ -91,7 +119,9 @@ export function TickClock({
         </div>
       </div>
       {model.holdReason && (
-        <div className={cx('rounded-lz-control px-3 py-2 text-lz-body', TONE_FILL.warn, WEIGHT.medium)}>
+        <div
+          className={cx('rounded-lz-control px-3 py-2 text-lz-body', TONE_FILL.warn, WEIGHT.medium)}
+        >
           held: {model.holdReason}
         </div>
       )}

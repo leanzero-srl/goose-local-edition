@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Sağlayıcıyı ve Modeli Sıfırla"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "Ajan çalışması"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

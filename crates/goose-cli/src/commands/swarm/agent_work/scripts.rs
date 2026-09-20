@@ -74,9 +74,85 @@ pub async fn run_script(dir: &Path, command: &str, env: &[(String, String)]) -> 
     }
 }
 
+pub async fn run_guards(
+    dir: &Path,
+    commands: &[String],
+    env: &[(String, String)],
+    mut record: impl FnMut(&ScriptRun, Option<&str>),
+) -> Option<String> {
+    for command in commands {
+        let run = run_script(dir, command, env).await;
+        let hold = match run.exit {
+            Some(0) => None,
+            Some(3) => {
+                let why = run.stdout.lines().next().unwrap_or("").trim();
+                Some(if why.is_empty() {
+                    format!("guard `{command}` said hold (exit 3)")
+                } else {
+                    why.to_string()
+                })
+            }
+            other => Some(format!(
+                "guard `{command}` failed (exit {}) — {}",
+                other
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "none".into()),
+                super::store::tail_chars(&format!("{}{}", run.stdout, run.stderr), 300).trim()
+            )),
+        };
+        record(&run, hold.as_deref());
+        if hold.is_some() {
+            return hold;
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn guards_stop_on_hold_error_or_spawn_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        for (command, reason) in [
+            ("echo waiting-for-approval; exit 3", "waiting-for-approval"),
+            ("echo permission-denied >&2; exit 1", "failed (exit 1)"),
+            ("exit 2", "failed (exit 2)"),
+        ] {
+            let mut records = Vec::new();
+            let hold = run_guards(
+                dir.path(),
+                &[command.into(), "touch should-not-run".into()],
+                &[],
+                |run, _| records.push(run.clone()),
+            )
+            .await
+            .unwrap();
+            assert!(hold.contains(reason), "{hold}");
+            assert_eq!(records.len(), 1);
+            assert!(!dir.path().join("should-not-run").exists());
+        }
+        let hold = run_guards(
+            &dir.path().join("missing"),
+            &["true".into()],
+            &[],
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+        assert!(hold.contains("failed (exit none)"));
+        assert!(hold.contains("could not start"));
+        let hold = run_guards(
+            dir.path(),
+            &["true".into(), "touch success".into()],
+            &[],
+            |_, _| {},
+        )
+        .await;
+        assert!(hold.is_none());
+        assert!(dir.path().join("success").exists());
+    }
 
     #[test]
     fn env_lines_parse_like_source() {

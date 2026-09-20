@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Đặt lại nhà cung cấp và mô hình"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "Công việc tác nhân"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

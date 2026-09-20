@@ -1361,7 +1361,7 @@ mod tests {
     #[test]
     fn the_control_template_carries_no_email_derived_token() {
         let key = LinkBuildKey {
-            email: Some("mihai@wolfaenpak.com".to_string()),
+            email: Some("user@example.com".to_string()),
             allow_remote_execution: true,
         };
         let binaries = MeshBinaries {

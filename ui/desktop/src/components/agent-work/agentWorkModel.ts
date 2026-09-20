@@ -115,7 +115,13 @@ export interface TickRecord {
   outcome?: string;
   summary?: string;
   notes?: string[];
-  poll?: { command: string; exit: number | null; secs: number; stdout_chars: number; stderr_tail: string }[];
+  poll?: {
+    command: string;
+    exit: number | null;
+    secs: number;
+    stdout_chars: number;
+    stderr_tail: string;
+  }[];
   orient?: {
     summary: string;
     lanes: { id: string; surgeon: string; item: string; objective: string; kind: string }[];
@@ -124,7 +130,14 @@ export interface TickRecord {
   };
   lanes?: Record<string, unknown>[];
   review?: Record<string, unknown>[];
-  synthesis?: { staged: string[]; asks: string[]; facts: string[]; log_line: string; handoff: string; pending: string[] };
+  synthesis?: {
+    staged: string[];
+    asks: string[];
+    facts: string[];
+    log_line: string;
+    handoff: string;
+    pending: string[];
+  };
   posted?: string[];
   lane_secs?: number;
   wall_secs?: number;
@@ -142,7 +155,13 @@ export interface LaneDigest {
   thinking_chars?: number;
   calls?: { name?: string; ok?: boolean | null; args?: string; result?: string; at?: string }[];
   inflight?: { name?: string; since?: string }[];
-  forming?: { id: string; name: string; since_ms: number; args_bytes?: number; args_preview?: string }[];
+  forming?: {
+    id: string;
+    name: string;
+    since_ms: number;
+    args_bytes?: number;
+    args_preview?: string;
+  }[];
   full_thinking?: string;
   thinking_bytes?: number;
   full_transcript?: string;
@@ -339,7 +358,9 @@ export function liveness(pid: number | null, heartbeatMs: number | null, now: nu
 }
 
 /** Lane keys the engine mints: `t<n>-orient`, `t<n>-<lane>`, `t<n>-<lane>-lens-<lens>`, `t<n>-synthesis`. */
-export function classifyKey(key: string): { tick: number; kind: LaneKind; laneId: string; lens?: string } | null {
+export function classifyKey(
+  key: string
+): { tick: number; kind: LaneKind; laneId: string; lens?: string } | null {
   const m = /^t(\d+)-(.+)$/.exec(key);
   if (!m) return null;
   const tick = Number.parseInt(m[1], 10);
@@ -434,7 +455,9 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
     if (c.kind === 'orient' || c.kind === 'synthesis') {
       const phase = st?.phase ?? 'idle';
       const done =
-        c.kind === 'orient' ? phaseIndex(phase) > phaseIndex('orient') || phase === 'idle' : phase === 'idle' || phaseIndex(phase) > phaseIndex('synthesis');
+        c.kind === 'orient'
+          ? phaseIndex(phase) > phaseIndex('orient') || phase === 'idle'
+          : phase === 'idle' || phaseIndex(phase) > phaseIndex('synthesis');
       r.status = done ? 'done' : 'running';
       r.model = r.model || st?.planner_model || '';
     }
@@ -464,11 +487,21 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
 
   const openAsks = read.asks.filter((a) => a.status === 'open');
   const answeredAsks = read.asks.filter((a) => a.status !== 'open');
-  const pendingDrafts = read.prepared.filter((r) => ['staged', 'approved', 'failed'].includes(r.status));
-  const settledDrafts = read.prepared.filter((r) => !['staged', 'approved', 'failed'].includes(r.status));
+  const pendingDrafts = read.prepared.filter((r) =>
+    ['staged', 'approved', 'failed'].includes(r.status)
+  );
+  const settledDrafts = read.prepared.filter(
+    (r) => !['staged', 'approved', 'failed'].includes(r.status)
+  );
 
   const kinds = read.ledger?.kinds ?? {};
-  const tickRows = (kinds.tick ?? []) as { tick?: number; lanes?: number; staged?: number; posted?: number; lane_secs?: number }[];
+  const tickRows = (kinds.tick ?? []) as {
+    tick?: number;
+    lanes?: number;
+    staged?: number;
+    posted?: number;
+    lane_secs?: number;
+  }[];
   const totals: DeskTotals = {
     ticks: tickRows.length,
     lanes: tickRows.reduce((n, t) => n + (t.lanes ?? 0), 0),
@@ -489,9 +522,16 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
     status,
     tick,
     phase: live === 'stopped' ? 'idle' : (st?.phase ?? 'idle'),
-    phaseElapsedMs: phaseStarted != null && Number.isFinite(phaseStarted) ? Math.max(0, now - phaseStarted) : null,
-    nextTickAt: nextTickAt != null && Number.isFinite(nextTickAt) && live !== 'stopped' ? nextTickAt : null,
-    nextTickInMs: nextTickAt != null && Number.isFinite(nextTickAt) && live !== 'stopped' ? nextTickAt - now : null,
+    phaseElapsedMs:
+      phaseStarted != null && Number.isFinite(phaseStarted)
+        ? Math.max(0, now - phaseStarted)
+        : null,
+    nextTickAt:
+      nextTickAt != null && Number.isFinite(nextTickAt) && live !== 'stopped' ? nextTickAt : null,
+    nextTickInMs:
+      nextTickAt != null && Number.isFinite(nextTickAt) && live !== 'stopped'
+        ? nextTickAt - now
+        : null,
     nextTickReason: st?.next_tick_reason ?? '',
     nextTickLocal: st?.next_tick_local ?? '',
     windowOpen: st?.window_open ?? false,
@@ -536,7 +576,9 @@ export function fmtClock(msEpoch: number | null): string {
 export function scheduleLine(m: AgentManifestLite | null): string {
   if (!m) return '';
   const w = m.window;
-  const days = w?.days?.length ? `${cap(w.days[0])}–${cap(w.days[w.days.length - 1])}` : 'every day';
+  const days = w?.days?.length
+    ? `${cap(w.days[0])}–${cap(w.days[w.days.length - 1])}`
+    : 'every day';
   const window = w?.always ? 'always open' : `${days} ${w?.from ?? '00:00'}–${w?.to ?? '24:00'}`;
   return `every ${m.cadence ?? '?'} · ${window}${m.timezone ? ` ${m.timezone}` : ''}`;
 }
@@ -563,6 +605,7 @@ export function manifestYaml(input: {
   postCommand: string;
   approval: 'human' | 'none';
   commit: boolean;
+  extensions?: string[];
 }): string {
   const q = (s: string) => JSON.stringify(s);
   const list = (xs: string[]) => (xs.length ? `[${xs.map(q).join(', ')}]` : '[]');
@@ -570,7 +613,7 @@ export function manifestYaml(input: {
     `name: ${input.name}`,
     `title: ${q(input.title || input.name)}`,
     `charter: CHARTER.md`,
-    `timezone: ${input.timezone}`,
+    `timezone: ${q(input.timezone)}`,
     `window:`,
     `  days: ${list(input.days)}`,
     `  from: ${q(input.from)}`,
@@ -585,7 +628,7 @@ export function manifestYaml(input: {
   if (input.surgeons.length) {
     lines.push(`surgeons:`);
     for (const s of input.surgeons) {
-      lines.push(`  - name: ${s.name}`);
+      lines.push(`  - name: ${q(s.name)}`);
       lines.push(`    brief: ${q(s.brief)}`);
       lines.push(`    match: []`);
       lines.push(`    read_only: ${s.readOnly ? 'true' : 'false'}`);
@@ -605,6 +648,6 @@ export function manifestYaml(input: {
   lines.push(`pending: PENDING.md`);
   lines.push(`scratchpad: SCRATCHPAD.md`);
   lines.push(`commit: ${input.commit ? 'true' : 'false'}`);
-  lines.push(`extensions: []`);
+  lines.push(`extensions: ${list(input.extensions ?? [])}`);
   return `${lines.join('\n')}\n`;
 }

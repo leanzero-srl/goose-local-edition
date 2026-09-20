@@ -11148,97 +11148,8 @@ fn shadow_and_branch_agree_on_the_lifted_confidence() {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// MCP worker extensions — secrets from env, falling back to swarm.research_keys in config
-// ---------------------------------------------------------------------------------------------
-
-/// Build a worker MCP extension by name, reading secrets from the environment. Returns None (with a
-/// note) if a required secret env var is missing, so the run proceeds without that extension.
-fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
-    match name {
-        "context7" => {
-            let key = research_secret("CONTEXT7_API_KEY").or_else(|| {
-                eprintln!(
-                    "(skipping context7: set CONTEXT7_API_KEY, or swarm.research_keys in config)"
-                );
-                None
-            })?;
-            Some(ExtensionConfig::Stdio {
-                name: "context7".to_string(),
-                description: "Upstash Context7 library docs".to_string(),
-                cmd: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@upstash/context7-mcp".to_string(),
-                    "--api-key".to_string(),
-                    key,
-                ],
-                envs: Default::default(),
-                env_keys: vec![],
-                timeout: Some(120),
-                cwd: None,
-                bundled: None,
-                available_tools: vec![],
-            })
-        }
-        "web-search" => {
-            let bearer = research_secret("WEBSEARCH_BEARER").or_else(|| {
-                eprintln!(
-                    "(skipping web-search: set WEBSEARCH_BEARER, or swarm.research_keys in config)"
-                );
-                None
-            })?;
-            let mut headers = HashMap::new();
-            headers.insert("Authorization".to_string(), format!("Bearer {bearer}"));
-            if let Some(k) = research_secret("SERPER_KEY") {
-                headers.insert("X-Serper-Key".to_string(), k);
-            }
-            if let Some(k) = research_secret("GITHUB_TOKEN") {
-                headers.insert("X-GitHub-Token".to_string(), k);
-            }
-            Some(ExtensionConfig::StreamableHttp {
-                name: "web-search".to_string(),
-                description: "Web search + GitHub".to_string(),
-                uri: research_secret("WEBSEARCH_URI").unwrap_or_else(|| {
-                    "https://worksmacstudio.tailfc4700.ts.net:8443/mcp".to_string()
-                }),
-                envs: Default::default(),
-                env_keys: vec![],
-                headers,
-                timeout: Some(120),
-                socket: None,
-                bundled: None,
-                available_tools: vec![],
-            })
-        }
-        "doc-processor" => {
-            let bearer = research_secret("DOCPROC_BEARER").or_else(|| {
-                eprintln!("(skipping doc-processor: set DOCPROC_BEARER, or swarm.research_keys in config)");
-                None
-            })?;
-            let mut headers = HashMap::new();
-            headers.insert("Authorization".to_string(), format!("Bearer {bearer}"));
-            Some(ExtensionConfig::StreamableHttp {
-                name: "doc-processor".to_string(),
-                description: "Document processor".to_string(),
-                uri: research_secret("DOCPROC_URI").unwrap_or_else(|| {
-                    "https://worksmacstudio.tailfc4700.ts.net:10000/mcp".to_string()
-                }),
-                envs: Default::default(),
-                env_keys: vec![],
-                headers,
-                timeout: Some(120),
-                socket: None,
-                bundled: None,
-                available_tools: vec![],
-            })
-        }
-        other => {
-            eprintln!("(unknown worker extension: {other})");
-            None
-        }
-    }
-}
+mod worker_extensions;
+use worker_extensions::build_worker_extension;
 
 // ---------------------------------------------------------------------------------------------
 // Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
@@ -27044,7 +26955,7 @@ fn resolve_app_root(cwd: PathBuf, run_id: &str) -> Result<PathBuf> {
 ///
 /// MEASURED on this machine, from goose's own llm_request logs: 17 of 17 substantive swarm requests
 /// carried the block, median prompt 45,264 chars of which 22,389 were hints — HALF of every prompt
-/// sent to a local 27B. Their headings included "Wolfaenpak Atlassian is a TEST environment",
+/// sent to a local 27B. Their headings included tenant-specific test-environment instructions,
 /// "Production config on a CLIENT system", "Workhorse — Mac Studio sync", "UI / design — MANDATORY
 /// rules", "Writing as the user", and the goose repo's own AGENTS.md build/test/clippy instructions —
 /// delivered to a worker whose entire job was to write a Python payments-sync tool in a temp

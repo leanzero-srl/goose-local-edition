@@ -35,7 +35,7 @@ vi.mock('./bottom_menu/ContextWindowIndicator', () => ({
   ContextWindowIndicator: () => <div data-testid="context-indicator" />,
 }));
 vi.mock('./MentionPopover', () => ({
-  default: React.forwardRef(() => null),
+  default: React.forwardRef(function MentionPopoverMock() { return null; }),
 }));
 vi.mock('../hooks/useAudioRecorder', () => ({
   useAudioRecorder: () => ({

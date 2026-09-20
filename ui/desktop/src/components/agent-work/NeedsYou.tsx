@@ -9,7 +9,12 @@ import type { AskRow, DeskModel, PreparedRow } from './agentWorkModel';
  * the approved draft posts on that tick through the desk's one write path. Nothing here is native
  * chrome — the reply box is an inline Studio form.
  */
-export function NeedsYou({ model, onDecide, requiresApproval, hasPostCommand }: {
+export function NeedsYou({
+  model,
+  onDecide,
+  requiresApproval,
+  hasPostCommand,
+}: {
   model: DeskModel;
   onDecide: (id: string, decision: string, text: string) => Promise<void>;
   requiresApproval: boolean;
@@ -19,14 +24,24 @@ export function NeedsYou({ model, onDecide, requiresApproval, hasPostCommand }: 
   return (
     <Panel title="Needs you" count={count} padded={false}>
       {count === 0 ? (
-        <EmptyState icon={<Check />} title="Nothing waits on you" body="Asks and staged drafts land here." />
+        <EmptyState
+          icon={<Check />}
+          title="Nothing waits on you"
+          body="Asks and staged drafts land here."
+        />
       ) : (
         <ul className="divide-y divide-lz-border" data-testid="needs-you-list">
           {model.openAsks.map((a) => (
             <AskItem key={a.id} ask={a} onDecide={onDecide} />
           ))}
           {model.pendingDrafts.map((d) => (
-            <DraftItem key={d.id} draft={d} onDecide={onDecide} requiresApproval={requiresApproval} hasPostCommand={hasPostCommand} />
+            <DraftItem
+              key={d.id}
+              draft={d}
+              onDecide={onDecide}
+              requiresApproval={requiresApproval}
+              hasPostCommand={hasPostCommand}
+            />
           ))}
         </ul>
       )}
@@ -34,14 +49,25 @@ export function NeedsYou({ model, onDecide, requiresApproval, hasPostCommand }: 
   );
 }
 
-function AskItem({ ask, onDecide }: { ask: AskRow; onDecide: (id: string, decision: string, text: string) => Promise<void> }) {
+function AskItem({
+  ask,
+  onDecide,
+}: {
+  ask: AskRow;
+  onDecide: (id: string, decision: string, text: string) => Promise<void>;
+}) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const send = async (decision: string) => {
+    if (busy) return;
     setBusy(true);
+    setError('');
     try {
       await onDecide(ask.id, decision, text);
       setText('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -49,7 +75,9 @@ function AskItem({ ask, onDecide }: { ask: AskRow; onDecide: (id: string, decisi
   return (
     <li className="flex flex-col gap-2 px-4 py-3" data-testid="ask-item">
       <div className="flex items-center gap-2">
-        <Chip tone="warn" icon={<MessageSquare />}>ask · tick {ask.tick}</Chip>
+        <Chip tone="warn" icon={<MessageSquare />}>
+          ask · tick {ask.tick}
+        </Chip>
         <span className={cx(TYPE.meta, TNUM)}>{ask.id}</span>
       </div>
       <p className={cx(TYPE.body, WEIGHT.semibold)}>{ask.question}</p>
@@ -65,18 +93,40 @@ function AskItem({ ask, onDecide }: { ask: AskRow; onDecide: (id: string, decisi
           aria-label={`Answer ${ask.id}`}
           className="h-8 min-w-0 flex-1 rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink"
         />
-        <Button variant="primary" size="sm" icon={<Send />} disabled={busy || !text.trim()} onClick={() => send('reply')}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Send />}
+          disabled={busy || !text.trim()}
+          onClick={() => send('reply')}
+        >
           Answer
         </Button>
-        <Button variant="ghost" size="sm" icon={<X />} disabled={busy} onClick={() => send('dismiss')}>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<X />}
+          disabled={busy}
+          onClick={() => send('dismiss')}
+        >
           Dismiss
         </Button>
       </div>
+      {error && (
+        <p role="alert" className="text-sm text-lz-err">
+          {error}
+        </p>
+      )}
     </li>
   );
 }
 
-function DraftItem({ draft, onDecide, requiresApproval, hasPostCommand }: {
+function DraftItem({
+  draft,
+  onDecide,
+  requiresApproval,
+  hasPostCommand,
+}: {
   draft: PreparedRow;
   onDecide: (id: string, decision: string, text: string) => Promise<void>;
   requiresApproval: boolean;
@@ -84,52 +134,108 @@ function DraftItem({ draft, onDecide, requiresApproval, hasPostCommand }: {
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const act = async (decision: string) => {
+    if (busy) return;
     setBusy(true);
+    setError('');
     try {
       await onDecide(draft.id, decision, '');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
   const refuted = (draft.review ?? []).filter((r) => r.verdict !== 'PASS');
-  const waitingOn = draft.status === 'approved'
-    ? hasPostCommand ? 'approved — posts on the next tick' : 'approved — no post command: mark it done once you have posted it'
-    : draft.status === 'failed'
-      ? 'the post command failed — approve again to retry'
-      : requiresApproval
-        ? 'staged — waits for your approval'
-        : hasPostCommand ? 'staged — posts on the next tick unless you decline' : 'staged — no post command: this desk hands drafts to you';
+  const waitingOn =
+    draft.status === 'approved'
+      ? hasPostCommand
+        ? 'approved — posts on the next tick'
+        : 'approved — no post command: mark it done once you have posted it'
+      : draft.status === 'failed'
+        ? 'the post command failed — approve again to retry'
+        : requiresApproval
+          ? 'staged — waits for your approval'
+          : hasPostCommand
+            ? 'staged — posts on the next tick unless you decline'
+            : 'staged — no post command: this desk hands drafts to you';
   return (
     <li className="flex flex-col gap-2 px-4 py-3" data-testid="draft-item">
       <div className="flex flex-wrap items-center gap-2">
-        <Chip tone={draft.status === 'failed' ? 'err' : draft.status === 'approved' ? 'ok' : 'accent'}>{draft.kind} → {draft.target}</Chip>
-        <span className={cx(TYPE.meta, TNUM)}>{draft.id} · tick {draft.tick}{draft.surgeon ? ` · ${draft.surgeon}` : ''}</span>
+        <Chip
+          tone={draft.status === 'failed' ? 'err' : draft.status === 'approved' ? 'ok' : 'accent'}
+        >
+          {draft.kind} → {draft.target}
+        </Chip>
+        <span className={cx(TYPE.meta, TNUM)}>
+          {draft.id} · tick {draft.tick}
+          {draft.surgeon ? ` · ${draft.surgeon}` : ''}
+        </span>
         {(draft.review ?? []).map((r) => (
-          <Chip key={r.lens} tone={r.verdict === 'PASS' ? 'ok' : 'err'}>{r.lens} {r.verdict}</Chip>
+          <Chip key={r.lens} tone={r.verdict === 'PASS' ? 'ok' : 'err'}>
+            {r.lens} {r.verdict}
+          </Chip>
         ))}
       </div>
       <p className={TYPE.meta}>{waitingOn}</p>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className={cx('rounded-lz-control bg-lz-surface-2 p-3 text-left', TYPE.body)}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className={cx('rounded-lz-control bg-lz-surface-2 p-3 text-left', TYPE.body)}
+      >
         <span className={cx(!open && 'line-clamp-3', 'whitespace-pre-wrap')}>{draft.body}</span>
       </button>
       {open && refuted.length > 0 && (
         <ul className="flex flex-col gap-1">
           {refuted.map((r) => (
-            <li key={r.lens} className={cx(TYPE.bodyMuted)}><span className={WEIGHT.semibold}>{r.lens}:</span> {r.notes}</li>
+            <li key={r.lens} className={cx(TYPE.bodyMuted)}>
+              <span className={WEIGHT.semibold}>{r.lens}:</span> {r.notes}
+            </li>
           ))}
         </ul>
       )}
-      {open && draft.result && <pre className={cx(TYPE.mono, 'whitespace-pre-wrap break-words rounded-lz-control border border-lz-err p-2')}>{draft.result}</pre>}
+      {open && draft.result && (
+        <pre
+          className={cx(
+            TYPE.mono,
+            'whitespace-pre-wrap break-words rounded-lz-control border border-lz-err p-2'
+          )}
+        >
+          {draft.result}
+        </pre>
+      )}
       <div className="flex items-center gap-2">
         {draft.status !== 'approved' && (
-          <Button variant="primary" size="sm" icon={<Check />} disabled={busy} onClick={() => act('approve')}>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Check />}
+            disabled={busy}
+            onClick={() => act('approve')}
+          >
             {hasPostCommand ? 'Approve — post next tick' : 'Approve'}
           </Button>
         )}
-        <Button variant="secondary" size="sm" disabled={busy} onClick={() => act('done')}>Mark done</Button>
-        <Button variant="destructive" size="sm" icon={<X />} disabled={busy} onClick={() => act('decline')}>Decline</Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => act('done')}>
+          Mark done
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          icon={<X />}
+          disabled={busy}
+          onClick={() => act('decline')}
+        >
+          Decline
+        </Button>
       </div>
+      {error && (
+        <p role="alert" className="text-sm text-lz-err">
+          {error}
+        </p>
+      )}
     </li>
   );
 }

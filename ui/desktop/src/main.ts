@@ -6003,9 +6003,9 @@ ipcMain.handle('agent-work-read', async (_event, dir: string) => {
   };
 });
 
-ipcMain.handle('bundled-mcps', async () => {
+async function bundledMcps() {
   const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src');
-  const node = path.join(root, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node');
+  const node = app.isPackaged ? path.join(root, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node') : process.execPath;
   const bundledRoot = path.join(
     app.isPackaged ? process.resourcesPath : app.getAppPath(),
     'bundled-mcps'
@@ -6048,6 +6048,7 @@ ipcMain.handle('bundled-mcps', async () => {
         args: [entry],
         envs: {
           MCP_CLIENT_TYPE: 'agent',
+          ...(!app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           PUPPETEER_EXECUTABLE_PATH: browserExecutable,
           LEANZERO_BROWSER_EXECUTABLE: browserExecutable,
         },
@@ -6055,4 +6056,5 @@ ipcMain.handle('bundled-mcps', async () => {
       };
     })
   );
-});
+}
+ipcMain.handle('bundled-mcps', bundledMcps);

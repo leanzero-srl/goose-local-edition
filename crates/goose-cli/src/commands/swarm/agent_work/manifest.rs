@@ -300,9 +300,9 @@ mod tests {
 
     #[test]
     fn starter_manifest_parses_and_validates() {
-        let m: AgentManifest = serde_yaml::from_str(&AgentManifest::starter("axpo")).unwrap();
+        let m: AgentManifest = serde_yaml::from_str(&AgentManifest::starter("demo")).unwrap();
         m.validate().unwrap();
-        assert_eq!(m.name, "axpo");
+        assert_eq!(m.name, "demo");
         assert_eq!(m.cadence, "30m");
         assert_eq!(m.surgeons.len(), 1);
         assert!(m.post.is_none());

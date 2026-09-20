@@ -3178,3 +3178,23 @@ mod mlx_node_id_tests {
         assert_eq!(back.settings.port, 8090);
     }
 }
+
+/// Connect a saved MCP using its stored credentials and discover its actual tools.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/config/extensions/inspect", response = InspectConfigExtensionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectConfigExtensionRequest {
+    pub name: String,
+    #[serde(default)]
+    pub settings_only: bool,
+    #[serde(default)]
+    pub source_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectConfigExtensionResponse {
+    pub settings: BTreeMap<String, String>,
+    pub tools: Vec<serde_json::Value>,
+    pub saved_file: Option<String>,
+}

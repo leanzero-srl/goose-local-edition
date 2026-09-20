@@ -77,7 +77,7 @@ export default function ExtensionList({
             <span className="w-2 h-2 bg-green-500 rounded-full"></span>
             {intl.formatMessage(i18n.defaultExtensions, { count: sortedEnabledExtensions.length })}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {sortedEnabledExtensions.map((extension) => (
               <ExtensionItem
                 key={extension.name}
@@ -99,7 +99,7 @@ export default function ExtensionList({
               count: sortedDisabledExtensions.length,
             })}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {sortedDisabledExtensions.map((extension) => (
               <ExtensionItem
                 key={extension.name}

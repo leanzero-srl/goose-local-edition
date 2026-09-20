@@ -1446,6 +1446,58 @@
       "x-side": "agent",
       "x-method": "session/delete"
     },
+    "InspectConfigExtensionRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "settingsOnly": {
+          "type": "boolean",
+          "default": false
+        },
+        "sourceUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "Connect a saved MCP using its stored credentials and discover its actual tools.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/extensions/inspect"
+    },
+    "InspectConfigExtensionResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {}
+        },
+        "savedFile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "settings",
+        "tools"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/extensions/inspect"
+    },
     "GetConfigExtensionsRequest_unstable": {
       "type": "object",
       "description": "List configured extensions and any warnings.",
@@ -6593,6 +6645,1531 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/local-inference/chat-templates/builtin/list"
     },
+    "MlxEngineStatusRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "LeanZero Link mesh target. Absent or equal to the local node → runs on THIS node's\nMLX engine exactly as before. A peer's `nodeId` forwards the operation over the mesh\nto that node's control service, which runs it against ITS local engine and returns\nthe result. A named peer must be Connected on the mesh, else a loud\n`not connected to the mesh` error — never a local fallback."
+        }
+      },
+      "description": "Read the MLX engine's live status, including a `/v1/models` probe when running.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/status"
+    },
+    "MlxEngineStatusResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/MlxEngineStatusDto"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/status"
+    },
+    "MlxEngineStatusDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "contextWindow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "toolCallParser": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "servedModelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The id the live engine serves on its API (/v1/models) — the id chat requests must use;\ndiffers from `model_id` (the HF directory) when `served_model_name` aliases it."
+        },
+        "probeError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeRequests": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Requests the engine has accepted and not finished (`/v1/status` `num_running +\nnum_waiting`), read on the same probe as `served_model_id`. Absent when the engine did\nnot report it — never a fabricated 0; `active_requests_error` says why. `> 0` is the\nnode's BUSY fact for the fleet corroboration; an explicit `0` is idle.",
+          "minimum": 0
+        },
+        "activeRequestsError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gateMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gateVerdict": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The last memory-gate verdict for `gate_message`: \"allow\" | \"warn\" | \"block\"."
+        },
+        "strayListenerPort": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Something already listens on the configured port while the manager supervises\nnothing — an engine orphaned by a previous goosed. Unmount reclaims it.",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "availableMemoryGb": {
+          "type": "number",
+          "format": "double"
+        },
+        "totalMemoryGb": {
+          "type": "number",
+          "format": "double"
+        },
+        "restartRequired": {
+          "type": "boolean",
+          "description": "True when the persisted settings would spawn the running engine differently\n(model, port, sampling): the engine keeps running with its old arguments until\nthe user remounts."
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "availableMemoryGb",
+        "totalMemoryGb",
+        "restartRequired"
+      ],
+      "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
+    },
+    "MlxEngineMountRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh."
+        }
+      },
+      "required": [
+        "modelId"
+      ],
+      "description": "Mount a local model into the MLX engine. Returns once mounting has started;\npoll status for running/failed.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/mount"
+    },
+    "MlxEngineUnmountRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh."
+        }
+      },
+      "description": "Stop the MLX engine and unmount its model.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/unmount"
+    },
+    "MlxEngineSettingsReadRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh."
+        }
+      },
+      "description": "Read the persisted MLX engine settings.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/settingsRead"
+    },
+    "MlxEngineSettingsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/MlxEngineSettingsDto"
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "x-side": "agent"
+    },
+    "MlxEngineSettingsDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelsDir": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "contextLimit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "LEGACY flat sampling/context fields, accepted inbound for old UI states and\nmigrated server-side into `model_profiles[model_id]`. Responses carry them\nonly until that one-time migration has run; profiles are the source of truth.",
+          "minimum": 0
+        },
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "topP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "topK": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "repetitionPenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "presencePenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "frequencyPenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "servedModelName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Swarm-facing model id advertised by the engine (`--served-model-name`); the HF\ndirectory id is served when unset."
+        },
+        "spawnCommand": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modelProfiles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MlxModelProfileDto"
+          },
+          "description": "Per-model sampling/context profiles keyed by HF model id — the source of truth\nfor the flags each model mounts with.",
+          "default": {}
+        }
+      },
+      "required": [
+        "modelsDir",
+        "port",
+        "spawnCommand"
+      ]
+    },
+    "MlxModelProfileDto": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "topP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "topK": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "repetitionPenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "presencePenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "frequencyPenalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "contextLimit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "speculative": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Speculative decoding: `\"mtp\"` (demand the MTP head, skipped with a warning when the\nmodel dir has no `mtp.safetensors`), `\"off\"`, or absent = auto (on when the head exists)."
+        },
+        "adapterPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.\nThe mount fails, naming the missing file, when it is not one."
+        },
+        "textOnly": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "`false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins\nthe text lane (`--text-only`). No effect on a checkpoint that declares no vision."
+        }
+      },
+      "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."
+    },
+    "MlxEngineSettingsUpdateRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/MlxEngineSettingsDto"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (the settings persist on THAT node)."
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "description": "Persist MLX engine settings. A running engine keeps its old arguments; status reports\n`restartRequired` until the model is remounted.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/settingsUpdate"
+    },
+    "MlxEngineModelsListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (the models + disk space are THAT node's)."
+        }
+      },
+      "description": "List models present in the configured models dir.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/modelsList"
+    },
+    "MlxEngineModelsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxLocalModelDto"
+          }
+        },
+        "diskAvailableBytes": {
+          "type": "integer",
+          "description": "Free bytes an unprivileged writer can use on the models dir's volume.",
+          "minimum": 0
+        },
+        "diskTotalBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "models",
+        "diskAvailableBytes",
+        "diskTotalBytes"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/modelsList"
+    },
+    "MlxLocalModelDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "missingFiles": {
+          "type": "integer",
+          "description": "Files provably missing or unfinished — shards the model's safetensors index\nnames that are absent/empty, plus `.part` leftovers. 0 when complete.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "sizeBytes",
+        "complete",
+        "missingFiles"
+      ]
+    },
+    "MlxEngineModelDeleteRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh. DESTRUCTIVE remotely too: the model is deleted from THAT\nnode's disk and the op is logged loudly there."
+        }
+      },
+      "required": [
+        "modelId"
+      ],
+      "description": "Delete a downloaded model from the models dir.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/modelDelete"
+    },
+    "MlxEngineHfSearchRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (runs the HF search from THAT node's network/token)."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "description": "Search HuggingFace for MLX models, sorted by downloads.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/hfSearch"
+    },
+    "MlxEngineHfSearchResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxHfModelHitDto"
+          }
+        }
+      },
+      "required": [
+        "hits"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/hfSearch"
+    },
+    "MlxHfModelHitDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "downloads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "likes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "downloads",
+        "likes",
+        "updatedAt"
+      ]
+    },
+    "MlxEngineBrowseRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quant": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sort": {
+          "type": "string",
+          "description": "\"downloads\" | \"newest\""
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Page size, default 20, capped at 50.",
+          "minimum": 0
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (browses from THAT node's network/token)."
+        }
+      },
+      "required": [
+        "sort"
+      ],
+      "description": "Paginated MLX-only HuggingFace browse. All filters apply server-side: `query`\nsearches names, `author` restricts the publisher, `quant` (\"4-bit\", \"8-bit\", …)\nand `arch` (\"qwen3_5\", \"llama\", …) AND-combine as HF tag filters — so a quant\nfilter cannot see repos whose bit width appears only in the repo NAME. `sort` is\n\"downloads\" or \"newest\" (createdAt descending). Pass `nextCursor` from a response\nback as `cursor` for the next page; other parameters are baked into it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/browse"
+    },
+    "MlxEngineBrowseResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxBrowseHitDto"
+          }
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Opaque continuation for the next page; absent on the last page."
+        }
+      },
+      "required": [
+        "hits"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/browse"
+    },
+    "MlxBrowseHitDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string",
+          "description": "The `publisher` prefix of `id`."
+        },
+        "downloads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "likes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastModified": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "quant": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sizeBytesEstimate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Exact repository download bytes; field name retained for wire compatibility.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "downloads",
+        "likes",
+        "tags"
+      ],
+      "description": "One MLX browse hit. `quant`/`arch` are DERIVED display fields (the repo's tags\nfirst, name patterns as fallback) — they describe the hit, they are not proof the\nserver filtered on them unless the request set the corresponding filter."
+    },
+    "MlxEngineDownloadRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (the download runs on THAT node; poll its progress with the\nsame `nodeId`)."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Start a background snapshot download of a HuggingFace repo into the models dir.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/download"
+    },
+    "MlxEngineDownloadProgressRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (reads progress from THAT node's tracker)."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Poll download progress for a repo. `progress` is unset when no download was tracked.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/downloadProgress"
+    },
+    "MlxEngineDownloadProgressResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDownloadProgressDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/downloadProgress"
+    },
+    "MlxDownloadProgressDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "downloadedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currentFile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "restartedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Files this attempt restarted from zero because their on-disk `.part` or the\nserver's range answer disagreed with the repo tree's size."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "totalBytes",
+        "downloadedBytes"
+      ],
+      "description": "Snapshot download progress. `state` is one of\n\"queued\" | \"downloading\" | \"paused\" | \"done\" | \"failed\" | \"cancelled\".\nA cancelled download has no on-disk claim (its partial repo dir is deleted), so a\n\"cancelled\" row may simply be dropped from the UI."
+    },
+    "MlxEngineBrowseFiltersRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh."
+        }
+      },
+      "description": "Filter vocabularies for the browse UI, aggregated live from HuggingFace (a bounded\ncrawl of MLX listings, cached in-process with a ~1h TTL — the first call pays the\ncrawl, later calls are instant). Values are raw filterable tag/author strings; free\ntext beyond them still passes to the browse filters.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/browseFilters"
+    },
+    "MlxEngineBrowseFiltersResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "quants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Quant tags observed live (\"4-bit\", \"8-bit\", \"bf16\", \"mxfp4\", …), ordered by\nobserved frequency."
+        },
+        "archs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Architectures (`config.model_type` values) observed live, each also usable as a\nserver-side tag filter; ordered by observed frequency."
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Publishers observed live, ordered by observed frequency."
+        },
+        "sampledRepos": {
+          "type": "integer",
+          "description": "Distinct repos the vocabulary was aggregated from — a top-N sample of the MLX\ncorpus (by downloads plus by newest), not an exhaustive census.",
+          "minimum": 0
+        },
+        "computedAt": {
+          "type": "integer",
+          "description": "Unix epoch seconds when the crawl ran.",
+          "minimum": 0
+        },
+        "refreshError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Present when this vocabulary is served stale because a TTL refresh failed;\ncarries the refresh failure."
+        }
+      },
+      "required": [
+        "quants",
+        "archs",
+        "authors",
+        "sampledRepos",
+        "computedAt"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/browseFilters"
+    },
+    "MlxEngineModelCardRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Everything the fullscreen model-card modal needs for one repo: README markdown,\nthe file listing with sizes, and repo metadata. A repo without a README yields no\n`readmeMarkdown` — that is an absent field, not an error.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/modelCard"
+    },
+    "MlxEngineModelCardResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "readmeMarkdown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "readmeTruncated": {
+          "type": "boolean",
+          "description": "True when the README exceeded the 1 MiB cap and was cut."
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxRepoFileDto"
+          }
+        },
+        "totalBytes": {
+          "type": "integer",
+          "description": "Exact sum of every file size the repo tree lists.",
+          "minimum": 0
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "downloads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "likes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastModified": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "readmeTruncated",
+        "files",
+        "totalBytes",
+        "tags",
+        "downloads",
+        "likes"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/modelCard"
+    },
+    "MlxRepoFileDto": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "sizeBytes"
+      ]
+    },
+    "MlxEngineDownloadPauseRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (pauses the download on THAT node)."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Pause an active download: the task stops cleanly between chunks and every `.part`\nstays on disk for a later resume. Loud on an unknown or inactive repo.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/downloadPause"
+    },
+    "MlxEngineDownloadResumeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh (resumes the download on THAT node)."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Resume a paused/failed/cancelled download — or partial files left on disk by an\nearlier session. Complete files are skipped, `.part` files continue via HTTP Range;\na file whose partial no longer matches the repo tree restarts from zero and is\nreported in `restartedFiles`. Loud on an unknown repo with nothing on disk.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/downloadResume"
+    },
+    "MlxEngineDownloadCancelRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. Absent/self → local; a peer\nforwards over the mesh. DESTRUCTIVE remotely too: the partial repo is deleted on\nTHAT node and the op is logged loudly there."
+        }
+      },
+      "required": [
+        "repoId"
+      ],
+      "description": "Cancel a download AND delete its on-disk claim: every `.part` and the whole partial\nrepo directory are removed. Works on active and paused/failed downloads; the state\nbecomes \"cancelled\" once the deletion has run.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/downloadCancel"
+    },
+    "LeanzeroLinkHealthRequest_unstable": {
+      "type": "object",
+      "description": "`GET /v1/health` on the auth worker — what the deployment supports.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/health"
+    },
+    "LeanzeroLinkHealthResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/LeanzeroLinkCapabilitiesDto"
+        }
+      },
+      "required": [
+        "ok",
+        "version",
+        "capabilities"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/health"
+    },
+    "LeanzeroLinkCapabilitiesDto": {
+      "type": "object",
+      "properties": {
+        "mail": {
+          "type": "boolean"
+        },
+        "audience": {
+          "type": "boolean"
+        },
+        "mesh": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mail",
+        "audience",
+        "mesh"
+      ],
+      "description": "Which auth-worker capabilities the deployment has configured (from env presence)."
+    },
+    "LeanzeroLinkRequestCodeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "description": "Request an email OTP → `codeSent`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/requestCode"
+    },
+    "LeanzeroLinkRequestCodeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "The worker-normalized email the code was sent to."
+        },
+        "expiresInSeconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "email",
+        "expiresInSeconds"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/requestCode"
+    },
+    "LeanzeroLinkVerifyRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "code"
+      ],
+      "description": "Verify the OTP → persist identity, `loggedIn`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/verify"
+    },
+    "LeanzeroLinkVerifyResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "The auth state after a successful verify (`\"loggedIn\"`)."
+        },
+        "email": {
+          "type": "string",
+          "description": "The worker-normalized account email."
+        },
+        "audienceSync": {
+          "type": "string",
+          "description": "Worker contact-sync verdict: `\"synced\" | \"skipped\" | \"failed\"`."
+        }
+      },
+      "required": [
+        "state",
+        "email",
+        "audienceSync"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/verify"
+    },
+    "LeanzeroLinkConnectRequest_unstable": {
+      "type": "object",
+      "description": "Bring up the mesh + control service (requires a verified identity).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/connect"
+    },
+    "LeanzeroLinkStateResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/LeanzeroLinkAuthStateDto"
+        },
+        "mesh": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeanzeroLinkMeshStatusDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nodeCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remoteExecutionAllowed": {
+          "type": "boolean",
+          "description": "The user's remote-execution switch (goose config key\n`LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`) as configured NOW — what a toggle shows.\nDefault `false`: the node is observe-only (peers get `403` on `/execute` and `/mlx/*`).",
+          "default": false
+        },
+        "remoteExecutionAllowedLive": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "The value the RUNNING control service enforces, present only while connected. When\nit differs from `remote_execution_allowed`, the change applies at the next connect."
+        },
+        "meshBinaries": {
+          "$ref": "#/$defs/LeanzeroLinkMeshBinariesDto",
+          "description": "Discovery's verdict on the mesh binaries at manager build — shown before any click."
+        },
+        "remoteExecutionWired": {
+          "type": "boolean",
+          "description": "Whether this goosed injected a remote executor at boot. `false` means every\n`/v1/swarm/execute` (own or a peer's) answers `501` — \"not wired\", not \"busy\".",
+          "default": false
+        },
+        "mlxControlWired": {
+          "type": "boolean",
+          "description": "Whether this goosed injected the local MLX control at boot. `false` means every\n`/v1/swarm/mlx/*` op answers `501`.",
+          "default": false
+        }
+      },
+      "required": [
+        "auth",
+        "nodeCount",
+        "meshBinaries"
+      ],
+      "description": "What goosed surfaces for the Link tab: auth + live mesh + total node count\n(self + reachable peers) + the last error (never swallowed).",
+      "x-side": "agent"
+    },
+    "LeanzeroLinkAuthStateDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "loggedOut"
+            }
+          },
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "codeSent"
+            }
+          },
+          "required": [
+            "state",
+            "email",
+            "expiresAt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "loggedIn"
+            }
+          },
+          "required": [
+            "state",
+            "email"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "connecting"
+            }
+          },
+          "required": [
+            "state",
+            "email"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            },
+            "meshIp": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "connected"
+            }
+          },
+          "required": [
+            "state",
+            "email",
+            "meshIp"
+          ]
+        }
+      ],
+      "description": "The auth lifecycle state. Internally tagged on `state`:\n`loggedOut | codeSent | loggedIn | connecting | connected`."
+    },
+    "LeanzeroLinkMeshStatusDto": {
+      "type": "object",
+      "properties": {
+        "selfIp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selfHostname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backendState": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LeanzeroLinkMeshPeerDto"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "backendState",
+        "online"
+      ],
+      "description": "Live mesh status from the goose-owned tailscaled."
+    },
+    "LeanzeroLinkMeshPeerDto": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "lastSeen": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "hostname",
+        "online"
+      ],
+      "description": "One raw Tailscale peer seen by the local mesh daemon (status-panel diagnostics —\ndistinct from a swarm `NodeState`)."
+    },
+    "LeanzeroLinkMeshBinariesDto": {
+      "type": "object",
+      "properties": {
+        "tailscaled": {
+          "$ref": "#/$defs/LeanzeroLinkBinaryDto"
+        },
+        "tailscale": {
+          "$ref": "#/$defs/LeanzeroLinkBinaryDto"
+        }
+      },
+      "required": [
+        "tailscaled",
+        "tailscale"
+      ],
+      "description": "The two binaries the goose-owned mesh needs."
+    },
+    "LeanzeroLinkBinaryDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "found"
+            }
+          },
+          "required": [
+            "status",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "missing"
+            }
+          },
+          "required": [
+            "status",
+            "error"
+          ]
+        }
+      ],
+      "description": "One mesh binary as discovered when the Link manager was built: `found` at `path`, or\n`missing` with the full text of where discovery looked (the env override, every PATH\ndirectory, the known install locations) — so the UI can show a broken bundle BEFORE\nthe connect click, and `connect` is refused with the same text."
+    },
+    "LeanzeroLinkStatusRequest_unstable": {
+      "type": "object",
+      "description": "The composed auth + mesh state.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/status"
+    },
+    "LeanzeroLinkLogoutRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "wipe": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Tear down the connection, clear the stored identity, drop to `loggedOut`.\n`wipe` also removes the mesh state dir (slower re-login).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/logout"
+    },
+    "LeanzeroLinkNodesRequest_unstable": {
+      "type": "object",
+      "description": "The swarm node view (`self` + peers). Proxies the local control service's\n`GET /v1/swarm/nodes`. The `self` and `peers` objects are the snake_case wire\n`NodeState` shared with peer nodes + the iOS companion — passed through verbatim:\n`{ node_id, hostname, mesh_ip, status: { type, session_id? }, sessions_active,\nupdated_at }`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/nodes"
+    },
+    "LeanzeroLinkNodesResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "self": {},
+        "peers": {
+          "type": "array",
+          "items": {},
+          "default": []
+        }
+      },
+      "required": [
+        "self"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/nodes"
+    },
+    "LeanzeroLinkRemoteExecuteRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "prompt"
+      ],
+      "description": "Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session\nthere. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks\n`targetNodeId` from `leanzeroLink/nodes` (filter to `status == \"Idle\"`); the receive\nside's idle guard on the peer is the backstop, so a busy/disabled/unwired target\nsurfaces its status text verbatim as an `invalid_params` error. Requires the manager\nbe `connected` — otherwise `invalid_params` \"not connected to the mesh\". The returned\n`sessionId` is the session on the TARGET node, mirrored over `/v1/swarm/stream`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/remoteExecute"
+    },
+    "LeanzeroLinkRemoteExecuteResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "The session id created on the target node — mirror it over the swarm stream."
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/remoteExecute"
+    },
     "GooseSessionNotification_unstable": {
       "type": "object",
       "properties": {
@@ -6950,6 +8527,15 @@
                   ],
                   "description": "Params for session/delete",
                   "title": "DeleteSessionRequest"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/InspectConfigExtensionRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/extensions/inspect",
+                  "title": "InspectConfigExtensionRequest_unstable"
                 },
                 {
                   "allOf": [
@@ -7796,6 +9382,222 @@
                   ],
                   "description": "Params for _goose/unstable/local-inference/chat-templates/builtin/list",
                   "title": "LocalInferenceBuiltinChatTemplatesListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineStatusRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/status",
+                  "title": "MlxEngineStatusRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineMountRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/mount",
+                  "title": "MlxEngineMountRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineUnmountRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/unmount",
+                  "title": "MlxEngineUnmountRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineSettingsReadRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/settingsRead",
+                  "title": "MlxEngineSettingsReadRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineSettingsUpdateRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/settingsUpdate",
+                  "title": "MlxEngineSettingsUpdateRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineModelsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/modelsList",
+                  "title": "MlxEngineModelsListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineModelDeleteRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/modelDelete",
+                  "title": "MlxEngineModelDeleteRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineHfSearchRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/hfSearch",
+                  "title": "MlxEngineHfSearchRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineBrowseRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/browse",
+                  "title": "MlxEngineBrowseRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDownloadRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/download",
+                  "title": "MlxEngineDownloadRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDownloadProgressRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/downloadProgress",
+                  "title": "MlxEngineDownloadProgressRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineBrowseFiltersRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/browseFilters",
+                  "title": "MlxEngineBrowseFiltersRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineModelCardRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/modelCard",
+                  "title": "MlxEngineModelCardRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDownloadPauseRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/downloadPause",
+                  "title": "MlxEngineDownloadPauseRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDownloadResumeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/downloadResume",
+                  "title": "MlxEngineDownloadResumeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDownloadCancelRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/downloadCancel",
+                  "title": "MlxEngineDownloadCancelRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkHealthRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/health",
+                  "title": "LeanzeroLinkHealthRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkRequestCodeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/requestCode",
+                  "title": "LeanzeroLinkRequestCodeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkVerifyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/verify",
+                  "title": "LeanzeroLinkVerifyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkConnectRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/connect",
+                  "title": "LeanzeroLinkConnectRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkStatusRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/status",
+                  "title": "LeanzeroLinkStatusRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkLogoutRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/logout",
+                  "title": "LeanzeroLinkLogoutRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkNodesRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/nodes",
+                  "title": "LeanzeroLinkNodesRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkRemoteExecuteRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/remoteExecute",
+                  "title": "LeanzeroLinkRemoteExecuteRequest_unstable"
                 }
               ]
             },
@@ -7930,6 +9732,14 @@
                         }
                       ],
                       "title": "PromptOperationResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/InspectConfigExtensionResponse_unstable"
+                        }
+                      ],
+                      "title": "InspectConfigExtensionResponse_unstable"
                     },
                     {
                       "allOf": [
@@ -8426,6 +10236,118 @@
                         }
                       ],
                       "title": "LocalInferenceBuiltinChatTemplatesListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineStatusResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineStatusResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineSettingsResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineSettingsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineModelsListResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineModelsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineHfSearchResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineHfSearchResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineBrowseResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineBrowseResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDownloadProgressResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDownloadProgressResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineBrowseFiltersResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineBrowseFiltersResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineModelCardResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineModelCardResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkHealthResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkHealthResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkRequestCodeResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkRequestCodeResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkVerifyResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkVerifyResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkStateResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkStateResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkNodesResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkNodesResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkRemoteExecuteResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkRemoteExecuteResponse_unstable"
                     }
                   ]
                 },

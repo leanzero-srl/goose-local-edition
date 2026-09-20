@@ -1,0 +1,17 @@
+# Copy into a dedicated agent directory as agent.yaml.
+# Configure and test LeanZero Web Search in the desktop MCPs menu first.
+name: web-research
+title: Public web research
+brief: "Read https://developer.mozilla.org/en-US/docs/Web/JavaScript using the page extraction tool. Report its title, purpose and source URL in the final handoff. Do not post messages or change external systems."
+timezone: UTC
+window: { always: true }
+cadence: 30m
+guard: []
+poll: []
+surgeons:
+  - name: researcher
+    brief: "Read the assigned public page and return a concise finding with its URL."
+    read_only: true
+review: { enabled: false, lenses: [] }
+commit: false
+extensions: [LeanZero Web Search]

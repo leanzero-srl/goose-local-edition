@@ -2,7 +2,6 @@ import { AppEvents } from '../constants/events';
 import { ToolIconWithStatus, ToolCallStatus } from './ToolCallStatusIndicator';
 import { getToolCallIcon } from '../utils/toolIconMapping';
 import React, { useEffect, useRef, useState } from 'react';
-import { Button } from './ui/button';
 import { ToolCallArguments, ToolCallArgumentValue } from './ToolCallArguments';
 import MarkdownContent from './MarkdownContent';
 import {
@@ -12,8 +11,9 @@ import {
   ToolConfirmationData,
 } from '../types/message';
 import { cn, snakeToTitleCase } from '../utils';
-import { LoadingStatus } from './ui/Dot';
-import { ChevronRight, ExternalLink } from 'lucide-react';
+import { ActivityDisclosure as ToolCallExpandable } from './activity/ActivityDisclosure';
+import { toolOutcome } from './activity/toolOutcome';
+import { ExternalLink } from 'lucide-react';
 import { TooltipWrapper } from './settings/providers/subcomponents/buttons/TooltipWrapper';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ContentBlock } from '../types/message';
@@ -136,10 +136,12 @@ function getSubagentSessionId(
 }
 
 function getToolResultContent(toolResult: Record<string, unknown>): ContentBlock[] {
-  if (toolResult.status !== 'success') {
-    return [];
+  if (toolResult.status === 'error') {
+    const error = toolResult.error;
+    return [{ type: 'text', text: typeof error === 'string' ? error : JSON.stringify(error ?? toolResult) }];
   }
-  const value = toolResult.value as ToolResultValue;
+  const value = toolResult.value as ToolResultValue | undefined;
+  if (!Array.isArray(value?.content)) return [];
   return value.content.filter((item) => {
     const annotations = (item as { annotations?: { audience?: string[] } }).annotations;
     return !annotations?.audience || annotations.audience.includes('user');
@@ -295,48 +297,6 @@ export default function ToolCallWithResponse({
         />
       )}
     </>
-  );
-}
-
-interface ToolCallExpandableProps {
-  label: string | React.ReactNode;
-  isStartExpanded?: boolean;
-  isForceExpand?: boolean;
-  children: React.ReactNode;
-  className?: string;
-}
-
-function ToolCallExpandable({
-  label,
-  isStartExpanded = false,
-  isForceExpand,
-  children,
-  className = '',
-}: ToolCallExpandableProps) {
-  const [isExpandedState, setIsExpanded] = React.useState<boolean | null>(null);
-  const isExpanded = isExpandedState === null ? isStartExpanded : isExpandedState;
-  const toggleExpand = () => setIsExpanded(!isExpanded);
-  React.useEffect(() => {
-    if (isForceExpand) setIsExpanded(true);
-  }, [isForceExpand]);
-
-  return (
-    <div className={className}>
-      <Button
-        onClick={toggleExpand}
-        className="group w-full flex justify-between items-center pr-2 transition-colors rounded-none"
-        variant="ghost"
-      >
-        <span className="flex items-center font-sans text-sm truncate flex-1 min-w-0">{label}</span>
-        <ChevronRight
-          className={cn(
-            'group-hover:opacity-100 transition-transform opacity-70',
-            isExpanded && 'rotate-90'
-          )}
-        />
-      </Button>
-      {isExpanded && <div>{children}</div>}
-    </div>
   );
 }
 
@@ -506,33 +466,12 @@ function ToolCallView({
 
   const isToolDetails = toolCall?.arguments && Object.entries(toolCall.arguments).length > 0;
 
-  // Check if streaming has finished but no tool response was received
-  // This is a workaround for cases where the backend doesn't send tool responses
-  const isStreamingComplete = !isStreamingMessage;
-  const shouldShowAsComplete = isStreamingComplete && !toolResponse;
-
-  const loadingStatus: LoadingStatus = !toolResponse
-    ? shouldShowAsComplete
-      ? 'success'
-      : 'loading'
-    : (toolResponse.toolResult as Record<string, unknown>).status === 'error'
-      ? 'error'
-      : 'success';
-
-  // Tool call timing tracking
-  const [startTime, setStartTime] = useState<number | null>(null);
-
-  // Track when tool call starts (when there's no response yet)
-  useEffect(() => {
-    if (!toolResponse && startTime === null) {
-      setStartTime(Date.now());
-    }
-  }, [toolResponse, startTime]);
-
-  const toolResults =
-    loadingStatus === 'success' && toolResponse?.toolResult
-      ? getToolResultContent(toolResponse.toolResult)
-      : [];
+  const loadingStatus = toolOutcome(
+    toolResponse?.toolResult,
+    Boolean(isStreamingMessage),
+    isCancelledMessage
+  );
+  const toolResults = toolResponse?.toolResult ? getToolResultContent(toolResponse.toolResult) : [];
 
   const logs = notifications
     ?.filter((notification) => {
@@ -753,21 +692,7 @@ function ToolCallView({
     // Fallback tool name formatting
     return snakeToTitleCase(getToolName(toolCall.name));
   };
-  // Map LoadingStatus to ToolCallStatus
-  const getToolCallStatus = (loadingStatus: LoadingStatus): ToolCallStatus => {
-    switch (loadingStatus) {
-      case 'success':
-        return 'success';
-      case 'error':
-        return 'error';
-      case 'loading':
-        return 'loading';
-      default:
-        return 'pending';
-    }
-  };
-
-  const toolCallStatus = getToolCallStatus(loadingStatus);
+  const toolCallStatus: ToolCallStatus = loadingStatus;
 
   const toolLabel = (
     <span
@@ -778,6 +703,17 @@ function ToolCallView({
     >
       <ToolIconWithStatus ToolIcon={getToolCallIcon(toolCall.name)} status={toolCallStatus} />
       <span className="truncate flex-1 min-w-0">{getToolLabelContent()}</span>
+      <span className="shrink-0 text-xs text-text-secondary">
+        {loadingStatus === 'pending'
+          ? isCancelledMessage
+            ? 'Cancelled'
+            : 'No result received'
+          : loadingStatus === 'loading'
+            ? 'Working'
+            : loadingStatus === 'error'
+              ? 'Failed'
+              : 'Completed'}
+      </span>
     </span>
   );
   return (

@@ -182,19 +182,6 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     );
     let sink: Arc<dyn goose_swarm::EventSink> =
         Arc::new(super::JsonlSink::new(&rt.events_path(), run_id.clone())?);
-    let env = match &manifest.env_file {
-        Some(rel) => {
-            match scripts::load_env_file(&dir.join(rel)) {
-                Ok(v) => v,
-                Err(e) => {
-                    sink.write_value(serde_json::json!({"event": "env_file_unreadable", "file": rel, "error": e}));
-                    eprintln!("env_file {rel} could not be read: {e} — scripts run without it");
-                    Vec::new()
-                }
-            }
-        }
-        None => Vec::new(),
-    };
     let charter = Arc::new(manifest.charter_text(&dir));
     sink.write_value(serde_json::json!({
         "event": "agent_started",
@@ -225,6 +212,29 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     st.phase_started_at = Some(now_rfc3339());
     rt.write_state(&mut st);
     rt.touch_heartbeat();
+
+    let env = match &manifest.env_file {
+        Some(rel) => match scripts::load_env_file(&dir.join(rel)) {
+            Ok(values) => values,
+            Err(error) => {
+                let reason = format!("env_file {rel} could not be read: {error}");
+                sink.write_value(serde_json::json!({
+                    "event": "env_file_unreadable", "file": rel, "error": error,
+                }));
+                st.status = "stopped".into();
+                st.phase = "idle".into();
+                st.phase_started_at = None;
+                st.pid = None;
+                st.next_tick_at = None;
+                st.next_tick_reason = "configuration error".into();
+                st.hold_reason = Some(reason.clone());
+                rt.write_state(&mut st);
+                rt.release_lock();
+                return Err(anyhow!(reason));
+            }
+        },
+        None => Vec::new(),
+    };
 
     let fleet = match runtime::resolve_fleet(&dir, sink.clone(), &manifest.extensions).await {
         Ok(f) => Arc::new(f),
@@ -340,4 +350,41 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     rt.clear_stop();
     rt.release_lock();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn unreadable_configured_environment_stops_before_fleet_or_scripts() {
+        for env_is_directory in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut manifest: AgentManifest =
+                serde_yaml::from_str(&AgentManifest::starter("demo")).unwrap();
+            manifest.env_file = Some("required.env".into());
+            manifest.poll = vec!["touch polled".into()];
+            if env_is_directory {
+                std::fs::create_dir(dir.path().join("required.env")).unwrap();
+            }
+            std::fs::write(
+                AgentManifest::path_in(dir.path()),
+                serde_yaml::to_string(&manifest).unwrap(),
+            )
+            .unwrap();
+            let error = serve(dir.path(), true).await.unwrap_err().to_string();
+            assert!(error.contains("required.env could not be read"));
+            let rt = RuntimeDir::new(dir.path());
+            let state = rt.read_state().unwrap().unwrap();
+            assert_eq!(state.status, "stopped");
+            assert_eq!(state.hold_reason.as_deref(), Some(error.as_str()));
+            assert!(state.pid.is_none());
+            assert!(rt.lock_holder().is_none());
+            assert!(!dir.path().join("polled").exists());
+            let events = std::fs::read_to_string(rt.events_path()).unwrap();
+            assert!(events.contains("env_file_unreadable"));
+            assert!(!events.contains("fleet_resolved"));
+            assert!(!events.contains("tick_started"));
+        }
+    }
 }

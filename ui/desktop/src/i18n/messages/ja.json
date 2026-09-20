@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "プロバイダーとモデルをリセット"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "エージェント作業"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

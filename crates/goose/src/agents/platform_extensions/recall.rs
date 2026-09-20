@@ -480,8 +480,8 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             // 3 of the names, score 1.5 — while the request is about whether to nag. The
             // description path also has to say two of the request's words TOGETHER (VA-188, 30
             // skills, 31 requests): "Deploy the app to the sandbox first, then production." suggested
-            // the tenant desks alterdomus ("(ET- on production; AHUB-, … on the sandbox) … the
-            // 'Altomata' Forge automations app", 3/5) and bankofireland ("Forge app development, Forge
+            // the tenant desks demotenant ("(DEMO- on production; DEMO-, … on the sandbox) … the
+            // 'Example' Forge automations app", 3/5) and demobank ("Forge app development, Forge
             // deployment/approval … every change to a production system", 3/5) — a request naming no
             // tenant, key or site, matched on the words every desk's description carries apart; the
             // description suggestions worth keeping say the words side by side: "blog post",
@@ -1032,7 +1032,7 @@ mod tests {
         let mut bank_rule = covering_hit("bank-agent-three-bucket-rule", 8.9, 4);
         bank_rule.name_terms = 0;
         bank_rule.topic_in_name = false;
-        let mut bank_desk = covering_hit("bankofireland-desk", 7.3, 2);
+        let mut bank_desk = covering_hit("demobank-desk", 7.3, 2);
         bank_desk.topic_in_name = false;
         let kept: Vec<String> = select_hits(vec![forge_facts, bank_rule, bank_desk], 4)
             .into_iter()
@@ -1464,16 +1464,16 @@ mod tests {
     fn a_tenant_desk_is_not_suggested_on_a_request_that_names_no_tenant() {
         let skills = vec![
             skill(
-                "alterdomus",
-                "Alter Domus Atlassian operations across alterdomus.atlassian.net (PRODUCTION) and alterdomus-sandbox.atlassian.net. Use whenever the task involves an Alter Domus ticket (ET- on production; AHUB- on the sandbox), the Altomata Forge automations app, or any REST automation against them.",
+                "demotenant",
+                "Demo Tenant Atlassian operations across tenant.example.com (PRODUCTION) and sandbox.example.com. Use whenever the task involves an Demo Tenant ticket (DEMO- on production; DEMO- on the sandbox), the Example Forge automations app, or any REST automation against them.",
             ),
             skill(
-                "bankofireland",
-                "Bank of Ireland Atlassian engagement — Forge app development, Forge deployment/approval. Every change to a production system goes through the bank's change control.",
+                "demobank",
+                "Demo Bank Atlassian engagement — Forge app development, Forge deployment/approval. Every change to a production system goes through the bank's change control.",
             ),
             skill(
-                "siemens",
-                "Siemens Atlassian operations on se-dps.atlassian.net (PRODUCTION CLIENT). Four sandboxes exist; rehearse in staging.",
+                "demoindustry",
+                "Demo Industry Atlassian operations on industry.example.com (PRODUCTION CLIENT). Four sandboxes exist; rehearse in staging.",
             ),
             skill(
                 "goose-swarm-campaign",
@@ -1510,22 +1510,22 @@ mod tests {
         );
         assert_eq!(
             names("Deploy the Forge app to production."),
-            vec!["bankofireland"],
+            vec!["demobank"],
             "a desk whose description says 'Forge app' and 'Forge deployment' is still suggested"
         );
         let hits = skill_hits(
             &skills,
             &query_terms("Deploy the app to the sandbox first, then production."),
         );
-        let alterdomus = hits.iter().find(|h| h.skill.name == "alterdomus").unwrap();
+        let demotenant = hits.iter().find(|h| h.skill.name == "demotenant").unwrap();
         assert_eq!(
             (
-                alterdomus.matched_terms,
-                alterdomus.together,
-                alterdomus.about
+                demotenant.matched_terms,
+                demotenant.together,
+                demotenant.about
             ),
             (3, false, false),
-            "{alterdomus:?}"
+            "{demotenant:?}"
         );
     }
 

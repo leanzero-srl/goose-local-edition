@@ -12,9 +12,9 @@
 > `set -a; source ~/.agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env; set +a; GOOSE_PROVIDER=openrouter GOOSE_MODEL=anthropic/claude-haiku-4.5`.
 >
 > **A. AGENT WORK — the desk operation (commits 99bd9a91e → d47e977c9; docs documentation/docs/guides/agent-work.md; example
-> evals/agent-work/examples/axpo.agent.yaml).** Verified so far: only the no-fleet path (a dead node fails the tick by name).
+> evals/agent-work/examples/web-research.agent.yaml).** Verified so far: only the no-fleet path (a dead node fails the tick by name).
 > 1. ONE REAL TICK ON A LOCAL NODE. `goose swarm agent init /tmp/desk-probe --name probe`; edit its agent.yaml: poll →
->    `["echo 'ITHUB-1: user asks for access to space X'; echo 'ITHUB-2: macro broken on page 42'"]`, one surgeon `general`
+>    `["echo 'DEMO-1: user asks for access to space X'; echo 'DEMO-2: macro broken on page 42'"]`, one surgeon `general`
 >    read-only, lenses `[factual, voice]`, no post. `goose swarm agent tick /tmp/desk-probe`. PASS = `.swarm/agent/run.jsonl`
 >    shows orient_done with 1–2 lanes → lane_dispatched/lane_done on the fleet model → lens_done → synthesis_done with a staged
 >    draft or an ask; `.swarm/agent/ledger.json` has kinds lane/lens/tick; `.swarm/activity/t1-*.think.log` carry the WORDS
@@ -31,7 +31,7 @@
 >    posted.log", approval: human}`): tick 1 stages, approve in the view (or append `{"id":"<draft id>","decision":"approve"}`
 >    to decisions.jsonl), tick 2 posts. PASS = `posted` event, prepared.json status posted, posted.log holds the body; a
 >    declined draft never posts; a tick outside the window emits `post_skipped{outside the desk's window}`.
-> 4. A REAL DESK: copy evals/agent-work/examples/axpo.agent.yaml into ~/.claude/skills/axpo as agent.yaml, `goose swarm agent
+> 4. A REAL DESK: copy evals/agent-work/examples/web-research.agent.yaml into ~/.claude/skills/demo-desk as agent.yaml, `goose swarm agent
 >    check` (env_file keys count, window), then ONE tick with `post` REMOVED (read-only proof first): PASS = the poll's real
 >    output reaches orient, lanes run the desk's read-only scripts (their calls.jsonl show `aj.py`), nothing is posted. Only
 >    then decide about the post command (`post_comment.py "$AGENT_DRAFT_TARGET" "$AGENT_DRAFT_FILE"` — usage read, never run).
@@ -77,7 +77,7 @@
 > Mihai: *"we don't have actual agent work and we don't want simple chat in goose… the ability to run these scripts, to
 > investigate, research, keep ledgers, keep scratchpads… tick information displayed in the UI like when is the next tick
 > happening, click on agents and see what they're doing in realtime… borrow from the swarm the synthetisize logic… snowball
-> logic and present it to orchestrating node."* Studied all seven desk skills (axpo, diconium, eon, siemens, alterdomus, the two
+> logic and present it to orchestrating node."* Studied all seven desk skills (demo-desk, demo-consulting, eon, demo-industry, demo-tenant, the two
 > community desks + `_agent-commons`) for MECHANICS: one shared spine — guard (kill-switch files, window, lock) → read-only
 > poll → one model-decided action → surgeon (returns a vetted draft, never posts) → refuting red team → STAGE → a LATER tick
 > posts through the ONE gated write script → ledgers (posted/effects, DAILY-LOG, PENDING for the human) → commit.
@@ -93,7 +93,7 @@
 > drafts → `decisions.jsonl`, folded at the next GUARD), note box → inbox, Ledger (ticks with lane-minutes, facts, drafts,
 > scratchpad, pending, daily log), New-agent dialog (writes agent.yaml). main.ts IPC `agent-work-*` spawns
 > `goose swarm agent run` per desk (per-pid stop, never a group kill). Docs: documentation/docs/guides/agent-work.md;
-> example: evals/agent-work/examples/axpo.agent.yaml.
+> example: evals/agent-work/examples/web-research.agent.yaml.
 > VERIFIED SINCE (0244f6169): the no-fleet path live — `goose swarm agent init/check/run --once` on a fresh desk with
 > LM Studio answering 401 and the sidecar down: fleet resolved to the configured sidecar device, the orchestrator's call came
 > back as the agent loop's transport text, and the tick now ends `failed` naming the node and the error (the first cut had

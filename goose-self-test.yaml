@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, delegation, advanced"
 
   - key: test_depth
     input_type: string
@@ -176,6 +176,17 @@ prompt: |
   4. Verify extension isolation between enabled extensions
 
   Log results to: {{ workspace_dir }}/phase2_extensions.md
+  {% endif %}
+
+  {% if test_phases == "all" or "extensions" in test_phases or test_phases == "mcp_setup" %}
+  ### LeanZero MCP configuration and corpus
+  When running from the Goose source checkout, run `node evals/agent-work/probe-mcp-setup.mjs`.
+  This uses an isolated configuration and the real bundled server: it verifies saved settings,
+  secret masking, discovered tools, public-page extraction, provenance and rejected local-file URLs.
+  Record the process exit code and source artifact. A missing build or bundle is a blocked check,
+  never a pass. Do not edit the user's existing extensions or run client agents for this test.
+
+  Log results to: {{ workspace_dir }}/mcp_setup.md
   {% endif %}
 
   {% if test_phases == "all" or "delegation" in test_phases %}

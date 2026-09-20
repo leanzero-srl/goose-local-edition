@@ -29,6 +29,7 @@
 pub mod engine;
 pub mod hf;
 mod memory;
+mod model_parsers;
 mod subprocess;
 
 pub use memory::{dir_size_bytes, disk_space, measure, GateResult, MemoryGate, Verdict, GIB};

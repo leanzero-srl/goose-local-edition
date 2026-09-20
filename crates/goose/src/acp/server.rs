@@ -89,6 +89,7 @@ mod diagnostics;
 mod dictation;
 mod dispatch;
 mod elicitation;
+mod extension_setup;
 mod extensions;
 mod fork_session;
 mod link;

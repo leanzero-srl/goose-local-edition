@@ -49,6 +49,7 @@ interface ExtensionSectionProps {
   selectedExtensions?: string[]; // Add controlled state
   onModalClose?: (extensionName: string) => void;
   searchTerm?: string;
+  excludeNames?: string[];
 }
 
 export default function ExtensionsSection({
@@ -60,6 +61,7 @@ export default function ExtensionsSection({
   selectedExtensions = [],
   onModalClose,
   searchTerm = '',
+  excludeNames,
 }: ExtensionSectionProps) {
   const intl = useIntl();
   const { getExtensions, addExtension, removeExtension, setExtensionEnabled, extensionsList } =
@@ -82,7 +84,8 @@ export default function ExtensionsSection({
   const extensions = useMemo(() => {
     if (extensionsList.length === 0) return [];
 
-    return [...extensionsList]
+    return extensionsList
+      .filter((entry) => !excludeNames?.includes(entry.name))
       .sort((a, b) => {
         // First sort by builtin
         if (a.type === 'builtin' && b.type !== 'builtin') return -1;
@@ -102,7 +105,7 @@ export default function ExtensionsSection({
         // Use selectedExtensions to determine enabled state in recipe editor
         enabled: disableConfiguration ? selectedExtensions.includes(ext.name) : ext.enabled,
       }));
-  }, [extensionsList, disableConfiguration, selectedExtensions]);
+  }, [extensionsList, disableConfiguration, selectedExtensions, excludeNames]);
 
   const fetchExtensions = useCallback(async () => {
     await getExtensions(true); // Force refresh - this will update the context
@@ -133,64 +136,26 @@ export default function ExtensionsSection({
   };
 
   const handleAddExtension = async (formData: ExtensionFormData) => {
-    // Close the modal immediately
-    handleModalClose();
-
-    const extensionConfig = createExtensionConfig(formData);
-    try {
-      await activateExtensionDefault({
-        addToConfig: addExtension,
-        extensionConfig: extensionConfig,
-      });
-    } catch (error) {
-      console.error('Failed to add extension:', error);
-    } finally {
-      await fetchExtensions();
-      if (onModalClose) {
-        setTimeout(() => {
-          onModalClose(formData.name);
-        }, 200);
-      }
-    }
+    await activateExtensionDefault({
+      addToConfig: addExtension,
+      extensionConfig: createExtensionConfig(formData),
+    });
+    await fetchExtensions();
+    onModalClose?.(formData.name);
   };
 
   const handleUpdateExtension = async (formData: ExtensionFormData) => {
-    if (!selectedExtension) {
-      console.error('No selected extension for update');
-      return;
-    }
-
-    // Close the modal immediately
-    handleModalClose();
-
+    if (!selectedExtension) throw new Error('Select an extension to update.');
     const extensionConfig = createExtensionConfig(formData);
-    const originalName = selectedExtension.name;
-
-    try {
-      if (originalName !== extensionConfig.name) {
-        await removeExtension(originalName);
-      }
-      await addExtension(extensionConfig.name, extensionConfig, formData.enabled);
-    } catch (error) {
-      console.error('Failed to update extension:', error);
-    } finally {
-      await fetchExtensions();
-    }
+    await addExtension(extensionConfig.name, extensionConfig, formData.enabled);
+    if (selectedExtension.name !== extensionConfig.name)
+      await removeExtension(selectedExtension.name);
+    await fetchExtensions();
   };
 
   const handleDeleteExtension = async (name: string) => {
-    handleModalClose();
-
-    try {
-      await deleteExtension({
-        name,
-        removeFromConfig: removeExtension,
-      });
-    } catch (error) {
-      console.error('Failed to delete extension:', error);
-    } finally {
-      await fetchExtensions();
-    }
+    await deleteExtension({ name, removeFromConfig: removeExtension });
+    await fetchExtensions();
   };
 
   const handleModalClose = () => {

@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Сбросить провайдера и модель"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "Работа агентов"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

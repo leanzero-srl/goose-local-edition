@@ -654,6 +654,27 @@ export const zDeleteSessionRequest = z.object({
 });
 
 /**
+ * Connect a saved MCP using its stored credentials and discover its actual tools.
+ */
+export const zInspectConfigExtensionRequest_unstable = z.object({
+    name: z.string(),
+    settingsOnly: z.boolean().optional().default(false),
+    sourceUrl: z.union([
+        z.string(),
+        z.null()
+    ]).optional().default(null)
+});
+
+export const zInspectConfigExtensionResponse_unstable = z.object({
+    settings: z.record(z.string()),
+    tools: z.array(z.unknown()),
+    savedFile: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
  * List configured extensions and any warnings.
  */
 export const zGetConfigExtensionsRequest_unstable = z.record(z.unknown());
@@ -2699,6 +2720,740 @@ export const zLocalInferenceBuiltinChatTemplatesListResponse_unstable = z.object
 });
 
 /**
+ * Read the MLX engine's live status, including a `/v1/models` probe when running.
+ */
+export const zMlxEngineStatusRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
+ * `context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never
+ * fabricated: a failed probe leaves them unset and reports `probe_error` instead.
+ */
+export const zMlxEngineStatusDto = z.object({
+    state: z.string(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    baseUrl: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    contextWindow: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    toolCallParser: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    servedModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    probeError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    activeRequests: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    activeRequestsError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    gateMessage: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    gateVerdict: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    strayListenerPort: z.union([
+        z.number().int().gte(0).lte(65535),
+        z.null()
+    ]).optional(),
+    availableMemoryGb: z.number(),
+    totalMemoryGb: z.number(),
+    restartRequired: z.boolean(),
+    lastError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineStatusResponse_unstable = z.object({
+    status: zMlxEngineStatusDto
+});
+
+/**
+ * Mount a local model into the MLX engine. Returns once mounting has started;
+ * poll status for running/failed.
+ */
+export const zMlxEngineMountRequest_unstable = z.object({
+    modelId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Stop the MLX engine and unmount its model.
+ */
+export const zMlxEngineUnmountRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Read the persisted MLX engine settings.
+ */
+export const zMlxEngineSettingsReadRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
+ * mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
+ */
+export const zMlxModelProfileDto = z.object({
+    temperature: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    topP: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    topK: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    minP: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    repetitionPenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    presencePenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    frequencyPenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    contextLimit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    speculative: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    adapterPath: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    textOnly: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineSettingsDto = z.object({
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelsDir: z.string(),
+    port: z.number().int().gte(0).lte(65535),
+    contextLimit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    temperature: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    topP: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    topK: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    minP: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    repetitionPenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    presencePenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    frequencyPenalty: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    servedModelName: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    spawnCommand: z.array(z.string()),
+    modelProfiles: z.record(zMlxModelProfileDto).optional().default({})
+});
+
+export const zMlxEngineSettingsResponse_unstable = z.object({
+    settings: zMlxEngineSettingsDto
+});
+
+/**
+ * Persist MLX engine settings. A running engine keeps its old arguments; status reports
+ * `restartRequired` until the model is remounted.
+ */
+export const zMlxEngineSettingsUpdateRequest_unstable = z.object({
+    settings: zMlxEngineSettingsDto,
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * List models present in the configured models dir.
+ */
+export const zMlxEngineModelsListRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxLocalModelDto = z.object({
+    id: z.string(),
+    sizeBytes: z.number().int().gte(0),
+    complete: z.boolean(),
+    missingFiles: z.number().int().gte(0)
+});
+
+export const zMlxEngineModelsListResponse_unstable = z.object({
+    models: z.array(zMlxLocalModelDto),
+    diskAvailableBytes: z.number().int().gte(0),
+    diskTotalBytes: z.number().int().gte(0)
+});
+
+/**
+ * Delete a downloaded model from the models dir.
+ */
+export const zMlxEngineModelDeleteRequest_unstable = z.object({
+    modelId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Search HuggingFace for MLX models, sorted by downloads.
+ */
+export const zMlxEngineHfSearchRequest_unstable = z.object({
+    query: z.string(),
+    limit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxHfModelHitDto = z.object({
+    id: z.string(),
+    downloads: z.number().int().gte(0),
+    likes: z.number().int().gte(0),
+    updatedAt: z.string()
+});
+
+export const zMlxEngineHfSearchResponse_unstable = z.object({
+    hits: z.array(zMlxHfModelHitDto)
+});
+
+/**
+ * Paginated MLX-only HuggingFace browse. All filters apply server-side: `query`
+ * searches names, `author` restricts the publisher, `quant` ("4-bit", "8-bit", …)
+ * and `arch` ("qwen3_5", "llama", …) AND-combine as HF tag filters — so a quant
+ * filter cannot see repos whose bit width appears only in the repo NAME. `sort` is
+ * "downloads" or "newest" (createdAt descending). Pass `nextCursor` from a response
+ * back as `cursor` for the next page; other parameters are baked into it.
+ */
+export const zMlxEngineBrowseRequest_unstable = z.object({
+    query: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    author: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    quant: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    arch: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    sort: z.string(),
+    cursor: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    limit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One MLX browse hit. `quant`/`arch` are DERIVED display fields (the repo's tags
+ * first, name patterns as fallback) — they describe the hit, they are not proof the
+ * server filtered on them unless the request set the corresponding filter.
+ */
+export const zMlxBrowseHitDto = z.object({
+    id: z.string(),
+    author: z.string(),
+    downloads: z.number().int().gte(0),
+    likes: z.number().int().gte(0),
+    createdAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    lastModified: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    tags: z.array(z.string()),
+    quant: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    arch: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    sizeBytesEstimate: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineBrowseResponse_unstable = z.object({
+    hits: z.array(zMlxBrowseHitDto),
+    nextCursor: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Start a background snapshot download of a HuggingFace repo into the models dir.
+ */
+export const zMlxEngineDownloadRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Poll download progress for a repo. `progress` is unset when no download was tracked.
+ */
+export const zMlxEngineDownloadProgressRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Snapshot download progress. `state` is one of
+ * "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled".
+ * A cancelled download has no on-disk claim (its partial repo dir is deleted), so a
+ * "cancelled" row may simply be dropped from the UI.
+ */
+export const zMlxDownloadProgressDto = z.object({
+    state: z.string(),
+    totalBytes: z.number().int().gte(0),
+    downloadedBytes: z.number().int().gte(0),
+    currentFile: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    restartedFiles: z.array(z.string()).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineDownloadProgressResponse_unstable = z.object({
+    progress: z.union([
+        zMlxDownloadProgressDto,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Filter vocabularies for the browse UI, aggregated live from HuggingFace (a bounded
+ * crawl of MLX listings, cached in-process with a ~1h TTL — the first call pays the
+ * crawl, later calls are instant). Values are raw filterable tag/author strings; free
+ * text beyond them still passes to the browse filters.
+ */
+export const zMlxEngineBrowseFiltersRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineBrowseFiltersResponse_unstable = z.object({
+    quants: z.array(z.string()),
+    archs: z.array(z.string()),
+    authors: z.array(z.string()),
+    sampledRepos: z.number().int().gte(0),
+    computedAt: z.number().int().gte(0),
+    refreshError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Everything the fullscreen model-card modal needs for one repo: README markdown,
+ * the file listing with sizes, and repo metadata. A repo without a README yields no
+ * `readmeMarkdown` — that is an absent field, not an error.
+ */
+export const zMlxEngineModelCardRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxRepoFileDto = z.object({
+    path: z.string(),
+    sizeBytes: z.number().int().gte(0)
+});
+
+export const zMlxEngineModelCardResponse_unstable = z.object({
+    readmeMarkdown: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    readmeTruncated: z.boolean(),
+    files: z.array(zMlxRepoFileDto),
+    totalBytes: z.number().int().gte(0),
+    tags: z.array(z.string()),
+    downloads: z.number().int().gte(0),
+    likes: z.number().int().gte(0),
+    license: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    createdAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    lastModified: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Pause an active download: the task stops cleanly between chunks and every `.part`
+ * stays on disk for a later resume. Loud on an unknown or inactive repo.
+ */
+export const zMlxEngineDownloadPauseRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Resume a paused/failed/cancelled download — or partial files left on disk by an
+ * earlier session. Complete files are skipped, `.part` files continue via HTTP Range;
+ * a file whose partial no longer matches the repo tree restarts from zero and is
+ * reported in `restartedFiles`. Loud on an unknown repo with nothing on disk.
+ */
+export const zMlxEngineDownloadResumeRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Cancel a download AND delete its on-disk claim: every `.part` and the whole partial
+ * repo directory are removed. Works on active and paused/failed downloads; the state
+ * becomes "cancelled" once the deletion has run.
+ */
+export const zMlxEngineDownloadCancelRequest_unstable = z.object({
+    repoId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * `GET /v1/health` on the auth worker — what the deployment supports.
+ */
+export const zLeanzeroLinkHealthRequest_unstable = z.record(z.unknown());
+
+/**
+ * Which auth-worker capabilities the deployment has configured (from env presence).
+ */
+export const zLeanzeroLinkCapabilitiesDto = z.object({
+    mail: z.boolean(),
+    audience: z.boolean(),
+    mesh: z.boolean()
+});
+
+export const zLeanzeroLinkHealthResponse_unstable = z.object({
+    ok: z.boolean(),
+    version: z.string(),
+    capabilities: zLeanzeroLinkCapabilitiesDto
+});
+
+/**
+ * Request an email OTP → `codeSent`.
+ */
+export const zLeanzeroLinkRequestCodeRequest_unstable = z.object({
+    email: z.string()
+});
+
+export const zLeanzeroLinkRequestCodeResponse_unstable = z.object({
+    email: z.string(),
+    expiresInSeconds: z.number().int().gte(0)
+});
+
+/**
+ * Verify the OTP → persist identity, `loggedIn`.
+ */
+export const zLeanzeroLinkVerifyRequest_unstable = z.object({
+    email: z.string(),
+    code: z.string()
+});
+
+export const zLeanzeroLinkVerifyResponse_unstable = z.object({
+    state: z.string(),
+    email: z.string(),
+    audienceSync: z.string()
+});
+
+/**
+ * Bring up the mesh + control service (requires a verified identity).
+ */
+export const zLeanzeroLinkConnectRequest_unstable = z.record(z.unknown());
+
+/**
+ * The auth lifecycle state. Internally tagged on `state`:
+ * `loggedOut | codeSent | loggedIn | connecting | connected`.
+ */
+export const zLeanzeroLinkAuthStateDto = z.union([
+    z.object({
+        state: z.literal('loggedOut')
+    }),
+    z.object({
+        email: z.string(),
+        expiresAt: z.string(),
+        state: z.literal('codeSent')
+    }),
+    z.object({
+        email: z.string(),
+        state: z.literal('loggedIn')
+    }),
+    z.object({
+        email: z.string(),
+        state: z.literal('connecting')
+    }),
+    z.object({
+        email: z.string(),
+        meshIp: z.string(),
+        state: z.literal('connected')
+    })
+]);
+
+/**
+ * One raw Tailscale peer seen by the local mesh daemon (status-panel diagnostics —
+ * distinct from a swarm `NodeState`).
+ */
+export const zLeanzeroLinkMeshPeerDto = z.object({
+    hostname: z.string(),
+    ip: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    online: z.boolean(),
+    lastSeen: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Live mesh status from the goose-owned tailscaled.
+ */
+export const zLeanzeroLinkMeshStatusDto = z.object({
+    selfIp: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    selfHostname: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    backendState: z.string(),
+    online: z.boolean(),
+    peers: z.array(zLeanzeroLinkMeshPeerDto).optional().default([])
+});
+
+/**
+ * One mesh binary as discovered when the Link manager was built: `found` at `path`, or
+ * `missing` with the full text of where discovery looked (the env override, every PATH
+ * directory, the known install locations) — so the UI can show a broken bundle BEFORE
+ * the connect click, and `connect` is refused with the same text.
+ */
+export const zLeanzeroLinkBinaryDto = z.union([
+    z.object({
+        path: z.string(),
+        status: z.literal('found')
+    }),
+    z.object({
+        error: z.string(),
+        status: z.literal('missing')
+    })
+]);
+
+/**
+ * The two binaries the goose-owned mesh needs.
+ */
+export const zLeanzeroLinkMeshBinariesDto = z.object({
+    tailscaled: zLeanzeroLinkBinaryDto,
+    tailscale: zLeanzeroLinkBinaryDto
+});
+
+/**
+ * What goosed surfaces for the Link tab: auth + live mesh + total node count
+ * (self + reachable peers) + the last error (never swallowed).
+ */
+export const zLeanzeroLinkStateResponse_unstable = z.object({
+    auth: zLeanzeroLinkAuthStateDto,
+    mesh: z.union([
+        zLeanzeroLinkMeshStatusDto,
+        z.null()
+    ]).optional(),
+    nodeCount: z.number().int().gte(0),
+    lastError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    remoteExecutionAllowed: z.boolean().optional().default(false),
+    remoteExecutionAllowedLive: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional(),
+    meshBinaries: zLeanzeroLinkMeshBinariesDto,
+    remoteExecutionWired: z.boolean().optional().default(false),
+    mlxControlWired: z.boolean().optional().default(false)
+});
+
+/**
+ * The composed auth + mesh state.
+ */
+export const zLeanzeroLinkStatusRequest_unstable = z.record(z.unknown());
+
+/**
+ * Tear down the connection, clear the stored identity, drop to `loggedOut`.
+ * `wipe` also removes the mesh state dir (slower re-login).
+ */
+export const zLeanzeroLinkLogoutRequest_unstable = z.object({
+    wipe: z.boolean().optional().default(false)
+});
+
+/**
+ * The swarm node view (`self` + peers). Proxies the local control service's
+ * `GET /v1/swarm/nodes`. The `self` and `peers` objects are the snake_case wire
+ * `NodeState` shared with peer nodes + the iOS companion — passed through verbatim:
+ * `{ node_id, hostname, mesh_ip, status: { type, session_id? }, sessions_active,
+ * updated_at }`.
+ */
+export const zLeanzeroLinkNodesRequest_unstable = z.record(z.unknown());
+
+export const zLeanzeroLinkNodesResponse_unstable = z.object({
+    self: z.unknown(),
+    peers: z.array(z.unknown()).optional().default([])
+});
+
+/**
+ * Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
+ * there. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks
+ * `targetNodeId` from `leanzeroLink/nodes` (filter to `status == "Idle"`); the receive
+ * side's idle guard on the peer is the backstop, so a busy/disabled/unwired target
+ * surfaces its status text verbatim as an `invalid_params` error. Requires the manager
+ * be `connected` — otherwise `invalid_params` "not connected to the mesh". The returned
+ * `sessionId` is the session on the TARGET node, mirrored over `/v1/swarm/stream`.
+ */
+export const zLeanzeroLinkRemoteExecuteRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    prompt: z.string(),
+    workingDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zLeanzeroLinkRemoteExecuteResponse_unstable = z.object({
+    sessionId: z.string()
+});
+
+/**
  * Streaming context-window usage update for a session.
  */
 export const zSessionUsageUpdate = z.object({
@@ -2792,6 +3547,7 @@ export const zExtRequest = z.object({
             zSavePromptRequest_unstable,
             zResetPromptRequest_unstable,
             zDeleteSessionRequest,
+            zInspectConfigExtensionRequest_unstable,
             zGetConfigExtensionsRequest_unstable,
             zGetAvailableExtensionsRequest_unstable,
             zAddConfigExtensionRequest_unstable,
@@ -2885,7 +3641,31 @@ export const zExtRequest = z.object({
             zLocalInferenceModelSettingsUpdateRequest_unstable,
             zLocalInferenceHuggingFaceSearchRequest_unstable,
             zLocalInferenceHuggingFaceRepoVariantsRequest_unstable,
-            zLocalInferenceBuiltinChatTemplatesListRequest_unstable
+            zLocalInferenceBuiltinChatTemplatesListRequest_unstable,
+            zMlxEngineStatusRequest_unstable,
+            zMlxEngineMountRequest_unstable,
+            zMlxEngineUnmountRequest_unstable,
+            zMlxEngineSettingsReadRequest_unstable,
+            zMlxEngineSettingsUpdateRequest_unstable,
+            zMlxEngineModelsListRequest_unstable,
+            zMlxEngineModelDeleteRequest_unstable,
+            zMlxEngineHfSearchRequest_unstable,
+            zMlxEngineBrowseRequest_unstable,
+            zMlxEngineDownloadRequest_unstable,
+            zMlxEngineDownloadProgressRequest_unstable,
+            zMlxEngineBrowseFiltersRequest_unstable,
+            zMlxEngineModelCardRequest_unstable,
+            zMlxEngineDownloadPauseRequest_unstable,
+            zMlxEngineDownloadResumeRequest_unstable,
+            zMlxEngineDownloadCancelRequest_unstable,
+            zLeanzeroLinkHealthRequest_unstable,
+            zLeanzeroLinkRequestCodeRequest_unstable,
+            zLeanzeroLinkVerifyRequest_unstable,
+            zLeanzeroLinkConnectRequest_unstable,
+            zLeanzeroLinkStatusRequest_unstable,
+            zLeanzeroLinkLogoutRequest_unstable,
+            zLeanzeroLinkNodesRequest_unstable,
+            zLeanzeroLinkRemoteExecuteRequest_unstable
         ]),
         z.union([
             z.record(z.unknown()),
@@ -2912,6 +3692,7 @@ export const zExtResponse = z.union([
                 zListPromptsResponse_unstable,
                 zGetPromptResponse_unstable,
                 zPromptOperationResponse_unstable,
+                zInspectConfigExtensionResponse_unstable,
                 zGetConfigExtensionsResponse_unstable,
                 zGetAvailableExtensionsResponse_unstable,
                 zGetSessionExtensionsResponse_unstable,
@@ -2973,7 +3754,21 @@ export const zExtResponse = z.union([
                 zLocalInferenceModelSettingsUpdateResponse_unstable,
                 zLocalInferenceHuggingFaceSearchResponse_unstable,
                 zLocalInferenceHuggingFaceRepoVariantsResponse_unstable,
-                zLocalInferenceBuiltinChatTemplatesListResponse_unstable
+                zLocalInferenceBuiltinChatTemplatesListResponse_unstable,
+                zMlxEngineStatusResponse_unstable,
+                zMlxEngineSettingsResponse_unstable,
+                zMlxEngineModelsListResponse_unstable,
+                zMlxEngineHfSearchResponse_unstable,
+                zMlxEngineBrowseResponse_unstable,
+                zMlxEngineDownloadProgressResponse_unstable,
+                zMlxEngineBrowseFiltersResponse_unstable,
+                zMlxEngineModelCardResponse_unstable,
+                zLeanzeroLinkHealthResponse_unstable,
+                zLeanzeroLinkRequestCodeResponse_unstable,
+                zLeanzeroLinkVerifyResponse_unstable,
+                zLeanzeroLinkStateResponse_unstable,
+                zLeanzeroLinkNodesResponse_unstable,
+                zLeanzeroLinkRemoteExecuteResponse_unstable
             ]),
             z.unknown()
         ]).optional()

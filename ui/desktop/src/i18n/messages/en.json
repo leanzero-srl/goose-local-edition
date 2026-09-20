@@ -1314,7 +1314,7 @@
     "defaultMessage": "These extensions use the Model Context Protocol (MCP). They can expand Goose's capabilities using three main components: Prompts, Resources, and Tools. {searchShortcut} to search."
   },
   "extensionsView.heading": {
-    "defaultMessage": "Extensions"
+    "defaultMessage": "MCPs"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Search extensions..."
@@ -2489,11 +2489,17 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Reset Provider and Model"
   },
+  "navigation.itemAgentWork": {
+    "defaultMessage": "Agent Work"
+  },
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Goose Swarm"
+  },
+  "navigation.itemMcps": {
+    "defaultMessage": "MCPs"
   },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"

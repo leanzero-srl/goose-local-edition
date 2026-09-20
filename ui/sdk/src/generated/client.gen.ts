@@ -91,10 +91,26 @@ import type {
   ImportSessionResponse_unstable,
   ImportSourcesRequest_unstable,
   ImportSourcesResponse_unstable,
+  InspectConfigExtensionRequest_unstable,
+  InspectConfigExtensionResponse_unstable,
   InspectRunningJobRequest_unstable,
   InspectRunningJobResponse_unstable,
   KillRunningJobRequest_unstable,
   KillRunningJobResponse_unstable,
+  LeanzeroLinkConnectRequest_unstable,
+  LeanzeroLinkHealthRequest_unstable,
+  LeanzeroLinkHealthResponse_unstable,
+  LeanzeroLinkLogoutRequest_unstable,
+  LeanzeroLinkNodesRequest_unstable,
+  LeanzeroLinkNodesResponse_unstable,
+  LeanzeroLinkRemoteExecuteRequest_unstable,
+  LeanzeroLinkRemoteExecuteResponse_unstable,
+  LeanzeroLinkRequestCodeRequest_unstable,
+  LeanzeroLinkRequestCodeResponse_unstable,
+  LeanzeroLinkStateResponse_unstable,
+  LeanzeroLinkStatusRequest_unstable,
+  LeanzeroLinkVerifyRequest_unstable,
+  LeanzeroLinkVerifyResponse_unstable,
   ListAgentMentionsRequest_unstable,
   ListAgentMentionsResponse_unstable,
   ListPromptsRequest_unstable,
@@ -129,6 +145,30 @@ import type {
   LocalInferenceModelSettingsUpdateResponse_unstable,
   LocalInferenceModelsListRequest_unstable,
   LocalInferenceModelsListResponse_unstable,
+  MlxEngineBrowseFiltersRequest_unstable,
+  MlxEngineBrowseFiltersResponse_unstable,
+  MlxEngineBrowseRequest_unstable,
+  MlxEngineBrowseResponse_unstable,
+  MlxEngineDownloadCancelRequest_unstable,
+  MlxEngineDownloadPauseRequest_unstable,
+  MlxEngineDownloadProgressRequest_unstable,
+  MlxEngineDownloadProgressResponse_unstable,
+  MlxEngineDownloadRequest_unstable,
+  MlxEngineDownloadResumeRequest_unstable,
+  MlxEngineHfSearchRequest_unstable,
+  MlxEngineHfSearchResponse_unstable,
+  MlxEngineModelCardRequest_unstable,
+  MlxEngineModelCardResponse_unstable,
+  MlxEngineModelDeleteRequest_unstable,
+  MlxEngineModelsListRequest_unstable,
+  MlxEngineModelsListResponse_unstable,
+  MlxEngineMountRequest_unstable,
+  MlxEngineSettingsReadRequest_unstable,
+  MlxEngineSettingsResponse_unstable,
+  MlxEngineSettingsUpdateRequest_unstable,
+  MlxEngineStatusRequest_unstable,
+  MlxEngineStatusResponse_unstable,
+  MlxEngineUnmountRequest_unstable,
   OnboardingImportApplyRequest_unstable,
   OnboardingImportApplyResponse_unstable,
   OnboardingImportScanRequest_unstable,
@@ -233,8 +273,15 @@ import {
   zGooseToolCallResponse_unstable,
   zImportSessionResponse_unstable,
   zImportSourcesResponse_unstable,
+  zInspectConfigExtensionResponse_unstable,
   zInspectRunningJobResponse_unstable,
   zKillRunningJobResponse_unstable,
+  zLeanzeroLinkHealthResponse_unstable,
+  zLeanzeroLinkNodesResponse_unstable,
+  zLeanzeroLinkRemoteExecuteResponse_unstable,
+  zLeanzeroLinkRequestCodeResponse_unstable,
+  zLeanzeroLinkStateResponse_unstable,
+  zLeanzeroLinkVerifyResponse_unstable,
   zListAgentMentionsResponse_unstable,
   zListPromptsResponse_unstable,
   zListProvidersResponse_unstable,
@@ -251,6 +298,14 @@ import {
   zLocalInferenceModelSettingsReadResponse_unstable,
   zLocalInferenceModelSettingsUpdateResponse_unstable,
   zLocalInferenceModelsListResponse_unstable,
+  zMlxEngineBrowseFiltersResponse_unstable,
+  zMlxEngineBrowseResponse_unstable,
+  zMlxEngineDownloadProgressResponse_unstable,
+  zMlxEngineHfSearchResponse_unstable,
+  zMlxEngineModelCardResponse_unstable,
+  zMlxEngineModelsListResponse_unstable,
+  zMlxEngineSettingsResponse_unstable,
+  zMlxEngineStatusResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
   zParseRecipeResponse_unstable,
@@ -457,6 +512,18 @@ export class GooseExtClient {
 
   async sessionDelete(params: DeleteSessionRequest): Promise<void> {
     await this.conn.extMethod("session/delete", params);
+  }
+
+  async configExtensionsInspect_unstable(
+    params: InspectConfigExtensionRequest_unstable,
+  ): Promise<InspectConfigExtensionResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/config/extensions/inspect",
+      params,
+    );
+    return zInspectConfigExtensionResponse_unstable.parse(
+      raw,
+    ) as InspectConfigExtensionResponse_unstable;
   }
 
   async configExtensionsList_unstable(
@@ -1450,6 +1517,261 @@ export class GooseExtClient {
     return zLocalInferenceBuiltinChatTemplatesListResponse_unstable.parse(
       raw,
     ) as LocalInferenceBuiltinChatTemplatesListResponse_unstable;
+  }
+
+  async mlxEngineStatus_unstable(
+    params: MlxEngineStatusRequest_unstable,
+  ): Promise<MlxEngineStatusResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/status",
+      params,
+    );
+    return zMlxEngineStatusResponse_unstable.parse(
+      raw,
+    ) as MlxEngineStatusResponse_unstable;
+  }
+
+  async mlxEngineMount_unstable(
+    params: MlxEngineMountRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod("_goose/unstable/mlxEngine/mount", params);
+  }
+
+  async mlxEngineUnmount_unstable(
+    params: MlxEngineUnmountRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod("_goose/unstable/mlxEngine/unmount", params);
+  }
+
+  async mlxEngineSettingsRead_unstable(
+    params: MlxEngineSettingsReadRequest_unstable,
+  ): Promise<MlxEngineSettingsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/settingsRead",
+      params,
+    );
+    return zMlxEngineSettingsResponse_unstable.parse(
+      raw,
+    ) as MlxEngineSettingsResponse_unstable;
+  }
+
+  async mlxEngineSettingsUpdate_unstable(
+    params: MlxEngineSettingsUpdateRequest_unstable,
+  ): Promise<MlxEngineSettingsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/settingsUpdate",
+      params,
+    );
+    return zMlxEngineSettingsResponse_unstable.parse(
+      raw,
+    ) as MlxEngineSettingsResponse_unstable;
+  }
+
+  async mlxEngineModelsList_unstable(
+    params: MlxEngineModelsListRequest_unstable,
+  ): Promise<MlxEngineModelsListResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/modelsList",
+      params,
+    );
+    return zMlxEngineModelsListResponse_unstable.parse(
+      raw,
+    ) as MlxEngineModelsListResponse_unstable;
+  }
+
+  async mlxEngineModelDelete_unstable(
+    params: MlxEngineModelDeleteRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod("_goose/unstable/mlxEngine/modelDelete", params);
+  }
+
+  async mlxEngineHfSearch_unstable(
+    params: MlxEngineHfSearchRequest_unstable,
+  ): Promise<MlxEngineHfSearchResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/hfSearch",
+      params,
+    );
+    return zMlxEngineHfSearchResponse_unstable.parse(
+      raw,
+    ) as MlxEngineHfSearchResponse_unstable;
+  }
+
+  async mlxEngineBrowse_unstable(
+    params: MlxEngineBrowseRequest_unstable,
+  ): Promise<MlxEngineBrowseResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/browse",
+      params,
+    );
+    return zMlxEngineBrowseResponse_unstable.parse(
+      raw,
+    ) as MlxEngineBrowseResponse_unstable;
+  }
+
+  async mlxEngineDownload_unstable(
+    params: MlxEngineDownloadRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod("_goose/unstable/mlxEngine/download", params);
+  }
+
+  async mlxEngineDownloadProgress_unstable(
+    params: MlxEngineDownloadProgressRequest_unstable,
+  ): Promise<MlxEngineDownloadProgressResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/downloadProgress",
+      params,
+    );
+    return zMlxEngineDownloadProgressResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDownloadProgressResponse_unstable;
+  }
+
+  async mlxEngineBrowseFilters_unstable(
+    params: MlxEngineBrowseFiltersRequest_unstable,
+  ): Promise<MlxEngineBrowseFiltersResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/browseFilters",
+      params,
+    );
+    return zMlxEngineBrowseFiltersResponse_unstable.parse(
+      raw,
+    ) as MlxEngineBrowseFiltersResponse_unstable;
+  }
+
+  async mlxEngineModelCard_unstable(
+    params: MlxEngineModelCardRequest_unstable,
+  ): Promise<MlxEngineModelCardResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/modelCard",
+      params,
+    );
+    return zMlxEngineModelCardResponse_unstable.parse(
+      raw,
+    ) as MlxEngineModelCardResponse_unstable;
+  }
+
+  async mlxEngineDownloadPause_unstable(
+    params: MlxEngineDownloadPauseRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/downloadPause",
+      params,
+    );
+  }
+
+  async mlxEngineDownloadResume_unstable(
+    params: MlxEngineDownloadResumeRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/downloadResume",
+      params,
+    );
+  }
+
+  async mlxEngineDownloadCancel_unstable(
+    params: MlxEngineDownloadCancelRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/downloadCancel",
+      params,
+    );
+  }
+
+  async leanzeroLinkHealth_unstable(
+    params: LeanzeroLinkHealthRequest_unstable,
+  ): Promise<LeanzeroLinkHealthResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/health",
+      params,
+    );
+    return zLeanzeroLinkHealthResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkHealthResponse_unstable;
+  }
+
+  async leanzeroLinkRequestCode_unstable(
+    params: LeanzeroLinkRequestCodeRequest_unstable,
+  ): Promise<LeanzeroLinkRequestCodeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/requestCode",
+      params,
+    );
+    return zLeanzeroLinkRequestCodeResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkRequestCodeResponse_unstable;
+  }
+
+  async leanzeroLinkVerify_unstable(
+    params: LeanzeroLinkVerifyRequest_unstable,
+  ): Promise<LeanzeroLinkVerifyResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/verify",
+      params,
+    );
+    return zLeanzeroLinkVerifyResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkVerifyResponse_unstable;
+  }
+
+  async leanzeroLinkConnect_unstable(
+    params: LeanzeroLinkConnectRequest_unstable,
+  ): Promise<LeanzeroLinkStateResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/connect",
+      params,
+    );
+    return zLeanzeroLinkStateResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkStateResponse_unstable;
+  }
+
+  async leanzeroLinkStatus_unstable(
+    params: LeanzeroLinkStatusRequest_unstable,
+  ): Promise<LeanzeroLinkStateResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/status",
+      params,
+    );
+    return zLeanzeroLinkStateResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkStateResponse_unstable;
+  }
+
+  async leanzeroLinkLogout_unstable(
+    params: LeanzeroLinkLogoutRequest_unstable,
+  ): Promise<LeanzeroLinkStateResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/logout",
+      params,
+    );
+    return zLeanzeroLinkStateResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkStateResponse_unstable;
+  }
+
+  async leanzeroLinkNodes_unstable(
+    params: LeanzeroLinkNodesRequest_unstable,
+  ): Promise<LeanzeroLinkNodesResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/nodes",
+      params,
+    );
+    return zLeanzeroLinkNodesResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkNodesResponse_unstable;
+  }
+
+  async leanzeroLinkRemoteExecute_unstable(
+    params: LeanzeroLinkRemoteExecuteRequest_unstable,
+  ): Promise<LeanzeroLinkRemoteExecuteResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/remoteExecute",
+      params,
+    );
+    return zLeanzeroLinkRemoteExecuteResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkRemoteExecuteResponse_unstable;
   }
 }
 

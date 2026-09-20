@@ -51,6 +51,12 @@ module.exports = [
       globals: {
         // Electron/Node.js globals
         process: 'readonly',
+        NodeJS: 'readonly',
+        RequestInit: 'readonly',
+        PointerEvent: 'readonly',
+        Element: 'readonly',
+        HTMLSpanElement: 'readonly',
+        sessionStorage: 'readonly',
         __dirname: 'readonly',
         require: 'readonly',
         module: 'readonly',

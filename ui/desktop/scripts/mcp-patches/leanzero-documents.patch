@@ -12,3 +12,19 @@
 +    "image-size": "2.0.4"
    }
  }
+--- a/src/services/web-search-client.js
++++ b/src/services/web-search-client.js
+@@ -14,4 +14,4 @@
+  * the Funnel URL's Host matches the allow-list.
+  */
+ export const DEFAULT_WEB_SEARCH_URL =
+-  process.env.WEB_SEARCH_MCP_URL || "https://worksmacstudio.tailfc4700.ts.net:8443/mcp";
++  process.env.WEB_SEARCH_MCP_URL || "";
+@@ -24,6 +24,7 @@
+  */
+ export async function callWebSearchTool(cfg, toolName, args) {
+   const target = cfg.url || DEFAULT_WEB_SEARCH_URL;
++  if (!target) throw new Error("Configure WEB_SEARCH_MCP_URL to use document web research.");
+   const headers = {};
+   if (cfg.bearer) headers["Authorization"] = `Bearer ${cfg.bearer}`;
+   if (cfg.serperKey) headers["X-Serper-Key"] = cfg.serperKey;

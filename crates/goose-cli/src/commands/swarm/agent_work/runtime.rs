@@ -33,6 +33,44 @@ pub struct Fleet {
     pub extensions: Vec<ExtensionConfig>,
 }
 
+fn resolve_extensions(
+    configured: &[String],
+    selected: &[String],
+    saved: impl Fn(&str) -> Option<ExtensionConfig>,
+    legacy: impl Fn(&str) -> Option<ExtensionConfig>,
+) -> Result<Vec<ExtensionConfig>> {
+    let names: std::collections::BTreeSet<&str> = configured
+        .iter()
+        .chain(selected)
+        .map(String::as_str)
+        .collect();
+    let mut keys = std::collections::HashSet::new();
+    let mut extensions = Vec::new();
+    let mut missing = Vec::new();
+    for name in names {
+        let extension = saved(name).or_else(|| match name {
+            "context7" | "web-search" | "doc-processor" => legacy(name),
+            _ => None,
+        });
+        match extension {
+            Some(extension) => {
+                if keys.insert(extension.key()) {
+                    extensions.push(extension);
+                }
+            }
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "Agent Work could not resolve selected MCPs: {}. Configure them in the MCP menu, \
+             supply the legacy builder credentials and endpoint, or remove them from the agent's extensions.",
+            missing.join(", ")
+        ));
+    }
+    Ok(extensions)
+}
+
 /// Resolve the pool and build the dispatcher. Every named absence (an unservable device, a
 /// planner fallback, an empty fleet falling to the configured devices) rides `sink`.
 pub async fn resolve_fleet(
@@ -41,6 +79,17 @@ pub async fn resolve_fleet(
     extra_extensions: &[String],
 ) -> Result<Fleet> {
     let mut cfg = load_config();
+    let extensions = resolve_extensions(
+        &cfg.worker_extensions,
+        extra_extensions,
+        goose::config::get_extension_by_name,
+        build_worker_extension,
+    )
+    .inspect_err(|error| {
+        sink.write_value(serde_json::json!({
+            "event": "agent_extensions_unavailable", "error": error.to_string(),
+        }));
+    })?;
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     suppress_inherited_hints();
     let engines = Arc::new(engines_for_run(&cfg.devices));
@@ -124,15 +173,6 @@ pub async fn resolve_fleet(
         })
         .collect();
 
-    let mut ext_names = cfg.worker_extensions.clone();
-    ext_names.extend(extra_extensions.iter().cloned());
-    ext_names.sort();
-    ext_names.dedup();
-    let extensions: Vec<ExtensionConfig> = ext_names
-        .iter()
-        .filter_map(|n| build_worker_extension(n))
-        .collect();
-
     let engine_models: std::collections::HashMap<String, EngineKind> = enabled
         .iter()
         .filter(|d| {
@@ -187,7 +227,7 @@ pub async fn resolve_fleet(
         "planner_model": cfg.planner_model,
         "devices": device_slots,
         "lane_slots": slots.capacity(),
-        "extensions": ext_names,
+        "extensions": extensions.iter().map(ExtensionConfig::name).collect::<Vec<_>>(),
     }));
     Ok(Fleet {
         dispatcher,
@@ -292,6 +332,84 @@ impl SlotPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn saved_mcp(name: &str) -> ExtensionConfig {
+        ExtensionConfig::StreamableHttp {
+            name: name.into(),
+            description: "Demo MCP".into(),
+            uri: "https://mcp.example.com/service".into(),
+            envs: Default::default(),
+            env_keys: vec!["DEMO_API_KEY".into()],
+            headers: [("X-Demo".into(), "fixture-value".into())].into(),
+            timeout: Some(23),
+            socket: None,
+            bundled: None,
+            available_tools: vec!["lookup".into()],
+        }
+    }
+
+    #[test]
+    fn selected_saved_mcps_keep_their_configuration_and_deduplicate_aliases() {
+        let config = saved_mcp("Demo Search");
+        let resolved = resolve_extensions(
+            &["demosearch".into()],
+            &["Demo Search".into(), "demosearch".into()],
+            |name| match name {
+                "Demo Search" | "demosearch" => Some(config.clone()),
+                _ => None,
+            },
+            |_| panic!("a saved MCP must not invoke a legacy builder"),
+        )
+        .unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&resolved[0]).unwrap(),
+            serde_json::to_value(&config).unwrap()
+        );
+        assert_eq!(resolved[0].name(), "Demo Search");
+    }
+
+    #[test]
+    fn saved_mcp_overrides_legacy_name_and_legacy_credentials_remain_supported() {
+        let saved = saved_mcp("web-search");
+        let legacy = saved_mcp("context7");
+        let resolved = resolve_extensions(
+            &["context7".into()],
+            &["web-search".into()],
+            |name| (name == "web-search").then(|| saved.clone()),
+            |name| {
+                assert_eq!(name, "context7");
+                Some(legacy.clone())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            resolved
+                .iter()
+                .map(ExtensionConfig::name)
+                .collect::<Vec<_>>(),
+            vec!["context7", "web-search"]
+        );
+    }
+
+    #[test]
+    fn unresolved_selected_mcp_is_an_error_instead_of_silent_omission() {
+        let error = resolve_extensions(
+            &["context7".into()],
+            &["missing-server".into()],
+            |_| None,
+            |name| {
+                assert_eq!(name, "context7");
+                None
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("context7, missing-server"));
+        assert!(resolve_extensions(&[], &[], |_| None, |_| None)
+            .unwrap()
+            .is_empty());
+    }
 
     fn dev(id: &str, weight: u32, supervision: bool) -> DeviceCfg {
         DeviceCfg {

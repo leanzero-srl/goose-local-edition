@@ -15,6 +15,7 @@ import { NAV_ITEMS, SETTINGS_NAV_ITEM } from './useNavigationItems';
 describe('NAV_ITEMS fixture', () => {
   it('contains exactly the expected entries, in order', () => {
     expect(NAV_ITEMS.map((i) => i.id)).toEqual([
+      'extensions',
       'skills',
       'memories',
       'agent-work',
@@ -22,6 +23,7 @@ describe('NAV_ITEMS fixture', () => {
       'leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
+      '/extensions',
       '/skills',
       '/memories',
       '/agent-work',
@@ -29,6 +31,7 @@ describe('NAV_ITEMS fixture', () => {
       '/leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
+      'MCPs',
       'Skills',
       'Memories',
       'Agent Work',
