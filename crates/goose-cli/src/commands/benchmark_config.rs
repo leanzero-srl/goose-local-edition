@@ -33,6 +33,7 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
                 if device.get("enabled").and_then(Value::as_bool) == Some(false) {
                     continue;
                 }
+                validate_isolated_device(device)?;
                 providers.insert(
                     super::swarm::cloud::cloud_registry_name(
                         device
@@ -102,6 +103,13 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
     write_private(output, &snapshot)
 }
 
+fn validate_isolated_device(device: &Value) -> Result<()> {
+    if device.get("engine").and_then(Value::as_str) == Some("mlx-sidecar") {
+        bail!("Benchmark isolation cannot attach the managed MLX swarm engine; use Single model with its configured running API endpoint");
+    }
+    Ok(())
+}
+
 fn write_private(output: &Path, snapshot: &Value) -> Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -119,6 +127,13 @@ fn write_private(output: &Path, snapshot: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_mlx_requires_attachment_but_api_devices_remain_available() {
+        assert!(validate_isolated_device(&json!({"engine": "mlx-sidecar"})).is_err());
+        assert!(validate_isolated_device(&json!({"provider": "omlx"})).is_ok());
+        assert!(validate_isolated_device(&json!({"engine": "lmstudio"})).is_ok());
+    }
 
     #[test]
     fn credential_snapshot_is_private_and_never_overwrites_existing_data() {
