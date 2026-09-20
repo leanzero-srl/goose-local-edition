@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
 import urllib.request
 
@@ -32,7 +33,7 @@ def fetch(url):
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
-    def collect(self, mutation=None, seed='123456789abcdef0'):
+    def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual'):
         bench = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix='sb71-visual-control-') as temporary:
             root = Path(temporary)
@@ -76,12 +77,24 @@ class VisualControls(unittest.TestCase):
                     else:
                         self.fail('Reference sync failed: ' + (root / 'apps.log').read_text()[-1000:])
                     records = fetch(base + '/api/viz/records')
-                    (root / 'expect.json').write_text(json.dumps(dict(seed=seed, records=records, count=records['count'])))
+                    (root / 'expect.json').write_text(json.dumps(dict(seed=seed, records=records, count=records['count'], stream={'mutateIds':[fixture.d1_target['payment_id']]})))
                     env = {**os.environ, 'SB7_EXPECT_FILE': str(root / 'expect.json'),
                            'BENCH_SHOTS_DIR': str(root / 'shots'), 'BENCH_MEDIA_DIR': str(root / 'bench-media')}
+                    if scenario == 'sb71-stream':
+                        ready_path = root / 'stream-ready.json'
+                        env['BENCH_SB71_STREAM_READY'] = str(ready_path)
+                        def deliver():
+                            until = time.monotonic() + 50
+                            while time.monotonic() < until:
+                                if ready_path.exists():
+                                    if json.loads(ready_path.read_text()).get('state') == 'armed':
+                                        vendor_service_v3.fire_d1_mutation()
+                                    return
+                                time.sleep(.02)
+                        threading.Thread(target=deliver, daemon=True).start()
                     result = subprocess.run(
                         [os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(bench / 'product_probe_sb71.mjs'),
-                         'sb71-visual', base], env=env, capture_output=True, text=True, timeout=100)
+                         scenario, base], env=env, capture_output=True, text=True, timeout=100)
                     self.assertEqual(result.returncode, 0, result.stderr[-1500:])
                     data = json.loads(result.stdout)
                     evidence_dir = os.environ.get('SB71_EVIDENCE_DIR')
@@ -95,6 +108,8 @@ class VisualControls(unittest.TestCase):
                                 shutil.copytree(root / artifact, destination / artifact, dirs_exist_ok=True)
                     self.assertFalse(data.get('timedOut'), data)
                     self.assertEqual(data.get('consoleErrors', {}).get('count'), 0, data.get('consoleErrors'))
+                    if scenario == 'sb71-stream':
+                        return data
                     media = data.get('sb71', {}).get('media', {})
                     self.assertEqual(media.get('recording'), 'graded-browser')
                     manifest = json.loads((root / media['manifest']).read_text())
@@ -111,6 +126,37 @@ class VisualControls(unittest.TestCase):
                             process.wait()
                     server.shutdown()
                     server.server_close()
+
+    def test_stream_latency_requires_actual_status_pixels(self):
+        data = self.collect(scenario='sb71-stream', seed='5a05d7631d9276e3')
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertTrue(entry['pixelWitness']['applied'], entry)
+        self.assertLess(entry['applyMs'], 250, entry)
+
+    def test_stream_retaining_d1_selection_also_has_valid_pixels(self):
+        data = self.collect(('web/viz.js', 'if (brush.has(it.id)) {', 'if (false) {'),
+            scenario='sb71-stream', seed='5a05d7631d9276e3')
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertTrue(data['streamBrushBeforeArm'])
+        self.assertEqual(data['streamBrushAfterArm'], [entry['pixelWitness']['id']])
+        self.assertTrue(entry['pixelWitness']['applied'], entry)
+        self.assertLess(entry['applyMs'], 250, entry)
+
+    def test_stream_fast_cpu_and_delayed_gpu_does_not_claim_fast_application(self):
+        data = self.collect(('web/viz.js', 'patchInstance(it);',
+            'setTimeout(function () { patchInstance(it); invalidate(); render(true); }, 1200);'),
+            scenario='sb71-stream', seed='5a05d7631d9276e3')
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertTrue(entry['pixelWitness']['applied'], entry)
+        self.assertGreaterEqual(entry['applyMs'], 1100, entry)
+        self.assertTrue(any(not sample['matched'] for sample in entry['pixelWitness']['samples']), entry)
+
+    def test_stream_missing_gpu_application_has_no_latency_credit(self):
+        data = self.collect(('web/viz.js', 'patchInstance(it);', '/* mutant: CPU status changes, GPU stays stale */'),
+            scenario='sb71-stream', seed='5a05d7631d9276e3')
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertIsNone(entry['applyMs'], entry)
+        self.assertFalse(entry['pixelWitness'].get('applied'), entry)
 
     def test_reference_passes_visible_structure_and_live_animation(self):
         rows = self.collect()

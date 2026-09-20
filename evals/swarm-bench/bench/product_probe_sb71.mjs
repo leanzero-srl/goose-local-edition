@@ -61,9 +61,10 @@ import { execSync, execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { inflateSync } from 'zlib';
 import { join, dirname, relative, resolve } from 'path';
-import { mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
 
 const err = (...a) => console.error('[probe]', ...a);
+function streamReady(value) { const path=process.env.BENCH_SB71_STREAM_READY;if(!path)return;writeFileSync(path+'.tmp',JSON.stringify(value));renameSync(path+'.tmp',path); }
 
 function loadPlaywright() {
   const attempts = [];
@@ -582,12 +583,12 @@ const blockApi = args.includes('--block-api');
 const positional = args.filter((a) => !a.startsWith('--'));
 const scenario = positional[0];
 const baseUrl = positional[1];
-const SCENARIOS = ['boot', 'load', 'sync', 'flow', 'error', 'viz', 'feed', 'sb71-visual'];
+const SCENARIOS = ['boot', 'load', 'sync', 'flow', 'error', 'viz', 'feed', 'sb71-visual', 'sb71-stream'];
 if (!SCENARIOS.includes(scenario) || !baseUrl) {
   err(`usage: node product_probe_v3.mjs <${SCENARIOS.join('|')}> <baseUrl> [--block-api] | --selfcheck`);
   process.exit(2);
 }
-const isViz = scenario === 'viz' || scenario === 'sb71-visual';
+const isViz = scenario === 'viz' || scenario === 'sb71-visual' || scenario === 'sb71-stream';
 
 // F18 lineage: viz carries SwiftShader startup at N=12,288 plus the full scripted battery.
 const HARD_MS = isViz ? 230000 : scenario === 'flow' ? 110000 : 90000;
@@ -645,7 +646,7 @@ function glInstrument() {
     for (const fn of names)
       if (typeof obj[fn] === 'function') {
         const d = obj[fn].bind(obj);
-        obj[fn] = (...a) => { countDraw(gl); return d(...a); };
+        obj[fn] = (...a) => { countDraw(gl); const result=d(...a); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; };
       }
   }
   const wrap = (proto, offscreen) => {
@@ -701,7 +702,7 @@ function glInstrument() {
                 if (typeof v === 'function') {
                   const bound = v.bind(ext);
                   shell[k] = /^(draw|multiDraw)/.test(k)
-                    ? (...a) => { countDraw(gl); return bound(...a); }
+                    ? (...a) => { countDraw(gl); const result=bound(...a); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; }
                     : (...a) => bound(...a);
                 } else shell[k] = v;
               }
@@ -760,27 +761,24 @@ function streamInstrument() {
       };
       if (P.stream.length < 40) P.stream.push(entry);
       if (P.sb71ArmCapture) P.sb71ArmCapture(entry);
+      if (P.sb71ArmStreamPixels) P.sb71ArmStreamPixels(entry);
       const k0 = digestKey(entry.digest0);
       const t0 = entry.t0;
-      // Harness fix: rAF starves at rest in headless Chromium and timers get
-      // coarse-throttled (~300 ms), both of which billed detection latency to the app.
-      // MessageChannel scheduling is unthrottled: the first tick lands within the next
-      // task, so an instant apply measures as instant; after 600 ms fall back to a
-      // coarse timer to keep the poll cheap.
-      const mc = new MessageChannel();
+      // Pixel-witness latency is stamped by the completed GL draw/readback. Settle
+      // snapshots need no busy MessageChannel loop for status/note-only batches.
       const poll = () => {
         const now = performance.now();
         const d = digest();
-        if (digestKey(d) !== null && digestKey(d) !== k0) {
+        if (entry.pixelWitness && entry.applyMs!==null) {entry.t1=now;entry.c1=counters();entry.digest1=d;return;}
+        if (!entry.pixelWitness && digestKey(d) !== null && digestKey(d) !== k0) {
           entry.applyMs = +(now - t0).toFixed(1);
           entry.t1 = now; entry.c1 = counters(); entry.digest1 = d;
           return;
         }
         if (now - t0 > 3000) { entry.t1 = now; entry.c1 = counters(); entry.digest1 = d; return; }
-        if (now - t0 < 600) { mc.port2.postMessage(0); } else setTimeout(poll, 80);
+        setTimeout(poll, 80);
       };
-      mc.port1.onmessage = poll;
-      mc.port2.postMessage(0);
+      setTimeout(poll, 0);
     });
     return es;
   }
@@ -807,6 +805,41 @@ function pageDrawTs(arg) {
   const ts = P.drawTs || [];
   return ts.slice(Math.max(0, ts.length - ((arg && arg.tail) || 2000))).map((t) => +t.toFixed(2));
 }
+// The driver fires the real vendor mutation only after this independently chosen
+// surface is armed. Receipt and completed readback share the browser monotonic clock.
+function pageArmStreamPixels(arg) {
+  const P=window.__p7, canvas=document.getElementById('viz3d');
+  const gl=canvas&&(canvas.getContext('webgl2')||canvas.getContext('webgl'));
+  if(!gl)throw new Error('Stream pixel witness has no visible WebGL canvas');
+  const rect=canvas.getBoundingClientRect(),W=canvas.width,H=canvas.height;
+  const x=Math.round(arg.cx*W/rect.width),y=H-1-Math.round(arg.cy*H/rect.height);
+  let readCompleted=0;
+  const read=()=>{const rgba=new Uint8Array(3*3*4);gl.readPixels(x-1,y-1,3,3,gl.RGBA,gl.UNSIGNED_BYTE,rgba);readCompleted=performance.now();return Array.from({length:9},(_,i)=>Array.from(rgba.slice(i*4,i*4+3)));};
+  const before=read();
+  let entry=null;
+  P.sb71ArmStreamPixels=e=>{
+    const record=(e.records||[]).find(r=>r.id===arg.id);
+    if(!record)return;
+    const rgb=arg.status[record.status];
+    e.pixelWitness={id:arg.id,record,before,point:{x,y},factor:arg.factor,dim:arg.dim,samples:[],error:rgb?null:'Unknown wire status'};
+    if(!rgb)return;
+    e.pixelWitness.expected=rgb.map(v=>Math.round((arg.dim?Math.round(v*.30):v)*arg.factor));
+    e.pixelWitness.expectedBefore=arg.status[arg.beforeStatus].map(v=>Math.round(v*arg.factor));
+    e.pixelWitness.discriminating=before.every(c=>c.every((v,i)=>Math.abs(v-e.pixelWitness.expectedBefore[i])<=8)&&c.some((v,i)=>Math.abs(v-e.pixelWitness.expected[i])>8));
+    entry=e;
+  };
+  P.sb71StreamPixels=context=>{
+    if(context!==gl||!entry||entry.applyMs!==null||performance.now()-entry.t0>3000)return;
+    const got=read(),elapsed=+(readCompleted-entry.t0).toFixed(1);
+    const camera=window.vs7dbg.camera();
+    const cameraFixed=Math.abs(((camera.yaw-arg.pose[0]+540)%360)-180)<.01&&Math.abs(camera.pitch-arg.pose[1])<.01&&Math.abs(camera.distance-arg.pose[2])<.01;
+    const matched=cameraFixed&&got.every(c=>c.every((v,i)=>Math.abs(v-entry.pixelWitness.expected[i])<=8));
+    entry.pixelWitness.samples.push({elapsed,got,matched,camera,cameraFixed});
+    if(matched&&entry.pixelWitness.discriminating){entry.applyMs=elapsed;entry.pixelWitness.applied=true;}
+  };
+  return {before,point:{x,y},id:arg.id};
+}
+
 function pageStreamLog() {
   const P = window.__p7 || {};
   return { unsupported: !!P.streamUnsupported, esUrls: P.esUrls || [],
@@ -2022,6 +2055,17 @@ async function main() {
   } else if (scenario === 'flow') {
     await flowScenario(page, tokens, pack, { saveShot, consoleErrors, safeGoto, waitIdle, finalizeMedia,
                                              pollFirstData, evalRetry, clean });
+  } else if (scenario === 'sb71-stream') {
+    const navigationError=await safeGoto(25000);if(navigationError)throw new Error(navigationError);
+    await page.waitForFunction(()=>window.vs7dbg?.sceneDigest()?.count>0,null,{timeout:15000});
+    const model=buildModel(pack);
+    await page.evaluate(pageTableRowByld,{id:model.items[0].id,click:true});
+    merge({streamBrushBeforeArm:(await page.evaluate(pageVs7,{want:['brush']})).brush});
+    await armStreamWitness(page,model,pack.stream.mutateIds[0],pack.seed);
+    merge({streamBrushAfterArm:(await page.evaluate(pageVs7,{want:['brush']})).brush});
+    await page.waitForFunction(()=>window.__p7.stream.some(e=>e.pixelWitness),null,{timeout:10000});
+    await sleep(3500);merge({stream:await page.evaluate(pageStreamLog)});
+    await finalizeMedia();emit({consoleErrors:consoleErrors()});
   } else if (scenario === 'sb71-visual') {
     const navigationError=await safeGoto(25000);
     if(navigationError) throw new Error(navigationError);
@@ -2748,6 +2792,53 @@ async function sb71VisualScenario(page,model,H,pack) {
   merge({sb71:{checks}});
 }
 
+async function armStreamWitness(page,model,d1TargetId,seed) {
+  const vs7=arg=>page.evaluate(pageVs7,arg);
+  const setCam=async(...pose)=>{await vs7({setCamera:pose});await sleep(80);};
+  await page.evaluate(pageScrollCanvasIntoView);
+  let rect=await page.evaluate(pageCanvasRect);const Wc=rect.w,Hcs=rect.h;
+      const n=model.byId.get(d1TargetId),it=model.items[n];
+      let witness=null;
+      if(it) {
+        const rng=seedRng(seed||'sb71','latency-pose'),az=Math.atan2(it.x,it.z)*180/Math.PI;
+        const radius=Math.hypot(it.x,it.z);
+        const poses=[[V7.yaw0,V7.pitch0,V7.dist0]];
+        for(let k=0;k<100;k++){const pitch=16+rng()*32;poses.push([az+(rng()-.5)*50,pitch,clamp((radius+15+rng()*65)/Math.cos(deg(pitch)),16,340)]);}
+        for(const pose of poses) {
+          const ctx=poseCtx(model,...pose,Wc,Hcs),point=findDecisivePointFor(ctx,model,n);
+          if(!point)continue;
+          await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
+          let brush=(await vs7({want:['brush']})).brush;
+          if(!Array.isArray(brush))break;
+          if(brush.some(id=>id!==d1TargetId)) {
+            let background=null;
+            for(const y of [8,Hcs/4,Hcs/2,Hcs*3/4,Hcs-8])for(const x of [8,Wc/4,Wc/2,Wc*3/4,Wc-8]) {
+              if(!castPixel(ctx,x,y).length)background={x,y};
+            }
+            if(!background)continue;
+            await page.mouse.click(rect.left+background.x,rect.top+background.y);await sleep(100);
+            brush=(await vs7({want:['brush']})).brush;
+            if(!Array.isArray(brush)||brush.length)continue;
+          }
+          if(!brush.includes(d1TargetId)){await page.mouse.click(rect.left+point.sx,rect.top+point.sy);await sleep(100);brush=(await vs7({want:['brush']})).brush;}
+          if(!Array.isArray(brush)||!brush.includes(d1TargetId))continue;
+          model.brush=new Set(brush);
+          await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
+          if(rect.top<-.5||rect.left<-.5||rect.bottom>rect.viewportH+.5||rect.right>rect.viewportW+.5)continue;
+          const raster=await page.evaluate(pageSamplePixels,{points:[{cx:point.sx,cy:point.sy}]});
+          const sample=raster.samples[0],hit=castPixel(ctx,sample.rayX,sample.rayY)[0];
+          if(!hit||hit.n!==n)continue;
+          const neighbors=[[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
+          if(!neighbors.every(([dx,dy])=>{const h=castPixel(ctx,sample.rayX+dx,sample.rayY+dy)[0];return h&&h.n===n&&h.factor===hit.factor;}))continue;
+          witness=await page.evaluate(pageArmStreamPixels,{id:d1TargetId,cx:point.sx,cy:point.sy,factor:hit.factor,dim:false,status:V7.status,beforeStatus:it.status,pose});
+          witness.pose=pose;break;
+        }
+      }
+      merge({streamPixelArm:witness||{error:'No independently decisive D1 pixel witness'}});
+      streamReady(witness?{state:'armed',id:d1TargetId}:{state:'witness_unavailable',reason:'No independently decisive D1 pixel witness'});
+      return witness;
+}
+
 async function vizScenario(page, pack, H) {
   const { saveShot, consoleErrors, safeGoto } = H;
   const model = buildModel(pack);
@@ -2843,6 +2934,7 @@ async function vizScenario(page, pack, H) {
   }
   merge({ contextReal });
   if (!contextReal.glReadable) {
+    if(pre)streamReady({state:'app_surface_absent',reason:pre.found?'Canvas has no readable WebGL context':'Visible canvas absent'});
     await saveShot('viz');
     emit({ consoleErrors: consoleErrors() });
     return;
@@ -3706,6 +3798,7 @@ async function vizScenario(page, pack, H) {
   // per-batch upload-byte accounting from the wrapper, apply latency, changed-instance pixel,
   // and the D1 brushed-mutation observation. The driver pokes the vendor while this waits.
   {
+    if(process.env.BENCH_SB71_STREAM_READY)await armStreamWitness(page,model,d1TargetId,pack.seed);
     // Harness fix: 30 s closed the stream window before the driver's alive-gated 110 s
     // D1 fire could land on a fast app; the wait must outlast the fire (budget-capped).
     const waitCap = Math.max(5000, Math.min(90000, budgetLeft() - 25000));
@@ -3735,7 +3828,7 @@ async function vizScenario(page, pack, H) {
       const bytes = e.c0 && e.c1
         ? (e.c1.bufDataBytes + e.c1.bufSubBytes) - (e.c0.bufDataBytes + e.c0.bufSubBytes) : null;
       perBatch.push({
-        batch: e.batch, size: e.size, wireBytes: e.bytes, applyMs: e.applyMs,
+        batch: e.batch, size: e.size, wireBytes: e.bytes, applyMs: e.applyMs, pixelWitness:e.pixelWitness||null,
         uploadedBytes: bytes,
         reallocsInWindow: e.c0 && e.c1 ? e.c1.reallocs - e.c0.reallocs : null,
         subDataCalls: e.c0 && e.c1 ? e.c1.bufSubCalls - e.c0.bufSubCalls : null,
