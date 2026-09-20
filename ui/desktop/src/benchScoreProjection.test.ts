@@ -151,3 +151,14 @@ it('preserves SB7.1 earned formula, ceilings and missing evidence through storag
     expect(persisted.verdict[key]).toEqual(canonical[key as keyof typeof canonical]);
   expect(persisted.tiers.S).toBe(0.5);
 });
+
+it('preserves stable SB71 media, timing and task provenance without relabeling the pilot', () => {
+  const source = { scorerVersion: 'sb-7.1', score: 0.699, rawScore: 0.7968,
+    tiers: { S: { mean: 0.5 } }, admission: { ceiling: 0.699 },
+    media: { manifest: 'bench-media/media-manifest.json' },
+    agent: { secs: 554, usage: { billing_verified: false } }, scoring: { secs: 226.3 },
+    spec_sha256: 'recorded-spec', contract_sha256: { visual: 'recorded-contract' } };
+  const { score: _score, ...detail } = source;
+  expect(projectBenchScore(source).verdict).toMatchObject(detail);
+  expect(projectBenchScore({ scorerVersion: 'sb-7.1-rc' }).scorerVersion).toBe('sb-7.1-rc');
+});

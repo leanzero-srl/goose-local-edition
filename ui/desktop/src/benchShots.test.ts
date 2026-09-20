@@ -81,3 +81,12 @@ describe('benchmark screenshot evidence', () => {
     expect(limitBenchShotsForPublish([oversized, medium, medium, medium])).toHaveLength(2);
   });
 });
+
+it('keeps SB71 field, currency inspection and live update evidence', async () => {
+  const names = ['sb71-field', 'sb71-inspect-usd', 'sb71-inspect-xyz', 'sb71-live-update', 'sb71-final-inspector'];
+  const dir = await fixture(names.map((name, i) => `${100 + i}-${name}.png`));
+  const shots = await pickBenchShots(dir);
+  expect(new Set(shots.map((shot) => shot.name))).toEqual(new Set(names));
+  expect(shots.find((shot) => shot.name === 'sb71-inspect-xyz')?.caption).toBe('XYZ payment inspection');
+  expect(shots.find((shot) => shot.name === 'sb71-live-update')?.caption).toBe('Committed payment update');
+});

@@ -33,21 +33,21 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_RENDER_PROBE['sb-7']).toBe('product_probe_v3.mjs');
   });
 
-  it('launches SB7 for local and cloud entrants while retaining the SB8 experiment payload', () => {
-    expect(defaultBenchmarkTier()).toBe('sb-7');
-    expect(BENCH_SPEC_FILE[defaultBenchmarkTier()]).toBe('spec-build-sb7.md');
-    expect(BENCH_RENDER_PROBE[defaultBenchmarkTier()]).toBe('product_probe_v3.mjs');
-    expect(defaultBenchmarkScorer()).toBe(TIER_SCORER['sb-7']);
+  it('launches stable SB7.1 for local and cloud entrants while retaining the SB8 experiment payload', () => {
+    expect(defaultBenchmarkTier()).toBe('sb-7.1');
+    expect(BENCH_SPEC_FILE[defaultBenchmarkTier()]).toBe('spec-build-sb71.md');
+    expect(BENCH_RENDER_PROBE[defaultBenchmarkTier()]).toBe('product_probe_sb71.mjs');
+    expect(defaultBenchmarkScorer()).toBe(TIER_SCORER['sb-7.1']);
     expect(TIERS).toContain('sb-8');
     expect(BENCH_SPEC_FILE['sb-8']).toBe('spec-build-sb8.md');
   });
 });
 
 import { benchmarkLaunchTier, benchmarkScorer } from './benchTierPayload';
-it('keeps stable local SB7 while selecting cloud pilot identity and exact payload', () => {
-  expect(benchmarkLaunchTier()).toBe('sb-7');
+it('uses stable SB7.1 identity and exact payload while retaining legacy SB7', () => {
+  expect(benchmarkLaunchTier()).toBe('sb-7.1');
   expect(benchmarkLaunchTier({ tier: 'sb-7.1' })).toBe('sb-7.1');
-  expect(benchmarkScorer(benchmarkLaunchTier({ tier: 'sb-7.1' }))).toBe('sb-7.1-rc');
+  expect(benchmarkScorer(benchmarkLaunchTier({ tier: 'sb-7.1' }))).toBe('sb-7.1');
   expect(BENCH_SPEC_FILE[benchmarkLaunchTier({ tier: 'sb-7.1' })]).toBe('spec-build-sb71.md');
   expect(BENCH_RENDER_PROBE[benchmarkLaunchTier({ tier: 'sb-7.1' })]).toBe(
     'product_probe_sb71.mjs'

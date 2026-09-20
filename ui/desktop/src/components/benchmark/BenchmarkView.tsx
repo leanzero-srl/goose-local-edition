@@ -1,3 +1,5 @@
+import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
+import { CloudEntrant } from './CloudEntrant';
 import type { CloudBenchmarkTier } from '../../benchTierPayload';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
@@ -110,6 +112,8 @@ type PublishState =
 
 /** The stored result row — the v1 chart fields plus the v2 publisher inputs main.ts persists. */
 interface MineRow extends BenchmarkRow {
+  provider?: string;
+  scoringSecs?: number;
   runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
@@ -131,7 +135,7 @@ type BenchPhase = 'boot' | 'build' | 'score' | 'done';
 
 const PHASES: Array<{ key: BenchPhase; label: string }> = [
   { key: 'boot', label: 'Boot' },
-  { key: 'build', label: 'Swarm build' },
+  { key: 'build', label: 'Model build' },
   { key: 'score', label: 'Scoring' },
   { key: 'done', label: 'Done' },
 ];
@@ -237,8 +241,8 @@ function PhaseStrip({
       }
     >
       <p className={TYPE.bodyMuted}>
-        The harness around the swarm — boot, build, scoring. The swarm build has its full live panel
-        below.
+        The harness records model build and scoring separately. Local swarm runs also show their
+        live agent panel below.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {PHASES.map((p, i) => {
@@ -470,16 +474,9 @@ function boardColumns(own: {
     },
     {
       key: 'duration',
-      header: 'Duration',
+      header: 'Model build',
       numeric: true,
-      cell: (r) =>
-        r.mine
-          ? own.wallMs != null
-            ? fmtElapsed(own.wallMs)
-            : ABSENT
-          : typeof r.wallSecs === 'number'
-            ? fmtElapsed(r.wallSecs * 1000)
-            : ABSENT,
+      cell: (r) => typeof r.wallSecs === 'number' ? fmtElapsed(r.wallSecs * 1000) : ABSENT,
     },
   ];
 }
@@ -628,6 +625,7 @@ function SessionDetail({
       ? null
       : {
           label: mineMatched && mine?.label ? mine.label : 'Your run',
+          ...(mineMatched && mine?.wallSecs != null ? { wallSecs: mine.wallSecs } : {}),
           score: session.score,
           tiers: mineMatched && mine?.tiers ? mine.tiers : session.tiers,
           nodes: session.nodes,
@@ -660,11 +658,12 @@ function SessionDetail({
           value={session.score != null ? `${(session.score * 100).toFixed(1)}%` : 'missing'}
           tone={session.score != null ? 'accent' : 'err'}
         />
-        {wallMs != null && <StatCell label="Wall time" value={fmtElapsed(wallMs)} />}
-        {mineMatched && mine?.runMeta && (
+        {mineMatched && mine?.wallSecs != null ? <StatCell label="Model build" value={fmtElapsed(mine.wallSecs * 1000)} /> : wallMs != null && <StatCell label="Run elapsed" value={fmtElapsed(wallMs)} />}
+        {mineMatched && mine?.scoringSecs != null && <StatCell label="Scoring" value={fmtElapsed(mine.scoringSecs * 1000)} />}
+        {mineMatched && mine?.runMeta && !mine.provider && (
           <StatCell label="Repair rounds" value={String(mine.runMeta.repairRounds)} />
         )}
-        {mineMatched && mine?.runMeta && (
+        {mineMatched && mine?.runMeta && !mine.provider && (
           <StatCell label="Engine events" value={mine.runMeta.engineEvents.toLocaleString()} />
         )}
       </div>
@@ -797,7 +796,9 @@ const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}
  * baselines.
  */
 export default function BenchmarkView() {
-  const [entrant, setEntrant] = useState<'swarm' | 'google'>('swarm');
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const [entrant, setEntrant] = useState<'swarm' | 'cloud'>('swarm');
+  const [cloudProvider, setCloudProvider] = useState('');
   const [cloudModel, setCloudModel] = useState('');
   const [cloudTier, setCloudTier] = useState<CloudBenchmarkTier>('sb-7.1');
   const [nodes, setNodes] = useState<NodeChoice>(3);
@@ -825,6 +826,7 @@ export default function BenchmarkView() {
   // Non-null while a run is live: the values that run LAUNCHED with (strip renders them read-only).
   const [launchedSampling, setLaunchedSampling] = useState<SamplingSettings | null>(null);
   const [running, setRunning] = useState(false);
+  const [harnessStage, setHarnessStage] = useState<BenchPhase>('boot');
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [pub, setPub] = useState<PublishState>({ kind: 'idle' });
@@ -921,6 +923,8 @@ export default function BenchmarkView() {
     void window.electron.benchmarkStatus?.().then((s) => {
       if (s?.running && s.workdir) {
         setRunning(true);
+        setHarnessStage(s.phase ?? 'boot');
+        if (s.provider) { setEntrant('cloud'); setCloudProvider(s.provider); }
         setActiveWorkdir(s.workdir);
         setRunStartedAt(s.startedAt ? Date.parse(s.startedAt) : Date.now());
         // main.ts kept the launched knobs with the run — the strip shows the truth, not this
@@ -944,10 +948,15 @@ export default function BenchmarkView() {
         startedAt?: string;
         sampling?: unknown;
         tier?: string;
+        phase?: BenchPhase;
+        provider?: string;
         scorerVersion?: string;
         catalogMismatch?: CatalogMismatch;
       };
       if (p?.workdir) {
+        setRunning(true);
+        setHarnessStage(p.phase ?? 'boot');
+        if (p.provider) { setEntrant('cloud'); setCloudProvider(p.provider); }
         setCatalogMismatch(p.catalogMismatch ?? null);
         setActiveWorkdir(p.workdir);
         setRunStartedAt(p.startedAt ? Date.parse(p.startedAt) : Date.now());
@@ -963,7 +972,8 @@ export default function BenchmarkView() {
       // The regex is gone from the renderer: `scored` rides every log payload from main, which owns
       // the fact (finding 17) — a scorer output change breaks ONE matcher in one process, and the
       // strip can never re-derive a stale answer from lines it happened to see.
-      const p = payload as { line?: string; scored?: boolean };
+      const p = payload as { line?: string; scored?: boolean; phase?: BenchPhase };
+      if (p.phase) setHarnessStage(p.phase);
       if (typeof p?.line === 'string') setLastLine(p.line);
       if (p?.scored === true) setScored(true);
     };
@@ -1023,10 +1033,11 @@ export default function BenchmarkView() {
 
   const phase: BenchPhase = useMemo(() => {
     if (scored) return 'done';
+    if (harnessStage !== 'boot') return harnessStage;
     if (swarm.present && swarm.finished) return 'score';
     if (swarm.present) return 'build';
     return 'boot';
-  }, [scored, swarm.present, swarm.finished]);
+  }, [scored, harnessStage, swarm.present, swarm.finished]);
 
   // One section per era: the catalog's benchmarks, plus any era that exists only in the session
   // history (sessions from previous benchmarks may display even after the site moves on).
@@ -1100,14 +1111,15 @@ export default function BenchmarkView() {
 
   const run = useCallback(async () => {
     setRunning(true);
+    setHarnessStage('boot');
     setScored(false);
     setStatus(null);
     setLaunchedSampling(sampling);
     try {
-      // No tier argument — the user cannot choose a benchmark; main runs the active benchmark.
+      // Local swarms use the stable default; cloud launches carry their explicit tier.
       const result =
-        entrant === 'google'
-          ? await window.electron.benchmarkRunCloud(cloudModel.trim(), cloudTier)
+        entrant === 'cloud'
+          ? await window.electron.benchmarkRunCloud(cloudProvider, cloudModel.trim(), cloudTier)
           : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
         setMine(result as MineRow);
@@ -1125,7 +1137,7 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, entrant, cloudModel, cloudTier, loadShots, loadSessions]);
+  }, [nodes, sampling, entrant, cloudProvider, cloudModel, cloudTier, loadShots, loadSessions]);
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -1228,7 +1240,7 @@ export default function BenchmarkView() {
     mine && selectedSession && sessionKey(selectedSession) === mineSessionKey ? (
       <Panel title="Publish to leanzero.net">
         <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
-          Posts your score, the full check-by-check breakdown and the before/after screenshots under
+          Posts your score, the check-by-check breakdown and graded app evidence under
           the title you choose. The result appears on the leanzero.net board immediately.
         </p>
         <div className="mt-4 flex flex-col gap-4">
@@ -1376,7 +1388,7 @@ export default function BenchmarkView() {
                   variant="primary"
                   onClick={run}
                   icon={<Play />}
-                  disabled={entrant === 'google' && !cloudModel.trim()}
+                  disabled={(entrant === 'swarm' || cloudTier === 'sb-7.1') && !runtimeReady || entrant === 'cloud' && (!cloudProvider || !cloudModel.trim())}
                 >
                   Run benchmark
                 </Button>
@@ -1385,8 +1397,8 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            Local swarm runs use stable SB7. Google Gemini can run the SB7.1 payments pilot or
-            legacy SB7. Earlier experiments remain in your session history.
+            SB7.1 payments runs on your local swarm or a configured cloud provider.
+            Earlier experiments remain separate in your session history.
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
@@ -1394,7 +1406,8 @@ export default function BenchmarkView() {
               unset knob — temperature included — falls through to the config/model default: the 0.2
               benchmark pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the
               per-model value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed
-              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). The Google pilot selection is independent of the stable local benchmark. */}
+              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). Cloud runs can explicitly select the retained legacy benchmark. */}
+          <BenchmarkRuntimeSetup onReady={setRuntimeReady} disabled={running} />
           <section aria-label="Run setup" className="flex flex-col gap-3">
             <Segmented
               as="buttons"
@@ -1402,37 +1415,26 @@ export default function BenchmarkView() {
               value={entrant}
               options={[
                 { value: 'swarm', label: 'Local swarm' },
-                { value: 'google', label: 'Google Gemini' },
+                { value: 'cloud', label: 'Cloud model' },
               ]}
-              onChange={(value) => setEntrant(value as 'swarm' | 'google')}
+              onChange={(value) => setEntrant(value as 'swarm' | 'cloud')}
               disabled={running}
             />
-            {entrant === 'google' ? (
+            {entrant === 'cloud' ? (
               <>
                 <Segmented
                   as="buttons"
-                  aria-label="Google benchmark"
+                  aria-label="Cloud benchmark"
                   value={cloudTier}
                   options={[
-                    { value: 'sb-7.1', label: 'SB7.1 payments · pilot' },
+                    { value: 'sb-7.1', label: 'SB7.1 payments' },
                     { value: 'sb-7', label: 'SB7 · legacy' },
                   ]}
                   onChange={(value) => setCloudTier(value as CloudBenchmarkTier)}
                   disabled={running}
                 />
-                <label className="flex flex-col gap-2 text-sm">
-                  Google model ID
-                  <input
-                    aria-label="Google model ID"
-                    value={cloudModel}
-                    onChange={(event) => setCloudModel(event.target.value)}
-                    disabled={running}
-                    className="rounded-lg border border-lz-border bg-lz-surface px-3 py-2 text-lz-ink"
-                  />
-                  <span className={TYPE.meta}>
-                    One cloud agent. Uses the saved benchmark Google credential.
-                  </span>
-                </label>
+                <CloudEntrant provider={cloudProvider} model={cloudModel} disabled={running}
+                  onChange={(provider, model) => { setCloudProvider(provider); setCloudModel(model); }} />
               </>
             ) : (
               <>

@@ -23,7 +23,7 @@ export function cloudUsageProvesExecution(value: unknown): boolean {
 
 /** The runner's durable console header proves Goose started, even when interrupted before usage flush. */
 export function cloudConsoleProvesExecution(text: string): boolean {
-  return /new session\s*·\s*google\s+\S+/.test(text) && /goose is ready/.test(text);
+  return /new session\s*·\s*[A-Za-z0-9_-]+\s+\S+/.test(text) && /goose is ready/.test(text);
 }
 
 export async function cloudRunStarted(workdir: string): Promise<boolean> {

@@ -45,3 +45,9 @@ it('does not treat startup errors, empty files or unknown usage as execution', (
   ).toBe(false);
   expect(cloudUsageProvesExecution({ sessions: [{ accumulated_input_tokens: 42 }] })).toBe(false);
 });
+
+it('recognizes recorded engine startup for configured cloud providers beyond Google', () => {
+  expect(cloudConsoleProvesExecution('● new session · custom_team vendor/model:release\n L L goose is ready')).toBe(true);
+  expect(cloudConsoleProvesExecution('● new session · aws_bedrock us.vendor.model:0\n L L goose is ready')).toBe(true);
+  expect(cloudConsoleProvesExecution('model is ready')).toBe(false);
+});

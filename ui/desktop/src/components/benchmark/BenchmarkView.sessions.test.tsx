@@ -21,6 +21,10 @@ vi.mock('../swarm/useSamplingDefaults', () => ({
   useSaveSamplingDefaults: () => () => {},
 }));
 
+vi.mock('../../acp/providers', () => ({
+  acpListProviderDetails: vi.fn(async () => [{ name: 'google', is_configured: true, metadata: { display_name: 'Google Gemini', known_models: [] } }]),
+}));
+
 import BenchmarkView from './BenchmarkView';
 
 type ElectronMock = Record<string, unknown>;
@@ -97,6 +101,7 @@ const SESSIONS = [
 
 function mockElectron(opts: { catalog?: unknown; sessions?: unknown[] } = {}) {
   const e = electron();
+  e.benchmarkRuntimeStatus = vi.fn(async () => ({state:'ready',downloadBytes:0}));
   e.benchmarkStatus = vi.fn(async () => ({ running: false }));
   e.benchmarkRead = vi.fn(async () => null);
   e.benchmarkShots = vi.fn(async () => []);
@@ -121,17 +126,20 @@ describe('the benchmark sections and their sessions', () => {
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Google Gemini' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cloud model' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cloud provider' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cloud provider' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
     expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Cloud model ID' }), {
       target: { value: 'gemini-3.8-flash' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() => expect(cloud).toHaveBeenCalledWith('gemini-3.8-flash', 'sb-7.1'));
+    await waitFor(() => expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.1'));
     expect(swarm).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'SB7 · legacy' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() => expect(cloud).toHaveBeenLastCalledWith('gemini-3.8-flash', 'sb-7'));
+    await waitFor(() => expect(cloud).toHaveBeenLastCalledWith('google', 'gemini-3.8-flash', 'sb-7'));
   });
 
   it('renders all four outcomes honestly — running pulses, finished carries its score, the dead ones say so', async () => {
@@ -361,8 +369,11 @@ it('can cancel a cloud run while its launch IPC promise remains pending', async 
       <BenchmarkView />
     </IntlTestWrapper>
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Google Gemini' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), {
+  fireEvent.click(screen.getByRole('button', { name: 'Cloud model' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cloud provider' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cloud provider' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Cloud model ID' }), {
     target: { value: 'gemini-3.8-flash' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
@@ -377,5 +388,63 @@ it('can cancel a cloud run while its launch IPC promise remains pending', async 
   expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
   await act(async () => finish());
   expect(await screen.findByRole('button', { name: 'Run benchmark' })).toBeEnabled();
+  cleanup();
+});
+
+it('restores the cloud scoring stage without a swarm event log', async () => {
+  mockElectron({ sessions: [] });
+  electron().benchmarkStatus = vi.fn(async () => ({ running: true, workdir: '/cloud/run', provider: 'google', phase: 'score', startedAt: '2026-09-20T10:00:00Z' }));
+  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  await waitFor(() => expect(screen.getByText('Scoring').closest('[data-tone]')).toHaveAttribute('data-tone', 'accent'));
+  expect(screen.getByText('Model build').closest('[data-tone]')).toHaveAttribute('data-tone', 'ok');
+  expect(screen.getByRole('button', { name: 'Cancel run' })).toBeEnabled();
+  cleanup();
+});
+
+it('shows measured cloud build and scoring independently without invented swarm counts', async () => {
+  const session = { runId: 'cloud-measured', scorerVersion: 'sb-7.1', startedAt: '2026-09-20T10:00:00Z', endedAt:'2026-09-20T10:13:00Z', outcome:'finished', score:0.699, publishable:false };
+  mockElectron({ sessions: [session] });
+  electron().benchmarkRead = vi.fn(async () => ({ ...session, label:'model · single agent', provider:'google', wallSecs:554, scoringSecs:226.3, runMeta:{ startedAt:session.startedAt, finishedAt:session.endedAt, engineEvents:0, repairRounds:0 } }));
+  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  expect((await screen.findAllByText('9m 14s')).length).toBeGreaterThan(0);
+  expect(screen.getByText('3m 46s')).toBeInTheDocument();
+  expect(screen.queryByText('Engine events')).toBeNull();
+  expect(screen.queryByText('Repair rounds')).toBeNull();
+  cleanup();
+});
+
+it('updates cloud pipeline stages from harness events, not model prose', async () => {
+  mockElectron({ sessions: [] });
+  const handlers = new Map<string, (event: unknown, payload: unknown) => void>();
+  electron().on = vi.fn((channel: string, cb: (event: unknown, payload: unknown) => void) => handlers.set(channel, cb));
+  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  await act(async () => handlers.get('benchmark-started')?.(null, { workdir:'/cloud/run', provider:'google', phase:'boot' }));
+  expect(screen.getByText('Boot').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
+  await act(async () => handlers.get('benchmark-log')?.(null, { line:'model says done', phase:'build' }));
+  expect(screen.getByText('Model build').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
+  await act(async () => handlers.get('benchmark-log')?.(null, { line:'harness scoring', phase:'score' }));
+  expect(screen.getByText('Scoring').closest('[data-tone]')).toHaveAttribute('data-tone','accent');
+  cleanup();
+});
+
+it('refuses Run until the user explicitly installs missing benchmark tools', async () => {
+  mockElectron({ sessions: [] });
+  const start = vi.fn(async()=>null);
+  const install = vi.fn(async()=>{});
+  electron().benchmarkRun = start;
+  electron().benchmarkRuntimeInstall = install;
+  electron().benchmarkRuntimeStatus = vi.fn().mockResolvedValueOnce({state:'missing',downloadBytes:49092883}).mockResolvedValueOnce({state:'ready',downloadBytes:49092883});
+  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  await screen.findByText(/46.8 MiB download/);
+  const run = screen.getByRole('button',{name:'Run benchmark'});
+  expect(run).toBeDisabled();
+  expect(install).not.toHaveBeenCalled();
+  fireEvent.click(run);
+  expect(start).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'Install benchmark tools'}));
+  await waitFor(()=>expect(run).toBeEnabled());
+  expect(install).toHaveBeenCalledOnce();
+  fireEvent.click(run);
+  await waitFor(()=>expect(start).toHaveBeenCalled());
   cleanup();
 });

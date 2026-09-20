@@ -1,3 +1,4 @@
+import type { BenchmarkRuntimeStatus } from './benchRuntimeTypes';
 import type { CloudBenchmarkTier } from './benchTierPayload';
 import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { Recipe } from './recipe';
@@ -158,7 +159,9 @@ type ElectronAPI = {
   readFile: (directory: string) => Promise<FileResponse>;
   /** Read the last benchmark result from disk, or null on first run. */
   benchmarkRead: () => Promise<unknown | null>;
-  benchmarkRunCloud: (model: string, tier: CloudBenchmarkTier) => Promise<unknown>;
+  benchmarkRuntimeStatus: () => Promise<BenchmarkRuntimeStatus>;
+  benchmarkRuntimeInstall: () => Promise<void>;
+  benchmarkRunCloud: (provider: string, model: string, tier: CloudBenchmarkTier) => Promise<unknown>;
   /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
    *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
    *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion, catalogMismatch?} fires
@@ -220,6 +223,8 @@ type ElectronAPI = {
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
   benchmarkStatus: () => Promise<{
     running: boolean;
+    phase?: 'boot' | 'build' | 'score' | 'done';
+    provider?: string;
     workdir?: string;
     nodes?: number;
     startedAt?: string;
@@ -496,8 +501,10 @@ const electronAPI: ElectronAPI = {
     return () => ipcRenderer.removeListener('swarm:delta', handler);
   },
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
-  benchmarkRunCloud: (model: string, tier: CloudBenchmarkTier) =>
-    ipcRenderer.invoke('benchmark-run', 1, undefined, { provider: 'google', model, tier }),
+  benchmarkRuntimeStatus: () => ipcRenderer.invoke('benchmark-runtime-status'),
+  benchmarkRuntimeInstall: () => ipcRenderer.invoke('benchmark-runtime-install'),
+  benchmarkRunCloud: (provider: string, model: string, tier: CloudBenchmarkTier) =>
+    ipcRenderer.invoke('benchmark-run', 1, undefined, { provider, model, tier }),
   // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the
   // dead tier choice: strip it so main's (nodes, sampling) contract holds for both call shapes.
   benchmarkRun: (nodes: number, tierOrSampling?: SwarmSampling | string, legacy?: SwarmSampling) =>

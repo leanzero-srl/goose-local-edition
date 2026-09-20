@@ -22,8 +22,7 @@ export interface BenchmarkRow {
 
 /**
  * The runnable-tier vocabulary main.ts's spec/probe mapping is keyed by (benchTierPayload.ts).
- * Which benchmark the user can RUN is the catalog's `current` flag, not a choice made here —
- * the view offers no tier chooser.
+ * The stable default is shared with the launcher; historical scorer identities stay distinct.
  */
 export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-7.1' | 'sb-8';
 export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7', 'sb-7.1', 'sb-8'];
@@ -34,7 +33,7 @@ export const TIER_SCORER: Record<BenchTier, string> = {
   // carries "calibrated": false. The rc identity is kept so an rc number is never quietly
   // compared against a calibrated one.
   'sb-7': 'sb-7.0-rc',
-  'sb-7.1': 'sb-7.1-rc',
+  'sb-7.1': 'sb-7.1',
   'sb-8': 'sb-8.0-rc',
 };
 

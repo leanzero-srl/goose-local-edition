@@ -34,6 +34,11 @@ export function projectBenchScore(v: {
       ...Object.fromEntries(
         [
           'fixture_seed',
+          'media',
+          'spec_sha256',
+          'contract_sha256',
+          'agent',
+          'scoring',
           'calibration',
           'inner',
           'excellence_gate',

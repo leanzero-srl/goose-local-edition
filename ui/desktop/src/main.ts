@@ -1,3 +1,8 @@
+import { benchmarkProfileDirectory } from './benchProfile';
+import { inspectBenchmarkRuntime, installBenchmarkRuntime } from './benchRuntimeInstaller';
+import { resolveBenchmarkRuntime } from './benchRuntime';
+import { validCloudEntrant } from './benchCloudLaunch';
+import { harnessPhase, type BenchmarkPhase } from './benchPhase';
 import { hasScoredVerdict } from './benchSessions';
 import { cloudRunStarted } from './benchCloudEvidence';
 import { benchmarkPythonLaunch } from './benchPython';
@@ -2390,7 +2395,7 @@ ipcMain.handle('select-import-session-file', async () => {
 // ones MUST live here — the renderer CSP allowlist (utils/csp.ts) permits only loopback and
 // github, so a renderer-side fetch to the site is blocked.
 
-const BENCH_DIR = path.join(os.homedir(), '.config', 'goose', 'benchmark');
+const BENCH_DIR = benchmarkProfileDirectory(os.homedir(), resolveGoosePathRoot());
 // Where a scored run is published. Overridable at run time like the updater's GITHUB_OWNER /
 // GITHUB_REPO (autoUpdater.ts), so a staging site or a fork can receive runs without a rebuild.
 const BENCH_PUBLISH_URL =
@@ -2508,6 +2513,21 @@ const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>): 
 // workdir, verdicts, traces and screenshots all live under userData.
 const benchWorkRoot = (): string => path.join(app.getPath('userData'), 'benchmark');
 
+let benchmarkRuntimeInstallation: Promise<void> | null = null;
+ipcMain.handle('benchmark-runtime-status', () => inspectBenchmarkRuntime(benchWorkRoot()));
+ipcMain.handle('benchmark-runtime-install', async () => {
+  if (activeBenchRun) throw new Error('Wait for the active benchmark to finish before changing its tools.');
+  if (!benchmarkRuntimeInstallation) {
+    benchmarkRuntimeInstallation = installBenchmarkRuntime(benchWorkRoot(), (progress) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('benchmark-runtime-progress', progress);
+      }
+    }).finally(() => { benchmarkRuntimeInstallation = null; });
+  }
+  return benchmarkRuntimeInstallation;
+});
+
+
 interface RunSampling {
   temperature?: number;
   topP?: number;
@@ -2541,6 +2561,8 @@ const samplingEnv = (s: RunSampling): Record<string, string> => ({
 });
 
 interface ActiveBenchRun {
+  phase: BenchmarkPhase;
+  provider?: string;
   child: ReturnType<typeof spawn>;
   workdir: string;
   nodes: number;
@@ -3049,8 +3071,8 @@ ipcMain.handle('benchmark-delete-session', async (_event, runId: string) => {
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
   if (!activeBenchRun) return { running: false };
-  const { workdir, nodes, startedAt, sampling, scored, lastLine, runId } = activeBenchRun;
-  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId };
+  const { workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId, phase, provider };
 });
 
 const benchMediaServer = new BenchMediaServer();
@@ -3080,20 +3102,20 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
-  if (cloud && (cloud.provider !== 'google' || typeof cloud.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(cloud.model))) {
-    throw new Error('Choose Google Gemini and provide a valid model ID.');
+  if (benchmarkRuntimeInstallation) throw new Error('Wait for Benchmark tools installation to finish.');
+  if (cloud && !validCloudEntrant(cloud)) {
+    throw new Error('Choose a configured provider and provide a valid model ID.');
   }
   if (cloud) nodes = 1;
   const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
   const runSampling = cleanSampling(cloud ? undefined : sampling);
-  // Cloud selection is explicit; local swarm retains the stable default.
+  // Cloud selection is explicit; local swarms run stable SB7.1.
   // The tier switches which spec/probe/scorer the harness
   // wires up, so a run is always scored by exactly one frozen version end to end.
   const tier = benchmarkLaunchTier(cloud);
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
   const sb71 = tier === 'sb-7.1';
-  if (sb71 && !cloud) throw new Error('SB7.1 local swarm validation pending; use the Google cloud entrant for this pilot.');
   const sb8 = tier === 'sb-8';
   // Site-vs-bundle drift, from the CACHED catalog only — launching must never wait on the network
   // (the view refreshes the cache via benchmark-catalog). When the site's current benchmark is not
@@ -3105,6 +3127,11 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   );
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
+  const runtime = sb71
+    ? await resolveBenchmarkRuntime(benchWorkRoot())
+    : { python: 'python3', env: {} };
+  const benchNode = await resolveBenchNode(tier);
+  const browserEnv = await bundledBrowserEnv();
   // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
   // lookup. run_build.py honors BENCH_GOOSE for the engine path.
   const engineBinary = findGooseBinaryPath({
@@ -3115,7 +3142,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const workRoot = benchWorkRoot();
   const outRoot = path.join(workRoot, 'runs', 'build');
   await fs.mkdir(outRoot, { recursive: true });
-  const entrant = cloud ? `${cloud.provider}-${cloud.model}-${cloudRunId}` : `swarm-${nodes}node`;
+  const entrant = cloud ? `${cloud.provider}-${cloudRunId}` : `swarm-${nodes}node`;
   const workdir = path.join(outRoot, `${entrant}-r0`);
   // The previous run is a SESSION, not garbage: move it out of the slot (with its honest outcome
   // stamped into the index) before anything wipes. Only then clear whatever remains —
@@ -3157,12 +3184,10 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
     }
   };
 
-  const benchNode = await resolveBenchNode(tier);
-  const browserEnv = await bundledBrowserEnv();
   return await new Promise((resolvePromise, reject) => {
-    const python = benchmarkPythonLaunch(runner, [], process.env);
+    const python = benchmarkPythonLaunch(runner, [], { ...process.env, ...runtime.env });
     const child = spawn(
-      'python3',
+      runtime.python,
       // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
       // door and cut a run the engine itself would never have stopped.
@@ -3174,6 +3199,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
         env: {
           ...python.env,
           BENCH_GOOSE: engineBinary,
+          GOOSE_PATH_ROOT: resolveGoosePathRoot(),
           // A benchmark run is by definition unattended: nobody is sitting in front of the app
           // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
           // before a node answers, and those 5 minutes are three idle machines.
@@ -3241,6 +3267,8 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       }
     );
     activeBenchRun = {
+      phase: 'boot',
+      ...(cloud ? { provider: cloud.provider } : {}),
       child,
       workdir,
       nodes,
@@ -3274,6 +3302,8 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
     // at the run, then resolve with the scored row on completion as before. scored/lastLine ride
     // along so a view (re)mounting off either payload restores the same facts the status poll serves.
     sendSafe('benchmark-started', {
+      phase: 'boot',
+      ...(cloud ? { provider: cloud.provider } : {}),
       workdir,
       nodes,
       startedAt,
@@ -3299,9 +3329,11 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
         // recreated window restores 'done' from status instead of regressing to a spinning 'score'.
         if (activeBenchRun) {
           activeBenchRun.lastLine = line;
+          const nextPhase = stream === 'stdout' ? harnessPhase(line) : null;
+          if (nextPhase) activeBenchRun.phase = nextPhase;
           if (!activeBenchRun.scored && /rep0 \(/.test(line)) activeBenchRun.scored = true;
         }
-        sendSafe('benchmark-log', { line, stream, scored: activeBenchRun?.scored === true });
+        sendSafe('benchmark-log', { line, stream, scored: activeBenchRun?.scored === true, phase: activeBenchRun?.phase });
       }
     };
     child.stdout?.on('data', onData('stdout'));
@@ -3360,6 +3392,8 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
           ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
           ...(typeof v.agent?.secs === 'number' ? { wallSecs: v.agent.secs } : {}),
+          ...(typeof v.scoring?.secs === 'number' ? { scoringSecs: v.scoring.secs } : {}),
+          ...(v.agent?.usage ? { modelUsage: v.agent.usage } : {}),
           // The run's own measured token rates (scorer's telemetry_summary) — published
           // with the post so the public entry shows prefill/decode tok/s per node.
           ...(v.telemetry && typeof v.telemetry === 'object' ? { telemetry: v.telemetry } : {}),

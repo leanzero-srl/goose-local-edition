@@ -41,7 +41,7 @@ export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
 };
 
 /** The user-selected active benchmark; bundled experiments remain available for historical reads. */
-export const DEFAULT_BENCHMARK_TIER: BenchTier = 'sb-7';
+export const DEFAULT_BENCHMARK_TIER: BenchTier = 'sb-7.1';
 
 export function defaultBenchmarkTier(): BenchTier {
   return DEFAULT_BENCHMARK_TIER;
@@ -55,7 +55,7 @@ export type CloudBenchmarkTier = 'sb-7' | 'sb-7.1';
 export function benchmarkLaunchTier(cloud?: { tier: CloudBenchmarkTier }): BenchTier {
   if (!cloud) return DEFAULT_BENCHMARK_TIER;
   if (cloud.tier !== 'sb-7' && cloud.tier !== 'sb-7.1')
-    throw new Error('Choose SB7 or the SB7.1 payments pilot.');
+    throw new Error('Choose SB7 or the SB7.1 payments.');
   return cloud.tier;
 }
 export function benchmarkScorer(tier: BenchTier): string {

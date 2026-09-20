@@ -18,6 +18,16 @@ const SB8_CAPTIONS: Record<string, string> = {
   final: 'Final app view',
 };
 
+const SB71_CAPTIONS: Record<string, string> = {
+  'sb71-field': 'Payment towers overview',
+  'sb71-inspect-usd': 'USD payment inspection',
+  'sb71-inspect-jpy': 'JPY payment inspection',
+  'sb71-inspect-kwd': 'KWD payment inspection',
+  'sb71-inspect-eur': 'EUR payment inspection',
+  'sb71-live-update': 'Committed payment update',
+  'sb71-final-inspector': 'Final payment inspector',
+};
+
 /** Read probe evidence for local viewing; upload constraints must not hide local captures. */
 export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
   const dir = path.join(workdir, 'bench-shots');
@@ -26,7 +36,7 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
   const captures: Capture[] = [];
   for (const file of files) {
     const modern = file.match(
-      /^(\d+)-(loaded|synced|error|empty|mobile|sb8-(?:initial|front|top|iso|kinematics|lift|rotation|final))\.png$/
+      /^(\d+)-(loaded|synced|error|empty|mobile|boot|flow|viz|sb71-(?:field|inspect-[a-z]+|live-update|final-inspector)|sb8-(?:initial|front|top|iso|kinematics|lift|rotation|final))\.png$/
     );
     const oldCamera = file.match(/^sb8-(front|top|iso)\.png$/);
     const oldGate = file.match(/^sb8-gate-(\d+)\.png$/);
@@ -49,6 +59,11 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
     error: 'Error state',
     empty: 'Empty state',
     mobile: 'Mobile · 375px',
+    boot: 'Initial app view',
+    flow: 'Payment workflow',
+    viz: '3D visualization',
+    ...SB71_CAPTIONS,
+    ...Object.fromEntries(captures.filter((capture) => capture.scenario.startsWith('sb71-inspect-')).map((capture) => [capture.scenario, `${capture.scenario.slice('sb71-inspect-'.length).toUpperCase()} payment inspection`])),
     ...Object.fromEntries(
       Object.entries(SB8_CAPTIONS).map(([key, label]) => [`sb8-${key}`, label])
     ),
