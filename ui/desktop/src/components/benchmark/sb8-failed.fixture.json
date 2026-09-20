@@ -1,0 +1,396 @@
+{
+  "scorerVersion": "sb-8.0-rc",
+  "scorer_version": "sb-8.0-rc",
+  "score": 0.5955882352941176,
+  "scoreInner": 0.9941176470588236,
+  "tiers": {
+    "A": 1.0,
+    "B": 0.9705882352941176,
+    "C": 1.0,
+    "D": 1.0,
+    "E": 1.0
+  },
+  "checks": [
+    {
+      "name": "boot_state",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "seeded_scene",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "empty_move",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "lift",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "durable_state",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "durable_scene",
+      "tier": "A",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "empty_release",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "unknown_box",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "misaligned_grip",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "grip",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "already_holding",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "reject_bounds",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "atomic_rejection",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "swept_collision",
+      "tier": "B",
+      "score": 0.0,
+      "detail": "expected HTTP 409, got 200"
+    },
+    {
+      "name": "sat_disjoint_aabbs_overlap",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "rotated_support_overhang",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "unsupported_release",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "held_bounds",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "supported_release",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "regrip_preserves_yaw",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "short_arc_wrap",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "floor_release",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "overload",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "stale_revision",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "idempotent_replay",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "id_conflict",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_None",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_True",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_1",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "concurrent_revision",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "durable_receipt",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_move",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_grip",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_release",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_semantic",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_malformed",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_stale",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "concurrent_identical_retry",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "durable_reordered_receipt",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "durable_conflict_precedence",
+      "tier": "B",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "webgl_geometry",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "seeded_box_geometry",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "columns_rails",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "bridge_beams",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "trolley_spreader",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "four_cables",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "spreader",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "wheels",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "crane_tracks_state",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "cargo_tracks_external_backend",
+      "tier": "C",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "scene_canvas_size",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "real_3d_pick",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "table_selection",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "ui_move_reaches_backend",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "visible_command_error",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "invalid_ui_move_is_atomic",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "revision_is_live",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "ui_release",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "ui_grip",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "orbit_changes_view",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "zoom_changes_view",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "camera_is_read_only",
+      "tier": "D",
+      "score": 1.0,
+      "detail": ""
+    },
+    {
+      "name": "clean_console",
+      "tier": "E",
+      "score": 1.0,
+      "detail": ""
+    }
+  ],
+  "criticalMultiplier": 0.6,
+  "fixture_seed": 7123,
+  "calibrated": false
+}

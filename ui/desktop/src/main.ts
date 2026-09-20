@@ -1,3 +1,4 @@
+import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
 import type { OpenDialogOptions, OpenDialogReturnValue } from 'electron';
 import {
   app,
@@ -2842,19 +2843,16 @@ const deriveSlotOutcome = async (
   try {
     const v = JSON.parse(await fs.readFile(path.join(dataDir, 'verdict.json'), 'utf8')) as {
       score?: unknown;
-      tiers?: Record<string, { mean?: unknown } | undefined>;
-      scorer_version?: unknown;
+      tiers?: Record<string, number | { mean?: number }>;
+      scorer_version?: string;
+      scorerVersion?: string;
     };
+    const scoring = projectBenchScore(v);
     return {
       outcome: outcomeFromSlot(true, true),
       ...(typeof v.score === 'number' ? { score: v.score } : {}),
-      tiers: {
-        A: typeof v.tiers?.A?.mean === 'number' ? v.tiers.A.mean : 0,
-        B: typeof v.tiers?.B?.mean === 'number' ? v.tiers.B.mean : 0,
-        C: typeof v.tiers?.C?.mean === 'number' ? v.tiers.C.mean : 0,
-        D: typeof v.tiers?.D?.mean === 'number' ? v.tiers.D.mean : 0,
-      },
-      ...(typeof v.scorer_version === 'string' ? { scorerVersion: v.scorer_version } : {}),
+      tiers: scoring.tiers,
+      scorerVersion: scoring.scorerVersion,
     };
   } catch {
     /* no verdict — the event log decides between did_not_finish and did_not_start */
@@ -2946,7 +2944,16 @@ const readBenchCatalogCache = async (): Promise<{
 
 ipcMain.handle('benchmark-read', async () => {
   try {
-    return JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8'));
+    const stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8'));
+    if (typeof stored?.workdir === 'string' && /^sb-8(?:\.|$)/.test(stored.scorerVersion ?? '')) {
+      try {
+        const canonical = JSON.parse(await fs.readFile(path.join(stored.workdir, 'verdict.json'), 'utf8'));
+        return recoverStoredSb8Score(stored, canonical);
+      } catch {
+        // The archived source is unavailable; retain the stored evidence and its explicit missing-input notice.
+      }
+    }
+    return stored;
   } catch {
     return null; // no previous run is the normal first-run state
   }
@@ -3125,11 +3132,16 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSampling) => {
+ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSampling, cloud?: { provider: string; model: string }) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
-  const runSampling = cleanSampling(sampling);
+  if (cloud && (cloud.provider !== 'google' || typeof cloud.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(cloud.model))) {
+    throw new Error('Choose Google Gemini and provide a valid model ID.');
+  }
+  if (cloud) nodes = 1;
+  const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
+  const runSampling = cleanSampling(cloud ? undefined : sampling);
   // LATEST-ONLY (2026-08-31): the renderer no longer chooses a tier — the app always runs the
   // newest benchmark it bundles, derived from the tier data (numeric version, never a hardcoded
   // name). The payload carries every scorer; the tier switches which spec/probe/scorer the harness
@@ -3158,7 +3170,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   const workRoot = benchWorkRoot();
   const outRoot = path.join(workRoot, 'runs', 'build');
   await fs.mkdir(outRoot, { recursive: true });
-  const entrant = `swarm-${nodes}node`;
+  const entrant = cloud ? `${cloud.provider}-${cloud.model}-${cloudRunId}` : `swarm-${nodes}node`;
   const workdir = path.join(outRoot, `${entrant}-r0`);
   // The previous run is a SESSION, not garbage: move it out of the slot (with its honest outcome
   // stamped into the index) before anything wipes. Only then clear whatever remains —
@@ -3176,7 +3188,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   {
     const rows = await readBenchSessionRows();
     rows.push({
-      runId: null,
+      runId: cloudRunId,
       scorerVersion: newestTierScorer(),
       startedAt,
       outcome: 'running',
@@ -3209,7 +3221,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
       // door and cut a run the engine itself would never have stopped.
       ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
-        '--out', outRoot, ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb8 ? ['--sb8'] : [])],
+        '--out', outRoot, ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []), ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : []), ...(sb8 ? ['--sb8'] : [])],
       {
         cwd: workRoot,
         detached: true,
@@ -3290,7 +3302,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       sampling: runSampling,
       scored: false,
       lastLine: null,
-      runId: null,
+      runId: cloudRunId,
     };
     // Reconcile the session row's runId the moment the engine publishes current-run.json (written
     // before any phase starts). A cheap local-file poll, cleared on first hit and on run end.
@@ -3386,16 +3398,14 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
         const verdictPath = path.join(workdir, 'verdict.json');
         const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
         const counts = await benchRunCounts(workdir);
+        const scoring = projectBenchScore(v);
         const row = {
-          label: `Your fleet · ${v.actual_nodes ?? nodes} node${(v.actual_nodes ?? nodes) > 1 ? 's' : ''}`,
+          label: cloud ? `${cloud.model} · single agent` : `Your fleet · ${v.actual_nodes ?? nodes} node${(v.actual_nodes ?? nodes) > 1 ? 's' : ''}`,
           score: v.score,
-          tiers: {
-            A: v.tiers?.A?.mean ?? 0, B: v.tiers?.B?.mean ?? 0,
-            C: v.tiers?.C?.mean ?? 0, D: v.tiers?.D?.mean ?? 0,
-          },
+          tiers: scoring.tiers,
           nodes: v.actual_nodes ?? nodes,
           mine: true,
-          scorerVersion: v.scorer_version ?? 'unknown',
+          scorerVersion: scoring.scorerVersion,
           // sb-4 additions — the site's endpoint stores these when present and older
           // scorers simply omit them (the allowlist tolerates absence, never unknowns).
           ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
@@ -3421,7 +3431,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           runId: sessionRunId,
           // Engine-truth model identifier (contract v2.2) — the publish form's prefill; the user
           // may edit it there, and the edit is persisted back onto this field.
-          modelId: deriveBenchModel(counts.poolModelIds),
+          modelId: cloud ? v.model : deriveBenchModel(counts.poolModelIds),
           // Per-device (id, model_id) pairs from pool_resolved (contract v2.3) — publish derives
           // nodesDetail from these; empty when the run's log carried no pool_resolved.
           poolDevices: counts.poolDevices,
@@ -3430,13 +3440,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           // root-cause attribution, and the run's repair story from complete_verify. Local-only —
           // benchmark-publish never sends any of this.
           verdict: {
-            checks: Array.isArray(v.checks) ? v.checks : [],
-            tiers: v.tiers ?? {},
-            ...(typeof v.core === 'number' ? { core: v.core } : {}),
-            ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
-            ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
-            ...(typeof v.solid === 'boolean' ? { solid: v.solid } : {}),
-            root_causes: v.root_causes ?? {},
+            ...scoring.verdict,
             // The findings that HELD when verification ended (pre-elided by the engine; cap 12).
             findingsHeld: (
               counts.verifyRounds[counts.verifyRounds.length - 1]?.findingTexts ?? []
@@ -3476,7 +3480,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
           endedAt: finishedAt,
           ...(typeof v.score === 'number' ? { score: v.score } : {}),
           tiers: row.tiers,
-          ...(typeof v.scorer_version === 'string' ? { scorerVersion: v.scorer_version } : {}),
+          scorerVersion: row.scorerVersion,
         });
         activeBenchRun = null;
         sendSafe('benchmark-finished', { row });

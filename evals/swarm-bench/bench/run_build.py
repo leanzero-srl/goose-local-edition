@@ -11,10 +11,12 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Dict
 
@@ -86,8 +88,12 @@ def build_prompt(port: int) -> str:
                 .replace("{API_KEY}", getattr(_vn, "API_KEY", vendor_service.API_KEY)))
 
 
-def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int) -> Dict:
+def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int,
+           provider: str | None = None, model: str | None = None) -> Dict:
     prompt = build_prompt(port)
+    (workdir / "benchmark-prompt.md").write_text(prompt)
+    credential_values = tuple(value for name, value in env.items()
+                              if value and re.search(r"(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD)$", name))
     # Every entrant records per-call token telemetry into the tree's own .swarm — the same
     # file the swarm engine defaults to, so telemetry_summary() finds it at scoring time and
     # cloud entries publish MEASURED rates instead of session-store recoveries. Truncated per
@@ -118,7 +124,11 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # entrants talk to LM Studio, which needs no key. Secrets fall back to ~/.config/goose/secrets.yaml
     # (base.rs:99-101), which this path does not use either.
     env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath), "GOOSE_DISABLE_KEYRING": "1"}
-    if entrant in MODELS:
+    if provider:
+        if not model:
+            raise ValueError("A cloud entrant requires an explicit model")
+        cmd = [str(GOOSE), "run", "--provider", provider, "--model", model, "--no-profile", "--with-builtin", "developer", "-t", prompt]
+    elif entrant in MODELS:
         cmd = [str(GOOSE), "run", "--provider", "aws_bedrock", "--model", MODELS[entrant],
                "-t", prompt]
     elif entrant == "local-single":
@@ -172,10 +182,23 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     console = workdir / "engine-console.log"
     try:
         with console.open("w", buffering=1) as fh:
-            proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
-                                  timeout=(timeout if timeout and timeout > 0 else None),
-                                  env={**os.environ, **env}, start_new_session=True)
-        code = proc.returncode
+            if provider:
+                proc = subprocess.Popen(cmd, cwd=workdir, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True,
+                                        env={**os.environ, **env, "GOOSE_MODE": "auto"},
+                                        start_new_session=True)
+                for line in proc.stdout:
+                    for value in credential_values:
+                        line = line.replace(value, "[REDACTED]")
+                    fh.write(line)
+                    print(line, end="", flush=True)
+                proc.stdout.close()
+                code = proc.wait()
+            else:
+                proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
+                                      timeout=(timeout if timeout and timeout > 0 else None),
+                                      env={**os.environ, **env}, start_new_session=True)
+                code = proc.returncode
         tail = console.read_text(errors="replace")[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
@@ -183,11 +206,51 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
             "timed_out": code is None}
 
 
-def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict:
+def cloud_env(provider: str) -> Dict[str, str]:
+    if provider != "google":
+        raise ValueError(f"No benchmark credential loader for provider {provider!r}")
+    key = os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        secret_file = Path.home() / ".agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env"
+        if secret_file.is_file():
+            for line in secret_file.read_text().splitlines():
+                name, sep, value = line.strip().removeprefix("export ").partition("=")
+                if sep and name.strip() == "GOOGLE_API_KEY":
+                    values = shlex.split(value, comments=True)
+                    key = values[0] if values else None
+                    break
+    if not key:
+        raise ValueError("Google benchmark credentials are missing (GOOGLE_API_KEY)")
+    return {"GOOGLE_API_KEY": key}
+
+
+def google_model_limits(model: str, credentials: Dict[str, str]) -> Dict[str, int]:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model):
+        raise ValueError("Invalid Google model ID")
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}",
+        headers={"x-goog-api-key": credentials["GOOGLE_API_KEY"]})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        metadata = json.load(response)
+    limits = {name: metadata.get(name) for name in ("inputTokenLimit", "outputTokenLimit")}
+    if any(type(value) is not int or value <= 0 for value in limits.values()):
+        raise ValueError("Google model metadata did not provide positive input/output token limits")
+    return limits
+
+
+def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
+        provider: str | None = None, model: str | None = None) -> Dict:
     workdir = out_root / f"{entrant}-r{rep}"
     if workdir.exists():
-        shutil.rmtree(workdir)
+        raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
+    credentials = cloud_env(provider) if provider else load_env()
+    model_limits = google_model_limits(model, credentials) if provider else None
+    if model_limits:
+        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": str(model_limits["inputTokenLimit"]),
+                       "GOOSE_MAX_TOKENS": str(model_limits["outputTokenLimit"])}
     workdir.mkdir(parents=True)
+    if model_limits:
+        (workdir / "model-limits.json").write_text(json.dumps(model_limits, indent=2))
     # F811 (Mihai: "next time we pause we won't lose anything"): RESUME A KILLED UNIT. When the
     # sweep points BENCH_RESUME_FROM at the voided unit's dir (same engine binary only — the
     # sweep enforces that), restore the partial tree + the run's own .swarm logs and arm the
@@ -293,7 +356,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     # environ too so score_build's in-process probe runs inherit it.
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
-        agent = invoke(entrant, workdir, port, load_env(), timeout)
+        agent = invoke(entrant, workdir, port, credentials, timeout, provider, model)
+        if provider and "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
+            (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
+            raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         ctx = scorer.gather(workdir, port, db, trace,
                             mark_phase=vendor.mark_phase,
@@ -309,6 +375,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
             pass
 
     verdict = scorer.evaluate(ctx)
+    if provider:
+        verdict["provider"] = provider
+        verdict["model"] = model
+        verdict["model_limits"] = model_limits
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
     # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent
@@ -351,6 +421,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--entrant", default="opus-5")
+    ap.add_argument("--provider", choices=["google"], help="Single cloud agent instead of a local swarm")
+    ap.add_argument("--model", help="Exact cloud model ID")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--only-rep", type=int,
                     help="run exactly this rep index instead of 0..reps-1")
@@ -365,6 +437,10 @@ def main() -> int:
                          "(equivalent to BENCH_SB7=1; wins over --sb6)")
     ap.add_argument("--sb8", action="store_true", help="SB-8 compact transactional 3D benchmark")
     args = ap.parse_args()
+    if bool(args.provider) != bool(args.model):
+        ap.error("--provider and --model must be supplied together")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.entrant):
+        ap.error("--entrant must be a directory-safe identifier")
     if args.sb6:
         os.environ["BENCH_SB6"] = "1"
     if args.sb7:
@@ -376,7 +452,7 @@ def main() -> int:
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))
     for rep in reps:
-        v = run(args.entrant, rep, args.out, args.timeout, args.port + rep)
+        v = run(args.entrant, rep, args.out, args.timeout, args.port + rep, args.provider, args.model)
         verdicts.append(v)
         print(_regime()[0].format_report(
             v, f"{args.entrant} rep{rep} ({v['agent']['secs']}s)"), flush=True)

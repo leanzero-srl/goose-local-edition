@@ -111,6 +111,21 @@ function mockElectron(opts: { catalog?: unknown; sessions?: unknown[] } = {}) {
 describe('the benchmark sections and their sessions', () => {
   afterEach(() => cleanup());
 
+  it('launches the exact Gemini model as one cloud entrant, without a swarm launch', async () => {
+    mockElectron({ sessions: [] });
+    const cloud = vi.fn(async () => null);
+    const swarm = vi.fn(async () => null);
+    electron().benchmarkRunCloud = cloud;
+    electron().benchmarkRun = swarm;
+    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    fireEvent.click(screen.getByRole('button', { name: 'Google Gemini' }));
+    expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), { target: { value: 'gemini-3.8-flash' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
+    await waitFor(() => expect(cloud).toHaveBeenCalledWith('gemini-3.8-flash'));
+    expect(swarm).not.toHaveBeenCalled();
+  });
+
   it('renders all four outcomes honestly — running pulses, finished carries its score, the dead ones say so', async () => {
     mockElectron();
     render(
@@ -280,4 +295,23 @@ describe('the benchmark sections and their sessions', () => {
     // The session itself still renders with its honest state.
     expect(screen.getByText('Finished')).toBeInTheDocument();
   });
+});
+
+it('joins the cloud result label and SB8 details to the exact session', async () => {
+  const verdict = (await import('./sb8-failed.fixture.json')).default;
+  mockElectron({ sessions: [{
+    runId: 'cloud-fixture', scorerVersion: verdict.scorerVersion, startedAt: '2026-09-20T10:00:00Z',
+    endedAt: '2026-09-20T10:04:00Z', outcome: 'finished', score: verdict.score, tiers: { A: 1, B: 0.97, C: 1, D: 1 }, publishable: false,
+  }] });
+  electron().benchmarkRead = vi.fn(async () => ({
+    label: 'gemini-3.8-flash · single agent', modelId: 'gemini-3.8-flash', runId: 'cloud-fixture',
+    scorerVersion: verdict.scorerVersion, score: verdict.score, tiers: verdict.tiers, verdict,
+  }));
+  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  expect((await screen.findAllByText('gemini-3.8-flash · single agent')).length).toBeGreaterThan(0);
+  expect(screen.queryByText('Your fleet')).toBeNull();
+  expect(screen.queryByText(/60% core build/)).toBeNull();
+  expect(await screen.findByText('Swept collision')).toBeInTheDocument();
+  expect(screen.getByText('E 100%')).toBeInTheDocument();
+  cleanup();
 });

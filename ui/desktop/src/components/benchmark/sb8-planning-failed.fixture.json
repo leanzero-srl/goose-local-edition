@@ -1,0 +1,486 @@
+{
+  "scorerVersion": "sb-8.0-rc",
+  "scorer_version": "sb-8.0-rc",
+  "scorer_files_sha256": {
+    "score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
+    "product_probe_v4.mjs": "dda1f974915a3a13c7701b530955e532a0de50dc9219a944a734688ff31b1a1f",
+    "gantry_oracle.py": "3baf116e2101bcdedc55f10a7319281b340052118a02c3db8c59318a225a399b",
+    "route_oracle.py": "8712733b7bdf377c10e62455e72478c68aed6647b0b3c939046de30737b6d848",
+    "score_routes.py": "d7ac1843106de505fbd74a587e4b0051c149007f3b7012bcc53f052890f0ce6e"
+  },
+  "spec_sha256": "e3f3f32f591532242fab8e1d48b0a1722237af2ad87956cc1080a7a70cfab8cf",
+  "weights": {
+    "A": 0.08,
+    "B": 0.17,
+    "C": 0.3,
+    "D": 0.15,
+    "E": 0.05,
+    "F": 0.25
+  },
+  "core_tiers": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "F"
+  ],
+  "score": 0.7,
+  "scoreInner": 0.75,
+  "tiers": {
+    "A": 1.0,
+    "B": 1.0,
+    "C": 1.0,
+    "D": 1.0,
+    "E": 1.0,
+    "F": 0.0
+  },
+  "checks": [
+    {
+      "name": "boot_state",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "seeded_scene",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "empty_move",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "lift",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "durable_state",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "durable_scene",
+      "tier": "A",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "empty_release",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "unknown_box",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "misaligned_grip",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "grip",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "already_holding",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "reject_bounds",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "atomic_rejection",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "swept_collision",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "sat_disjoint_aabbs_overlap",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "rotated_support_overhang",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "unsupported_release",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "held_bounds",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "supported_release",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "regrip_preserves_yaw",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "short_arc_wrap",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "floor_release",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "overload",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "stale_revision",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "idempotent_replay",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "id_conflict",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_None",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_True",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "invalid_number_1",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "concurrent_revision",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "durable_receipt",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_move",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_grip",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "stale_before_release",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_semantic",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_malformed",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "retry_after_stale",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "concurrent_identical_retry",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "durable_reordered_receipt",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "durable_conflict_precedence",
+      "tier": "B",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "webgl_geometry",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "seeded_box_geometry",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "columns_rails",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "bridge_beams",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "trolley_spreader",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "four_cables",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "spreader",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "wheels",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "crane_tracks_state",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "cargo_tracks_external_backend",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "cargo_yaw_tracks_state",
+      "tier": "C",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "scene_canvas_size",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "real_3d_pick",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "table_selection",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "ui_move_reaches_backend",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "visible_command_error",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "invalid_ui_move_is_atomic",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "revision_is_live",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "ui_release",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "ui_grip",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "orbit_changes_view",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "zoom_changes_view",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "camera_is_read_only",
+      "tier": "D",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "clean_console",
+      "tier": "E",
+      "score": 1,
+      "detail": ""
+    },
+    {
+      "name": "plan_requires_load",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_invalid_lattice",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_stale_revision",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_identity",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_detour_optimal",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_lift_rotate_optimal",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_energy_optimal",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_rotation_clearance",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_unreachable",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    },
+    {
+      "name": "plan_wrap_optimal",
+      "tier": "F",
+      "score": 0,
+      "detail": "route absent"
+    }
+  ],
+  "criticalMultiplier": 1.0,
+  "fixture_seed": 7123,
+  "calibrated": false
+}

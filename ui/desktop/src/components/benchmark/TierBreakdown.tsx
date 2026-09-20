@@ -1,7 +1,7 @@
 import { Chip, RADIUS, SURFACE, TNUM, TONE_DOT, TYPE, WEIGHT, cx } from '../lz';
 import { BenchmarkRow, Tier } from './baselines';
 
-const TIERS: Tier[] = ['A', 'B', 'C', 'D'];
+const TIERS: Tier[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 /**
  * Per-tier bars, one row per entrant. This is the part that turns a score into a diagnosis: a build
@@ -37,7 +37,7 @@ export function TierBreakdown({ rows }: { rows: BenchmarkRow[] }) {
               {row.mine && <Chip tone="accent">yours</Chip>}
             </div>
             <div className="flex flex-1 gap-2">
-              {(row.tiers?.E !== undefined ? [...TIERS, 'E' as Tier] : TIERS).map((tier) => {
+              {TIERS.filter((tier) => row.tiers?.[tier] !== undefined).map((tier) => {
                 const value = Math.min(1, Math.max(0, row.tiers?.[tier] ?? 0));
                 return (
                   <div key={tier} className="flex-1">

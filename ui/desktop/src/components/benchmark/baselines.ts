@@ -7,7 +7,7 @@
  * loudly; it never invents rows.
  */
 
-export type Tier = 'A' | 'B' | 'C' | 'D' | 'E';
+export type Tier = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 export interface BenchmarkRow {
   label: string;
@@ -43,4 +43,22 @@ export const TIER_LABELS: Record<Tier, string> = {
   C: 'C vendor contract',
   D: 'D finesse',
   E: 'E excellence',
+  F: 'F route planning',
+};
+
+export const isSb8 = (version: string) => /^sb-8(?:\.|$)/.test(version);
+
+export const SB8_TIERS: Record<string, { name: string; desc: string }> = {
+  A: { name: 'Backend foundation', desc: 'Seeded scene, movement and durable state' },
+  B: {
+    name: 'Transactional correctness',
+    desc: 'Geometry, atomic commands and receipt persistence',
+  },
+  C: {
+    name: '3D scene',
+    desc: 'Observed WebGL geometry and backend-driven movement',
+  },
+  D: { name: 'Interaction', desc: 'Picking, controls and live state in the browser' },
+  E: { name: 'Excellence', desc: 'Clean console, gated by core correctness' },
+  F: { name: 'Route planning', desc: 'Optimal collision-free routes without changing live state' },
 };

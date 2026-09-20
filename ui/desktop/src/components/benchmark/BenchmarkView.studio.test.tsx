@@ -182,7 +182,7 @@ describe('BenchmarkView — LeanZero Studio', () => {
     expect(new Set(keys).size).toBe(expected);
     expect(keys).toContain('mine');
     // The row's mark is a StatusDot whose label is its meaning.
-    expect(within(table).getByRole('img', { name: 'your fleet' })).toBeTruthy();
+    expect(within(table).getByRole('img', { name: 'your run' })).toBeTruthy();
     expect(within(table).getAllByRole('img', { name: 'baseline' })).toHaveLength(expected - 1);
 
     // The shots panel counts the figures it shows.
@@ -253,7 +253,7 @@ describe('BenchmarkView — LeanZero Studio', () => {
     expect(absent.getAttribute('data-tone')).toBe('err');
     expect(absent.className).toContain('bg-lz-err-solid');
     const table = await screen.findByRole('table', { name: 'Benchmark board' });
-    await waitFor(() => expect(within(table).getByRole('img', { name: 'your fleet' })).toBeTruthy());
+    await waitFor(() => expect(within(table).getByRole('img', { name: 'your run' })).toBeTruthy());
     expect(within(table).queryAllByRole('img', { name: 'baseline' })).toHaveLength(0);
     expect(screen.queryByText('Claude Opus 5')).toBeNull();
   });

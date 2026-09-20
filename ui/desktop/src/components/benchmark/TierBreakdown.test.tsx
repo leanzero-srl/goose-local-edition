@@ -10,8 +10,19 @@ import { missingUtilities } from '../lz/compileStudioCss';
  * of coloured squares; now every bar is the accent and the tier is its column + "A 88%" label.
  */
 const rows: BenchmarkRow[] = [
-  { label: 'Claude Opus 5', score: 0.9, tiers: { A: 1, B: 0.9, C: 0.85, D: 0.8 }, scorerVersion: 'sb-5.3' },
-  { label: 'Your fleet · 3 nodes', score: 0.6, tiers: { A: 0.7, B: 0.5, C: 0.6, D: 0.6 }, mine: true, scorerVersion: 'sb-5.3' },
+  {
+    label: 'Claude Opus 5',
+    score: 0.9,
+    tiers: { A: 1, B: 0.9, C: 0.85, D: 0.8 },
+    scorerVersion: 'sb-5.3',
+  },
+  {
+    label: 'Your fleet · 3 nodes',
+    score: 0.6,
+    tiers: { A: 0.7, B: 0.5, C: 0.6, D: 0.6 },
+    mine: true,
+    scorerVersion: 'sb-5.3',
+  },
 ];
 
 describe('TierBreakdown', () => {
@@ -27,4 +38,13 @@ describe('TierBreakdown', () => {
     assertStudioClean(container);
     expect(await missingUtilities(allClasses(container))).toEqual([]);
   }, 30_000);
+});
+
+it('shows F only when the result actually recorded route planning', () => {
+  const { getByText, rerender, queryByText } = render(
+    <TierBreakdown rows={[{ ...rows[0], tiers: { A: 1, B: 1, C: 1, D: 1, E: 1, F: 0 } }]} />
+  );
+  getByText('F 0%');
+  rerender(<TierBreakdown rows={[rows[0]]} />);
+  expect(queryByText('F 0%')).toBeNull();
 });

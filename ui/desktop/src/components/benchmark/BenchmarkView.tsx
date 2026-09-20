@@ -14,7 +14,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
-import { TIER_LABELS, type BenchmarkRow, type Tier } from './baselines';
+import { SB8_TIERS, isSb8, TIER_LABELS, type BenchmarkRow, type Tier } from './baselines';
 import type {
   BenchSession,
   CatalogBaseline,
@@ -85,14 +85,16 @@ const MODEL_MIN_CHARS = 8;
 export function modelIdProblem(modelId: string | undefined): string | null {
   const n = (modelId ?? '').trim().length;
   if (n === 0) return 'This result carries no model id from the engine — run the benchmark again.';
-  if (n < MODEL_MIN_CHARS) return `The engine recorded a ${n}-character model id — too short to publish.`;
+  if (n < MODEL_MIN_CHARS)
+    return `The engine recorded a ${n}-character model id — too short to publish.`;
   return null;
 }
 
 /** Why the Title field blocks publishing, or null when it does not. The title is the USER'S name
  *  for the run on the public board — never auto-generated. */
 export function titleProblem(title: string): string | null {
-  if (title.trim().length === 0) return 'Title is required — name this run; it is the public title on the board.';
+  if (title.trim().length === 0)
+    return 'Title is required — name this run; it is the public title on the board.';
   return null;
 }
 
@@ -131,7 +133,6 @@ const PHASES: Array<{ key: BenchPhase; label: string }> = [
   { key: 'score', label: 'Scoring' },
   { key: 'done', label: 'Done' },
 ];
-
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -419,7 +420,11 @@ const ABSENT = <span className="text-lz-ink-4">—</span>;
 /** The board as a table: who | run | tier | nodes | started | score | duration. Catalog baselines
  *  publish only the overall number, so their other cells read as absent — never invented; the
  *  session's own row reads its start from the session and the rest from the stored result. */
-function boardColumns(own: { startedAt: string; wallMs: number | null; nodes?: number }): DataTableColumn<BenchmarkRow>[] {
+function boardColumns(own: {
+  startedAt: string;
+  wallMs: number | null;
+  nodes?: number;
+}): DataTableColumn<BenchmarkRow>[] {
   return [
     {
       key: 'who',
@@ -428,7 +433,7 @@ function boardColumns(own: { startedAt: string; wallMs: number | null; nodes?: n
       cell: (r) => (
         <StatusDot
           tone={r.mine ? 'accent' : 'stopped'}
-          label={r.mine ? 'your fleet' : 'baseline'}
+          label={r.mine ? 'your run' : 'baseline'}
         />
       ),
     },
@@ -624,9 +629,9 @@ function SessionDetail({
     session.score == null
       ? null
       : {
-          label: 'Your fleet',
+          label: mineMatched && mine?.label ? mine.label : 'Your run',
           score: session.score,
-          tiers: session.tiers,
+          tiers: mineMatched && mine?.tiers ? mine.tiers : session.tiers,
           nodes: session.nodes,
           mine: true,
           scorerVersion: session.scorerVersion,
@@ -692,15 +697,20 @@ function SessionDetail({
       </Panel>
 
       <Panel title="Overall">
-        {baselines.length === 0 ? <ToneBand tone="err">{noRows}</ToneBand> : <ScoreBars rows={rows} />}
+        {baselines.length === 0 ? (
+          <ToneBand tone="err">{noRows}</ToneBand>
+        ) : (
+          <ScoreBars rows={rows} />
+        )}
       </Panel>
 
       <Panel title="Where the points went">
         <p className={cx('mb-3 max-w-[70ch]', TYPE.bodyMuted)}>
-          {TIER_LABELS.A} · {TIER_LABELS.B} · {TIER_LABELS.C} · {TIER_LABELS.D}. A build can be
-          perfectly structured and still score nothing on behaviour — the split is the diagnosis.
+          {isSb8(session.scorerVersion)
+            ? Object.entries(SB8_TIERS).filter(([tier]) => ownRow?.tiers?.[tier as Tier] !== undefined).map(([tier, info]) => `${tier} ${info.name}`).join(' · ')
+            : `${TIER_LABELS.A} · ${TIER_LABELS.B} · ${TIER_LABELS.C} · ${TIER_LABELS.D}`}.
         </p>
-        {ownRow && session.tiers ? (
+        {ownRow?.tiers ? (
           <TierBreakdown rows={[ownRow]} />
         ) : (
           <p className={TYPE.bodyMuted}>This session recorded no per-tier split.</p>
@@ -712,13 +722,9 @@ function SessionDetail({
           <>
             <p className={cx('mb-4 max-w-[80ch]', TYPE.bodyMuted)}>
               Every number below is scorer evidence from YOUR run — the exact checks it ran, what
-              each one saw, and what the misses cost. The formula:{' '}
-              <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>
-                60% core build + 15% journey + 10% visual + 5% performance + 10% hard block
-              </span>
-              .
+              each one saw, and what the misses cost.
             </p>
-            <ScoringDetail verdict={mine.verdict} score={mine.score} />
+            <ScoringDetail key={sessionKey(session)} verdict={mine.verdict} score={mine.score} scorerVersion={session.scorerVersion} />
           </>
         ) : mineMatched ? (
           <p className={TYPE.bodyMuted}>
@@ -772,6 +778,8 @@ const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}
  * baselines.
  */
 export default function BenchmarkView() {
+  const [entrant, setEntrant] = useState<'swarm' | 'google'>('swarm');
+  const [cloudModel, setCloudModel] = useState('');
   const [nodes, setNodes] = useState<NodeChoice>(3);
   // The pool's size caps the offered node counts and is the default; read once per mount (a device
   // edit is a config change, and the next mount sees it). Unreadable config keeps every choice.
@@ -864,7 +872,9 @@ export default function BenchmarkView() {
         // it never falls back to invented bars (the baked boards this replaced are deleted).
         setCatalog({
           kind: 'absent',
-          message: c?.error ?? (c ? 'the catalog carried no benchmark list' : 'this build has no catalog bridge'),
+          message:
+            c?.error ??
+            (c ? 'the catalog carried no benchmark list' : 'this build has no catalog bridge'),
         });
       }
     } catch (err) {
@@ -1075,7 +1085,10 @@ export default function BenchmarkView() {
     setLaunchedSampling(sampling);
     try {
       // No tier argument — the user cannot choose a benchmark; main runs the newest bundled one.
-      const result = await window.electron.benchmarkRun?.(nodes, sampling);
+      const result =
+        entrant === 'google'
+          ? await window.electron.benchmarkRunCloud(cloudModel.trim())
+          : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
         setMine(result as MineRow);
         setStatus('Run complete.');
@@ -1092,7 +1105,7 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, loadShots, loadSessions]);
+  }, [nodes, sampling, entrant, cloudModel, loadShots, loadSessions]);
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -1195,8 +1208,8 @@ export default function BenchmarkView() {
     mine && selectedSession && sessionKey(selectedSession) === mineSessionKey ? (
       <Panel title="Publish to leanzero.net">
         <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
-          Posts your score, the full check-by-check breakdown and the before/after screenshots
-          under the title you choose. The result appears on the leanzero.net board immediately.
+          Posts your score, the full check-by-check breakdown and the before/after screenshots under
+          the title you choose. The result appears on the leanzero.net board immediately.
         </p>
         <div className="mt-4 flex flex-col gap-4">
           <div className="max-w-[560px]">
@@ -1287,8 +1300,8 @@ export default function BenchmarkView() {
             >
               <BadgeCheck />
               <span>
-                Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
-                {(pub.score * 100).toFixed(1)}%{pub.url ? ` · leanzero.net${pub.url}` : ''}
+                Live on leanzero.net — &ldquo;{pub.title}&rdquo; · {(pub.score * 100).toFixed(1)}%
+                {pub.url ? ` · leanzero.net${pub.url}` : ''}
               </span>
             </div>
           )}
@@ -1337,7 +1350,12 @@ export default function BenchmarkView() {
                   {cancelling ? 'Cancelling…' : 'Cancel run'}
                 </Button>
               ) : (
-                <Button variant="primary" onClick={run} icon={<Play />}>
+                <Button
+                  variant="primary"
+                  onClick={run}
+                  icon={<Play />}
+                  disabled={entrant === 'google' && !cloudModel.trim()}
+                >
                   Run benchmark
                 </Button>
               )
@@ -1357,36 +1375,65 @@ export default function BenchmarkView() {
               a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). There is no
               benchmark chooser: the launch runs the catalog's CURRENT benchmark, the only one open. */}
           <section aria-label="Run setup" className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className={TYPE.meta}>Nodes</span>
-              <Segmented
-                as="buttons"
-                aria-label="Nodes"
-                options={nodeChoices.map((n) => ({
-                  value: String(n),
-                  label: <span className={TNUM}>{n}</span>,
-                  title: running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`,
-                  describedBy: running ? lockedId : undefined,
-                }))}
-                value={String(nodes)}
-                onChange={(v) => {
-                  const n = nodeChoices.find((c) => String(c) === v);
-                  if (n != null) setNodes(n);
-                }}
-                disabled={running}
-              />
-              {running && (
-                <span id={lockedId} className={TYPE.meta}>
-                  locked while the run is live
-                </span>
-              )}
-            </div>
-            <SamplingKnobs
-              value={launchedSampling ?? sampling}
-              onChange={setSampling}
-              active={running}
-              onSaveDefaults={() => saveDefaults(sampling)}
+            <Segmented
+              as="buttons"
+              aria-label="Benchmark entrant"
+              value={entrant}
+              options={[
+                { value: 'swarm', label: 'Local swarm' },
+                { value: 'google', label: 'Google Gemini' },
+              ]}
+              onChange={(value) => setEntrant(value as 'swarm' | 'google')}
+              disabled={running}
             />
+            {entrant === 'google' ? (
+              <label className="flex flex-col gap-2 text-sm">
+                Google model ID
+                <input
+                  aria-label="Google model ID"
+                  value={cloudModel}
+                  onChange={(event) => setCloudModel(event.target.value)}
+                  disabled={running}
+                  className="rounded-lg border border-lz-border bg-lz-surface px-3 py-2 text-lz-ink"
+                />
+                <span className={TYPE.meta}>
+                  One cloud agent. Uses the saved benchmark Google credential.
+                </span>
+              </label>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className={TYPE.meta}>Nodes</span>
+                  <Segmented
+                    as="buttons"
+                    aria-label="Nodes"
+                    options={nodeChoices.map((n) => ({
+                      value: String(n),
+                      label: <span className={TNUM}>{n}</span>,
+                      title: running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`,
+                      describedBy: running ? lockedId : undefined,
+                    }))}
+                    value={String(nodes)}
+                    onChange={(v) => {
+                      const n = nodeChoices.find((c) => String(c) === v);
+                      if (n != null) setNodes(n);
+                    }}
+                    disabled={running}
+                  />
+                  {running && (
+                    <span id={lockedId} className={TYPE.meta}>
+                      locked while the run is live
+                    </span>
+                  )}
+                </div>
+                <SamplingKnobs
+                  value={launchedSampling ?? sampling}
+                  onChange={setSampling}
+                  active={running}
+                  onSaveDefaults={() => saveDefaults(sampling)}
+                />
+              </>
+            )}
           </section>
 
           {catalog.kind === 'absent' && (
@@ -1398,7 +1445,8 @@ export default function BenchmarkView() {
           {catalog.kind === 'ok' && catalog.stale && (
             <div>
               <Chip tone="warn">
-                catalog cached {fmtWhen(catalog.fetchedAt) ?? catalog.fetchedAt ?? 'at an unknown time'}
+                catalog cached{' '}
+                {fmtWhen(catalog.fetchedAt) ?? catalog.fetchedAt ?? 'at an unknown time'}
               </Chip>
             </div>
           )}
@@ -1452,7 +1500,9 @@ export default function BenchmarkView() {
                   >
                     {expanded ? <ChevronDown /> : <ChevronRight />}
                     <span className={TYPE.h2}>{sec.title}</span>
-                    <span className="font-mono text-lz-mono text-lz-ink-3">{sec.scorerVersion}</span>
+                    <span className="font-mono text-lz-mono text-lz-ink-3">
+                      {sec.scorerVersion}
+                    </span>
                     {sec.current ? (
                       <Chip tone="ok">CURRENT</Chip>
                     ) : sec.frozen ? (
@@ -1512,7 +1562,11 @@ export default function BenchmarkView() {
           {sections.length === 0 && catalog.kind !== 'absent' && (
             <Panel>
               <EmptyState
-                title={catalog.kind === 'loading' ? 'Loading the benchmark catalog…' : 'No benchmarks yet'}
+                title={
+                  catalog.kind === 'loading'
+                    ? 'Loading the benchmark catalog…'
+                    : 'No benchmarks yet'
+                }
                 body={
                   catalog.kind === 'loading'
                     ? 'Retrieving the published benchmarks from leanzero.net.'
@@ -1523,10 +1577,9 @@ export default function BenchmarkView() {
           )}
 
           <footer className={cx('border-t pt-4 text-lz-body text-lz-ink-2', SURFACE.hairline)}>
-            Comparison rows are retrieved from leanzero.net&rsquo;s published board for each benchmark —
-            nothing is baked into the app, so a shipped number can never outlive the board it came
-            from. Scores below 100 are expected: the finesse tier is graded against a theoretical
-            optimum, and a perfect score would mean the task had stopped measuring.
+            Comparison rows are retrieved from leanzero.net&rsquo;s published board for each
+            benchmark — nothing is baked into the app, so a shipped number can never outlive the
+            board it came from. Each result uses the checks and formula of its recorded scorer version.
           </footer>
         </div>
       </div>

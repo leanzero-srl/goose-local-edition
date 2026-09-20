@@ -97,15 +97,121 @@ describe('ScoringDetail', () => {
     const tone = (chip: Element) => chip.getAttribute('data-tone');
     const chips = [...container.querySelectorAll('[data-testid="score-chip"]')];
     // The open B group (0.7316) is a warn chip; its 0.5 row warn; the collapsed A group's 1.0 is ok.
-    expect(chips.some((c) => tone(c) === 'ok' && c.classList.contains('bg-lz-ok-solid'))).toBe(true);
+    expect(chips.some((c) => tone(c) === 'ok' && c.classList.contains('bg-lz-ok-solid'))).toBe(
+      true
+    );
     expect(chips.some((c) => tone(c) === 'warn' && c.classList.contains('bg-lz-warn-solid'))).toBe(
       true
     );
     // The held findings sit under a solid err header, and the composition earned-fill is the accent.
-    expect(container.querySelector('[data-testid="findings-held"] .bg-lz-err-solid')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="findings-held"] .bg-lz-err-solid')
+    ).not.toBeNull();
     expect(container.querySelectorAll('svg rect.fill-lz-accent').length).toBeGreaterThan(0);
     expect(container.innerHTML).not.toMatch(/color-node-|color-block|#[0-9a-f]{6}/i);
     assertStudioClean(container);
     expect(await missingUtilities(utilitiesOf(allClasses(container)))).toEqual([]);
   }, 30_000);
+});
+
+import { fireEvent } from '@testing-library/react';
+import sb8Perfect from './sb8-perfect.fixture.json';
+import sb8Failed from './sb8-failed.fixture.json';
+
+describe('SB8 scoring evidence', () => {
+  it('renders all five numeric tiers and the scorer formula, without the legacy hard block', () => {
+    const { getAllByText, getByRole, queryByText } = render(
+      <ScoringDetail verdict={sb8Perfect} score={sb8Perfect.score} />
+    );
+    for (const name of [
+      'Backend foundation',
+      'Transactional correctness',
+      '3D scene',
+      'Interaction',
+      'Excellence',
+    ]) {
+      expect(getAllByText(name).length).toBe(2);
+    }
+    expect(queryByText('Hard block')).toBeNull();
+    expect(queryByText('Core build')).toBeNull();
+    fireEvent.click(getByRole('button', { name: /Backend foundation/ }));
+    expect(getAllByText('Boot state')).toHaveLength(1);
+    fireEvent.click(getByRole('button', { name: /Excellence.*Clean console/ }));
+    expect(getAllByText('Clean console')).toHaveLength(1);
+  });
+
+  it('shows the failed check evidence, excellence adjustment and actual critical multiplier', () => {
+    const { getByText, getAllByText } = render(
+      <ScoringDetail verdict={sb8Failed} score={sb8Failed.score} />
+    );
+    getByText('Swept collision');
+    getByText('expected HTTP 409, got 200');
+    getByText('× 0.6000');
+    getByText('-0.1');
+    // Actual Python evaluate output with one of 34 transactional checks failed.
+    expect(getAllByText('59.6')).toHaveLength(1);
+  });
+});
+
+import { projectBenchScore } from '../../benchScoreProjection';
+import truncatedDesktopResult from './sb8-desktop-truncated.fixture.json';
+
+it('renders the actual main-process projection after disk serialization as SB8', () => {
+  const stored = JSON.parse(JSON.stringify(projectBenchScore(sb8Failed)));
+  const { queryByText, getByText } = render(
+    <ScoringDetail
+      verdict={stored.verdict}
+      score={sb8Failed.score}
+      scorerVersion={stored.scorerVersion}
+    />
+  );
+  expect(queryByText('Core build')).toBeNull();
+  getByText('× 0.6000');
+  getByText('Swept collision');
+});
+
+it('does not claim the legacy formula for the truncated result observed in the running app', () => {
+  const stored = JSON.parse(JSON.stringify(truncatedDesktopResult));
+  const { queryByText, getByText } = render(
+    <ScoringDetail
+      verdict={stored.verdict}
+      score={stored.score}
+      scorerVersion={stored.scorerVersion}
+    />
+  );
+  expect(queryByText('Core build')).toBeNull();
+  getByText(/missing its composition inputs/);
+  getByText('Backend foundation');
+});
+
+import planningFailed from './sb8-planning-failed.fixture.json';
+
+it('shows recorded route-planning weight and includes its failure in the excellence adjustment', () => {
+  const { getByText, getAllByText } = render(
+    <ScoringDetail verdict={planningFailed} score={planningFailed.score} />
+  );
+  expect(getAllByText('Route planning')).toHaveLength(2);
+  getByText('25%');
+  getByText('-5.0');
+  getByText('70.0');
+  expect(getAllByText('route absent').length).toBeGreaterThan(0);
+  getByText(/A, B, C, D, F/);
+});
+
+it('keeps the historical perfect score and does not invent F for an older result', () => {
+  const { getAllByText, queryByText } = render(
+    <ScoringDetail verdict={sb8Perfect} score={sb8Perfect.score} />
+  );
+  expect(getAllByText('100.0').length).toBeGreaterThan(0);
+  expect(queryByText('Route planning')).toBeNull();
+});
+
+it('does not apply the historical formula to F when the recorded metadata is missing', () => {
+  const { weights: _weights, core_tiers: _core, ...missing } = planningFailed;
+  const { getByText, getAllByText, queryByText } = render(
+    <ScoringDetail verdict={missing} score={missing.score} />
+  );
+  getByText(/missing its composition inputs/);
+  expect(queryByText('Weighted subtotal')).toBeNull();
+  expect(getAllByText('route absent').length).toBeGreaterThan(0);
 });

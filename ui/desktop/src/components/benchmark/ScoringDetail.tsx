@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { SB8_TIERS, isSb8 } from './baselines';
+import { sb8CompositionSchema } from '../../sb8ScoreSchema';
 import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
 import {
   Chip,
@@ -37,7 +39,7 @@ export interface VerdictCheck {
   parts?: Record<string, unknown>;
 }
 
-export interface VerdictDetail {
+interface LegacyVerdictDetail {
   checks: VerdictCheck[];
   tiers: Record<string, { mean: number; checks: number; weight: number }>;
   core?: number;
@@ -49,12 +51,28 @@ export interface VerdictDetail {
   repairRounds?: Array<{ round: number; findings: number }>;
 }
 
-const TIER_ORDER = ['A', 'B', 'C', 'D', 'J', 'V', 'P'] as const;
+export interface Sb8VerdictDetail {
+  scorerVersion: string;
+  checks: Array<{ name: string; tier: string; score: number; detail?: string }>;
+  tiers: Record<string, number>;
+  scoreInner: number;
+  criticalMultiplier: number;
+  calibrated?: boolean;
+  weights?: Record<string, number>;
+  core_tiers?: string[];
+}
+
+export type VerdictDetail = LegacyVerdictDetail | Sb8VerdictDetail;
+
+const TIER_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'J', 'V', 'P'] as const;
 
 const TIER_INFO: Record<string, { name: string; desc: string }> = {
   A: { name: 'Structure', desc: 'The files and structure the spec names' },
   B: { name: 'Behaviour', desc: 'Does the app DO what the spec says — probed by running it' },
-  C: { name: 'Vendor contract', desc: 'The vendor API contract — sync, idempotency, conditional fetch' },
+  C: {
+    name: 'Vendor contract',
+    desc: 'The vendor API contract — sync, idempotency, conditional fetch',
+  },
   D: { name: 'Finesse', desc: 'Formats, edge cases, polish' },
   J: { name: 'Journey', desc: 'The user journey in a real browser' },
   V: { name: 'Visual', desc: 'Visual/design quality of the served page' },
@@ -167,6 +185,7 @@ function TierGroup({
   weight,
   open,
   onToggle,
+  sb8 = false,
 }: {
   tier: string;
   checks: VerdictCheck[];
@@ -174,8 +193,9 @@ function TierGroup({
   weight: number | null;
   open: boolean;
   onToggle: () => void;
+  sb8?: boolean;
 }) {
-  const info = TIER_INFO[tier] ?? { name: tier, desc: '' };
+  const info = (sb8 ? SB8_TIERS[tier] : TIER_INFO[tier]) ?? { name: tier, desc: '' };
   const lost = checks.filter((c) => c.score < 1).length;
   return (
     <div className={cx(SURFACE.card, 'overflow-hidden')}>
@@ -228,7 +248,7 @@ function TierGroup({
  * component's maximum share of the 100; the accent fill is what this build actually earned) plus
  * the arithmetic, so the final number is reproducible by eye.
  */
-function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: number }) {
+function CompositionBar({ verdict, score }: { verdict: LegacyVerdictDetail; score: number }) {
   const t = verdict.tiers;
   const core =
     verdict.core ??
@@ -319,12 +339,13 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
         </table>
 
         <p className={cx('mt-2 max-w-[80ch]', TYPE.bodyMuted)}>
-          Core build = A structure × 25% + B behaviour × 30% + C vendor contract × 25% + D finesse
-          × 20%
+          Core build = A structure × 25% + B behaviour × 30% + C vendor contract × 25% + D finesse ×
+          20%
           {(['A', 'B', 'C', 'D'] as const).every((k) => typeof t[k]?.mean === 'number') && (
             <>
               {' '}
-              = {(['A', 'B', 'C', 'D'] as const)
+              ={' '}
+              {(['A', 'B', 'C', 'D'] as const)
                 .map((k) => `${pct(t[k].mean, 0)}·${pct(t[k].weight)}`)
                 .join(' + ')}{' '}
               = <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>{pct(core, 1)}</span>
@@ -335,6 +356,84 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
           them.
         </p>
       </div>
+    </div>
+  );
+}
+
+function Sb8Composition({ verdict, score }: { verdict: Sb8VerdictDetail; score: number }) {
+  const composition = sb8CompositionSchema(verdict);
+  if (
+    !composition ||
+    typeof verdict.scoreInner !== 'number' ||
+    typeof verdict.criticalMultiplier !== 'number'
+  ) {
+    return (
+      <p className={TYPE.bodyMuted}>
+        This stored SB8 result is missing its composition inputs. The check evidence and tier scores
+        remain available.
+      </p>
+    );
+  }
+  const { weights, coreTiers } = composition;
+  const coreFloor = Math.min(...coreTiers.map((t) => verdict.tiers[t]));
+  const excellence = coreFloor * verdict.tiers.E;
+  const adjusted = verdict.scoreInner - weights.E * verdict.tiers.E + weights.E * excellence;
+  const cell = cx('border px-2 py-1', SURFACE.hairline);
+  return (
+    <div className="overflow-x-auto">
+      {verdict.calibrated === false && <Chip tone="warn">Uncalibrated scorer</Chip>}
+      <table className={cx('mt-3 w-full border-collapse text-lz-body text-lz-ink', TNUM)}>
+        <thead>
+          <tr className="text-left">
+            <th className={cell}>Component</th>
+            <th className={cell}>Earned</th>
+            <th className={cell}>Weight</th>
+            <th className={cell}>Points of 100</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(weights).map(([tier, weight]) => (
+            <tr key={tier}>
+              <td className={cell}>{SB8_TIERS[tier]?.name ?? tier}</td>
+              <td className={cell}>{pct(verdict.tiers[tier], 1)}</td>
+              <td className={cell}>{pct(weight)}</td>
+              <td className={cell}>{(verdict.tiers[tier] * weight * 100).toFixed(1)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td className={cell} colSpan={3}>
+              Weighted subtotal
+            </td>
+            <td className={cell}>{(verdict.scoreInner * 100).toFixed(1)}</td>
+          </tr>
+          <tr>
+            <td className={cell} colSpan={3}>
+              Excellence adjustment
+            </td>
+            <td className={cell}>
+              {((excellence - verdict.tiers.E) * weights.E * 100).toFixed(1)}
+            </td>
+          </tr>
+          <tr>
+            <td className={cell} colSpan={3}>
+              Critical multiplier
+            </td>
+            <td className={cell}>× {verdict.criticalMultiplier.toFixed(4)}</td>
+          </tr>
+          <tr>
+            <td className={cell} colSpan={3}>
+              Final score
+            </td>
+            <td className={cx(cell, WEIGHT.semibold)}>{(score * 100).toFixed(1)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className={cx('mt-2 max-w-[80ch]', TYPE.bodyMuted)}>
+        Excellence is multiplied by the lowest core tier ({coreTiers.join(', ')}) (
+        {pct(coreFloor, 1)}). The adjusted subtotal ({pct(adjusted, 1)}) is multiplied by the
+        recorded critical multiplier. Each critical check contributes 0.6 + 0.4 × its score to that
+        multiplier.
+      </p>
     </div>
   );
 }
@@ -362,7 +461,38 @@ function RepairStrip({ rounds }: { rounds: Array<{ round: number; findings: numb
   );
 }
 
-export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; score: number }) {
+export function ScoringDetail({
+  verdict: rawVerdict,
+  score,
+  scorerVersion,
+}: {
+  verdict: VerdictDetail;
+  score: number;
+  scorerVersion?: string;
+}) {
+  const sb8 = isSb8(
+    scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : '')
+  );
+  const sb8Verdict = sb8 ? (rawVerdict as Sb8VerdictDetail) : null;
+  const verdict: LegacyVerdictDetail = useMemo(
+    () =>
+      sb8Verdict
+        ? {
+            checks: sb8Verdict.checks.map((c) => ({ ...c, check: c.name })),
+            tiers: Object.fromEntries(
+              Object.entries(sb8Verdict.tiers).map(([tier, mean]) => [
+                tier,
+                {
+                  mean,
+                  checks: sb8Verdict.checks.filter((c) => c.tier === tier).length,
+                  weight: sb8CompositionSchema(sb8Verdict)?.weights[tier] ?? NaN,
+                },
+              ])
+            ),
+          }
+        : (rawVerdict as LegacyVerdictDetail),
+    [rawVerdict, sb8Verdict]
+  );
   const groups = useMemo(() => {
     const byTier = new Map<string, VerdictCheck[]>();
     for (const c of verdict.checks) {
@@ -374,7 +504,7 @@ export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; scor
       tier: t as string,
       checks: byTier.get(t) ?? [],
       mean: typeof verdict.tiers[t]?.mean === 'number' ? verdict.tiers[t].mean : null,
-      weight: typeof verdict.tiers[t]?.weight === 'number' ? verdict.tiers[t].weight : null,
+      weight: Number.isFinite(verdict.tiers[t]?.weight) ? verdict.tiers[t].weight : null,
     }));
   }, [verdict]);
 
@@ -391,7 +521,13 @@ export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; scor
 
   return (
     <div className="flex flex-col gap-6">
-      <CompositionBar verdict={verdict} score={score} />
+      <>
+        {sb8Verdict ? (
+          <Sb8Composition verdict={sb8Verdict} score={score} />
+        ) : (
+          <CompositionBar verdict={verdict} score={score} />
+        )}
+      </>
 
       {findingsHeld.length > 0 && (
         // The refusal register: a solid err header on a Panel-shaped card; the findings themselves
@@ -433,8 +569,8 @@ export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; scor
           <SectionHeader as="h3" title="Root-cause attribution" />
           {rootCauses.map(([root, downstream]) => (
             <p key={root} className={cx('mt-2', TYPE.body)}>
-              <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{humanize(root)}</span>{' '}
-              failed at the root and zeroed {downstream.length} downstream check
+              <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{humanize(root)}</span> failed at
+              the root and zeroed {downstream.length} downstream check
               {downstream.length === 1 ? '' : 's'}: {downstream.map(humanize).join(', ')} — one
               defect, not {downstream.length + 1}.
             </p>
@@ -447,6 +583,7 @@ export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; scor
           <TierGroup
             key={g.tier}
             tier={g.tier}
+            sb8={sb8}
             checks={g.checks}
             mean={g.mean}
             weight={g.weight}
