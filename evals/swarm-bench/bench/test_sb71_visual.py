@@ -146,7 +146,16 @@ class VisualControls(unittest.TestCase):
                     media = data.get('sb71', {}).get('media', {})
                     self.assertEqual(media.get('recording'), 'graded-browser')
                     manifest = json.loads((root / media['manifest']).read_text())
-                    self.assertGreater(manifest['videos'][0]['bytes'], 0)
+                    video = manifest['videos'][0]
+                    self.assertGreater(video['bytes'], 0)
+                    self.assertLessEqual(video['bytes'], 4 * 1024 * 1024)
+                    self.assertTrue(video['publishable'])
+                    self.assertFalse(manifest['errors'], manifest)
+                    interval = video['sourceInterval']
+                    phases = video['recordingClock']['phases']
+                    self.assertGreater(interval['encodedDurationSeconds'], 0)
+                    self.assertGreaterEqual(interval['encodedDurationSeconds'],
+                                            (phases['motionEnd'] - phases['motionStart']) / 1000 - 2)
                     return {row['check']: row for row in data['sb71']['checks']}
                 finally:
                     for process in processes:

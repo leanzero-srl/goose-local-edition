@@ -638,6 +638,8 @@ const budgetLeft = () => HARD_MS - (Date.now() - startedAt);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const result = { scenario, baseUrl, timedOut: false };
+const mediaPhases={};
+const markMediaPhase=name=>{mediaPhases[name]=performance.now();};
 // Phases merge into `result` as they complete, so a cap hit ships everything measured;
 // the scorer reads absent sections on timedOut as PROBE UNAVAILABLE (score_sb7._viz_section).
 const merge = (o) => Object.assign(result, o);
@@ -1736,22 +1738,40 @@ async function main() {
       return route.continue();
     });
   }
+  const pageCreationStart=performance.now();
   const page = await context.newPage();
+  const pageCreationEnd=performance.now();
   async function finalizeMedia() {
     if(!mediaDir)return;
     const raw=await page.video().path();
     await context.close();
     const root=dirname(mediaDir),clip=join(mediaDir,'payment-towers.webm'),errors=[];
-    let selected=clip;
-    try {
-      execFileSync(process.env.BENCH_FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-sseof','-30','-i',raw,
-        '-an','-vf','scale=960:-2','-c:v','libvpx-vp9','-b:v','450k','-threads','1','-y',clip],{timeout:60000});
-    } catch(error) { selected=raw;errors.push('Clip encoding failed; full graded recording retained: '+String(error.message).slice(0,180)); }
+    let selected=raw,selection='Full graded browser recording',sourceInterval=null;
+    const clock={pageCreationStart,pageCreationEnd,phases:{...mediaPhases},clock:'Node performance.now milliseconds',firstFramePaddingSeconds:2};
+    const phaseStart=mediaPhases.motionStart,phaseEnd=mediaPhases.motionEnd;
+    if(Number.isFinite(phaseStart)&&Number.isFinite(phaseEnd)&&phaseEnd>phaseStart) {
+      const start=Math.max(0,(phaseStart-pageCreationEnd)/1000-2);
+      const end=(phaseEnd-pageCreationStart)/1000+2,duration=end-start;
+      sourceInterval={startSeconds:start,endSeconds:end,durationSeconds:duration,
+        reason:'Recorded inspector state immediately before actual committed-update checks through replay, newer-version and exit checks',
+        uncertainty:'Video origin estimated from measured page-creation bounds; two-second first-frame padding retained on each side'};
+      const bitrate=Math.floor(Math.min(450000,3*1024*1024*8/(duration+1)));
+      try {
+        execFileSync(process.env.BENCH_FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',raw,'-ss',String(start),'-t',String(duration),
+          '-an','-vf','scale=960:-2','-c:v','libvpx-vp9','-b:v',String(bitrate),'-threads','1','-y',clip],{timeout:60000});
+        const probe=JSON.parse(execFileSync(process.env.BENCH_FFPROBE||'ffprobe',['-v','error','-show_entries','format=duration','-of','json',clip],{encoding:'utf8',timeout:10000}));
+        const encodedDuration=Number(probe.format?.duration);
+        if(!Number.isFinite(encodedDuration)||encodedDuration<Math.max(.1,(phaseEnd-phaseStart)/1000-2))throw new Error('Encoded excerpt does not cover the measured update phase');
+        sourceInterval.encodedDurationSeconds=encodedDuration;
+        if(statSync(clip).size>4*1024*1024)throw new Error('Encoded phase exceeds 4MiB publication limit');
+        selected=clip;selection='Actual graded payment-update phase, including inspection, live update and replay checks';
+      } catch(error) {errors.push('Phase encoding failed; full graded recording retained: '+String(error.message).slice(0,180));}
+    } else errors.push('Payment-update phase timing unavailable; full graded recording retained');
     const bytes=readFileSync(selected),file=relative(root,selected);
     const manifest={schemaVersion:1,scorerVersion:'sb-7.1-rc',recording:'graded-browser',
-      videos:[{file,caption:'Graded payment towers: structural inspection and a real payment-update animation',mimeType:'video/webm',
+      videos:[{file,caption:selected===clip?'Graded payment inspection and committed-update checks':'Full graded browser recording; payment-update excerpt unavailable',mimeType:'video/webm',
         scenario:'viz',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:statSync(selected).size,
-        selection:selected===clip?'Final 30 seconds of the graded browser recording':'Full graded browser recording',sourceFile:relative(root,raw)}],errors};
+        selection,publishable:bytes.length<=4*1024*1024,sourceInterval:selected===clip?sourceInterval:null,recordingClock:clock,sourceFile:relative(root,raw)}],errors};
     const path=join(mediaDir,'media-manifest.json');writeFileSync(path,JSON.stringify(manifest,null,2)+'\n');
     result.sb71={...(result.sb71||{}),media:{manifest:relative(root,path),...manifest}};
   }
@@ -2755,6 +2775,7 @@ async function sb71VisualScenario(page,model,H,pack) {
     presentation.push(...evidence);
   }
   add('q_legible_presentation','Q',(presentation.filter(p=>p.ok).length/4)*(framing.length===8?framing.filter(f=>f.ok).length/8:0),'Visible child text: anatomy, payment context, controls and part callouts are readable',{elements:presentation,framing});
+  markMediaPhase('motionStart');
   let live={ok:false},replay={ok:false},corroboration={ok:false},semantics={ok:false};
   const target=candidates[3];
   try {
@@ -2829,6 +2850,7 @@ async function sb71VisualScenario(page,model,H,pack) {
     await page.locator('#inspect-open').click();await page.evaluate(pageScrollCanvasIntoView);
   }
   } catch(error) {semantics={...semantics,ok:false,evidenceError:String(error)};}
+  markMediaPhase('motionEnd');
   add('m_committed_event_replay','M',(Number(corroboration.ok&&live.ok)+Number(corroboration.ok&&replay.ok)+Number(semantics.ok))/3,'Actual vendor-backed note update triggers collar motion; replay reproduces it without camera movement',{corroboration,live,replay,semantics});
   await H.saveShot('sb71-final-inspector');
   merge({sb71:{checks}});
