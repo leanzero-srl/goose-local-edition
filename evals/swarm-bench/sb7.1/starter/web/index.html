@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meridian Payments Console</title>
+  <link rel="stylesheet" href="web/styles.css">
+  <script defer src="web/app.js"></script>
+  <script defer src="web/viz.js"></script>
+</head>
+<body>
+  <header id="app-header"><h1>Meridian Payments Console</h1></header>
+  <main>
+    <p id="starter-status" role="status">Starter only. Application behavior and visualization are not implemented.</p>
+    <p id="notice" role="status"></p>
+    <section aria-labelledby="summary-heading"><h2 id="summary-heading">Summary</h2><div id="summary"></div><p id="last-sync"></p><button id="sync-now" disabled>Sync now</button></section>
+    <section aria-labelledby="viz-heading"><h2 id="viz-heading">Payments field</h2><div id="viz-panel"><canvas id="viz3d" aria-label="Payments visualization"></canvas><div id="viz-labels"></div><p id="viz-empty" hidden></p><p id="viz-error" hidden></p></div><p id="brush-count"></p></section>
+    <section aria-labelledby="payments-heading"><h2 id="payments-heading">Payments</h2><div id="status-filter"></div><div id="currency-filter"></div><table><thead><tr><th>Date</th><th>Amount</th><th>Status</th><th>Counterparty</th><th>Note</th></tr></thead><tbody></tbody></table><button id="prev" disabled>Prev</button><button id="next" disabled>Next</button></section>
+    <section aria-labelledby="notifications-heading"><h2 id="notifications-heading">Notifications</h2><div id="notifications"></div></section>
+    <section aria-labelledby="drafts-heading"><h2 id="drafts-heading">Drafts</h2><label>Role token <input id="role-token" type="password" autocomplete="off"></label><form id="draft-form"></form><div id="draft-list"></div><button id="submit-btn" disabled>Submit</button><button id="approve-btn" disabled>Approve</button><button id="reject-btn" disabled>Reject</button></section>
+  </main>
+</body>
+</html>

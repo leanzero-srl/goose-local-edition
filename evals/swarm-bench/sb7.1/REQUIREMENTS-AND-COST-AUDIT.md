@@ -8,7 +8,7 @@ Status: design in progress, 2026-09-20. No SB7.1 model run has started. SB7 rema
 2. A more complex backend-driven 3D element, with greater emphasis on visible structure and animation.
 3. More discriminating, judicious scoring of correct and well-presented 3D output. Actual screenshots, detailed observations, and scoring explanations must remain part of the product.
 
-The exact visual subject is pending clarification: a more detailed articulated gantry versus a richer version of the SB7 payments field. Do not implement a replacement subject without resolving that distinction.
+Resolved by the user: retain the Meridian payments app. SB7.1 enriches its payment field with detailed towers, backend-driven animation and recorded video. The crane proposal was rejected as unrelated. Exact design and score bands are in DESIGN.md.
 
 ## What regressed in SB8
 
@@ -72,4 +72,4 @@ Commit 5f24a45d0 restores SB7 as the default for both local and Gemini app launc
 
 Validation: 235 desktop test files / 1,999 tests passed, plus Node24 TypeScript and ESLint. A signed build was installed in `/Applications/Goose.app`. Live native-app readback showed “New runs use SB-7: Meridian Payments Console,” all three real Gemini camera screenshots, correct historical weights 10/20/45/20/5, and the isometric image opened successfully in the full viewer. No model run was launched.
 
-The superseded empty payments-console starter draft is preserved under `/tmp/sb71-superseded-starter-20260920`; it is not part of the active source or advertised SB7.1 contract. Implementation of the richer visual subject awaits the user's clarification.
+The superseded empty payments-console starter draft is preserved under `/tmp/sb71-superseded-starter-20260920`; it is not part of the active source or advertised SB7.1 contract. The subsequent user instruction authorized design, implementation and a fresh Gemini 3.8 Flash test of the payments-based SB7.1.

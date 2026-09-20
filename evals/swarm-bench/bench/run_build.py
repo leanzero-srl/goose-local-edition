@@ -8,6 +8,7 @@ produced tree and the vendor's request trace.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,10 @@ def _regime():
     """sb-6 gate (--sb6 / BENCH_SB6): spec v3 + vendor_service_v2 + score_sb6. Read at CALL
     time (env-at-import would miss a sweep's per-arm env — the FEATURE_CHECKS precedent).
     Returns (scorer_module, vendor_module, default_spec_name). Default path byte-identical."""
+    if os.environ.get("BENCH_SB71"):
+        import score_sb71
+        import vendor_service_v3
+        return score_sb71, vendor_service_v3, "spec-build-sb71.md"
     if os.environ.get("BENCH_SB8"):
         import score_sb8
         import vendor_service_v4
@@ -82,10 +87,14 @@ def build_prompt(port: int) -> str:
     spec_file = os.environ.get("BENCH_AMEND_SPEC", "") or os.environ.get("BENCH_SPEC", "")
     _sc, _vn, default_spec = _regime()
     spec = (Path(spec_file) if spec_file else ROOT / default_spec).read_text()
-    docs_path = getattr(_vn, "DOCS_PATH", "/v1/docs")
+    return render_public_contract(spec, port, _vn)
+
+
+def render_public_contract(spec: str, port: int, vendor_module) -> str:
+    docs_path = getattr(vendor_module, "DOCS_PATH", "/v1/docs")
     return (spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}{docs_path}")
                 .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
-                .replace("{API_KEY}", getattr(_vn, "API_KEY", vendor_service.API_KEY)))
+                .replace("{API_KEY}", getattr(vendor_module, "API_KEY", vendor_service.API_KEY)))
 
 
 def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int,
@@ -173,6 +182,17 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     else:
         raise SystemExit(f"unknown entrant {entrant!r}")
 
+    child_env = {**os.environ, **env}
+    if os.environ.get("BENCH_SB71"):
+        if provider != "google":
+            raise RuntimeError("REFUSED: SB7.1 pilot currently requires the validated Google single-agent path")
+        import bench_isolation
+        prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent)
+        cmd = prefix + cmd
+        child_env = {key: value for key, value in os.environ.items()
+                     if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL"}}
+        child_env.update(env)
+        child_env.update(isolated_env)
     started = time.time()
     # F924: stream the engine's console to a file INSTEAD of buffering it to exit.
     # `capture_output=True` held every byte in memory until the process ended, so during a live
@@ -185,7 +205,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
             if provider:
                 proc = subprocess.Popen(cmd, cwd=workdir, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True,
-                                        env={**os.environ, **env, "GOOSE_MODE": "auto"},
+                                        env={**child_env, "GOOSE_MODE": "auto"},
                                         start_new_session=True)
                 for line in proc.stdout:
                     for value in credential_values:
@@ -197,13 +217,17 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
             else:
                 proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
                                       timeout=(timeout if timeout and timeout > 0 else None),
-                                      env={**os.environ, **env}, start_new_session=True)
+                                      env=child_env, start_new_session=True)
                 code = proc.returncode
         tail = console.read_text(errors="replace")[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
-    return {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
-            "timed_out": code is None}
+    result = {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
+              "timed_out": code is None}
+    if os.environ.get("BENCH_SB71"):
+        result["usage"] = bench_isolation.usage(Path(child_env["BENCH_SB71_RUNTIME"]))
+        (workdir / "model-usage.json").write_text(json.dumps(result["usage"], indent=2))
+    return result
 
 
 def cloud_env(provider: str) -> Dict[str, str]:
@@ -306,6 +330,20 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                 shutil.copytree(child, workdir / child.name)
             else:
                 shutil.copy2(child, workdir / child.name)
+    if os.environ.get("BENCH_SB71"):
+        if resume_from or seed:
+            raise RuntimeError("REFUSED: SB7.1 pilot starts from its public starter only")
+        starter = ROOT / "sb7.1" / "starter"
+        shutil.copytree(starter, workdir, dirs_exist_ok=True)
+        public = {"SB7-CONTRACT.md": ROOT / "spec-build-sb7.md",
+                  "VISUAL-CONTRACT.md": ROOT / "sb7.1" / "VISUAL-CONTRACT.md"}
+        for name, source in public.items():
+            text = render_public_contract(source.read_text(), port, _regime()[1])
+            (workdir / name).write_text(text)
+        (workdir / "benchmark-prompt.md").write_text(build_prompt(port))
+        manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in workdir.rglob('*') if path.is_file()}
+        (workdir / "input-manifest.json").write_text(json.dumps(manifest, indent=2))
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     scorer, vendor, _spec = _regime()
@@ -314,7 +352,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     # kill placements (the haiku canary measured exactly that: every pack-dependent probe
     # reported "harness failure"). Same hermetic wipes as score_sb7's own CLI.
     sb8 = bool(os.environ.get("BENCH_SB8"))
-    sb7 = bool(os.environ.get("BENCH_SB7")) and not sb8
+    sb7 = bool(os.environ.get("BENCH_SB7") or os.environ.get("BENCH_SB71")) and not sb8
     seeded = sb7 or sb8
     seed = None
     # REFUSE BEFORE BIND. vendor.serve() is a bare ThreadingHTTPServer: a held port is a traceback
@@ -361,9 +399,11 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
+        scoring_started = time.monotonic()
         ctx = scorer.gather(workdir, port, db, trace,
                             mark_phase=vendor.mark_phase,
                             **({"seed": seed} if seeded else {}))
+        scoring_seconds = round(time.monotonic() - scoring_started, 3)
     finally:
         server.shutdown()
         # Refresh the run's copy now the vendor has stopped appending (record() is write-through,
@@ -375,6 +415,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             pass
 
     verdict = scorer.evaluate(ctx)
+    verdict["scorer_seconds"] = scoring_seconds
+    if os.environ.get("BENCH_SB71"):
+        verdict["starter_assisted"] = True
+        verdict["input_manifest"] = manifest
     if provider:
         verdict["provider"] = provider
         verdict["model"] = model
@@ -436,6 +480,7 @@ def main() -> int:
                     help="sb-7 regime: spec-build-sb7 + vendor_service_v3 + score_sb7 "
                          "(equivalent to BENCH_SB7=1; wins over --sb6)")
     ap.add_argument("--sb8", action="store_true", help="SB-8 compact transactional 3D benchmark")
+    ap.add_argument("--sb71", action="store_true", help="SB7.1 payments landscape with isolated public starter")
     args = ap.parse_args()
     if bool(args.provider) != bool(args.model):
         ap.error("--provider and --model must be supplied together")
@@ -448,6 +493,8 @@ def main() -> int:
 
     if args.sb8:
         os.environ["BENCH_SB8"] = "1"
+    if args.sb71:
+        os.environ["BENCH_SB71"] = "1"
 
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))

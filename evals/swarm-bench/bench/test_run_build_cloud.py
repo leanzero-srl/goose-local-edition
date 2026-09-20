@@ -11,6 +11,43 @@ import run_build
 
 
 class CloudLaunchTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS sandbox integration')
+    def test_sb71_actual_dispatch_is_isolated_and_omits_other_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / 'engine'
+            private = root / 'private-reference.txt'
+            private.write_text('private answer')
+            engine.write_text('#!' + sys.executable + '''
+import json, os, pathlib, subprocess, sys
+assert 'UNRELATED_SECRET' not in os.environ
+assert os.environ['GOOGLE_API_KEY'] == 'test-google-only'
+try:
+ pathlib.Path(sys.argv[0]).with_name('private-reference.txt').read_text()
+except PermissionError:
+ pass
+else:
+ raise SystemExit('private reference readable')
+subprocess.run(['/bin/sh', '-c', 'printf child-shell-works > shell-proof.txt'], check=True)
+pathlib.Path('request.json').write_text(json.dumps(sys.argv[1:]))
+print('isolated dispatch passed')
+''')
+            engine.chmod(0o700)
+            work = root / 'candidate'
+            work.mkdir()
+            with patch.object(run_build, 'GOOSE', engine), patch.dict(os.environ, {
+                'BENCH_SB71': '1', 'UNRELATED_SECRET': 'must-not-inherit',
+            }, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                result = run_build.invoke('google-fixture', work, 8850,
+                                          {'GOOGLE_API_KEY': 'test-google-only'}, 0,
+                                          'google', 'gemini-3.8-flash')
+            self.assertEqual(result['exit'], 0, result['tail'])
+            self.assertEqual((work / 'shell-proof.txt').read_text(), 'child-shell-works')
+            prompt = json.loads((work / 'request.json').read_text())[-1]
+            self.assertIn('VISUAL-CONTRACT.md', prompt)
+            self.assertEqual(result['usage']['status'], 'unavailable')
+            self.assertFalse(list(root.glob('isolation-control-*')))
+
     def test_google_invocation_uses_rendered_sb8_and_redacts_before_logging(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
