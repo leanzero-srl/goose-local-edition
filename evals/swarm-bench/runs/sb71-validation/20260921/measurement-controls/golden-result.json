@@ -1,0 +1,1522 @@
+{
+  "scenario": "flow",
+  "baseUrl": "http://127.0.0.1:50713",
+  "timedOut": false,
+  "roleTokenAccepted": {
+    "found": true,
+    "confirmed": true,
+    "draftListFound": true,
+    "formUsable": true
+  },
+  "draftCreated": {
+    "formFound": true,
+    "filled": {
+      "amount": true,
+      "currency": true,
+      "counterparty": true,
+      "country": true,
+      "note": true
+    },
+    "submittedForm": true,
+    "draftId": "draft_0000",
+    "stateAtCreate": "draft"
+  },
+  "f1Submit": {
+    "rowFound": true,
+    "clicked": true,
+    "used": "global-button",
+    "stateNow": "draft",
+    "reached": true,
+    "state": "submitted",
+    "ms": 13,
+    "requestsSeen": 1
+  },
+  "submitCausal": {
+    "clicked": true,
+    "reached": true,
+    "state": "submitted",
+    "requestsSeen": 1
+  },
+  "approvalOptimisticDiagnostic": {
+    "holdMs": 800,
+    "requestSeen": 1,
+    "heldDuringCheck": true,
+    "stateWhileHeld": "approved",
+    "paintedWhileHeld": true,
+    "paintMs": 5,
+    "savedAfterRelease": true
+  },
+  "paymentWitness": {
+    "ok": true,
+    "start": {
+      "rows": [
+        {
+          "id": "pay_00000",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 01:00 AM",
+            "\u00a579",
+            "pending",
+            "Aurora Freight \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00001",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 01:17 AM",
+            "$26.20",
+            "pending",
+            "Baltic Traders \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00002",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 01:30 AM",
+            "KWD 9.280",
+            "refunded",
+            "Cinder Works \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00003",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 01:45 AM",
+            "\u20ac65.40",
+            "settled",
+            "Delta Provisions \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00004",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 01:46 AM",
+            "\u20ac77.70",
+            "pending",
+            "Ember Logistics \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00005",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:04 AM",
+            "\u20ac2,490.00",
+            "failed",
+            "Fjord Supply \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00006",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:06 AM",
+            "KWD 1,760.000",
+            "pending",
+            "Granite Metals \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00007",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:10 AM",
+            "\u20ac651.00",
+            "refunded",
+            "Harbor Textiles \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00008",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:21 AM",
+            "\u20ac74.00",
+            "pending",
+            "Iris Components \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00009",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:24 AM",
+            "$428.00",
+            "pending",
+            "Juniper Foods \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00010",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:25 AM",
+            "KWD 2,360.000",
+            "failed",
+            "Krait Marine \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00011",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:39 AM",
+            "\u00a57",
+            "failed",
+            "Lumen Energy \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00012",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:44 AM",
+            "\u20ac2,630.00",
+            "pending",
+            "Meridian Paper \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00013",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 02:48 AM",
+            "KWD 1,780.000",
+            "refunded",
+            "Nordwind Tools \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00014",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:00 AM",
+            "\u20ac85.00",
+            "pending",
+            "Opal Ceramics \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00015",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:12 AM",
+            "\u00a54",
+            "failed",
+            "Pinnacle Grain \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00016",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:13 AM",
+            "KWD 6.040",
+            "settled",
+            "Aurora Freight \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00017",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:14 AM",
+            "$76.50",
+            "settled",
+            "Baltic Traders \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00018",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:31 AM",
+            "KWD 1,600.000",
+            "settled",
+            "Cinder Works \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00019",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:39 AM",
+            "\u20ac1,100.00",
+            "pending",
+            "Delta Provisions \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00020",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:46 AM",
+            "$1,700.00",
+            "refunded",
+            "Ember Logistics \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00021",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 03:56 AM",
+            "$4.50",
+            "failed",
+            "Fjord Supply \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00022",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 04:22 AM",
+            "\u00a54",
+            "failed",
+            "Granite Metals \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00023",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 04:24 AM",
+            "$9.37",
+            "failed",
+            "Harbor Textiles \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00024",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 04:40 AM",
+            "\u00a52",
+            "failed",
+            "Iris Components \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00025",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 04:55 AM",
+            "KWD 1,130.000",
+            "settled",
+            "Juniper Foods \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00026",
+          "inViewport": true,
+          "cells": [
+            "Oct 9, 2025, 05:00 AM",
+            "$1,980.00",
+            "refunded",
+            "Krait Marine \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00027",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:01 AM",
+            "\u20ac617.00",
+            "failed",
+            "Lumen Energy \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00028",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:06 AM",
+            "$1,130.00",
+            "pending",
+            "Meridian Paper \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00029",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:12 AM",
+            "\u00a51,820",
+            "pending",
+            "Nordwind Tools \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00030",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:16 AM",
+            "KWD 961.000",
+            "failed",
+            "Opal Ceramics \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00031",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:25 AM",
+            "\u00a52,750",
+            "failed",
+            "Pinnacle Grain \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00032",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:26 AM",
+            "$1,320.00",
+            "failed",
+            "Aurora Freight \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00033",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 05:48 AM",
+            "KWD 386.000",
+            "failed",
+            "Baltic Traders \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00034",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:02 AM",
+            "\u00a5705",
+            "pending",
+            "Cinder Works \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00035",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:05 AM",
+            "\u00a51,850",
+            "pending",
+            "Delta Provisions \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00036",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:12 AM",
+            "\u20ac92.60",
+            "pending",
+            "Ember Logistics \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00037",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:37 AM",
+            "$9.83",
+            "pending",
+            "Fjord Supply \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00038",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:38 AM",
+            "$508.00",
+            "settled",
+            "Granite Metals \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00039",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 06:50 AM",
+            "\u00a5803",
+            "refunded",
+            "Harbor Textiles \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00040",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:00 AM",
+            "\u00a579",
+            "failed",
+            "Iris Components \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00041",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:02 AM",
+            "$29.40",
+            "failed",
+            "Juniper Foods \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00042",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:06 AM",
+            "\u00a588",
+            "refunded",
+            "Krait Marine \u00b7 DE",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00043",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:20 AM",
+            "\u20ac2,350.00",
+            "pending",
+            "Lumen Energy \u00b7 US",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00044",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:23 AM",
+            "\u00a515",
+            "failed",
+            "Meridian Paper \u00b7 JP",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00045",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:28 AM",
+            "$67.90",
+            "failed",
+            "Nordwind Tools \u00b7 KW",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00046",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:39 AM",
+            "\u00a5982",
+            "failed",
+            "Opal Ceramics \u00b7 FR",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00047",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:46 AM",
+            "\u00a59",
+            "pending",
+            "Pinnacle Grain \u00b7 GB",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00048",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:52 AM",
+            "\u20ac74.60",
+            "refunded",
+            "Aurora Freight \u00b7 NL",
+            "\u2014"
+          ]
+        },
+        {
+          "id": "pay_00049",
+          "inViewport": false,
+          "cells": [
+            "Oct 9, 2025, 07:54 AM",
+            "KWD 89.800",
+            "failed",
+            "Baltic Traders \u00b7 DE",
+            "\u2014"
+          ]
+        }
+      ],
+      "requestUrl": "http://127.0.0.1:50713/api/payments?limit=50&offset=0&sort=created_at",
+      "showing": null
+    },
+    "navigation": [
+      {
+        "direction": "next",
+        "expectedOffset": 50,
+        "actualOffset": 50,
+        "ids": [
+          "pay_00050",
+          "pay_00051",
+          "pay_00052",
+          "pay_00053",
+          "pay_00054",
+          "pay_00055",
+          "pay_00056",
+          "pay_00057",
+          "pay_00058",
+          "pay_00059",
+          "pay_00060",
+          "pay_00061",
+          "pay_00062",
+          "pay_00063",
+          "pay_00064",
+          "pay_00065",
+          "pay_00066",
+          "pay_00067",
+          "pay_00068",
+          "pay_00069",
+          "pay_00070",
+          "pay_00071",
+          "pay_00072",
+          "pay_00073",
+          "pay_00074",
+          "pay_00075",
+          "pay_00076",
+          "pay_00077",
+          "pay_00078",
+          "pay_00079",
+          "pay_00080",
+          "pay_00081",
+          "pay_00082",
+          "pay_00083",
+          "pay_00084",
+          "pay_00085",
+          "pay_00086",
+          "pay_00087",
+          "pay_00088",
+          "pay_00089",
+          "pay_00090",
+          "pay_00091",
+          "pay_00092",
+          "pay_00093",
+          "pay_00094",
+          "pay_00095",
+          "pay_00096",
+          "pay_00097",
+          "pay_00098",
+          "pay_00099"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 100,
+        "actualOffset": 100,
+        "ids": [
+          "pay_00100",
+          "pay_00101",
+          "pay_00102",
+          "pay_00103",
+          "pay_00104",
+          "pay_00105",
+          "pay_00106",
+          "pay_00107",
+          "pay_00108",
+          "pay_00109",
+          "pay_00110",
+          "pay_00111",
+          "pay_00112",
+          "pay_00113",
+          "pay_00114",
+          "pay_00115",
+          "pay_00116",
+          "pay_00117",
+          "pay_00118",
+          "pay_00119",
+          "pay_00120",
+          "pay_00121",
+          "pay_00122",
+          "pay_00123",
+          "pay_00124",
+          "pay_00125",
+          "pay_00126",
+          "pay_00127",
+          "pay_00128",
+          "pay_00129",
+          "pay_00130",
+          "pay_00131",
+          "pay_00132",
+          "pay_00133",
+          "pay_00134",
+          "pay_00135",
+          "pay_00136",
+          "pay_00137",
+          "pay_00138",
+          "pay_00139",
+          "pay_00140",
+          "pay_00141",
+          "pay_00142",
+          "pay_00143",
+          "pay_00144",
+          "pay_00145",
+          "pay_00146",
+          "pay_00147",
+          "pay_00148",
+          "pay_00149"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 150,
+        "actualOffset": 150,
+        "ids": [
+          "pay_00150",
+          "pay_00151",
+          "pay_00152",
+          "pay_00153",
+          "pay_00154",
+          "pay_00155",
+          "pay_00156",
+          "pay_00157",
+          "pay_00158",
+          "pay_00159",
+          "pay_00160",
+          "pay_00161",
+          "pay_00162",
+          "pay_00163",
+          "pay_00164",
+          "pay_00165",
+          "pay_00166",
+          "pay_00167",
+          "pay_00168",
+          "pay_00169",
+          "pay_00170",
+          "pay_00171",
+          "pay_00172",
+          "pay_00173",
+          "pay_00174",
+          "pay_00175",
+          "pay_00176",
+          "pay_00177",
+          "pay_00178",
+          "pay_00179",
+          "pay_00180",
+          "pay_00181",
+          "pay_00182",
+          "pay_00183",
+          "pay_00184",
+          "pay_00185",
+          "pay_00186",
+          "pay_00187",
+          "pay_00188",
+          "pay_00189",
+          "pay_00190",
+          "pay_00191",
+          "pay_00192",
+          "pay_00193",
+          "pay_00194",
+          "pay_00195",
+          "pay_00196",
+          "pay_00197",
+          "pay_00198",
+          "pay_00199"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 200,
+        "actualOffset": 200,
+        "ids": [
+          "pay_00200",
+          "pay_00201",
+          "pay_00202",
+          "pay_00203",
+          "pay_00204",
+          "pay_00205",
+          "pay_00206",
+          "pay_00207",
+          "pay_00208",
+          "pay_00209",
+          "pay_00210",
+          "pay_00211",
+          "pay_00212",
+          "pay_00213",
+          "pay_00214",
+          "pay_00215",
+          "pay_00216",
+          "pay_00217",
+          "pay_00218",
+          "pay_00219",
+          "pay_00220",
+          "pay_00221",
+          "pay_00222",
+          "pay_00223",
+          "pay_00224",
+          "pay_00225",
+          "pay_00226",
+          "pay_00227",
+          "pay_00228",
+          "pay_00229",
+          "pay_00230",
+          "pay_00231",
+          "pay_00232",
+          "pay_00233",
+          "pay_00234",
+          "pay_00235",
+          "pay_00236",
+          "pay_00237",
+          "pay_00238",
+          "pay_00239",
+          "pay_00240",
+          "pay_00241",
+          "pay_00242",
+          "pay_00243",
+          "pay_00244",
+          "pay_00245",
+          "pay_00246",
+          "pay_00247",
+          "pay_00248",
+          "pay_00249"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 250,
+        "actualOffset": 250,
+        "ids": [
+          "pay_00250",
+          "pay_00251",
+          "pay_00252",
+          "pay_00253",
+          "pay_00254",
+          "pay_00255",
+          "pay_00256",
+          "pay_00257",
+          "pay_00258",
+          "pay_00259",
+          "pay_00260",
+          "pay_00261",
+          "pay_00262",
+          "pay_00263",
+          "pay_00264",
+          "pay_00265",
+          "pay_00266",
+          "pay_00267",
+          "pay_00268",
+          "pay_00269",
+          "pay_00270",
+          "pay_00271",
+          "pay_00272",
+          "pay_00273",
+          "pay_00274",
+          "pay_00275",
+          "pay_00276",
+          "pay_00277",
+          "pay_00278",
+          "pay_00279",
+          "pay_00280",
+          "pay_00281",
+          "pay_00282",
+          "pay_00283",
+          "pay_00284",
+          "pay_00285",
+          "pay_00286",
+          "pay_00287",
+          "pay_00288",
+          "pay_00289",
+          "pay_00290",
+          "pay_00291",
+          "pay_00292",
+          "pay_00293",
+          "pay_00294",
+          "pay_00295",
+          "pay_00296",
+          "pay_00297",
+          "pay_00298",
+          "pay_00299"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 300,
+        "actualOffset": 300,
+        "ids": [
+          "pay_00300",
+          "pay_00301",
+          "pay_00302",
+          "pay_00303",
+          "pay_00304",
+          "pay_00305",
+          "pay_00306",
+          "pay_00307",
+          "pay_00308",
+          "pay_00309",
+          "pay_00310",
+          "pay_00311",
+          "pay_00312",
+          "pay_00313",
+          "pay_00314",
+          "pay_00315",
+          "pay_00316",
+          "pay_00317",
+          "pay_00318",
+          "pay_00319",
+          "pay_00320",
+          "pay_00321",
+          "pay_00322",
+          "pay_00323",
+          "pay_00324",
+          "pay_00325",
+          "pay_00326",
+          "pay_00327",
+          "pay_00328",
+          "pay_00329",
+          "pay_00330",
+          "pay_00331",
+          "pay_00332",
+          "pay_00333",
+          "pay_00334",
+          "pay_00335",
+          "pay_00336",
+          "pay_00337",
+          "pay_00338",
+          "pay_00339",
+          "pay_00340",
+          "pay_00341",
+          "pay_00342",
+          "pay_00343",
+          "pay_00344",
+          "pay_00345",
+          "pay_00346",
+          "pay_00347",
+          "pay_00348",
+          "pay_00349"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 350,
+        "actualOffset": 350,
+        "ids": [
+          "pay_00350",
+          "pay_00351",
+          "pay_00352",
+          "pay_00353",
+          "pay_00354",
+          "pay_00355",
+          "pay_00356",
+          "pay_00357",
+          "pay_00358",
+          "pay_00359",
+          "pay_00360",
+          "pay_00361",
+          "pay_00362",
+          "pay_00363",
+          "pay_00364",
+          "pay_00365",
+          "pay_00366",
+          "pay_00367",
+          "pay_00368",
+          "pay_00369",
+          "pay_00370",
+          "pay_00371",
+          "pay_00372",
+          "pay_00373",
+          "pay_00374",
+          "pay_00375",
+          "pay_00376",
+          "pay_00377",
+          "pay_00378",
+          "pay_00379",
+          "pay_00380",
+          "pay_00381",
+          "pay_00382",
+          "pay_00383",
+          "pay_00384",
+          "pay_00385",
+          "pay_00386",
+          "pay_00387",
+          "pay_00388",
+          "pay_00389",
+          "pay_00390",
+          "pay_00391",
+          "pay_00392",
+          "pay_00393",
+          "pay_00394",
+          "pay_00395",
+          "pay_00396",
+          "pay_00397",
+          "pay_00398",
+          "pay_00399"
+        ]
+      },
+      {
+        "direction": "next",
+        "expectedOffset": 400,
+        "actualOffset": 1500,
+        "ids": [
+          "pay_01500",
+          "pay_01501",
+          "pay_01502",
+          "pay_01503",
+          "pay_new_0000",
+          "pay_01504",
+          "pay_01505",
+          "pay_01506",
+          "pay_01507",
+          "pay_01508",
+          "pay_01509",
+          "pay_01510",
+          "pay_01511",
+          "pay_01512",
+          "pay_01513",
+          "pay_01514",
+          "pay_01515",
+          "pay_01516",
+          "pay_01517",
+          "pay_01518",
+          "pay_01519",
+          "pay_01520",
+          "pay_01521",
+          "pay_01522",
+          "pay_01523",
+          "pay_01524",
+          "pay_01525",
+          "pay_01526",
+          "pay_01527",
+          "pay_01528",
+          "pay_01529",
+          "pay_01530",
+          "pay_01531",
+          "pay_01532",
+          "pay_01533",
+          "pay_01534",
+          "pay_01535",
+          "pay_01536",
+          "pay_01537",
+          "pay_01538",
+          "pay_01539",
+          "pay_01540",
+          "pay_01541",
+          "pay_01542",
+          "pay_01543",
+          "pay_01544",
+          "pay_01545",
+          "pay_01546",
+          "pay_01547",
+          "pay_01548"
+        ]
+      }
+    ],
+    "committed": {
+      "id": "pay_new_0000",
+      "amount_minor": 277839,
+      "currency": "KWD",
+      "created_at": "2025-10-19T21:53:02Z",
+      "settled_at": null,
+      "status": "pending",
+      "version": 1,
+      "note": "draft-F1",
+      "counterparty": {
+        "name": "Draft Counterparty F1",
+        "country": "DE"
+      }
+    },
+    "ledgerStatus": 200,
+    "ledger": {
+      "id": "pay_new_0000",
+      "amount_minor": 277839,
+      "currency": "KWD",
+      "created_at": "2025-10-19T21:53:02Z",
+      "settled_at": null,
+      "status": "pending",
+      "version": 1,
+      "note": "draft-F1",
+      "counterparty_name": "Draft Counterparty F1",
+      "country": "DE"
+    },
+    "targetOffset": 1500,
+    "startOffset": 0,
+    "order": "limit=50&offset=0&sort=created_at",
+    "rendered": {
+      "id": "pay_new_0000",
+      "inViewport": true,
+      "cells": [
+        "Oct 20, 2025, 12:53 AM",
+        "KWD 277.839",
+        "pending",
+        "Draft Counterparty F1 \u00b7 DE",
+        "draft-F1"
+      ],
+      "visible": true,
+      "parsedAmount": 277839
+    }
+  },
+  "approveCausal": {
+    "clicked": true,
+    "used": "global-button",
+    "requestSeen": true,
+    "stateAfter": "approved",
+    "reachedApproved": true,
+    "approvalBackend": {
+      "ok": true,
+      "id": "draft_0000",
+      "visibleState": "approved",
+      "backendState": "sent"
+    },
+    "paymentAppeared": true,
+    "rowsBefore": 50,
+    "rowsAfter": 1,
+    "notificationSeen": true,
+    "submittedNotificationSeen": true
+  },
+  "notificationSeen": true,
+  "paymentInTable": true,
+  "rejectCausal": {
+    "draftId": "draft_0001",
+    "clicked": true,
+    "used": "global-button",
+    "stateAfter": "rejected",
+    "reachedRejected": true,
+    "notificationSeen": true
+  },
+  "d2Resubmit": {
+    "attempted": true,
+    "controlClicked": true,
+    "stateAfter": "rejected"
+  },
+  "draftListStates": {
+    "found": true,
+    "rows": [
+      {
+        "id": "draft_0001",
+        "state": "rejected",
+        "visible": true,
+        "text": "REJECTED\ndraft_0001\n\u20ac221.71\nDraft Counterparty F2"
+      },
+      {
+        "id": "draft_0000",
+        "state": "sent",
+        "visible": true,
+        "text": "SENT\ndraft_0000\nKWD 277.839\nDraft Counterparty F1"
+      }
+    ]
+  },
+  "optimistic": {
+    "id": "pay_01549",
+    "note": "SB7.1 optimistic note 1789938683640",
+    "holdMs": 800,
+    "requestSeen": 1,
+    "heldDuringCheck": true,
+    "backendUnchangedWhileHeld": true,
+    "paintedWhileHeld": true,
+    "paintMs": 14.600000143051147,
+    "savedAfterRelease": true,
+    "stateTimeline": [
+      {
+        "elapsed": null,
+        "originalConnected": true,
+        "originalState": null,
+        "liveState": null,
+        "text": "SaveCancel",
+        "visible": true
+      },
+      {
+        "elapsed": 0.5,
+        "originalConnected": true,
+        "originalState": "saving",
+        "liveState": "saving",
+        "text": "SB7.1 optimistic note 1789938683640",
+        "visible": true
+      },
+      {
+        "elapsed": 1097.5,
+        "originalConnected": true,
+        "originalState": "saved",
+        "liveState": "saved",
+        "text": "SB7.1 optimistic note 1789938683640",
+        "visible": true
+      }
+    ],
+    "responseElapsed": 1097.2000000476837,
+    "savedObservation": {
+      "elapsed": 1097.5,
+      "originalConnected": true,
+      "originalState": "saved",
+      "liveState": "saved",
+      "text": "SB7.1 optimistic note 1789938683640",
+      "visible": true
+    },
+    "finalUi": {
+      "state": "saved",
+      "text": "SB7.1 optimistic note 1789938683640"
+    },
+    "responseStatus": 200,
+    "before": {
+      "note": "",
+      "version": 1
+    },
+    "after": {
+      "note": "SB7.1 optimistic note 1789938683640",
+      "version": 2
+    },
+    "capture": {
+      "id": "pay_01549",
+      "note": "SB7.1 optimistic note 1789938683640",
+      "confirmedAt": 8646.799999952316,
+      "paintMs": 14.600000143051147,
+      "observations": [
+        {
+          "elapsed": 14.600000143051147,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 31.40000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 48,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 64.70000004768372,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 81.29999995231628,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 98.10000014305115,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 114.70000004768372,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 131.29999995231628,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 148.20000004768372,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 164.70000004768372,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 181.40000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 197.90000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 214.70000004768372,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 231.40000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 247.90000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 264.7999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 281.2999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 298,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 314.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 331.40000009536743,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 348.10000014305115,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 364.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 381.2999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 398.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 414.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 431.2999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 448.5,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 464.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 481.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 498,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 514.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 531.4000000953674,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 548,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 564.7000000476837,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 581.2999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 598.4000000953674,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 614.7999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 631.2999999523163,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        },
+        {
+          "elapsed": 648.1000001430511,
+          "state": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true,
+          "correct": true
+        }
+      ],
+      "stateTimeline": [
+        {
+          "elapsed": null,
+          "originalConnected": true,
+          "originalState": null,
+          "liveState": null,
+          "text": "SaveCancel",
+          "visible": true
+        },
+        {
+          "elapsed": 0.5,
+          "originalConnected": true,
+          "originalState": "saving",
+          "liveState": "saving",
+          "text": "SB7.1 optimistic note 1789938683640",
+          "visible": true
+        }
+      ]
+    }
+  },
+  "consoleErrors": {
+    "count": 0,
+    "texts": [],
+    "sources": []
+  }
+}

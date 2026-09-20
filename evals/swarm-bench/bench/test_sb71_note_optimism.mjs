@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.GOOSE_SWARM_PLAYWRIGHT_MODULE);
 const source=readFileSync(new URL('./product_probe_sb71.mjs',import.meta.url),'utf8');
-const helper=source.slice(source.indexOf('async function measureOptimisticNote('),source.indexOf('async function flowScenario('));
+const helper=source.slice(source.indexOf('async function measureOptimisticNote('),source.indexOf('function workflowPayloadMatches('));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const measure=(0,eval)('('+helper.trim()+')');
 globalThis.sleep=sleep;
@@ -21,8 +21,8 @@ const server=createServer(async(req,res)=>{
  cell.onclick=()=>{if(cell.querySelector('input'))return;cell.innerHTML='<input value="old note"><button>Save</button>';cell.querySelector('button').onclick=async event=>{
  event.stopPropagation();const value=cell.querySelector('input').value;
  const paint=()=>{cell.textContent=value;row.dataset.state='saving';};
- if(${JSON.stringify(mode)}==='normal'||${JSON.stringify(mode)}==='aria'||${JSON.stringify(mode)}==='interference')paint();if(${JSON.stringify(mode)}==='delayed')setTimeout(paint,180);
- const data=await fetch('/api/payments/p1/note',{method:'POST',body:JSON.stringify({note:value})}).then(r=>r.json());cell.textContent=data.note;row.dataset.state='saved';};};
+ if(!['delayed','network-only'].includes(${JSON.stringify(mode)}))paint();if(${JSON.stringify(mode)}==='early-saved')setTimeout(()=>row.dataset.state='saved',50);if(${JSON.stringify(mode)}==='delayed')setTimeout(paint,180);
+ const data=await fetch('/api/payments/p1/note',{method:'POST',body:JSON.stringify({note:value})}).then(r=>r.json());cell.textContent=data.note;if(${JSON.stringify(mode)}==='detached'){const replacement=row.cloneNode(true);replacement.removeAttribute('data-state');row.replaceWith(replacement);}row.dataset.state='saved';if(${JSON.stringify(mode)}==='transient')setTimeout(()=>{const replacement=row.cloneNode(true);replacement.removeAttribute('data-state');row.replaceWith(replacement);},4);};};
  </script>`;
  if(mode==='aria')html=html.replace('<table><tbody>','<div role=table>').replace('</tbody></table>','</div>').replace('<tr data-id="p1">','<div role=row data-id="p1">').replace('</tr>','</div>').replaceAll('<td>','<div role=cell>').replace('<td id="note">','<div role=cell id="note">').replaceAll('</td>','</div>');
  res.end(html);
@@ -32,10 +32,10 @@ const base='http://127.0.0.1:'+server.address().port;
 const browser=await chromium.launch({headless:true,executablePath:process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE});
 try{
  const page=await browser.newPage();
- for(const mode of ['normal','delayed','network-only','aria','interference']){
+ for(const mode of ['normal','delayed','network-only','aria','interference','transient','detached','early-saved']){
   record={id:'p1',note:'old note',version:1};await page.goto(base+'/?mode='+mode);
   const result=await measure(page,base,{},async()=>{});
-  assert.equal(result.backendUnchangedWhileHeld,mode!=='interference',mode);assert.equal(result.savedAfterRelease,true,mode);
+  assert.equal(result.backendUnchangedWhileHeld,mode!=='interference',mode);assert.equal(result.savedAfterRelease,!['detached','early-saved'].includes(mode),JSON.stringify(result));
   assert.equal(result.paintedWhileHeld,!['network-only','interference'].includes(mode),JSON.stringify(result));
   if(mode==='normal'||mode==='aria')assert.ok(result.paintMs<100,JSON.stringify(result));
   if(mode==='delayed')assert.ok(result.paintMs>=180,JSON.stringify(result));

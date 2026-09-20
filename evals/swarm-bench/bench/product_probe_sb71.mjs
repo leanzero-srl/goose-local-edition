@@ -2242,7 +2242,35 @@ async function measureOptimisticNote(page,baseUrl,pack,saveShot) {
     await input.fill(note);
     await page.evaluate(({id,note})=>{
       const row=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(e=>e.dataset.id===id),cell=row.querySelectorAll('td,[role="cell"],[role="gridcell"]')[4];
-      const watch=window.__sb71NoteWatch={id,note,confirmedAt:null,paintMs:null,observations:[]};
+      const watch=window.__sb71NoteWatch={id,note,confirmedAt:null,paintMs:null,observations:[],stateTimeline:[]};
+      const snapshot=()=>{
+        const live=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(e=>e.dataset.id===id);
+        const liveCell=live?.querySelectorAll('td,[role="cell"],[role="gridcell"]')[4];
+        const state={elapsed:watch.confirmedAt===null?null:performance.now()-watch.confirmedAt,
+          originalConnected:row.isConnected,originalState:row.dataset.state||null,
+          liveState:live?.dataset.state||null,text:liveCell?.textContent.trim()||null,
+          visible:!!liveCell&&liveCell.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})};
+        const previous=watch.stateTimeline.at(-1);
+        if(!previous||['originalConnected','originalState','liveState','text','visible'].some(key=>previous[key]!==state[key]))watch.stateTimeline.push(state);
+      };
+      const observer=new MutationObserver(snapshot);observer.observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+      observer.observe(row,{subtree:true,childList:true,attributes:true,characterData:true});
+      const endpoint='/api/payments/'+encodeURIComponent(id)+'/note';
+      const originalFetch=window.fetch,originalOpen=XMLHttpRequest.prototype.open,originalSend=XMLHttpRequest.prototype.send;
+      const completed=status=>{watch.responseCompletedAt=performance.now();watch.responseStatus=status;};
+      const wrappedFetch=function(input,init){
+        const method=String(init?.method||(input&&typeof input==='object'&&'method' in input?input.method:'GET')).toUpperCase();
+        const target=method==='POST'&&new URL(input&&typeof input==='object'&&'url' in input?input.url:input,location.href).pathname===endpoint;
+        return originalFetch.apply(this,arguments).then(response=>{if(target)completed(response.status);return response;});
+      };
+      const wrappedOpen=function(method,url){this.__sb71NoteTarget=String(method).toUpperCase()==='POST'&&new URL(url,location.href).pathname===endpoint;return originalOpen.apply(this,arguments);};
+      const wrappedSend=function(){if(this.__sb71NoteTarget)this.addEventListener('load',()=>completed(this.status),{capture:true,once:true});return originalSend.apply(this,arguments);};
+      window.fetch=wrappedFetch;XMLHttpRequest.prototype.open=wrappedOpen;XMLHttpRequest.prototype.send=wrappedSend;
+      window.__sb71NoteStop=()=>{snapshot();observer.disconnect();
+        if(window.fetch===wrappedFetch)window.fetch=originalFetch;
+        if(XMLHttpRequest.prototype.open===wrappedOpen)XMLHttpRequest.prototype.open=originalOpen;
+        if(XMLHttpRequest.prototype.send===wrappedSend)XMLHttpRequest.prototype.send=originalSend;
+        return {stateTimeline:watch.stateTimeline,responseCompletedAt:watch.responseCompletedAt,responseStatus:watch.responseStatus,confirmedAt:watch.confirmedAt};};snapshot();
       const observe=()=>{
         const elapsed=performance.now()-watch.confirmedAt,r=cell.getBoundingClientRect();
         const visible=r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&cell.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
@@ -2274,11 +2302,111 @@ async function measureOptimisticNote(page,baseUrl,pack,saveShot) {
     const after=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(id)).then(r=>r.json());
     await page.waitForFunction(({id,note})=>{const row=Array.from(document.querySelectorAll('tbody tr[data-id], [role="row"][data-id]')).find(e=>e.dataset.id===id);return row?.dataset.state==='saved'&&row.querySelectorAll('td,[role="cell"],[role="gridcell"]')[4].textContent.trim()===note;},{id,note},{timeout:3000}).catch(()=>{});
     const state=await row.getAttribute('data-state'),text=await cell.textContent();
+    const completion=await page.evaluate(()=>window.__sb71NoteStop());
+    const stateTimeline=completion.stateTimeline,responseElapsed=completion.responseCompletedAt-completion.confirmedAt;
+    const savedObservation=stateTimeline.find(entry=>entry.liveState==='saved'&&entry.visible&&entry.text===note&&entry.elapsed>=responseElapsed);
     return {id,note,holdMs:800,requestSeen:held.requests,heldDuringCheck,backendUnchangedWhileHeld:backendHeld.note===before.note&&backendHeld.version===before.version,
       paintedWhileHeld:heldDuringCheck&&backendHeld.note===before.note&&backendHeld.version===before.version&&capture.paintMs!==null,paintMs:capture.paintMs,
-      savedAfterRelease:response.ok()&&after.note===note&&after.version>before.version&&text.trim()===note&&state==='saved',
-      responseStatus:response.status(),before:{note:before.note,version:before.version},after:{note:after.note,version:after.version},capture};
-  }finally{await page.unroute(endpoint,handler);}
+      savedAfterRelease:response.ok()&&after.note===note&&after.version>before.version&&text.trim()===note&&!!savedObservation,
+      stateTimeline, responseElapsed, savedObservation:savedObservation||null, finalUi:{state,text},responseStatus:response.status(),before:{note:before.note,version:before.version},after:{note:after.note,version:after.version},capture};
+  }finally{await page.evaluate(()=>window.__sb71NoteStop?.()).catch(()=>{});await page.unroute(endpoint,handler);}
+}
+
+function workflowPayloadMatches(row,draft) {
+  return row.amount_minor===draft.amount_minor&&row.currency===draft.currency
+    &&(row.counterparty?.name??row.counterparty_name)===draft.counterparty?.name&&(row.counterparty?.country??row.country)===draft.counterparty?.country
+    &&(row.note||'')===(draft.note||'');
+}
+function pageWorkflowTable() {
+  const rows=Array.from(document.querySelectorAll('tbody tr[data-id],[role="row"][data-id]'))
+    .filter(row=>row.querySelectorAll('td,[role="cell"],[role="gridcell"]').length>=5);
+  const entries=performance.getEntriesByType('resource').filter(entry=>new URL(entry.name).pathname==='/api/payments');
+  return {rows:rows.map(row=>({id:row.dataset.id,inViewport:row.getBoundingClientRect().top>=0&&row.getBoundingClientRect().bottom<=innerHeight,cells:Array.from(row.querySelectorAll('td,[role="cell"],[role="gridcell"]')).map(c=>(c.innerText||'').trim())})),
+    requestUrl:entries.at(-1)?.name||null,showing:document.getElementById('showing-readout')?.textContent||null};
+}
+async function measureWorkflowPayment(page,baseUrl,draft,readCommitted) {
+  const evidence={ok:false,start:await page.evaluate(pageWorkflowTable),navigation:[]};
+  let matches=[];
+  for(let attempt=0;attempt<40;attempt++){
+    const receipt=readCommitted();
+    if(!receipt||!Array.isArray(receipt.rows))return {...evidence,unavailable:'run-bound committed payment receipt is missing'};
+    matches=receipt.rows.filter(row=>workflowPayloadMatches(row,draft));
+    if(matches.length)break;
+    await sleep(100);
+  }
+  if(matches.length===0)return {...evidence,reason:'valid vendor receipt contains no committed F1 payment'};
+  if(matches.length!==1)return {...evidence,unavailable:'ambiguous vendor-created F1 identity: '+matches.length};
+  const committed=matches[0];evidence.committed=committed;
+  let record=null;
+  for(let attempt=0;attempt<40;attempt++){
+    const response=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(committed.id));
+    evidence.ledgerStatus=response.status();
+    if(response.ok()){record=await response.json();break;}
+    await sleep(100);
+  }
+  evidence.ledger=record;
+  if(!record||record.id!==committed.id||!workflowPayloadMatches(record,draft))return {...evidence,reason:'committed payment missing or incorrect in ledger'};
+  let state=await page.evaluate(pageWorkflowTable);
+  if(!state.requestUrl)return {...evidence,reason:'no actual paginated table request observed'};
+  const url=new URL(state.requestUrl),limit=Number(url.searchParams.get('limit')||50);
+  if(url.origin!==new URL(baseUrl).origin)return {...evidence,reason:'table request is not bound to the graded ledger'};
+  if(!Number.isSafeInteger(limit)||limit<1||limit>50)return {...evidence,reason:'invalid table page size'};
+  let currentOffset=Number(url.searchParams.get('offset')||0);
+  const locate=async()=>{
+    const query=new URL(url);query.searchParams.set('limit','200');let total=null;
+    for(let offset=0;total===null||offset<total;offset+=200){
+      query.searchParams.set('offset',String(offset));
+      const response=await page.request.get(query.href);if(!response.ok())return {error:'table membership query failed',status:response.status()};
+      const body=await response.json();if(!Array.isArray(body.data)||!Number.isSafeInteger(body.total))return {error:'invalid pagination response'};
+      total=body.total;const index=body.data.findIndex(row=>row.id===record.id);
+      if(index>=0)return {index:offset+index,total,offset:Math.floor((offset+index)/limit)*limit};
+      if(body.data.length===0)break;
+    }
+    return {error:'committed payment absent from active table membership'};
+  };
+  let membership=await locate();
+  if(membership.error)return {...evidence,reason:membership.error};
+  if(currentOffset===0&&membership.index>membership.total/2&&['created_at','-created_at'].includes(url.searchParams.get('sort')||'created_at')){
+    const dateHeader=page.locator('th,[role="columnheader"]').filter({hasText:/^Date\b/i}).first();
+    if(await dateHeader.count()){
+      const wanted=(url.searchParams.get('sort')||'created_at')==='created_at'?'-created_at':'created_at';
+      const before=state.rows.map(row=>row.id).join('|');await dateHeader.click();
+      await page.waitForFunction(previous=>Array.from(document.querySelectorAll('tbody tr[data-id],[role="row"][data-id]')).map(row=>row.dataset.id).join('|')!==previous,before,{timeout:3000}).catch(()=>{});
+      state=await page.evaluate(pageWorkflowTable);const actual=state.requestUrl?new URL(state.requestUrl):null;
+      evidence.navigation.push({action:'Date sort',wanted,actual:actual?.searchParams.get('sort')});
+      if(!actual||actual.searchParams.get('sort')!==wanted)return {...evidence,reason:'Date sorting did not reach requested order'};
+      url.search=actual.search;currentOffset=Number(url.searchParams.get('offset')||0);membership=await locate();
+      if(membership.error)return {...evidence,reason:membership.error};
+    }
+  }
+  const targetOffset=membership.offset;
+  evidence.targetOffset=targetOffset;evidence.startOffset=currentOffset;evidence.order=url.searchParams.toString();
+  if(targetOffset===null)return {...evidence,reason:'committed payment absent from active table membership'};
+  while(currentOffset!==targetOffset){
+    const direction=currentOffset<targetOffset?'next':'prev',nextOffset=currentOffset+(direction==='next'?limit:-limit);
+    const button=page.locator('#'+direction);
+    if(!await button.count()||!await button.isEnabled())return {...evidence,reason:'required pagination control unavailable',direction};
+    const before=state.rows.map(row=>row.id).join('|');
+    await button.click();
+    await page.waitForFunction(previous=>Array.from(document.querySelectorAll('tbody tr[data-id],[role="row"][data-id]')).map(row=>row.dataset.id).join('|')!==previous,before,{timeout:3000}).catch(()=>{});
+    state=await page.evaluate(pageWorkflowTable);
+    const actual=state.requestUrl?Number(new URL(state.requestUrl).searchParams.get('offset')||0):null;
+    evidence.navigation.push({direction,expectedOffset:nextOffset,actualOffset:actual,ids:state.rows.map(row=>row.id)});
+    if(actual===targetOffset&&state.rows.some(row=>row.id===record.id)){currentOffset=actual;break;}
+    if(actual!==nextOffset||state.rows.map(row=>row.id).join('|')===before)return {...evidence,reason:'pagination did not reach requested page'};
+    currentOffset=actual;
+  }
+  const row=page.locator('[data-id='+JSON.stringify(record.id)+']').filter({has:page.locator('td,[role="cell"],[role="gridcell"]')}).first();
+  if(!await row.count())return {...evidence,reason:'same-ID payment row not rendered'};
+  await page.evaluate(id=>{const row=Array.from(document.querySelectorAll('tbody tr[data-id],[role="row"][data-id]')).find(row=>row.dataset.id===id);row?.scrollIntoView({block:'center'});},record.id);
+  state=await page.evaluate(pageWorkflowTable);const rendered=state.rows.find(row=>row.id===record.id);
+  const visible=await row.isVisible()&&rendered?.inViewport===true,cells=rendered?.cells||[];
+  const parsed=parseVisibleMoney(cells[1]||'',record.currency);
+  evidence.rendered={...rendered,visible,parsedAmount:parsed};
+  evidence.ok=visible&&parsed===record.amount_minor&&cells[2]?.toLowerCase()===record.status
+    &&cells[3]?.includes(record.counterparty?.name??record.counterparty_name)&&cells[4]===(record.note||'');
+  if(!evidence.ok)evidence.reason='same-ID visible payment fields differ from committed truth';
+  return evidence;
 }
 
 async function flowScenario(page, tokens, pack, H) {
@@ -2383,6 +2511,7 @@ async function flowScenario(page, tokens, pack, H) {
                           state: submitted.state, requestsSeen: held.submits } });
 
   await setRole(tokens.checker);
+  const approvalFinished=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/drafts/'+encodeURIComponent(f1Id)+'/approve',{timeout:20000}).catch(()=>null);
   const approveClick = await page.evaluate(pageDraftAction, { id: f1Id, kind: 'approve' })
     .catch(() => ({ clicked: false }));
   // Retain the historical held-approval observation diagnostically; only note-edit
@@ -2400,10 +2529,11 @@ async function flowScenario(page, tokens, pack, H) {
     await sleep(60);
   }
   const heldDuringCheck = held.approves > 0 && held.releasedAt == null;
+  const approvalHttp=await approvalFinished;
   const approved = await pollState(f1Id, ['approved','sent'], 12000);
   const approvalResponse=await page.request.get(baseUrl+'/api/drafts',{headers:{Authorization:'Bearer '+tokens.checker}});
   const approvalBackend=approvalCompletionEvidence(f1Id,approved.state,approvalResponse.ok()?await approvalResponse.json():null);
-  approved.reached=approved.reached&&approvalBackend.ok;
+  approved.reached=!!approvalHttp&&approvalHttp.ok()&&approved.reached&&approvalBackend.ok;
   merge({ approvalOptimisticDiagnostic: {
     holdMs: HOLD_MS, requestSeen: held.approves, heldDuringCheck,
     stateWhileHeld: midRow ? midRow.state : null,
@@ -2412,18 +2542,12 @@ async function flowScenario(page, tokens, pack, H) {
     savedAfterRelease: !!approved.reached,
   } });
 
-  // vendor round-trip: the approved payment lands in the table; the feed shows the journey
-  let paymentAppeared = false, rowsAfter = null;
-  {
-    const t0 = Date.now();
-    while (Date.now() - t0 < 20000) {
-      const snap = await page.evaluate(pageViewSnapshot).catch(() => null);
-      rowsAfter = snap ? snap.rowCount : null;
-      if (tableBefore && snap && (snap.rowCount > tableBefore.rowCount ||
-          snap.tableHash !== tableBefore.tableHash)) { paymentAppeared = true; break; }
-      await sleep(1000);
-    }
-  }
+  const paymentWitness=await measureWorkflowPayment(page,baseUrl,drafts[0],()=>{
+    const path=process.env.BENCH_SB71_COMMITTED_PAYMENTS;
+    return path?JSON.parse(readFileSync(path,'utf8')):null;
+  });
+  const paymentAppeared=paymentWitness.ok,rowsAfter=paymentWitness.rendered?1:null;
+  merge({paymentWitness});
   const notifMid = await page.evaluate(pageNotificationsState).catch(() => ({ present: false }));
   const notifTexts = (notifMid.texts || []).join(' | ');
   merge({ approveCausal: {

@@ -253,6 +253,36 @@ def resync_runtime(mark_phase):
 
 
 @contextmanager
+def committed_payment_channel(directory):
+    path = Path(directory) / 'committed-payments.json'
+    stopped = threading.Event()
+    errors = []
+    def publish():
+        with vendor.STATE.lock:
+            rows = [vendor._public(dict(row)) for row in vendor.STATE.created]
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps({'rows': rows}))
+        temporary.replace(path)
+    def watch():
+        while not stopped.wait(0.05):
+            try:
+                publish()
+            except Exception as error:
+                errors.append(str(error))
+                return
+    publish()
+    thread = threading.Thread(target=watch, daemon=True)
+    thread.start()
+    try:
+        yield path
+    finally:
+        stopped.set()
+        thread.join()
+        if errors:
+            raise RuntimeError('committed payment witness failed: ' + errors[0])
+
+
+@contextmanager
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
     old_read_stream = base._ReadStream
@@ -264,6 +294,10 @@ def probe_runtime():
     ready_dir = tempfile.TemporaryDirectory(prefix='sb71-stream-')
     handshake = StreamHandshake(Path(ready_dir.name) / 'ready.json', old_fire_d1)
     def browser_probe(scenario, url, *flags, env=None, timeout=None):
+        if scenario == 'flow':
+            with committed_payment_channel(ready_dir.name) as committed:
+                return old_browser_probe(scenario, url, *flags,
+                    env={**(env or {}), 'BENCH_SB71_COMMITTED_PAYMENTS': str(committed)}, timeout=timeout)
         if scenario != 'viz':
             return old_browser_probe(scenario, url, *flags, env=env, timeout=timeout)
         handshake.start()
@@ -327,6 +361,89 @@ def _probe_preflight():
         return base._probe_preflight()
 
 
+class PartitionStatusReader(threading.Thread):
+    """Observe the existing partition without postponing the immediate A1 kill."""
+    def __init__(self, url, get):
+        super().__init__(daemon=True)
+        self.url, self.get = url, get
+        self.samples = []
+        self.stopped = threading.Event()
+
+    def run(self):
+        while not self.stopped.is_set():
+            started = time.monotonic()
+            status, body, _raw, _headers = self.get(self.url + '/api/outbox/status', timeout=3)
+            self.samples.append({'started': started, 'completed': time.monotonic(),
+                                 'status': status, 'body': body})
+            self.stopped.wait(0.25)
+
+    def finish(self):
+        self.stopped.set()
+        self.join()
+
+
+def partition_status_evidence(samples):
+    successful = [s for s in samples if s['status'] == 200 and isinstance(s['body'], dict)]
+    matched = [s for s in successful if s['body'].get('notifier') == 'down'
+               and isinstance(s['body'].get('pending'), int) and s['body']['pending'] > 0]
+    span, reachable_since = 0, None
+    for sample in samples:
+        if sample['status'] != 200 or not isinstance(sample['body'], dict):
+            reachable_since = None
+            continue
+        if reachable_since is None:
+            reachable_since = sample['completed']
+        span = max(span, sample['completed'] - reachable_since)
+    return {'samples': samples, 'successful_reads': len(successful), 'reachable_span': span,
+            'relay_opportunity': span >= 2, 'status_down': bool(matched),
+            'matched_at': matched[0]['completed'] if matched else None}
+
+
+@contextmanager
+def partition_runtime(mark_phase):
+    old_spawn, old_get = base._spawn_ledgerd, base._get
+    state = {'phase': None, 'reader': None, 'evidence': None}
+    def finish():
+        reader = state['reader']
+        if reader is not None:
+            reader.finish()
+            state['evidence'] = partition_status_evidence(reader.samples)
+            state['reader'] = None
+    def mark(name, reset=None):
+        if name == 'heal':
+            finish()
+        state['phase'] = name
+        if mark_phase:
+            return mark_phase(name, reset) if reset is not None else mark_phase(name)
+    def spawn(ctx, env, db_dir, port, *args, **kwargs):
+        process = old_spawn(ctx, env, db_dir, port, *args, **kwargs)
+        if state['phase'] == 'partition' and state['reader'] is None:
+            state['reader'] = PartitionStatusReader(f'http://127.0.0.1:{port}', old_get)
+            state['reader'].start()
+        return process
+    base._spawn_ledgerd = spawn
+    try:
+        yield mark, state
+    finally:
+        finish()
+        base._spawn_ledgerd = old_spawn
+
+
+def pair_conservation_result(original, ctx):
+    outcome = original(ctx)
+    evidence = getattr(ctx, '_m2_conclusion', None)
+    if (not evidence or not evidence.get('samples') or outcome.get('unavailable')
+            or (outcome.get('parts') or {}).get('vacuous_root')):
+        return outcome
+    parts = {**evidence, 'unconfirmed_disagreements':
+             evidence['samples'] - evidence['ok_samples'] if not evidence['confirmed_half_states'] else None}
+    confirmed = evidence['confirmed_half_states']
+    return base.g(0.0 if confirmed else 1.0,
+                  f"{evidence['ok_samples']}/{evidence['samples']} sequential reads agree; "
+                  f"{confirmed} confirmed half states; isolated read skew is not an atomicity violation",
+                  outcome.get('consequence', ''), parts=parts)
+
+
 def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     if not seed:
         raise ValueError('SB7.1 requires the exact run fixture seed')
@@ -335,14 +452,18 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     os.environ['BENCH_MEDIA_DIR'] = str(media_dir)
     try:
         with probe_runtime() as absences:
-            with resync_runtime(mark_phase) as (mark, resync):
-                ctx = base.gather(root, vendor_port, db_dir, trace_path, mark, seed)
+            with partition_runtime(mark_phase) as (partition_mark, partition):
+                with resync_runtime(partition_mark) as (mark, resync):
+                    ctx = base.gather(root, vendor_port, db_dir, trace_path, mark, seed)
+        ctx.sb71_partition = partition['evidence']
         ctx.sb71_resync = resync
         ctx.sb71_endpoint_absences = absences
         (Path(root) / 'api-observations.json').write_text(json.dumps({
             'endpoint_absences': absences, 'stream_head': ctx.stream_head,
             'workflow': ctx.workflow, 'api_lat': ctx.api_lat,
-            'resync_interruption': resync}, indent=2))
+            'resync_interruption': resync, 'partition_status': ctx.sb71_partition,
+            'partition_immediate_status': ctx.outbox_during_partition,
+            'read_stream': ctx.read_stream}, indent=2))
         (Path(root) / 'probe-observations.json').write_text(json.dumps(ctx.probes, indent=2))
         return ctx
     finally:
@@ -431,6 +552,19 @@ def label_offset_result(original, ctx):
 
 
 def observed_absence_result(name, original, ctx):
+    if name == 'j_workflow_journey' and ctx.probes.get('flow', {}).get('paymentWitness', {}).get('unavailable'):
+        return base.unavail(ctx.probes['flow']['paymentWitness']['unavailable'])
+    if name == 'x_m2_pair_conservation':
+        return pair_conservation_result(original, ctx)
+    if name == 'r_b7_partition' and hasattr(ctx, 'sb71_partition'):
+        evidence = ctx.sb71_partition
+        if not evidence or (not evidence['status_down'] and not evidence['relay_opportunity']):
+            return base.unavail('partition status lacked a successful observation window covering the declared 2s relay backoff')
+        observed = copy.copy(ctx)
+        observed.b7_result = {**ctx.b7_result, 'status_down': evidence['status_down']}
+        outcome = original(observed)
+        outcome['parts']['status_observations'] = evidence
+        return outcome
     outcome = label_offset_result(original, ctx) if name == 't_labels_culling' else original(ctx)
     if not outcome.get('unavailable'):
         return outcome

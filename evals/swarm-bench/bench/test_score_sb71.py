@@ -326,5 +326,57 @@ class ScorerRuntimeTests(unittest.TestCase):
                     original.assert_called_once_with('http://app', 100, 420)
 
 
+
+class ConservationEvidenceTests(unittest.TestCase):
+    def test_single_read_skew_is_not_confirmed_atomicity_failure(self):
+        original = lambda _: {'score': 936/937, 'consequence': 'atomicity'}
+        ctx = SimpleNamespace(_m2_conclusion={'samples': 937, 'ok_samples': 936, 'confirmed_half_states': 0})
+        result = score.pair_conservation_result(original, ctx)
+        self.assertEqual(result['score'], 1)
+        self.assertEqual(result['parts']['unconfirmed_disagreements'], 1)
+        root_failure = {'score': 0, 'parts': {'vacuous_root': 'sync_completeness'}}
+        self.assertEqual(score.pair_conservation_result(lambda _: root_failure, ctx), root_failure)
+        ctx._m2_conclusion['confirmed_half_states'] = 1
+        self.assertEqual(score.pair_conservation_result(original, ctx)['score'], 0)
+        ctx._m2_conclusion = {'samples': 0}
+        self.assertEqual(score.pair_conservation_result(lambda _: {'unavailable': 'missing'}, ctx), {'unavailable': 'missing'})
+
+    def test_partition_requires_actual_down_and_relay_opportunity(self):
+        def sample(t, status='up', pending=3):
+            return {'started': t, 'completed': t, 'status': 200, 'body': {'notifier': status, 'pending': pending}}
+        self.assertFalse(score.partition_status_evidence([sample(0), sample(.1)])['relay_opportunity'])
+        failed = {'started': 1, 'completed': 1, 'status': None, 'body': None}
+        self.assertFalse(score.partition_status_evidence([sample(0), failed, sample(3)])['relay_opportunity'])
+        self.assertTrue(score.partition_status_evidence([sample(0), sample(2.1)])['relay_opportunity'])
+        self.assertFalse(score.partition_status_evidence([sample(0), sample(2.1)])['status_down'])
+        self.assertTrue(score.partition_status_evidence([sample(0), sample(.3, 'down')])['status_down'])
+        self.assertFalse(score.partition_status_evidence([sample(0), sample(2.1, 'down', 0)])['status_down'])
+
+    def test_partition_reader_observes_real_delayed_failure(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        down = threading.Event()
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args): pass
+            def do_GET(self):
+                body = json.dumps({'notifier': 'down' if down.is_set() else 'up', 'pending': 4}).encode()
+                self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        serving = threading.Thread(target=server.serve_forever, daemon=True); serving.start()
+        reader = score.PartitionStatusReader(f'http://127.0.0.1:{server.server_port}', score.base._get)
+        try:
+            reader.start()
+            deadline = score.time.monotonic()+3
+            while not reader.samples and score.time.monotonic()<deadline: score.time.sleep(.01)
+            self.assertEqual(reader.samples[0]['body']['notifier'], 'up')
+            down.set()
+            while not any(x['body'].get('notifier')=='down' for x in reader.samples) and score.time.monotonic()<deadline: score.time.sleep(.01)
+            reader.finish()
+            self.assertFalse(reader.is_alive())
+            self.assertTrue(score.partition_status_evidence(reader.samples)['status_down'])
+        finally:
+            if reader.is_alive(): reader.finish()
+            server.shutdown(); serving.join(); server.server_close()
+
 if __name__ == '__main__':
     unittest.main()

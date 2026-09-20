@@ -1,0 +1,7 @@
+{"mode":"normal","ok":true,"navigation":1}
+{"mode":"wrong-id","ok":false,"reason":"same-ID payment row not rendered","navigation":1}
+{"mode":"wrong-money","ok":false,"reason":"same-ID visible payment fields differ from committed truth","navigation":1}
+{"mode":"unrelated","ok":false,"reason":"Date sorting did not reach requested order","navigation":1}
+{"mode":"missing-ledger","ok":false,"reason":"committed payment missing or incorrect in ledger","navigation":0}
+{"mode":"far","rows":12289,"milliseconds":112,"navigation":[{"action":"Date sort","wanted":"-created_at","actual":"-created_at"}]}
+{"mode":"midrank","rows":12289,"milliseconds":8150,"navigation":122}
