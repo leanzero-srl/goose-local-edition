@@ -26,4 +26,12 @@ An earlier launch was stopped for an environment error: Python could not read th
 
 ## Decision
 
+## Completed corrections and remaining verification
+
+Scorer commits `c96a4cdf8`, `db54d0662`, `fbc0097f9` correct the pixel witness, version parsing, measured video interval and render-time eligibility. The animation still has to actually finish in its resting geometry; late reads cannot certify a frozen mid-flight frame. Commit `89a7e19cb` fixes a further inherited B3 assumption: the candidate's valid second sync returned 192 cached HTTP 304 pages in 95.7 ms, whereas the old test counted only HTTP 200 and polled every 150 ms. The new SB7.1-only gate completes the scheduled responses, holds the next response, kills the process while that response is held, and releases for restart. Real 200/304 HTTP tests prove the boundary. The fresh scorer receipt independently records three 304 responses followed by a held fourth and PID 17824 terminated with returncode -9 before release.
+
+The first corrected full rescore completed with no missing infrastructure, unavailable probes or unreached schedules, and earned behavioral score 0.7826. Its final 0.599 is **not accepted as a model result**: a further harness-owned camera state leak invalidated visible-surface admission. The latency pose was only restored when the separate changed-pixel search succeeded; that search failed, leaving a different camera for the subsequent background click and default-camera pixel expectations. Independent source/data review confirmed this cause. Preserve that report as a rejected measurement, fix restoration on every path, then re-score the unchanged candidate.
+
+Desktop commits `2daf8274e` and `4c9de76de` fix the inherited busy-state Cancel button, use real cloud execution evidence for interrupted outcomes, reap separate-session descendants by PID, and prevent Python bytecode writes inside signed resources. Typecheck, lint and 31 scoped tests pass, including actual process and Python-import tests. A rebuilt installed-app verification is still required; source tests alone are not release acceptance.
+
 Correct and independently verify the scorer against the preserved candidate, then inspect its actual media and individual backend failures. Keep SB7 stable and SB7.1 explicitly a pilot. A low score is not the release criterion: faithful measurement, a genuinely stronger visual challenge, predictable cost accounting, usable submission/reporting and successful reference plus defect controls are.
