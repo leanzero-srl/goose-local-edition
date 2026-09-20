@@ -1,3 +1,4 @@
+import { benchmarkModelIdProblem } from './benchModelIdentity';
 import { benchmarkProfileDirectory } from './benchProfile';
 import { inspectBenchmarkRuntime, installBenchmarkRuntime } from './benchRuntimeInstaller';
 import { resolveBenchmarkRuntime } from './benchRuntime';
@@ -3554,7 +3555,7 @@ ipcMain.handle(
     // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
     // refuses loudly with the reason — never a substitute.
     const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
-    if (model.length < 8 || model.length > 120) {
+    if (benchmarkModelIdProblem(model)) {
       return {
         ok: false,
         error:
@@ -3613,6 +3614,7 @@ ipcMain.handle(
         : {}),
       title,
       model,
+      ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
       poster: { installId: identity.installId, handle: identity.handle },
       ...(screenshots.length > 0 ? { screenshots } : {}),
       runMeta,

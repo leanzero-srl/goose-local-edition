@@ -101,7 +101,9 @@ describe('modelIdProblem / titleProblem — the two rules the hints and the Publ
   it('refuses an absent or junk engine model id with the reason', () => {
     expect(modelIdProblem(undefined)).toMatch(/no model id from the engine/);
     expect(modelIdProblem('')).toMatch(/no model id from the engine/);
-    expect(modelIdProblem('qwen3')).toMatch(/5-character model id — too short/);
+    expect(modelIdProblem('o3')).toBeNull();
+    expect(modelIdProblem('gpt-4o')).toBeNull();
+    expect(modelIdProblem('x'.repeat(121))).toMatch(/120 characters/);
     expect(modelIdProblem('qwen3.6-27b-mtp')).toBeNull();
   });
   it('requires a user-chosen title', () => {

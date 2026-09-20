@@ -1,3 +1,4 @@
+import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
 import type { CloudBenchmarkTier } from '../../benchTierPayload';
@@ -81,18 +82,11 @@ export function nodeCapFor(cfg: SwarmConfig | null): NodeChoice {
   return (NODE_CHOICES.find((n) => n === capped) ?? max) as NodeChoice;
 }
 
-const MODEL_MIN_CHARS = 8;
 
 /** Why this result's ENGINE-TRUTH model id cannot be published, or null when it can. The field is
  *  read-only — a user-editable model id publishes a lie — so the only problem left is absence:
  *  a result whose run never recorded pool_resolved (or recorded junk) refuses with the reason. */
-export function modelIdProblem(modelId: string | undefined): string | null {
-  const n = (modelId ?? '').trim().length;
-  if (n === 0) return 'This result carries no model id from the engine — run the benchmark again.';
-  if (n < MODEL_MIN_CHARS)
-    return `The engine recorded a ${n}-character model id — too short to publish.`;
-  return null;
-}
+export const modelIdProblem = benchmarkModelIdProblem;
 
 /** Why the Title field blocks publishing, or null when it does not. The title is the USER'S name
  *  for the run on the public board — never auto-generated. */
