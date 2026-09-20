@@ -64,6 +64,13 @@ import { join, dirname, relative, resolve } from 'path';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
 
 const err = (...a) => console.error('[probe]', ...a);
+function summarizeAnimationFrames(frames,minMoving=9) {
+  const moving=frames.filter(f=>Number.isFinite(f.renderElapsed)&&f.renderElapsed<900),rest=frames.find(f=>f.elapsed>=1050);
+  const eligible=moving.filter(f=>f.witnesses>=3&&f.positiveWitnesses>=3);
+  const motionOk=eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
+  const settled=!!rest&&rest.renderElapsed>=1000&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
+  return {ok:motionOk&&settled,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),distinctMovingDraws:new Set(eligible.map(f=>f.renderElapsed)).size,frames};
+}
 function parseVisibleVersion(raw) {
   if(typeof raw!=='string')return null;
   const match=/^\s*(?:(?:v|version)\s*:?\s*)?(\d+)\s*$/i.exec(raw);
@@ -2629,11 +2636,7 @@ function animationEvidence(it,pose,capture,minMoving=9) {
     const cameraFixed=!!camera&&Math.abs(camera.yaw-35)<.01&&Math.abs(camera.pitch-25)<.01&&Math.abs(camera.distance-6)<.01;
     frames.push({elapsed:frame.elapsed,renderElapsed:renderTime,frameAge:frame.elapsed-renderTime,compared,matched,witnesses,witnessMatches,positiveWitnesses,positiveMatches,cameraFixed,examples});
   }
-  const moving=frames.filter(f=>f.elapsed<900),rest=frames.find(f=>f.elapsed>=1050);
-  const eligible=moving.filter(f=>f.witnesses>=3&&f.positiveWitnesses>=3);
-  const motionOk=eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
-  const settled=!!rest&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
-  return {ok:motionOk&&settled,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),frames,event:capture?.event||null};
+  return {...summarizeAnimationFrames(frames,minMoving),event:capture?.event||null};
 }
 function visibleMotionEvidence(it,pose,capture) {
   const first=capture.frames[0],rest=capture.frames[1],trials=[];

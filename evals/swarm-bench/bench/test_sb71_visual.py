@@ -32,6 +32,33 @@ def fetch(url):
 
 
 class PixelAndVersionOracleControls(unittest.TestCase):
+    def test_late_read_uses_actual_render_clock_without_inventing_distinct_frames(self):
+        bench = Path(__file__).resolve().parent
+        prefix = (bench / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
+        # Primary golden replay: delayed screenshot/read tasks, ten correct samples,
+        # seven distinct actual draws. Keep exact measured timestamps and pixel counts.
+        frames = [{'elapsed': 122.20000004768372, 'renderElapsed': 48.09999990463257, 'compared': 4156, 'matched': 4156, 'witnesses': 272, 'witnessMatches': 272, 'positiveWitnesses': 105, 'positiveMatches': 105, 'cameraFixed': True}, {'elapsed': 302.59999990463257, 'renderElapsed': 301.7000000476837, 'compared': 4037, 'matched': 4037, 'witnesses': 221, 'witnessMatches': 221, 'positiveWitnesses': 54, 'positiveMatches': 54, 'cameraFixed': True}, {'elapsed': 374.2000000476837, 'renderElapsed': 301.7000000476837, 'compared': 4037, 'matched': 4037, 'witnesses': 221, 'witnessMatches': 221, 'positiveWitnesses': 54, 'positiveMatches': 54, 'cameraFixed': True}, {'elapsed': 386.89999985694885, 'renderElapsed': 386, 'compared': 4030, 'matched': 4030, 'witnesses': 218, 'witnessMatches': 218, 'positiveWitnesses': 51, 'positiveMatches': 51, 'cameraFixed': True}, {'elapsed': 451.2999999523163, 'renderElapsed': 450.59999990463257, 'compared': 4027, 'matched': 4027, 'witnesses': 215, 'witnessMatches': 215, 'positiveWitnesses': 48, 'positiveMatches': 48, 'cameraFixed': True}, {'elapsed': 523.8999998569489, 'renderElapsed': 523.0999999046326, 'compared': 4018, 'matched': 4018, 'witnesses': 214, 'witnessMatches': 214, 'positiveWitnesses': 47, 'positiveMatches': 47, 'cameraFixed': True}, {'elapsed': 601.2999999523163, 'renderElapsed': 598.0999999046326, 'compared': 4021, 'matched': 4021, 'witnesses': 214, 'witnessMatches': 214, 'positiveWitnesses': 47, 'positiveMatches': 47, 'cameraFixed': True}, {'elapsed': 862.8999998569489, 'renderElapsed': 862.2000000476837, 'compared': 4075, 'matched': 4075, 'witnesses': 88, 'witnessMatches': 88, 'positiveWitnesses': 31, 'positiveMatches': 31, 'cameraFixed': True}, {'elapsed': 947.5999999046326, 'renderElapsed': 862.2000000476837, 'compared': 4075, 'matched': 4075, 'witnesses': 88, 'witnessMatches': 88, 'positiveWitnesses': 31, 'positiveMatches': 31, 'cameraFixed': True}, {'elapsed': 959.7999999523163, 'renderElapsed': 862.2000000476837, 'compared': 4075, 'matched': 4075, 'witnesses': 88, 'witnessMatches': 88, 'positiveWitnesses': 31, 'positiveMatches': 31, 'cameraFixed': True}, {'elapsed': 1152.7999999523163, 'renderElapsed': 1031.7999999523163, 'compared': 4162, 'matched': 4162, 'witnesses': 0, 'witnessMatches': 0, 'positiveWitnesses': 0, 'positiveMatches': 0, 'cameraFixed': True}]
+        assertions = r"""
+const require=(condition,message)=>{if(!condition)throw Error(message);};
+const summary=summarizeAnimationFrames(FRAMES);
+require(summary.ok&&summary.eligibleMotionFrames===10&&summary.distinctMovingDraws===7,'Late read incorrectly rejected or unique draws invented');
+const afterWindow=structuredClone(FRAMES);afterWindow[8].renderElapsed=901;afterWindow[9].renderElapsed=901;
+require(!summarizeAnimationFrames(afterWindow).ok,'Post-window rendered frames counted');
+const missingPositive=structuredClone(FRAMES);for(const f of missingPositive)f.positiveMatches=0;
+require(!summarizeAnimationFrames(missingPositive).ok,'Missing occupied collar accepted');
+const wrongLatePixels=structuredClone(FRAMES);wrongLatePixels[9].matched=0;
+require(!summarizeAnimationFrames(wrongLatePixels).ok,'Late-read geometry unchecked');
+const frozenRest=structuredClone(FRAMES);frozenRest[10].renderElapsed=862.2;
+require(!summarizeAnimationFrames(frozenRest).ok,'Frozen midflight image accepted as settled');
+console.log(JSON.stringify(summary));
+"""
+        with tempfile.TemporaryDirectory(prefix='sb71-render-clock-control-') as directory:
+            script = Path(directory) / 'control.mjs'
+            script.write_text(prefix + '\nconst FRAMES=' + json.dumps(frames) + ';\n' + assertions)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(script)],
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_actual_seed_pixel_witness_and_rejected_boundary_samples(self):
         bench = Path(__file__).resolve().parent
         fixture = fixtures_v3.build('5cd00e961d80464f')
