@@ -55,10 +55,13 @@ impl GooseAcpAgent {
                     return Err(agent_client_protocol::Error::invalid_params().data("This server does not provide page extraction."));
                 }
                 let folder = settings.get("OUTPUT_DIR").ok_or_else(|| agent_client_protocol::Error::invalid_params().data("Save a research corpus folder before collecting a source."))?;
-                let folder = PathBuf::from(shellexpand::tilde(&folder).as_ref());
+                let folder = PathBuf::from(folder);
                 if !folder.is_absolute() {
                     return Err(agent_client_protocol::Error::invalid_params().data("The corpus folder must be an absolute path."));
                 }
+                // Use the bundled server's research directory so list-cached-documents
+                // and read-cached-document can consume sources collected in the UI.
+                let folder = folder.join("docs").join("research-output");
                 let ctx = crate::agents::ToolCallContext::new("mcp-setup".into(), None, None);
                 let call = CallToolRequestParams::new(tool_name).with_arguments(serde_json::json!({"url": url.as_str()}).as_object().expect("object literal").clone());
                 let response = manager.dispatch_tool_call(&ctx, call, CancellationToken::new()).await.internal_err()?.result.await.internal_err()?;

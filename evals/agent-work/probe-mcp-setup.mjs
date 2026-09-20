@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { GooseClient } from '../../ui/sdk/dist/goose-client.js';
 import { ndJsonStream } from '../../ui/node_modules/@agentclientprotocol/sdk/dist/acp.js';
+import { Client } from '../../ui/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { StdioClientTransport } from '../../ui/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const root = await mkdtemp(path.join(tmpdir(), 'goose-mcp-setup-'));
 await mkdir(path.join(root, 'config'));
@@ -46,9 +48,24 @@ try {
   assert.match(body, /JavaScript/);
   assert.match(body, /Source: https:\/\/developer.mozilla.org/);
   assert.match(body, /Collected:/);
-  const beforeInvalidSource = await readdir(env.OUTPUT_DIR);
+  const cacheClient = new Client({ name: 'corpus-readback', version: '1' });
+  const cacheTransport = new StdioClientTransport({ command: process.execPath, args: [path.join(bundle, 'leanzero-web-search/dist/index.js')], env: { ...process.env, ...env }, stderr: 'ignore' });
+  try {
+    await cacheClient.connect(cacheTransport);
+    const fileName = path.basename(collected.savedFile);
+    const cached = await cacheClient.callTool({ name: 'list-cached-documents', arguments: { category: 'research' } });
+    assert.notEqual(cached.isError, true);
+    assert.ok(JSON.stringify(cached.content).includes(fileName), 'Collected page must be discoverable by the agent cache tool');
+    const reread = await cacheClient.callTool({ name: 'read-cached-document', arguments: { fileName } });
+    assert.notEqual(reread.isError, true);
+    assert.match(JSON.stringify(reread.content), /Source: https:\/\/developer.mozilla.org/);
+    assert.match(JSON.stringify(reread.content), /JavaScript/);
+  } finally {
+    await cacheClient.close();
+  }
+  const beforeInvalidSource = await readdir(path.dirname(collected.savedFile));
   await assert.rejects(client.goose.configExtensionsInspect_unstable({ name: 'LeanZero Web Search', sourceUrl: 'file:///etc/passwd' }));
-  assert.deepEqual(await readdir(env.OUTPUT_DIR), beforeInvalidSource);
+  assert.deepEqual(await readdir(path.dirname(collected.savedFile)), beforeInvalidSource);
   await client.goose.configExtensionsAdd_unstable({ enabled: false, extension: { type: 'mcp', server: {
     name: 'LeanZero Documents', command: process.execPath,
     args: [path.join(bundle, 'leanzero-documents/src/index.js')],
