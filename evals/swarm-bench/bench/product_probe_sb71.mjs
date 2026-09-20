@@ -2132,7 +2132,20 @@ async function main() {
     await armStreamWitness(page,model,pack.stream.mutateIds[0],pack.seed);
     merge({streamBrushAfterArm:(await page.evaluate(pageVs7,{want:['brush']})).brush});
     await page.waitForFunction(()=>window.__p7.stream.some(e=>e.pixelWitness),null,{timeout:10000});
-    await sleep(3500);merge({stream:await page.evaluate(pageStreamLog)});
+    await sleep(3500);const stream=await page.evaluate(pageStreamLog);merge({stream});
+    if(process.env.BENCH_SB71_RESTORE_CONTROL==='1') {
+      const initial=await page.evaluate(pageVs7,{want:['camera','brush']});
+      let caught=null;
+      try {await withRestoredOverview(page,async()=>{throw new Error('intentional restoration control');});}
+      catch(error){caught=String(error);}
+      for(const event of stream.entries)if(event.records)applyBatchToModel(model,event.records);
+      await page.evaluate(pageScrollCanvasIntoView);const box=await page.evaluate(pageCanvasRect);
+      const ctx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,box.w,box.h);
+      const background=findPickTargets(ctx,model,pack.seed+':restore').background;
+      if(background)await page.mouse.click(box.left+background.sx,box.top+background.sy);
+      await sleep(100);const after=await page.evaluate(pageVs7,{want:['camera','brush']});
+      merge({restorationControl:{initial,caught,background,after}});
+    }
     await finalizeMedia();emit({consoleErrors:consoleErrors()});
   } else if (scenario === 'sb71-visual') {
     const navigationError=await safeGoto(25000);
@@ -2683,7 +2696,7 @@ async function sb71VisualScenario(page,model,H,pack) {
       exposed:points.filter(Boolean).length,total:points.length,failures,rect:{width:r.width,height:r.height}};
   });
   const labelRects=await page.evaluate(()=>Array.from(document.querySelectorAll('#viz-labels .viz-label')).filter(e=>e.getClientRects().length&&getComputedStyle(e).display!=='none').map(e=>{const r=e.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};}));
-  let rootFacts={dom,matched:0,total:0,ids:[],labelRects};
+  let rootFacts={dom,matched:0,total:0,ids:[],labelRects,observedState:await page.evaluate(pageVs7,{want:['camera','brush']})};
   if(rect?.w&&rect?.h) {
     const ctx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,rect.w,rect.h);
     const points=seededSurfacePoints(ctx,(x,y)=>labelRects.some(r=>rect.left+x>=r.left-1&&rect.left+x<=r.right+1&&rect.top+y>=r.top-1&&rect.top+y<=r.bottom+1));
@@ -2859,6 +2872,15 @@ async function sb71VisualScenario(page,model,H,pack) {
   merge({sb71:{checks}});
 }
 
+async function withRestoredOverview(page, action) {
+  try { return await action(); }
+  finally {
+    await page.evaluate(pageVs7,{want:[],setCamera:[V7.yaw0,V7.pitch0,V7.dist0]});
+    await sleep(80);
+    const actual=await page.evaluate(pageVs7,{want:['camera','brush']});
+    merge({streamCameraRestoration:{expected:{yaw:V7.yaw0,pitch:V7.pitch0,distance:V7.dist0},actual}});
+  }
+}
 async function armStreamWitness(page,model,d1TargetId,seed) {
   const vs7=arg=>page.evaluate(pageVs7,arg);
   const setCam=async(...pose)=>{await vs7({setCamera:pose});await sleep(80);};
@@ -3865,7 +3887,7 @@ async function vizScenario(page, pack, H) {
   // stream (§3.7): every observed SSE batch replayed against a fresh model — digest deltas,
   // per-batch upload-byte accounting from the wrapper, apply latency, changed-instance pixel,
   // and the D1 brushed-mutation observation. The driver pokes the vendor while this waits.
-  {
+  await withRestoredOverview(page,async()=>{
     if(process.env.BENCH_SB71_STREAM_READY)await armStreamWitness(page,model,d1TargetId,pack.seed);
     // Harness fix: 30 s closed the stream window before the driver's alive-gated 110 s
     // D1 fire could land on a fast app; the wait must outlast the fire (budget-capped).
@@ -3938,7 +3960,7 @@ async function vizScenario(page, pack, H) {
       let hitC = null;
       for (const [py, pp, pd] of posesC) {
         const ctxN = poseCtx(model, py, pp, pd, Wc, Hcs);
-        const pt = findDecisivePointFor(ctxN, model, n);
+        const pt = findPixelWitnessFor(ctxN, model, n);
         if (pt) { hitC = { pose: [py, pp, pd], pt }; break; }
       }
       if (hitC) {
@@ -3949,11 +3971,11 @@ async function vizScenario(page, pack, H) {
         const exp = expectPx(model.items[n], hitC.pt.factor);
         changedPixel = { id: lastUpdate.id, got, expect: exp,
                          ok: !!got && got.every((v, i) => Math.abs(v - exp[i]) <= V7.tol) };
-        await setCam(V7.yaw0, V7.pitch0, V7.dist0);
       } else changedPixel = { id: lastUpdate.id, noDecisivePoint: true };
     }
     const dBrush = await vs7({ want: ['brush'] });
     const brushAfter = Array.isArray(dBrush.brush) ? dBrush.brush : null;
+    if(brushAfter)model.brush=new Set(brushAfter);
     const mutationSeen = d1TargetId != null &&
       entries.some((e) => (e.records || []).some((r) => r.id === d1TargetId));
     const d1Row = d1TargetId != null
@@ -3986,7 +4008,7 @@ async function vizScenario(page, pack, H) {
         ? brushAfter.includes(d1TargetId) : null,
       rowBrushedAfter: d1Row.found ? d1Row.dataBrushed === 'true' : null,
     } });
-  }
+  });
 
   // background click clears the brush; dim lifts (pixel-verified back to full hex).
   if (inViewport) {

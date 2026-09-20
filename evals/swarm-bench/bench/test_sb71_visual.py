@@ -93,7 +93,7 @@ console.log(JSON.stringify({pixel:point,oldPickDepthGap:strictPick.depthGap,chec
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
-    def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual'):
+    def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual', restore_control=False):
         bench = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix='sb71-visual-control-') as temporary:
             root = Path(temporary)
@@ -140,6 +140,8 @@ class VisualControls(unittest.TestCase):
                     (root / 'expect.json').write_text(json.dumps(dict(seed=seed, records=records, count=records['count'], stream={'mutateIds':[fixture.d1_target['payment_id']]})))
                     env = {**os.environ, 'SB7_EXPECT_FILE': str(root / 'expect.json'),
                            'BENCH_SHOTS_DIR': str(root / 'shots'), 'BENCH_MEDIA_DIR': str(root / 'bench-media')}
+                    if restore_control:
+                        env['BENCH_SB71_RESTORE_CONTROL'] = '1'
                     if scenario == 'sb71-stream':
                         ready_path = root / 'stream-ready.json'
                         env['BENCH_SB71_STREAM_READY'] = str(ready_path)
@@ -195,6 +197,19 @@ class VisualControls(unittest.TestCase):
                             process.wait()
                     server.shutdown()
                     server.server_close()
+
+    def test_actual_seed_restores_camera_on_error_before_real_background_clear(self):
+        data = self.collect(('web/viz.js', 'if (brush.has(it.id)) {', 'if (false) {'),
+            scenario='sb71-stream', seed='5cd00e961d80464f', restore_control=True)
+        control = data['restorationControl']
+        self.assertIn('intentional restoration control', control['caught'])
+        self.assertNotEqual(control['initial']['camera']['yaw'], 30)
+        self.assertEqual(control['initial']['brush'], ['pay_01412'])
+        for key, value in {'yaw': 30, 'pitch': 40, 'distance': 260}.items():
+            self.assertAlmostEqual(data['streamCameraRestoration']['actual']['camera'][key], value)
+            self.assertAlmostEqual(control['after']['camera'][key], value)
+        self.assertIsNotNone(control['background'])
+        self.assertEqual(control['after']['brush'], [])
 
     def test_stream_latency_requires_actual_status_pixels(self):
         data = self.collect(scenario='sb71-stream', seed='5a05d7631d9276e3')
