@@ -83,7 +83,7 @@ const i18n = defineMessages({
   editionDesc: {
     id: 'settings.edition.description',
     defaultMessage:
-      'The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Goose Swarm in the model selector. The Goose Swarm settings tab stays available whenever you run local models, regardless of this setting.',
+      'The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To build with Swarm, pick Goose Swarm in the model selector. Swarm nodes can mix local and cloud providers. The Goose Swarm settings tab stays available whenever you run local models, regardless of this setting.',
   },
   editionPreview: {
     id: 'settings.edition.preview',

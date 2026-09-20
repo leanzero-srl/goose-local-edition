@@ -235,7 +235,7 @@ function PhaseStrip({
       }
     >
       <p className={TYPE.bodyMuted}>
-        The harness records model build and scoring separately. Local swarm runs also show their
+        The harness records model build and scoring separately. Swarm runs also show their
         live agent panel below.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1110,7 +1110,7 @@ export default function BenchmarkView() {
     setStatus(null);
     setLaunchedSampling(sampling);
     try {
-      // Local swarms use the stable default; cloud launches carry their explicit tier.
+      // Swarms use the stable default; cloud launches carry their explicit tier.
       const result =
         entrant === 'cloud'
           ? await window.electron.benchmarkRunCloud(cloudProvider, cloudModel.trim(), cloudTier)
@@ -1391,7 +1391,7 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            SB7.1 payments runs on your local swarm or a configured model provider.
+            SB7.1 payments runs with Swarm or a single model. Swarm nodes can mix local and cloud providers.
             Earlier experiments remain separate in your session history.
           </p>
 
@@ -1408,7 +1408,7 @@ export default function BenchmarkView() {
               aria-label="Benchmark entrant"
               value={entrant}
               options={[
-                { value: 'swarm', label: 'Local swarm' },
+                { value: 'swarm', label: 'Swarm' },
                 { value: 'cloud', label: 'Single model' },
               ]}
               onChange={(value) => setEntrant(value as 'swarm' | 'cloud')}

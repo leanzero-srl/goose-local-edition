@@ -291,7 +291,7 @@ describe('BenchmarkView — LeanZero Studio', () => {
     mockElectron({ running: false, shots: [] });
     renderView();
     expect(await screen.findByText('No app screenshots were recorded or could be read for this result.')).toBeInTheDocument();
-    expect(screen.getByText(/SB7.1 payments runs on your local swarm/)).toBeInTheDocument();
+    expect(screen.getByText(/SB7.1 payments runs with Swarm/)).toBeInTheDocument();
   });
 
 });

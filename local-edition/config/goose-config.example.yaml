@@ -1,4 +1,4 @@
-# Example Goose config for the local swarm.
+# Example Goose config for Swarm using LM Studio devices.
 # Copy to ~/.config/goose/config.yaml. Set provider creds via env:
 #   export LMSTUDIO_HOST=http://localhost:1234
 #   export LMSTUDIO_API_KEY=lm-studio   # dummy; LM Studio ignores it

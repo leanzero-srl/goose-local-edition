@@ -1,5 +1,5 @@
 version: "1.0.0"
-title: "Local Swarm v3 — true 3-device fan-out over LM Link"
+title: "Swarm v3 — true 3-device fan-out over LM Link"
 description: "Planner on Qwen3.6-27B (workhorse) fans independent subtasks across THREE physical devices via LM Link, addressing each by its model id. The headline multi-device demo."
 author:
   contact: local-swarm-agent

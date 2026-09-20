@@ -3114,7 +3114,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   if (cloud) nodes = 1;
   const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
   const runSampling = cleanSampling(cloud ? undefined : sampling);
-  // Cloud selection is explicit; local swarms run stable SB7.1.
+  // Cloud selection is explicit; Swarms run stable SB7.1.
   // The tier switches which spec/probe/scorer the harness
   // wires up, so a run is always scored by exactly one frozen version end to end.
   const tier = benchmarkLaunchTier(cloud);
@@ -3603,12 +3603,12 @@ ipcMain.handle(
     const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
     // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
     // is built key by key (never a spread of the stored row, which carries mine/workdir).
-    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node local fleet", never the in-app
+    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
     // first-person "Your fleet · N nodes".
     const cloudEntrant = typeof stored.provider === 'string' || (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
     const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
     const payload: Record<string, unknown> = {
-      label: cloudEntrant ? `${model} · single agent` : nodeCount != null ? `${nodeCount}-node local fleet` : 'local fleet',
+      label: cloudEntrant ? `${model} · single agent` : nodeCount != null ? `${nodeCount}-node Swarm` : 'Swarm',
       score: stored.score,
       tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
       ...(nodeCount != null ? { nodes: nodeCount } : {}),
