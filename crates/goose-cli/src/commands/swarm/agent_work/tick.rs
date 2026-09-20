@@ -550,42 +550,19 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
         if s.body.trim().is_empty() {
             continue;
         }
-        let lane = lane_results.iter().find(|r| r.plan.id == s.lane);
-        let lane_name = if s.lane.is_empty() {
-            format!("draft-{}", k + 1)
-        } else {
-            s.lane.clone()
-        };
-        let id = format!("{}-t{n}-{}", ctx.manifest.name, sanitize_name(&lane_name));
         let review: Vec<Value> = lens_results
             .iter()
             .filter(|l| l.lane_id == s.lane)
             .map(|l| json!({"lens": l.lens, "verdict": l.out.verdict, "notes": l.out.notes}))
             .collect();
-        let row = PreparedRow {
-            id: id.clone(),
-            tick: n,
-            lane: s.lane.clone(),
-            surgeon: lane.map_or_else(
-                || "(lane not in this tick)".to_string(),
-                |r| r.plan.surgeon.clone(),
-            ),
-            target: s.target.clone(),
-            kind: if s.kind.is_empty() {
-                "comment".into()
-            } else {
-                s.kind.clone()
-            },
-            body: s.body.trim().to_string(),
-            evidence: s.evidence.clone(),
-            status: "staged".into(),
-            staged_at: now.clone(),
-            decided_at: None,
-            decided_note: None,
-            posted_tick: None,
-            result: None,
-            review,
+        let row = match prepare_stage_row(s, &lane_results, &ctx.manifest.name, n, &now, review) {
+            Ok(row) => row,
+            Err(reason) => {
+                ctx.sink.write_value(json!({"event": "staging_skipped", "tick": n, "lane": s.lane, "reason": reason}));
+                continue;
+            }
         };
+        let id = row.id.clone();
         let _ = std::fs::write(ctx.rt.draft_path(&id), &row.body);
         ctx.sink.write_value(json!({"event": "draft_staged", "tick": n, "id": id, "lane": s.lane, "target": s.target, "kind": row.kind, "chars": row.body.chars().count()}));
         let _ = ctx.rt.write_mini(
@@ -1073,6 +1050,49 @@ fn lane_value(r: &LaneResult) -> Value {
     })
 }
 
+fn prepare_stage_row(
+    stage: &prompts::StagePlan,
+    lanes: &[LaneResult],
+    agent: &str,
+    tick: u64,
+    now: &str,
+    review: Vec<Value>,
+) -> Result<PreparedRow, &'static str> {
+    let lane = lanes
+        .iter()
+        .find(|lane| lane.plan.id == stage.lane)
+        .ok_or("source lane does not exist in this tick")?;
+    let draft = lane
+        .out
+        .as_ref()
+        .and_then(|out| out.draft.as_ref())
+        .filter(|draft| !draft.body.trim().is_empty())
+        .ok_or("source lane did not return a nonempty draft")?;
+    if lane.error.is_some() {
+        return Err("source lane did not return a nonempty draft");
+    }
+    if stage.target != draft.target || stage.kind != draft.kind {
+        return Err("staged destination or kind differs from the source draft");
+    }
+    Ok(PreparedRow {
+        id: format!("{agent}-t{tick}-{}", sanitize_name(&lane.plan.id)),
+        tick,
+        lane: lane.plan.id.clone(),
+        surgeon: lane.plan.surgeon.clone(),
+        target: stage.target.clone(),
+        kind: draft.kind.clone(),
+        body: stage.body.trim().to_string(),
+        evidence: stage.evidence.clone(),
+        status: "staged".into(),
+        staged_at: now.to_string(),
+        decided_at: None,
+        decided_note: None,
+        posted_tick: None,
+        result: None,
+        review,
+    })
+}
+
 fn render_lane_report(r: &LaneResult) -> String {
     let head = format!(
         "LANE {} — surgeon {}, node {}, {:.0}s\n  item: {}\n  objective: {}",
@@ -1120,7 +1140,71 @@ fn render_lane_report(r: &LaneResult) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::transport_error;
+    use super::*;
+
+    #[test]
+    fn staging_requires_this_ticks_draft_and_preserves_its_destination() {
+        let mut lanes = vec![LaneResult {
+            plan: serde_json::from_value(json!({"id": "page-read", "surgeon": "researcher"}))
+                .unwrap(),
+            key: "t1-page-read".into(),
+            model: "test".into(),
+            secs: 0.0,
+            out: Some(LaneOut::default()),
+            raw: String::new(),
+            error: None,
+        }];
+        let mut stage: prompts::StagePlan = serde_json::from_value(json!({
+            "lane": "invented", "target": "DEMO-1", "kind": "comment", "body": "Reviewed text"
+        }))
+        .unwrap();
+        assert_eq!(
+            prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).unwrap_err(),
+            "source lane does not exist in this tick"
+        );
+        stage.lane = "page-read".into();
+        assert_eq!(
+            prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).unwrap_err(),
+            "source lane did not return a nonempty draft"
+        );
+        lanes[0].out.as_mut().unwrap().draft = Some(Draft {
+            target: "DEMO-1".into(),
+            kind: "comment".into(),
+            body: "   ".into(),
+        });
+        assert!(prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).is_err());
+        lanes[0].out.as_mut().unwrap().draft.as_mut().unwrap().body = "Original text".into();
+        stage.target = "DEMO-2".into();
+        assert_eq!(
+            prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).unwrap_err(),
+            "staged destination or kind differs from the source draft"
+        );
+        stage.target = "DEMO-1".into();
+        stage.kind = "create".into();
+        assert!(prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).is_err());
+        stage.kind = "comment".into();
+        let review = vec![json!({"verdict": "pass"})];
+        let row = prepare_stage_row(&stage, &lanes, "demo", 1, "now", review.clone()).unwrap();
+        assert_eq!(
+            (
+                row.lane.as_str(),
+                row.surgeon.as_str(),
+                row.target.as_str(),
+                row.kind.as_str(),
+                row.body.as_str()
+            ),
+            (
+                "page-read",
+                "researcher",
+                "DEMO-1",
+                "comment",
+                "Reviewed text"
+            )
+        );
+        assert_eq!(row.review, review);
+        lanes[0].error = Some("failed after draft".into());
+        assert!(prepare_stage_row(&stage, &lanes, "demo", 1, "now", vec![]).is_err());
+    }
 
     #[test]
     fn a_dead_node_reads_as_a_transport_error_never_as_an_answer() {

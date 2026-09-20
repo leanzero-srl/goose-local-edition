@@ -3,6 +3,7 @@
 //! template about work in general — and every output is a HANDOFF: exact identifiers, the
 //! concrete next step, a confidence the reviewer can hold it to (gate 2).
 
+use goose::agents::final_output_tool::FINAL_OUTPUT_TOOL_NAME;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -121,7 +122,7 @@ pub fn orient_system(m: &AgentManifest, tick: u64) -> String {
          the human can make, raise an ASK with the exact question and why, and do not lane it. An \
          item already handled on the ledger (a staged or posted draft, an open ask) is DROPPED with \
          that reason, not re-laned.\n\n\
-         Complete this call with the provided final_output tool using all required fields: \
+         Complete this call with the provided {FINAL_OUTPUT_TOOL_NAME} tool using all required fields: \
          summary, lanes, asks, drop (empty arrays are valid). The runtime stores the plan; do not \
          search for or write a plan/output file. The output shape is \
          {{summary, lanes:[{{id, surgeon, item, objective, kind}}], asks:[{{question, why}}], \
@@ -161,7 +162,7 @@ pub fn orient_user(
         )
     };
     format!(
-        "THE CHARTER:\n{charter}\n\n---\nSCRATCHPAD (your own note from the previous tick):\n{scratch}\n\n---\nTHE LEDGER (snowballed across ticks):\n{ledger}\n\n---\nNOTES FROM THE HUMAN since the last tick:\n{notes_block}{guards}\n\n---\nTHE POLL — what the desk's read-only scripts returned this tick (this is the inbox; identifiers in it are the ones to use):\n{poll}\n\n---\nDecide the lanes now, then submit the complete plan through final_output.",
+        "THE CHARTER:\n{charter}\n\n---\nSCRATCHPAD (your own note from the previous tick):\n{scratch}\n\n---\nTHE LEDGER (snowballed across ticks):\n{ledger}\n\n---\nNOTES FROM THE HUMAN since the last tick:\n{notes_block}{guards}\n\n---\nTHE POLL — what the desk's read-only scripts returned this tick (this is the inbox; identifiers in it are the ones to use):\n{poll}\n\n---\nDecide the lanes now, then submit the complete plan through {FINAL_OUTPUT_TOOL_NAME}.",
         scratch = if scratchpad.trim().is_empty() { "(empty)" } else { scratchpad.trim() },
         ledger = ledger_block.trim(),
         poll = if poll_text.trim().is_empty() {
@@ -236,7 +237,7 @@ pub fn lane_system(m: &AgentManifest, surgeon: Option<&Surgeon>, surgeon_charter
          counts only after the same probe is shown to find something on that object. A number you did \
          not measure this call is not evidence.\n\n\
          YOUR CHARTER:\n{charter}\n\n\
-         Finish with the provided final_output tool: supply homework, finding, confidence, evidence \
+         Finish with the provided {FINAL_OUTPUT_TOOL_NAME} tool: supply homework, finding, confidence, evidence \
          and next_step, plus draft/ask/route only when needed. The runtime records your answer \
          automatically. There is no output or handoff file to find or create; \
          .swarm is runtime bookkeeping. Once the requested evidence is collected, submit the result \
@@ -274,7 +275,7 @@ pub fn lane_user(
     poll_excerpt: &str,
 ) -> String {
     format!(
-        "THE DESK CHARTER (binding):\n{charter}\n\n---\nTHE LEDGER SO FAR:\n{ledger}\n\n---\nYOUR ITEM: {item}\nKIND: {kind}\nOBJECTIVE: {objective}\n\n---\nWHAT THE POLL SAID ABOUT IT (excerpt):\n{poll}\n\n---\nDo the homework, then submit all required fields through final_output. The runtime saves the handoff.",
+        "THE DESK CHARTER (binding):\n{charter}\n\n---\nTHE LEDGER SO FAR:\n{ledger}\n\n---\nYOUR ITEM: {item}\nKIND: {kind}\nOBJECTIVE: {objective}\n\n---\nWHAT THE POLL SAID ABOUT IT (excerpt):\n{poll}\n\n---\nDo the homework, then submit all required fields through {FINAL_OUTPUT_TOOL_NAME}. The runtime saves the handoff.",
         charter = desk_charter.trim(),
         ledger = ledger_block.trim(),
         item = lane.item,
@@ -456,19 +457,29 @@ pub fn synthesis_schema() -> Value {
 pub fn synthesis_system(m: &AgentManifest, tick: u64) -> String {
     format!(
         "You are the ORCHESTRATOR of the desk `{name}` closing tick #{tick}. The lanes have returned and \
-         the reviewers have attacked every draft. You decide what the desk KEEPS from this tick:\n\
-         - stage: the drafts that survived review (every lens PASS, or a REFUTED whose fixes you applied \
+         any configured draft reviews are supplied below. Your sources are ONLY the supplied lane \
+         reports, review reports, ledger and human notes. Preserve what they actually say: do not \
+         invent tool calls, errors, actions, approvals or a total number of ticks. An absent fact is \
+         unknown, not an invitation to fill it in. You decide what the desk KEEPS from this tick:\n\
+         - stage: ONLY an actual DRAFT supplied in a lane report, using that lane's exact id. If no \
+         lane supplied a DRAFT, stage is []. Preserve its exact target and kind; review may change \
+         the body, never the destination. A research finding is a report for the handoff, not a \
+         draft to post. Keep drafts that survived review (every lens PASS, or a REFUTED whose fixes you applied \
          and can name) — with the final body. A draft any lens refuted on facts is NOT staged; its \
          finding goes to facts or to an ask instead. Nothing here posts now: a staged draft posts on a \
          later tick through the desk's one write path, after the human's approval when the desk requires it.\n\
-         - asks: questions only the human can answer, exact and answerable in one line.\n\
+         - asks: concrete unresolved questions from this tick that only the human can answer. Do not \
+         ask where to post a read-only report or invent new requirements after the task is finished.\n\
          - facts: what the ledger should remember from this tick — measured things with their \
          identifiers, decisions taken, dead ends (so no later tick repeats them). Not restatements of the poll.\n\
          - log_line: ONE line for the daily log in the desk owner's voice, plain, what happened.\n\
          - scratchpad: the running note for the next tick, rewritten whole (goal, in flight, next, facts).\n\
          - pending: lines for the human's pending file (things only they can clear), if any new.\n\
-         - handoff: the concrete next step for the next tick's orchestrator.\n\
-         Output JSON only.",
+         - handoff: the requested result, with its evidence identifiers/URLs, and any genuinely \
+         remaining next step. When the task was read-only research, deliver its findings here. \
+         When it is finished, say so; do not manufacture another task.\n\
+         Submit stage, asks, facts, log_line and handoff through the provided {FINAL_OUTPUT_TOOL_NAME} \
+         tool. The runtime saves the result; do not print a JSON answer instead of calling the tool.",
         name = m.name,
     )
 }
@@ -481,7 +492,7 @@ pub fn synthesis_user(
     notes: &[String],
 ) -> String {
     format!(
-        "WHAT THIS TICK SET OUT TO DO:\n{summary}\n\n---\nTHE LEDGER BEFORE THIS TICK:\n{ledger}\n\n---\nWHAT THE LANES RETURNED:\n{lanes}\n\n---\nWHAT THE REVIEWERS SAID:\n{review}\n\n---\nNOTES FROM THE HUMAN THIS TICK:\n{notes}\n\n---\nClose the tick. JSON only.",
+        "WHAT THIS TICK SET OUT TO DO:\n{summary}\n\n---\nTHE LEDGER BEFORE THIS TICK:\n{ledger}\n\n---\nWHAT THE LANES RETURNED:\n{lanes}\n\n---\nWHAT THE REVIEWERS SAID:\n{review}\n\n---\nNOTES FROM THE HUMAN THIS TICK:\n{notes}\n\n---\nClose the tick through {FINAL_OUTPUT_TOOL_NAME}, preserving the supplied findings and evidence.",
         summary = orient_summary.trim(),
         ledger = ledger_block.trim(),
         lanes = if lane_reports.trim().is_empty() { "(no lanes ran)" } else { lane_reports.trim() },
@@ -534,8 +545,13 @@ mod tests {
         assert!(empty_inbox.contains("unfinished concrete task in the charter"));
         assert!(!empty_inbox.contains("plan no lanes unless"));
         let lane = lane_system(&m, None, "Read the assigned page");
-        for (prompt, schema) in [(&s, orient_schema()), (&lane, lane_schema())] {
-            assert!(prompt.contains("final_output"));
+        let synthesis = synthesis_system(&m, 7);
+        for (prompt, schema) in [
+            (&s, orient_schema()),
+            (&lane, lane_schema()),
+            (&synthesis, synthesis_schema()),
+        ] {
+            assert!(prompt.contains(FINAL_OUTPUT_TOOL_NAME));
             for field in schema["required"].as_array().unwrap() {
                 assert!(
                     prompt.contains(field.as_str().unwrap()),

@@ -21,7 +21,7 @@ use super::spec_surface::{
 use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
-use super::{EventSink, SpecSection};
+use super::{EventSink, SpecSection, FINAL_OUTPUT_TOOL};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
@@ -991,7 +991,7 @@ pub(super) fn research_user_text(head: &str, prior_block: &str, qs: &[ResearchQu
         .map(|q| format!("[q{}] {}", q.q_index, q.question))
         .collect();
     format!(
-        "{head}{prior_block}\n\n{label}. Each is tagged [qN]; your final_output carries one \
+        "{head}{prior_block}\n\n{label}. Each is tagged [qN]; your {FINAL_OUTPUT_TOOL} call carries one \
          entry per tag with question_index = N:\n{}",
         tagged.join("\n")
     )
@@ -2056,7 +2056,7 @@ pub(super) fn research_system_text() -> String {
      fact ONCE and let the later answers refer back to it, never contradict it. If a question \
      cannot be settled from the request or the sources, say exactly that in one line and still \
      name the conventional choice. Keep each answer under a page.\n\n\
-     When ALL of them are done, call the final_output tool ONCE with {\"answers\": \
+     When ALL of them are done, call the recipe__final_output tool ONCE with {\"answers\": \
      [{\"question_index\": N, \"answer\": \"...\", \"raised\": [...]}, ...]} — one entry per \
      [qN] tag with question_index = N, in any order. COMPOSE EACH ANSWER INSIDE THAT CALL'S \
      ARGUMENTS: an answer drafted in your reasoning first is written twice and read by no one \

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 pub const FINAL_OUTPUT_TOOL_NAME: &str = "recipe__final_output";
 pub const FINAL_OUTPUT_CONTINUATION_MESSAGE: &str =
-    "You MUST call the `final_output` tool NOW with the final output for the user.";
+    "You MUST call the `recipe__final_output` tool NOW with the final output for the user.";
 
 pub struct FinalOutputTool {
     pub response: Response,
@@ -37,9 +37,9 @@ impl FinalOutputTool {
 
     pub fn tool(&self) -> Tool {
         let instructions = formatdoc! {r#"
-            The final_output tool collects the final output for the user and provides validation for structured JSON final output against a predefined schema.
+            The {FINAL_OUTPUT_TOOL_NAME} tool collects the final output for the user and provides validation for structured JSON final output against a predefined schema.
 
-            This final_output tool MUST be called with the final output for the user.
+            This {FINAL_OUTPUT_TOOL_NAME} tool MUST be called with the final output for the user.
             
             Purpose:
             - Collects the final output for the user
@@ -47,7 +47,7 @@ impl FinalOutputTool {
             - Provides clear validation feedback when outputs don't match the schema
             
             Usage:
-            - Call the `final_output` tool with your JSON final output passed as the argument.
+            - Call the `{FINAL_OUTPUT_TOOL_NAME}` tool with your JSON final output passed as the argument.
             
             The expected JSON schema format is:
 
@@ -82,8 +82,8 @@ impl FinalOutputTool {
         formatdoc! {r#"
             # Final Output Instructions
 
-            You MUST use the `final_output` tool to collect the final output for the user rather than providing the output directly in your response.
-            The final output MUST be a valid JSON object that is provided to the `final_output` tool when called and it must match the following schema:
+            You MUST use the `{FINAL_OUTPUT_TOOL_NAME}` tool to collect the final output for the user rather than providing the output directly in your response.
+            The final output MUST be a valid JSON object that is provided to the `{FINAL_OUTPUT_TOOL_NAME}` tool when called and it must match the following schema:
 
             {}
 
@@ -175,6 +175,36 @@ mod tests {
             },
             "required": ["user", "tags"]
         })
+    }
+
+    #[tokio::test]
+    async fn every_completion_instruction_names_the_registered_callable_tool() {
+        let mut output = FinalOutputTool::new(Response {
+            json_schema: Some(json!({
+                "type": "object", "required": ["summary"],
+                "properties": {"summary": {"type": "string"}}
+            })),
+        });
+        let registered = output.tool();
+        let prompts = [
+            registered.description.as_deref().unwrap().to_string(),
+            output.system_prompt(),
+            FINAL_OUTPUT_CONTINUATION_MESSAGE.to_string(),
+        ];
+        for prompt in prompts {
+            let names: Vec<_> = prompt.split('`').skip(1).step_by(2).collect();
+            assert!(!names.is_empty(), "instruction must name its tool");
+            for name in names {
+                assert_eq!(name, registered.name.as_ref());
+                let call = CallToolRequestParams::new(name.to_string())
+                    .with_arguments(object!({"summary": "handoff complete"}));
+                assert!(output.execute_tool_call(call).await.result.await.is_ok());
+                assert_eq!(
+                    output.final_output.as_deref(),
+                    Some(r#"{"summary":"handoff complete"}"#)
+                );
+            }
+        }
     }
 
     #[test]

@@ -175,7 +175,7 @@ use fleet_order::{
 // per-engine `live_fleet_slots` reads it as its fallback through this one re-export.
 pub(super) use fleet_order::fleet_slot_models;
 
-const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
+use goose::agents::final_output_tool::FINAL_OUTPUT_TOOL_NAME as FINAL_OUTPUT_TOOL;
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
 /// `fold_research_outcome` string-matches to classify a lane as `judge_ended` rather than
 /// laundering it into `provider_error`. ONE constant at the emit site, the matcher and the test,
@@ -19201,7 +19201,7 @@ impl GooseAgentDispatcher {
              NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE, AS OWNERSHIP DECLARATIONS — a claim of \
              territory, not a task plan. The next step reads each slice's files out of its objective, \
              so a slice that names none forces it to guess. Do NOT plan tasks or dependencies. Do NOT \
-             write code. Call the final_output tool once \
+             write code. Call the {FINAL_OUTPUT_TOOL} tool once \
              with the slices.{sections_block}{existing_block}"
         );
         // OPEN-1: above the arming floor the opener consumes the spec's OWN structure — an
@@ -19445,7 +19445,7 @@ impl GooseAgentDispatcher {
              modules together, runs `{test_cmd}`, boots the app, and exercises the commands the request \
              advertises. It must own no files: a task that owns files is failed when an upstream task \
              fails, and this one has to run precisely when something upstream went wrong.\n\n\
-             Call the final_output tool once with the subtasks."
+             Call the {FINAL_OUTPUT_TOOL} tool once with the subtasks."
         );
         // THE FILES ALREADY ON DISK. This is what `normalize_plan_files_to_package` used to read — an
         // on-disk collision test, the one deterministic rewrite that did not map cleanly onto a REVIEW
@@ -25525,7 +25525,7 @@ impl GooseAgentDispatcher {
             // "STOP WHEN GREEN" tells a verifier to chase a pass it must never manufacture (F851).
             // Its job ends at one honest pass, red or green.
             "- STOP AFTER ONE HONEST PASS. Run the named checks ONCE, report exactly what each \
-             printed (verbatim output, pass or fail), then call final_output. There is nothing for \
+             printed (verbatim output, pass or fail), then call recipe__final_output. There is nothing for \
              you to fix and no green to chase — a failing check reported faithfully IS the job done.\n"
         } else if repairing {
             // THE THIRD EXIT IN A REPAIR PROMPT, and the quietest. "STOP WHEN GREEN, the MOMENT
@@ -25538,14 +25538,14 @@ impl GooseAgentDispatcher {
              green: the suite passes on the app the findings were measured against. For each \
              finding, the line your task asks for — FIXED with the command/URL you ran and its \
              output, NOT FIXED with what still fails, or NOT REAL with the output that rules it \
-             out — then call final_output. A finding left silent is one the next round repeats \
+             out — then call recipe__final_output. A finding left silent is one the next round repeats \
              from scratch.\n"
         } else if kind_prompt_on {
-            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
+            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call recipe__final_output and finish. Do NOT \
              re-run pytest more than ~2 times, and pick a sensible default for anything UNSPECIFIED \
              rather than agonizing over it.\n"
         } else {
-            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
+            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call recipe__final_output and finish. Do NOT \
              re-run pytest more than ~2 times and do NOT keep tweaking an UNSPECIFIED detail (e.g. whether \
              multiple filters use AND vs OR): pick the sensible default, note it in one line, and STOP — a \
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \

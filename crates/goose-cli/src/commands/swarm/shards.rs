@@ -409,7 +409,7 @@ pub(super) fn split_system_prompt() -> String {
      apart, or the measurement is an artifact (a few short sections on one small file) — do not \
      invent shards: return exactly ONE shard with id `whole`, its responsibility stating the reason \
      in one sentence, and an empty interface; the plan then stays exactly as it is.\n\n\
-     Do not restate the spec and do not write code. Call the final_output tool once with \
+     Do not restate the spec and do not write code. Call the recipe__final_output tool once with \
      {interface: {exports: [{name, kind, signature, purpose}], shared_state, layout: []}, \
      shards: [{id, responsibility, sections: [], provides: [], writes: []}]}."
         .to_string()
