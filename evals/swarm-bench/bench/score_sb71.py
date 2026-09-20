@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import subprocess
 import signal
+from dataclasses import asdict
 
 import score_sb7 as base
 import score_sb8
@@ -31,6 +32,21 @@ QUALITY_CHECKS = ('t_draw_budget', 't_pick_buffer', 't_pick_real_pass', 't_click
 BACKEND_EXCELLENCE = tuple(name for name, tier, _ in base.SB7_CHECKS if tier in {'X', 'R'})
 _draw_seed = base._draw_seed
 _port_holder = base._port_holder
+
+
+def reserved_payment_ids(schedule, payment_ids):
+    found = set()
+    def visit(value):
+        if isinstance(value, str) and value in payment_ids:
+            found.add(value)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child)
+    visit(schedule)
+    return sorted(found)
 
 
 class UnavailableEvidence(RuntimeError):
@@ -62,12 +78,20 @@ def _kill_owned(proc):
 @contextmanager
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
+    old_pack = base._write_expect_pack
+    def write_pack(ctx, path, created_rows, d1_target):
+        old_pack(ctx, path, created_rows, d1_target)
+        pack = json.loads(path.read_text())
+        pack['sb71_reserved_payment_ids'] = reserved_payment_ids(asdict(ctx.schedule), set(ctx.pack.index()))
+        path.write_text(json.dumps(pack))
     base.PROBE_SCRIPT = HERE / 'product_probe_sb71.mjs'
     base._kill = _kill_owned
+    base._write_expect_pack = write_pack
     try:
         yield
     finally:
         base.PROBE_SCRIPT, base._kill = old_probe, old_kill
+        base._write_expect_pack = old_pack
 
 
 def _probe_preflight():

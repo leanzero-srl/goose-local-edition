@@ -63,6 +63,15 @@ class AdmissionTests(unittest.TestCase):
             self.assertNotIn('score', diagnostic)
             self.assertEqual(diagnostic['partial_checks'], self.raw['checks'])
 
+    def test_visual_mutation_avoids_actual_backend_schedule_targets(self):
+        import fixtures_v3
+        from dataclasses import asdict
+        fixture = fixtures_v3.build('5a05d7631d9276e3')
+        ids = score.reserved_payment_ids(asdict(fixture.schedule), set(fixture.index()))
+        self.assertIn(fixture.schedule.ooo_pair['payment_id'], ids)
+        self.assertIn(fixture.schedule.forged_event['payment_id'], ids)
+        self.assertLess(len(ids), len(fixture.payments))
+
     def test_missing_partial_and_vacuous_evidence_cannot_admit(self):
         self.assertEqual(score.admit(self.raw, [])['score'], .599)
         self.assertEqual(self.fail('s_tower_geometry', .999)['score'], .699)
