@@ -470,6 +470,11 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
   }
   // Objectives from the tick record's orient plan.
   const rec = read.ticks.find((t) => t.tick === tick);
+  for (const report of rec?.lanes ?? []) {
+    if (typeof report.key !== 'string' || typeof report.finding !== 'string') continue;
+    const row = rows.get(report.key);
+    if (row?.status === 'done' && report.finding.trim()) row.liveLine = report.finding.trim();
+  }
   if (rec?.orient?.lanes) {
     for (const p of rec.orient.lanes) {
       const r = rows.get(`t${tick}-${p.id}`);

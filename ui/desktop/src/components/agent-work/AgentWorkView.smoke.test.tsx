@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { IntlProvider } from 'react-intl';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import { foldDesk, type AgentWorkRead, type DeskState } from './agentWorkModel';
 import { TickClock } from './TickClock';
@@ -149,6 +150,61 @@ const read: AgentWorkRead = {
 };
 
 describe('Agent Work desk surfaces', () => {
+  it('uses the recorded finding for a completed lane while retaining its raw transcript', () => {
+    const model = foldDesk(
+      {
+        ...read,
+        events: [...read.events, { event: 'lane_done', tick: 4, key: 't4-demo-77' }],
+        ticks: [{ tick: 4, lanes: [{ key: 't4-demo-77', finding: 'The verified finding.' }] }],
+      },
+      NOW
+    )!;
+    expect(model.lanes[0].liveLine).toBe('The verified finding.');
+    expect(model.lanes[0].thinkingTail).toBe('the group ugroups says two owners');
+  });
+
+  it('leads with the source finding, keeps caveats visible and discloses full evidence', () => {
+    const model = foldDesk(
+      {
+        ...read,
+        pid: null,
+        ticks: [
+          {
+            tick: 4,
+            outcome: 'done',
+            lanes: [
+              {
+                key: 't4-source',
+                finding: 'Verified page finding.',
+                next_step: 'Exact title remains unverified.',
+              },
+            ],
+            synthesis: {
+              source: { mode: 'lane_report', lane: 'source', key: 't4-source' },
+              handoff: 'Full source evidence preserved.',
+              facts: [],
+              asks: [],
+              staged: [],
+              pending: [],
+              log_line: 'Delivered.',
+            },
+          },
+        ],
+      },
+      NOW
+    )!;
+    render(
+      <IntlProvider locale="en">
+        <AgentResults model={model} />
+      </IntlProvider>
+    );
+    expect(screen.getByText('Verified page finding.')).toBeTruthy();
+    expect(screen.getByText('Exact title remains unverified.')).toBeTruthy();
+    expect(screen.queryByText('Full source evidence preserved.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Evidence and full report' }));
+    expect(screen.getByText('Full source evidence preserved.')).toBeTruthy();
+  });
+
   it('shows direct delivery as a handoff without inventing a synthesis call', () => {
     const model = foldDesk({ ...read, state: { ...state, phase: 'handoff' } }, NOW)!;
     const { container } = render(

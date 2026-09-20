@@ -30,50 +30,68 @@ export function AgentResults({ model }: { model: DeskModel }) {
         />
       ) : ticks.length > 0 ? (
         <div className="space-y-6">
-          {ticks.map((tick) => (
-            <article key={tick.tick} className="min-w-0">
-              <div className="mb-3 flex items-center gap-2 text-xs text-lz-ink-2">
-                <Bot size={16} />
-                <span>Agent · run {tick.tick}</span>
-                {tick.synthesis?.source?.mode === 'lane_report' && <span>Worker report</span>}
-                <span className="ml-auto">
-                  {tick.outcome ??
-                    (active && tick.tick === model.tick ? 'In progress' : 'Interrupted')}
-                </span>
-              </div>
-              {tick.notes?.map((note, index) => (
-                <p key={index} className="mb-3 rounded-lg bg-lz-surface-2 p-3 text-sm">
-                  {note}
-                </p>
-              ))}
-              <MarkdownContent
-                content={
-                  tick.synthesis?.handoff ||
-                  tick.synthesis?.log_line ||
-                  tick.summary ||
-                  'No summary was recorded for this run.'
-                }
-              />
-              {!!tick.synthesis?.facts.length && (
-                <ActivityDisclosure label={`${tick.synthesis.facts.length} recorded findings`}>
-                  <ul className="space-y-2 px-3 py-2 text-sm">
-                    {tick.synthesis.facts.map((fact, index) => (
-                      <li key={index}>{fact}</li>
-                    ))}
-                  </ul>
-                </ActivityDisclosure>
-              )}
-              {!!tick.synthesis?.pending.length && (
-                <ActivityDisclosure label="Next steps">
-                  <ul className="space-y-2 px-3 py-2 text-sm">
-                    {tick.synthesis.pending.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </ActivityDisclosure>
-              )}
-            </article>
-          ))}
+          {ticks.map((tick) => {
+            const source = tick.synthesis?.source;
+            const report =
+              source?.mode === 'lane_report'
+                ? tick.lanes?.find((lane) => lane.key === source.key)
+                : undefined;
+            const finding = typeof report?.finding === 'string' ? report.finding : '';
+            const nextStep = typeof report?.next_step === 'string' ? report.next_step : '';
+            return (
+              <article key={tick.tick} className="min-w-0">
+                <div className="mb-3 flex items-center gap-2 text-xs text-lz-ink-2">
+                  <Bot size={16} />
+                  <span>Agent · run {tick.tick}</span>
+                  {tick.synthesis?.source?.mode === 'lane_report' && <span>Worker report</span>}
+                  <span className="ml-auto">
+                    {tick.outcome ??
+                      (active && tick.tick === model.tick ? 'In progress' : 'Interrupted')}
+                  </span>
+                </div>
+                {tick.notes?.map((note, index) => (
+                  <p key={index} className="mb-3 rounded-lg bg-lz-surface-2 p-3 text-sm">
+                    {note}
+                  </p>
+                ))}
+                <MarkdownContent
+                  content={
+                    finding ||
+                    tick.synthesis?.handoff ||
+                    tick.synthesis?.log_line ||
+                    tick.summary ||
+                    'No summary was recorded for this run.'
+                  }
+                />
+                {finding && nextStep && <MarkdownContent content={nextStep} />}
+                {finding && tick.synthesis?.handoff && (
+                  <ActivityDisclosure label="Evidence and full report">
+                    <div className="px-3 py-2">
+                      <MarkdownContent content={tick.synthesis.handoff} />
+                    </div>
+                  </ActivityDisclosure>
+                )}
+                {!finding && !!tick.synthesis?.facts.length && (
+                  <ActivityDisclosure label={`${tick.synthesis.facts.length} recorded findings`}>
+                    <ul className="space-y-2 px-3 py-2 text-sm">
+                      {tick.synthesis.facts.map((fact, index) => (
+                        <li key={index}>{fact}</li>
+                      ))}
+                    </ul>
+                  </ActivityDisclosure>
+                )}
+                {!!tick.synthesis?.pending.length && (
+                  <ActivityDisclosure label="Next steps">
+                    <ul className="space-y-2 px-3 py-2 text-sm">
+                      {tick.synthesis.pending.map((item, index) => (
+                        <li key={index}>{item}</li>
+                      ))}
+                    </ul>
+                  </ActivityDisclosure>
+                )}
+              </article>
+            );
+          })}
         </div>
       ) : null}
     </Panel>
