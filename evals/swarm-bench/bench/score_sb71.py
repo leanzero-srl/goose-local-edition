@@ -40,6 +40,32 @@ _draw_seed = base._draw_seed
 _port_holder = base._port_holder
 
 
+class ReadStream(threading.Thread):
+    """Preserve SB7 sampling without shadowing Python 3.12 Thread._stop()."""
+
+    def __init__(self, url, pids):
+        super().__init__(daemon=True)
+        self.base, self.pids = url, pids
+        self.samples = []
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            timestamp = time.time()
+            _status, summary, _raw, _headers = base._get(f'{self.base}/api/summary', timeout=4)
+            rows = {}
+            for pid in self.pids:
+                _status, row, _raw, _headers = base._get(f'{self.base}/api/payments/{pid}', timeout=4)
+                if isinstance(row, dict) and row.get('id'):
+                    rows[pid] = row
+            if isinstance(summary, dict) and summary:
+                self.samples.append({'t': timestamp, 'summary': summary, 'rows': rows})
+            self._stop_event.wait(0.25)
+
+
 class RecordedAppOutput:
     def __init__(self, path):
         self.path = path
@@ -229,6 +255,7 @@ def resync_runtime(mark_phase):
 @contextmanager
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
+    old_read_stream = base._ReadStream
     old_pack = base._write_expect_pack
     old_subprocess, old_wait_total = base.subprocess, base._wait_total
     old_get, old_sse_head = base._get, base._sse_head
@@ -275,6 +302,7 @@ def probe_runtime():
         pack['sb71_reserved_payment_ids'] = reserved_payment_ids(asdict(ctx.schedule), set(ctx.pack.index()))
         path.write_text(json.dumps(pack))
     base.PROBE_SCRIPT = HERE / 'product_probe_sb71.mjs'
+    base._ReadStream = ReadStream
     base._kill = _kill_owned
     base._write_expect_pack = write_pack
     base.subprocess = ScorerProcesses()
@@ -285,6 +313,7 @@ def probe_runtime():
         yield endpoint_absences
     finally:
         base.PROBE_SCRIPT, base._kill = old_probe, old_kill
+        base._ReadStream = old_read_stream
         base._write_expect_pack = old_pack
         base.subprocess, base._wait_total = old_subprocess, old_wait_total
         base._get, base._sse_head = old_get, old_sse_head

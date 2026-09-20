@@ -10,6 +10,57 @@ import sys
 import score_sb71 as score
 
 
+class ReadStreamTests(unittest.TestCase):
+    def test_real_thread_samples_summary_first_and_joins(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        requests = []
+        sampled = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_GET(self):
+                requests.append(self.path)
+                value = {'count': 1} if self.path == '/api/summary' else {'id': 'payment-a', 'version': 7}
+                body = json.dumps(value).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if self.path == '/api/payments/payment-a':
+                    sampled.set()
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
+        serving.start()
+        original = score.base._ReadStream
+        try:
+            with score.probe_runtime():
+                self.assertIs(score.base._ReadStream, score.ReadStream)
+                reader = score.base._ReadStream(f'http://127.0.0.1:{server.server_port}', ['payment-a'])
+                reader.start()
+                self.assertTrue(sampled.wait(5))
+                reader.stop()
+                reader.join(5)
+                self.assertFalse(reader.is_alive())
+                self.assertTrue(callable(reader._stop) if hasattr(reader, '_stop') else True)
+                self.assertEqual(requests[:2], ['/api/summary', '/api/payments/payment-a'])
+                self.assertEqual(reader.samples[0]['summary'], {'count': 1})
+                self.assertEqual(reader.samples[0]['rows'], {'payment-a': {'id': 'payment-a', 'version': 7}})
+                self.assertGreater(reader.samples[0]['t'], 0)
+            self.assertIs(score.base._ReadStream, original)
+            with self.assertRaisesRegex(RuntimeError, 'control exception'):
+                with score.probe_runtime():
+                    raise RuntimeError('control exception')
+            self.assertIs(score.base._ReadStream, original)
+        finally:
+            server.shutdown()
+            serving.join(5)
+            server.server_close()
+
+
 class AdmissionTests(unittest.TestCase):
     def setUp(self):
         self.raw = {'score': 1.0, 'checks': [
