@@ -33,3 +33,9 @@ The first full reference (seed `5a05d7631d9276e3`) earned 0.9907 but was correct
 Animation adversaries include a collar disappearing during the middle of the motion. Both occupied moving pixels and vacated pixels are now required at observed draw times; the disappearing control fails all47–59 occupied witnesses while the real reference passes them. Solid geometry, static/stepped motion, and a second fixture seed passed the final four control tests. Full combined reference rerun remains pending. Original SB7 files remain unchanged.
 
 Mac screen lock currently prevents the required installed Benchmark UI launch. No paid Gemini call has been made. The staged signed app requires a final harness refresh after these scorer changes.
+
+## Combined reference e7e7b8d81
+
+The final structured scene and every S/Q/M visual row passed in the combined seed5a05d7631d9276e3 run. All X/R backend checks passed; critical multiplier1.0. Earned score0.9583, admission ceiling1.0, but reference acceptance was REFUSED because p_stream_apply and e_stream_apply_latency recorded no application time. The raw stream observation independently shows one batch,28uploadedbytes,no reallocations,digestOktrue and the correct changed pixel. This discrepancy is being traced; no timing credit is fabricated.
+
+Evidence is retained under `evals/swarm-bench/runs/sb71-validation/20260920/sb71-full-reference-e7e7b8d81-evidence/`, including raw API/browser observations, screenshots, video and logs. The signed staged payload receipt is retained beside it. This remains reference validation, not a Gemini result or measured cost saving.

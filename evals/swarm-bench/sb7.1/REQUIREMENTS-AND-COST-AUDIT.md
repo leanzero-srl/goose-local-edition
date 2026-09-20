@@ -1,6 +1,6 @@
 # SB7.1: requirements and measured cost audit
 
-Status: design in progress, 2026-09-20. No SB7.1 model run has started. SB7 remains the default. SB8 artifacts are retained as experiments; its 100% score is not evidence of SB7-equivalent difficulty.
+Status: implementation under reference validation, 2026-09-20. No SB7.1 model run has started. The staged app explicitly selects SB7.1 for the Google pilot; SB7 remains available and remains the local-run default. SB8 artifacts are retained as experiments; its 100% score is not evidence of SB7-equivalent difficulty.
 
 ## User requirements
 
@@ -58,7 +58,7 @@ Thus shrinking the task is not the first justified cost intervention. Grader/ref
 - The candidate tests its own implementation and hands over on completion. The external scorer runs afterward; the model never waits for or drives private grading.
 - Record model usage, cache usage, measured build duration and grader duration separately. Refuse invented dollar estimates when rates or usage semantics are missing.
 - Grade screenshots and mechanism observations in the same browser state. Visible fallback, hidden/covered canvas, offscreen-only rendering and blank default framebuffer cannot retain visualization credit.
-- Structural and motion checks must observe geometry and pixels: connected moving parts, dimensions, depth/occlusion, backend-commanded pose, load attachment and time-series trajectory. A changed screenshot alone is insufficient animation evidence.
+- Structural and motion checks must observe geometry and pixels: tower components, dimensions, depth/occlusion, committed payment versions, currency collars and their time-series trajectory. A changed screenshot alone is insufficient animation evidence.
 - Score readability and presentation with transparent, reproducible criteria and reference/mutant comparisons. Avoid hardcoded aesthetic preferences or a model judge being the sole authority.
 - Preserve SB7's detailed per-check evidence, root-cause attribution, severity explanation and screenshot viewer. Keep the original SB7 scorer and results unchanged.
 
