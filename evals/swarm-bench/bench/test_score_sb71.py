@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from pathlib import Path
 import tempfile
 import json
+import subprocess
+import sys
 import score_sb71 as score
 
 
@@ -80,6 +82,35 @@ class AdmissionTests(unittest.TestCase):
         self.raw['checks'][0].pop('parts')
         self.raw['sched_unreached'] = ['outbox_kill']
         self.assertEqual(score.admit(self.raw, self.rows)['score'], .899)
+
+
+class ScorerRuntimeTests(unittest.TestCase):
+    def test_chatty_app_completes_and_full_output_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with score.probe_runtime():
+                child = score.base.subprocess.Popen(
+                    [sys.executable, '-c', "import sys;sys.stdout.write('x'*(2*1024*1024));sys.stdout.flush()"],
+                    cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, start_new_session=True)
+                try:
+                    self.assertEqual(child.wait(timeout=5), 0)
+                    self.assertEqual(child.stdout.read(), 'x' * (2 * 1024 * 1024))
+                    probe = score.base.subprocess.run([sys.executable, '-c', "print('probe capture')"],
+                                                     capture_output=True, text=True)
+                    self.assertEqual(probe.stdout, 'probe capture\n')
+                finally:
+                    score._kill_owned(child)
+            self.assertIs(score.base.subprocess, subprocess)
+
+    def test_only_explicit_not_implemented_short_circuits_sync_wait(self):
+        with patch.object(score.base, '_wait_total', return_value=(True, 12, 100)) as original:
+            with score.probe_runtime():
+                with patch.object(score.base, '_get', return_value=(501, {}, b'', {})):
+                    self.assertEqual(score.base._wait_total('http://app', 100, 420), (False, None, None))
+                    original.assert_not_called()
+                with patch.object(score.base, '_get', return_value=(503, {}, b'', {})):
+                    self.assertEqual(score.base._wait_total('http://app', 100, 420), (True, 12, 100))
+                    original.assert_called_once_with('http://app', 100, 420)
 
 
 if __name__ == '__main__':

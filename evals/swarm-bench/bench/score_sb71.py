@@ -34,6 +34,30 @@ _draw_seed = base._draw_seed
 _port_holder = base._port_holder
 
 
+class RecordedAppOutput:
+    def __init__(self, path):
+        self.path = path
+
+    def read(self):
+        return self.path.read_text(errors='replace')
+
+
+class ScorerProcesses:
+    """Drain-free app logs prevent HTTP request logging from filling an unread pipe."""
+    def __getattr__(self, name):
+        return getattr(subprocess, name)
+
+    def Popen(self, *args, **kwargs):
+        if kwargs.get('stdout') != subprocess.PIPE or not kwargs.get('start_new_session'):
+            return subprocess.Popen(*args, **kwargs)
+        directory = Path(kwargs['cwd']) / 'scorer-logs'
+        directory.mkdir(exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix='app-', suffix='.log', dir=directory, delete=False) as log:
+            proc = subprocess.Popen(*args, **{**kwargs, 'stdout': log})
+        proc.stdout = RecordedAppOutput(Path(log.name))
+        return proc
+
+
 def reserved_payment_ids(schedule, payment_ids):
     found = set()
     def visit(value):
@@ -79,6 +103,12 @@ def _kill_owned(proc):
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
     old_pack = base._write_expect_pack
+    old_subprocess, old_wait_total = base.subprocess, base._wait_total
+    def wait_total(url, want, seconds):
+        status, _body, _raw, _headers = base._get(url + '/api/payments?limit=1', timeout=8)
+        if status == 501:
+            return False, None, None
+        return old_wait_total(url, want, seconds)
     def write_pack(ctx, path, created_rows, d1_target):
         old_pack(ctx, path, created_rows, d1_target)
         pack = json.loads(path.read_text())
@@ -87,11 +117,14 @@ def probe_runtime():
     base.PROBE_SCRIPT = HERE / 'product_probe_sb71.mjs'
     base._kill = _kill_owned
     base._write_expect_pack = write_pack
+    base.subprocess = ScorerProcesses()
+    base._wait_total = wait_total
     try:
         yield
     finally:
         base.PROBE_SCRIPT, base._kill = old_probe, old_kill
         base._write_expect_pack = old_pack
+        base.subprocess, base._wait_total = old_subprocess, old_wait_total
 
 
 def _probe_preflight():
@@ -242,7 +275,7 @@ def main():
             server.server_close()
         evidence = a.json_out.with_suffix('').with_name(a.json_out.stem + '-evidence')
         evidence.mkdir(parents=True, exist_ok=False)
-        for name in ['sb7-shots', 'bench-media']:
+        for name in ['sb7-shots', 'bench-media', 'scorer-logs']:
             if (candidate / name).exists():
                 shutil.copytree(candidate / name, evidence / name)
         shutil.copy2(trace, evidence / 'vendor-trace.jsonl')
