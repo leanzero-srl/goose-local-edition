@@ -339,10 +339,19 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
             .get("promptTokenCount")
             .and_then(|v| v.as_u64())
             .map(|v| v as i32);
-        let output_tokens = usage_meta_data
+        let candidate_tokens = usage_meta_data
             .get("candidatesTokenCount")
             .and_then(|v| v.as_u64())
             .map(|v| v as i32);
+        let thought_tokens = usage_meta_data
+            .get("thoughtsTokenCount")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as i32);
+        // Google bills generated reasoning as output, separately from candidatesTokenCount.
+        let output_tokens = match (candidate_tokens, thought_tokens) {
+            (Some(candidate), Some(thought)) => Some(candidate + thought),
+            (candidate, thought) => candidate.or(thought),
+        };
         let total_tokens = usage_meta_data
             .get("totalTokenCount")
             .and_then(|v| v.as_u64())
@@ -722,6 +731,28 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(120));
         assert_eq!(usage.cache_read_input_tokens, Some(80));
         assert_eq!(usage.cache_write_input_tokens, None);
+    }
+
+    #[test]
+    fn test_get_usage_counts_generated_thoughts_without_double_counting_cache() {
+        let usage = get_usage(&json!({"usageMetadata": {
+            "promptTokenCount": 100, "cachedContentTokenCount": 80,
+            "candidatesTokenCount": 20, "thoughtsTokenCount": 30, "totalTokenCount": 150
+        }}))
+        .unwrap();
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(50));
+        assert_eq!(usage.total_tokens, Some(150));
+        assert_eq!(usage.cache_read_input_tokens, Some(80));
+        let thinking_only =
+            get_usage(&json!({"usageMetadata": {"thoughtsTokenCount": 30}})).unwrap();
+        assert_eq!(thinking_only.output_tokens, Some(30));
+        assert_eq!(
+            get_usage(&json!({"usageMetadata": {}}))
+                .unwrap()
+                .output_tokens,
+            None
+        );
     }
 
     #[test]
