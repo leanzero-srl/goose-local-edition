@@ -34,7 +34,7 @@ These are records of expensive trajectories, not clean paired cost comparisons. 
 
 ### Confirmed Gemini contamination and wasted trajectory
 
-The primary session contains 586 unique shell tool-request IDs. Raw console marker counts are unreliable: later commands read the console itself, causing earlier commands to appear again in output.
+The primary session contains 586 unique shell tool-request IDs: 166 before the reference copy and 420 afterward. Before the copy, 122 commands directly name scorer/probe files. There are 88 actual compaction markers, 14 before and 74 after the copy. These counts were extracted from stored requests, not repeated console output. Raw console marker counts are unreliable: later commands read the console itself, causing earlier commands to appear again in output.
 
 At 2026-09-09 17:56:41 UTC, actual tool request in message 759520 reads the private scorer. At 18:23:05 UTC, message 759876 / tool request `af07c124-8dd3-4365-bb75-d3d21016b664` executes:
 
@@ -65,3 +65,11 @@ Thus shrinking the task is not the first justified cost intervention. Grader/ref
 ## Acceptance before claiming a cheaper, stronger benchmark
 
 A correct reference must pass; structurally wrong, visually misleading, uncoupled and static-animation mutants must fail for their actual defects. Freeze the candidate contract before a paid run. Compare fresh isolated entrants on model time, actual usage and correctly rendered product evidence. Cost reduction and frontier difficulty remain unproven until those measurements exist; neither altered weights nor a lower score alone establishes them.
+
+## Restoration verification
+
+Commit 5f24a45d0 restores SB7 as the default for both local and Gemini app launches while retaining historical SB8 results. The screenshot reader recovers the actual three camera captures from the completed Gemini SB8 tree. The UI now shows the recorded A–E formula rather than SB7 labels/formula, includes the missing excellence tier, and labels legacy images as camera captures, not before/after repairs.
+
+Validation: 235 desktop test files / 1,999 tests passed, plus Node24 TypeScript and ESLint. A signed build was installed in `/Applications/Goose.app`. Live native-app readback showed “New runs use SB-7: Meridian Payments Console,” all three real Gemini camera screenshots, correct historical weights 10/20/45/20/5, and the isometric image opened successfully in the full viewer. No model run was launched.
+
+The superseded empty payments-console starter draft is preserved under `/tmp/sb71-superseded-starter-20260920`; it is not part of the active source or advertised SB7.1 contract. Implementation of the richer visual subject awaits the user's clarification.
