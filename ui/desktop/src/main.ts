@@ -1,3 +1,4 @@
+import { spawnBenchmarkWithPower } from './benchPower';
 import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
 import { benchmarkProfileDirectory } from './benchProfile';
@@ -2564,6 +2565,7 @@ const samplingEnv = (s: RunSampling): Record<string, string> => ({
 });
 
 interface ActiveBenchRun {
+  releasePower: () => void;
   phase: BenchmarkPhase;
   provider?: string;
   child: ReturnType<typeof spawn>;
@@ -3189,7 +3191,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
 
   return await new Promise((resolvePromise, reject) => {
     const python = benchmarkPythonLaunch(runner, [], { ...process.env, ...runtime.env });
-    const child = spawn(
+    const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () => spawn(
       runtime.python,
       // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
       // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
@@ -3268,8 +3270,9 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
             : {}),
         },
       }
-    );
+    ));
     activeBenchRun = {
+      releasePower,
       phase: 'boot',
       ...(cloud ? { provider: cloud.provider } : {}),
       child,
@@ -3523,6 +3526,7 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
   }
   log.info(`[benchmark-cancel] ${why}: per-pid ${owned.join(',')}`);
   if (errors.length) return { ok: false, error: `Some benchmark processes could not be stopped: ${errors.join('; ')}` };
+  run.releasePower();
   return { ok: true };
 };
 
@@ -5581,7 +5585,10 @@ let relaunchOnQuit = false;
 app.on('will-quit', async () => {
   // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
   // synchronous so it lands before Electron finishes quitting (U-M8).
-  if (activeBenchRun !== null) cancelActiveBenchRun('app quitting');
+  if (activeBenchRun !== null) {
+    cancelActiveBenchRun('app quitting');
+    activeBenchRun?.releasePower();
+  }
   if (relaunchOnQuit) app.relaunch();
 
   const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
