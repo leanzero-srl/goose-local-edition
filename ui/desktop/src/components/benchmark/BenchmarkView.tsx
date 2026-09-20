@@ -1353,6 +1353,7 @@ export default function BenchmarkView() {
             actions={
               running ? (
                 <Button
+                  key="cancel-benchmark"
                   onClick={() => setConfirmCancel(true)}
                   disabled={cancelling}
                   title={
@@ -1372,6 +1373,7 @@ export default function BenchmarkView() {
                 </Button>
               ) : (
                 <Button
+                  key="start-benchmark"
                   variant="primary"
                   onClick={run}
                   icon={<Play />}

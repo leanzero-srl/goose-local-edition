@@ -1,4 +1,4 @@
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
@@ -340,5 +340,42 @@ it('joins the cloud result label and SB8 details to the exact session', async ()
   expect(screen.queryByText(/60% core build/)).toBeNull();
   expect(await screen.findByText('Swept collision')).toBeInTheDocument();
   expect(screen.getByText('E 100%')).toBeInTheDocument();
+  cleanup();
+});
+
+it('can cancel a cloud run while its launch IPC promise remains pending', async () => {
+  mockElectron({ sessions: [] });
+  let finish!: () => void;
+  let settled = false;
+  const pending = new Promise<null>((resolve) => {
+    finish = () => {
+      settled = true;
+      resolve(null);
+    };
+  });
+  electron().benchmarkRunCloud = vi.fn(() => pending);
+  const cancel = vi.fn(async () => ({ ok: true }));
+  electron().benchmarkCancel = cancel;
+  render(
+    <IntlTestWrapper>
+      <BenchmarkView />
+    </IntlTestWrapper>
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Google Gemini' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), {
+    target: { value: 'gemini-3.8-flash' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
+  const stop = await screen.findByRole('button', { name: 'Cancel run' });
+  expect(settled).toBe(false);
+  expect(stop).toBeEnabled();
+  expect(stop).not.toHaveAttribute('aria-busy', 'true');
+  fireEvent.click(stop);
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel the run' }));
+  await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+  expect(settled).toBe(false);
+  expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
+  await act(async () => finish());
+  expect(await screen.findByRole('button', { name: 'Run benchmark' })).toBeEnabled();
   cleanup();
 });
