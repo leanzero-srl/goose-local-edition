@@ -3,6 +3,7 @@ import argparse, json, sqlite3, threading, urllib.request
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from gantry_oracle import initial, apply, valid
+from route_oracle import plan
 
 p=argparse.ArgumentParser();p.add_argument('--port',type=int,required=True);p.add_argument('--db',required=True);p.add_argument('--vendor',required=True);args=p.parse_args()
 root=Path(args.db);root.mkdir(parents=True,exist_ok=True)
@@ -30,9 +31,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path=='/three.js': self.answer(200,asset.read_bytes(),'application/javascript')
         else: self.send_error(404)
     def do_POST(self):
-        if self.path!='/api/commands': self.send_error(404);return
+        if self.path not in ('/api/commands','/api/plan'): self.send_error(404);return
         try: cmd=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))))
-        except (ValueError,TypeError): self.answer(400,{'error':'invalid_command'});return
+        except (ValueError,TypeError):
+            self.answer(400,{'error':'invalid_plan' if self.path=='/api/plan' else 'invalid_command'});return
+        if self.path=='/api/plan':
+            with lock:
+                state=json.loads(con.execute('select state from state').fetchone()[0])
+                status,value=plan(scene,state,cmd)
+            self.answer(status,value);return
         if not valid(cmd): self.answer(400,{'error':'invalid_command'});return
         body=json.dumps(cmd,sort_keys=True,separators=(',',':'))
         with lock:

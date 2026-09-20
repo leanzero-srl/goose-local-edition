@@ -61,6 +61,16 @@ await page.getByRole('spinbutton',{name:'X',exact:true}).fill('-10');await page.
 async function external(op,values){let current=await(await fetch(base+'/api/state')).json();let r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),revision:current.revision,op,...values})});if(!r.ok)throw Error('setup '+await r.text());return r.json()}
 await scenario('external state and load controls',async()=>{
 await external('move',{x:b.x,z:b.z,y:b.y+b.h,yaw:0});await external('grip',{boxId:b.id});await external('move',{x:b.x,z:b.z,y:5,yaw:0});await page.waitForTimeout(1400);let lifted=await shot('front');check('cargo_tracks_external_backend','C',near(lifted,project(sc,lifted,'front',[b.x,5+b.h/2,b.z]),b.color));check('revision_is_live','D',Number(await page.getByTestId('revision').innerText())===(await(await fetch(base+'/api/state')).json()).revision);
+// The same cargo must rotate in pixels, not only in the API's yaw field.
+const yaw=Math.atan2(b.d,b.w)*180/Math.PI;
+await external('move',{x:b.x,z:b.z,y:5,yaw});await page.waitForTimeout(1400);
+const rotated=await shot('front');
+const span=Math.max(sc.height+4,(sc.width+4)/(rotated.w/rotated.h));
+const expectedWidth=Math.hypot(b.w,b.d)*rotated.h/span;
+const xs=pixels(rotated,b.color).map(pt=>pt[0]);
+const actualWidth=xs.length?Math.max(...xs)-Math.min(...xs)+1:0;
+check('cargo_yaw_tracks_state','C',Math.abs(actualWidth-expectedWidth)<=Math.max(2,expectedWidth*.05),`projected width expected=${expectedWidth.toFixed(2)} observed=${actualWidth}`);
+await external('move',{x:b.x,z:b.z,y:5,yaw:0});await page.waitForTimeout(1100);
 // Exercise both load controls after the independently initiated lift.
 for(let [key,label] of [['x','X'],['z','Z'],['y','Height'],['yaw','Yaw']])await page.getByRole('spinbutton',{name:label,exact:true}).fill(String({x:b.x,z:b.z,y:0,yaw:0}[key]));
 await page.getByRole('button',{name:'Move',exact:true}).click();await page.waitForTimeout(350);
@@ -85,7 +95,7 @@ check('clean_console','E',errors.length===0,errors.join('; '));
 }catch(e){errors.push(String(e));check('browser_flow_failure','D',0,String(e));}
 finally{await browser.close()}
 // Missing checks stay zero rather than shrinking the denominator.
-const expected={C:['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','crane_tracks_state','cargo_tracks_external_backend'],D:['scene_canvas_size','real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],E:['clean_console']};
+const expected={C:['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','crane_tracks_state','cargo_tracks_external_backend','cargo_yaw_tracks_state'],D:['scene_canvas_size','real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],E:['clean_console']};
 for(let [tier,names] of Object.entries(expected))for(let name of names)if(!rows.some(r=>r.name===name))check(name,tier,0,'not reached: '+errors.join('; '));
 if(process.argv[2]==='load'){console.log(JSON.stringify({renderedRowCount:0,consoleErrors:{count:errors.length,texts:errors}}));process.exit(0)}
 console.log(JSON.stringify({checks:rows.filter(r=>r.name!=='browser_flow_failure'),errors}));

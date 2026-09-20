@@ -56,6 +56,31 @@ single box/obstacle that completely contains the carried rotated footprint (`uns
 Choose the highest valid support; check collision again after snapping. Commit box at the support height, preserving yaw; held becomes null. Touching support is legal.
 A collision/bounds check still applies. Held boxes remain in state.boxes (one box, never duplicated).
 
+## Optimal cargo route planning
+
+The same server must plan safe movement for the currently held box. Add one read-only endpoint,
+`POST /api/plan`, accepting `{revision,goal:{x,z,y,yaw},lattice:{x:[...],z:[...],y:[...],yaw:[...]}}`.
+Each lattice axis is a nonempty, strictly increasing list of finite numbers (booleans are not
+numbers). Goal has all four finite numeric components. Both the current pose and goal must occur
+exactly in these axis lists. Malformed bodies/lattices return 400 `invalid_plan`; a well-formed
+request at a stale revision returns 409 `stale_revision`; without a held box return 422 `not_holding`.
+The planner never changes state, revision or command receipts.
+
+The Cartesian product is the finite planning graph. A transition changes exactly ONE component
+to an adjacent entry in its axis list; the yaw list also connects its first and last entries.
+Every transition must satisfy the same entire swept move and bounds contract described above,
+including other boxes, obstacles, the carried footprint and shortest-arc rotation. Unusable nodes
+and edges are forbidden, not repaired or snapped. A transition costs
+`1 + abs(dx) + abs(dz) + 3*max(dy,0) + max(-dy,0) + abs(shortestYawDelta)/90`.
+Find the minimum TOTAL cost, not the fewest waypoints, a direct move, or a greedy detour.
+
+Return 200 `{revision,cost,route:[startPose,...,goalPose]}` with an optimal feasible route.
+Any route with the optimal cost is accepted; equal-cost tie-breaking is unrestricted. Start=goal
+returns the one-pose route and cost 0. If no feasible route exists return 422 `{error:"unreachable"}`.
+Grading scenes use fewer than 1,000 lattice poses and include detours, lifting, rotation and
+unreachable goals. The planner is tested through HTTP; no extra planning UI is required. Reuse
+geometry and persistence already built for the crane; do not add another service.
+
 ## The 3D scene is the primary product
 
 Render a real WebGL perspective/orthographic scene driven by /api/scene and /api/state:
@@ -95,9 +120,10 @@ refresh state. Refresh from backend at least once a second so external commands 
 
 ## Scoring and scope
 
-Backend correctness/durability 30%, rendered 3D 45%, working UI 20%, excellence 5%. Independent
+Backend correctness/durability 25%, rendered 3D 30%, working UI 15%, optimal route planning 25%,
+excellence 5%. Independent
 rungs award partial credit: boot/state → accurate scene → kinematics → real picking → swept
-collision → rotated support → concurrency/replay/restart. A superficial demo cannot score
+collision → rotated support → concurrency/replay/restart → optimal safe routes. A superficial demo cannot score
 high: missing 3D earns zero visual points, incorrect persistence loses its own checks and a
 critical multiplier; fabricated/cached state cannot satisfy seeded mutations. No points for
 source keywords, claimed test counts, self-reported scene graphs or an unverified canvas.

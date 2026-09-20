@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse, concurrent.futures, copy, hashlib, json, math, os, secrets, shutil, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from pathlib import Path
 import gantry_oracle as oracle
+import score_routes
 import vendor_service_v4 as vendor
 HERE=Path(__file__).resolve().parent
 VERSION='sb-8.0-rc'
-WEIGHTS={'A':.10,'B':.20,'C':.45,'D':.20,'E':.05}
+WEIGHTS={'A':.08,'B':.17,'C':.30,'D':.15,'E':.05,'F':.25}
+CORE_TIERS=['A','B','C','D','F']
 CRITICAL={'durable_state','atomic_rejection','concurrent_revision','cargo_tracks_external_backend','crane_tracks_state','swept_collision','rotated_support_overhang','short_arc_wrap','sat_disjoint_aabbs_overlap'}
 
 def _draw_seed(): return secrets.randbelow(2**31)
@@ -173,6 +175,10 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         check('durable_reordered_receipt','B',replay[0]==200 and equivalent(replay[1],receipts[first['id']][1]) and equivalent(request(base,'/api/state')[1],before))
         conflict=dict(first,x=-1)
         check('durable_conflict_precedence','B',request(base,'/api/commands',conflict)==(409,{'error':'id_conflict'}) and equivalent(request(base,'/api/state')[1],before))
+        stop(child);child=None
+        db=db.with_name(db.name+'-planning')
+        child=start(f'http://127.0.0.1:{port}')
+        rows+=score_routes.gather(sc,lambda path,body=None:request(base,path,body))
         # Browser starts from fresh state so every visual scenario has known, exposed targets.
         stop(child);child=None
         visual=db.with_name(db.name+'-visual');shutil.rmtree(visual,ignore_errors=True);db=visual
@@ -190,7 +196,7 @@ def gather(tree,port,db,trace,mark_phase=None,seed=None):
         log.close()
     return dict(checks=rows,fixture_seed=seed)
 
-BACKEND={'A':['boot_state','seeded_scene','empty_move','lift','durable_state','durable_scene'], 'B':['empty_release','unknown_box','misaligned_grip','grip','already_holding','reject_bounds','atomic_rejection','swept_collision','sat_disjoint_aabbs_overlap','rotated_support_overhang','unsupported_release','held_bounds','supported_release','regrip_preserves_yaw','short_arc_wrap','floor_release','overload','stale_revision','idempotent_replay','id_conflict','invalid_number_None','invalid_number_True','invalid_number_1','concurrent_revision','durable_receipt','stale_before_move','stale_before_grip','stale_before_release','retry_after_semantic','retry_after_malformed','retry_after_stale','concurrent_identical_retry','durable_reordered_receipt','durable_conflict_precedence'], 'C':['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','crane_tracks_state','cargo_tracks_external_backend'], 'D':['scene_canvas_size','real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],'E':['clean_console']}
+BACKEND={'A':['boot_state','seeded_scene','empty_move','lift','durable_state','durable_scene'], 'B':['empty_release','unknown_box','misaligned_grip','grip','already_holding','reject_bounds','atomic_rejection','swept_collision','sat_disjoint_aabbs_overlap','rotated_support_overhang','unsupported_release','held_bounds','supported_release','regrip_preserves_yaw','short_arc_wrap','floor_release','overload','stale_revision','idempotent_replay','id_conflict','invalid_number_None','invalid_number_True','invalid_number_1','concurrent_revision','durable_receipt','stale_before_move','stale_before_grip','stale_before_release','retry_after_semantic','retry_after_malformed','retry_after_stale','concurrent_identical_retry','durable_reordered_receipt','durable_conflict_precedence'], 'C':['webgl_geometry','seeded_box_geometry','columns_rails','bridge_beams','trolley_spreader','four_cables','spreader','wheels','crane_tracks_state','cargo_tracks_external_backend','cargo_yaw_tracks_state'], 'D':['scene_canvas_size','real_3d_pick','table_selection','ui_move_reaches_backend','visible_command_error','invalid_ui_move_is_atomic','revision_is_live','ui_release','ui_grip','orbit_changes_view','zoom_changes_view','camera_is_read_only'],'E':['clean_console'],'F':score_routes.CHECKS}
 def evaluate(ctx):
     by={r['name']:copy.deepcopy(r) for r in ctx['checks']};rows=[by.get(n,dict(name=n,tier=t,score=0,detail='not reached')) for t,names in BACKEND.items() for n in names]
     if by.get('webgl_geometry', {}).get('score', 0) != 1:
@@ -201,10 +207,10 @@ def evaluate(ctx):
     tiers={t:sum(r['score'] for r in rows if r['tier']==t)/len(names) for t,names in BACKEND.items()}
     inner=sum(WEIGHTS[t]*v for t,v in tiers.items());critical=math.prod(.6+.4*by.get(n,{'score':0})['score'] for n in CRITICAL)
     # Excellence is earned only while every core category works, never by a quiet empty page.
-    excellence=min(tiers[t] for t in ['A','B','C','D'])*tiers['E']
+    excellence=min(tiers[t] for t in CORE_TIERS)*tiers['E']
     score=(inner-WEIGHTS['E']*tiers['E']+WEIGHTS['E']*excellence)*critical
-    provenance={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in ('score_sb8.py','product_probe_v4.mjs','gantry_oracle.py')}
-    return dict(scorerVersion=VERSION,scorer_version=VERSION,scorer_files_sha256=provenance,score=score,scoreInner=inner,tiers=tiers,checks=rows,criticalMultiplier=critical,fixture_seed=ctx['fixture_seed'],calibrated=False)
+    provenance={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in ('score_sb8.py','product_probe_v4.mjs','gantry_oracle.py','route_oracle.py','score_routes.py')}
+    return dict(scorerVersion=VERSION,scorer_version=VERSION,scorer_files_sha256=provenance,spec_sha256=hashlib.sha256((HERE.parent/'spec-build-sb8.md').read_bytes()).hexdigest(),weights=WEIGHTS.copy(),core_tiers=CORE_TIERS.copy(),score=score,scoreInner=inner,tiers=tiers,checks=rows,criticalMultiplier=critical,fixture_seed=ctx['fixture_seed'],calibrated=False)
 def format_report(v,label=''):return f"{label} {VERSION}: {v['score']:.4f} (uncalibrated)"
 def main():
     p=argparse.ArgumentParser();p.add_argument('--tree',type=Path,required=True);p.add_argument('--port',type=int,default=8899);p.add_argument('--seed',type=int,required=True);p.add_argument('--json-out',type=Path);p.add_argument('--reference',action='store_true');a=p.parse_args()
