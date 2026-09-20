@@ -259,7 +259,7 @@ def main():
         # Scoring a clone preserves all prior screenshots, receipts and grading databases.
         candidate = Path(tmp) / 'candidate'
         shutil.copytree(root, candidate, ignore=shutil.ignore_patterns(
-            'graded*', 'sb7-shots', 'bench-media', 'sb7-empty-db', 'sb7-combined-db',
+            'graded*', 'sb7-shots', 'bench-media', 'scorer-logs', 'sb7-empty-db', 'sb7-combined-db',
             '__pycache__', '.swarm', 'engine-console.log'))
         trace = Path(tmp) / 'vendor-trace.jsonl'
         server = vendor.serve(a.port, trace, seed=a.seed)
