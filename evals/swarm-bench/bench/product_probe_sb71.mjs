@@ -64,6 +64,11 @@ import { join, dirname, relative, resolve } from 'path';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
 
 const err = (...a) => console.error('[probe]', ...a);
+function measuredApplicationSurfaceAbsent(glBeforePixelProbe, observations) {
+  return !!glBeforePixelProbe && Array.isArray(glBeforePixelProbe.contexts) &&
+    !glBeforePixelProbe.contexts.some(context=>!context.offscreen) && glBeforePixelProbe.defDraws===0 &&
+    observations.length>=2 && observations.every(o=>o.evaluationSucceeded===true&&o.present===false);
+}
 function streamReady(value) { const path=process.env.BENCH_SB71_STREAM_READY;if(!path)return;writeFileSync(path+'.tmp',JSON.stringify(value));renameSync(path+'.tmp',path); }
 
 function loadPlaywright() {
@@ -551,6 +556,14 @@ function selfcheck() {
     const stk = 'ReferenceError: x is not defined\n    at onLoad (http://127.0.0.1:54622/web/viz.js:1124:5)';
     if (stackFirstRelPath(stk) !== 'web/viz.js') failures.push('s stack line:col strip');
     if (stackFirstRelPath(undefined) !== '') failures.push('s missing stack not empty');
+  }
+  {
+    const absent=[{evaluationSucceeded:true,present:false},{evaluationSucceeded:true,present:false}];
+    const noGl={contexts:[],defDraws:0};
+    if(!measuredApplicationSurfaceAbsent(noGl,absent))failures.push('surface explicit absence not recognized');
+    for(const [gl,obs] of [[null,absent],[noGl,absent.slice(0,1)],[noGl,[...absent,{evaluationSucceeded:false}]],
+      [noGl,[...absent,{evaluationSucceeded:true,present:true}]],[{contexts:[{offscreen:false}],defDraws:0},absent]])
+      if(measuredApplicationSurfaceAbsent(gl,obs))failures.push('surface unavailable or existing application misclassified');
   }
   const ok = failures.length === 0;
   process.stdout.write(JSON.stringify({ selfcheck: ok ? 'ok' : 'fail', failures }) + '\n');
@@ -2933,6 +2946,7 @@ async function vizScenario(page, pack, H) {
     contextReal = { canvasFound: !!(pre && pre.found), glReadable: !!(pre && pre.glReadable) };
   }
   merge({ contextReal });
+  if(measuredApplicationSurfaceAbsent(glc0,debugSurfaceObservations))streamReady({state:'app_surface_absent',reason:'Repeated successful debug absence and no application WebGL context or draw before probe-created context'});
   if (!contextReal.glReadable) {
     if(pre)streamReady({state:'app_surface_absent',reason:pre.found?'Canvas has no readable WebGL context':'Visible canvas absent'});
     await saveShot('viz');
