@@ -46,7 +46,7 @@ import { startGooseServe, findGooseBinaryPath } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
-import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, defaultBenchmarkTier, defaultBenchmarkScorer } from './benchTierPayload';
+import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, defaultBenchmarkTier, benchmarkLaunchTier, benchmarkScorer, type CloudBenchmarkTier } from './benchTierPayload';
 import {
   outcomeFromSlot,
   findLaunchRow,
@@ -2473,12 +2473,13 @@ const bundledBrowserEnv = async (): Promise<Record<string, string>> => {
   };
 };
 
-let benchNodeMemo: string | null = null;
-const resolveBenchNode = async (): Promise<string> => {
-  if (benchNodeMemo) return benchNodeMemo;
+const benchNodeMemo = new Map<string, string>();
+const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>): Promise<string> => {
+  const cached = benchNodeMemo.get(tier);
+  if (cached) return cached;
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
   const node = path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
-  const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[defaultBenchmarkTier()]);
+  const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[tier]);
   const env = { ...process.env, ...await bundledBrowserEnv() };
   await new Promise<void>((resolve, reject) => {
     const child = spawn(node, [probe, '--preflight'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -2496,7 +2497,7 @@ const resolveBenchNode = async (): Promise<string> => {
       else reject(new Error(`Bundled benchmark browser failed: ${output.slice(-1500)}`));
     });
   });
-  benchNodeMemo = node;
+  benchNodeMemo.set(tier, node);
   return node;
 };
 
@@ -3067,7 +3068,7 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSampling, cloud?: { provider: string; model: string }) => {
+ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSampling, cloud?: { provider: string; model: string; tier: CloudBenchmarkTier }) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
@@ -3077,11 +3078,10 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   if (cloud) nodes = 1;
   const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
   const runSampling = cleanSampling(cloud ? undefined : sampling);
-  // Both cloud and local runs use the explicit active benchmark. Bundled experimental scorers
-  // remain available for historical evidence; they do not change the launch default.
+  // Cloud selection is explicit; local swarm retains the stable default.
   // The tier switches which spec/probe/scorer the harness
   // wires up, so a run is always scored by exactly one frozen version end to end.
-  const tier = defaultBenchmarkTier();
+  const tier = benchmarkLaunchTier(cloud);
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
   const sb71 = tier === 'sb-7.1';
@@ -3093,7 +3093,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
   // not ship) and benchmark-started carries the mismatch so the view can say an update is needed.
   const catalogMismatch = catalogMismatchOf(
     (await readBenchCatalogCache())?.benchmarks,
-    defaultBenchmarkScorer()
+    benchmarkScorer(tier)
   );
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
@@ -3126,7 +3126,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
     const rows = await readBenchSessionRows();
     rows.push({
       runId: cloudRunId,
-      scorerVersion: defaultBenchmarkScorer(),
+      scorerVersion: benchmarkScorer(tier),
       startedAt,
       outcome: 'running',
       nodes,
@@ -3149,7 +3149,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
     }
   };
 
-  const benchNode = await resolveBenchNode();
+  const benchNode = await resolveBenchNode(tier);
   const browserEnv = await bundledBrowserEnv();
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(
@@ -3272,7 +3272,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
       scored: false,
       lastLine: null,
       tier,
-      scorerVersion: defaultBenchmarkScorer(),
+      scorerVersion: benchmarkScorer(tier),
       ...(catalogMismatch ? { catalogMismatch } : {}),
     });
 

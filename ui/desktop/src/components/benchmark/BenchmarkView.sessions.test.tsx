@@ -102,8 +102,7 @@ function mockElectron(opts: { catalog?: unknown; sessions?: unknown[] } = {}) {
   e.benchmarkShots = vi.fn(async () => []);
   e.readSwarmRun = vi.fn(async () => null);
   e.fleetStatus = vi.fn(async () => ({}));
-  e.benchmarkCatalog =
-    'catalog' in opts ? opts.catalog : vi.fn(async () => CATALOG);
+  e.benchmarkCatalog = 'catalog' in opts ? opts.catalog : vi.fn(async () => CATALOG);
   e.benchmarkSessions = vi.fn(async () => ({ sessions: opts.sessions ?? SESSIONS }));
   e.benchmarkDeleteSession = vi.fn(async () => ({ ok: true }));
 }
@@ -117,13 +116,22 @@ describe('the benchmark sections and their sessions', () => {
     const swarm = vi.fn(async () => null);
     electron().benchmarkRunCloud = cloud;
     electron().benchmarkRun = swarm;
-    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Google Gemini' }));
     expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), { target: { value: 'gemini-3.8-flash' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Google model ID' }), {
+      target: { value: 'gemini-3.8-flash' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() => expect(cloud).toHaveBeenCalledWith('gemini-3.8-flash'));
+    await waitFor(() => expect(cloud).toHaveBeenCalledWith('gemini-3.8-flash', 'sb-7.1'));
     expect(swarm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'SB7 · legacy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
+    await waitFor(() => expect(cloud).toHaveBeenLastCalledWith('gemini-3.8-flash', 'sb-7'));
   });
 
   it('renders all four outcomes honestly — running pulses, finished carries its score, the dead ones say so', async () => {
@@ -238,9 +246,9 @@ describe('the benchmark sections and their sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete session' }));
 
     await waitFor(() =>
-      expect(
-        (electron().benchmarkDeleteSession as ReturnType<typeof vi.fn>).mock.calls
-      ).toEqual([['s-dnf']])
+      expect((electron().benchmarkDeleteSession as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+        ['s-dnf'],
+      ])
     );
   });
 
@@ -299,15 +307,34 @@ describe('the benchmark sections and their sessions', () => {
 
 it('joins the cloud result label and SB8 details to the exact session', async () => {
   const verdict = (await import('./sb8-failed.fixture.json')).default;
-  mockElectron({ sessions: [{
-    runId: 'cloud-fixture', scorerVersion: verdict.scorerVersion, startedAt: '2026-09-20T10:00:00Z',
-    endedAt: '2026-09-20T10:04:00Z', outcome: 'finished', score: verdict.score, tiers: { A: 1, B: 0.97, C: 1, D: 1 }, publishable: false,
-  }] });
+  mockElectron({
+    sessions: [
+      {
+        runId: 'cloud-fixture',
+        scorerVersion: verdict.scorerVersion,
+        startedAt: '2026-09-20T10:00:00Z',
+        endedAt: '2026-09-20T10:04:00Z',
+        outcome: 'finished',
+        score: verdict.score,
+        tiers: { A: 1, B: 0.97, C: 1, D: 1 },
+        publishable: false,
+      },
+    ],
+  });
   electron().benchmarkRead = vi.fn(async () => ({
-    label: 'gemini-3.8-flash · single agent', modelId: 'gemini-3.8-flash', runId: 'cloud-fixture',
-    scorerVersion: verdict.scorerVersion, score: verdict.score, tiers: verdict.tiers, verdict,
+    label: 'gemini-3.8-flash · single agent',
+    modelId: 'gemini-3.8-flash',
+    runId: 'cloud-fixture',
+    scorerVersion: verdict.scorerVersion,
+    score: verdict.score,
+    tiers: verdict.tiers,
+    verdict,
   }));
-  render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+  render(
+    <IntlTestWrapper>
+      <BenchmarkView />
+    </IntlTestWrapper>
+  );
   expect((await screen.findAllByText('gemini-3.8-flash · single agent')).length).toBeGreaterThan(0);
   expect(screen.queryByText('Your fleet')).toBeNull();
   expect(screen.queryByText(/60% core build/)).toBeNull();

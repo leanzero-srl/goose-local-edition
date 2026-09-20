@@ -50,3 +50,14 @@ export function defaultBenchmarkTier(): BenchTier {
 export function defaultBenchmarkScorer(): string {
   return TIER_SCORER[DEFAULT_BENCHMARK_TIER];
 }
+
+export type CloudBenchmarkTier = 'sb-7' | 'sb-7.1';
+export function benchmarkLaunchTier(cloud?: { tier: CloudBenchmarkTier }): BenchTier {
+  if (!cloud) return DEFAULT_BENCHMARK_TIER;
+  if (cloud.tier !== 'sb-7' && cloud.tier !== 'sb-7.1')
+    throw new Error('Choose SB7 or the SB7.1 payments pilot.');
+  return cloud.tier;
+}
+export function benchmarkScorer(tier: BenchTier): string {
+  return TIER_SCORER[tier];
+}

@@ -1,3 +1,4 @@
+import type { CloudBenchmarkTier } from '../../benchTierPayload';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -432,10 +433,7 @@ function boardColumns(own: {
       header: <span className="sr-only">Entrant</span>,
       width: 28,
       cell: (r) => (
-        <StatusDot
-          tone={r.mine ? 'accent' : 'stopped'}
-          label={r.mine ? 'your run' : 'baseline'}
-        />
+        <StatusDot tone={r.mine ? 'accent' : 'stopped'} label={r.mine ? 'your run' : 'baseline'} />
       ),
     },
     {
@@ -678,13 +676,21 @@ function SessionDetail({
           count={shots.length}
           headerRight={<span className={TYPE.meta}>captured app evidence</span>}
         >
-          {shots.length > 0 ? <ShotsStrip shots={shots} /> : (
-            <p className={TYPE.bodyMuted}>No app screenshots were recorded or could be read for this result.</p>
+          {shots.length > 0 ? (
+            <ShotsStrip shots={shots} />
+          ) : (
+            <p className={TYPE.bodyMuted}>
+              No app screenshots were recorded or could be read for this result.
+            </p>
           )}
         </Panel>
       )}
 
-      {mineMatched && session.scorerVersion.startsWith('sb-7.1') && <Panel title="Graded browser recording"><RunVideoEvidence workdir={mine?.workdir} /></Panel>}
+      {mineMatched && session.scorerVersion.startsWith('sb-7.1') && (
+        <Panel title="Graded browser recording">
+          <RunVideoEvidence workdir={mine?.workdir} />
+        </Panel>
+      )}
 
       <Panel
         title="Board"
@@ -712,8 +718,12 @@ function SessionDetail({
       <Panel title="Where the points went">
         <p className={cx('mb-3 max-w-[70ch]', TYPE.bodyMuted)}>
           {isSb8(session.scorerVersion)
-            ? Object.entries(SB8_TIERS).filter(([tier]) => ownRow?.tiers?.[tier as Tier] !== undefined).map(([tier, info]) => `${tier} ${info.name}`).join(' · ')
-            : `${TIER_LABELS.A} · ${TIER_LABELS.B} · ${TIER_LABELS.C} · ${TIER_LABELS.D}`}.
+            ? Object.entries(SB8_TIERS)
+                .filter(([tier]) => ownRow?.tiers?.[tier as Tier] !== undefined)
+                .map(([tier, info]) => `${tier} ${info.name}`)
+                .join(' · ')
+            : `${TIER_LABELS.A} · ${TIER_LABELS.B} · ${TIER_LABELS.C} · ${TIER_LABELS.D}`}
+          .
         </p>
         {ownRow?.tiers ? (
           <TierBreakdown rows={[ownRow]} />
@@ -729,7 +739,12 @@ function SessionDetail({
               Every number below is scorer evidence from YOUR run — the exact checks it ran, what
               each one saw, and what the misses cost.
             </p>
-            <ScoringDetail key={sessionKey(session)} verdict={mine.verdict} score={mine.score} scorerVersion={session.scorerVersion} />
+            <ScoringDetail
+              key={sessionKey(session)}
+              verdict={mine.verdict}
+              score={mine.score}
+              scorerVersion={session.scorerVersion}
+            />
           </>
         ) : mineMatched ? (
           <p className={TYPE.bodyMuted}>
@@ -785,6 +800,7 @@ const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}
 export default function BenchmarkView() {
   const [entrant, setEntrant] = useState<'swarm' | 'google'>('swarm');
   const [cloudModel, setCloudModel] = useState('');
+  const [cloudTier, setCloudTier] = useState<CloudBenchmarkTier>('sb-7.1');
   const [nodes, setNodes] = useState<NodeChoice>(3);
   // The pool's size caps the offered node counts and is the default; read once per mount (a device
   // edit is a config change, and the next mount sees it). Unreadable config keeps every choice.
@@ -1092,7 +1108,7 @@ export default function BenchmarkView() {
       // No tier argument — the user cannot choose a benchmark; main runs the active benchmark.
       const result =
         entrant === 'google'
-          ? await window.electron.benchmarkRunCloud(cloudModel.trim())
+          ? await window.electron.benchmarkRunCloud(cloudModel.trim(), cloudTier)
           : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
         setMine(result as MineRow);
@@ -1110,7 +1126,7 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, entrant, cloudModel, loadShots, loadSessions]);
+  }, [nodes, sampling, entrant, cloudModel, cloudTier, loadShots, loadSessions]);
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -1368,8 +1384,8 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            New runs use SB-7: Meridian Payments Console. Earlier SB-8 experiments remain in
-            your session history.
+            Local swarm runs use stable SB7. Google Gemini can run the SB7.1 payments pilot or
+            legacy SB7. Earlier experiments remain in your session history.
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
@@ -1377,8 +1393,7 @@ export default function BenchmarkView() {
               unset knob — temperature included — falls through to the config/model default: the 0.2
               benchmark pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the
               per-model value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed
-              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). There is no
-              benchmark chooser: the launch runs the catalog's CURRENT benchmark, the only one open. */}
+              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). The Google pilot selection is independent of the stable local benchmark. */}
           <section aria-label="Run setup" className="flex flex-col gap-3">
             <Segmented
               as="buttons"
@@ -1392,19 +1407,32 @@ export default function BenchmarkView() {
               disabled={running}
             />
             {entrant === 'google' ? (
-              <label className="flex flex-col gap-2 text-sm">
-                Google model ID
-                <input
-                  aria-label="Google model ID"
-                  value={cloudModel}
-                  onChange={(event) => setCloudModel(event.target.value)}
+              <>
+                <Segmented
+                  as="buttons"
+                  aria-label="Google benchmark"
+                  value={cloudTier}
+                  options={[
+                    { value: 'sb-7.1', label: 'SB7.1 payments · pilot' },
+                    { value: 'sb-7', label: 'SB7 · legacy' },
+                  ]}
+                  onChange={(value) => setCloudTier(value as CloudBenchmarkTier)}
                   disabled={running}
-                  className="rounded-lg border border-lz-border bg-lz-surface px-3 py-2 text-lz-ink"
                 />
-                <span className={TYPE.meta}>
-                  One cloud agent. Uses the saved benchmark Google credential.
-                </span>
-              </label>
+                <label className="flex flex-col gap-2 text-sm">
+                  Google model ID
+                  <input
+                    aria-label="Google model ID"
+                    value={cloudModel}
+                    onChange={(event) => setCloudModel(event.target.value)}
+                    disabled={running}
+                    className="rounded-lg border border-lz-border bg-lz-surface px-3 py-2 text-lz-ink"
+                  />
+                  <span className={TYPE.meta}>
+                    One cloud agent. Uses the saved benchmark Google credential.
+                  </span>
+                </label>
+              </>
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-3">
@@ -1584,7 +1612,8 @@ export default function BenchmarkView() {
           <footer className={cx('border-t pt-4 text-lz-body text-lz-ink-2', SURFACE.hairline)}>
             Comparison rows are retrieved from leanzero.net&rsquo;s published board for each
             benchmark — nothing is baked into the app, so a shipped number can never outlive the
-            board it came from. Each result uses the checks and formula of its recorded scorer version.
+            board it came from. Each result uses the checks and formula of its recorded scorer
+            version.
           </footer>
         </div>
       </div>

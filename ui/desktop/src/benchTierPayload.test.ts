@@ -42,3 +42,15 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_SPEC_FILE['sb-8']).toBe('spec-build-sb8.md');
   });
 });
+
+import { benchmarkLaunchTier, benchmarkScorer } from './benchTierPayload';
+it('keeps stable local SB7 while selecting cloud pilot identity and exact payload', () => {
+  expect(benchmarkLaunchTier()).toBe('sb-7');
+  expect(benchmarkLaunchTier({ tier: 'sb-7.1' })).toBe('sb-7.1');
+  expect(benchmarkScorer(benchmarkLaunchTier({ tier: 'sb-7.1' }))).toBe('sb-7.1-rc');
+  expect(BENCH_SPEC_FILE[benchmarkLaunchTier({ tier: 'sb-7.1' })]).toBe('spec-build-sb71.md');
+  expect(BENCH_RENDER_PROBE[benchmarkLaunchTier({ tier: 'sb-7.1' })]).toBe(
+    'product_probe_sb71.mjs'
+  );
+  expect(() => benchmarkLaunchTier({ tier: 'sb-8' as 'sb-7' })).toThrow('Choose SB7');
+});
