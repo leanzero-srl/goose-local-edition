@@ -20,7 +20,7 @@
   var LABEL_W = 110, LABEL_H = 18, LABEL_DX = 10, LABEL_DY = -9, LABEL_N = 12;
   var FLOATS = 7, STRIDE = FLOATS * 4;
   var COLLAR_HALF = { EUR: .31, USD: .35, JPY: .39, KWD: .43 };
-  var meshVertexCount = 0;
+  var meshVertexCount = 0, meshIndexCount = 0, meshIndexBuffer = null;
   var inspectedId = null, replay = null, replayRaf = 0;
   var committedUpdates = new Map();
 
@@ -291,7 +291,14 @@
     gl.enable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.DITHER);
-    var mesh = boxMesh();
+    var expanded = boxMesh(), vertices=[],indices=[],unique=new Map();
+    for(var offset=0;offset<expanded.length;offset+=4){
+      var key=Array.from(expanded.subarray(offset,offset+4)).join(',');
+      if(!unique.has(key)){unique.set(key,vertices.length/4);vertices.push(expanded[offset],expanded[offset+1],expanded[offset+2],expanded[offset+3]);}
+      indices.push(unique.get(key));
+    }
+    var mesh=new Float32Array(vertices);meshVertexCount=vertices.length/4;meshIndexCount=indices.length;
+    meshIndexBuffer=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,meshIndexBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(indices),gl.STATIC_DRAW);
     vertBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertBuf);
     gl.bufferData(gl.ARRAY_BUFFER, mesh, gl.STATIC_DRAW);
@@ -307,8 +314,8 @@
     else instExt.vertexAttribDivisorANGLE(l, d);
   }
   function drawInstanced(count, instances) {
-    if (isGl2) gl.drawArraysInstanced(gl.TRIANGLES, 0, count, instances);
-    else instExt.drawArraysInstancedANGLE(gl.TRIANGLES, 0, count, instances);
+    if (isGl2) gl.drawElementsInstanced(gl.TRIANGLES, meshIndexCount, gl.UNSIGNED_SHORT, 0, instances);
+    else instExt.drawElementsInstancedANGLE(gl.TRIANGLES, meshIndexCount, gl.UNSIGNED_SHORT, 0, instances);
   }
 
   function uploadAllInstances() {
@@ -363,6 +370,7 @@
   }
 
   function bindGeometry() {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,meshIndexBuffer);
     gl.bindBuffer(gl.ARRAY_BUFFER, vertBuf);
     gl.enableVertexAttribArray(loc.aVert);
     gl.vertexAttribPointer(loc.aVert, 3, gl.FLOAT, false, 16, 0);
@@ -380,6 +388,49 @@
     vertexDivisor(loc.aCollar, 1);
   }
 
+  var detailProgram=null,detailBuffer=null,detailLocations={},detailCurrency=null,detailCount=0;
+  function initDetail() {
+    var vs='attribute vec3 aPosition;attribute vec3 aNormal;attribute float aMaterial;uniform mat4 uMatrix;uniform vec3 uPayment;uniform vec3 uStatus;uniform vec3 uCurrency;uniform float uOffset;uniform float uPick;uniform vec3 uIdentity;varying vec3 vColor;void main(){vec3 p=aPosition;p.y=(p.y+(aMaterial>2.5?uOffset:0.0))*uPayment.y;p.x+=uPayment.x;p.z+=uPayment.z;gl_Position=uMatrix*vec4(p,1.0);vec3 color=aMaterial<.5?vec3(42.,55.,73.):aMaterial<1.5?vec3(190.,207.,223.):aMaterial<2.5?uStatus:uCurrency;float factor=abs(aNormal.y)>.5?(aMaterial>1.5&&aMaterial<2.5&&aNormal.y>0.?1.:.82):(.55*abs(aNormal.x)+.72*abs(aNormal.z))/(abs(aNormal.x)+abs(aNormal.z));vColor=uPick>.5?uIdentity:floor(color*factor+.5)/255.;}';
+    detailProgram=gl.createProgram();gl.attachShader(detailProgram,compile(gl.VERTEX_SHADER,vs));gl.attachShader(detailProgram,compile(gl.FRAGMENT_SHADER,'precision mediump float;varying vec3 vColor;void main(){gl_FragColor=vec4(vColor,1.);}'));gl.linkProgram(detailProgram);
+    ['aPosition','aNormal','aMaterial'].forEach(function(name){detailLocations[name]=gl.getAttribLocation(detailProgram,name);});
+    ['uMatrix','uPayment','uStatus','uCurrency','uOffset','uPick','uIdentity'].forEach(function(name){detailLocations[name]=gl.getUniformLocation(detailProgram,name);});
+    detailBuffer=gl.createBuffer();
+  }
+  function buildDetail(currency) {
+    var vertices=[];
+    function triangle(a,b,c,normal,material){[a,b,c].forEach(function(p){vertices.push(p[0],p[1],p[2],normal[0],normal[1],normal[2],material);});}
+    function prism(profile,lo,hi,material){
+      for(var i=1;i<profile.length-1;i++){
+        triangle([profile[0][0],hi,profile[0][1]],[profile[i][0],hi,profile[i][1]],[profile[i+1][0],hi,profile[i+1][1]],[0,1,0],material);
+        triangle([profile[0][0],lo,profile[0][1]],[profile[i][0],lo,profile[i][1]],[profile[i+1][0],lo,profile[i+1][1]],[0,-1,0],material);
+      }
+      for(i=0;i<profile.length;i++){
+        var a=profile[i],b=profile[(i+1)%profile.length],normal=[b[1]-a[1],0,a[0]-b[0]];
+        triangle([a[0],lo,a[1]],[b[0],lo,b[1]],[b[0],hi,b[1]],normal,material);
+        triangle([a[0],lo,a[1]],[b[0],hi,b[1]],[a[0],hi,a[1]],normal,material);
+      }
+    }
+    function box(x,z,w,d,lo,hi,material){prism([[x-w/2,z-d/2],[x+w/2,z-d/2],[x+w/2,z+d/2],[x-w/2,z+d/2]],lo,hi,material);}
+    var cut=[[-.35,-.45],[.35,-.45],[.45,-.35],[.45,.35],[.35,.45],[-.35,.45],[-.45,.35],[-.45,-.35]];
+    prism(cut,0,.12,1);prism(cut,.90,1,2);box(0,0,.38,.38,.12,.90,0);
+    [-.24,.24].forEach(function(x){[-.24,.24].forEach(function(z){box(x,z,.06,.06,.12,.90,1);});});
+    var w=COLLAR_HALF[currency]*2,t=.04;
+    [-1,1].forEach(function(sign){box(0,sign*(w-t)/2,w,t,.76,.84,3);box(sign*(w-t)/2,0,t,w-2*t,.76,.84,3);});
+    detailCount=vertices.length/7;detailCurrency=currency;
+    gl.bindBuffer(gl.ARRAY_BUFFER,detailBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
+  }
+  function drawDetail(it,mode) {
+    if(!detailProgram)initDetail();if(detailCurrency!==it.currency)buildDetail(it.currency);
+    gl.useProgram(detailProgram);gl.bindBuffer(gl.ARRAY_BUFFER,detailBuffer);
+    var max=gl.getParameter(gl.MAX_VERTEX_ATTRIBS);for(var i=0;i<max;i++){gl.disableVertexAttribArray(i);vertexDivisor(i,0);}
+    [['aPosition',3,0],['aNormal',3,12],['aMaterial',1,24]].forEach(function(a){var location=detailLocations[a[0]];gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,a[1],gl.FLOAT,false,28,a[2]);});
+    var colors={EUR:[37,99,235],USD:[6,182,212],JPY:[234,88,12],KWD:[147,51,234]},id=it.n+1;
+    gl.uniformMatrix4fv(detailLocations.uMatrix,false,mvpMatrix(canvas.clientWidth/Math.max(1,canvas.clientHeight)));
+    gl.uniform3f(detailLocations.uPayment,it.x,it.h,it.z);gl.uniform3fv(detailLocations.uStatus,STATUS_RGB[STATUS_IDX[it.status]]);gl.uniform3fv(detailLocations.uCurrency,colors[it.currency]);
+    gl.uniform1f(detailLocations.uOffset,replay?replay.offset:0);gl.uniform1f(detailLocations.uPick,mode);gl.uniform3f(detailLocations.uIdentity,(id%256)/255,(Math.floor(id/256)%256)/255,Math.floor(id/65536)/255);
+    gl.drawArrays(gl.TRIANGLES,0,detailCount);
+  }
+
   function drawScene(mode) {
     gl.viewport(0, 0, canvas.width, canvas.height);
     if (mode === 0) gl.clearColor(BG[0], BG[1], BG[2], 1);
@@ -387,6 +438,7 @@
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     var n = store.items.length;
     if (!n) return;
+    if(inspectedId!=null){drawDetail(store.items[store.byId.get(inspectedId)],mode);return;}
     gl.useProgram(prog);
     gl.uniformMatrix4fv(loc.uMvp, false,
                         mvpMatrix(canvas.clientWidth / Math.max(1, canvas.clientHeight)));
@@ -740,7 +792,7 @@
     if(!layer.children.length) ['cap','collar','shaft','pedestal'].forEach(function(name){
       var label=document.createElement('span');label.dataset.part=name;layer.appendChild(label);
     });
-    var parts=[['cap',.95,'Status cap · 0.90'],['collar',.80,'Currency collar · '+(COLLAR_HALF[it.currency]*2).toFixed(2)],['shaft',.45,'Shaft · 0.54'],['pedestal',.06,'Pedestal · 0.90']];
+    var parts=[['cap',.95,'Status cap · 0.90'],['collar',.80,'Currency collar · '+(COLLAR_HALF[it.currency]*2).toFixed(2)],['shaft',.45,'Core shaft · 0.38'],['pedestal',.06,'Pedestal · 0.90']];
     parts.forEach(function(part,index){
       var point=projectCss(it.x,it.h*part[1],it.z,r.width,r.height),label=layer.children[index];
       label.textContent=part[2];

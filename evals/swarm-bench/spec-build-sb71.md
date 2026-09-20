@@ -16,7 +16,8 @@ provided. The backend uses Python standard library; the frontend remains self-co
 HTML/CSS/JavaScript and WebGL, with no package installs needed.
 
 The 3D result must be a legible, well-framed payments landscape with the specified detailed
-payment towers. It is driven by actual payment data, including currency exponents, statuses,
+payment towers and a refined close-up ledger spire: clipped corners, separate structural ribs,
+a recessed core and a hollow moving currency frame. It is driven by actual payment data, including currency exponents, statuses,
 versions and live events. The close-up inspector and short event animation are part of the
 same real scene, never a pre-rendered demo or separate grading image. Financial state updates
 immediately; decorative interpolation must not invent amounts, statuses or intermediate totals.

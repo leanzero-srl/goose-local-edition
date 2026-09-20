@@ -197,7 +197,10 @@ tr[data-state="saved"] td.note-cell { color: #34D399; }
 #tower-legend { padding: 12px 18px; color: #ffffff; background: #153eab; font-size: 14px; line-height: 1.5; }
 #tower-legend span { display: block; }
 #inspector-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 18px; }
-#inspect-payment { min-width: 0; flex: 1 1 220px; padding: 9px; }
+#inspect-payment { min-width: 0; flex: 1 1 220px; padding: 10px 12px; font: inherit; background: #0b1220; color: #fff; border: 1px solid #55769e; border-radius: 6px; }
+#inspect-open { background: #2563eb; color: #fff; }
+#inspect-amount { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#inspect-id { font-family: ui-monospace, monospace; color: #7dd3fc; }
 #inspect-details, #replay-status { margin: 0 18px 12px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 @media (max-width:480px) { #viz3d { height: 320px; } #inspector-controls { padding: 12px; } }
 

@@ -25,7 +25,7 @@ import score_sb8
 import vendor_service_v3 as vendor
 
 HERE = Path(__file__).resolve().parent
-VERSION = 'sb-7.1-rc'
+VERSION = 'sb-7.1'
 VISUAL_CHECKS = {
     's_visible_surface': 'S', 's_tower_geometry': 'S', 's_currency_collar': 'S',
     'q_payment_context': 'Q', 'q_legible_presentation': 'Q',
@@ -348,21 +348,31 @@ def admit(raw, visual_rows):
                          and not raw.get('harness_missing') and not raw.get('sched_unreached'))
     reasons = []
     ceiling = 1.0
-    for condition, limit, message in [
-        (visible, .599, 'No verified visible payment scene in the recorded browser state'),
-        (matching, .699, 'Required payment-tower structure or currency mapping is incomplete'),
-        (good, .799, 'Payment context, readability or interaction quality is incomplete'),
-        (visual_excellent and backend_excellent, .899,
-         'Scores above 0.9 require both verified event animation and backend recovery excellence'),
-    ]:
+    evidence = {**original, **by}
+    bands = [
+        (visible, .599, 'Visible payment scene', ('s_visible_surface',)),
+        (matching, .699, 'Payment geometry, mapping and scene truth',
+         ('s_visible_surface', 's_tower_geometry', 's_currency_collar', *STRUCTURE_CHECKS)),
+        (good, .799, 'Readable presentation and field interaction',
+         ('q_payment_context', 'q_legible_presentation', *QUALITY_CHECKS)),
+        (visual_excellent and backend_excellent, .899, 'Event animation and backend recovery',
+         ('m_committed_event_replay', *BACKEND_EXCELLENCE)),
+    ]
+    failures_by_band = []
+    for condition, limit, label, names in bands:
+        failed = [name for name in names if not passed(evidence.get(name))]
         if not condition:
             ceiling = min(ceiling, limit)
-            reasons.append(message)
+            failures_by_band.append({'ceiling': limit, 'checks': failed})
+            cause = ', '.join(failed) if failed else 'an earlier admission band is incomplete'
+            if limit == .899 and (raw.get('harness_missing') or raw.get('sched_unreached')):
+                cause += '; required infrastructure or recovery schedule evidence is missing'
+            reasons.append(f'{label}: {cause} (maximum {limit:.3f})')
     result.update(scorer_version=VERSION, scorerVersion=VERSION, rawScore=raw['score'],
                   score=min(raw['score'], ceiling),
                   admission={'visible': visible, 'matching': matching, 'good': good,
                              'excellence': {'visual': visual_excellent, 'backend': backend_excellent},
-                             'ceiling': ceiling, 'reasons': reasons})
+                             'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failures_by_band})
     result['checks'] += rows
     for tier in {'S', 'Q', 'M'}:
         members = [r for r in rows if r['tier'] == tier]
@@ -441,6 +451,8 @@ def evaluate(ctx):
     finally:
         base.SB7_CHECKS = original_checks
     observation = ctx.probes.get('viz', {}).get('sb71', {})
+    if observation.get('oracleCoverageUnavailable'):
+        raise UnavailableEvidence(ctx, raw, 'independent inspector geometry lacks required stable pixel coverage: ' + json.dumps(observation['oracleCoverageUnavailable']))
     resync = getattr(ctx, 'sb71_resync', None)
     if resync is not None and (ctx.b3_result or {}).get('kill_fired'):
         receipt = resync.get('kill') or {}

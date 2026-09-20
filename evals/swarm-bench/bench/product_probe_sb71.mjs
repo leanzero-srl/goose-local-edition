@@ -67,9 +67,10 @@ const err = (...a) => console.error('[probe]', ...a);
 function summarizeAnimationFrames(frames,minMoving=9) {
   const moving=frames.filter(f=>Number.isFinite(f.renderElapsed)&&f.renderElapsed<900),rest=frames.find(f=>f.elapsed>=1050);
   const eligible=moving.filter(f=>f.witnesses>=3&&f.positiveWitnesses>=3);
-  const motionOk=eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
+  const phaseCoverage=[0,300,600].map(start=>({start,end:start+300,observed:eligible.some(f=>f.renderElapsed>=start&&f.renderElapsed<start+300&&f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)}));
+  const motionOk=(minMoving===1||phaseCoverage.every(p=>p.observed))&&eligible.length>=minMoving&&eligible.every(f=>f.witnessMatches/f.witnesses>=.9&&f.positiveMatches/f.positiveWitnesses>=.9)&&moving.every(f=>f.matched/Math.max(1,f.compared)>=.97&&f.cameraFixed);
   const settled=!!rest&&rest.renderElapsed>=1000&&rest.matched/Math.max(1,rest.compared)>=.97&&rest.cameraFixed;
-  return {ok:motionOk&&settled,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),distinctMovingDraws:new Set(eligible.map(f=>f.renderElapsed)).size,frames};
+  return {ok:motionOk&&settled,phaseCoverage,eligibleMotionFrames:eligible.length,excludedMotionFrames:moving.filter(f=>f.witnesses<3||f.positiveWitnesses<3).map(f=>({elapsed:f.elapsed,witnesses:f.witnesses,positiveWitnesses:f.positiveWitnesses,reason:'Insufficient stable occupied-collar witnesses'})),distinctMovingDraws:new Set(eligible.map(f=>f.renderElapsed)).size,frames};
 }
 function parseVisibleVersion(raw) {
   if(typeof raw!=='string')return null;
@@ -679,7 +680,7 @@ function glInstrument() {
   const P = { contexts: [], contextLost: 0,
               defDraws: 0, offDraws: 0, defReads: 0, offReads: 0,
               bufDataBytes: 0, bufSubBytes: 0, reallocs: 0, bufDataCalls: 0, bufSubCalls: 0,
-              drawTs: [], sb71DrawTimes:new WeakMap(), rafTicks: 0, stream: [] };
+              drawTs: [], sb71DrawTimes:new WeakMap(), sb71LastFrames:new WeakMap(), activeRafTime:null, rafTicks: 0, stream: [] };
   window.__p7 = P;
   const byteLen = (x) => (typeof x === 'number' ? x
     : x && typeof x.byteLength === 'number' ? x.byteLength : 0);
@@ -688,15 +689,23 @@ function glInstrument() {
   function countDraw(gl) {
     if (gl.__p7fbo == null) {
       P.defDraws++;
-      P.sb71DrawTimes.set(gl.canvas,performance.now());
-      if (P.drawTs.length < 20000) P.drawTs.push(performance.now());
+      const at=performance.now();
+      P.sb71DrawTimes.set(gl.canvas,at);
+      if (P.drawTs.length < 20000) P.drawTs.push(at);
+      return {drawTime:at,rafTime:P.activeRafTime};
     } else P.offDraws++;
+  }
+  function completedDraw(gl,frame) {
+    if(!frame)return;
+    const record={...frame,completedAt:performance.now()};P.sb71LastFrames.set(gl.canvas,record);
+    const capture=P.sb71Capture;
+    if(capture?.event&&gl.canvas.id==='viz3d')capture.rendered.push(record);
   }
   function wrapDrawFns(obj, gl, names) {
     for (const fn of names)
       if (typeof obj[fn] === 'function') {
         const d = obj[fn].bind(obj);
-        obj[fn] = (...a) => { countDraw(gl); const result=d(...a); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; };
+        obj[fn] = (...a) => { const frame=countDraw(gl); const result=d(...a); completedDraw(gl,frame); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; };
       }
   }
   const wrap = (proto, offscreen) => {
@@ -752,7 +761,7 @@ function glInstrument() {
                 if (typeof v === 'function') {
                   const bound = v.bind(ext);
                   shell[k] = /^(draw|multiDraw)/.test(k)
-                    ? (...a) => { countDraw(gl); const result=bound(...a); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; }
+                    ? (...a) => { const frame=countDraw(gl); const result=bound(...a); completedDraw(gl,frame); if(gl.__p7fbo==null&&P.sb71StreamPixels)P.sb71StreamPixels(gl); return result; }
                     : (...a) => bound(...a);
                 } else shell[k] = v;
               }
@@ -772,7 +781,10 @@ function glInstrument() {
   wrap(HTMLCanvasElement.prototype, false);
   if (typeof OffscreenCanvas !== 'undefined') wrap(OffscreenCanvas.prototype, true);
   const oRaf = window.requestAnimationFrame.bind(window);
-  window.requestAnimationFrame = (cb) => oRaf((t) => { P.rafTicks++; return cb(t); });
+  window.requestAnimationFrame = (cb) => oRaf((t) => {
+    P.rafTicks++;const previous=P.activeRafTime;P.activeRafTime=t;
+    try{return cb(t);}finally{P.activeRafTime=previous;}
+  });
 }
 
 // §3.7 stream observer: wraps EventSource so every SSE batch is recorded with arrival time,
@@ -1461,7 +1473,7 @@ function pageCanvasRect() {
   if (!c) return null;
   const r = c.getBoundingClientRect();
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height,
-           viewportW: window.innerWidth, viewportH: window.innerHeight, scrollY: window.scrollY };
+           viewportW: window.innerWidth, viewportH: window.innerHeight, scrollY: window.scrollY, dpr:window.devicePixelRatio };
 }
 
 // §3.2 pinned budget window: [dispatch of first pointermove after arming, dispatch of
@@ -1775,7 +1787,7 @@ async function main() {
       } catch(error) {errors.push('Phase encoding failed; full graded recording retained: '+String(error.message).slice(0,180));}
     } else errors.push('Payment-update phase timing unavailable; full graded recording retained');
     const bytes=readFileSync(selected),file=relative(root,selected);
-    const manifest={schemaVersion:1,scorerVersion:'sb-7.1-rc',recording:'graded-browser',
+    const manifest={schemaVersion:1,scorerVersion:'sb-7.1',recording:'graded-browser',
       videos:[{file,caption:selected===clip?'Graded payment inspection and committed-update checks':'Full graded browser recording; payment-update excerpt unavailable',mimeType:'video/webm',
         scenario:'viz',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:statSync(selected).size,
         selection,publishable:bytes.length<=4*1024*1024,sourceInterval:selected===clip?sourceInterval:null,recordingClock:clock,sourceFile:relative(root,raw)}],errors};
@@ -2532,16 +2544,60 @@ function inspectorPose(it, W, H, yawDegrees=35) {
   const f = norm(sub(target,eye)), r = norm(cross(f,[0,1,0])), u = cross(r,f);
   return {eye,basis:{f,r,u},W,H};
 }
-function towerRay(it, pose, x, y, offset=0) {
-  const direction=unprojectDir(pose.basis,pose.W,pose.H,x,y);
-  let hit=null;
-  for(const part of towerParts(it,offset)) {
-    const t=rayBox(pose.eye,direction,part.mn,part.mx);
-    if(t!=null && (hit==null || t<hit.t)) hit={...part,t};
+const INSPECTOR_METAL=[190,207,223],INSPECTOR_CORE=[42,55,73];
+const INSPECTOR_CURRENCY={EUR:[37,99,235],USD:[6,182,212],JPY:[234,88,12],KWD:[147,51,234]};
+const INSPECTOR_SOLID_CACHE=new WeakMap();
+function inspectorSolids(it,offset=0) {
+  const key=[offset,it.x,it.z,it.h,it.cur,it.status].join('|');
+  let cache=INSPECTOR_SOLID_CACHE.get(it);if(!cache){cache=new Map();INSPECTOR_SOLID_CACHE.set(it,cache);}
+  if(cache.has(key))return cache.get(key);
+  const solids=[];
+  const box=(name,x,z,width,depth,lo,hi,color,chamfer=false)=>{
+    const mn=[x-width/2,lo*it.h,z-depth/2],mx=[x+width/2,hi*it.h,z+depth/2];
+    const planes=[];
+    for(let axis=0;axis<3;axis++)for(const sign of [-1,1]){const n=[0,0,0];n[axis]=sign;planes.push({n,k:sign*(sign>0?mx[axis]:mn[axis])});}
+    if(chamfer)for(const sx of [-1,1])for(const sz of [-1,1])planes.push({n:[sx,0,sz],k:sx*x+sz*z+.80});
+    solids.push({name,mn,mx,planes,color,chamfer});
+  };
+  box('pedestal',it.x,it.z,.90,.90,0,.12,INSPECTOR_METAL,true);
+  box('shaft',it.x,it.z,.38,.38,.12,.90,INSPECTOR_CORE);
+  box('cap',it.x,it.z,.90,.90,.90,1,V7.status[it.status],true);
+  for(const x of [-.24,.24])for(const z of [-.24,.24])box('ribs',it.x+x,it.z+z,.06,.06,.12,.90,INSPECTOR_METAL);
+  const width={EUR:.62,USD:.70,JPY:.78,KWD:.86}[it.cur],rail=.04;
+  for(const sign of [-1,1]){
+    box('collar',it.x,it.z+sign*(width-rail)/2,width,rail,.76+offset,.84+offset,INSPECTOR_CURRENCY[it.cur]);
+    box('collar',it.x+sign*(width-rail)/2,it.z,rail,width-2*rail,.76+offset,.84+offset,INSPECTOR_CURRENCY[it.cur]);
   }
-  if(!hit) return {part:'void',rgb:V7.bg};
-  const point=pose.eye.map((v,i)=>v+direction[i]*hit.t),factor=surfaceFactor(it,hit,point);
-  return {part:hit.name,factor,rgb:V7.status[it.status].map(v=>Math.round(v*factor))};
+  cache.set(key,solids);return solids;
+}
+function rayConvex(origin,direction,planes) {
+  let enter=-Infinity,exit=Infinity,normal=null;
+  for(const plane of planes){
+    const den=dot(direction,plane.n),remaining=plane.k-dot(origin,plane.n);
+    if(Math.abs(den)<1e-12){if(remaining<0)return null;continue;}
+    const t=remaining/den;
+    if(den<0){if(t>enter){enter=t;normal=plane.n;}}
+    else exit=Math.min(exit,t);
+    if(enter>exit)return null;
+  }
+  return exit<0||enter<0?null:{t:enter,normal};
+}
+function towerRay(it, pose, x, y, offset=0) {
+  const direction=unprojectDir(pose.basis,pose.W,pose.H,x,y),solids=inspectorSolids(it,offset);
+  let hit=null;
+  for(const solid of solids){const contact=rayConvex(pose.eye,direction,solid.planes);if(contact&&(!hit||contact.t<hit.t))hit={...solid,...contact};}
+  let feature=hit?.name||'void';
+  if(hit?.chamfer&&hit.normal[0]!==0&&hit.normal[2]!==0)feature='chamfer';
+  for(const solid of solids.filter(s=>s.chamfer)){
+    const t=rayBox(pose.eye,direction,solid.mn,solid.mx);
+    if(feature!=='chamfer'&&t!=null&&(!hit||t<hit.t-1e-6)){feature='cutout';break;}
+  }
+  const half={EUR:.31,USD:.35,JPY:.39,KWD:.43}[it.cur];
+  const filled=rayBox(pose.eye,direction,[it.x-half,(.76+offset)*it.h,it.z-half],[it.x+half,(.84+offset)*it.h,it.z+half]);
+  if(filled!=null&&(!hit||filled<hit.t-1e-6))feature='framegap';
+  if(!hit)return {part:'void',feature,rgb:V7.bg};
+  const n=hit.normal,factor=n[1]!==0?(n[1]>0&&hit.name==='cap'?1:.82):(.55*Math.abs(n[0])+.72*Math.abs(n[2]))/(Math.abs(n[0])+Math.abs(n[2]));
+  return {part:hit.name,feature,factor,rgb:hit.color.map(v=>Math.round(v*factor))};
 }
 function inspectorGrid(it,pose) {
   const corners=[];
@@ -2552,7 +2608,7 @@ function inspectorGrid(it,pose) {
   const top=Math.max(2,Math.floor(Math.min(...corners.map(p=>p.y)))-4);
   const bottom=Math.min(pose.H-3,Math.ceil(Math.max(...corners.map(p=>p.y)))+4);
   const points=[];
-  for(let y=top;y<=bottom;y+=3) for(let x=left;x<=right;x+=3) points.push({cx:x,cy:y});
+  for(let y=top;y<=bottom;y+=2) for(let x=left;x<=right;x+=2) points.push({cx:x,cy:y});
   return points;
 }
 const rgbNear=(a,b)=>Array.isArray(a)&&a.length>=3&&a.slice(0,3).every((v,i)=>Math.abs(v-b[i])<=8);
@@ -2572,24 +2628,46 @@ function seededSurfacePoints(ctx,skip=()=>false) {
   return points;
 }
 function geometryEvidence(it,pose,samples) {
-  const groups=Object.fromEntries(['pedestal','shaft','cap','collar','void'].map(k=>[k,{matched:0,total:0,examples:[]}]));
+  const groups=Object.fromEntries(['pedestal','shaft','cap','collar','ribs','chamfer','cutout','framegap','void'].map(k=>[k,{matched:0,total:0,examples:[]}]));
   for(const sample of samples) {
     const x=sample.rayX,y=sample.rayY;
     const expected=towerRay(it,pose,x,y);
     const neighbors=O9.map(([dx,dy])=>towerRay(it,pose,x+dx,y+dy));
-    if(neighbors.some(n=>n.part!==expected.part||!rgbNear(n.rgb,expected.rgb))) continue;
-    const group=groups[expected.part],ok=rgbNear(sample.got,expected.rgb);
+    if(neighbors.some(n=>n.feature!==expected.feature||!rgbNear(n.rgb,expected.rgb))) continue;
+    const group=groups[expected.feature],ok=rgbNear(sample.got,expected.rgb);
     group.total++;group.matched+=Number(ok);
     if(group.examples.length<3 || !ok && group.examples.every(e=>e.ok)) {
       if(group.examples.length>=3) group.examples.pop();
-      group.examples.push({x:sample.cx,y:sample.cy,got:sample.got,expected:expected.rgb,ok});
+      group.examples.push({x:sample.cx,y:sample.cy,rayX:x,rayY:y,got:sample.got,expected:expected.rgb,ok});
     }
   }
   return groups;
 }
+function pageInspectorExitState() {
+  const root=document.getElementById('tower-annotations'),visibleAnnotations=[];
+  const hasColor=value=>!!value&&!(/^transparent$/.test(value)||/^rgba\(.*,[ ]*0[ ]*\)$/.test(value)||/\/[ ]*0[ ]*\)$/.test(value));
+  if(root)for(const element of [root,...root.querySelectorAll('*')]) {
+    const style=getComputedStyle(element),ownText=Array.from(element.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent.trim());
+    const painted=/^(IMG|SVG|CANVAS)$/i.test(element.tagName)||(ownText&&hasColor(style.color))||hasColor(style.backgroundColor)||
+      ['Top','Right','Bottom','Left'].some(side=>parseFloat(style['border'+side+'Width'])>0&&style['border'+side+'Style']!=='none'&&hasColor(style['border'+side+'Color']));
+    let hidden=false,rects=Array.from(element.getClientRects()).map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}));
+    for(let parent=element;parent;parent=parent.parentElement){
+      const css=getComputedStyle(parent);
+      if(css.display==='none'||css.visibility==='hidden'||css.visibility==='collapse'||Number(css.opacity)===0){hidden=true;break;}
+      if(parent!==element){const bounds=parent.getBoundingClientRect();rects=rects.map(r=>({
+        left:/hidden|clip|scroll|auto/.test(css.overflowX)?Math.max(r.left,bounds.left):r.left,
+        right:/hidden|clip|scroll|auto/.test(css.overflowX)?Math.min(r.right,bounds.right):r.right,
+        top:/hidden|clip|scroll|auto/.test(css.overflowY)?Math.max(r.top,bounds.top):r.top,
+        bottom:/hidden|clip|scroll|auto/.test(css.overflowY)?Math.min(r.bottom,bounds.bottom):r.bottom}));}
+    }
+    if(painted&&!hidden&&rects.some(r=>r.right>r.left&&r.bottom>r.top))
+      visibleAnnotations.push({tag:element.tagName,text:ownText?element.textContent.trim():'',part:element.dataset.part||null});
+  }
+  return {camera:window.vs7dbg.camera(),annotationsHidden:root?.hidden??null,visibleAnnotations,annotationsAbsent:visibleAnnotations.length===0};
+}
 function pageArmSb71Capture({id,points,source}) {
   const P=window.__p7;
-  const capture={id,source,frames:[],event:null};P.sb71Capture=capture;
+  const capture={id,source,frames:[],rendered:[],event:null};P.sb71Capture=capture;
   const begin=(event)=>{
     if(!P.sb71Capture || P.sb71Capture.event) return;
     P.sb71Capture.event=event;
@@ -2606,7 +2684,8 @@ function pageArmSb71Capture({id,points,source}) {
         const x=Math.round(p.cx*W/rect.width),y=H-1-Math.round(p.cy*H/rect.height),o=(y*W+x)*4;
         return {...p,rayX:(x+.5)*rect.width/W,rayY:(H-y-.5)*rect.height/H,got:Array.from(px.subarray(o,o+3))};
       });
-      P.sb71Capture.frames.push({elapsed:at-event.t0,renderElapsed:P.sb71DrawTimes.has(canvas)?P.sb71DrawTimes.get(canvas)-event.t0:null,samples,camera:window.vs7dbg?.camera()});
+      const rendered=P.sb71LastFrames.get(canvas);
+      P.sb71Capture.frames.push({elapsed:at-event.t0,renderElapsed:rendered?rendered.drawTime-event.t0:null,rafElapsed:rendered&&Number.isFinite(rendered.rafTime)?rendered.rafTime-event.t0:null,drawCompletedElapsed:rendered?rendered.completedAt-event.t0:null,samples,camera:window.vs7dbg?.camera()});
     },delay);
   };
   if(source==='live') P.sb71ArmCapture=(entry)=>{
@@ -2620,10 +2699,15 @@ function pageArmSb71Capture({id,points,source}) {
     }
   },true);
 }
-function animationEvidence(it,pose,capture,minMoving=9) {
+function animationEvidence(it,pose,capture,minMoving=9,clockModel=null) {
+  if(clockModel===null){
+    const draw=animationEvidence(it,pose,capture,minMoving,'draw');
+    const raf=animationEvidence(it,pose,capture,minMoving,'raf');
+    return {...draw,clockModels:{draw,raf}};
+  }
   const frames=[];
   for(const frame of capture?.frames||[]) {
-    const renderTime=frame.renderElapsed;
+    const renderTime=clockModel==='raf'&&Number.isFinite(frame.rafElapsed)?frame.rafElapsed:frame.renderElapsed;
     if(!Number.isFinite(renderTime)){frames.push({elapsed:frame.elapsed,validTiming:false,compared:0,matched:0,witnesses:0,positiveWitnesses:0,cameraFixed:false});continue;}
     const phase=clamp(renderTime/1000,0,1),offset=-.56*(1-phase*phase*(3-2*phase));
     let compared=0,matched=0,witnesses=0,witnessMatches=0,positiveWitnesses=0,positiveMatches=0;
@@ -2647,21 +2731,19 @@ function animationEvidence(it,pose,capture,minMoving=9) {
     }
     const camera=frame.camera;
     const cameraFixed=!!camera&&Math.abs(camera.yaw-35)<.01&&Math.abs(camera.pitch-25)<.01&&Math.abs(camera.distance-6)<.01;
-    frames.push({elapsed:frame.elapsed,renderElapsed:renderTime,frameAge:frame.elapsed-renderTime,compared,matched,witnesses,witnessMatches,positiveWitnesses,positiveMatches,cameraFixed,examples});
+    frames.push({elapsed:frame.elapsed,renderElapsed:renderTime,drawElapsed:frame.renderElapsed,rafElapsed:frame.rafElapsed,drawCompletedElapsed:frame.drawCompletedElapsed,frameAge:frame.elapsed-renderTime,compared,matched,witnesses,witnessMatches,positiveWitnesses,positiveMatches,cameraFixed,examples});
   }
-  return {...summarizeAnimationFrames(frames,minMoving),event:capture?.event||null};
+  return {...summarizeAnimationFrames(frames,minMoving),clockModel,event:capture?.event||null};
 }
-function visibleMotionEvidence(it,pose,capture) {
+function visibleMotionEvidence(it,pose,capture,clockModel=null) {
+  if(clockModel===null){const draw=visibleMotionEvidence(it,pose,capture,'draw'),raf=visibleMotionEvidence(it,pose,capture,'raf');return {...draw,clockModels:{draw,raf}};}
   const first=capture.frames[0],rest=capture.frames[1],trials=[];
   if(!first||!rest)return {ok:false,error:'Missing composited capture'};
-  // Chromium screenshot returns asynchronously. Its actual compositor instant is inside
-  // the measured request interval, never the arbitrary midpoint of that interval.
-  for(let elapsed=first.captureStart;elapsed<=first.captureEnd;elapsed+=16) {
-    const evidence=animationEvidence(it,pose,{frames:[{...first,elapsed,renderElapsed:elapsed},{...rest,renderElapsed:rest.elapsed}]},1);
-    trials.push(evidence);
+  for(const moving of first.renderCandidates||[])for(const settled of rest.renderCandidates||[]){
+    trials.push(animationEvidence(it,pose,{frames:[{...first,...moving},{...rest,...settled}]},1,clockModel));
   }
   const selected=trials.find(t=>t.ok)||trials.sort((a,b)=>b.frames[0].witnessMatches-a.frames[0].witnessMatches)[0];
-  return {...selected,captureIntervals:capture.frames.map(f=>({start:f.captureStart,end:f.captureEnd,duration:f.captureDuration})),timing:'Compositor instant bounded by screenshot request/response; raw framebuffer trajectory independently timed'};
+  return {...selected,ok:!!selected?.ok,clockModel,captureIntervals:capture.frames.map(f=>({start:f.captureStart,end:f.captureEnd,duration:f.captureDuration,renderCandidates:f.renderCandidates})),timing:'Actual recorded draws during screenshot interval plus the last draw before capture; same declared animation clock'};
 }
 async function captureVisibleMotion(page,points) {
   await page.waitForFunction(()=>window.__p7?.sb71Capture?.event,null,{timeout:8000});
@@ -2669,10 +2751,12 @@ async function captureVisibleMotion(page,points) {
   for(const desired of [300,1170]) {
     const elapsed=await page.evaluate(()=>performance.now()-window.__p7.sb71Capture.event.t0);
     if(desired>elapsed)await sleep(desired-elapsed);
-    const before=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,camera:window.vs7dbg.camera()}));
+    const before=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,camera:window.vs7dbg.camera(),last:window.__p7.sb71LastFrames.get(document.getElementById('viz3d'))}));
     const rect=await page.evaluate(pageCanvasRect),image=await cdp.send('Page.captureScreenshot',{format:'png',fromSurface:true,optimizeForSpeed:true}),bitmap=screenshotPixels(Buffer.from(image.data,'base64'));
-    const after=await page.evaluate(()=>performance.now()-window.__p7.sb71Capture.event.t0);
-    frames.push({elapsed:(before.elapsed+after)/2,captureStart:before.elapsed,captureEnd:after,captureDuration:after-before.elapsed,camera:before.camera,
+    const afterState=await page.evaluate(()=>({elapsed:performance.now()-window.__p7.sb71Capture.event.t0,draws:window.__p7.sb71Capture.rendered,t0:window.__p7.sb71Capture.event.t0})),after=afterState.elapsed;
+    const candidates=[before.last,...afterState.draws.filter(d=>d.drawTime-afterState.t0>=before.elapsed)].filter(Boolean);
+    const renderCandidates=candidates.map(d=>({renderElapsed:d.drawTime-afterState.t0,rafElapsed:Number.isFinite(d.rafTime)?d.rafTime-afterState.t0:null,drawCompletedElapsed:d.completedAt-afterState.t0}));
+    frames.push({elapsed:(before.elapsed+after)/2,captureStart:before.elapsed,captureEnd:after,captureDuration:after-before.elapsed,camera:before.camera,renderCandidates,
       samples:points.map(p=>({...p,rayX:Math.round(rect.left+p.cx)+.5-rect.left,rayY:Math.round(rect.top+p.cy)+.5-rect.top,got:bitmap.at(rect.left+p.cx,rect.top+p.cy)}))});
   }
   await cdp.detach();
@@ -2713,7 +2797,7 @@ async function sb71VisualScenario(page,model,H,pack) {
   add('s_visible_surface','S',Number(admitted),'Visible canvas, unobscured samples and independently predicted seeded-payment pixels from this browser',rootFacts);
   await H.saveShot('sb71-field');
   const candidates=['EUR','USD','JPY','KWD'].map(cur=>model.items.filter(it=>it.cur===cur&&!(pack.sb71_reserved_payment_ids||[]).includes(it.id)).sort((a,b)=>b.h-a.h||a.id.localeCompare(b.id))[0]);
-  const cases=[],contexts=[],framing=[];
+  const cases=[],contexts=[],framing=[],oracleCoverageUnavailable=[];
   for(const it of candidates.filter(Boolean)) {
     if(!await page.locator('#inspect-payment').count()||!await page.locator('#inspect-open').count())break;
     await page.locator('#inspect-payment').fill(it.id);
@@ -2725,18 +2809,24 @@ async function sb71VisualScenario(page,model,H,pack) {
       const box=await page.evaluate(pageCanvasRect),pose=inspectorPose(it,box.w,box.h,yaw),points=inspectorGrid(it,pose);
       const sample=await page.evaluate(pageSamplePixels,{points});
       const groups=geometryEvidence(it,pose,sample.samples||[]);
-      cases.push({id:it.id,currency:it.cur,height:it.h,yaw,groups});
+      const pickPoints=Object.values(groups).flatMap(g=>g.examples).map(p=>({x:p.x,y:p.y,expected:towerRay(it,pose,p.rayX,p.rayY).part==='void'?null:it.id}));
+      const picks=await page.evaluate(pageVs7,{want:[],picks:pickPoints.map(p=>[p.x,p.y]),pickPixels:pickPoints.map(p=>[p.x,p.y])});
+      const picking=pickPoints.map((p,i)=>{const picked=picks.picks?.[i],px=picks.pickPixels?.[i],decoded=Array.isArray(px)?px[0]+256*px[1]+65536*px[2]:null;return {...p,picked,pixel:px,ok:(picked?.id??null)===p.expected&&decoded===(p.expected==null?0:it.n+1)};});
+      cases.push({id:it.id,currency:it.cur,height:it.h,yaw,groups,picking});
+      const expectedW=Math.round(box.w*box.dpr),expectedH=Math.round(box.h*box.dpr);
+      const analytic=geometryEvidence(it,pose,points.map(p=>({...p,rayX:(Math.round(p.cx*expectedW/box.w)+.5)*box.w/expectedW,rayY:(Math.round(p.cy*expectedH/box.h)+.5)*box.h/expectedH,got:null})));
+      if(box.w>=600&&box.h>=460)for(const [feature,g]of Object.entries(analytic))if(g.total<3)oracleCoverageUnavailable.push({id:it.id,currency:it.cur,yaw,width:box.w,height:box.h,feature,stablePixels:g.total});
       const corners=[];for(const x of [it.x-.45,it.x+.45])for(const y of [0,it.h])for(const z of [it.z-.45,it.z+.45])corners.push(projectPt(pose.eye,pose.basis,pose.W,pose.H,[x,y,z]));
       const bounds={left:Math.min(...corners.map(p=>p.x)),right:Math.max(...corners.map(p=>p.x)),top:Math.min(...corners.map(p=>p.y)),bottom:Math.max(...corners.map(p=>p.y))};
       const labels=await page.evaluate(()=>{const canvas=document.getElementById('viz3d').getBoundingClientRect();return Array.from(document.querySelectorAll('#tower-annotations [data-part]')).map(e=>{const r=e.getBoundingClientRect();return {part:e.dataset.part,text:e.textContent,left:r.left-canvas.left,right:r.right-canvas.left,top:r.top-canvas.top,bottom:r.bottom-canvas.top};});});
       const overlap=(a,b)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
-      const expectedParts={cap:[.95,.90],collar:[.80,{EUR:.62,USD:.70,JPY:.78,KWD:.86}[it.cur]],shaft:[.45,.54],pedestal:[.06,.90]};
+      const expectedParts={cap:[.95,.90],collar:[.80,{EUR:.62,USD:.70,JPY:.78,KWD:.86}[it.cur]],shaft:[.45,.38],pedestal:[.06,.90]};
       const annotationOk=Object.entries(expectedParts).every(([name,[height,width]])=>{
         const a=labels.find(l=>l.part===name),anchor=projectPt(pose.eye,pose.basis,pose.W,pose.H,[it.x,it.h*height,it.z]);
         return a&&a.text.toLowerCase().includes(name)&&a.text.includes(width.toFixed(2))&&Math.abs((a.top+a.bottom)/2-anchor.y)<=24&&a.left>=0&&a.right<=box.w&&a.top>=0&&a.bottom<=box.h&&!overlap(a,bounds)&&!labels.some(b=>a!==b&&overlap(a,b));
       });
       const heightFraction=(bounds.bottom-bounds.top)/box.h,unclipped=bounds.left>=0&&bounds.right<=box.w&&bounds.top>=0&&bounds.bottom<=box.h;
-      framing.push({id:it.id,yaw,bounds,labels,heightFraction,unclipped,annotationOk,ok:unclipped&&heightFraction>=.4&&heightFraction<=.9&&annotationOk&&Object.values(groups).every(g=>g.total>=3&&g.matched/g.total>=.97)});
+      framing.push({id:it.id,yaw,bounds,labels,heightFraction,unclipped,annotationOk,ok:box.w>=600&&box.h>=460&&unclipped&&heightFraction>=.4&&heightFraction<=.9&&annotationOk&&Object.values(groups).every(g=>g.total>=3&&g.matched/g.total>=.97)});
       if(yaw===35)await H.saveShot('sb71-inspect-'+it.cur.toLowerCase());
     }
     const backend=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(it.id)).then(r=>r.json());
@@ -2749,8 +2839,9 @@ async function sb71VisualScenario(page,model,H,pack) {
       ok:fields.id===backend.id&&fields.currency===backend.currency&&fields.status===backend.status&&parsedVersion===backend.version&&moneyOk});
   }
   const groups=cases.flatMap(c=>Object.entries(c.groups).filter(([name])=>name!=='collar').map(([name,g])=>({currency:c.currency,name,...g})));
-  const partScore=groups.length===32?groups.reduce((sum,g)=>sum+(g.total>=3?g.matched/g.total:0),0)/32:0;
-  add('s_tower_geometry','S',partScore,'Four currencies: pedestal, shaft, cap and shoulder voids match independent stepped geometry', {cases});
+  const partScore=groups.length===64?groups.reduce((sum,g)=>sum+(g.total>=3?g.matched/g.total:0),0)/64:0;
+  const pickScore=cases.length===8?cases.reduce((sum,c)=>sum+(c.picking.length>=24?c.picking.filter(p=>p.ok).length/c.picking.length:0),0)/8:0;
+  add('s_tower_geometry','S',Math.min(partScore,pickScore),'Four currencies: chamfered structure, separate ribs, recessed core and true frame gaps match independent rays', {cases});
   const collars=cases.map(c=>({currency:c.currency,...c.groups.collar}));
   add('s_currency_collar','S',collars.length===8?collars.reduce((sum,g)=>sum+(g.total>=3?g.matched/g.total:0),0)/8:0,'Currency-specific collar widths match projected pixel surfaces',{collars});
   add('q_payment_context','Q',contexts.length===4?contexts.filter(c=>c.ok).length/4:0,'Inspector identity, currency, money, status and version match the backend',{contexts});
@@ -2860,16 +2951,25 @@ async function sb71VisualScenario(page,model,H,pack) {
     }
     await page.locator('#replay-event').click();await sleep(150);await page.locator('#field-view').click();await sleep(250);
     const idleBefore=await page.evaluate(pageGlCounters);await sleep(350);const idleAfter=await page.evaluate(pageGlCounters);
-    const restored=await page.evaluate(()=>({camera:window.vs7dbg.camera(),annotationsHidden:document.getElementById('tower-annotations').hidden}));
-    const c=restored.camera,exit={before:idleBefore,after:idleAfter,...restored,ok:idleBefore.defDraws===idleAfter.defDraws&&restored.annotationsHidden&&Math.abs(c.yaw-V7.yaw0)<.01&&Math.abs(c.pitch-V7.pitch0)<.01&&Math.abs(c.distance-V7.dist0)<.01};
+    const restored=await page.evaluate(pageInspectorExitState);
+    const c=restored.camera,exit={before:idleBefore,after:idleAfter,...restored,ok:idleBefore.defDraws===idleAfter.defDraws&&restored.annotationsAbsent&&Math.abs(c.yaw-V7.yaw0)<.01&&Math.abs(c.pitch-V7.pitch0)<.01&&Math.abs(c.distance-V7.dist0)<.01};
     semantics={restart,suppression,exit,ok:restart.ok&&restart.corroborated&&suppression.every(s=>s.ok)&&exit.ok};
     await page.locator('#inspect-open').click();await page.evaluate(pageScrollCanvasIntoView);
   }
   } catch(error) {semantics={...semantics,ok:false,evidenceError:String(error)};}
+  const clockScores=Object.fromEntries(['draw','raf'].map(clock=>[clock,[live,replay,semantics.restart].filter(e=>e?.clockModels?.[clock]?.ok&&(!e.visible||e.visible.clockModels?.[clock]?.ok)).length]));
+  const chosenClock=clockScores.raf>clockScores.draw?'raf':'draw';
+  const clockEvidence={chosen:chosenClock,scores:clockScores,live:live.clockModels,replay:replay.clockModels,restart:semantics.restart?.clockModels};
+  if(live.clockModels)live={...live,...live.clockModels[chosenClock],ok:live.clockModels[chosenClock].ok&&live.visible.clockModels[chosenClock].ok};
+  if(replay.clockModels)replay={...replay,...replay.clockModels[chosenClock],ok:replay.clockModels[chosenClock].ok&&replay.visible.clockModels[chosenClock].ok&&replay.noWrite};
+  if(semantics.restart?.clockModels){
+    semantics.restart={...semantics.restart,...semantics.restart.clockModels[chosenClock]};
+    semantics.ok=semantics.restart.ok&&semantics.restart.corroborated&&semantics.suppression.every(s=>s.ok)&&semantics.exit.ok;
+  }
   markMediaPhase('motionEnd');
-  add('m_committed_event_replay','M',(Number(corroboration.ok&&live.ok)+Number(corroboration.ok&&replay.ok)+Number(semantics.ok))/3,'Actual vendor-backed note update triggers collar motion; replay reproduces it without camera movement',{corroboration,live,replay,semantics});
+  add('m_committed_event_replay','M',(Number(corroboration.ok&&live.ok)+Number(corroboration.ok&&replay.ok)+Number(semantics.ok))/3,'Actual vendor-backed note update triggers collar motion; replay reproduces it without camera movement',{corroboration,live,replay,semantics,clockEvidence});
   await H.saveShot('sb71-final-inspector');
-  merge({sb71:{checks}});
+  merge({sb71:{checks,oracleCoverageUnavailable}});
 }
 
 async function withRestoredOverview(page, action) {

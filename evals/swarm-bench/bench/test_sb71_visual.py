@@ -32,6 +32,38 @@ def fetch(url):
 
 
 class PixelAndVersionOracleControls(unittest.TestCase):
+    def test_detailed_oracle_has_each_feature_at_minimum_desktop_size(self):
+        bench = Path(__file__).resolve().parent
+        source = (bench / 'product_probe_sb71.mjs').read_text()
+        code = source.split('// ── selfcheck:')[0]
+        code += source[source.index('function inspectorPose('):source.index('function pageInspectorExitState(')]
+        items = []
+        import math
+        for seed in ['123456789abcdef0', '5a05d7631d9276e3', '5cd00e961d80464f']:
+            records = fixtures_v3.build(seed).payments
+            for currency, exponent in {'EUR': 2, 'USD': 2, 'JPY': 0, 'KWD': 3}.items():
+                record = max((r for r in records if r['currency'] == currency), key=lambda r: r['amount_minor'])
+                items.append({'seed': seed, 'cur': currency, 'status': record['status'], 'x': 0, 'z': 0,
+                              'h': min(4.2, max(.2, .9 + .55 * math.log10(record['amount_minor'] / 10 ** exponent)))})
+        code += '\nconst items=' + json.dumps(items) + ';\n' + r'''
+for(const it of items)for(const yaw of [35,125]){
+  const pose=inspectorPose(it,600,460,yaw);
+  const samples=inspectorGrid(it,pose).map(p=>({...p,rayX:p.cx+.5,rayY:p.cy+.5,got:towerRay(it,pose,p.cx+.5,p.cy+.5).rgb}));
+  const groups=geometryEvidence(it,pose,samples);
+  for(const [name,g]of Object.entries(groups))if(g.total<3||g.total!==g.matched)throw Error(JSON.stringify({it,yaw,name,g}));
+  const corners=[];for(const x of [-.45,.45])for(const y of [0,it.h])for(const z of [-.45,.45])corners.push(projectPt(pose.eye,pose.basis,600,460,[x,y,z]));
+  const fraction=(Math.max(...corners.map(p=>p.y))-Math.min(...corners.map(p=>p.y)))/460;
+  if(fraction<.4||fraction>.9)throw Error('Published framing violated '+fraction);
+}
+console.log('24 minimum-size currency/azimuth/seed cases have every feature and valid framing');
+'''
+        with tempfile.TemporaryDirectory(prefix='sb71-feature-coverage-') as directory:
+            script = Path(directory) / 'coverage.mjs'
+            script.write_text(code)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(script)],
+                                    capture_output=True, text=True, timeout=45)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_late_read_uses_actual_render_clock_without_inventing_distinct_frames(self):
         bench = Path(__file__).resolve().parent
         prefix = (bench / 'product_probe_sb71.mjs').read_text().split('// ── selfcheck:')[0]
@@ -89,6 +121,43 @@ console.log(JSON.stringify({pixel:point,oldPickDepthGap:strictPick.depthGap,chec
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['checks'], 'passed')
+
+
+@unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser semantic controls')
+class AnnotationSemanticControls(unittest.TestCase):
+    def test_empty_hidden_clipped_and_painted_annotations(self):
+        source = (Path(__file__).parent / 'product_probe_sb71.mjs').read_text()
+        helper = source[source.index('function pageInspectorExitState()'):source.index('function pageArmSb71Capture(')]
+        script = "import {createRequire} from 'module';\n" + helper + r'''
+const require=createRequire(import.meta.url),pw=require(process.env.GOOSE_SWARM_PLAYWRIGHT_MODULE);
+const browser=await pw.chromium.launch({headless:true,executablePath:process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
+try{
+  const page=await browser.newPage();
+  const cases=[
+    ['',true],
+    ['<span hidden>Old collar</span>',true],
+    ['<div style="opacity:0"><span>Old collar</span></div>',true],
+    ['<div style="overflow:hidden;width:0;height:0"><span>Old collar</span></div>',true],
+    ['<span style="color:transparent">Old collar</span>',true],
+    ['<span>Old collar</span>',false],
+    ['<span style="display:block;width:30px;height:30px;background:black"></span>',false],
+    ['<svg width="30" height="30"><rect width="30" height="30" fill="red"/></svg>',false],
+    ['<span style="position:absolute;top:3000px">Old collar</span>',false]
+  ];
+  for(const [html,expected] of cases){
+    await page.setContent('<div id="tower-annotations">'+html+'</div>');
+    await page.evaluate(()=>{window.vs7dbg={camera:()=>({yaw:30,pitch:40,distance:260})};});
+    const result=await page.evaluate(pageInspectorExitState);
+    if(result.annotationsAbsent!==expected)throw Error(JSON.stringify({html,expected,result}));
+  }
+}finally{await browser.close();}
+'''
+        with tempfile.TemporaryDirectory(prefix='sb71-annotation-semantics-') as directory:
+            path = Path(directory) / 'control.mjs'
+            path.write_text(script)
+            result = subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(path)],
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
@@ -253,9 +322,49 @@ class VisualControls(unittest.TestCase):
             self.assertEqual(row['score'], 1, (name, row))
 
     def test_solid_box_is_not_a_structured_tower(self):
-        rows = self.collect(('web/viz.js', 'part(.27, .12, .90, false, false);',
-                             'part(.45, .12, .90, false, false);'))
+        rows = self.collect(('web/viz.js', 'box(0,0,.38,.38,.12,.90,0);',
+                             'box(0,0,.90,.90,.12,.90,0);'))
         self.assertLess(rows['s_tower_geometry']['score'], .95)
+
+    def test_solid_currency_frame_loses_gap_credit(self):
+        rows = self.collect(('web/viz.js', 'var w=COLLAR_HALF[currency]*2,t=.04;',
+                             'var w=COLLAR_HALF[currency]*2,t=.04;box(0,0,w,w,.76,.84,3);'))
+        self.assertLess(rows['s_tower_geometry']['score'], 1)
+
+    def test_missing_support_ribs_loses_structure_credit(self):
+        rows = self.collect(('web/viz.js', 'box(x,z,.06,.06,.12,.90,1);', '/* no support ribs */'))
+        self.assertLess(rows['s_tower_geometry']['score'], 1)
+
+    def test_empty_annotations_are_a_valid_exit(self):
+        rows = self.collect(('web/viz.js', 'layer.hidden=inspectedId==null;\n    if(inspectedId==null)return;',
+                             'layer.hidden=false;\n    if(inspectedId==null){layer.replaceChildren();return;}'))
+        exit = rows['m_committed_event_replay']['parts']['semantics']['exit']
+        self.assertFalse(exit['annotationsHidden'])
+        self.assertTrue(exit['annotationsAbsent'])
+        self.assertTrue(exit['ok'])
+
+    def test_raf_clock_with_callback_work_is_accepted(self):
+        rows = self.collect(('web/viz.js',
+            'var step = function () {\n      var t = clamp((performance.now() - replay.start) / 1000, 0, 1);',
+            'var step = function (rafNow) {\n      var end=performance.now()+35;while(performance.now()<end){}\n      var t = clamp(((Number.isFinite(rafNow)?rafNow:performance.now()) - replay.start) / 1000, 0, 1);'))
+        motion = rows['m_committed_event_replay']
+        self.assertEqual(motion['score'], 1, motion)
+        self.assertEqual(motion['parts']['clockEvidence']['chosen'], 'raf')
+
+    def test_two_frame_hold_does_not_impersonate_a_trajectory(self):
+        rows = self.collect(('web/viz.js', 'invalidate(); render();\n      if (t < 1)',
+            'if((!replay.held&&t>=.05)||t>=1){invalidate();render();replay.held=true;}\n      if (t < 1)'))
+        motion = rows['m_committed_event_replay']
+        self.assertLess(motion['score'], 1, motion)
+        evidence = motion['parts']['clockEvidence']['live']['draw']
+        self.assertFalse(evidence['phaseCoverage'][1]['observed'])
+        self.assertFalse(evidence['phaseCoverage'][2]['observed'])
+
+    def test_uncut_corners_lose_structural_credit(self):
+        rows = self.collect(('web/viz.js',
+            '[[-.35,-.45],[.35,-.45],[.45,-.35],[.45,.35],[.35,.45],[-.35,.45],[-.45,.35],[-.45,-.35]]',
+            '[[-.45,-.45],[.45,-.45],[.45,.45],[-.45,.45]]'))
+        self.assertLess(rows['s_tower_geometry']['score'], 1)
 
     def test_currency_width_is_measured(self):
         rows = self.collect(('web/viz.js', 'EUR: .31, USD: .35, JPY: .39, KWD: .43',
@@ -273,7 +382,7 @@ class VisualControls(unittest.TestCase):
         self.assertLess(rows['q_legible_presentation']['score'], 1)
 
     def test_flat_side_shading_loses_depth_credit(self):
-        rows = self.collect(('web/viz.js', '0.72/0.55', '1.0'))
+        rows = self.collect(('web/viz.js', '(.55*abs(aNormal.x)+.72*abs(aNormal.z))', '(.55*abs(aNormal.x)+.55*abs(aNormal.z))'))
         self.assertLess(rows['s_tower_geometry']['score'], .95)
         self.assertLess(rows['q_legible_presentation']['score'], 1)
 

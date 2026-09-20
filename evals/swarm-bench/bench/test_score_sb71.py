@@ -50,11 +50,29 @@ class AdmissionTests(unittest.TestCase):
                 with self.subTest(name=name):
                     self.assertEqual(score.admit(raw, self.rows)['score'], ceiling)
 
+    def test_scene_truth_failure_names_the_actual_check(self):
+        next(row for row in self.raw['checks'] if row['check'] == 't_vs7dbg_truth')['score'] = .4
+        result = score.admit(self.raw, self.rows)
+        self.assertEqual(result['score'], .699)
+        band = next(row for row in result['admission']['failedChecksByBand'] if row['ceiling'] == .699)
+        self.assertEqual(band['checks'], ['t_vs7dbg_truth'])
+        self.assertIn('t_vs7dbg_truth', result['admission']['reasons'][0])
+        self.assertNotIn('currency mapping is incomplete', ' '.join(result['admission']['reasons']))
+
     def test_gates_never_award_credit_or_mutate_input(self):
         self.raw['score'] = .22
         before = copy.deepcopy(self.raw)
         self.assertEqual(score.admit(self.raw, self.rows)['score'], .22)
         self.assertEqual(self.raw, before)
+
+    def test_only_intrinsic_oracle_coverage_absence_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(score.base, 'evaluate', return_value=self.raw):
+            ctx = SimpleNamespace(probes={'viz': {'sb71': {'checks': []}}}, root=Path(tmp), fixture_seed='123456789abcdef0')
+            result = score.evaluate(ctx)
+            self.assertEqual(result['score'], .599)
+            ctx.probes['viz']['sb71']['oracleCoverageUnavailable'] = [{'feature': 'framegap', 'stablePixels': 0}]
+            with self.assertRaisesRegex(RuntimeError, 'independent inspector geometry lacks required stable pixel coverage'):
+                score.evaluate(ctx)
 
     def test_unavailable_probe_refuses_official_score(self):
         self.raw['probe_unavailable'] = ['t_pick_real_pass']

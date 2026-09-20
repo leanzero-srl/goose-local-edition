@@ -1,0 +1,59 @@
+{
+  "status": "visual_controls_passed_not_full_reference",
+  "scorerVersion": "sb-7.1",
+  "sourceSha256": {
+    "bench/score_sb71.py": "ea0330e7741e095a19f6eac98a20485ed0d13f547ff0ef2bf324b9294d0182d8",
+    "bench/product_probe_sb71.mjs": "429df8ddf8997d11a524263a63826706a7058359d0ea65e2ad6a56a3ea18331f",
+    "bench/golden-sb71/web/viz.js": "dbc36a2687dbe6c9a507852abe75c3cdb7e545594b0fec2478b5ab7da6a391d3",
+    "bench/golden-sb71/web/styles.css": "fc99265bf479816f4ca040a65a1ac10a6aa32f4f2683e943b0d6f59685dc4a2c",
+    "bench/golden-sb71/web/index.html": "3bb91a28bef345d779dd0d82edf89ab5222145c6931145014e90eb272638733b",
+    "spec-build-sb71.md": "6396dc40551a513068695e90b6555108be31b379c3bd3f9279242de02013a9e8",
+    "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
+  },
+  "finalBrowserControls": {
+    "test_raf_clock_with_callback_work_is_accepted": {
+      "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_raf_clock_with_callback_work_is_accepted/result.json",
+      "sha256": "1eebb8f217927bd5692aa35f9ab7ff66fa5cc0cbe2a60549c50b6c25c70599fd",
+      "scores": {
+        "s_visible_surface": 1,
+        "s_tower_geometry": 1,
+        "s_currency_collar": 1,
+        "q_payment_context": 1,
+        "q_legible_presentation": 1,
+        "m_committed_event_replay": 1
+      }
+    },
+    "test_two_frame_hold_does_not_impersonate_a_trajectory": {
+      "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_two_frame_hold_does_not_impersonate_a_trajectory/result.json",
+      "sha256": "11d2cd4e227eea6ce92571db5c4b99fa7e5033d1b34215554a1d86a246f92da9",
+      "scores": {
+        "s_visible_surface": 1,
+        "s_tower_geometry": 1,
+        "s_currency_collar": 1,
+        "q_payment_context": 1,
+        "q_legible_presentation": 1,
+        "m_committed_event_replay": 0
+      }
+    },
+    "test_uncut_corners_lose_structural_credit": {
+      "evidence": "runs/sb71-validation/20260920/stable-refined-controls/test_uncut_corners_lose_structural_credit/result.json",
+      "sha256": "c4cf8861079853c68c2b03b199871184b2d69ade7b0b68435a94416b65f3a23b",
+      "scores": {
+        "s_visible_surface": 1,
+        "s_tower_geometry": 0.75,
+        "s_currency_collar": 1,
+        "q_payment_context": 1,
+        "q_legible_presentation": 0,
+        "m_committed_event_replay": 0.6667
+      }
+    }
+  },
+  "earlierStructuralControlsNote": "The six structural/semantic controls preceded the final stable phase-coverage gate and indexed overview; their primary evidence remains preserved. The final RAF control re-exercises all six rows on current production sources.",
+  "additionalValidation": {
+    "annotationDomCases": 9,
+    "pureVisualTests": 3,
+    "scorerTests": 19,
+    "selfcheck": "ok",
+    "independentReview": "sb8_contract_audit CONFIRMED; full performance reference outstanding"
+  }
+}
