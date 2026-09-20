@@ -32,7 +32,7 @@ def fetch(url):
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
-    def collect(self, mutation=None):
+    def collect(self, mutation=None, seed='123456789abcdef0'):
         bench = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix='sb71-visual-control-') as temporary:
             root = Path(temporary)
@@ -47,7 +47,6 @@ class VisualControls(unittest.TestCase):
                 source = path.read_text()
                 self.assertEqual(source.count(old), 1)
                 path.write_text(source.replace(old, new))
-            seed = '123456789abcdef0'
             fixture = fixtures_v3.build(seed)
             (root / 'tokens.json').write_text(json.dumps(fixture.tokens))
             vendor_port, ledger_port, notifier_port = free_port(), free_port(), free_port()
@@ -118,6 +117,11 @@ class VisualControls(unittest.TestCase):
         for name, row in rows.items():
             self.assertEqual(row['score'], 1, (name, row))
 
+    def test_reference_pixel_centers_on_full_reference_seed(self):
+        rows = self.collect(seed='5a05d7631d9276e3')
+        for name, row in rows.items():
+            self.assertEqual(row['score'], 1, (name, row))
+
     def test_solid_box_is_not_a_structured_tower(self):
         rows = self.collect(('web/viz.js', 'part(.27, .12, .90, false, false);',
                              'part(.45, .12, .90, false, false);'))
@@ -151,6 +155,11 @@ class VisualControls(unittest.TestCase):
     def test_stepped_animation_loses_motion_credit(self):
         rows = self.collect(('web/viz.js', 'replay.offset = -.56 * (1 - t * t * (3 - 2 * t));',
                              't=Math.floor(t*3)/3; replay.offset = -.56 * (1 - t * t * (3 - 2 * t));'))
+        self.assertLess(rows['m_committed_event_replay']['score'], 1)
+
+    def test_disappearing_midflight_collar_loses_motion_credit(self):
+        rows = self.collect(('web/viz.js', 'replay.offset = -.56 * (1 - t * t * (3 - 2 * t));',
+                             'replay.offset = t>.25 && t<.75 ? -10 : -.56 * (1 - t * t * (3 - 2 * t));'))
         self.assertLess(rows['m_committed_event_replay']['score'], 1)
 
     def test_stale_delivery_cannot_rewind_or_animate(self):
