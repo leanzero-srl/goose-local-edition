@@ -22,7 +22,10 @@ class IsolationTests(unittest.TestCase):
             console = work / 'engine-console.log'
             console.write_text('operator log')
             prefix, env = bench_isolation.prepare(work, Path(sys.executable), private)
-            program = '''import pathlib,sys
+            program = '''import pathlib,sys,zoneinfo,datetime
+berlin=zoneinfo.ZoneInfo('Europe/Berlin')
+assert datetime.datetime(2026,1,1,tzinfo=berlin).utcoffset()==datetime.timedelta(hours=1)
+assert datetime.datetime(2026,7,1,tzinfo=berlin).utcoffset()==datetime.timedelta(hours=2)
 p=pathlib.Path('app.txt');p.write_text('candidate');assert p.read_text()=='candidate'
 for name in sys.argv[1:]:
  try:pathlib.Path(name).read_text()

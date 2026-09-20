@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zoneinfo
 
 
 def node_runtime() -> Path | None:
@@ -27,6 +28,7 @@ def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None
     read_dirs = ['/System', '/usr', '/bin', '/sbin', '/Library/Apple',
                  '/Library/Developer', '/Library/Frameworks', '/opt/homebrew',
                  '/private/etc', '/dev', str(workdir), str(runtime)]
+    read_dirs.extend(str(Path(path).resolve()) for path in zoneinfo.TZPATH if Path(path).is_dir())
     node = node or node_runtime()
     if node is not None:
         read_dirs.append(str(node.parent))
@@ -65,7 +67,8 @@ def prepare(workdir: Path, engine: Path, private_root: Path) -> tuple[list[str],
     control.write_text('private benchmark reference control')
     allowed = workdir / '.isolation-positive-control'
     allowed.write_text('candidate workspace')
-    probe = '''import pathlib,sys
+    probe = '''import pathlib,sys,zoneinfo
+zoneinfo.ZoneInfo('Europe/Berlin')
 assert pathlib.Path(sys.argv[1]).read_text() == 'candidate workspace'
 for name in sys.argv[2:]:
  try:
