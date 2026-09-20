@@ -1,3 +1,4 @@
+import { AgentText } from './AgentText';
 import { ActivityDisclosure } from '../activity/ActivityDisclosure';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Bot, Eye, FileText, Search, Sparkles, X } from 'lucide-react';
@@ -358,19 +359,16 @@ export function LaneInspector({
                     isStartExpanded={c.ok === false}
                   >
                     {c.args && (
-                      <pre className={cx(TYPE.mono, 'mt-1 whitespace-pre-wrap break-words')}>
-                        {c.args}
-                      </pre>
+                      <section className="p-3">
+                        <h3 className="mb-2 text-sm font-semibold">Arguments</h3>
+                        <AgentText text={c.args} />
+                      </section>
                     )}
                     {c.result && (
-                      <pre
-                        className={cx(
-                          TYPE.mono,
-                          'mt-1 whitespace-pre-wrap break-words text-lz-ink-2'
-                        )}
-                      >
-                        {c.result}
-                      </pre>
+                      <section className="p-3">
+                        <h3 className="mb-2 text-sm font-semibold">Result</h3>
+                        <AgentText text={c.result} />
+                      </section>
                     )}
                   </ActivityDisclosure>
                 </li>
@@ -378,13 +376,15 @@ export function LaneInspector({
             </ol>
           )
         ) : (
-          <pre
-            className={cx(TYPE.mono, 'whitespace-pre-wrap break-words')}
-            data-testid={`lane-${channel}`}
-          >
-            {(channel === 'thinking' ? thinking : answer) ||
-              `(nothing on the ${channel} channel yet)`}
-          </pre>
+          <div data-testid={`lane-${channel}`}>
+            <AgentText
+              text={
+                (channel === 'thinking' ? thinking : answer) ||
+                `(nothing on the ${channel} channel yet)`
+              }
+              raw
+            />
+          </div>
         )}
       </div>
     </div>

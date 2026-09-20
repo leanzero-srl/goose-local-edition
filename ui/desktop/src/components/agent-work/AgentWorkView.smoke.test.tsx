@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render as renderBase, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import { assertStudioClean } from '../lz/assertStudioClean';
@@ -8,6 +8,10 @@ import { LaneBoard } from './LaneBoard';
 import { NeedsYou } from './NeedsYou';
 import { AgentResults } from './AgentResults';
 import { LedgerPanel } from './LedgerPanel';
+
+function render(ui: React.ReactNode) {
+  return renderBase(<IntlProvider locale="en">{ui}</IntlProvider>);
+}
 
 const NOW = Date.parse('2026-09-07T08:00:00Z');
 
@@ -202,6 +206,8 @@ describe('Agent Work desk surfaces', () => {
     expect(screen.getByText('Exact title remains unverified.')).toBeTruthy();
     expect(screen.queryByText('Full source evidence preserved.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Evidence and full report' }));
+    expect(screen.getByRole('heading', { name: 'Finding' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Original handoff' }));
     expect(screen.getByText('Full source evidence preserved.')).toBeTruthy();
   });
 

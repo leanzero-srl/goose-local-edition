@@ -1,3 +1,4 @@
+import { AgentText } from './AgentText';
 import { Bot } from 'lucide-react';
 import MarkdownContent from '../MarkdownContent';
 import { ActivityDisclosure } from '../activity/ActivityDisclosure';
@@ -67,7 +68,12 @@ export function AgentResults({ model }: { model: DeskModel }) {
                 {finding && tick.synthesis?.handoff && (
                   <ActivityDisclosure label="Evidence and full report">
                     <div className="px-3 py-2">
-                      <MarkdownContent content={tick.synthesis.handoff} />
+                      <AgentText text={report ? JSON.stringify(report) : tick.synthesis.handoff} />
+                      {report && (
+                        <ActivityDisclosure label="Original handoff">
+                          <MarkdownContent content={tick.synthesis.handoff} />
+                        </ActivityDisclosure>
+                      )}
                     </div>
                   </ActivityDisclosure>
                 )}
@@ -75,7 +81,9 @@ export function AgentResults({ model }: { model: DeskModel }) {
                   <ActivityDisclosure label={`${tick.synthesis.facts.length} recorded findings`}>
                     <ul className="space-y-2 px-3 py-2 text-sm">
                       {tick.synthesis.facts.map((fact, index) => (
-                        <li key={index}>{fact}</li>
+                        <li key={index}>
+                          <AgentText text={fact} />
+                        </li>
                       ))}
                     </ul>
                   </ActivityDisclosure>
@@ -84,7 +92,9 @@ export function AgentResults({ model }: { model: DeskModel }) {
                   <ActivityDisclosure label="Next steps">
                     <ul className="space-y-2 px-3 py-2 text-sm">
                       {tick.synthesis.pending.map((item, index) => (
-                        <li key={index}>{item}</li>
+                        <li key={index}>
+                          <AgentText text={item} />
+                        </li>
                       ))}
                     </ul>
                   </ActivityDisclosure>

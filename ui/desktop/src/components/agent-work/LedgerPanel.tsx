@@ -1,3 +1,4 @@
+import { AgentText } from './AgentText';
 import { ActivityDisclosure } from '../activity/ActivityDisclosure';
 import MarkdownContent from '../MarkdownContent';
 import { useState } from 'react';
@@ -61,7 +62,7 @@ export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWork
             {model.facts.map((f, i) => (
               <li key={i} className={cx(TYPE.body, 'flex gap-3')}>
                 <span className={cx(TYPE.meta, TNUM, 'w-10 shrink-0')}>t{f.tick}</span>
-                <span>{f.fact}</span>
+                <AgentText text={f.fact} />
               </li>
             ))}
           </ul>
@@ -81,9 +82,9 @@ export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWork
 
 function FileText({ text, empty }: { text: string; empty: string }) {
   return text.trim() ? (
-    <pre className={cx(TYPE.mono, 'max-h-[40vh] overflow-auto whitespace-pre-wrap break-words')}>
-      {text}
-    </pre>
+    <div className="max-h-[40vh] overflow-auto p-4">
+      <AgentText text={text} />
+    </div>
   ) : (
     <p className={TYPE.bodyMuted}>{empty}</p>
   );
@@ -114,7 +115,7 @@ function TicksTable({ ticks }: { ticks: TickRecord[] }) {
     {
       key: 'summary',
       header: 'What happened',
-      cell: (t) => <span className="line-clamp-2">{t.summary ?? ''}</span>,
+      cell: (t) => <AgentText text={t.summary ?? ''} />,
     },
     { key: 'lanes', header: 'Lanes', cell: (t) => t.lanes?.length ?? 0, numeric: true, width: 64 },
     {
