@@ -334,7 +334,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         if resume_from or seed:
             raise RuntimeError("REFUSED: SB7.1 pilot starts from its public starter only")
         starter = ROOT / "sb7.1" / "starter"
-        shutil.copytree(starter, workdir, dirs_exist_ok=True)
+        shutil.copytree(starter, workdir, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
         public = {"SB7-CONTRACT.md": ROOT / "spec-build-sb7.md",
                   "VISUAL-CONTRACT.md": ROOT / "sb7.1" / "VISUAL-CONTRACT.md"}
         for name, source in public.items():
