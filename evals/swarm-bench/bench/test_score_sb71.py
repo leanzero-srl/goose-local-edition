@@ -140,6 +140,48 @@ class ScorerRuntimeTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_stream_handshake_fires_only_after_ready_and_never_twice(self):
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'ready.json'
+            fired = threading.Event()
+            calls = []
+            def fire():
+                calls.append('actual mutation')
+                fired.set()
+                return {'version': 2}
+            handshake = score.StreamHandshake(path, fire)
+            handshake.start()
+            self.assertFalse(fired.is_set())
+            staged = path.with_suffix('.pending')
+            staged.write_text(json.dumps({'state': 'armed'}))
+            staged.replace(path)
+            self.assertTrue(fired.wait(2))
+            self.assertEqual(handshake.result(), {'version': 2})
+            self.assertEqual(handshake.result(), {'version': 2})
+            handshake.finish()
+            self.assertEqual(calls, ['actual mutation'])
+            handshake.finish()
+
+    def test_unstarted_stream_handshake_cleanup_is_safe(self):
+        handshake = score.StreamHandshake(Path('/unused'), lambda: None)
+        handshake.finish()
+        handshake.finish()
+
+    def test_stream_handshake_missing_or_bad_witness_is_loud(self):
+        for state in [None, 'witness_unavailable']:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'ready.json'
+                if state:
+                    path.write_text(json.dumps({'state': state}))
+                handshake = score.StreamHandshake(path, lambda: self.fail('must not mutate'))
+                handshake.start()
+                if state:
+                    self.assertTrue(handshake.done.wait(2))
+                handshake.finish()
+                with self.assertRaisesRegex(RuntimeError, 'SB7.1 stream'):
+                    handshake.result()
+
     def test_zero_label_offset_is_not_missing_and_missing_stays_missing(self):
         for dy, expected in [(0, 1), (None, .9), (3, .9), (float('nan'), .9)]:
             ctx = SimpleNamespace(probes={'viz': {'labels': {'perLabel': [{'dx': 0, 'dy': dy}]}}})

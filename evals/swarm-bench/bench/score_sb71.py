@@ -13,6 +13,7 @@ import tempfile
 import subprocess
 import signal
 import math
+import threading
 import urllib.request
 import urllib.error
 from urllib.parse import urlsplit
@@ -103,6 +104,48 @@ def _kill_owned(proc):
                 pass
 
 
+class StreamHandshake:
+    def __init__(self, path, fire):
+        self.path, self.fire = path, fire
+        self.stop = threading.Event()
+        self.done = threading.Event()
+        self.error = None
+        self.receipt = None
+        self.thread = None
+
+    def start(self):
+        def watch():
+            try:
+                while not self.stop.wait(.05):
+                    if not self.path.exists():
+                        continue
+                    signal = json.loads(self.path.read_text())
+                    if signal.get('state') not in {'armed', 'app_surface_absent'}:
+                        raise RuntimeError('SB7.1 stream witness unavailable: ' + str(signal))
+                    self.receipt = {'signal': signal, 'delivery': self.fire()}
+                    return
+                raise RuntimeError('SB7.1 stream probe ended without a readiness signal')
+            except Exception as error:
+                self.error = error
+            finally:
+                self.done.set()
+        self.thread = threading.Thread(target=watch, name='sb71-stream-handshake')
+        self.thread.start()
+
+    def finish(self):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join()
+
+    def result(self):
+        if self.thread is None:
+            raise RuntimeError('SB7.1 stream probe never started')
+        self.done.wait()
+        if self.error is not None:
+            raise self.error
+        return self.receipt['delivery']
+
+
 @contextmanager
 def probe_runtime():
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
@@ -110,6 +153,21 @@ def probe_runtime():
     old_subprocess, old_wait_total = base.subprocess, base._wait_total
     old_get, old_sse_head = base._get, base._sse_head
     endpoint_absences = []
+    old_browser_probe, old_fire_d1 = base._probe, vendor.fire_d1_mutation
+    ready_dir = tempfile.TemporaryDirectory(prefix='sb71-stream-')
+    handshake = StreamHandshake(Path(ready_dir.name) / 'ready.json', old_fire_d1)
+    def browser_probe(scenario, url, *flags, env=None, timeout=None):
+        if scenario != 'viz':
+            return old_browser_probe(scenario, url, *flags, env=env, timeout=timeout)
+        handshake.start()
+        try:
+            result = old_browser_probe(scenario, url, *flags,
+                env={**(env or {}), 'BENCH_SB71_STREAM_READY': str(handshake.path)}, timeout=timeout)
+        finally:
+            handshake.finish()
+        result['sb71StreamHandshake'] = (handshake.receipt if handshake.receipt is not None
+                                        else {'error': str(handshake.error)})
+        return result
     def get(url, *args, **kwargs):
         response = old_get(url, *args, **kwargs)
         if response[0] == 501:
@@ -142,6 +200,7 @@ def probe_runtime():
     base.subprocess = ScorerProcesses()
     base._wait_total = wait_total
     base._get, base._sse_head = get, sse_head
+    base._probe, vendor.fire_d1_mutation = browser_probe, handshake.result
     try:
         yield endpoint_absences
     finally:
@@ -149,6 +208,9 @@ def probe_runtime():
         base._write_expect_pack = old_pack
         base.subprocess, base._wait_total = old_subprocess, old_wait_total
         base._get, base._sse_head = old_get, old_sse_head
+        base._probe, vendor.fire_d1_mutation = old_browser_probe, old_fire_d1
+        handshake.finish()
+        ready_dir.cleanup()
 
 
 def _probe_preflight():
