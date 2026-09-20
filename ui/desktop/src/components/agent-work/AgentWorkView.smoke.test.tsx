@@ -149,6 +149,26 @@ const read: AgentWorkRead = {
 };
 
 describe('Agent Work desk surfaces', () => {
+  it('shows direct delivery as a handoff without inventing a synthesis call', () => {
+    const model = foldDesk({ ...read, state: { ...state, phase: 'handoff' } }, NOW)!;
+    const { container } = render(
+      <TickClock
+        model={model}
+        busy={false}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onTickNow={vi.fn()}
+        onPause={vi.fn()}
+      />
+    );
+    expect(container.querySelector('[data-phase="handoff"]')?.getAttribute('data-state')).toBe(
+      'live'
+    );
+    expect(screen.getByText('Handoff')).toBeTruthy();
+    expect(screen.queryByText('Synthesis')).toBeNull();
+    expect(model.lanes.some((lane) => lane.kind === 'synthesis')).toBe(false);
+  });
+
   it('the tick clock shows the live tick, the phase ribbon and the controls, studio-clean', () => {
     const model = foldDesk(read, NOW)!;
     const onTickNow = vi.fn();

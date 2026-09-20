@@ -131,6 +131,7 @@ export interface TickRecord {
   lanes?: Record<string, unknown>[];
   review?: Record<string, unknown>[];
   synthesis?: {
+    source?: { mode: 'lane_report'; lane: string; key: string } | { mode: 'model' };
     staged: string[];
     asks: string[];
     facts: string[];
@@ -304,7 +305,7 @@ export const PHASES: readonly { key: string; label: string }[] = [
 ];
 
 export function phaseIndex(phase: string): number {
-  return PHASES.findIndex((p) => p.key === phase);
+  return PHASES.findIndex((p) => p.key === (phase === 'handoff' ? 'synthesis' : phase));
 }
 
 /** ONE join from the engine's digest to a lane's stream fields. */

@@ -35,6 +35,7 @@ export function AgentResults({ model }: { model: DeskModel }) {
               <div className="mb-3 flex items-center gap-2 text-xs text-lz-ink-2">
                 <Bot size={16} />
                 <span>Agent · run {tick.tick}</span>
+                {tick.synthesis?.source?.mode === 'lane_report' && <span>Worker report</span>}
                 <span className="ml-auto">
                   {tick.outcome ??
                     (active && tick.tick === model.tick ? 'In progress' : 'Interrupted')}

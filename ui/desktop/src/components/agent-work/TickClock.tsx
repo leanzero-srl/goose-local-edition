@@ -49,6 +49,11 @@ export function TickClock({
   const label = stale ? 'stale — no heartbeat' : model.status;
   const current = phaseIndex(model.phase);
   const ticking = model.status === 'ticking' && !stopped;
+  const directHandoff =
+    model.phase === 'handoff' ||
+    model.ticks.some(
+      (tick) => tick.tick === model.tick && tick.synthesis?.source?.mode === 'lane_report'
+    );
 
   return (
     <div className="flex flex-col gap-4" data-testid="tick-clock">
@@ -131,7 +136,7 @@ export function TickClock({
           return (
             <li
               key={p.key}
-              data-phase={p.key}
+              data-phase={p.key === 'synthesis' && directHandoff ? 'handoff' : p.key}
               data-state={state}
               className={cx(
                 'flex h-7 items-center gap-2 rounded-lz-control px-2.5 text-[12px]',
@@ -142,7 +147,7 @@ export function TickClock({
                 state === 'idle' && 'bg-lz-surface-2 text-lz-ink-3'
               )}
             >
-              <span>{p.label}</span>
+              <span>{p.key === 'synthesis' && directHandoff ? 'Handoff' : p.label}</span>
               {state === 'live' && model.phaseElapsedMs != null && (
                 <span className={TNUM}>{fmtDuration(model.phaseElapsedMs)}</span>
               )}
