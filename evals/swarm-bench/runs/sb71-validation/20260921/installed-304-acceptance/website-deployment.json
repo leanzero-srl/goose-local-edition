@@ -1,0 +1,59 @@
+{
+  "commit": "9f56a90da4330d7ef354133aef704d9c13d87e66",
+  "amplifyJob": "343",
+  "checkedAt": "2026-09-21T10:04:58.763Z",
+  "pages": [
+    {
+      "path": "/portfolio/goose-local-edition",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "attribution": true,
+        "correctedSync": true,
+        "release": true,
+        "directDownload": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "attribution": true,
+        "correctedSync": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks/run/brun-91771691-a846-447d-81cd-2d0eba36d8a5",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "fullRecording": true,
+        "controls": true,
+        "expectedBehavior": true,
+        "correction": true,
+        "laterRecovery": true,
+        "notesBeforeVideo": true
+      }
+    }
+  ],
+  "video": {
+    "status": 200,
+    "bytes": 3090416,
+    "sha256": "cd6c1143e4d56682b2e3a55368ad8a5fbd3d7f3b74b1a4e4362ae341996166fc"
+  },
+  "download": {
+    "status": 200,
+    "bytes": 508650560
+  },
+  "productionBrowserVerification": {
+    "method": "Codex browser accessibility interactions on public deployed pages",
+    "recordingDurationSeconds": 110.56,
+    "endState": "Recording ended; 1:50 / 1:50; Replay recording",
+    "replay": "Clicked Replay recording: Playing; 0:00 / 1:50",
+    "pause": "Clicked Pause recording: Paused; 0:03 / 1:50",
+    "portfolio": "Both Download for Mac links point directly to v3.0.4 DMG; separate See release links; 3.0.4 notarization and benchmark explanations visible",
+    "score": 0.4992,
+    "modelBuildAttribution": "Goose 3.0.2"
+  }
+}
