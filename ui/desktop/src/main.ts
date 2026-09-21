@@ -1,3 +1,4 @@
+import './utils/userDataPath';
 import { benchmarkResultTransaction } from './benchResultTransaction';
 import { retryScoringEligibility, type BuildCompletionReceipt } from './benchRescore';
 import {
