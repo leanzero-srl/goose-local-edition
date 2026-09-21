@@ -2,6 +2,7 @@
 //! CogniRunner task routes — written ONCE over an [`AgentManagerSource`] so `goose serve` (the
 //! engine the desktop runs) and goosed serve the same handlers.
 
+pub mod cognirunner;
 pub mod openai_compat;
 
 use crate::acp::server_factory::AcpServer;

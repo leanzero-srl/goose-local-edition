@@ -194,7 +194,8 @@ fn aux_cors_layer() -> CorsLayer {
 /// that makes the API reachable on the node a user actually runs.
 fn api_routes(server: Arc<AcpServer>, secret_key: Option<String>) -> Router {
     let source = crate::api::AgentManagerSource::FromAcpServer(server);
-    let mut routes = crate::api::openai_compat::routes(source.clone());
+    let mut routes = crate::api::openai_compat::routes(source.clone())
+        .merge(crate::api::cognirunner::routes(source));
     if let Some(secret_key) = secret_key {
         routes = routes.layer(axum::middleware::from_fn_with_state(
             secret_key,
