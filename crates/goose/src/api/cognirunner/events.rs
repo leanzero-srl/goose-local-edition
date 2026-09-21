@@ -228,8 +228,7 @@ mod tests {
         MessageContent::ToolRequest(ToolRequest {
             id: id.to_string(),
             tool_call: Ok(CallToolRequestParams::new(name.to_string()).with_arguments(
-                serde_json::from_value(serde_json::json!({"command": "cat /etc/passwd"}))
-                    .unwrap(),
+                serde_json::from_value(serde_json::json!({"command": "cat /etc/passwd"})).unwrap(),
             )),
             metadata: None,
             tool_meta: None,
@@ -309,7 +308,9 @@ mod tests {
         ));
         message.content.push(response(
             "call-2",
-            Ok(CallToolResult::error(vec![Content::text("permission denied")])),
+            Ok(CallToolResult::error(vec![Content::text(
+                "permission denied",
+            )])),
         ));
         message.content.push(response(
             "call-3",
