@@ -1,0 +1,64 @@
+{
+  "commit": "cb1f980db79f9ea7d41a83c350ff20cf2fb25fa7",
+  "job": "341",
+  "checkedAt": "2026-09-21T08:50:32.464Z",
+  "pages": [
+    {
+      "path": "/portfolio/goose-local-edition",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "publicRun": true,
+        "noFutureAcceptance": true,
+        "release": true,
+        "latestOnly": true,
+        "originalBuild": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "publicRun": true,
+        "noFutureAcceptance": true,
+        "release": true,
+        "latestOnly": true,
+        "originalBuild": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks/run/brun-91771691-a846-447d-81cd-2d0eba36d8a5",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "modelBuild": true,
+        "noWallClock": true,
+        "screenshots": true
+      }
+    }
+  ],
+  "video": {
+    "status": 200,
+    "bytes": 1978615,
+    "sha256": "54eab8b85449d2c4f8bb776b2e68719e6a8d798d37e66b2bbe5e454d78da08d9"
+  },
+  "deployment": {
+    "status": "SUCCEED",
+    "commit": "cb1f980db79f9ea7d41a83c350ff20cf2fb25fa7",
+    "job": "341"
+  },
+  "validation": {
+    "typecheck": "passed",
+    "scopedLint": "passed",
+    "isolatedProductionBuild": "passed",
+    "buildLog": "/tmp/lz-303-final-website-build.log",
+    "visualCheck": "parent performing IAB readback"
+  },
+  "rootVisualReadback": {
+    "portfolio": "passed: 3.0.3 release guidance, notarization, unchanged 3.0.2 Gemini attribution, screenshot inspected",
+    "benchmark": "passed: latest-only instructions, current sb-7.1 board, 49.92% run, complete prompt expands",
+    "promptCharacters": 78698,
+    "horizontalOverflow": false
+  }
+}
