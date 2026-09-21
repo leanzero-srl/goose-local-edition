@@ -43,10 +43,10 @@ afterEach(() => {
 });
 
 describe('LeanZeroSwarmView shell', () => {
-  it('is titled Goose Swarm and renders the base three segments in one radiogroup', () => {
+  it('is titled Providers and renders the base three segments in one radiogroup', () => {
     render();
-    expect(screen.getByRole('heading', { name: 'Goose Swarm' })).toBeInTheDocument();
-    const group = screen.getByRole('radiogroup', { name: 'Goose Swarm sections' });
+    expect(screen.getByRole('heading', { name: 'Providers' })).toBeInTheDocument();
+    const group = screen.getByRole('radiogroup', { name: 'Providers sections' });
     expect(group).toBeInTheDocument();
     expect(segment('LeanZero MLX')).toBeInTheDocument();
     expect(segment('Cloud Providers')).toBeInTheDocument();

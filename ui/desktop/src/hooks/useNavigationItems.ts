@@ -23,6 +23,8 @@ export interface NavItem {
  *
  * 2026-09-02 (owner): the row is labelled "Goose Swarm" and carries the goose mark; the route id
  * and path stay `leanzero-swarm` — internal ids never move with a rename.
+ * 2026-09-21 (owner): the row is labelled "Providers" — it is where providers (MLX, cloud, swarm)
+ * are managed; "Goose Swarm" stays the PRODUCT name (wordmark, chips), not this row's label.
  *
  * Pass D (owner): the "New Chat" row is GONE — sessions start from a project, so the only
  * session-creating affordance is the Projects tree's per-project "+ New session here". The "/"
@@ -34,7 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
   { id: 'agent-work', path: '/agent-work', label: 'Agent Work', icon: Bot },
   { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
-  { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'Goose Swarm', icon: Goose },
+  { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'Providers', icon: Goose },
 ];
 
 /** Settings is rendered separately, pinned to the bottom of the sidebar. */
@@ -67,7 +69,7 @@ const navItemMessages = defineMessages({
   },
   'leanzero-swarm': {
     id: 'navigation.itemLeanzeroSwarm',
-    defaultMessage: 'Goose Swarm',
+    defaultMessage: 'Providers',
   },
   settings: {
     id: 'navigation.itemSettings',

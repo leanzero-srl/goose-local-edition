@@ -343,10 +343,10 @@ describe('LeanZero MLX panel naming', () => {
     unmount();
   });
 
-  it('the nav item is /leanzero-swarm labelled Goose Swarm (old /mlx-engine path is gone)', () => {
+  it('the nav item is /leanzero-swarm labelled Providers (old /mlx-engine path is gone)', () => {
     expect(NAV_ITEMS.find((i) => i.path === '/mlx-engine')).toBeUndefined();
     const item = NAV_ITEMS.find((i) => i.path === '/leanzero-swarm');
-    expect(item?.label).toBe('Goose Swarm');
+    expect(item?.label).toBe('Providers');
   });
 });
 

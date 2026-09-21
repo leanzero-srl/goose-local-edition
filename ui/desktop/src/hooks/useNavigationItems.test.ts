@@ -36,7 +36,7 @@ describe('NAV_ITEMS fixture', () => {
       'Memories',
       'Agent Work',
       'Benchmark',
-      'Goose Swarm',
+      'Providers',
     ]);
   });
 

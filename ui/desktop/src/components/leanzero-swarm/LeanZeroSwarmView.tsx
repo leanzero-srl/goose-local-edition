@@ -54,11 +54,11 @@ const LeanZeroSwarmView: React.FC = () => {
         <div className={cx('border-b px-lz-page pb-6 pt-16', SURFACE.hairline)}>
           <PageHeader
             className="page-transition"
-            title="Goose Swarm"
+            title="Providers"
             subtitle={<span className="block max-w-[70ch]">{intl.formatMessage(i18n.subtitle)}</span>}
             actions={
               <Segmented
-                aria-label="Goose Swarm sections"
+                aria-label="Providers sections"
                 options={tabs}
                 value={tab}
                 onChange={setTab}
