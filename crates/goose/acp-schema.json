@@ -8158,6 +8158,192 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/nodes"
     },
+    "ListMemoryProposalsRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "Every proposal for a session: those the end-of-turn assessment filed under the session id\nand those `propose_knowledge` filed under the session's working directory.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/memory_proposals/list"
+    },
+    "ListMemoryProposalsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "proposals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemoryProposalDto"
+          }
+        }
+      },
+      "required": [
+        "proposals"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/memory_proposals/list"
+    },
+    "MemoryProposalDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string",
+          "description": "The store key the proposal lives under: the session id, or the working-dir key for a\npiece the memory extension filed. Echoed back on answer."
+        },
+        "kind": {
+          "$ref": "#/$defs/MemoryProposalKind"
+        },
+        "polarity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryProposalPolarity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "isGlobal": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "$ref": "#/$defs/MemoryProposalState"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "kind",
+        "text",
+        "why",
+        "category",
+        "tags",
+        "isGlobal",
+        "sources",
+        "createdAt",
+        "state"
+      ]
+    },
+    "MemoryProposalKind": {
+      "type": "string",
+      "enum": [
+        "memory",
+        "knowledge"
+      ]
+    },
+    "MemoryProposalPolarity": {
+      "type": "string",
+      "enum": [
+        "positive",
+        "negative"
+      ]
+    },
+    "MemoryProposalState": {
+      "type": "string",
+      "enum": [
+        "open",
+        "saved",
+        "declined",
+        "expired"
+      ]
+    },
+    "AnswerMemoryProposalRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/MemoryProposalDecision"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The text as the user edited it; omitted = as proposed."
+        }
+      },
+      "required": [
+        "sessionId",
+        "key",
+        "proposalId",
+        "decision"
+      ],
+      "description": "The human's answer. Save writes the (possibly edited) text through the memory store;\nDecline writes nothing. Either way the proposal leaves the open state.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/memory_proposals/answer"
+    },
+    "MemoryProposalDecision": {
+      "type": "string",
+      "enum": [
+        "save",
+        "decline"
+      ]
+    },
+    "AnswerMemoryProposalResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryProposalDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the memory store did on Save: \"added\" | \"updated\" | \"unchanged\"; None on Decline."
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/memory_proposals/answer"
+    },
     "LeanzeroLinkRemoteExecuteRequest_unstable": {
       "type": "object",
       "properties": {
@@ -9619,6 +9805,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ListMemoryProposalsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/memory_proposals/list",
+                  "title": "ListMemoryProposalsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/AnswerMemoryProposalRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/memory_proposals/answer",
+                  "title": "AnswerMemoryProposalRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/LeanzeroLinkRemoteExecuteRequest_unstable"
                     }
                   ],
@@ -10366,6 +10570,22 @@
                         }
                       ],
                       "title": "LeanzeroLinkNodesResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ListMemoryProposalsResponse_unstable"
+                        }
+                      ],
+                      "title": "ListMemoryProposalsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/AnswerMemoryProposalResponse_unstable"
+                        }
+                      ],
+                      "title": "AnswerMemoryProposalResponse_unstable"
                     },
                     {
                       "allOf": [

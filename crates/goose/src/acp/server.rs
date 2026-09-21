@@ -109,6 +109,7 @@ pub use mlx_engine::GoosedMlxControl;
 mod new_session;
 mod onboarding;
 mod prompts;
+mod proposals;
 mod providers;
 mod recipe;
 mod resources;

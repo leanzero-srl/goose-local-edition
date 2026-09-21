@@ -1116,6 +1116,22 @@ impl GooseAcpAgent {
         self.on_leanzero_link_nodes(req).await
     }
 
+    #[custom_method(ListMemoryProposalsRequest)]
+    async fn dispatch_list_memory_proposals(
+        &self,
+        req: ListMemoryProposalsRequest,
+    ) -> Result<ListMemoryProposalsResponse, agent_client_protocol::Error> {
+        self.on_list_memory_proposals(req).await
+    }
+
+    #[custom_method(AnswerMemoryProposalRequest)]
+    async fn dispatch_answer_memory_proposal(
+        &self,
+        req: AnswerMemoryProposalRequest,
+    ) -> Result<AnswerMemoryProposalResponse, agent_client_protocol::Error> {
+        self.on_answer_memory_proposal(req).await
+    }
+
     #[custom_method(LeanzeroLinkRemoteExecuteRequest)]
     async fn dispatch_leanzero_link_remote_execute(
         &self,
