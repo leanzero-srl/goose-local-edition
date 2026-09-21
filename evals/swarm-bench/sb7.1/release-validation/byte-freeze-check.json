@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-09-21T05:53:58.475303+00:00",
+  "scope": "Source byte freeze before packaging; no installed/public acceptance claim",
+  "manifestSha256": "cd815d3cd39c7c279b4c9269c401d77054e86e78a65149c2a6266541b360abc6",
+  "validationReceiptSha256": "a67794c5429d9f5bd66f42a3481d44f269e7b824d60010b685ed26ea0aea2bd4",
+  "exactForgeMirrorInventory": {
+    "hashedFiles": 93,
+    "totalIncludingManifest": 94,
+    "passed": true
+  },
+  "tamperedScorerRejected": true,
+  "websiteSchemaPassed": true,
+  "incorrectManifestHashRejected": true
+}

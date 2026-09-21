@@ -1,0 +1,36 @@
+{
+  "command": [
+    "/var/folders/41/670wc_gs2y93f8rs0330cc780000gn/T/sb71-fresh-install-0av92tdd/electron/benchmark/runtime/python/bin/python3",
+    "-B",
+    "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/bench/score_sb71.py",
+    "--tree",
+    "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/bench/golden-sb71",
+    "--seed",
+    "5a05d7631d9276e3",
+    "--port",
+    "8899",
+    "--json-out",
+    "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/sb71-validation/20260920/sb71-reference-1a06212bc-python312-043808.json",
+    "--reference"
+  ],
+  "startedUnix": 1789965488.847008,
+  "scorerCommit": "1a06212bcb07cbd9dfd24b2a5d5115a12fa1cd91",
+  "sourceSha256": {
+    "bench/score_sb71.py": "7decf048aa992e8abe0ade899661bfd05512c3f7cfe4d540a6727e424b2f8562",
+    "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
+    "bench/product_probe_sb71.mjs": "c800cfd0b76b4ebe1cdfb0c8f1a84121121d06d75e00893649567f4d8a35b86e",
+    "bench/vendor_service_v3.py": "f18979ceeccea722b5f1288912f87ae838c979ac7cb7d52b789f20b09a17ff5f",
+    "spec-build-sb71.md": "6396dc40551a513068695e90b6555108be31b379c3bd3f9279242de02013a9e8",
+    "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
+    "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
+  },
+  "runtime": {
+    "python": "Python 3.12.14",
+    "node": "v24.18.0"
+  },
+  "report": "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/sb71-validation/20260920/sb71-reference-1a06212bc-python312-043808.json",
+  "hostConditions": "Shared Mac; our builds and other benchmark/browser tests paused. Unrelated host activity not controlled.",
+  "exitCode": 0,
+  "seconds": 222.253,
+  "sourceUnchanged": true
+}
