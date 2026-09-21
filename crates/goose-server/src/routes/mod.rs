@@ -1,5 +1,6 @@
 pub mod action_required;
 pub mod agent;
+pub mod cognirunner;
 pub mod config_management;
 pub mod dictation;
 pub mod errors;
@@ -37,4 +38,5 @@ pub fn configure(state: Arc<crate::state::AppState>, secret_key: String) -> Rout
         .merge(session_events::routes(state.clone()))
         .merge(dictation::routes(state.clone()))
         .merge(openai_compat::routes(state.clone()))
+        .merge(cognirunner::routes(state.clone()))
 }

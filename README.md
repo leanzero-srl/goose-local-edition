@@ -1,6 +1,6 @@
 # Goose Swarm
 
-**Download the macOS app:** [Goose-2.0.3.dmg](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.3) — Developer-ID signed and notarized by Apple (Gatekeeper: "accepted, Notarized Developer ID"), Apple silicon. Drag to Applications; no right-click-to-open dance.
+**Download the macOS app, Goose Swarm:** the `Goose-Swarm-<version>.dmg` on the [latest release](https://github.com/leanzero-srl/goose-local-edition/releases/latest) — Developer-ID signed and notarized by Apple (Gatekeeper: "accepted, Notarized Developer ID"), Apple silicon. Drag to Applications; no right-click-to-open dance. (Releases up to 3.0.7 shipped the app as `Goose.app` in `Goose-<version>.dmg`; from 3.0.8 the app is named Goose Swarm — same bundle id, so an installed 3.0.7 updates in place.)
 
 
 Goose Swarm (the repository is still named goose-local-edition) is a fork of [goose](https://github.com/aaif-goose/goose) (originally `block/goose`, now part of the Agentic AI Foundation at the Linux Foundation) adapted to answer one question: can several machines running the same local model, orchestrated correctly, build working software of measurably higher quality than one machine running that model alone?
@@ -30,6 +30,7 @@ The register of this document is deliberate: it describes what was built, what w
 - [The fleet](#the-fleet)
 - [Current results](#current-results)
 - [Install and usage](#install-and-usage)
+  - [CogniRunner task mode](#cognirunner-task-mode)
 - [Releases](#releases)
 - [Measurement discipline](#measurement-discipline)
 - [Relationship to upstream](#relationship-to-upstream)
@@ -216,6 +217,38 @@ curl -sk https://127.0.0.1:3000/v1/chat/completions \
   -d '{"model":"lmstudio/qwen3-coder","messages":[{"role":"system","content":"Answer in one word."},{"role":"user","content":"What colour is the sky?"}]}'
 ```
 
+### CogniRunner task mode
+
+The OpenAI-compatible routes make goose a *model*. Task mode makes goose an *executor*: CogniRunner (LeanZero's Jira workflow-AI app) hands a node a prompt and a callback, goose runs it as one ephemeral session with its own MCP tools — or as a swarm build — and pushes signed receipts to the callback as the turn happens, so a person watching a Jira panel sees each tool call land rather than a spinner. Nothing on the caller's side ever waits on a turn.
+
+Both `goose serve` (the desktop's engine) and `goosed` mount the routes, under the same secret as the OpenAI routes (`X-Secret-Key`, or `Authorization: Bearer <secret>`).
+
+| route | what |
+|---|---|
+| `POST /cognirunner/tasks` | body `{prompt, context?, model, callbackUrl, callbackSecret, threadId, recipe?}`; `model` is any id `/v1/models` lists (`provider/model`, `swarm`, `swarm-build`); `context` and `recipe` become system-prompt extensions of the session. Answers `202 {taskId, sessionId}` once the session exists and the model is applied — `400` for a bad body or an unusable model, `404 model not found`, `503` when the task table (64) is full. Send `x-goose-keep-session: 1` to keep the session after the task ends. |
+| `POST /cognirunner/tasks/{id}/messages` | body `{text}` — queued into the running turn through goose's steer door (the same `_goose/unstable/session/steer` the desktop uses; a queued message is delivered at the next round boundary and never dropped). `202 {taskId, messageId, queued: true}`; `409` once the task is terminal. |
+| `POST /cognirunner/tasks/{id}/cancel` | Cancels the run's token and discards queued steers; the task then reports `done` with `finishReason: "cancelled"`. `202` with the task's status; idempotent. |
+| `GET /cognirunner/tasks/{id}` | `{taskId, sessionId, threadId, status, seq, createdAt, lastEventAt}` with `status` ∈ `running | done | failed | cancelled` — for reconciliation when a push was lost. Finished tasks stay readable for an hour. |
+
+**Receipts.** Every push is `POST callbackUrl` with `Content-Type: application/json`, the header `x-cognirunner-signature: sha256=<hex HMAC-SHA256(callbackSecret, raw body)>`, and a body that is a JSON **array** of envelopes — one element per event, in order:
+
+```json
+[{"taskId":"task_…","threadId":"…","seq":3,"at":"2026-09-21T10:15:02.412Z","type":"tool","name":"developer__shell","phase":"finished","ok":true,"summary":"ok · 1 item","ref":"call_…"}]
+```
+
+`type` is one of `started {model, sessionId}`, `text {text}` (the assistant's text — streamed deltas of one message are glued into one event per push), `tool {name, phase: "started"|"finished", ok: null|true|false, summary, ref}` (the summary is at most 300 characters and is built from counts and error text: a tool's arguments and its output never cross the wire; `ref` joins a `finished` to its `started`), `question {prompt, options?, ref}` (a tool confirmation or an elicitation the human must answer), `done {finishReason: "stop"|"cancelled", usage: {inputTokens, outputTokens, totalTokens}}` or `failed {error}` (a provider failure the agent phrased as a message is re-raised here, never reported as `done`). `seq` is strictly increasing per task across pushes; pushes go out at most once per second per task, are retried three times with backoff on a non-2xx, and never block the turn — a callback that stays down loses receipts, not the run.
+
+```bash
+curl -s http://127.0.0.1:3001/cognirunner/tasks -H "Authorization: Bearer $GOOSE_SERVER__SECRET_KEY" \
+  -H "Content-Type: application/json" -d '{
+    "prompt": "List the files in the working directory and summarise them.",
+    "model": "lmstudio/qwen3.5-9b-atlassian-mlx",
+    "callbackUrl": "https://<forge-web-trigger-url>?resource=goose-events",
+    "callbackSecret": "<per-task secret>",
+    "threadId": "CORE-812:thread-1"
+  }'
+```
+
 ### Environment levers
 
 The engine's behaviour is governed by `GOOSE_SWARM_*` environment variables (environment beats saved config — a stale `config.yaml` shadowing a baked default is a measured failure class). The levers that matter, as pinned by the campaign's product regime:
@@ -252,7 +285,7 @@ Every macOS release is signed with the LeanZero Developer ID and notarized by Ap
 |---|---|---|
 | [v2.0.3](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.3) | 2026-09-05 | First notarized build. The swarm engine is the r6h golden (commit 393a99351, sb-7 0.4616) with the multi-engine layer; Goose Swarm naming; MLX sidecar on Rapid-MLX v0.13.4-lz.1 with the launcher migration; the Swarm provider's idle-node router and the provider allow-list; LeanZero Link mesh. |
 
-The app updates itself from this repository's releases (`latest-mac.yml` + `Goose.zip` ride each release).
+The app updates itself from this repository's releases (`latest-mac.yml` + `Goose-Swarm-darwin-arm64.zip` ride each release).
 
 ## Relationship to upstream
 

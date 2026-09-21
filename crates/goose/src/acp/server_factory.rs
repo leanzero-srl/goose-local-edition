@@ -1,5 +1,7 @@
 use crate::acp::server::{AcpProviderFactory, GooseAcpAgent, GooseAcpAgentOptions};
-use crate::agents::GoosePlatform;
+use crate::agents::{AgentConfig, GoosePlatform};
+use crate::config::permission::PermissionManager;
+use crate::execution::manager::AgentManager;
 use crate::scheduler_trait::SchedulerTrait;
 use crate::session::SessionManager;
 use crate::source_roots::SourceRoot;
@@ -23,6 +25,7 @@ pub struct AcpServerFactoryConfig {
 pub struct AcpServer {
     config: AcpServerFactoryConfig,
     scheduler: OnceCell<Arc<dyn SchedulerTrait>>,
+    agent_manager: OnceCell<Arc<AgentManager>>,
 }
 
 impl AcpServer {
@@ -30,7 +33,35 @@ impl AcpServer {
         Self {
             config,
             scheduler: OnceCell::new(),
+            agent_manager: OnceCell::new(),
         }
+    }
+
+    /// The manager the HTTP API routes (`/v1/*`, `/cognirunner/*`) run their ephemeral sessions
+    /// on under `goose serve`: built once, on first use, exactly as [`GooseAcpAgent::new`] builds
+    /// one for an ACP connection — the same data dir, the same scheduler, the same platform — so
+    /// an API session lives in the same store the desktop reads. Never
+    /// `AgentManager::instance()`, which would start a second scheduler in this process.
+    pub async fn agent_manager(&self) -> Result<Arc<AgentManager>> {
+        self.agent_manager
+            .get_or_try_init(|| async {
+                let scheduler = self.scheduler().await?;
+                let session_manager = Arc::new(SessionManager::new(self.config.data_dir.clone()));
+                let permission_manager =
+                    Arc::new(PermissionManager::new(self.config.config_dir.clone()));
+                let config = crate::config::Config::global();
+                let agent_config = AgentConfig::new(
+                    session_manager,
+                    permission_manager,
+                    Some(scheduler),
+                    config.get_goose_mode().unwrap_or_default(),
+                    config.get_goose_disable_session_naming().unwrap_or(false),
+                    self.config.goose_platform.clone(),
+                );
+                Ok(Arc::new(AgentManager::new(agent_config, None).await?))
+            })
+            .await
+            .cloned()
     }
 
     async fn scheduler(&self) -> Result<Arc<dyn SchedulerTrait>> {

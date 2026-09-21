@@ -7,10 +7,11 @@ type Node = MenuItemLike & { label?: string; type?: string; submenu?: { items: N
 const item = (props: Partial<Node>): Node => ({ visible: true, enabled: true, ...props });
 
 // Mirrors the shape of Electron's default macOS menu after main.ts has inserted the role-less
-// configured items (Find…, Toggle Navigation).
+// configured items (Find…, Toggle Navigation). The first menu carries app.name — the packaged
+// product is "Goose Swarm".
 const defaultMenu = (): Node[] => [
   item({
-    label: 'Goose',
+    label: 'Goose Swarm',
     submenu: {
       items: [item({ role: 'about' }), item({ type: 'separator' }), item({ role: 'quit' })],
     },

@@ -5276,7 +5276,9 @@ async function appMain() {
 
   const shortcuts = getKeyboardShortcuts(settings);
 
-  const appMenu = menu?.items.find((item) => item.label === 'Goose');
+  // Electron labels the application menu with app.name (the packaged productName, "Goose Swarm";
+  // "Goose" in an unpackaged dev run) — a literal here silently loses the Settings item.
+  const appMenu = menu?.items.find((item) => item.label === app.name);
   if (appMenu?.submenu) {
     appMenu.submenu.insert(1, new MenuItem({ type: 'separator' }));
     if (shortcuts.settings) {

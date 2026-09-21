@@ -43,6 +43,7 @@ pub(crate) mod swarm_router;
 pub mod http_status {
     pub use goose_providers::http_status::*;
 }
+pub mod configured;
 pub mod huggingface;
 pub mod huggingface_auth;
 mod init;

@@ -171,9 +171,10 @@ fn acp_cors_layer(policy: AcpOriginPolicy) -> CorsLayer {
         ])
 }
 
-/// CORS for the auxiliary routes (`/health`, `/status`, MCP app proxy) served by
-/// `goose serve`. This allows the `x-secret-key` auth header the proxy routes
-/// rely on.
+/// CORS for the auxiliary routes (`/health`, `/status`, MCP app proxy) and the API routes
+/// (`/v1/*`, `/cognirunner/*`) served by `goose serve`. This allows the `x-secret-key` auth
+/// header the proxy routes rely on and the `authorization` header API clients send. A
+/// server-to-server client sends no Origin at all, and CORS never gates such a request.
 fn aux_cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(Any)
@@ -181,8 +182,27 @@ fn aux_cors_layer() -> CorsLayer {
         .allow_headers([
             header::CONTENT_TYPE,
             header::ACCEPT,
+            header::AUTHORIZATION,
             HeaderName::from_static("x-secret-key"),
+            HeaderName::from_static("x-goose-keep-session"),
         ])
+}
+
+/// The HTTP API routes (`/v1/*`, `/cognirunner/*`) over this server's own agent manager, under
+/// the same secret as the ACP endpoint (`X-Secret-Key`, or Bearer where
+/// `auth::accepts_bearer` allows). The desktop's engine is `goose serve`, so this is the mount
+/// that makes the API reachable on the node a user actually runs.
+fn api_routes(server: Arc<AcpServer>, secret_key: Option<String>) -> Router {
+    let source = crate::api::AgentManagerSource::FromAcpServer(server);
+    let mut routes = crate::api::openai_compat::routes(source.clone())
+        .merge(crate::api::cognirunner::routes(source));
+    if let Some(secret_key) = secret_key {
+        routes = routes.layer(axum::middleware::from_fn_with_state(
+            secret_key,
+            auth::check_api_token,
+        ));
+    }
+    routes.layer(aux_cors_layer())
 }
 
 fn create_acp_router_inner(server: Arc<AcpServer>, policy: AcpOriginPolicy) -> Router {
@@ -239,14 +259,19 @@ pub fn create_router(
     } else {
         AcpOriginPolicy::loopback()
     };
-    let acp_routes =
-        create_acp_router_with_policy(server, policy, require_token.then_some(secret_key.clone()));
+    let acp_routes = create_acp_router_with_policy(
+        server.clone(),
+        policy,
+        require_token.then_some(secret_key.clone()),
+    );
 
     let aux_routes = Router::new()
         .route("/health", get(health))
         .route("/status", get(health))
-        .merge(super::mcp_app_proxy::routes(secret_key))
+        .merge(super::mcp_app_proxy::routes(secret_key.clone()))
         .layer(aux_cors_layer());
 
-    acp_routes.merge(aux_routes)
+    acp_routes
+        .merge(aux_routes)
+        .merge(api_routes(server, require_token.then_some(secret_key)))
 }
