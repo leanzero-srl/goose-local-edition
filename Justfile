@@ -244,8 +244,8 @@ release-fork version:
     GOOSE_BUILD_VERSION={{version}} GOOSE_BUILD_SHA=$(git rev-parse --short HEAD) just release-binary
     @echo "Bumping ui/desktop version to {{version}}..."
     cd ui/desktop && node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
-    @echo "Building (electron-forge make)..."
-    cd ui/desktop && pnpm run make
+    @echo "Packaging (electron-forge package)..."
+    cd ui/desktop && pnpm run package
     @echo "Signing the WHOLE bundle with the stable self-signed cert + local entitlements..."
     @echo "  (@electron/osx-sign ignores the entitlements path and applies defaults WITHOUT"
     @echo "   disable-library-validation, so the self-signed no-Team-ID build crashes on launch;"
@@ -255,7 +255,7 @@ release-fork version:
     cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "{{local_sign_identity}}" out/Goose-darwin-arm64/Goose.app
     @echo "Re-zipping the signed app (auto-update artifact) + rebuilding the DMG FROM the signed app..."
     cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
-    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
+    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage out/make && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
     @echo "Generating update manifest (latest-mac.yml)..."
     cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
     @echo ""
@@ -313,14 +313,14 @@ release-notarized version:
     cd ui/desktop
     echo "Bumping ui/desktop version to {{version}}..."
     node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
-    echo "electron-forge make — @electron/osx-sign signs the WHOLE bundle with your Developer ID +"
+    echo "electron-forge package — @electron/osx-sign signs the WHOLE bundle with your Developer ID +"
     echo "  hardened runtime + entitlements.plist (goosed, tailscaled, tailscale, node, uvx in"
     echo "  Resources/bin included), then @electron/notarize submits + STAPLES the .app. APPLE_TEAM_ID"
     echo "  is set, so forge.config.ts takes the Developer-ID branch — NO local self-signed re-sign."
-    pnpm run make
+    pnpm run package
     echo "Building the DMG from the notarized, stapled app..."
     rm -rf out/dmgstage
-    mkdir -p out/dmgstage
+    mkdir -p out/dmgstage out/make
     ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app
     ln -s /Applications out/dmgstage/Applications
     rm -f out/make/Goose-{{version}}.dmg
