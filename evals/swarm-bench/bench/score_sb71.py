@@ -445,6 +445,65 @@ def pair_conservation_result(original, ctx):
                   outcome.get('consequence', ''), parts=parts)
 
 
+def initial_api_evidence(ctx):
+    fields = ('payments', 'summary', 'buckets', 'viz_records', 'buckets_expected',
+              'expected_total_at_load', 'sync1_done', 'sync1_wall_ms', 'fixture_seed')
+    missing = [name for name in fields if not hasattr(ctx, name) or getattr(ctx, name) is None]
+    snapshot = {name: copy.deepcopy(getattr(ctx, name)) for name in fields
+                if name not in missing and name != 'buckets_expected'}
+    if 'buckets_expected' not in missing:
+        snapshot['buckets_expected'] = [dict(day=day, status=status, count=count)
+            for (day, status), count in ctx.buckets_expected.items()]
+    return {'phase': 'postsync1 API battery', 'snapshot': snapshot,
+            'missing_fields': missing,
+            'timing': 'Saved initial API responses; reads are sequential, not an atomic snapshot'}
+
+
+def explain_initial_state(result, ctx):
+    payments = getattr(ctx, 'payments', None)
+    initial = payments.get('total') if isinstance(payments, dict) else None
+    expected = getattr(ctx, 'expected_total_at_load', None)
+    rows = {row['check']: row for row in result['checks']}
+    sync = rows.get('sync_completeness')
+    if sync:
+        eventual = sync.get('parts', {}).get('evidenced_total')
+        sync['detail'] = (f'Eventual evidenced total {eventual}; initial API snapshot total {initial}; '
+                          f'initial expected total {expected}. Later recovery does not repair earlier API observations.')
+    bucket = rows.get('b_buckets_dst')
+    if bucket and isinstance(initial, int) and isinstance(expected, int) and initial < expected:
+        why = f'Incorrect daily bucket counts in the incomplete initial dataset ({initial}/{expected} payments)'
+        bucket['detail'] = why + '; ' + bucket['detail']
+        bucket['consequence'] = 'Initial bucket counts disagree with the full fixture; this alone does not establish a timezone conversion defect'
+        for critical in result.get('critical', {}).get('rows', []):
+            if critical['check'] == 'b_buckets_dst':
+                critical['why'] = why
+    return result
+
+
+def threshold_policy():
+    path = HERE / 'sb7-thresholds.json'
+    return {'basis': 'fixed published specification budgets',
+            'empirically_calibrated': base.CALIBRATED,
+            'thresholds_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'qualification': 'No empirical worst-of-five fit; no hardware normalization. Release identity is separate from calibration.'}
+
+
+def encode_recorded_media(ctx, root):
+    observation = ctx.probes.get('viz', {}).get('sb71', {})
+    media = observation.get('media')
+    if media is None:
+        return
+    manifest = Path(root) / media['manifest']
+    try:
+        subprocess.run([os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'),
+                        str(HERE / 'media_sb71.mjs'), str(manifest)],
+                       check=True, capture_output=True, text=True)
+        observation['media'] = {'manifest': media['manifest'], **json.loads(manifest.read_text())}
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        media['errors'].append(f'Publication encoding unavailable; graded observations retained: {type(error).__name__}')
+        manifest.write_text(json.dumps({key: value for key, value in media.items() if key != 'manifest'}, indent=2))
+
+
 def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     if not seed:
         raise ValueError('SB7.1 requires the exact run fixture seed')
@@ -456,10 +515,13 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
             with partition_runtime(mark_phase) as (partition_mark, partition):
                 with resync_runtime(partition_mark) as (mark, resync):
                     ctx = base.gather(root, vendor_port, db_dir, trace_path, mark, seed)
+        # Media serialization runs after all timed probes and app measurement have finished.
+        encode_recorded_media(ctx, root)
         ctx.sb71_partition = partition['evidence']
         ctx.sb71_resync = resync
         ctx.sb71_endpoint_absences = absences
         (Path(root) / 'api-observations.json').write_text(json.dumps({
+            'initial_api': initial_api_evidence(ctx),
             'endpoint_absences': absences, 'stream_head': ctx.stream_head,
             'workflow': ctx.workflow, 'api_lat': ctx.api_lat,
             'resync_interruption': resync, 'partition_status': ctx.sb71_partition,
@@ -718,9 +780,13 @@ def evaluate(ctx):
     if stream_row and stream_row['score'] == 1 and (stream.get('changedPixel') or {}).get('ok') is not True:
         stream_row['admission_evidence_complete'] = False
         stream_row['detail'] += '; SB7.1: changed-instance pixels were not verified'
+    explain_initial_state(raw, ctx)
     result = admit(raw, observation.get('checks', []))
+    result['initial_api'] = initial_api_evidence(ctx)
+    result['threshold_policy'] = threshold_policy()
+    result['calibration'] = 'SB7.1 uses fixed specification budgets; empirical worst-of-five calibration not performed'
     result['media'] = observation.get('media')
-    files = ['score_sb71.py', 'score_sb7.py', 'product_probe_sb71.mjs', 'product_probe_v3.mjs']
+    files = ['score_sb71.py', 'score_sb7.py', 'product_probe_sb71.mjs', 'product_probe_v3.mjs', 'media_sb71.mjs']
     result['scorer_files_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
                                     for name in files}
     result['spec_sha256'] = hashlib.sha256((HERE.parent / 'spec-build-sb71.md').read_bytes()).hexdigest()
@@ -734,10 +800,14 @@ def evaluate(ctx):
 def format_report(result, title=''):
     old_rows = [r for r in result['checks'] if r['check'] not in VISUAL_CHECKS]
     legacy = {**result, 'checks': old_rows, 'score': result.get('rawScore', result['score'])}
+    behavioral = base.format_report(legacy, 'SB7 behavioral evidence')
+    behavioral = '\n'.join(line for line in behavioral.splitlines()
+                           if line.strip() != base.UNCALIBRATED_BANNER)
     lines = [f"{title} {VERSION}: {result['score']:.3f}",
+             result.get('calibration', 'Threshold policy not recorded'),
              f"Earned behavioral score {result['rawScore']:.4f}; admission ceiling {result['admission']['ceiling']:.3f}",
              'Admission does not award points. Final score = min(earned score, applicable ceilings).',
-             *result['admission']['reasons'], '', base.format_report(legacy, 'SB7 behavioral evidence'),
+             *result['admission']['reasons'], '', behavioral,
              '', 'SB7.1 same-session visual evidence:']
     for row in result['checks']:
         if row['check'] in VISUAL_CHECKS:

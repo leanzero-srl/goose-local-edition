@@ -1797,33 +1797,13 @@ async function main() {
     if(!mediaDir)return;
     const raw=await page.video().path();
     await context.close();
-    const root=dirname(mediaDir),clip=join(mediaDir,'payment-towers.webm'),errors=[];
-    let selected=raw,selection='Full graded browser recording',sourceInterval=null;
+    const root=dirname(mediaDir),bytes=readFileSync(raw),file=relative(root,raw);
     const clock={pageCreationStart,pageCreationEnd,phases:{...mediaPhases},clock:'Node performance.now milliseconds',firstFramePaddingSeconds:2};
-    const phaseStart=mediaPhases.motionStart,phaseEnd=mediaPhases.motionEnd;
-    if(Number.isFinite(phaseStart)&&Number.isFinite(phaseEnd)&&phaseEnd>phaseStart) {
-      const start=Math.max(0,(phaseStart-pageCreationEnd)/1000-2);
-      const end=(phaseEnd-pageCreationStart)/1000+2,duration=end-start;
-      sourceInterval={startSeconds:start,endSeconds:end,durationSeconds:duration,
-        reason:'Recorded inspector state immediately before actual committed-update checks through replay, newer-version and exit checks',
-        uncertainty:'Video origin estimated from measured page-creation bounds; two-second first-frame padding retained on each side'};
-      const bitrate=Math.floor(Math.min(450000,3*1024*1024*8/(duration+1)));
-      try {
-        execFileSync(process.env.BENCH_FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',raw,'-ss',String(start),'-t',String(duration),
-          '-an','-vf','scale=960:-2','-c:v','libvpx-vp9','-b:v',String(bitrate),'-threads','1','-y',clip],{timeout:60000});
-        const probe=JSON.parse(execFileSync(process.env.BENCH_FFPROBE||'ffprobe',['-v','error','-show_entries','format=duration','-of','json',clip],{encoding:'utf8',timeout:10000}));
-        const encodedDuration=Number(probe.format?.duration);
-        if(!Number.isFinite(encodedDuration)||encodedDuration<Math.max(.1,(phaseEnd-phaseStart)/1000-2))throw new Error('Encoded excerpt does not cover the measured update phase');
-        sourceInterval.encodedDurationSeconds=encodedDuration;
-        if(statSync(clip).size>4*1024*1024)throw new Error('Encoded phase exceeds 4MiB publication limit');
-        selected=clip;selection='Actual graded payment-update phase, including inspection, live update and replay checks';
-      } catch(error) {errors.push('Phase encoding failed; full graded recording retained: '+String(error.message).slice(0,180));}
-    } else errors.push('Payment-update phase timing unavailable; full graded recording retained');
-    const bytes=readFileSync(selected),file=relative(root,selected);
     const manifest={schemaVersion:1,scorerVersion:'sb-7.1',recording:'graded-browser',
-      videos:[{file,caption:selected===clip?'Graded payment inspection and committed-update checks':'Full graded browser recording; payment-update excerpt unavailable',mimeType:'video/webm',
-        scenario:'viz',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:statSync(selected).size,
-        selection,publishable:bytes.length<=4*1024*1024,sourceInterval:selected===clip?sourceInterval:null,recordingClock:clock,sourceFile:relative(root,raw)}],errors};
+      videos:[{file,caption:'Original graded browser recording; publication encoding pending',mimeType:'video/webm',
+        scenario:'viz',sha256:createHash('sha256').update(bytes).digest('hex'),bytes:statSync(raw).size,
+        selection:'Full original graded browser recording',publishable:bytes.length<=4*1024*1024,
+        sourceInterval:null,recordingClock:clock,sourceFile:file}],errors:[]};
     const path=join(mediaDir,'media-manifest.json');writeFileSync(path,JSON.stringify(manifest,null,2)+'\n');
     result.sb71={...(result.sb71||{}),media:{manifest:relative(root,path),...manifest}};
   }
