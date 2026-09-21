@@ -61,13 +61,26 @@ impl Batcher {
         })
     }
 
-    /// Everything pending, if the rate rule allows a push at `now`; otherwise nothing.
+    /// Everything pending, if the rate rule allows a push at `now`; otherwise nothing. A text
+    /// event is trimmed (a model's reply often opens with the newlines that separated its
+    /// thinking) and dropped when nothing is left — as the shim's accumulator trims at finish.
     pub fn take(&mut self, now: Instant) -> Vec<TaskEvent> {
         match self.ready_at(now) {
             Some(ready) if ready <= now => {
                 self.last_push = Some(now);
                 self.last_text_id = None;
                 std::mem::take(&mut self.pending)
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        TaskEvent::Text { text } => {
+                            let trimmed = text.trim();
+                            (!trimmed.is_empty()).then(|| TaskEvent::Text {
+                                text: trimmed.to_string(),
+                            })
+                        }
+                        other => Some(other),
+                    })
+                    .collect()
             }
             _ => Vec::new(),
         }
@@ -151,6 +164,26 @@ mod tests {
         assert_eq!(second, vec![tool("c2"), tool("c3")]);
         assert!(b.is_empty());
         assert_eq!(b.ready_at(t0 + Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn a_text_event_is_trimmed_and_an_empty_one_is_dropped() {
+        let mut b = Batcher::new(Duration::from_secs(1));
+        b.push_text(text(Some("m1"), "\n\n"));
+        b.push_text(text(Some("m1"), "pong"));
+        b.push_text(text(Some("m1"), "\n"));
+        assert_eq!(
+            b.take(Instant::now()),
+            vec![TaskEvent::Text {
+                text: "pong".into()
+            }]
+        );
+        b.push_text(text(Some("m2"), "  \n"));
+        b.push(tool("c1"));
+        assert_eq!(
+            b.take(Instant::now() + Duration::from_secs(2)),
+            vec![tool("c1")]
+        );
     }
 
     #[test]
