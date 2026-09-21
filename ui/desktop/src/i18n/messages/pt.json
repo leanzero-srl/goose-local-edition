@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Disponíveis para configurar"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Verificando conexões…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Configurados"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Nenhum provedor de nuvem configurado. Escolha um abaixo para configurar."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Verificar conexões novamente"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Tentar novamente"
@@ -2141,6 +2147,21 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Reproduzindo em Picture-in-Picture"
   },
+  "memoryProposals.description": {
+    "defaultMessage": "No fim de um turno o goose avalia como correu — bem ou mal — e, quando há algo que vale a pena lembrar, mostra um cartão sob a resposta. Nada é guardado até clicares em Guardar."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "O modelo que avalia o turno. Deixa vazio para usar o modelo da sessão; um modelo pequeno e rápido mantém a avaliação barata."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "modelo da sessão"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Modelo de avaliação"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Perguntar antes de guardar memórias"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# item encontrado} other{# itens encontrados}}"
   },
@@ -3059,6 +3080,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "A iniciar sessão..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Ao salvar e iniciar o aplicativo, uma breve solicitação é enviada a este modelo para verificar o acesso. As tarifas normais do provedor podem ser aplicadas."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modelo de teste de conexão"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "As conexões dos provedores precisam de atenção"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Adicionar fornecedor"
   },
@@ -3127,6 +3157,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Não pode eliminar {providerName} enquanto estiver em utilização. Mude para um modelo diferente antes de eliminar este fornecedor."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Verificando conexão…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Confirmar eliminação"
@@ -4957,23 +4990,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Criar uma nova sessão com a mensagem editada"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Verificar conexões novamente"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Verificando conexões…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Modelo de teste de conexão"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Ao salvar e iniciar o aplicativo, uma breve solicitação é enviada a este modelo para verificar o acesso. As tarifas normais do provedor podem ser aplicadas."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Verificando conexão…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "As conexões dos provedores precisam de atenção"
   }
 }

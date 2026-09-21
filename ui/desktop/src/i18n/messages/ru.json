@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Доступны для настройки"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Проверка подключений…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Настроенные"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Облачные провайдеры ещё не настроены. Выберите провайдера ниже для настройки."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Перепроверить подключения"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Повторить"
@@ -2141,6 +2147,21 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Воспроизведение в режиме «картинка в картинке»"
   },
+  "memoryProposals.description": {
+    "defaultMessage": "В конце хода goose оценивает, как всё прошло — хорошо или плохо — и, если есть что запомнить, показывает карточку под ответом. Ничего не сохраняется, пока вы не нажмёте Сохранить."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Модель, которая оценивает ход. Оставьте пустым, чтобы использовать модель сессии; маленькая быстрая модель делает оценку дешёвой."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "модель сессии"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Модель оценки"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Спрашивать перед сохранением памяти"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count, plural, one {Найден # элемент} few {Найдено # элемента} many {Найдено # элементов} other {Найдено # элемента}}"
   },
@@ -3059,6 +3080,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Вход..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "При сохранении и запуске приложения этой модели отправляется короткий запрос для проверки доступа. Может взиматься обычная плата провайдера."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Модель для проверки подключения"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Подключения провайдеров требуют внимания"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Добавить провайдера"
   },
@@ -3127,6 +3157,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Нельзя удалить {providerName}, пока он используется. Перед удалением провайдера переключитесь на другую модель."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Проверка подключения…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Подтвердить удаление"
@@ -4957,23 +4990,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Создать новый сеанс с измененным сообщением"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Перепроверить подключения"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Проверка подключений…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Модель для проверки подключения"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "При сохранении и запуске приложения этой модели отправляется короткий запрос для проверки доступа. Может взиматься обычная плата провайдера."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Проверка подключения…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Подключения провайдеров требуют внимания"
   }
 }

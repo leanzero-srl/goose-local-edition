@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Kuruluma hazır"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Bağlantılar denetleniyor…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Yapılandırılmış"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Henüz yapılandırılmış bulut sağlayıcısı yok. Kurmak için aşağıdan birini seçin."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Bağlantıları yeniden denetle"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Yeniden dene"
@@ -2141,6 +2147,21 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
   },
+  "memoryProposals.description": {
+    "defaultMessage": "Bir turun sonunda goose nasıl geçtiğini — iyi ya da kötü — değerlendirir ve hatırlamaya değer bir şey varsa yanıtın altında bir kart gösterir. Kaydet'e tıklayana kadar hiçbir şey kaydedilmez."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Turu değerlendiren model. Oturumun kendi modelini kullanmak için boş bırakın; küçük ve hızlı bir model değerlendirmeyi ucuz tutar."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "oturumun modeli"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Değerlendirme modeli"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Anıları kaydetmeden önce sor"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# öğe bulundu} other{# öğe bulundu}}"
   },
@@ -3059,6 +3080,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Oturum açılıyor..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Kaydetme ve uygulama başlangıcında erişimi denetlemek için bu modele kısa bir istek gönderilir. Sağlayıcının normal kullanım ücretleri uygulanabilir."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Bağlantı testi modeli"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Sağlayıcı bağlantıları dikkat gerektiriyor"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Sağlayıcı Ekle"
   },
@@ -3127,6 +3157,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Şu anda kullanımdayken {providerName}'yi silemezsiniz. Bu sağlayıcıyı silmeden önce lütfen farklı bir modele geçin."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Bağlantı denetleniyor…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Silmeyi Onayla"
@@ -4957,23 +4990,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Düzenlenen mesajla yeni bir oturum oluşturun"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Bağlantıları yeniden denetle"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Bağlantılar denetleniyor…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Bağlantı testi modeli"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Kaydetme ve uygulama başlangıcında erişimi denetlemek için bu modele kısa bir istek gönderilir. Sağlayıcının normal kullanım ücretleri uygulanabilir."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Bağlantı denetleniyor…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Sağlayıcı bağlantıları dikkat gerektiriyor"
   }
 }

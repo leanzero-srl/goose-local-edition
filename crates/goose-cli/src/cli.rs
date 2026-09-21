@@ -1428,7 +1428,10 @@ async fn handle_mcp_command(server: McpCommand) -> Result<()> {
     match server {
         McpCommand::AutoVisualiser => serve(AutoVisualiserRouter::new()).await?,
         McpCommand::ComputerController => serve(ComputerControllerServer::new()).await?,
-        McpCommand::Memory => serve(MemoryServer::new()).await?,
+        McpCommand::Memory => {
+            let proposals = goose::config::Config::global().memory_proposals_enabled();
+            serve(MemoryServer::with_proposals(proposals)).await?
+        }
         McpCommand::Tutorial => serve(TutorialServer::new()).await?,
     }
     Ok(())

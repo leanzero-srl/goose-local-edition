@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Tersedia untuk disediakan"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Menyemak sambungan…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Dikonfigurasi"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Belum ada penyedia awan yang dikonfigurasi. Pilih satu di bawah untuk menyediakannya."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Semak semula sambungan"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Cuba lagi"
@@ -2141,6 +2147,21 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Bermain dalam Gambar-dalam-Gambar"
   },
+  "memoryProposals.description": {
+    "defaultMessage": "Di hujung giliran goose menilai bagaimana hasilnya — baik atau buruk — dan, apabila ada sesuatu yang patut diingat, memaparkan kad di bawah balasan. Tiada apa yang disimpan sehingga anda klik Simpan."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Model yang menilai giliran. Biarkan kosong untuk menggunakan model sesi; model kecil yang pantas mengekalkan penilaian murah."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "model sesi"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Model penilaian"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Tanya sebelum menyimpan memori"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# item dijumpai} other{# item dijumpai}}"
   },
@@ -3059,6 +3080,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Sedang log masuk..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Apabila menyimpan dan memulakan aplikasi, permintaan ringkas dihantar kepada model ini untuk menyemak akses. Caj penggunaan biasa penyedia mungkin dikenakan."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Model ujian sambungan"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Sambungan penyedia memerlukan perhatian"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Tambah Penyedia"
   },
@@ -3127,6 +3157,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Anda tidak boleh memadamkan {providerName} semasa ia sedang digunakan. Sila tukar ke model lain sebelum memadamkan penyedia ini."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Menyemak sambungan…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Sahkan Padam"
@@ -4957,23 +4990,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Cipta sesi baharu dengan mesej yang disunting"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Semak semula sambungan"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Menyemak sambungan…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Model ujian sambungan"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Apabila menyimpan dan memulakan aplikasi, permintaan ringkas dihantar kepada model ini untuk menyemak akses. Caj penggunaan biasa penyedia mungkin dikenakan."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Menyemak sambungan…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Sambungan penyedia memerlukan perhatian"
   }
 }
