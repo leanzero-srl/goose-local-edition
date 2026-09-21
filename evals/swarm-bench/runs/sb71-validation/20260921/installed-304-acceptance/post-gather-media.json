@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "scope": "Final post-gather publication hook on actual reference recording; not a new browser grading run",
+  "seconds": 147.2618234581314,
+  "gradedObservationsUnchanged": true,
+  "media": {
+    "manifest": "bench-media/media-manifest.json",
+    "schemaVersion": 1,
+    "scorerVersion": "sb-7.1",
+    "recording": "graded-browser",
+    "videos": [
+      {
+        "file": "bench-media/payment-towers.webm",
+        "caption": "Full graded browser recording: payment field, structure inspection, committed updates and replay",
+        "mimeType": "video/webm",
+        "scenario": "viz",
+        "sha256": "d31f4e937bb2dfad5badc143cd70a34916e2d28b16f34cb34cb66e1393ebe3fd",
+        "bytes": 2947417,
+        "selection": "Complete recording in original order and at original speed",
+        "publishable": true,
+        "sourceInterval": {
+          "startSeconds": 0,
+          "endSeconds": 118.56,
+          "durationSeconds": 118.56,
+          "encodedDurationSeconds": 118.56,
+          "reason": "Complete graded browser recording, in original order and at original speed"
+        },
+        "recordingClock": {
+          "pageCreationStart": 233.841958,
+          "pageCreationEnd": 280.930208,
+          "phases": {
+            "motionStart": 94049.676917,
+            "motionEnd": 117537.391042
+          },
+          "clock": "Node performance.now milliseconds",
+          "firstFramePaddingSeconds": 2
+        },
+        "sourceFile": "bench-media/raw/page@70a65b195ea40469f0c3755eb0f8fef6.webm"
+      }
+    ],
+    "errors": []
+  }
+}

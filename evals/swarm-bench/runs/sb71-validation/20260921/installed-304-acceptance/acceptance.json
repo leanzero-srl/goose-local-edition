@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "release": "v3.0.4",
+  "sourceCommit": "01bdba703",
+  "manifestSha256": "69a3d183a73b63789439cb545e645fbb3aca72bff08ba82ce17b08e8735757b9",
+  "installedPayloadFilesVerified": 94,
+  "installedFrom": "Exact notarized Goose-3.0.4.dmg published on GitHub",
+  "installedUI": {
+    "version": "3.0.4",
+    "latestStable": "sb-7.1",
+    "toolsReady": true,
+    "runButtonEnabled": true,
+    "updateCheck": "You are running the latest version!"
+  },
+  "notarization": {
+    "app": "Notarized Developer ID",
+    "dmg": "Accepted and stapled",
+    "dmgSubmission": "2e8953e0-06d0-4d25-87ee-f3c907a97aef"
+  },
+  "assets": [
+    {
+      "name": "Goose-3.0.4.dmg",
+      "bytes": 508650560,
+      "digest": "sha256:e851df4234f6bc5e74b44b83e8117defd756c841f8137bb129cf717400d21cb7"
+    },
+    {
+      "name": "Goose-darwin-arm64.zip",
+      "bytes": 409968752,
+      "digest": "sha256:5b903ce5f5188ed57fc1b5298b0e73c5a0f6a0596614ff177f1a24708653f355"
+    },
+    {
+      "name": "Goose.zip",
+      "bytes": 409968752,
+      "digest": "sha256:5b903ce5f5188ed57fc1b5298b0e73c5a0f6a0596614ff177f1a24708653f355"
+    },
+    {
+      "name": "latest-mac.yml",
+      "bytes": 351,
+      "digest": "sha256:15bc7ad53e4738756f33a898a02dbdaf9a2decc2774a1d75a7122b9a843dccb3"
+    }
+  ],
+  "github": {
+    "url": "https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.4",
+    "draft": false,
+    "prerelease": false,
+    "latest": true
+  },
+  "newPaidModelBuilds": 0,
+  "qualification": "No claim of empirical hardware calibration or exhaustive absence of defects. Numeric rules, thresholds and prompt unchanged. Reporting tests preserve archived Gemini0.4992."
+}
