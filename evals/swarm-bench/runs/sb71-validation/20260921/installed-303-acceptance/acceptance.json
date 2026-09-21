@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "release": "v3.0.3",
+  "sourceCommit": "f54601f3e",
+  "manifestSha256": "55b0937f98769ee588ad26ee56e7745a1e563dfce6c267689fd8a963cc475b57",
+  "installedPayloadFilesVerified": 93,
+  "scope": "latest stable launch and retry restriction; no benchmark payload changes",
+  "tests": {
+    "desktopPassed": 2054,
+    "desktopSkipped": 1,
+    "finalFocusedPassed": 25,
+    "eslint": "passed",
+    "typecheck": "passed",
+    "cargoFmt": "passed",
+    "workspaceClippy": "passed"
+  },
+  "installedUI": {
+    "legacySelectorAbsent": true,
+    "latestStable": "sb-7.1",
+    "toolsReady": true,
+    "version": "3.0.3",
+    "updateCheck": "You are running the latest version!",
+    "historicalSessionsReadable": true
+  },
+  "notarization": {
+    "app": "Notarized Developer ID",
+    "dmg": "Accepted and stapled"
+  },
+  "assets": [
+    {
+      "name": "Goose-3.0.3.dmg",
+      "bytes": 498285464,
+      "digest": "sha256:7ff5f67f28405a85637e6332e7da2eefd525226262e4fd3135fcd3183db23571"
+    },
+    {
+      "name": "Goose-darwin-arm64.zip",
+      "bytes": 409965466,
+      "digest": "sha256:413ffaf7bffb60295316f8477a4659ad89d2d2458ab45daeae4858ca4451dbcc"
+    },
+    {
+      "name": "Goose.zip",
+      "bytes": 409965466,
+      "digest": "sha256:413ffaf7bffb60295316f8477a4659ad89d2d2458ab45daeae4858ca4451dbcc"
+    },
+    {
+      "name": "latest-mac.yml",
+      "bytes": 351,
+      "digest": "sha256:74181e7958a372589fee2dbad9abecf523c61d0a9604d6abb153b7f8d7064b11"
+    }
+  ],
+  "benchmarkAcceptance": "../installed-302-acceptance/acceptance.json",
+  "freshModelRun": false
+}
