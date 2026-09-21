@@ -4,6 +4,7 @@ pub mod config_management;
 pub mod dictation;
 pub mod errors;
 pub mod mcp_app_proxy;
+pub mod openai_compat;
 pub mod prompts;
 pub mod recipe;
 pub mod recipe_utils;
@@ -35,4 +36,5 @@ pub fn configure(state: Arc<crate::state::AppState>, secret_key: String) -> Rout
         .merge(mcp_app_proxy::routes(secret_key))
         .merge(session_events::routes(state.clone()))
         .merge(dictation::routes(state.clone()))
+        .merge(openai_compat::routes(state.clone()))
 }

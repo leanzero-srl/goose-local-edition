@@ -187,6 +187,35 @@ goose swarm run "build a CLI tool that ..."
 
 Open the Benchmark page in the desktop app, choose the node count, and press Run. The app boots the vendor fixture, runs the swarm build against the frozen spec, scores the result with sb-5.2, and offers Publish with the identity, model identifier and screenshots described above. Publishing is opt-in per run.
 
+### OpenAI-compatible endpoint
+
+`goosed` (the desktop's backend, also runnable on its own) exposes an OpenAI-compatible surface, so any OpenAI client — an Atlassian Forge app, an SDK, `curl` — can use a goose node, or the whole swarm, as a model.
+
+| route | what |
+|---|---|
+| `GET /v1/models` | `{"object":"list","data":[{"id":"<provider>/<model>","object":"model","owned_by":"goose"}, …]}` — every model the node's configured providers can run, plus the literal ids `swarm` (chat through an idle fleet node) and `swarm-build` (the message becomes a swarm build brief). |
+| `POST /v1/chat/completions` | The OpenAI request (`model`, `messages[]` with string or parts content, `stream`, `response_format`). Each call is one ephemeral goose session: the messages become its conversation, `model` is applied exactly as the desktop's provider switch does, the turn runs with goose's own MCP tools, the answer comes back as `chat.completion` (or `chat.completion.chunk` SSE frames ending in `data: [DONE]` when `stream:true`), and the session is deleted — send `x-goose-keep-session: 1` to keep it. |
+
+Model ids are `provider/model`, split on the first `/` (`openrouter/anthropic/claude-sonnet-4` is provider `openrouter`). A `tools` field is accepted and ignored (the response never carries `tool_calls`); image parts are dropped with a warning; `response_format: {"type":"json_object"}` appends a JSON-only instruction to the system prompt; `temperature` and `max_tokens` are ignored. Errors use the OpenAI envelope: `401` without the secret, `400` on a bad body, `404 {"error":{"message":"model not found"}}` for an unknown model, `500` with goose's error text otherwise.
+
+Auth is the server secret, sent either as `X-Secret-Key: <secret>` (every goosed route) or as `Authorization: Bearer <secret>` (these two routes only).
+
+Start a reachable goosed:
+
+```bash
+GOOSE_HOST=0.0.0.0 GOOSE_PORT=3000 GOOSE_SERVER__SECRET_KEY=change-me goosed agent
+```
+
+`GOOSE_HOST` defaults to `127.0.0.1`; bind `0.0.0.0` only on a network you trust. goosed speaks plain HTTP — for a caller outside the LAN (a Forge app's egress is HTTPS-only) put it behind TLS: a Tailscale Funnel (`tailscale funnel 3000`) gives a public `https://<node>.<tailnet>.ts.net` with a real certificate; a reverse proxy with its own certificate does the same. Set `GOOSE_OPENAI_COMPAT_WORKING_DIR` to choose the ephemeral sessions' working directory (default: goose's data dir).
+
+```bash
+curl -s http://127.0.0.1:3000/v1/models -H "Authorization: Bearer change-me"
+
+curl -s http://127.0.0.1:3000/v1/chat/completions \
+  -H "Authorization: Bearer change-me" -H "Content-Type: application/json" \
+  -d '{"model":"lmstudio/qwen3-coder","messages":[{"role":"system","content":"Answer in one word."},{"role":"user","content":"What colour is the sky?"}]}'
+```
+
 ### Environment levers
 
 The engine's behaviour is governed by `GOOSE_SWARM_*` environment variables (environment beats saved config — a stale `config.yaml` shadowing a baked default is a measured failure class). The levers that matter, as pinned by the campaign's product regime:

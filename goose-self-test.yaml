@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, openai_compat, delegation, advanced"
 
   - key: test_depth
     input_type: string
@@ -451,6 +451,19 @@ prompt: |
   1. Archive results to {{ workspace_dir }}/archive/
   2. Remove temporary test artifacts
   3. Keep only the final report and logs
+  {% endif %}
+
+  {% if test_phases == "openai_compat" %}
+  ## OpenAI-compatible endpoint
+  With goosed running (GOOSE_SERVER__SECRET_KEY set), `GET /v1/models` must answer 401 with no
+  credential, and 200 with either `X-Secret-Key` or `Authorization: Bearer <the same secret>`;
+  the list must carry `swarm` and `swarm-build` plus one `provider/model` id per configured
+  provider model. `POST /v1/chat/completions` with a one-line user message and a configured
+  `provider/model` must answer a `chat.completion` whose single choice has role assistant and
+  non-empty content; with `stream:true` it must send `chat.completion.chunk` frames and end with
+  `data: [DONE]`; an unknown model must answer 404 `model not found`; a malformed body 400.
+  Bearer must NOT unlock any other route (`/config` with only a Bearer header answers 401).
+  Confirm the ephemeral session is gone afterwards unless `x-goose-keep-session: 1` was sent.
   {% endif %}
 
   {% if test_phases == "provider_connections" %}
