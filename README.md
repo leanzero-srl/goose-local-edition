@@ -206,12 +206,12 @@ Start a reachable goosed:
 GOOSE_HOST=0.0.0.0 GOOSE_PORT=3000 GOOSE_SERVER__SECRET_KEY=change-me goosed agent
 ```
 
-`GOOSE_HOST` defaults to `127.0.0.1`; bind `0.0.0.0` only on a network you trust. goosed speaks plain HTTP — for a caller outside the LAN (a Forge app's egress is HTTPS-only) put it behind TLS: a Tailscale Funnel (`tailscale funnel 3000`) gives a public `https://<node>.<tailnet>.ts.net` with a real certificate; a reverse proxy with its own certificate does the same. Set `GOOSE_OPENAI_COMPAT_WORKING_DIR` to choose the ephemeral sessions' working directory (default: goose's data dir).
+`GOOSE_HOST` defaults to `127.0.0.1`; bind `0.0.0.0` only on a network you trust. goosed serves **HTTPS with a self-signed certificate by default** (it prints the fingerprint as `GOOSED_CERT_FINGERPRINT=…` at boot) — pass `-k` to curl, or set `GOOSE_TLS=false` for plain HTTP on a trusted LAN, or `GOOSE_TLS_CERT_PATH` + `GOOSE_TLS_KEY_PATH` for your own certificate. A caller that only trusts public CAs (a Forge app's egress is HTTPS-only and does not accept self-signed certificates) needs a real certificate in front: a Tailscale Funnel (`tailscale funnel 3000`, with `GOOSE_TLS=false` behind it) gives a public `https://<node>.<tailnet>.ts.net`; a reverse proxy with its own certificate does the same. Set `GOOSE_OPENAI_COMPAT_WORKING_DIR` to choose the ephemeral sessions' working directory (default: goose's data dir).
 
 ```bash
-curl -s http://127.0.0.1:3000/v1/models -H "Authorization: Bearer change-me"
+curl -sk https://127.0.0.1:3000/v1/models -H "Authorization: Bearer change-me"
 
-curl -s http://127.0.0.1:3000/v1/chat/completions \
+curl -sk https://127.0.0.1:3000/v1/chat/completions \
   -H "Authorization: Bearer change-me" -H "Content-Type: application/json" \
   -d '{"model":"lmstudio/qwen3-coder","messages":[{"role":"system","content":"Answer in one word."},{"role":"user","content":"What colour is the sky?"}]}'
 ```
