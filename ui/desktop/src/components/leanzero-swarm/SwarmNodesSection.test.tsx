@@ -33,9 +33,7 @@ const fleetState = {
 // The mock honors the `enabled` gate exactly like the real hook: disabled discovery reads offline.
 vi.mock('../swarm/useFleet', () => ({
   useFleet: (_pollMs?: number, _endpoint?: string, enabled = true) =>
-    enabled
-      ? fleetState
-      : { lanes: [], models: [], online: false, loading: false, endpoint: '' },
+    enabled ? fleetState : { lanes: [], models: [], online: false, loading: false, endpoint: '' },
   deviceFromModelId: (id: string) => {
     const bare = id.split('/').pop() || id;
     const dash = bare.indexOf('-');
@@ -169,9 +167,7 @@ describe('the simplified Nodes tab', () => {
     await waitFor(() => {
       expect(nodeRow('workhorse-mlx')).toBeInTheDocument();
     });
-    expect(
-      within(nodeRow('workhorse-mlx')).getByText('LeanZero MLX')
-    ).toBeInTheDocument();
+    expect(within(nodeRow('workhorse-mlx')).getByText('LeanZero MLX')).toBeInTheDocument();
     expect(within(nodeRow('zai-glm')).getByText('Z.ai')).toBeInTheDocument();
     expect(nodeRowOrNull('gabee-qwen3.8-27b')).toBeNull();
     expect(screen.queryByText('LM Studio')).toBeNull();
@@ -276,9 +272,7 @@ describe('the simplified Nodes tab', () => {
     await waitFor(() => {
       expect(nodeRow('gabee-qwen3.8-27b')).toBeInTheDocument();
     });
-    await userEvent.click(
-      screen.getByRole('button', { name: 'More work (gabee-qwen3.8-27b)' })
-    );
+    await userEvent.click(screen.getByRole('button', { name: 'More work (gabee-qwen3.8-27b)' }));
     await waitFor(() => {
       expect(mockUpsert).toHaveBeenCalled();
     });
@@ -366,12 +360,11 @@ describe('the simplified Nodes tab', () => {
 });
 
 describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
-  it('derives [mlx, ...every CLOUD_PROVIDERS entry] from the ONE mirror — never a hardcoded list', () => {
-    const opts = deriveProviderOptions(new Set(['zai']), false);
-    // The cloud slice IS the mirror, 1:1 and in order: a provider added to CLOUD_PROVIDERS
-    // appears here with no other change.
-    expect(opts.map((o) => o.value)).toEqual(['mlx', ...CLOUD_PROVIDERS.map((c) => c.cli)]);
-    expect(opts.slice(1).map((o) => o.label)).toEqual(CLOUD_PROVIDERS.map((c) => c.label));
+  it('offers only configured cloud adapters from the shared mirror', () => {
+    expect(deriveProviderOptions(new Set(['zai']), false).map((o) => o.value)).toEqual([
+      'mlx',
+      'zai',
+    ]);
   });
 
   it('the mirror carries the engine CLOUD_DEFS registry ids (the join keys)', () => {
@@ -383,13 +376,13 @@ describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
     ]);
   });
 
-  it('configured -> selectable; unconfigured -> the no-key state; unknown read -> selectable', () => {
-    const opts = deriveProviderOptions(new Set(['zai', 'google']), false);
-    const byValue = Object.fromEntries(opts.map((o) => [o.value, o.configured]));
-    expect(byValue).toMatchObject({ mlx: true, zai: true, google: true, bedrock: false, deepseek: false });
-    // A failed provider-details read must not dead-end the dialog: everything stays selectable
-    // and the engine-side CloudPane check governs.
-    expect(deriveProviderOptions(null, false).every((o) => o.configured)).toBe(true);
+  it('does not offer unconfigured or unreadable cloud providers', () => {
+    expect(deriveProviderOptions(new Set(['zai', 'google']), false).map((o) => o.value)).toEqual([
+      'mlx',
+      'zai',
+      'google',
+    ]);
+    expect(deriveProviderOptions(null, false).map((o) => o.value)).toEqual(['mlx']);
   });
 
   it('lmstudio is absent by default (code gate off) and present only when BOTH gates open', () => {
@@ -400,31 +393,14 @@ describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
     expect(withLm[0].value).toBe('mlx'); // MLX stays first
   });
 
-  it('renders true configured state: zai plain, the key-less families badged, no LM Studio', async () => {
-    render();
+  it('hides unconfigured choices and keeps provider setup accessible', async () => {
+    const openCloud = vi.fn();
+    rtlRender(<SwarmNodesSection onOpenCloudProviders={openCloud} />, { wrapper: IntlTestWrapper });
     await userEvent.click(await screen.findByTestId('swarm-add-node'));
     await userEvent.click(screen.getAllByRole('combobox')[0]);
     const opts = await screen.findAllByRole('option');
-    const names = opts.map((o) => o.textContent ?? '');
-    expect(names.some((n) => n.includes('LeanZero MLX'))).toBe(true);
-    expect(names.some((n) => /LM Studio/i.test(n))).toBe(false);
-    expect(screen.queryByTestId('provider-no-key-zai')).toBeNull();
-    expect(screen.getByTestId('provider-no-key-bedrock')).toBeInTheDocument();
-    expect(screen.getByTestId('provider-no-key-google')).toBeInTheDocument();
-    expect(screen.getByTestId('provider-no-key-deepseek')).toBeInTheDocument();
-  });
-
-  it('picking a key-less provider shows the no-key state whose action deep-links to Cloud Providers', async () => {
-    const openCloud = vi.fn();
-    rtlRender(<SwarmNodesSection onOpenCloudProviders={openCloud} />, {
-      wrapper: IntlTestWrapper,
-    });
-    await userEvent.click(await screen.findByTestId('swarm-add-node'));
-    await userEvent.click(screen.getAllByRole('combobox')[0]);
-    await userEvent.click(await screen.findByRole('option', { name: /Amazon Bedrock/ }));
-    await waitFor(() => expect(screen.getByTestId('add-node-no-key-pane')).toBeInTheDocument());
-    // the add pane must NOT render for a key-less family
-    expect(mockSwarmCloud).not.toHaveBeenCalled();
+    expect(opts.map((o) => o.textContent)).toEqual(['LeanZero MLX', 'Z.ai']);
+    await userEvent.click(screen.getByRole('option', { name: 'Z.ai' }));
     await userEvent.click(screen.getByTestId('add-node-configure-cloud'));
     expect(openCloud).toHaveBeenCalledTimes(1);
   });
@@ -548,12 +524,7 @@ describe('Add node — cloud path (the invariant)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'More work (weight)' }));
     await userEvent.click(await screen.findByRole('button', { name: '+ Add' }));
     await waitFor(() => {
-      expect(mockSwarmCloud).toHaveBeenCalledWith('zai', [
-        'add',
-        'glm-5.3-turbo',
-        '--weight',
-        '3',
-      ]);
+      expect(mockSwarmCloud).toHaveBeenCalledWith('zai', ['add', 'glm-5.3-turbo', '--weight', '3']);
     });
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockRead).toHaveBeenCalled();
@@ -583,10 +554,9 @@ describe('the Nodes tab — LeanZero Studio register', () => {
     });
     expect(screen.getByTestId('lz-section-count')).toHaveTextContent('3');
     // the anti-claim chip is the stopped tone, never an amber fill
-    expect(within(screen.getByTestId('awaiting-routing-mihai-mlx')).getByTestId('lz-chip')).toHaveAttribute(
-      'data-tone',
-      'stopped'
-    );
+    expect(
+      within(screen.getByTestId('awaiting-routing-mihai-mlx')).getByTestId('lz-chip')
+    ).toHaveAttribute('data-tone', 'stopped');
     // a node-hue dot per row, identity only
     expect(screen.getAllByTestId('lz-status-dot')).toHaveLength(3);
     assertStudioClean(container);

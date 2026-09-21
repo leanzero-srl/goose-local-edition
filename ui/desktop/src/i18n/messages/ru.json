@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Один движок LeanZero MLX обслуживает ОДНУ модель: все MLX-узлы делят то, что движок смонтировал, поэтому разная модель на узел пока невозможна. Добавление этого узла направит движок на выбранную здесь модель."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "нет ключа"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "У {label} на этой машине пока нет API-ключа. Добавьте его в разделе «Облачные провайдеры», затем вернитесь, чтобы добавить узел."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Провайдер"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Стили ответов"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Доступны для настройки"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Настроенные"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "Настроено {configured} из {total}"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Загрузка провайдеров…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "Облачные провайдеры ещё не настроены. Выберите провайдера ниже для настройки."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Повторить"

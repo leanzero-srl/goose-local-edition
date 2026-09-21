@@ -263,7 +263,7 @@ impl ProviderRegistry {
                     config_keys.remove(api_key_index);
                 } else if !config.api_key_env.is_empty() {
                     config_keys[api_key_index] =
-                        ConfigKey::new(&config.api_key_env, false, true, None, true);
+                        ConfigKey::new(&config.api_key_env, true, true, None, true);
                 }
             }
 
@@ -300,10 +300,12 @@ impl ProviderRegistry {
             fast_model: config.fast_model.clone(),
         };
         let inventory_config_keys = custom_metadata.config_keys.clone();
+        let explicitly_configured = provider_type == ProviderType::Custom && !config.requires_auth;
         let default_inventory_configured = Arc::new(move || {
             super::inventory::default_inventory_configured(
                 &inventory_config_keys,
                 crate::config::Config::global(),
+                explicitly_configured,
             )
         });
 

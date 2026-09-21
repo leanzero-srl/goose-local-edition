@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Satu enjin LeanZero MLX melayani SATU model: semua nod MLX berkongsi apa yang dimuatkan enjin, jadi model berbeza bagi setiap nod belum boleh dilakukan. Menambah nod ini menghala enjin ke model yang anda pilih di sini."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "tiada kunci"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} belum mempunyai kunci API pada mesin ini. Tambahkannya dalam Penyedia Awan, kemudian kembali untuk menambah nod."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Penyedia"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Gaya Respons"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Tersedia untuk disediakan"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Dikonfigurasi"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} daripada {total} dikonfigurasi"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Memuatkan penyedia…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "Belum ada penyedia awan yang dikonfigurasi. Pilih satu di bawah untuk menyediakannya."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Cuba lagi"

@@ -66,8 +66,14 @@ impl InventoryResolvers {
         });
 
         let config_keys = metadata.config_keys.clone();
-        let default_configured =
-            Arc::new(move || default_inventory_configured(&config_keys, Config::global()));
+        let provider_id = metadata.name.clone();
+        let default_configured = Arc::new(move || {
+            let config = Config::global();
+            let explicitly_configured =
+                crate::config::providers::get_provider_entry(config, &provider_id)
+                    .is_some_and(|entry| entry.configured);
+            default_inventory_configured(&config_keys, config, explicitly_configured)
+        });
 
         match registration {
             Some(registration) => Self {

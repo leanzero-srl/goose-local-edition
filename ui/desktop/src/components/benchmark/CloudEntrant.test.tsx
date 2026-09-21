@@ -20,7 +20,18 @@ const row = (name: string, configured = true) => ({
 });
 it('lists configured provider identities including custom, without assuming four providers or Google', async () => {
   vi.mocked(acpListProviderDetails).mockResolvedValue(
-    ['google', 'anthropic', 'openai', 'aws_bedrock', 'deepseek', 'custom_team', 'lmstudio', 'ollama', 'omlx', 'local']
+    [
+      'google',
+      'anthropic',
+      'openai',
+      'aws_bedrock',
+      'deepseek',
+      'custom_team',
+      'lmstudio',
+      'ollama',
+      'omlx',
+      'local',
+    ]
       .map((name) => row(name))
       .concat(row('unconfigured', false))
   );
@@ -28,8 +39,10 @@ it('lists configured provider identities including custom, without assuming four
   render(<CloudEntrant provider="" model="" disabled={false} onChange={change} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled());
   fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
-  expect(await screen.findAllByRole('menuitem')).toHaveLength(9);
-  expect(screen.queryByRole('menuitem', { name: 'unconfigured' })).toBeNull();
+  expect(await screen.findAllByRole('menuitem')).toHaveLength(6);
+  for (const name of ['unconfigured', 'lmstudio', 'ollama', 'omlx', 'local']) {
+    expect(screen.queryByRole('menuitem', { name })).toBeNull();
+  }
   fireEvent.click(screen.getByRole('menuitem', { name: 'custom_team' }));
   expect(change).toHaveBeenCalledWith('custom_team', '');
 });

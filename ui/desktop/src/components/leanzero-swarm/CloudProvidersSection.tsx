@@ -19,6 +19,12 @@ const i18n = defineMessages({
     defaultMessage: 'Could not load the provider list.',
   },
   retry: { id: 'cloudProviders.retry', defaultMessage: 'Retry' },
+  configured: { id: 'cloudProviders.configured', defaultMessage: 'Configured' },
+  available: { id: 'cloudProviders.available', defaultMessage: 'Available to set up' },
+  noneConfigured: {
+    id: 'cloudProviders.noneConfigured',
+    defaultMessage: 'No cloud providers configured yet. Choose one below to set it up.',
+  },
   configuredCount: {
     id: 'cloudProviders.configuredCount',
     defaultMessage: '{configured} of {total} configured',
@@ -106,13 +112,39 @@ export default function CloudProvidersSection() {
       ) : providers == null ? (
         <div className="text-sm text-text-secondary">{intl.formatMessage(i18n.loading)}</div>
       ) : (
-        <ProviderGrid
-          providers={cloudProviders}
-          isOnboarding={false}
-          refreshProviders={() => void refreshProviders()}
-          setView={setView}
-          allowCustomProvider
-        />
+        <>
+          <section aria-label={intl.formatMessage(i18n.configured)}>
+            <h2 className="mb-3 text-lg font-semibold text-text-primary">
+              {intl.formatMessage(i18n.configured)}
+            </h2>
+            {configuredCount === 0 ? (
+              <p className="text-sm text-text-secondary">
+                {intl.formatMessage(i18n.noneConfigured)}
+              </p>
+            ) : (
+              <ProviderGrid
+                providers={cloudProviders.filter((p) => p.is_configured)}
+                isOnboarding={false}
+                refreshProviders={() => void refreshProviders()}
+                setView={setView}
+                allowCustomProvider={false}
+              />
+            )}
+          </section>
+          <hr className="my-2 border-border-primary" />
+          <section aria-label={intl.formatMessage(i18n.available)}>
+            <h2 className="mb-3 text-lg font-semibold text-text-primary">
+              {intl.formatMessage(i18n.available)}
+            </h2>
+            <ProviderGrid
+              providers={cloudProviders.filter((p) => !p.is_configured)}
+              isOnboarding={false}
+              refreshProviders={() => void refreshProviders()}
+              setView={setView}
+              allowCustomProvider
+            />
+          </section>
+        </>
       )}
     </div>
   );

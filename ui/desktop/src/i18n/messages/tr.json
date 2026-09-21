@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Bir LeanZero MLX motoru TEK bir model sunar: tüm MLX düğümleri motorun bağladığını paylaşır, bu yüzden düğüm başına farklı model henüz mümkün değil. Bu düğümü eklemek motoru burada seçtiğiniz modele yönlendirir."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "anahtar yok"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} için bu makinede henüz API anahtarı yok. Bulut Sağlayıcıları'nda ekleyin, sonra düğümü eklemek için geri gelin."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Sağlayıcı"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Yanıt Stilleri"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Kuruluma hazır"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Yapılandırılmış"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} sağlayıcıdan {configured} tanesi yapılandırıldı"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Sağlayıcılar yükleniyor…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "Henüz yapılandırılmış bulut sağlayıcısı yok. Kurmak için aşağıdan birini seçin."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Yeniden dene"

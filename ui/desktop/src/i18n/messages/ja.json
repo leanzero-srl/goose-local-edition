@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "1 つの LeanZero MLX エンジンは 1 つのモデルのみを提供します。すべての MLX ノードはエンジンがマウントしているものを共有するため、ノードごとに別モデルはまだできません。このノードを追加すると、ここで選んだモデルにエンジンが切り替わります。"
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "キーなし"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} にはこのマシン上でまだ API キーがありません。クラウドプロバイダーで追加してから、戻ってノードを追加してください。"
-  },
   "addNode.providerLabel": {
     "defaultMessage": "プロバイダー"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回答スタイル"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "設定できるプロバイダー"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "設定済み"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} 中 {configured} 件設定済み"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "プロバイダーを読み込み中…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "クラウドプロバイダーはまだ設定されていません。下から選んで設定してください。"
   },
   "cloudProviders.retry": {
     "defaultMessage": "再試行"

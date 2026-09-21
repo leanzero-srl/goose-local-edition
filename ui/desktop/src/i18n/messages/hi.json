@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "एक LeanZero MLX इंजन केवल एक ही मॉडल चलाता है: सभी MLX नोड वही साझा करते हैं जो इंजन ने माउंट किया है, इसलिए हर नोड के लिए अलग मॉडल अभी संभव नहीं। यह नोड जोड़ने से इंजन यहाँ चुने गए मॉडल पर सेट हो जाएगा।"
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "कोई कुंजी नहीं"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} के लिए इस मशीन पर अभी कोई API कुंजी नहीं है। इसे क्लाउड प्रदाता में जोड़ें, फिर नोड जोड़ने के लिए वापस आएँ।"
-  },
   "addNode.providerLabel": {
     "defaultMessage": "प्रदाता"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "प्रतिक्रिया शैलियाँ"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "सेटअप के लिए उपलब्ध"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "कॉन्फ़िगर किए गए"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} में से {configured} कॉन्फ़िगर"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "प्रदाता लोड हो रहे हैं…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "अभी कोई क्लाउड प्रदाता कॉन्फ़िगर नहीं है। सेटअप के लिए नीचे किसी एक को चुनें।"
   },
   "cloudProviders.retry": {
     "defaultMessage": "फिर कोशिश करें"

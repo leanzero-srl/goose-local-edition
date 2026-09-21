@@ -77,7 +77,7 @@ describe('CloudProvidersSection', () => {
     ]);
     render();
     await waitFor(() => {
-      expect(screen.getByTestId('provider-grid')).toBeInTheDocument();
+      expect(screen.getAllByTestId('provider-grid')[0]).toBeInTheDocument();
     });
     for (const allowed of [
       'anthropic',
@@ -95,7 +95,10 @@ describe('CloudProvidersSection', () => {
     expect(gridSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({ allowCustomProvider: true })
     );
-    expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(6);
+    expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(3);
+    expect(screen.getByRole('region', { name: 'Configured' })).toHaveTextContent('anthropic');
+    expect(screen.getByRole('region', { name: 'Configured' })).not.toHaveTextContent('openai');
+    expect(screen.getByRole('region', { name: 'Available to set up' })).toHaveTextContent('openai');
     // The count describes the visible registry rows.
     expect(screen.getByText('3 of 6 configured')).toBeInTheDocument();
   });

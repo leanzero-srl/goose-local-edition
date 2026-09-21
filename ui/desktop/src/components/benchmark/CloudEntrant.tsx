@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { Button, TYPE } from '../lz';
+import { isLocalEditionCloudProvider } from '../settings/models/leanzeroSelectorPolicy';
 
 export function CloudEntrant({
   provider,
@@ -32,10 +33,7 @@ export function CloudEntrant({
       .then((rows) => {
         if (!alive) return;
         setProviders(
-          rows.filter(
-            (row) =>
-              row.is_configured && !['local', 'swarm'].includes(row.name)
-          )
+          rows.filter((row) => row.is_configured && isLocalEditionCloudProvider(row.name))
         );
         setError(null);
       })

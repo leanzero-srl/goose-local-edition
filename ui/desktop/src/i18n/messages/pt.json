@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Um motor LeanZero MLX serve UM único modelo: todos os nós MLX compartilham o que o motor montou, então um modelo diferente por nó ainda não é possível. Adicionar este nó aponta o motor para o modelo escolhido aqui."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "sem chave"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} ainda não tem chave de API nesta máquina. Adicione-a em Provedores de nuvem e depois volte para adicionar o nó."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Provedor"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Estilos de resposta"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Disponíveis para configurar"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Configurados"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} de {total} configurados"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Carregando provedores…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "Nenhum provedor de nuvem configurado. Escolha um abaixo para configurar."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Tentar novamente"

@@ -880,20 +880,31 @@ pub fn default_inventory_identity(
     identity
 }
 
-pub fn default_inventory_configured(config_keys: &[ConfigKey], config: &Config) -> bool {
-    config_keys.iter().all(|key| {
-        if !key.required {
-            return true;
-        }
-        if key.default.is_some() {
-            return true;
-        }
-        if key.secret {
-            config.get_secret::<serde_json::Value>(&key.name).is_ok()
+pub fn default_inventory_configured(
+    config_keys: &[ConfigKey],
+    config: &Config,
+    explicitly_configured: bool,
+) -> bool {
+    let mut has_configuration = explicitly_configured;
+    for key in config_keys {
+        let value = if key.secret {
+            config_secret_value(config, &key.name)
         } else {
-            config.get_param::<serde_json::Value>(&key.name).is_ok()
+            config_param_value(config, &key.name)
+        };
+        let present = value.is_some_and(|value| !value.trim().is_empty());
+        has_configuration |= present;
+        if key.required
+            && !present
+            && key
+                .default
+                .as_ref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            return false;
         }
-    })
+    }
+    has_configuration
 }
 
 pub fn declarative_inventory_identity(
@@ -1176,6 +1187,36 @@ pub async fn create_tables(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_configuration_requires_real_setup_and_all_required_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::new_with_file_secrets(
+            dir.path().join("config.yaml"),
+            dir.path().join("secrets.yaml"),
+        )
+        .unwrap();
+        let optional = vec![ConfigKey::new(
+            "TEST_PICKER_COMMAND",
+            false,
+            false,
+            Some("unused-cli"),
+            true,
+        )];
+        assert!(!default_inventory_configured(&[], &config, false));
+        assert!(!default_inventory_configured(&optional, &config, false));
+        assert!(default_inventory_configured(&optional, &config, true));
+        config
+            .set_param("TEST_PICKER_COMMAND", " /custom/cli ")
+            .unwrap();
+        assert!(default_inventory_configured(&optional, &config, false));
+        let required = vec![ConfigKey::new("TEST_PICKER_KEY", true, true, None, true)];
+        assert!(!default_inventory_configured(&required, &config, true));
+        config.set_secret("TEST_PICKER_KEY", &"   ").unwrap();
+        assert!(!default_inventory_configured(&required, &config, false));
+        config.set_secret("TEST_PICKER_KEY", &"test-key").unwrap();
+        assert!(default_inventory_configured(&required, &config, false));
+    }
 
     fn test_identity(provider_id: &str, inventory_key: &str) -> InventoryIdentity {
         InventoryIdentity {

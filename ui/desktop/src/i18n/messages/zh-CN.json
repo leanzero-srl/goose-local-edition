@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "一个 LeanZero MLX 引擎只服务一个模型:所有 MLX 节点共享引擎当前挂载的模型,暂时无法为每个节点配不同的模型。添加此节点会让引擎指向你在这里选择的模型。"
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "无密钥"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} 在这台机器上还没有 API 密钥。请先在云端提供方中添加,然后回来添加节点。"
-  },
   "addNode.providerLabel": {
     "defaultMessage": "提供方"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回复风格"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "可供设置"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "已配置"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "已配置 {configured}/{total}"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "正在加载提供方…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "尚未配置云服务提供商。请在下方选择一个进行设置。"
   },
   "cloudProviders.retry": {
     "defaultMessage": "重试"

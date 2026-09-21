@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "Một động cơ LeanZero MLX chỉ phục vụ MỘT mô hình: mọi nút MLX dùng chung thứ động cơ đã gắn, nên mỗi nút một mô hình khác nhau là chưa thể. Thêm nút này sẽ trỏ động cơ tới mô hình bạn chọn ở đây."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "chưa có khóa"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} chưa có khóa API trên máy này. Hãy thêm nó trong Nhà cung cấp đám mây, rồi quay lại để thêm nút."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Nhà cung cấp"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Phong cách phản hồi"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Có thể thiết lập"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Đã cấu hình"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "Đã cấu hình {configured} trên {total}"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Đang tải nhà cung cấp…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "Chưa có nhà cung cấp đám mây nào được cấu hình. Chọn một nhà cung cấp bên dưới để thiết lập."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Thử lại"

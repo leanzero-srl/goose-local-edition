@@ -68,12 +68,6 @@
   "addNode.mlxOneModel": {
     "defaultMessage": "One LeanZero MLX engine serves ONE model: every MLX node shares whatever the engine has mounted, so a different model per node is not possible yet. Adding this node points the engine at the model you pick here."
   },
-  "addNode.noKeyBadge": {
-    "defaultMessage": "no key"
-  },
-  "addNode.noKeyPane": {
-    "defaultMessage": "{label} has no API key on this machine yet. Add it under Cloud Providers, then come back to add the node."
-  },
   "addNode.providerLabel": {
     "defaultMessage": "Provider"
   },
@@ -332,6 +326,12 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Response Styles"
   },
+  "cloudProviders.available": {
+    "defaultMessage": "Available to set up"
+  },
+  "cloudProviders.configured": {
+    "defaultMessage": "Configured"
+  },
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} of {total} configured"
   },
@@ -343,6 +343,9 @@
   },
   "cloudProviders.loading": {
     "defaultMessage": "Loading providers…"
+  },
+  "cloudProviders.noneConfigured": {
+    "defaultMessage": "No cloud providers configured yet. Choose one below to set it up."
   },
   "cloudProviders.retry": {
     "defaultMessage": "Retry"
