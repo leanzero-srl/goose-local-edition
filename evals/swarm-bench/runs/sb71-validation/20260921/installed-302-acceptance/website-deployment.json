@@ -1,0 +1,58 @@
+{
+  "commit": "0979fda37a456697f3f08dcec31c76486818bd6f",
+  "job": "340",
+  "checkedAt": "2026-09-21T08:03:48.025Z",
+  "pages": [
+    {
+      "path": "/portfolio/goose-local-edition",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "publicRun": true,
+        "noFutureAcceptance": true,
+        "release": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "publicRun": true,
+        "noFutureAcceptance": true,
+        "release": true
+      }
+    },
+    {
+      "path": "/agentic-benchmarks/run/brun-91771691-a846-447d-81cd-2d0eba36d8a5",
+      "status": 200,
+      "checks": {
+        "score": true,
+        "modelBuild": true,
+        "noWallClock": true,
+        "screenshots": true
+      }
+    }
+  ],
+  "video": {
+    "status": 200,
+    "bytes": 1978615,
+    "sha256": "54eab8b85449d2c4f8bb776b2e68719e6a8d798d37e66b2bbe5e454d78da08d9"
+  },
+  "renderedAcceptance": {
+    "productionPortfolioScore": "49.92%",
+    "productionRunScore": "0.4992",
+    "productionRunModelBuild": "10m 16s",
+    "mobileWidths": {
+      "viewport": 390,
+      "documentScrollWidth": 375
+    },
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "expandedPromptCharacters": 78698,
+    "pilotSectionRemoved": true,
+    "mobileVideoAdvancedSeconds": 24.636106
+  }
+}
