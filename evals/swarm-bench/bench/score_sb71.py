@@ -19,6 +19,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import urlsplit
 from dataclasses import asdict
+from datetime import datetime
 
 import score_sb7 as base
 import score_sb8
@@ -551,6 +552,68 @@ def label_offset_result(original, ctx):
     return outcome
 
 
+
+def premature_resync_evidence(ctx):
+    """Require positive completion of a nonterminal walk, not a checkpoint timeout."""
+    receipt = getattr(ctx, 'sb71_resync', None) or {}
+    target = getattr(getattr(ctx, 'schedule', None), 'sigkill_after_list', None)
+    completed = receipt.get('completed') or []
+    if (not isinstance(target, int) or target < 1 or receipt.get('target') != target
+            or not 0 < len(completed) < target or receipt.get('held') != []
+            or receipt.get('kill') is not None or (ctx.b3_result or {}).get('kill_fired')):
+        return None
+    trace = ctx.trace
+    starts = [i for i, event in enumerate(trace) if event.get('__phase__') == 'sync2']
+    if len(starts) != 1:
+        return None
+    start = starts[0]
+    end = next((i for i in range(start + 1, len(trace)) if '__phase__' in trace[i]), None)
+    if end is None:
+        return None
+    phase = trace[start + 1:end]
+    lists = [e for e in phase if e.get('method') == 'GET' and e.get('path') == '/v3/payments']
+    if (len(lists) != len(completed) or any(e.get('authorized') is not True
+            or e.get('status') not in (200, 304) for e in lists)
+            or any(e['status'] != r.get('status') or e['path'] != r.get('path')
+                   for e, r in zip(lists, completed))):
+        return None
+    last = lists[-1]
+    if last['status'] != 304 or not last.get('if_none_match'):
+        return None
+    cached = [e for e in trace[:start] if e.get('method') == 'GET'
+              and e.get('path') == '/v3/payments' and e.get('status') == 200
+              and e.get('authorized') is True and e.get('offset') == last.get('offset')
+              and e.get('generation') == last.get('generation')]
+    if (not cached or cached[-1].get('last') is not False
+            or last.get('offset') is None or last.get('generation') is None):
+        return None
+    reversals = [e for e in phase if e.get('method') == 'GET'
+                 and e.get('path') == '/v3/reversals' and e.get('status') == 200
+                 and e.get('authorized') is True and e.get('t', 0) > last.get('t', float('inf'))]
+    if not reversals:
+        return None
+    samples = ctx.read_stream or []
+    before = [s for s in samples if s.get('t', float('inf')) < trace[start]['t']
+              and isinstance(s.get('summary'), dict) and s['summary'].get('last_sync')]
+    after = [s for s in samples if reversals[0]['t'] <= s.get('t', 0) < trace[end]['t']
+             and isinstance(s.get('summary'), dict) and s['summary'].get('last_sync')]
+    if not before or not after:
+        return None
+    try:
+        prior = datetime.fromisoformat(before[-1]['summary']['last_sync'].replace('Z', '+00:00'))
+        advanced = next((s for s in after if datetime.fromisoformat(
+            s['summary']['last_sync'].replace('Z', '+00:00')) > prior), None)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if advanced is None:
+        return None
+    return {'phase_start': trace[start], 'phase_end': trace[end], 'target': target,
+            'completed': completed, 'nonterminal_cached_page': cached[-1],
+            'last_payment_response': last, 'reversals_response': reversals[0],
+            'last_sync_before': before[-1], 'last_sync_completed': advanced,
+            'kill_fired': False, 'checkpoint_unreached': True}
+
+
 def observed_absence_result(name, original, ctx):
     if name == 'j_workflow_journey' and ctx.probes.get('flow', {}).get('paymentWitness', {}).get('unavailable'):
         return base.unavail(ctx.probes['flow']['paymentWitness']['unavailable'])
@@ -568,6 +631,13 @@ def observed_absence_result(name, original, ctx):
     outcome = label_offset_result(original, ctx) if name == 't_labels_culling' else original(ctx)
     if not outcome.get('unavailable'):
         return outcome
+    if name == 'r_b3_sigkill_resync':
+        evidence = premature_resync_evidence(ctx)
+        if evidence is not None:
+            return base.g(0.0, 'sync #2 completed after a cached nonterminal payment page; '
+                          'the candidate ended its walk before the interruption checkpoint',
+                          'B3 recovery remains unproven: no kill or restart was executed',
+                          parts={'premature_resync': evidence, 'kill_fired': False})
     if name == 'r_workflow_durability' and (ctx.workflow or {}).get('create_status') == 501:
         return base._absent('drafts endpoints: exercised create returned HTTP 501')
     if name == 'r_notification_multiset' and any(
