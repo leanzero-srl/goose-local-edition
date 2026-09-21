@@ -65,12 +65,12 @@ function yamlString(value) {
 function writeManifest({ directory, version }) {
   const files = [
     {
-      sourceName: 'Goose.zip',
-      updateName: 'Goose-darwin-arm64.zip',
+      sourceName: 'Goose-Swarm.zip',
+      updateName: 'Goose-Swarm-darwin-arm64.zip',
     },
     {
-      sourceName: 'Goose_intel_mac.zip',
-      updateName: 'Goose-darwin-x64.zip',
+      sourceName: 'Goose-Swarm_intel_mac.zip',
+      updateName: 'Goose-Swarm-darwin-x64.zip',
     },
   ];
 
@@ -94,7 +94,7 @@ function writeManifest({ directory, version }) {
 
   if (entries.length === 0) {
     throw new Error(
-      `No arch zip found in ${directory} (expected Goose.zip and/or Goose_intel_mac.zip)`
+      `No arch zip found in ${directory} (expected Goose-Swarm.zip and/or Goose-Swarm_intel_mac.zip)`
     );
   }
 

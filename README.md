@@ -1,6 +1,6 @@
 # Goose Swarm
 
-**Download the macOS app:** [Goose-2.0.3.dmg](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.3) — Developer-ID signed and notarized by Apple (Gatekeeper: "accepted, Notarized Developer ID"), Apple silicon. Drag to Applications; no right-click-to-open dance.
+**Download the macOS app, Goose Swarm:** the `Goose-Swarm-<version>.dmg` on the [latest release](https://github.com/leanzero-srl/goose-local-edition/releases/latest) — Developer-ID signed and notarized by Apple (Gatekeeper: "accepted, Notarized Developer ID"), Apple silicon. Drag to Applications; no right-click-to-open dance. (Releases up to 3.0.7 shipped the app as `Goose.app` in `Goose-<version>.dmg`; from 3.0.8 the app is named Goose Swarm — same bundle id, so an installed 3.0.7 updates in place.)
 
 
 Goose Swarm (the repository is still named goose-local-edition) is a fork of [goose](https://github.com/aaif-goose/goose) (originally `block/goose`, now part of the Agentic AI Foundation at the Linux Foundation) adapted to answer one question: can several machines running the same local model, orchestrated correctly, build working software of measurably higher quality than one machine running that model alone?
@@ -285,7 +285,7 @@ Every macOS release is signed with the LeanZero Developer ID and notarized by Ap
 |---|---|---|
 | [v2.0.3](https://github.com/leanzero-srl/goose-local-edition/releases/tag/v2.0.3) | 2026-09-05 | First notarized build. The swarm engine is the r6h golden (commit 393a99351, sb-7 0.4616) with the multi-engine layer; Goose Swarm naming; MLX sidecar on Rapid-MLX v0.13.4-lz.1 with the launcher migration; the Swarm provider's idle-node router and the provider allow-list; LeanZero Link mesh. |
 
-The app updates itself from this repository's releases (`latest-mac.yml` + `Goose.zip` ride each release).
+The app updates itself from this repository's releases (`latest-mac.yml` + `Goose-Swarm-darwin-arm64.zip` ride each release).
 
 ## Relationship to upstream
 

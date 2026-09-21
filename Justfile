@@ -218,12 +218,12 @@ package-ui:
     cd ui/desktop && pnpm install && pnpm run package
     @if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
         echo "Signing with the stable '{{local_sign_identity}}' identity + entitlements.local.plist..."; \
-        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
+        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app"; \
     else \
         echo "Signing ad-hoc with entitlements..."; \
-        codesign --force --deep --sign - --entitlements ui/desktop/entitlements.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
+        codesign --force --deep --sign - --entitlements ui/desktop/entitlements.plist "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app"; \
     fi
-    @echo "Done! Launch with: open ui/desktop/out/Goose-darwin-arm64/Goose.app"
+    @echo "Done! Launch with: open "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app""
 
 # local-edition: build a SIGNED desktop release for our own fork's auto-update feed
 # (leanzero-srl/goose-local-edition), and stage the update artifacts.
@@ -252,21 +252,21 @@ release-fork version:
     @echo "   this explicit re-sign forces entitlements.local.plist onto the app, the frameworks"
     @echo "   and the helper .apps. It does NOT reach Contents/Resources/bin/goose -- a bare Mach-O"
     @echo "   under Resources is sealed as a resource, and keeps the signature copy-binary gave it.)"
-    cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "{{local_sign_identity}}" out/Goose-darwin-arm64/Goose.app
+    cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "{{local_sign_identity}}" "out/Goose Swarm-darwin-arm64/Goose Swarm.app"
     @echo "Re-zipping the signed app (auto-update artifact) + rebuilding the DMG FROM the signed app..."
-    cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
-    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage out/make && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
+    cd ui/desktop && rm -f "out/Goose Swarm-darwin-arm64/Goose-Swarm.zip" && ditto -c -k --sequesterRsrc --keepParent "out/Goose Swarm-darwin-arm64/Goose Swarm.app" "out/Goose Swarm-darwin-arm64/Goose-Swarm.zip"
+    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage out/make && ditto "out/Goose Swarm-darwin-arm64/Goose Swarm.app" "out/dmgstage/Goose Swarm.app" && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-Swarm-{{version}}.dmg && hdiutil create -volname "Goose Swarm" -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-Swarm-{{version}}.dmg
     @echo "Generating update manifest (latest-mac.yml)..."
-    cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
+    cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory "out/Goose Swarm-darwin-arm64"
     @echo ""
     @echo ">>> LAUNCH-CHECK BEFORE PUBLISHING (a valid signature is NOT the same as a launchable app):"
-    @echo "    open ui/desktop/out/make/Goose-{{version}}.dmg   # drag to /Applications, then launch it"
-    @echo "Staged: ui/desktop/out/Goose-darwin-arm64/{Goose-darwin-arm64.zip,latest-mac.yml} + out/make/Goose-{{version}}.dmg"
+    @echo "    open ui/desktop/out/make/Goose-Swarm-{{version}}.dmg   # drag to /Applications, then launch it"
+    @echo "Staged: "ui/desktop/out/Goose Swarm-darwin-arm64/{Goose-Swarm-darwin-arm64.zip,latest-mac.yml}" + out/make/Goose-Swarm-{{version}}.dmg"
     @echo "Publish to the fork release (needs 'gh' + a GITHUB_TOKEN with repo scope):"
     @echo "  gh release create v{{version}} --repo leanzero-srl/goose-local-edition --title v{{version}} --notes 'local build' \\"
-    @echo "    ui/desktop/out/Goose-darwin-arm64/Goose-darwin-arm64.zip \\"
-    @echo "    ui/desktop/out/Goose-darwin-arm64/latest-mac.yml \\"
-    @echo "    ui/desktop/out/make/Goose-{{version}}.dmg"
+    @echo "    "ui/desktop/out/Goose Swarm-darwin-arm64/Goose-Swarm-darwin-arm64.zip" \\"
+    @echo "    "ui/desktop/out/Goose Swarm-darwin-arm64/latest-mac.yml" \\"
+    @echo "    ui/desktop/out/make/Goose-Swarm-{{version}}.dmg"
 
 # local-edition: build a DEVELOPER-ID SIGNED + NOTARIZED release for distribution OUTSIDE the
 # App Store — a DMG any Mac can open with no Gatekeeper prompt. This is the real-distribution
@@ -321,23 +321,23 @@ release-notarized version:
     echo "Building the DMG from the notarized, stapled app..."
     rm -rf out/dmgstage
     mkdir -p out/dmgstage out/make
-    ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app
+    ditto "out/Goose Swarm-darwin-arm64/Goose Swarm.app" "out/dmgstage/Goose Swarm.app"
     ln -s /Applications out/dmgstage/Applications
-    rm -f out/make/Goose-{{version}}.dmg
-    hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
+    rm -f out/make/Goose-Swarm-{{version}}.dmg
+    hdiutil create -volname "Goose Swarm" -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-Swarm-{{version}}.dmg
     echo "Notarizing + stapling the DMG itself (the artifact people download)..."
-    xcrun notarytool submit out/make/Goose-{{version}}.dmg --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-    xcrun stapler staple out/make/Goose-{{version}}.dmg
+    xcrun notarytool submit out/make/Goose-Swarm-{{version}}.dmg --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+    xcrun stapler staple out/make/Goose-Swarm-{{version}}.dmg
     echo "Verifying Gatekeeper acceptance (must say 'accepted' / 'Notarized Developer ID')..."
-    xcrun stapler validate out/make/Goose-{{version}}.dmg
-    /usr/sbin/spctl -a -vvv -t exec out/Goose-darwin-arm64/Goose.app
+    xcrun stapler validate out/make/Goose-Swarm-{{version}}.dmg
+    /usr/sbin/spctl -a -vvv -t exec "out/Goose Swarm-darwin-arm64/Goose Swarm.app"
     echo "Re-zipping the Developer-ID-signed, stapled app for the auto-update feed + manifest..."
-    rm -f out/Goose-darwin-arm64/Goose.zip
-    ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
-    node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
+    rm -f "out/Goose Swarm-darwin-arm64/Goose-Swarm.zip"
+    ditto -c -k --sequesterRsrc --keepParent "out/Goose Swarm-darwin-arm64/Goose Swarm.app" "out/Goose Swarm-darwin-arm64/Goose-Swarm.zip"
+    node scripts/generate-mac-update-manifest.js --version {{version}} --directory "out/Goose Swarm-darwin-arm64"
     echo ""
-    echo ">>> DONE. Notarized DMG: ui/desktop/out/make/Goose-{{version}}.dmg — drag-installs on ANY Mac, no Gatekeeper prompt."
-    echo "    Auto-update artifacts (Developer-ID signed): ui/desktop/out/Goose-darwin-arm64/{Goose.zip,Goose-darwin-arm64.zip,latest-mac.yml}"
+    echo ">>> DONE. Notarized DMG: ui/desktop/out/make/Goose-Swarm-{{version}}.dmg — drag-installs on ANY Mac, no Gatekeeper prompt."
+    echo "    Auto-update artifacts (Developer-ID signed): "ui/desktop/out/Goose Swarm-darwin-arm64/{Goose-Swarm.zip,Goose-Swarm-darwin-arm64.zip,latest-mac.yml}""
 
 # Publish a notarized release to GitHub: the DMG, the auto-update zip and its manifest, with notes.
 # Runs AFTER `just release-notarized <version>`. gh is logged in as leanzero-srl on this Mac
@@ -350,15 +350,15 @@ publish-release version notes="":
     if ! gh auth status >/dev/null 2>&1; then
         if [ -s "$HOME/.leanzero/github/token.env" ]; then set -a; . "$HOME/.leanzero/github/token.env"; set +a; export GH_TOKEN; else echo "publish-release: REFUSED — gh is not logged in and ~/.leanzero/github/token.env is absent"; exit 1; fi
     fi
-    dmg=ui/desktop/out/make/Goose-{{version}}.dmg
+    dmg=ui/desktop/out/make/Goose-Swarm-{{version}}.dmg
     [ -s "$dmg" ] || { echo "publish-release: REFUSED — $dmg missing; run just release-notarized {{version}} first"; exit 1; }
-    /usr/sbin/spctl -a -vvv -t exec ui/desktop/out/Goose-darwin-arm64/Goose.app 2>&1 | grep -q "Notarized Developer ID" || { echo "publish-release: REFUSED — the built app is not a notarized Developer ID build"; exit 1; }
+    /usr/sbin/spctl -a -vvv -t exec "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app" 2>&1 | grep -q "Notarized Developer ID" || { echo "publish-release: REFUSED — the built app is not a notarized Developer ID build"; exit 1; }
     git rev-parse -q --verify "refs/tags/v{{version}}" >/dev/null || { echo "publish-release: REFUSED — tag v{{version}} does not exist; tag the release commit first"; exit 1; }
-    update_zip=ui/desktop/out/Goose-darwin-arm64/Goose-darwin-arm64.zip
+    update_zip="ui/desktop/out/Goose Swarm-darwin-arm64/Goose-Swarm-darwin-arm64.zip"
     [ -s "$update_zip" ] || { echo "publish-release: REFUSED — manifest archive $update_zip missing"; exit 1; }
-    cmp -s ui/desktop/out/Goose-darwin-arm64/Goose.zip "$update_zip" || { echo "publish-release: REFUSED — update archive differs from notarized archive"; exit 1; }
+    cmp -s ui/desktop/"out/Goose Swarm-darwin-arm64/Goose-Swarm.zip" "$update_zip" || { echo "publish-release: REFUSED — update archive differs from notarized archive"; exit 1; }
     notes_arg=(--generate-notes); [ -n "{{notes}}" ] && notes_arg=(--notes-file "{{notes}}")
-    gh release create "v{{version}}" "$dmg" ui/desktop/out/Goose-darwin-arm64/Goose.zip "$update_zip" ui/desktop/out/Goose-darwin-arm64/latest-mac.yml -R leanzero-srl/goose-local-edition --title "Goose Swarm {{version}}" "${notes_arg[@]}" --latest
+    gh release create "v{{version}}" "$dmg" ui/desktop/"out/Goose Swarm-darwin-arm64/Goose-Swarm.zip" "$update_zip" "ui/desktop/out/Goose Swarm-darwin-arm64/latest-mac.yml" -R leanzero-srl/goose-local-edition --title "Goose Swarm {{version}}" "${notes_arg[@]}" --latest
     gh release view "v{{version}}" -R leanzero-srl/goose-local-edition --json tagName,assets,url -q '"\(.tagName) assets=\(.assets|map(.name)|join(",")) \(.url)"'
 
 # Run UI with latest (Windows version)
@@ -437,8 +437,8 @@ make-ui:
     # otherwise, so CI and a fresh clone are unaffected.
     @if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
         echo "Re-signing the bundle with '{{local_sign_identity}}'..."; \
-        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
-        ./ui/desktop/out/Goose-darwin-arm64/Goose.app/Contents/Resources/bin/goose --version >/dev/null || { echo "bundle does not EXECUTE after signing"; exit 1; }; \
+        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app"; \
+        ./"ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app"/Contents/Resources/bin/goose --version >/dev/null || { echo "bundle does not EXECUTE after signing"; exit 1; }; \
     fi
 
 # make GUI with latest Windows binary on a Windows host

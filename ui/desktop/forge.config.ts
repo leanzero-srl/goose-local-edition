@@ -68,6 +68,13 @@ function mirrorSwarmBenchPayload() {
 }
 
 let cfg = {
+  // The product is "Goose Swarm" (package.json productName drives the bundle, Finder, dock,
+  // app-menu and executable names). The bundle id electron-packager would otherwise DERIVE from
+  // that name is pinned to its pre-rename value so auto-update, the notarization identity and the
+  // keychain entries do not change under an installed 3.0.7. The executable is deliberately NOT
+  // pinned: the packager copies executableName into CFBundleDisplayName AFTER extendInfo, so a
+  // pinned "Goose" executable would have left the display name "Goose".
+  appBundleId: 'com.electron.goose',
   asar: true,
   extraResource: ['src/bin', 'src/images', 'src/app-update.yml', 'src/swarm-bench', 'bundled-mcps'],
   icon: 'src/images/icon',
@@ -99,9 +106,9 @@ let cfg = {
     ],
     // Usage descriptions for macOS TCC (Transparency, Consent, and Control)
     NSCalendarsUsageDescription:
-      'Goose needs access to your calendars to help manage and query calendar events.',
+      'Goose Swarm needs access to your calendars to help manage and query calendar events.',
     NSRemindersUsageDescription:
-      'Goose needs access to your reminders to help manage and query reminders.',
+      'Goose Swarm needs access to your reminders to help manage and query reminders.',
   },
 };
 
@@ -181,7 +188,7 @@ module.exports = {
       name: '@electron-forge/maker-dmg',
       platforms: ['darwin'],
       config: {
-        name: 'Goose',
+        name: 'Goose Swarm',
         icon: 'src/images/icon.icns',
         // Default DMG contents already place Goose.app + an /Applications symlink
         // (drag-to-install), so no explicit `contents` array is needed.
