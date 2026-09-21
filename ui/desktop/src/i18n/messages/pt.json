@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Reproduzindo em Picture-in-Picture"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Dispensar"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Editar"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Expirado — não guardado"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negativo"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Não"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positivo"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Guardar"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Guardar isto como conhecimento?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Guardar isto como memória?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "este projeto"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Fontes: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Porquê: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "No fim de um turno o goose avalia como correu — bem ou mal — e, quando há algo que vale a pena lembrar, mostra um cartão sob a resposta. Nada é guardado até clicares em Guardar."
   },

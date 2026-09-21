@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "ピクチャ・イン・ピクチャで再生中"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "編集"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "期限切れ — 保存されていません"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "ネガティブ"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "いいえ"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "ポジティブ"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "保存"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "これをナレッジとして保存しますか？"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "これをメモリーとして保存しますか？"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "グローバル"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "このプロジェクト"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "ソース: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "理由: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "ターンの終わりに goose はその結果 — 良かったか悪かったか — を判断し、覚えておく価値があるときは返答の下にカードを表示します。保存をクリックするまで何も保存されません。"
   },

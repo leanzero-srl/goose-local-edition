@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "पिक्चर-इन-पिक्चर में बजाना"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "समाप्त — सहेजा नहीं गया"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "नकारात्मक"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "नहीं"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "सकारात्मक"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "सहेजें"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "इसे ज्ञान के रूप में सहेजें?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "इसे याद के रूप में सहेजें?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "वैश्विक"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "यह प्रोजेक्ट"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "स्रोत: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "क्यों: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "एक टर्न के अंत में goose आँकता है कि यह कैसा रहा — अच्छा या बुरा — और जब कुछ याद रखने लायक हो, तो जवाब के नीचे एक कार्ड दिखाता है। जब तक आप सहेजें पर क्लिक नहीं करते, कुछ भी सहेजा नहीं जाता।"
   },

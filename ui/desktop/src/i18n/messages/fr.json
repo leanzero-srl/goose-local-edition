@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Lecture en Picture-in-Picture"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Modifier"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Expiré — non enregistré"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Négatif"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Non"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positif"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Enregistrer"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Enregistrer comme connaissance ?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Enregistrer comme souvenir ?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "ce projet"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Sources : {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Pourquoi : {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "À la fin d'un tour, goose juge comment il s'est passé — bien ou mal — et, quand quelque chose mérite d'être retenu, affiche une carte sous la réponse. Rien n'est enregistré tant que vous ne cliquez pas sur Enregistrer."
   },

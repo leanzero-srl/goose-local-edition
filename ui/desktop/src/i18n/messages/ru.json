@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Воспроизведение в режиме «картинка в картинке»"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Скрыть"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Изменить"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Истекло — не сохранено"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Негативно"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Нет"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Позитивно"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Сохранить"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Сохранить как знание?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Сохранить как воспоминание?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "глобально"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "этот проект"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Источники: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Почему: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "В конце хода goose оценивает, как всё прошло — хорошо или плохо — и, если есть что запомнить, показывает карточку под ответом. Ничего не сохраняется, пока вы не нажмёте Сохранить."
   },

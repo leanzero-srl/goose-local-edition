@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Bermain dalam Gambar-dalam-Gambar"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Sunting"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Tamat tempoh — tidak disimpan"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negatif"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Tidak"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positif"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Simpan"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Simpan ini sebagai pengetahuan?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Simpan ini sebagai memori?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "projek ini"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Sumber: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Mengapa: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "Di hujung giliran goose menilai bagaimana hasilnya — baik atau buruk — dan, apabila ada sesuatu yang patut diingat, memaparkan kad di bawah balasan. Tiada apa yang disimpan sehingga anda klik Simpan."
   },

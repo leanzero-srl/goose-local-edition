@@ -40,6 +40,7 @@ import SwarmRunPanel from './swarm/SwarmRunPanel';
 import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
+import MemoryProposalCards from './memories/MemoryProposalCard';
 import NodesStrip from './swarm/NodesStrip';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
@@ -585,6 +586,11 @@ export default function BaseChat({
                 submitElicitationResponse={submitElicitationResponse}
               />
             </SearchView>
+
+            {/* FRAME 1.14 event B: what the agent asked to remember at the end of the turn — a card,
+                never a modal, never an elicitation. Not edition-gated: a memory proposal is
+                upstream-worthy, so it renders on every build. */}
+            <MemoryProposalCards sessionId={sessionId} chatState={chatState} className="mt-2" />
 
             <div className="block h-8" />
           </>

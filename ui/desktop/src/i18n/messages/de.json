@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Wiedergabe im Bild-in-Bild-Modus"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Ausblenden"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Bearbeiten"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Abgelaufen — nicht gespeichert"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negativ"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Nein"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positiv"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Speichern"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Als Wissensstück speichern?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Als Erinnerung speichern?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "dieses Projekt"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Quellen: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Warum: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "Am Ende eines Zuges beurteilt goose, wie es lief — gut oder schlecht — und zeigt, wenn etwas merkenswert ist, eine Karte unter der Antwort. Nichts wird gespeichert, bis du auf Speichern klickst."
   },

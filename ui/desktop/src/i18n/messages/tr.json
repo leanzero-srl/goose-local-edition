@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Düzenle"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Süresi doldu — kaydedilmedi"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Olumsuz"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Hayır"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Olumlu"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Kaydet"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Bunu bilgi olarak kaydet?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Bunu anı olarak kaydet?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "genel"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "bu proje"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Kaynaklar: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Neden: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "Bir turun sonunda goose nasıl geçtiğini — iyi ya da kötü — değerlendirir ve hatırlamaya değer bir şey varsa yanıtın altında bir kart gösterir. Kaydet'e tıklayana kadar hiçbir şey kaydedilmez."
   },

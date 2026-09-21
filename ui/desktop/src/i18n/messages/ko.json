@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "PIP(Picture-in-Picture)에서 재생 중"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "편집"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "만료됨 — 저장되지 않음"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "부정"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "아니요"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "긍정"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "저장"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "이것을 지식으로 저장할까요?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "이것을 메모리로 저장할까요?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "전역"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "이 프로젝트"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "출처: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "이유: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "턴이 끝나면 goose가 결과를 — 좋았는지 나빴는지 — 판단하고, 기억할 가치가 있으면 답변 아래에 카드를 표시합니다. 저장을 클릭하기 전까지는 아무것도 저장되지 않습니다."
   },

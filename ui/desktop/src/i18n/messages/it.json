@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "In riproduzione in Picture-in-Picture"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Ignora"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Modifica"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Scaduto — non salvato"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negativo"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "No"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positivo"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Salva"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Salvare come conoscenza?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Salvare come ricordo?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "globale"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "questo progetto"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Fonti: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Perché: {why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "Alla fine di un turno goose giudica com'è andata — bene o male — e, quando c'è qualcosa da ricordare, mostra una scheda sotto la risposta. Nulla viene salvato finché non fai clic su Salva."
   },

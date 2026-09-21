@@ -2147,6 +2147,48 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在子母畫面中播放"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "關閉"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "編輯"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "已過期 — 未儲存"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "負面"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "否"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "正面"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "儲存"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "將此儲存為知識？"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "將此儲存為記憶？"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "全域"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "此專案"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "來源：{sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "原因：{why}"
+  },
   "memoryProposals.description": {
     "defaultMessage": "每輪結束時，goose 會判斷這一輪進行得如何——好或壞——當有值得記住的內容時，在回覆下方顯示一張卡片。在你點擊儲存之前不會儲存任何內容。"
   },
