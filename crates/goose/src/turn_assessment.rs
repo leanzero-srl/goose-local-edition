@@ -193,6 +193,25 @@ pub fn assessment_user_prompt(facts: &TurnFacts, stop_reason: &str, nearest: &[S
     )
 }
 
+/// The reply as text to parse. A local reasoning model (measured: qwen3.5-9b on LM Studio) can put
+/// the whole JSON in its reasoning channel and leave `content` EMPTY — so when the text carries no
+/// object, the thinking blocks are read too. Same clamps either way; nothing is trusted more.
+pub fn reply_text(message: &Message) -> String {
+    let text = message.as_concat_text();
+    if json_object(&text).is_some() {
+        return text;
+    }
+    message
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::Thinking(t) => Some(t.thinking.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The nearest saved memories by the store's own scorer — so the model merges instead of
 /// proposing a near-duplicate.
 fn nearest_memories(store: &MemoryStore, query: &str) -> Vec<String> {
@@ -286,7 +305,7 @@ pub async fn assess_turn(
         )
         .await
     {
-        Ok((message, _usage)) => message.as_concat_text(),
+        Ok((message, _usage)) => reply_text(&message),
         Err(err) => {
             tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
             return;
@@ -351,6 +370,26 @@ mod tests {
         assert!(
             parse_assessment(r#"{"worth": "true", "polarity": "positive", "memory": "ok"}"#)
                 .is_some()
+        );
+    }
+
+    /// Measured live (qwen3.5-9b, LM Studio): the JSON arrived in `reasoning_content` and `content`
+    /// was empty, so the judgement was silently discarded. The thinking channel is read when the
+    /// text holds no object — and ignored when the text does.
+    #[test]
+    fn a_judgement_written_in_the_reasoning_channel_is_still_read() {
+        let json = r#"{"worth": true, "polarity": "positive", "memory": "export WEBHOOK_SECRET=dev before npm test", "why": "setup fact"}"#;
+        let only_thinking = Message::assistant().with_thinking(json, "sig");
+        assert!(parse_assessment(&reply_text(&only_thinking)).is_some());
+        let text_wins = Message::assistant()
+            .with_thinking(
+                r#"{"worth": true, "polarity": "negative", "memory": "draft"}"#,
+                "sig",
+            )
+            .with_text(json);
+        assert_eq!(
+            parse_assessment(&reply_text(&text_wins)).unwrap().polarity,
+            Polarity::Positive
         );
     }
 
