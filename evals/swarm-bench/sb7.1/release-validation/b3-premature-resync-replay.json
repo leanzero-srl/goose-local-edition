@@ -1,0 +1,286 @@
+{
+  "scope": "Archived phase-specific B3 classification replay; not a new full candidate score or installed acceptance",
+  "source": "scoring-attempt e7431516-44f3-4b51-924a-51a0dffc5ec0; seed 8714b2874ad94ed7",
+  "fixtureSha256": "1f99e1b48d548b1150476b3627197f573d001e09f77cfc4b80a4ef943334270f",
+  "scorerSha256": "547a1a8f36426a89a56a9066c48c3914af2be15ba4fce6143fc9bcf7ef6ef03f",
+  "original": {
+    "score": 0.0,
+    "detail": "PROBE UNAVAILABLE: B3 kill unreached: sync2 produced only 1 list responses (sched-unreached,R1)",
+    "consequence": "harness failure, not app evidence",
+    "unavailable": true
+  },
+  "corrected": {
+    "score": 0.0,
+    "detail": "sync #2 completed after a cached nonterminal payment page; the candidate ended its walk before the interruption checkpoint",
+    "consequence": "B3 recovery remains unproven: no kill or restart was executed",
+    "parts": {
+      "premature_resync": {
+        "phase_start": {
+          "method": "-",
+          "path": "-",
+          "status": 0,
+          "query": {},
+          "__phase__": "sync2",
+          "seq": 301,
+          "t": 1789973010.3618
+        },
+        "phase_end": {
+          "method": "-",
+          "path": "-",
+          "status": 0,
+          "query": {},
+          "__phase__": "partition",
+          "seq": 305,
+          "t": 1789973220.8634
+        },
+        "target": 2,
+        "completed": [
+          {
+            "status": 304,
+            "path": "/v3/payments",
+            "response_sent_at": 1462090.325898958
+          }
+        ],
+        "nonterminal_cached_page": {
+          "method": "GET",
+          "path": "/v3/payments",
+          "query": {},
+          "status": 200,
+          "if_none_match": "\"de4329fe7d34fa3b\"",
+          "idempotency_key": null,
+          "authorized": true,
+          "ua": "Python-urllib/3.12",
+          "offset": 0,
+          "returned": 64,
+          "page": 132,
+          "sync": 1,
+          "last": false,
+          "generation": 23,
+          "seq": 192,
+          "t": 1789972589.128
+        },
+        "last_payment_response": {
+          "method": "GET",
+          "path": "/v3/payments",
+          "query": {},
+          "status": 304,
+          "if_none_match": "\"7beee3c240a70990\"",
+          "idempotency_key": null,
+          "authorized": true,
+          "ua": "Python-urllib/3.12",
+          "offset": 0,
+          "sync": 1,
+          "generation": 23,
+          "seq": 303,
+          "t": 1789973010.4548
+        },
+        "reversals_response": {
+          "method": "GET",
+          "path": "/v3/reversals",
+          "query": {},
+          "status": 200,
+          "if_none_match": null,
+          "idempotency_key": null,
+          "authorized": true,
+          "ua": "Python-urllib/3.12",
+          "returned": 3169,
+          "seq": 304,
+          "t": 1789973010.4561
+        },
+        "last_sync_before": {
+          "t": 1789973010.3335402,
+          "summary": {
+            "count": 8388,
+            "last_sync": "2026-09-21T06:36:31Z",
+            "oldest": "2027-01-26T23:00:00Z",
+            "newest": "2027-05-02T21:44:52Z",
+            "by_currency": [
+              {
+                "currency": "EUR",
+                "count": 2159,
+                "total_minor": 140494651
+              },
+              {
+                "currency": "JPY",
+                "count": 2112,
+                "total_minor": 1440101
+              },
+              {
+                "currency": "KWD",
+                "count": 2062,
+                "total_minor": 1335301130
+              },
+              {
+                "currency": "USD",
+                "count": 2055,
+                "total_minor": 144364589
+              }
+            ],
+            "reversals": [
+              {
+                "currency": "EUR",
+                "count": 810,
+                "total_minor": 57615232
+              },
+              {
+                "currency": "JPY",
+                "count": 809,
+                "total_minor": 530509
+              },
+              {
+                "currency": "KWD",
+                "count": 749,
+                "total_minor": 477128520
+              },
+              {
+                "currency": "USD",
+                "count": 801,
+                "total_minor": 52015197
+              }
+            ]
+          },
+          "rows": {
+            "pay_07333": {
+              "id": "pay_07333",
+              "amount_minor": 569000,
+              "currency": "KWD",
+              "created_at": "2027-03-25T17:33:55+01:00",
+              "settled_at": null,
+              "status": "settled",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Fjord Supply",
+              "country": "FR"
+            },
+            "pay_10373": {
+              "id": "pay_10373",
+              "amount_minor": 51000,
+              "currency": "KWD",
+              "created_at": "2027-04-18T12:10:47+09:00",
+              "settled_at": null,
+              "status": "settled",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Fjord Supply",
+              "country": "NL"
+            },
+            "pay_03342": {
+              "id": "pay_03342",
+              "amount_minor": 93100,
+              "currency": "EUR",
+              "created_at": "2027-02-20T16:36:27Z",
+              "settled_at": null,
+              "status": "refunded",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Opal Ceramics",
+              "country": "KW"
+            }
+          }
+        },
+        "last_sync_completed": {
+          "t": 1789973010.593919,
+          "summary": {
+            "count": 8388,
+            "last_sync": "2026-09-21T06:43:30Z",
+            "oldest": "2027-01-26T23:00:00Z",
+            "newest": "2027-05-02T21:44:52Z",
+            "by_currency": [
+              {
+                "currency": "EUR",
+                "count": 2159,
+                "total_minor": 140494651
+              },
+              {
+                "currency": "JPY",
+                "count": 2112,
+                "total_minor": 1440101
+              },
+              {
+                "currency": "KWD",
+                "count": 2062,
+                "total_minor": 1335301130
+              },
+              {
+                "currency": "USD",
+                "count": 2055,
+                "total_minor": 144364589
+              }
+            ],
+            "reversals": [
+              {
+                "currency": "EUR",
+                "count": 810,
+                "total_minor": 57615232
+              },
+              {
+                "currency": "JPY",
+                "count": 809,
+                "total_minor": 530509
+              },
+              {
+                "currency": "KWD",
+                "count": 749,
+                "total_minor": 477128520
+              },
+              {
+                "currency": "USD",
+                "count": 801,
+                "total_minor": 52015197
+              }
+            ]
+          },
+          "rows": {
+            "pay_07333": {
+              "id": "pay_07333",
+              "amount_minor": 569000,
+              "currency": "KWD",
+              "created_at": "2027-03-25T17:33:55+01:00",
+              "settled_at": null,
+              "status": "settled",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Fjord Supply",
+              "country": "FR"
+            },
+            "pay_10373": {
+              "id": "pay_10373",
+              "amount_minor": 51000,
+              "currency": "KWD",
+              "created_at": "2027-04-18T12:10:47+09:00",
+              "settled_at": null,
+              "status": "settled",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Fjord Supply",
+              "country": "NL"
+            },
+            "pay_03342": {
+              "id": "pay_03342",
+              "amount_minor": 93100,
+              "currency": "EUR",
+              "created_at": "2027-02-20T16:36:27Z",
+              "settled_at": null,
+              "status": "refunded",
+              "version": 2,
+              "note": "",
+              "counterparty_name": "Opal Ceramics",
+              "country": "KW"
+            }
+          }
+        },
+        "kill_fired": false,
+        "checkpoint_unreached": true
+      },
+      "kill_fired": false
+    }
+  },
+  "finalCandidateTotalUnchanged": 12291,
+  "tests": {
+    "runtime": "Python3.12.14",
+    "focusedSuiteTestsPassed": 29,
+    "negativeWitnessMutationsPassed": 14,
+    "relocatedReplayTestsPassed": 4
+  },
+  "independentReview": "sb8_contract_audit approved primary trace, implementation and negative controls"
+}

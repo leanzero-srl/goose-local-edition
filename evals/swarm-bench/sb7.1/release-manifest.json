@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.1",
-  "sourceCommit": "2417153e447031f219ab5ab267852fbf6f0314b3",
+  "sourceCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
   "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit.",
   "validation": {
     "status": "passed",
-    "scope": "Full serial reference and preserved-candidate scoring completed with exact source hashes; measurement validation only.",
+    "scope": "Current full serial reference scoring and archived candidate B3 classification replay passed; prior full candidate scores are historical. Installed scoring retry and publication require separate acceptance.",
     "receipt": "bench/sb71-release-validation.json",
-    "receiptSha256": "a67794c5429d9f5bd66f42a3481d44f269e7b824d60010b685ed26ea0aea2bd4"
+    "receiptSha256": "083aea6a442287166de1ad017d22e90570da8e9d61b64e8aa4272ba52fed0bc9"
   },
   "releaseAcceptance": {
     "installedScoringRetry": "pending separate receipt",
@@ -51,7 +51,7 @@
     "bench/run_build.py": "d0c24eec687783542488c85adef8f7178ae05923f67be5484c1d9f8dbb5a2c48",
     "bench/sb6-thresholds.json": "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a",
     "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
-    "bench/sb71-release-validation.json": "a67794c5429d9f5bd66f42a3481d44f269e7b824d60010b685ed26ea0aea2bd4",
+    "bench/sb71-release-validation.json": "083aea6a442287166de1ad017d22e90570da8e9d61b64e8aa4272ba52fed0bc9",
     "bench/sb7_local_vendor.py": "b45e10e01ad33dae8685c5bc09ded017725033601e330b10d208d636c1a16e7e",
     "bench/sb8-three.module.js": "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495",
     "bench/schedule_sb7.py": "4c765a401db8513f8c1efbf6d4bd210b3527cddecff71192e534cf515d457e86",
@@ -61,7 +61,7 @@
     "bench/score_routes.py": "d7ac1843106de505fbd74a587e4b0051c149007f3b7012bcc53f052890f0ce6e",
     "bench/score_sb6.py": "bce118750bb7b06419b2e555528a62bd3f460736313ff8ba64f9238bd8296f9f",
     "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
-    "bench/score_sb71.py": "7decf048aa992e8abe0ade899661bfd05512c3f7cfe4d540a6727e424b2f8562",
+    "bench/score_sb71.py": "547a1a8f36426a89a56a9066c48c3914af2be15ba4fce6143fc9bcf7ef6ef03f",
     "bench/score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
     "bench/sweep.py": "3078af8d02281d3af16df40b8633af23015cf24e1db1c2668222cb0c953db4c0",
     "bench/test_bench_browser.py": "3a10fd54ed7415474d6547377f942e8668d9ec118f5443dd0dac51e46cbc88c8",
