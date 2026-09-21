@@ -1,0 +1,33 @@
+{
+  "scope": "Bounded read-only audit of released SB7.1 and actual Gemini49.92 result; no new model run or complete rescore",
+  "checks": {
+    "focusedPythonPassed": 31,
+    "optInBrowserSkipped": 27,
+    "prematureResyncTestsPassed": 4,
+    "prematureResyncNegativeMutations": 14,
+    "severitySelftestFailures": [],
+    "recomposedScore": 0.4992,
+    "recordedConsoleErrors": 1,
+    "sourceAndInstalledPayloadFilesVerified": 93,
+    "payloadMismatches": [],
+    "publishedVerdictMissingEvidenceLists": []
+  },
+  "findings": [
+    {
+      "kind": "reporting inconsistency",
+      "status": "OPEN",
+      "detail": "Initial completed sync held8388 rows for roughly414 seconds before bucket sampling; later recovery reached12291. sync_completeness uses max(initial,final), but bucket check uses initial snapshot. This leaves initial incomplete-data failure labeled DST/wrong-money while sync completeness passes. Not evidence that candidate was unfairly sampled during an active sync; candidate had reported completion. Root attribution and phase labeling need correction."
+    },
+    {
+      "kind": "evidence retention gap",
+      "status": "OPEN",
+      "detail": "Raw bucket response is not retained in api-observations. Exact0/384 cell detail cannot independently be reconstructed from the archived initial snapshot. Saved checkparts and source establish calculation, but raw response retention should be added."
+    },
+    {
+      "kind": "calibration qualification",
+      "status": "OPEN",
+      "detail": "Stable SB7.1 freezes exact spec-derived inherited thresholds via manifest. Empirical worst-of-five calibration has not been demonstrated; inherited rc-grade-only wording conflates that qualification with SB7.1 release identity. Do not claim empirical calibration or silently relabel calibrated."
+    }
+  ],
+  "conclusion": "No new scorer crash, missing-evidence success, score arithmetic or installed payload mismatch found. Actual initial incomplete sync supports deduction; remaining reporting/provenance qualifications mean zero-known-issues is not established. Score and release untouched."
+}
