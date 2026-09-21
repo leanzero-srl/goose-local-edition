@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.1",
-  "sourceCommit": "d46e7be2a0e21068482044c15c392e65c1365eab",
-  "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit.",
+  "sourceCommit": "3ff00b8ba9a2e1d4c333add016a13f1ec3ca49d0",
+  "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit. 3.0.8: run_build.py gained the knowledge-blind invariant (a scored run's knowledge store is snapshotted before and after and the artifact refused if it moved); scorer bytes unchanged.",
   "validation": {
     "status": "passed",
     "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run.",
@@ -50,7 +50,7 @@
     "bench/quality_observer_aggregate.py": "8f8aac80bbdbeceafc9d894fb07743955c1c2d5acbc8781f97ee99cdfeb13c4e",
     "bench/repair.py": "83734027abae84772688198d4da694c4df57e638bd763cdd9c2432bf6a9793f6",
     "bench/route_oracle.py": "8712733b7bdf377c10e62455e72478c68aed6647b0b3c939046de30737b6d848",
-    "bench/run_build.py": "d0c24eec687783542488c85adef8f7178ae05923f67be5484c1d9f8dbb5a2c48",
+    "bench/run_build.py": "7dfa2622181dc45d788a2f6179f52e4a5360d77312e657057573730b012608ee",
     "bench/sb6-thresholds.json": "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a",
     "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
     "bench/sb71-release-validation.json": "a9dacd7131c6c72d82c06c2d4b692503f71d73c179fc291f231c2a302366edf4",
