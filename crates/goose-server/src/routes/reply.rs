@@ -154,18 +154,7 @@ pub enum MessageEvent {
 }
 
 pub async fn get_token_state(session_manager: &SessionManager, session_id: &str) -> TokenState {
-    session_manager
-        .get_session(session_id, false)
-        .await
-        .map(|session| TokenState::from(&session))
-        .inspect_err(|e| {
-            tracing::warn!(
-                "Failed to fetch session token state for {}: {}",
-                session_id,
-                e
-            );
-        })
-        .unwrap_or_default()
+    goose::api::openai_compat::session_token_state(session_manager, session_id).await
 }
 
 async fn stream_event(

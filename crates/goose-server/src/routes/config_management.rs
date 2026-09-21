@@ -487,42 +487,15 @@ pub async fn resolve_provider_model_info(
     name: &str,
     model: &str,
 ) -> Result<ModelInfo, ErrorResponse> {
-    let all = get_providers().await.into_iter().collect::<Vec<_>>();
-    let Some((metadata, provider_type)) = all.into_iter().find(|(m, _)| m.name == name) else {
-        return Err(ErrorResponse::bad_request(format!(
-            "Unknown provider: {}",
-            name
-        )));
-    };
-    if !check_provider_configured(&metadata, provider_type) {
-        return Err(ErrorResponse::bad_request(format!(
-            "Provider '{}' is not configured",
-            name
-        )));
-    }
-
-    let entry = goose::providers::get_from_registry(name).await?;
-    let model_config = entry.normalize_model_config(ModelConfig::new(model))?;
-    let provider = goose::providers::create(name, Vec::new()).await?;
-    match provider.fetch_model_info(model).await {
-        Ok(mut info) => {
-            if let Some(limit) = model_config.context_limit {
-                info.context_limit = limit;
+    use goose::providers::configured::ModelInfoError;
+    goose::providers::configured::resolve_model_info(name, model)
+        .await
+        .map_err(|e| match e {
+            ModelInfoError::UnknownProvider(_) | ModelInfoError::NotConfigured(_) => {
+                ErrorResponse::bad_request(e.to_string())
             }
-            Ok(info)
-        }
-        Err(error) => {
-            let mut info = ModelInfo::new(model, model_config.context_limit());
-            info.reasoning = model_config.is_reasoning_model();
-            tracing::debug!(
-                provider = name,
-                model,
-                error = %error,
-                "Falling back to local model metadata"
-            );
-            Ok(info)
-        }
-    }
+            ModelInfoError::Other(e) => ErrorResponse::from(e),
+        })
 }
 
 #[utoipa::path(
