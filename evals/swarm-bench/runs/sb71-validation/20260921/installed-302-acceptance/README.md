@@ -1,0 +1,11 @@
+# Installed Goose 3.0.2 acceptance — 2026-09-21
+
+The final notarized DMG was installed into Applications. Its bundled SB7.1 manifest and all 93 payload files matched. A genuine Gemini 3.8 Flash build completed in 616 seconds through the app Benchmark view. Scoring was interrupted after its private completion receipt existed, then retried through the app without generating new model output. The final scoring pass took 853.636 seconds and earned 0.4992. Its 0.699 admission ceiling did not reduce that earned score.
+
+The report contains no unavailable probes, missing harness observations, unreached schedules or vacuous checks. B3 records a measured premature-resync failure and explicitly says that no kill/restart was executed for that check; it does not fabricate recovery evidence. Other checks observed real kills. DST bucketing triggers the existing 0.6 critical multiplier. The 3D structure and committed-update animation pass, while legibility, scene truth and linked brushing miss quality requirements. This one result does not establish universal difficulty or subjective artistic excellence.
+
+The installed app's normal Publish action created [the public result](https://leanzero.net/agentic-benchmarks/run/brun-91771691-a846-447d-81cd-2d0eba36d8a5). Its rendered score was checked, and its actual graded video advanced and played to completion. Promotion checked public report identity, installed files and CDN video bytes against the explicit acceptance receipt before making SB7.1 current. GitHub v3.0.2 was then published as the latest stable release, with matching signed asset digests and a publicly retrievable updater manifest.
+
+The full candidate, both scoring attempts, original completion receipt and model session database are preserved in a private local archive under Documents/Goose-benchmark-archives/sb71-gemini-302-20260921. Private installation identity and credentials are deliberately excluded from this public receipt. The original completion receipt binds the older scorer; the final report records that provenance and the corrected scorer separately, with an unchanged task contract.
+
+Runtime validation metadata in the signed bundle remains frozen. This separate acceptance receipt completes the installed/publish/notarization gates without changing those signed bytes. Website deployment evidence follows separately.

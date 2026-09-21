@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "release": "v3.0.2",
+  "sourceCommit": "bb01c01929836f30ccbfad46c5943eb392b68593",
+  "manifestSha256": "55b0937f98769ee588ad26ee56e7745a1e563dfce6c267689fd8a963cc475b57",
+  "installedPayloadFilesVerified": 93,
+  "runId": "brun-91771691-a846-447d-81cd-2d0eba36d8a5",
+  "model": "gemini-3.8-flash",
+  "score": 0.4992,
+  "rawScore": 0.4992,
+  "modelBuildSeconds": 616,
+  "scoringSeconds": 853.636,
+  "modelMessagesBeforeRetry": 154,
+  "modelMessagesAfterRetry": 154,
+  "reportSha256": "2d8d28dcb104cd0bb61460456af590e9156b205d3f4189b02fee5f3fff61a464",
+  "publication": "normal installed app Publish action",
+  "video": {
+    "sha256": "54eab8b85449d2c4f8bb776b2e68719e6a8d798d37e66b2bbe5e454d78da08d9",
+    "bytes": 1978615,
+    "durationSeconds": 28.56,
+    "publicPlaybackVerifiedSeconds": [
+      4.355084,
+      28.56
+    ],
+    "ended": true
+  },
+  "notarization": {
+    "dmgSubmissionId": "6ac5f3f3-6231-4120-a2d6-1a2829907ed8",
+    "status": "Accepted and stapled",
+    "installedAppGatekeeper": "Notarized Developer ID"
+  },
+  "assets": [
+    {
+      "name": "Goose-3.0.2.dmg",
+      "digest": "sha256:5d37c3d26080ca4530d4a8e1ad616a0f8feeea6605d0daf23f512a68047b244d",
+      "size": 510904206
+    },
+    {
+      "name": "Goose-darwin-arm64.zip",
+      "digest": "sha256:1fee17f97e90664f88c023cb60d882152a7a3fbc315bfae33a57790a44bde5f0",
+      "size": 409965607
+    },
+    {
+      "name": "Goose.zip",
+      "digest": "sha256:1fee17f97e90664f88c023cb60d882152a7a3fbc315bfae33a57790a44bde5f0",
+      "size": 409965607
+    },
+    {
+      "name": "latest-mac.yml",
+      "digest": "sha256:b1fca7de40d7f17f64c654782a3a5199aee524f3670831ced1abacecde8c57fb",
+      "size": 351
+    }
+  ]
+}
