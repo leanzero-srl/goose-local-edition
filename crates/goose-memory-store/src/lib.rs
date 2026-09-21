@@ -10,6 +10,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod proposals;
+pub use proposals::{
+    working_dir_key, MemoryProposal, Polarity, ProposalKind, ProposalState, ProposalStore,
+    ProposeOutcome,
+};
+
 /// One memory as stored on disk: an optionally tagged entry inside a category file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryEntry {

@@ -87,6 +87,25 @@ pub struct RemoveSpecificMemoryParams {
     pub is_global: bool,
 }
 
+/// Parameters for the propose_knowledge tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ProposeKnowledgeParams {
+    /// The category (a short kebab-case topic) the knowledge piece belongs to
+    pub category: String,
+    /// The knowledge piece. First line = one specific statement (the headline); then the detail.
+    pub data: String,
+    /// REQUIRED and non-empty: what GROUNDS this — the lookups you made (tool names, URLs, file
+    /// paths). A piece with no source is your own reasoning and is not knowledge; use remember_memory
+    /// for a preference or a project fact instead.
+    pub sources: Vec<String>,
+    /// Tags after the kind; `reference` is added first automatically
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Whether to store globally (user-wide) or project-local
+    #[serde(default)]
+    pub is_global: bool,
+}
+
 /// Parameters for the search_memories tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SearchMemoriesParams {
@@ -107,6 +126,9 @@ pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
     instructions: String,
     global_memory_dir: PathBuf,
+    /// Where `propose_knowledge` files a PROPOSAL instead of writing an entry — the owner's
+    /// `memory_proposals` (default ON, frame 1.14). None = write directly, as `remember_memory` does.
+    proposals_dir: Option<PathBuf>,
 }
 
 impl Default for MemoryServer {
@@ -122,6 +144,16 @@ impl MemoryServer {
             .map(|strategy| strategy.in_config_dir("memory"))
             .unwrap_or_else(|_| PathBuf::from(".config/goose/memory"));
         Self::with_global_dir(global_memory_dir)
+    }
+
+    /// The same server with `propose_knowledge` filing proposals (the owner's default) or writing
+    /// entries directly. The caller reads the config; this process reads none.
+    pub fn with_proposals(memory_proposals: bool) -> Self {
+        let mut server = Self::new();
+        if !memory_proposals {
+            server.proposals_dir = None;
+        }
+        server
     }
 
     /// Build the server over a given global directory. The project-local directory is resolved from the
@@ -163,10 +195,14 @@ impl MemoryServer {
              Use category "*" with retrieve_memories or remove_memory_category to access all entries.
             "#};
 
+        let proposals_dir = global_memory_dir
+            .parent()
+            .map(|config| config.join("proposals"));
         let mut memory_router = Self {
             tool_router: Self::tool_router(),
             instructions: String::new(),
             global_memory_dir,
+            proposals_dir,
         };
 
         let mut updated_instructions = instructions;
@@ -425,6 +461,118 @@ impl MemoryServer {
         Ok(CallToolResult::success(vec![Content::text(message)]))
     }
 
+    /// FRAME 1.14, event A on the session path: knowledge that RESEARCH creates. The instructions
+    /// above tell the model to write memories "WITHOUT asking permission first" — that paragraph
+    /// is load-bearing (it is why the store has hundreds of entries in the measured recall work)
+    /// and is deliberately left alone. This is a DIFFERENT event: a piece grounded in a lookup,
+    /// which under `memory_proposals` becomes a proposal the human answers, never a silent write.
+    #[tool(
+        name = "propose_knowledge",
+        description = "File a KNOWLEDGE PIECE you learned by RESEARCHING — a fact you looked up (web search, \
+                       library docs, a document, a file you read) that would be worth having next time. \
+                       Unlike remember_memory this REQUIRES `sources`: the lookups that ground it. Call it \
+                       after a successful lookup, not for your own reasoning. When memory proposals are on \
+                       (the default) it is PROPOSED to the user, who decides whether to keep it; otherwise it \
+                       is stored as a `reference` entry with its sources. The data's first line is the \
+                       headline: one specific statement."
+    )]
+    pub async fn propose_knowledge(
+        &self,
+        params: Parameters<ProposeKnowledgeParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let working_dir = extract_working_dir_from_meta(&context.meta);
+        let message = self.propose_knowledge_inner(params.0, working_dir)?;
+        Ok(CallToolResult::success(vec![Content::text(message)]))
+    }
+
+    fn propose_knowledge_inner(
+        &self,
+        params: ProposeKnowledgeParams,
+        working_dir: Option<PathBuf>,
+    ) -> Result<String, ErrorData> {
+        if params.data.trim().is_empty() {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                "Data must not be empty when proposing knowledge".to_string(),
+                None,
+            ));
+        }
+        let sources: Vec<String> = params
+            .sources
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if sources.is_empty() {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                "A knowledge piece needs at least one source — the lookup that grounds it. Your own \
+                 reasoning is not knowledge; use remember_memory for a preference or a project fact."
+                    .to_string(),
+                None,
+            ));
+        }
+        let mut tags = vec!["reference".to_string()];
+        tags.extend(params.tags.iter().filter(|t| *t != "reference").cloned());
+        let content = format!("{}\nSources: {}", params.data.trim(), sources.join(", "));
+
+        if let Some(dir) = &self.proposals_dir {
+            let key = goose_memory_store::working_dir_key(
+                working_dir
+                    .as_deref()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            );
+            let outcome = goose_memory_store::ProposalStore::new(dir.clone())
+                .add(
+                    &key,
+                    goose_memory_store::ProposalKind::Knowledge,
+                    None,
+                    &content,
+                    "grounded by a lookup this turn",
+                    &params.category,
+                    &tags,
+                    params.is_global,
+                    &sources,
+                )
+                .map_err(memory_error)?;
+            let message = match outcome {
+                goose_memory_store::ProposeOutcome::Added => format!(
+                    "Proposed as knowledge in category \"{}\" — the user decides whether to keep it; \
+                     nothing is stored until they save it.",
+                    params.category
+                ),
+                goose_memory_store::ProposeOutcome::Duplicate => {
+                    "Already proposed — not raised again.".to_string()
+                }
+                goose_memory_store::ProposeOutcome::Refused => {
+                    "Not proposed: three proposals are already waiting for the user's answer."
+                        .to_string()
+                }
+            };
+            tracing::info!(category = %params.category, ?outcome, "knowledge proposed");
+            return Ok(message);
+        }
+
+        let tag_refs: Vec<&str> = tags.iter().map(String::as_str).collect();
+        let outcome = self
+            .remember(
+                "context",
+                &params.category,
+                &content,
+                &tag_refs,
+                params.is_global,
+                working_dir.as_ref(),
+            )
+            .map_err(memory_error)?;
+        let scope = scope_label(params.is_global);
+        tracing::info!(category = %params.category, scope, ?outcome, "knowledge stored");
+        Ok(format!(
+            "Stored a {scope} reference entry in category \"{}\" ({outcome:?}) with its sources.",
+            params.category
+        ))
+    }
+
     /// Retrieves all memories from a specified category
     #[tool(
         name = "retrieve_memories",
@@ -621,6 +769,72 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn server(dir: &std::path::Path, proposals: bool) -> MemoryServer {
+        MemoryServer {
+            tool_router: ToolRouter::new(),
+            instructions: String::new(),
+            global_memory_dir: dir.join("memory"),
+            proposals_dir: proposals.then(|| dir.join("proposals")),
+        }
+    }
+
+    fn call(
+        server: &MemoryServer,
+        working_dir: &std::path::Path,
+        sources: Vec<&str>,
+    ) -> Result<String, ErrorData> {
+        let params = ProposeKnowledgeParams {
+            category: "vendor-api".to_string(),
+            data: "The vendor API returns 409 on a conflict.\nBody is the error envelope."
+                .to_string(),
+            sources: sources.into_iter().map(String::from).collect(),
+            tags: vec!["api".to_string()],
+            is_global: false,
+        };
+        server.propose_knowledge_inner(params, Some(working_dir.to_path_buf()))
+    }
+
+    /// FRAME 1.14 G2: with proposals on (the default) a grounded piece is PROPOSED — nothing in
+    /// the memory store — keyed by the working dir; with them off it is a `reference` entry
+    /// carrying its sources; and a piece with no source is refused as not-knowledge.
+    #[test]
+    fn propose_knowledge_proposes_by_default_stores_when_off_and_needs_a_source() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("project");
+        let on = server(dir.path(), true);
+        let reply = call(&on, &wd, vec!["web-search__search"]).unwrap();
+        assert!(reply.contains("Proposed as knowledge"), "{reply}");
+        assert!(!wd.join(".goose/memory").exists());
+        let key = goose_memory_store::working_dir_key(&wd);
+        let rows = goose_memory_store::ProposalStore::new(dir.path().join("proposals"))
+            .list(&key)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, goose_memory_store::ProposalKind::Knowledge);
+        assert!(
+            rows[0].text.ends_with("Sources: web-search__search"),
+            "{}",
+            rows[0].text
+        );
+        assert_eq!(
+            rows[0].tags,
+            vec!["reference".to_string(), "api".to_string()]
+        );
+
+        let off = server(dir.path(), false);
+        let reply = call(&off, &wd, vec!["context7__get-library-docs"]).unwrap();
+        assert!(reply.contains("Stored a local reference entry"), "{reply}");
+        let text = std::fs::read_to_string(wd.join(".goose/memory/vendor-api.txt")).unwrap();
+        assert!(
+            text.starts_with("# reference api\nThe vendor API returns 409"),
+            "{text}"
+        );
+        assert!(text.contains("Sources: context7__get-library-docs"));
+
+        let err = call(&on, &wd, vec!["  "]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
     #[test]
     fn test_lazy_directory_creation() {
         let temp_dir = tempdir().unwrap();
@@ -631,6 +845,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            proposals_dir: None,
         };
 
         let local_memory_dir = working_dir.join(".goose").join("memory");
@@ -676,6 +891,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            proposals_dir: None,
         };
 
         assert!(router
@@ -696,6 +912,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            proposals_dir: None,
         };
 
         router
@@ -740,6 +957,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            proposals_dir: None,
         };
 
         let local_memory_dir = working_dir.join(".goose").join("memory");
@@ -770,6 +988,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            proposals_dir: None,
         };
 
         router
@@ -827,6 +1046,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            proposals_dir: None,
         };
 
         for category in [
@@ -894,6 +1114,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            proposals_dir: None,
         };
 
         router
@@ -927,6 +1148,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            proposals_dir: None,
         };
 
         let memories = router.retrieve_all(false, Some(&working_dir)).unwrap();
@@ -976,6 +1198,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            proposals_dir: None,
         };
         let first = router
             .remember(
