@@ -3,7 +3,7 @@ import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
-import type { CloudBenchmarkTier } from '../../benchTierPayload';
+import { DEFAULT_BENCHMARK_TIER, benchmarkLaunchProblem } from '../../benchTierPayload';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -746,7 +746,6 @@ export default function BenchmarkView() {
   const [entrant, setEntrant] = useState<'swarm' | 'cloud'>('swarm');
   const [cloudProvider, setCloudProvider] = useState('');
   const [cloudModel, setCloudModel] = useState('');
-  const [cloudTier, setCloudTier] = useState<CloudBenchmarkTier>('sb-7.1');
   const [nodes, setNodes] = useState<NodeChoice>(3);
   // The pool's size caps the offered node counts and is the default; read once per mount (a device
   // edit is a config change, and the next mount sees it). Unreadable config keeps every choice.
@@ -789,6 +788,10 @@ export default function BenchmarkView() {
   const [scored, setScored] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [catalog, setCatalog] = useState<CatalogState>({ kind: 'loading' });
+  const launchProblem = benchmarkLaunchProblem(
+    catalog.kind === 'ok' ? catalog.benchmarks : undefined,
+    catalog.kind === 'ok' && catalog.stale
+  );
   const [sessions, setSessions] = useState<BenchSession[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   // The 'benchmark-started' fact that the site's current benchmark outruns this app's bundle —
@@ -826,8 +829,7 @@ export default function BenchmarkView() {
     }
   }, [loadShots]);
 
-  // Called unconditionally on mount: main's frozen publish gate and the catalogMismatch check
-  // run off the CACHED catalog, and this mount call is what refreshes that cache.
+  // Refresh history and launch availability. Main checks the catalog again before starting work.
   const loadCatalog = useCallback(async () => {
     try {
       const c = await window.electron.benchmarkCatalog?.();
@@ -1096,10 +1098,14 @@ export default function BenchmarkView() {
     setFailureDetails(null);
     setLaunchedSampling(sampling);
     try {
-      // Swarms use the stable default; cloud launches carry their explicit tier.
+      // Both entrant modes use the same bundled stable benchmark.
       const result =
         entrant === 'cloud'
-          ? await window.electron.benchmarkRunCloud(cloudProvider, cloudModel.trim(), cloudTier)
+          ? await window.electron.benchmarkRunCloud(
+              cloudProvider,
+              cloudModel.trim(),
+              DEFAULT_BENCHMARK_TIER
+            )
           : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
         setMine(result as MineRow);
@@ -1119,7 +1125,7 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, entrant, cloudProvider, cloudModel, cloudTier, loadShots, loadSessions]);
+  }, [nodes, sampling, entrant, cloudProvider, cloudModel, loadShots, loadSessions]);
 
   const retryScoring = useCallback(
     async (session: BenchSession) => {
@@ -1398,9 +1404,11 @@ export default function BenchmarkView() {
                   key="start-benchmark"
                   variant="primary"
                   onClick={run}
+                  title={launchProblem ?? undefined}
                   icon={<Play />}
                   disabled={
-                    ((entrant === 'swarm' || cloudTier === 'sb-7.1') && !runtimeReady) ||
+                    !runtimeReady ||
+                    !!launchProblem ||
                     (entrant === 'cloud' && (!cloudProvider || !cloudModel.trim()))
                   }
                 >
@@ -1420,8 +1428,22 @@ export default function BenchmarkView() {
               unset knob — temperature included — falls through to the config/model default: the 0.2
               benchmark pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the
               per-model value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed
-              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). Cloud runs can explicitly select the retained legacy benchmark. */}
+              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). Both entrant modes use only the latest stable benchmark. */}
           <BenchmarkRuntimeSetup onReady={setRuntimeReady} disabled={running} />
+          {launchProblem && !running && (
+            <div
+              aria-label="Benchmark availability"
+              className="flex flex-wrap items-center gap-3 text-lz-warn"
+            >
+              <span>{launchProblem}</span>
+              <Button onClick={loadCatalog}>Refresh benchmark</Button>
+            </div>
+          )}
+          <p className={TYPE.bodyMuted}>
+            {DEFAULT_BENCHMARK_TIER.toUpperCase().replace('SB-', 'SB')} payments ·{' '}
+            {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}. Previous results
+            below are history only.
+          </p>
           <section aria-label="Run setup" className="flex flex-col gap-3">
             <Segmented
               as="buttons"
@@ -1436,17 +1458,6 @@ export default function BenchmarkView() {
             />
             {entrant === 'cloud' ? (
               <>
-                <Segmented
-                  as="buttons"
-                  aria-label="Single model benchmark"
-                  value={cloudTier}
-                  options={[
-                    { value: 'sb-7.1', label: 'SB7.1 payments' },
-                    { value: 'sb-7', label: 'SB7 · legacy' },
-                  ]}
-                  onChange={(value) => setCloudTier(value as CloudBenchmarkTier)}
-                  disabled={running}
-                />
                 <CloudEntrant
                   provider={cloudProvider}
                   model={cloudModel}
@@ -1510,8 +1521,8 @@ export default function BenchmarkView() {
           {catalogMismatch && (
             <ToneBand tone="warn">
               The site&rsquo;s current benchmark is {catalogMismatch.siteCurrent}, but this app
-              bundles {catalogMismatch.bundled}. Runs use the bundled scorer; results from different
-              scorers are shown separately.
+              bundles {catalogMismatch.bundled}. Update Goose before starting another run. Older
+              results remain available as history.
             </ToneBand>
           )}
 
@@ -1610,7 +1621,12 @@ export default function BenchmarkView() {
                           shots={shots}
                           publishSlot={publishSection}
                           onRetryScoring={() => void retryScoring(selectedSession)}
-                          retryBusy={running || !runtimeReady}
+                          retryBusy={
+                            running ||
+                            !runtimeReady ||
+                            !!launchProblem ||
+                            selectedSession.scorerVersion !== DEFAULT_BENCHMARK_TIER
+                          }
                         />
                       </div>
                     )}

@@ -42,9 +42,16 @@ const CATALOG = {
   stale: false,
   benchmarks: [
     {
+      scorerVersion: 'sb-7.1',
+      title: 'SB7.1 payments',
+      current: true,
+      frozen: false,
+      baselines: [],
+    },
+    {
       scorerVersion: 'sb-7.0-rc',
       title: 'Meridian Payments Console',
-      current: true,
+      current: false,
       frozen: false,
       baselines: [{ label: 'Claude Opus 5', score: 0.9142, model: 'claude-opus-5' }],
     },
@@ -206,11 +213,8 @@ describe('the benchmark sections and their sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
     await waitFor(() => expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.1'));
     expect(swarm).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'SB7 · legacy' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() =>
-      expect(cloud).toHaveBeenLastCalledWith('google', 'gemini-3.8-flash', 'sb-7')
-    );
+    expect(screen.queryByRole('button', { name: 'SB7 · legacy' })).toBeNull();
+    expect(cloud).toHaveBeenCalledTimes(1);
   });
 
   it('renders all four outcomes honestly — running pulses, finished carries its score, the dead ones say so', async () => {
@@ -352,7 +356,7 @@ describe('the benchmark sections and their sessions', () => {
       scorerVersion: 'sb-7.0-rc',
       catalogMismatch: { siteCurrent: 'sb-8.0', bundled: 'sb-7.0-rc' },
     });
-    const notice = await screen.findByText(/Runs use the bundled scorer/);
+    const notice = await screen.findByText(/Update Goose before starting another run/);
     expect(notice.textContent).toContain('sb-8.0');
     expect(notice.textContent).toContain('sb-7.0-rc');
 
@@ -362,7 +366,9 @@ describe('the benchmark sections and their sessions', () => {
       startedAt: '2026-08-30T11:00:00.000Z',
       sampling: {},
     });
-    await waitFor(() => expect(screen.queryByText(/Runs use the bundled scorer/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText(/Update Goose before starting another run/)).toBeNull()
+    );
   });
 
   it('states the catalog absence LOUDLY and renders no comparison rows — never invented bars', async () => {
@@ -582,5 +588,37 @@ it('refuses Run until the user explicitly installs missing benchmark tools', asy
   expect(install).toHaveBeenCalledOnce();
   fireEvent.click(run);
   await waitFor(() => expect(start).toHaveBeenCalled());
+  cleanup();
+});
+
+it.each([
+  [
+    'newer stable release',
+    { ...CATALOG, benchmarks: [{ ...CATALOG.benchmarks[0], scorerVersion: 'sb-8.0' }] },
+    /Update Goose to run/,
+  ],
+  ['cached catalog', { ...CATALOG, stale: true }, /Connect to leanzero.net/],
+  [
+    'experimental current release',
+    { ...CATALOG, benchmarks: [{ ...CATALOG.benchmarks[0], scorerVersion: 'sb-8.0-rc' }] },
+    /no single available stable benchmark/,
+  ],
+] as const)('blocks launching against %s', async (_name, catalog, message) => {
+  mockElectron({ catalog: vi.fn(async () => catalog), sessions: [] });
+  const start = vi.fn();
+  electron().benchmarkRun = start;
+  render(
+    <IntlTestWrapper>
+      <BenchmarkView />
+    </IntlTestWrapper>
+  );
+  expect(await screen.findByText(message)).toBeVisible();
+  const run = screen.getByRole('button', { name: 'Run benchmark' });
+  expect(run).toBeDisabled();
+  fireEvent.click(run);
+  expect(start).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Refresh benchmark' })).toBeEnabled();
+  expect(screen.getByText(/Bundled benchmark/)).toBeInTheDocument();
+  expect(screen.queryByText(/Latest stable benchmark/)).not.toBeInTheDocument();
   cleanup();
 });

@@ -52,5 +52,36 @@ it('uses stable SB7.1 identity and exact payload while retaining legacy SB7', ()
   expect(BENCH_RENDER_PROBE[benchmarkLaunchTier({ tier: 'sb-7.1' })]).toBe(
     'product_probe_sb71.mjs'
   );
-  expect(() => benchmarkLaunchTier({ tier: 'sb-8' as 'sb-7' })).toThrow('Choose SB7');
+  expect(() => benchmarkLaunchTier({ tier: 'sb-8' as 'sb-7' })).toThrow('Only the latest stable');
+});
+
+import { benchmarkLaunchProblem } from './benchTierPayload';
+const stable = {
+  scorerVersion: 'sb-7.1',
+  title: 'SB7.1 payments',
+  current: true,
+  frozen: false,
+  baselines: [],
+};
+it('refuses legacy, experimental and missing tier overrides at the launch boundary', () => {
+  for (const tier of ['sb-7', 'sb-8', 'sb-7.1-rc', '', undefined])
+    expect(() => benchmarkLaunchTier({ tier } as never)).toThrow('Only the latest stable');
+});
+it('allows only one fresh available current stable release matching the bundled scorer', () => {
+  expect(benchmarkLaunchProblem([stable])).toBeNull();
+  expect(
+    benchmarkLaunchProblem([stable, { ...stable, current: false, scorerVersion: 'sb-8.0-rc' }])
+  ).toBeNull();
+  for (const rows of [
+    undefined,
+    [],
+    [stable, stable],
+    [{ ...stable, frozen: true }],
+    [{ ...stable, scorerVersion: 'sb-7.1-rc' }],
+    [{ ...stable, scorerVersion: 'sb-8.0' }],
+  ])
+    expect(benchmarkLaunchProblem(rows)).toBeTruthy();
+  expect(benchmarkLaunchProblem([{ ...stable, frozen: undefined } as never])).toBeTruthy();
+  expect(benchmarkLaunchProblem([stable], true)).toMatch(/Connect/);
+  expect(benchmarkLaunchProblem([stable], false, 'sb-7.0-rc')).toMatch(/history only/);
 });

@@ -69,6 +69,7 @@ import {
   BENCH_RENDER_PROBE,
   defaultBenchmarkTier,
   benchmarkLaunchTier,
+  benchmarkLaunchProblem,
   benchmarkScorer,
   type CloudBenchmarkTier,
 } from './benchTierPayload';
@@ -76,7 +77,6 @@ import {
   outcomeFromSlot,
   findLaunchRow,
   upsertArchivedRow,
-  catalogMismatchOf,
   frozenPublishRefusal,
   type BenchSessionRow,
   type BenchSessionOutcome,
@@ -2942,22 +2942,29 @@ ipcMain.handle('benchmark-read', async () => {
 // their baseline boards. Fetched here (renderer CSP blocks the host), cached to disk so the app
 // keeps a last-known truth offline. On fetch failure the cache serves with stale:true; with no
 // cache at all the answer is the NAMED absence {error:'catalog unreachable'} — never invented rows.
+const fetchBenchCatalog = async () => {
+  // Transport timeout only (a dead endpoint), same class as the engine's connect-30.
+  const res = await fetch(BENCH_SITE_API, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { benchmarks?: unknown };
+  if (!Array.isArray(body.benchmarks)) {
+    throw new Error('catalog response carried no benchmarks array');
+  }
+  const fetchedAt = new Date().toISOString();
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(
+    BENCH_CATALOG_CACHE,
+    JSON.stringify({ fetchedAt, benchmarks: body.benchmarks }, null, 2)
+  );
+  return { ok: true, benchmarks: body.benchmarks, fetchedAt };
+};
+
 ipcMain.handle('benchmark-catalog', async () => {
   try {
-    // Transport timeout only (a dead endpoint), same class as the engine's connect-30.
-    const res = await fetch(BENCH_SITE_API, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = (await res.json()) as { benchmarks?: unknown };
-    if (!Array.isArray(body.benchmarks)) {
-      throw new Error('catalog response carried no benchmarks array');
-    }
-    const fetchedAt = new Date().toISOString();
-    await fs.mkdir(BENCH_DIR, { recursive: true });
-    await fs.writeFile(
-      BENCH_CATALOG_CACHE,
-      JSON.stringify({ fetchedAt, benchmarks: body.benchmarks }, null, 2)
-    );
-    return { ok: true, benchmarks: body.benchmarks, fetchedAt };
+    return await fetchBenchCatalog();
   } catch (err) {
     const cached = await readBenchCatalogCache();
     if (cached) {
@@ -3321,22 +3328,13 @@ ipcMain.handle(
       if (cloud) nodes = 1;
       const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
       const runSampling = cleanSampling(cloud ? undefined : sampling);
-      // Cloud selection is explicit; Swarms run stable SB7.1.
-      // The tier switches which spec/probe/scorer the harness
-      // wires up, so a run is always scored by exactly one frozen version end to end.
       const tier = benchmarkLaunchTier(cloud);
+      const launchProblem = benchmarkLaunchProblem((await fetchBenchCatalog()).benchmarks);
+      if (launchProblem) throw new Error(launchProblem);
       const sb6 = tier === 'sb-6';
       const sb7 = tier === 'sb-7';
       const sb71 = tier === 'sb-7.1';
       const sb8 = tier === 'sb-8';
-      // Site-vs-bundle drift, from the CACHED catalog only — launching must never wait on the network
-      // (the view refreshes the cache via benchmark-catalog). When the site's current benchmark is not
-      // the bundled newest, the run still launches the bundled one (the app cannot run a spec it does
-      // not ship) and benchmark-started carries the mismatch so the view can say an update is needed.
-      const catalogMismatch = catalogMismatchOf(
-        (await readBenchCatalogCache())?.benchmarks,
-        benchmarkScorer(tier)
-      );
       const payloadDir = resolveBenchPayloadDir();
       const runner = path.join(payloadDir, 'bench', 'run_build.py');
       const runtime = sb71
@@ -3555,7 +3553,6 @@ ipcMain.handle(
           lastLine: null,
           tier,
           scorerVersion: benchmarkScorer(tier),
-          ...(catalogMismatch ? { catalogMismatch } : {}),
         });
 
         let tail = '';
@@ -3693,6 +3690,12 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
       throw new Error('Wait for Benchmark tools installation to finish.');
     const session = (await readBenchSessionRows()).find((row) => row.runId === runId);
     if (!session) throw new Error('Benchmark session not found.');
+    const launchProblem = benchmarkLaunchProblem(
+      (await fetchBenchCatalog()).benchmarks,
+      false,
+      session.scorerVersion
+    );
+    if (launchProblem) throw new Error(launchProblem);
     const receipt = await readBuildCompletion(session);
     const eligible = retryScoringEligibility(session, receipt);
     if (!eligible.ready || !receipt || !session.completionReceipt) throw new Error(eligible.reason);

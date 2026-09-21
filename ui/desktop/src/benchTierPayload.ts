@@ -22,6 +22,7 @@
  * file fails the build instead of quietly running sb-7's spec.
  */
 import { TIER_SCORER } from './components/benchmark/baselines';
+import type { BenchCatalogBenchmark } from './benchSessions';
 import type { BenchTier } from './components/benchmark/baselines';
 
 export const BENCH_SPEC_FILE: Record<BenchTier, string> = {
@@ -40,8 +41,8 @@ export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
   'sb-8': 'product_probe_v4.mjs',
 };
 
-/** The user-selected active benchmark; bundled experiments remain available for historical reads. */
-export const DEFAULT_BENCHMARK_TIER: BenchTier = 'sb-7.1';
+/** The latest stable benchmark shipped by this app; bundled experiments remain available for historical reads. */
+export const DEFAULT_BENCHMARK_TIER = 'sb-7.1' satisfies BenchTier;
 
 export function defaultBenchmarkTier(): BenchTier {
   return DEFAULT_BENCHMARK_TIER;
@@ -53,10 +54,32 @@ export function defaultBenchmarkScorer(): string {
 
 export type CloudBenchmarkTier = 'sb-7' | 'sb-7.1';
 export function benchmarkLaunchTier(cloud?: { tier: CloudBenchmarkTier }): BenchTier {
-  if (!cloud) return DEFAULT_BENCHMARK_TIER;
-  if (cloud.tier !== 'sb-7' && cloud.tier !== 'sb-7.1')
-    throw new Error('Choose SB7 or the SB7.1 payments.');
-  return cloud.tier;
+  if (cloud && cloud.tier !== DEFAULT_BENCHMARK_TIER)
+    throw new Error(
+      'Only the latest stable benchmark can be run. Older benchmarks are history only.'
+    );
+  return DEFAULT_BENCHMARK_TIER;
+}
+
+export function benchmarkLaunchProblem(
+  benchmarks: BenchCatalogBenchmark[] | null | undefined,
+  stale = false,
+  scorer = defaultBenchmarkScorer()
+): string | null {
+  if (!benchmarks || stale)
+    return 'Connect to leanzero.net to verify the latest stable benchmark before running.';
+  const current = benchmarks.filter((entry) => entry?.current === true);
+  if (
+    current.length !== 1 ||
+    !/^sb-\d+(?:\.\d+)*$/.test(current[0].scorerVersion) ||
+    current[0].frozen !== false
+  )
+    return 'The catalog has no single available stable benchmark. Refresh before running.';
+  if (current[0].scorerVersion !== defaultBenchmarkScorer())
+    return `Update Goose to run the latest stable benchmark (${current[0].scorerVersion}). This app bundles ${defaultBenchmarkScorer()}.`;
+  if (scorer !== current[0].scorerVersion)
+    return 'This benchmark is history only. Only the latest stable benchmark can be run or re-scored.';
+  return null;
 }
 export function benchmarkScorer(tier: BenchTier): string {
   return TIER_SCORER[tier];
