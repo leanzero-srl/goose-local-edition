@@ -118,3 +118,67 @@ mod tests {
         }
     }
 }
+
+/// THE BENCHMARK INVARIANT at the worker door (frame 1.14 §2.6). A measured run is knowledge-blind:
+/// its workers never receive the `memory` or `skills` extension, so recall has nothing to inject and
+/// nothing to capture. Today the swarm builds that list from research MCPs only, so this is a stated
+/// refusal over a state that already holds — and the day a feature adds `memory` to a worker's menu,
+/// the bench path drops it and names it instead of silently learning. Off benchmark: byte-identical.
+pub(super) fn knowledge_blind_refusals(
+    benchmark: bool,
+    extensions: &[ExtensionConfig],
+) -> (Vec<ExtensionConfig>, Vec<String>) {
+    if !benchmark {
+        return (extensions.to_vec(), Vec::new());
+    }
+    let mut kept = Vec::new();
+    let mut refused = Vec::new();
+    for ext in extensions {
+        let name = ext.name();
+        if KNOWLEDGE_EXTENSIONS.contains(&name.as_str()) {
+            refused.push(name);
+        } else {
+            kept.push(ext.clone());
+        }
+    }
+    (kept, refused)
+}
+
+/// The extensions that READ or WRITE durable knowledge: the memory store and the skill catalogue.
+const KNOWLEDGE_EXTENSIONS: &[&str] = &["memory", "skills"];
+
+#[cfg(test)]
+mod knowledge_blind_tests {
+    use super::*;
+
+    fn builtin(name: &str) -> ExtensionConfig {
+        ExtensionConfig::Builtin {
+            name: name.to_string(),
+            display_name: None,
+            description: String::new(),
+            timeout: None,
+            bundled: Some(true),
+            available_tools: vec![],
+        }
+    }
+
+    /// A bench worker's session is assembled with `benchmark() == true` and the list contains
+    /// neither `memory` nor `skills`, whatever the caller handed in; every other extension rides.
+    #[test]
+    fn a_benchmark_worker_never_gets_memory_or_skills() {
+        let handed = vec![builtin("memory"), builtin("web-search"), builtin("skills")];
+        let (kept, refused) = knowledge_blind_refusals(true, &handed);
+        let kept: Vec<String> = kept.iter().map(|e| e.name()).collect();
+        assert_eq!(kept, vec!["web-search".to_string()]);
+        assert_eq!(refused, vec!["memory".to_string(), "skills".to_string()]);
+    }
+
+    /// Off benchmark the list is byte-identical: the invariant changes nothing for a real run.
+    #[test]
+    fn an_attended_worker_keeps_every_extension() {
+        let handed = vec![builtin("memory"), builtin("web-search"), builtin("skills")];
+        let (kept, refused) = knowledge_blind_refusals(false, &handed);
+        assert_eq!(kept.len(), 3);
+        assert!(refused.is_empty());
+    }
+}

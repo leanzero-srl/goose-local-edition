@@ -218,6 +218,11 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
             child_env['GOOSE_SWARM_RENDER_PROBE'] = str(workdir / 'browser-self-test.mjs')
             child_env['GOOSE_SWARM_RENDER_NODE'] = str(bench_isolation.node_runtime())
     started = time.time()
+    # THE BENCHMARK INVARIANT (frame 1.14 §2.6): a scored run is knowledge-blind. The engine refuses
+    # to read or write memories/skills under GOOSE_SWARM_BENCHMARK; this is the one place that can
+    # SEE the real store, so it snapshots every knowledge directory before the run and refuses the
+    # artifact if any file list or mtime moved. A benchmark that learned is not a measurement.
+    knowledge_before = knowledge_store_snapshot(workdir)
     # F924: stream the engine's console to a file INSTEAD of buffering it to exit.
     # `capture_output=True` held every byte in memory until the process ended, so during a live
     # run the engine's stderr was unreadable — and the omni-judge reports its looks ONLY there.
@@ -248,10 +253,38 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         code, tail = None, "timed out"
     result = {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
               "timed_out": code is None}
+    knowledge_after = knowledge_store_snapshot(workdir)
+    if knowledge_after != knowledge_before:
+        changed = sorted(set(knowledge_before.items()) ^ set(knowledge_after.items()))
+        raise RuntimeError("REFUSED: the benchmark run touched the knowledge store "
+                           "(memories/skills/proposals must stay byte-identical across a scored run): "
+                           + "; ".join(f"{path}@{mtime}" for path, mtime in changed[:20]))
     if os.environ.get("BENCH_SB71"):
         result["usage"] = bench_isolation.usage(Path(child_env["BENCH_SB71_RUNTIME"]))
         (workdir / "model-usage.json").write_text(json.dumps(result["usage"], indent=2))
     return result
+
+
+KNOWLEDGE_DIRS = ("memory", "proposals")
+
+
+def knowledge_store_snapshot(workdir: Path) -> dict[str, float]:
+    """Every file under the global and project-local knowledge stores with its mtime.
+
+    Global: ~/.config/goose/{memory,proposals}. Local: <workdir>/.goose/{memory,proposals}. The skill
+    catalogue (~/.config/agents/skills, <workdir>/.goose/skills) rides too. A missing directory is an
+    honest empty, not an error — a fresh machine has none of them.
+    """
+    roots = [Path.home() / ".config" / "goose" / d for d in KNOWLEDGE_DIRS]
+    roots += [workdir / ".goose" / d for d in KNOWLEDGE_DIRS]
+    roots += [Path.home() / ".config" / "agents" / "skills", workdir / ".goose" / "skills"]
+    snapshot: dict[str, float] = {}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(p for p in root.rglob("*") if p.is_file()):
+            snapshot[str(path)] = path.stat().st_mtime
+    return snapshot
 
 
 def entrant_config(provider: str | None) -> dict:

@@ -560,9 +560,13 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiral_break_chars: Option<usize>,
-    /// UNATTENDED: the benchmark harness and the loop set this. Its ONLY effect is that a clarify
-    /// question is routed to a node INSTANTLY instead of waiting 5 minutes for the human. Config-reachable
-    /// because a desktop app launched with `open -n` receives no environment at all.
+    /// UNATTENDED + KNOWLEDGE-BLIND: the benchmark harness and the loop set this. It does TWO things
+    /// (frame 1.14 §2.6): (1) a clarify question is routed to a node INSTANTLY instead of waiting
+    /// 5 minutes for the human; (2) the run reads and writes NO memory, skill or knowledge — no
+    /// `memory`/`skills` extension on a worker, recall a no-op, no grounded-research write, no
+    /// proposal. A score that reads them measures this machine's history, not the engine; a run
+    /// that writes them poisons every later measurement. Config-reachable because a desktop app
+    /// launched with `open -n` receives no environment at all.
     #[serde(default)]
     pub benchmark: bool,
     /// Secrets for the research MCP tools, keyed by the env var name they would otherwise come from
@@ -2632,10 +2636,17 @@ fn omni_judge_enabled(cfg: Option<bool>) -> bool {
 
 /// UNATTENDED MODE. Set by the benchmark harness and by the loop — any run nobody is sitting in front of.
 ///
-/// It changes exactly ONE thing: how long a question waits for a human before it is routed to a node.
-/// ON -> routed INSTANTLY, no wait at all. OFF -> the human gets exactly 5 minutes, then a node answers.
+/// It changes exactly TWO things (frame 1.14 §2.6 widened it from one; both docblocks say so).
+/// ONE: how long a question waits for a human before it is routed to a node — ON -> routed
+/// INSTANTLY, no wait at all; OFF -> the human gets exactly 5 minutes, then a node answers.
+/// TWO: THE RUN IS KNOWLEDGE-BLIND — a worker never gets the `memory` or `skills` extension
+/// (`worker_extensions::knowledge_blind_refusals`), its agent is `set_knowledge_blind` so recall's
+/// injection and correction capture are no-ops, and the grounded-research write (G1) is refused.
+/// Reading them makes the score a property of this machine's history; writing them puts the
+/// benchmark's own findings in the store the next benchmark reads.
 /// Env wins, then config, because `open -n` gives a desktop-launched app no environment at all, so
-/// `launch.sh` must be able to set this in config.yaml.
+/// `launch.sh` must be able to set this in config.yaml. The flag reaches `crates/goose` on the agent
+/// (never by re-reading the env there — that crate also serves the desktop).
 fn benchmark() -> bool {
     match std::env::var("GOOSE_SWARM_BENCHMARK") {
         Ok(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
@@ -4810,98 +4821,6 @@ mod tests {
         assert!(!is_stub_content(
             "func add(a: Int, b: Int) -> Int {\n return a + b\n}\nlet x = add(1, 2)"
         ));
-    }
-
-    // ---- RESEARCH PROVENANCE (grounded vs invented) -----------------------------------------
-    /// A finding is GROUNDED only when the agent made a SUCCESSFUL EXTERNAL lookup — a research MCP call
-    /// (web-search/context7). A failed call, no call, or a mere `developer__` shell command is not
-    /// grounding: a pure guess (optionally dressed with a trivial `echo`) must never close a product decision.
-    #[test]
-    fn research_lookups_counts_only_successful_lookups() {
-        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
-            name: name.to_string(),
-            is_mcp,
-            ok,
-            fetched_external: false,
-        };
-        // A successful web-search / context7 call grounds it.
-        let grounded = vec![
-            mk("web-search__search", true, Some(true)),
-            mk("context7__get-library-docs", true, Some(true)),
-        ];
-        assert_eq!(research_lookups(&grounded).len(), 2);
-
-        // A shell command does NOT ground a product/convention decision — else a trivial `echo` before an
-        // invented answer would launder the guess through the gate this exists to close.
-        assert!(research_lookups(&[mk("developer__shell", false, Some(true))]).is_empty());
-        assert!(research_lookups(&[mk("developer__text_editor", false, Some(true))]).is_empty());
-
-        // NO tool calls -> pure reasoning -> NOT grounded (the laundering case).
-        assert!(research_lookups(&[]).is_empty());
-
-        // A FAILED lookup is not grounding — it looked nothing up.
-        assert!(research_lookups(&[mk("web-search__search", true, Some(false))]).is_empty());
-        // No response at all (max-turns cutoff) is not grounding.
-        assert!(research_lookups(&[mk("context7__resolve-library-id", true, None)]).is_empty());
-        // A shell BEFORE a real web-search still yields exactly the one EXTERNAL lookup.
-        assert_eq!(
-            research_lookups(&[
-                mk("developer__shell", false, Some(true)),
-                mk("web-search__search", true, Some(true)),
-            ]),
-            vec!["web-search__search".to_string()]
-        );
-    }
-
-    /// P1 substrate: `classify_research_attempt` widens `grounded:bool` into the four cases the ASK-AWAY
-    /// interim routing needs (CalledEmpty → ask the user; Errored/NeverCalled → retry the fetch). The
-    /// CalledEmpty-vs-Errored boundary is the load-bearing distinction — verify it explicitly.
-    #[test]
-    fn classify_research_attempt_separates_the_four_cases() {
-        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
-            name: name.to_string(),
-            is_mcp,
-            ok,
-            fetched_external: false,
-        };
-        // NeverCalled: no tool call at all — pure model reasoning.
-        assert_eq!(classify_research_attempt(&[]), ResearchAttempt::NeverCalled);
-        // Grounded: at least one successful MCP lookup, and it wins even alongside a failed one.
-        assert_eq!(
-            classify_research_attempt(&[mk("web-search__search", true, Some(true))]),
-            ResearchAttempt::Grounded
-        );
-        assert_eq!(
-            classify_research_attempt(&[
-                mk("web-search__search", true, Some(false)),
-                mk("context7__get-library-docs", true, Some(true)),
-            ]),
-            ResearchAttempt::Grounded
-        );
-        // Errored: a lookup was attempted and failed or was cut off (Some(false) / None), none succeeded.
-        assert_eq!(
-            classify_research_attempt(&[mk("web-search__search", true, Some(false))]),
-            ResearchAttempt::Errored
-        );
-        assert_eq!(
-            classify_research_attempt(&[mk("context7__resolve-library-id", true, None)]),
-            ResearchAttempt::Errored
-        );
-        // CalledEmpty: tools ran and none errored, but nothing grounded — only non-MCP shell calls.
-        assert_eq!(
-            classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
-            ResearchAttempt::CalledEmpty
-        );
-        // The field is populated on the struct — read it so the P1 substrate is exercised end to end.
-        let f = ResearchFinding {
-            question: "q".into(),
-            kind: "web".into(),
-            findings: "f".into(),
-            grounded: false,
-            lookups: Vec::new(),
-            attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
-        };
-        assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
     }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
@@ -9712,12 +9631,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             fetched_external: fetched,
         };
         assert_eq!(
-            research_lookups(&[rec("developer__shell", false, Some(true), true)]).len(),
+            research::research_lookups(&[rec("developer__shell", false, Some(true), true)]).len(),
             1
         );
-        assert!(research_lookups(&[rec("developer__shell", false, Some(true), false)]).is_empty());
+        assert!(
+            research::research_lookups(&[rec("developer__shell", false, Some(true), false)])
+                .is_empty()
+        );
         // A fetch that FAILED grounds nothing — the docs were not read.
-        assert!(research_lookups(&[rec("developer__shell", false, Some(false), true)]).is_empty());
+        assert!(
+            research::research_lookups(&[rec("developer__shell", false, Some(false), true)])
+                .is_empty()
+        );
     }
 
     /// G7's SECOND seam, same shape as the first. `overview_run_command` handled Python, Rust and
@@ -11871,6 +11796,7 @@ impl GooseAgentDispatcher {
         );
         let agent = Agent::with_config(agent_config);
         agent.set_swarm_single_owned_file(single_owned_file);
+        agent.set_knowledge_blind(benchmark());
 
         let session = self
             .session_manager
@@ -11972,7 +11898,12 @@ impl GooseAgentDispatcher {
         }
 
         // Worker MCP extensions (none for the planner). A failed connection is non-fatal so a down
-        // server doesn't kill the task.
+        // server doesn't kill the task. A benchmark refuses `memory`/`skills` LOUDLY (frame 1.14).
+        let (extensions, refused) =
+            worker_extensions::knowledge_blind_refusals(benchmark(), extensions);
+        for name in refused {
+            eprintln!("knowledge_blind_extension_refused: {name} (GOOSE_SWARM_BENCHMARK is on)");
+        }
         for ext in extensions {
             if let Err(e) = agent.add_extension(ext.clone(), &session_id).await {
                 eprintln!("(worker extension add failed: {e})");
@@ -31054,27 +30985,6 @@ impl TargetLang {
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
 #[cfg(test)]
-/// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
-/// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
-/// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
-/// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
-///
-/// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
-/// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
-/// without guessing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResearchAttempt {
-    /// No research tool call at all — pure model reasoning.
-    NeverCalled,
-    /// A lookup was attempted and failed or was cut off (`ok == Some(false)` / `ok == None`).
-    Errored,
-    /// A tool ran but grounded nothing usable — only non-MCP calls, or MCP calls returning nothing.
-    CalledEmpty,
-    /// At least one successful MCP lookup (today's `grounded: true`).
-    Grounded,
-}
-
-#[cfg(test)]
 /// The read-only END-TO-END SHARD spec: one slice of the app's advertised commands, checked against the
 /// spec's golden values. Owns nothing and writes nothing, so N of these co-run race-free on one tree.
 /// Deterministically extract the ADVERTISED SURFACE from the operator's frozen spec, as numbered
@@ -31240,27 +31150,6 @@ fn clarity_reason_is_fail_closed(reason: &str) -> bool {
     reason.starts_with("timeout")
         || reason.starts_with("agent_error")
         || reason.starts_with("no_final_output")
-}
-
-#[cfg(test)]
-/// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
-/// events only) so it is unit-testable and no model opinion enters. `Grounded` wins over any failure, then
-/// an attempted-but-failed lookup is `Errored`, tools-ran-but-nothing-grounded is `CalledEmpty`, and an
-/// empty trace is `NeverCalled`.
-fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
-    if tool_calls.is_empty() {
-        return ResearchAttempt::NeverCalled;
-    }
-    if tool_calls.iter().any(|t| t.ok == Some(true) && t.is_mcp) {
-        return ResearchAttempt::Grounded;
-    }
-    if tool_calls
-        .iter()
-        .any(|t| matches!(t.ok, Some(false) | None))
-    {
-        return ResearchAttempt::Errored;
-    }
-    ResearchAttempt::CalledEmpty
 }
 
 #[cfg(test)]
@@ -32315,17 +32204,6 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 }
 
 #[cfg(test)]
-/// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
-/// recall, which may be good planning context but must never be routed to workers as a verified fact.
-fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
-    tool_calls
-        .iter()
-        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.fetched_external))
-        .map(|t| t.name.clone())
-        .collect()
-}
-
-#[cfg(test)]
 fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
     goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
     let wc = worker_count.max(1) as i64;
@@ -32899,27 +32777,6 @@ const DELEGATION_STOPWORDS: &[&str] = &[
     "genuinely",
     "material",
 ];
-
-#[cfg(test)]
-#[allow(dead_code)]
-struct ResearchFinding {
-    question: String,
-    kind: String,
-    findings: String,
-    /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
-    /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
-    /// tool call means it consulted an external source. A finding with none is the model's own reasoning.
-    /// This is the deterministic signal that separates a grounded fact (safe to trust / cache / learn) from
-    /// an invented one (which must never silently close a user's product decision). A tool call is an engine
-    /// event, so no model opinion enters the classification.
-    grounded: bool,
-    /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
-    lookups: Vec<String>,
-    /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
-    /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
-    #[allow(dead_code)]
-    attempt: ResearchAttempt,
-}
 
 // ================================================================================================
 // REGRESSIONS FOR THE 2026-08-29 AUDIT PASS.

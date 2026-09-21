@@ -436,6 +436,17 @@ impl Agent {
         }
     }
 
+    /// KNOWLEDGE-BLIND: a benchmarked run reads and writes no memory, skill or knowledge
+    /// (`ExtensionManager::knowledge_blind`). Recall, the end-of-turn assessment and every
+    /// knowledge writer in this crate consult it; the swarm sets it from its one benchmark flag.
+    pub fn set_knowledge_blind(&self, on: bool) {
+        self.extension_manager.set_knowledge_blind(on);
+    }
+
+    pub fn knowledge_blind(&self) -> bool {
+        self.extension_manager.knowledge_blind()
+    }
+
     /// SWARM: turn the measured per-turn context line on for this agent (see the field doc).
     pub fn set_swarm_measured_context(&self, on: bool) {
         self.swarm_measured_context

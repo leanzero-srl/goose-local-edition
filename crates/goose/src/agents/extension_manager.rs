@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -191,6 +191,12 @@ pub struct ExtensionManager {
     tools_cache_version: AtomicU64,
     client_name: String,
     capabilities: ExtensionManagerCapabilities,
+    /// KNOWLEDGE-BLIND (frame 1.14 §2.6). A run that is being MEASURED must neither read nor write
+    /// memories, skills or knowledge: reading makes the score a property of this machine's history,
+    /// writing puts the benchmark's own findings in the store the next benchmark reads. Set by the
+    /// swarm from its `benchmark()` flag at the one worker door — never read from the environment
+    /// here, because this crate also serves the desktop, where that variable is meaningless.
+    knowledge_blind: AtomicBool,
 }
 
 /// A flattened representation of a resource used by the agent to prepare inference
@@ -890,7 +896,16 @@ impl ExtensionManager {
             tools_cache_version: AtomicU64::new(0),
             client_name,
             capabilities,
+            knowledge_blind: AtomicBool::new(false),
         }
+    }
+
+    pub fn set_knowledge_blind(&self, on: bool) {
+        self.knowledge_blind.store(on, Ordering::Relaxed);
+    }
+
+    pub fn knowledge_blind(&self) -> bool {
+        self.knowledge_blind.load(Ordering::Relaxed)
     }
 
     pub fn new_without_provider(data_dir: std::path::PathBuf) -> Self {
