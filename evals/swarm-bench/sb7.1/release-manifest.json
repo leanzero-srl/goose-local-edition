@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.1",
-  "sourceCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
+  "sourceCommit": "d46e7be2a0e21068482044c15c392e65c1365eab",
   "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit.",
   "validation": {
     "status": "passed",
-    "scope": "Current full serial reference scoring and archived candidate B3 classification replay passed; prior full candidate scores are historical. Installed scoring retry and publication require separate acceptance.",
+    "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run.",
     "receipt": "bench/sb71-release-validation.json",
-    "receiptSha256": "083aea6a442287166de1ad017d22e90570da8e9d61b64e8aa4272ba52fed0bc9"
+    "receiptSha256": "a9dacd7131c6c72d82c06c2d4b692503f71d73c179fc291f231c2a302366edf4"
   },
   "releaseAcceptance": {
     "installedScoringRetry": "pending separate receipt",
@@ -15,11 +15,12 @@
     "notarization": "pending separate receipt"
   },
   "qualityLimitations": {
-    "difficultyAcceptance": "open: candidate raw score 0.9683 does not establish broad frontier challenge; final 0.799 is an explicit quality ceiling",
+    "difficultyAcceptance": "One published Gemini run scored0.4992; broad cross-model difficulty is not established.",
     "subjectiveArtisticExcellence": "not established by deterministic geometry, presentation and motion checks",
     "installedScoringRetryAcceptance": "pending separate receipt",
     "publishedAcceptance": "pending separate receipt",
-    "notarizedDistribution": "pending separate receipt"
+    "notarizedDistribution": "pending separate receipt",
+    "empiricalCalibration": "Fixed published specification budgets; no empirical worst-of-five fit or hardware normalization."
   },
   "files": {
     "bench/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -36,12 +37,13 @@
     "bench/fixtures_v2.py": "f5c2f580c81e1ee8055a64b6e22dea3eae8e1fac38b448b9b371dd95111cbbb5",
     "bench/fixtures_v3.py": "40d7415ea8b9851619062c2e64d281c38afe631acca1e0802cf1afb55efbc4a6",
     "bench/gantry_oracle.py": "3baf116e2101bcdedc55f10a7319281b340052118a02c3db8c59318a225a399b",
+    "bench/media_sb71.mjs": "3ec2696b74b3f9ef4bdceaf2723cfef97b56a37bbe0f7918072ecdf01474577e",
     "bench/perf_probe.py": "73ad3f41a1823c45291754cd9200a07999385aa671cbbf8f19901cd09cfae33c",
     "bench/probes/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "bench/probes/client_probe.py": "e32c6c2573108a43dc0e55be69779f87362c9da2be7dc2e02d27aebb94b7c2db",
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/product_probe.mjs": "7772e9c17d358b9c8febb79180b07ee79100adae9a735249f45cdccc35e4e712",
-    "bench/product_probe_sb71.mjs": "c800cfd0b76b4ebe1cdfb0c8f1a84121121d06d75e00893649567f4d8a35b86e",
+    "bench/product_probe_sb71.mjs": "e3e7c52923243229baa7e52b00756c76594fe4be3f64084afa89ee2bce83caa7",
     "bench/product_probe_v2.mjs": "0d2ac54f73f149082ba30a8b537480bc18b484522ef4d3233daff4948a733729",
     "bench/product_probe_v3.mjs": "d4c4aa49ab7c68f783f16cd627a35828b8ab86d68323f413d43fe21c14da1074",
     "bench/product_probe_v4.mjs": "dda1f974915a3a13c7701b530955e532a0de50dc9219a944a734688ff31b1a1f",
@@ -51,7 +53,7 @@
     "bench/run_build.py": "d0c24eec687783542488c85adef8f7178ae05923f67be5484c1d9f8dbb5a2c48",
     "bench/sb6-thresholds.json": "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a",
     "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
-    "bench/sb71-release-validation.json": "083aea6a442287166de1ad017d22e90570da8e9d61b64e8aa4272ba52fed0bc9",
+    "bench/sb71-release-validation.json": "a9dacd7131c6c72d82c06c2d4b692503f71d73c179fc291f231c2a302366edf4",
     "bench/sb7_local_vendor.py": "b45e10e01ad33dae8685c5bc09ded017725033601e330b10d208d636c1a16e7e",
     "bench/sb8-three.module.js": "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495",
     "bench/schedule_sb7.py": "4c765a401db8513f8c1efbf6d4bd210b3527cddecff71192e534cf515d457e86",
@@ -61,7 +63,7 @@
     "bench/score_routes.py": "d7ac1843106de505fbd74a587e4b0051c149007f3b7012bcc53f052890f0ce6e",
     "bench/score_sb6.py": "bce118750bb7b06419b2e555528a62bd3f460736313ff8ba64f9238bd8296f9f",
     "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
-    "bench/score_sb71.py": "547a1a8f36426a89a56a9066c48c3914af2be15ba4fce6143fc9bcf7ef6ef03f",
+    "bench/score_sb71.py": "ce6bb57c258fef7138fa445d504f26b267fb0719538ced0e1ec2ec43394f3da2",
     "bench/score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
     "bench/sweep.py": "3078af8d02281d3af16df40b8633af23015cf24e1db1c2668222cb0c953db4c0",
     "bench/test_bench_browser.py": "3a10fd54ed7415474d6547377f942e8668d9ec118f5443dd0dac51e46cbc88c8",

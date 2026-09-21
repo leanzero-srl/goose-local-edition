@@ -2,49 +2,26 @@
   "schemaVersion": 1,
   "scorerVersion": "sb-7.1",
   "status": "passed",
-  "scope": "Current full serial reference scoring and archived candidate B3 classification replay passed; prior full candidate scores are historical. Installed scoring retry and publication require separate acceptance.",
-  "evaluatedSourceCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
-  "implementationSourceCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
+  "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run.",
+  "evaluatedSourceCommit": "6c2e96d33",
+  "implementationSourceCommit": "d46e7be2a0e21068482044c15c392e65c1365eab",
   "limitations": {
-    "difficultyAcceptance": "open: candidate raw score 0.9683 does not establish broad frontier challenge; final 0.799 is an explicit quality ceiling",
+    "difficultyAcceptance": "One published Gemini run scored0.4992; broad cross-model difficulty is not established.",
     "subjectiveArtisticExcellence": "not established by deterministic geometry, presentation and motion checks",
     "installedScoringRetryAcceptance": "pending separate receipt",
     "publishedAcceptance": "pending separate receipt",
-    "notarizedDistribution": "pending separate receipt"
+    "notarizedDistribution": "pending separate receipt",
+    "empiricalCalibration": "Fixed published specification budgets; no empirical worst-of-five fit or hardware normalization."
   },
   "newModelCallsForValidation": 0,
   "reports": {
     "reference": {
-      "report": "sb7.1/release-validation/sb71-reference-5361f70b1-b3-python312.json",
-      "reportSha256": "f173a1a23cc93d012ee6647fb9e51cf18e493806fba38194b8a3cd34c2e2ba84",
-      "commandReceipt": "sb7.1/release-validation/sb71-reference-5361f70b1-b3-python312-command.json",
-      "commandReceiptSha256": "f82f6f04702c0dfc502538c0dd72b5995ffe0b321db28945e3eca26a8dfe9a91",
-      "scorerCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
-      "runtime": {
-        "python": "Python 3.12.14",
-        "node": "v24.18.0"
-      },
-      "seconds": 237.093,
-      "seed": "5a05d7631d9276e3",
+      "report": "runs/sb71-validation/20260921/reporting-video-304/reference-with-encoder-failure.json",
+      "reportSha256": "d2f76a2cfa1e5502d30f1b620a3a9da4595a2e65a830992868b5bcd4efbcb09d",
+      "scorerCommit": "6c2e96d33",
       "score": 0.994,
-      "rawScore": 0.994,
-      "inner": 1.0,
-      "criticalMultiplier": 1.0,
-      "unsuppressedCriticals": [],
-      "missingInfrastructure": [],
-      "unavailableProbes": [],
-      "unreachedSchedules": [],
-      "sourceUnchanged": true,
-      "verifiedEvaluatedFiles": {
-        "bench/score_sb71.py": "547a1a8f36426a89a56a9066c48c3914af2be15ba4fce6143fc9bcf7ef6ef03f",
-        "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
-        "bench/product_probe_sb71.mjs": "c800cfd0b76b4ebe1cdfb0c8f1a84121121d06d75e00893649567f4d8a35b86e",
-        "bench/vendor_service_v3.py": "f18979ceeccea722b5f1288912f87ae838c979ac7cb7d52b789f20b09a17ff5f",
-        "spec-build-sb71.md": "6396dc40551a513068695e90b6555108be31b379c3bd3f9279242de02013a9e8",
-        "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
-        "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
-      },
-      "hostConditions": "Shared Mac; our builds and other benchmark/browser tests paused. Unrelated host activity not controlled."
+      "checks": 97,
+      "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run."
     }
   },
   "historicalReports": {
@@ -111,6 +88,38 @@
         "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
       },
       "hostConditions": "Shared Mac; our builds and other benchmark/browser tests paused. Unrelated host activity not controlled."
+    },
+    "pre304Reference": {
+      "report": "sb7.1/release-validation/sb71-reference-5361f70b1-b3-python312.json",
+      "reportSha256": "f173a1a23cc93d012ee6647fb9e51cf18e493806fba38194b8a3cd34c2e2ba84",
+      "commandReceipt": "sb7.1/release-validation/sb71-reference-5361f70b1-b3-python312-command.json",
+      "commandReceiptSha256": "f82f6f04702c0dfc502538c0dd72b5995ffe0b321db28945e3eca26a8dfe9a91",
+      "scorerCommit": "5361f70b17fe33e3ea36022d835f6415380d2ef4",
+      "runtime": {
+        "python": "Python 3.12.14",
+        "node": "v24.18.0"
+      },
+      "seconds": 237.093,
+      "seed": "5a05d7631d9276e3",
+      "score": 0.994,
+      "rawScore": 0.994,
+      "inner": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "missingInfrastructure": [],
+      "unavailableProbes": [],
+      "unreachedSchedules": [],
+      "sourceUnchanged": true,
+      "verifiedEvaluatedFiles": {
+        "bench/score_sb71.py": "547a1a8f36426a89a56a9066c48c3914af2be15ba4fce6143fc9bcf7ef6ef03f",
+        "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
+        "bench/product_probe_sb71.mjs": "c800cfd0b76b4ebe1cdfb0c8f1a84121121d06d75e00893649567f4d8a35b86e",
+        "bench/vendor_service_v3.py": "f18979ceeccea722b5f1288912f87ae838c979ac7cb7d52b789f20b09a17ff5f",
+        "spec-build-sb71.md": "6396dc40551a513068695e90b6555108be31b379c3bd3f9279242de02013a9e8",
+        "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
+        "sb7.1/VISUAL-CONTRACT.md": "86024cd0674b38da7f680f1496ab0cb6ab97cc8cd85ae0ac98511d2612e5962d"
+      },
+      "hostConditions": "Shared Mac; our builds and other benchmark/browser tests paused. Unrelated host activity not controlled."
     }
   },
   "archivedCandidateReplay": {
@@ -123,5 +132,9 @@
       "negativeWitnessMutationsPassed": 14,
       "relocatedReplayTestsPassed": 4
     }
+  },
+  "maintenanceValidation": {
+    "receipt": "runs/sb71-validation/20260921/reporting-video-304/validation.json",
+    "receiptSha256": "0e988c9464f4c09ac4e04002f4c5f28573c3e5e4367cf568644fd04623c01f71"
   }
 }

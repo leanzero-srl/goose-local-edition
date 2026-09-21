@@ -1,0 +1,108 @@
+golden-sb71 sb-7.1: 0.994
+SB7.1 uses fixed specification budgets; empirical worst-of-five calibration not performed
+Earned behavioral score 0.9940; admission ceiling 1.000
+Admission does not award points. Final score = min(earned score, applicable ceilings).
+
+SB7 behavioral evidence  99.4%   A 100% · B 100% · C 100% · D 100% · J 100% · V 100% · P 100% · T 100% · X 100% · R 100% · E 95%
+  seed 5a05d7631d9276e3
+
+   A  100% a_asset_budget               83 KB of 150 KB (4/4 files), 0 external ref(s)
+   A  100% a_combined_entrypoint        python -m app: boot=True ledger=200 notifier=200
+   A  100% a_db_ownership               ledger.db=True notifier.db=True
+   A  100% a_package_layout             6/6 named files, 2/2 bootable service modules
+   A  100% server_runs                  both services healthy, ledgerd in 0.3s
+   A  100% serves_page                  page 200, 3/3 assets served with correct content types
+   B  100% b_buckets_dst                384/384 cells exact, DST-window 1.00, tz=Europe/Berlin
+           └ Berlin-day bucketing across the DST switch is the data-correctness trap
+   B  100% b_chronological_order        49/49 adjacent pairs ordered by instant
+   B  100% b_error_envelope             envelope 1.00, field paths 1.00 over 7 cases
+   B  100% b_events_log                 12346 events, contiguous=True, vocab 1.00/1.00
+   B  100% b_json_shapes                6/6 responses parse as JSON
+   B  100% b_money_rendered             1.00 of 12 cells exponent-correct; JPY/KWD traps 1.00
+   B  100% b_row_shape                  10/10 documented keys
+   B  100% b_summary_shape              by_currency 4 rows (sorted=True), reversals present (4 rows)
+   B  100% b_total_field                total=12289 (want 12289)
+   B  100% b_viz_records                7/7 columns, count=12289, order 1.00, server Berlin day 1.00
+   B  100% sync_completeness            Eventual evidenced total 12291; initial API snapshot total 12289; initial expe
+   C  100% c_b1_drop_resume             {'armed': True, 'resumed': True, 'no_full_restart': True, 'walk_completed': Tr
+   C  100% c_b2_retry_after             {'armed': True, 'single_retry': True, 'waited': True, 'continued': True}
+   C  100% c_b5_generation_304          unconditional=1 conditional-repeats=0 propagated=True
+   C  100% c_conditional_resync         354/355 conditional (1 documented unconditional), 5 x 304 across post-mutation
+   C  100% c_paged_walk                 192/192 pages served, 0 undocumented-param requests, 0 duplicate pages
+   C  100% c_send_idempotency           3/3 sends carried Idempotency-Key, retry_reused=True
+   C  100% c_webhook_discipline         54/54 deliveries 2xx-acked, forged -> 401
+   D  100% d_client_timeouts            ledgerd bound and served local state while the vendor refused connections (5s 
+   D  100% d_content_types              api json 1.00, /api/stream ctype 'text/event-stream'
+   D  100% d_decisions_doc              D1=1.0, D2=1.0, D3=1.0
+   D  100% d_peer_absence               proxy -> 502 code=True, ledgerd-alive=True, notifierd-alive=True
+   D  100% d_validation                 14/14 status codes correct
+  ·J  100% j_console_clean              0 console error(s) across load+sync
+   J  100% j_empty_state                pre-sync state rendered: {'tablePresent': True, 'renderedRowCount': 0, 'progre
+   J  100% j_error_state                visible + actionable: Backend unreachable — check the service is running, then
+   J  100% j_first_use                  ttfd=678ms reconcile=1.0 consoleErrs=0
+  ·J  100% j_loads_data                 50 rows rendered, DOM claims 12290 (want 12290)
+   J  100% j_notifications_feed         partition state=degraded, heal state=live, live in 0.3s
+   J  100% j_sync_journey               button_found, in_flight_state, completed, state_stays_correct
+   J  100% j_workflow_journey           roleTokenAccepted, draftCreated, submitCausal, approveCausal, draftListStates,
+   J  100% j_workflow_reject            reject_completed, rejected_state_listed, reject_notification
+   V  100% v_dates_readable             rendered dates like Aug 31, 2025, 01:20 AM
+   V  100% v_money_presentation         12/12 amount cells carry a recognizable currency token
+   V  100% v_responsive_375             no h-scroll, 50 rows (tap targets not measured by this probe)
+   V  100% v_status_badges              4 statuses on page 1, 4 at the frozen hex, 4 distinct styles
+   V  100% v_styling                    stylesheet=True, 8 backgrounds, font '"Avenir Next", "Segoe UI", sys', header=
+   P  100% p_api_latency                worst idle p95 3.0717090703547 ms across ['payments', 'summary']
+   P  100% p_drag_frames                41 frames over the 40-move budget drag (13309.9ms)
+   P  100% p_idle_flatness              0 default-FBO draws in the worst 500ms rest window (2 sampled)
+   P  100% p_stream_apply               batch visible in 131.2 ms
+   P  100% p_sync_wall                  sync #1 wall 4514 ms (self-driven, faults included)
+   P  100% p_under_stream               p95=2.7ms with readers during the stream burst (overlap 1.00)
+   T  100% t_brush_link                 row_click_toggles, dim_pixels, member_pixels, brush_count, instance_click_togg
+   T  100% t_camera_math                projErr=2px pitch@clamp=85 defaults, drag_law, wheel_law, pitch_clamp, dist_cl
+   T  100% t_click_semantics            {'click_toggles_on': True, 'click_toggles_off': True, 'background_clears': Tru
+   T  100% t_coast_identity             identity 1.00 over 2 mid-coast samples, slow=True (drift 0°), settle=True (147
+   T  100% t_coast_reality              coasted 8.19° past release, direction=True, pixels moved 5/5, rest pixel ok=Tr
+   T  100% t_context_real               ctx=1 type=webgl2 nonBg=49/49 distinct=7 backingOk=True
+   T  100% t_draw_budget                ΔD=41 ΔF=41 over M=40 moves (limits 328/384)
+   T  100% t_height_pixels              6/6 instance tops within ±3 px (currencies ['EUR', 'JPY', 'KWD', 'USD'])
+   T  100% t_labels_culling             setMatch=True at the decisive pose (expected 8, dom 8), geom 1.00, overlapViol
+   T  100% t_layout_basis               layout got={'d0': '2025-08-31', 'D0': 96, 'R0': 176} want={'d0': '2025-08-31',
+   T  100% t_pick_buffer                6/6 decisive picks agree three ways; constructions {'occluded-by-lower-n': Tru
+   T  100% t_pick_real_pass             since invalidation: 2 offscreen draws, 4 readbacks; 0 default-FBO draws across
+   T  100% t_scene_binding              7/7 digest moments within tolerance (count got=12291 want=12291)
+   T  100% t_stream_diff                1 batches: bytes 1.00, reallocs none, digest 1.00 (1 graded), changed pixel Tr
+   T  100% t_vs7dbg_truth               cameraYawErr=0 restPixel=True digest 1.0 framesAgree=True pickTriplet=True
+   X  100% x_conservation_residual      residual 0 in every currency after attribution
+   X  100% x_l1_no_invented_states      14542 observations, 0 invented states
+   X  100% x_l2_per_key_order           0 order violations over 43 same-key event pairs
+   X  100% x_l3_monotonic_reads         0 regressions over 2208 sampled read pairs
+   X  100% x_l4_convergence             24/27 touched rows at vendor-final state, total 12291 (want 12291)
+   X  100% x_l5_group_atomicity         0 confirmed half-applied group observations over 737 samples
+   X  100% x_m1_amount_immutability     2235 amount observations, 0 mutated
+   X  100% x_m2_pair_conservation       737/737 sequential reads agree; 0 confirmed half states; isolated read skew is
+   X  100% x_m3_terminal_conservation   4/4 currency totals exact, 4/4 reversal totals exact at quiescence
+   X  100% x_m4_no_cross_currency       no cross-currency money sum anywhere
+   X  100% x_no_lost_write              23 acked webhook mutations checked, 0 lost
+   X  100% x_ooo_dup_forged             {'ooo_kept_v2': True, 'forged_untouched': True, 'dup_applied_once': True}
+   R  100% r_b3_sigkill_resync          kill after list #5: restart=True converge=True nodupes=True
+   R  100% r_b4_vendor_down_boot        {'armed': True, 'refusal_secs': 5, 'bound_in_10s': True, 'served_while_down': 
+   R  100% r_b6_outbox_atomic           {'pending_before_kill': True, 'resumed': True, 'exactly_once': True, 'none_los
+   R  100% r_b7_partition               {'ledger_alive': True, 'writes_fast': True, 'status_down': True, 'ui_degraded'
+   R  100% r_cache_truth                post-304 state reflects the committed mutations
+   R  100% r_no_dupe_effect             no duplicated effects
+   R  100% r_no_row_loss                4 kills; no rows lost
+   R  100% r_notification_multiset      got {'draft.rejected': 1, 'draft.submitted': 3, 'draft.approved': 2, 'reversal
+   R  100% r_notifier_exactly_once      9 processed (9 unique), crossing coverage 1.00
+   R  100% r_workflow_durability        A1 -> submitted, A2 -> sent
+   E  100% e_frames_under_drag          41 frames over the 40-move drag at N=12288
+   E  100% e_mastery                    T+X+R mean 1.000
+   E  100% e_optimistic_paint           painted while held (14.599999904632568ms), saved-after-release=True
+   E   75% e_stream_apply_latency       batch visible in 131.2 ms (excellence rungs)
+   E  100% e_under_load_latency         p95=2.7ms under the stream burst (overlap 1.00)
+
+SB7.1 same-session visual evidence:
+S 1.000 s_visible_surface: Visible canvas, unobscured samples and independently predicted seeded-payment pixels from this browser
+S 1.000 s_tower_geometry: Four currencies: chamfered structure, separate ribs, recessed core and true frame gaps match independent rays
+S 1.000 s_currency_collar: Currency-specific collar widths match projected pixel surfaces
+Q 1.000 q_payment_context: Inspector identity, currency, money, status and version match the backend
+Q 1.000 q_legible_presentation: All measured presentation text is readable; framing 8/8
+M 1.000 m_committed_event_replay: committed live update: passed; replay without writes: passed; newer/stale versions and exit: passed

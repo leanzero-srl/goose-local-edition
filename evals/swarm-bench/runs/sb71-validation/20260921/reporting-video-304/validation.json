@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "release": "3.0.4",
+  "implementationCommit": "d46e7be2a0e21068482044c15c392e65c1365eab",
+  "status": "passed",
+  "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run.",
+  "reference": {
+    "implementationCommit": "6c2e96d33",
+    "score": 0.994,
+    "checks": 97,
+    "exitCode": 0,
+    "reportSha256": "d2f76a2cfa1e5502d30f1b620a3a9da4595a2e65a830992868b5bcd4efbcb09d",
+    "initialApiMissingFields": [],
+    "initialBucketCells": 384,
+    "encoderFailure": [
+      "Full recording encoding failed; original retained: Command failed: /Users/mihaiperdum/Library/Application Support/Goose/benchmark/runtime/ffmpeg/ffmpeg -hide_banner -loglevel error -i /var/folders/41/670wc_gs2y93f8rs0330cc780000gn/"
+    ]
+  },
+  "finalEncoder": {
+    "seconds": 133.708,
+    "startSeconds": 0,
+    "endSeconds": 118.56,
+    "durationSeconds": 118.56,
+    "encodedDurationSeconds": 118.56,
+    "reason": "Complete graded browser recording, in original order and at original speed",
+    "bytes": 3024252,
+    "sha256": "7bc97506b73442dea6613f8d42f680bb1606a5f59cf2a17384f874cb5d9dce1c"
+  },
+  "numericPolicy": "Unchanged; archived Gemini0.4992 recomposes exactly. SB7 threshold bytes unchanged; fixed published budgets, no empirical worst-of-five fitting or hardware normalization.",
+  "tests": {
+    "reporting": 6,
+    "sb71NonBrowser": 31,
+    "browserOptInSkipped": 27,
+    "fmt": "passed",
+    "workspaceClippy": "passed"
+  },
+  "sourceFilesSha256": {
+    "bench/score_sb71.py": "ce6bb57c258fef7138fa445d504f26b267fb0719538ced0e1ec2ec43394f3da2",
+    "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
+    "bench/product_probe_sb71.mjs": "e3e7c52923243229baa7e52b00756c76594fe4be3f64084afa89ee2bce83caa7",
+    "bench/media_sb71.mjs": "3ec2696b74b3f9ef4bdceaf2723cfef97b56a37bbe0f7918072ecdf01474577e",
+    "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3"
+  }
+}
