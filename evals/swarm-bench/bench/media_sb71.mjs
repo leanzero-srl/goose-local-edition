@@ -21,7 +21,7 @@ export function encodeFullRecording(raw, output) {
   const bitrate = Math.floor(3 * 1024 * 1024 * 8 / (duration + 1));
   const shared = ['-hide_banner', '-loglevel', 'error', '-i', raw, '-an',
     '-vf', 'scale=1280:-2', '-c:v', 'libvpx-vp9', '-b:v', String(bitrate),
-    '-threads', '1', '-passlogfile', join(directory, 'encode'), '-y'];
+    '-cpu-used', '4', '-threads', '1', '-passlogfile', join(directory, 'encode'), '-y'];
   const options = { timeout: Math.max(60000, Math.ceil(duration * 5000)) };
   try {
     execFileSync(process.env.BENCH_FFMPEG || 'ffmpeg', [...shared, '-pass', '1', '-f', 'null', '/dev/null'], options);

@@ -463,14 +463,17 @@ def explain_initial_state(result, ctx):
     payments = getattr(ctx, 'payments', None)
     initial = payments.get('total') if isinstance(payments, dict) else None
     expected = getattr(ctx, 'expected_total_at_load', None)
+    incomplete = isinstance(initial, int) and isinstance(expected, int) and initial < expected
     rows = {row['check']: row for row in result['checks']}
     sync = rows.get('sync_completeness')
     if sync:
         eventual = sync.get('parts', {}).get('evidenced_total')
         sync['detail'] = (f'Eventual evidenced total {eventual}; initial API snapshot total {initial}; '
-                          f'initial expected total {expected}. Later recovery does not repair earlier API observations.')
+                          f'initial expected total {expected}. ' +
+                          ('Later recovery does not repair earlier API observations.' if incomplete else
+                           'Totals reflect their respective measurement phases.'))
     bucket = rows.get('b_buckets_dst')
-    if bucket and isinstance(initial, int) and isinstance(expected, int) and initial < expected:
+    if bucket and incomplete:
         why = f'Incorrect daily bucket counts in the incomplete initial dataset ({initial}/{expected} payments)'
         bucket['detail'] = why + '; ' + bucket['detail']
         bucket['consequence'] = 'Initial bucket counts disagree with the full fixture; this alone does not establish a timezone conversion defect'

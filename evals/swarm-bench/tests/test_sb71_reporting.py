@@ -37,6 +37,7 @@ class ReportingTests(unittest.TestCase):
         original = copy.deepcopy(result['critical'])
         score.explain_initial_state(result, SimpleNamespace(payments={'total': 12289}, expected_total_at_load=12289))
         self.assertEqual(result['critical'], original)
+        self.assertNotIn('recovery', next(r['detail'] for r in result['checks'] if r['check'] == 'sync_completeness'))
 
     def test_snapshot_retains_actual_values_and_expected_cells(self):
         ctx = SimpleNamespace(payments={'total': 8388}, summary={'count': 8388},
