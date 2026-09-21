@@ -2147,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Playing in Picture-in-Picture"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Edit"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Expired — not saved"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negative"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "No"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positive"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Save"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Save this as a knowledge piece?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Save this as a memory?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "this project"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Sources: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Why: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "At the end of a turn goose judges how it went — well or badly — and, when something is worth remembering, shows a card under the reply. Nothing is saved until you click Save."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "The model that judges the turn. Leave empty to use the session's own model; set a small fast model to keep the judgement cheap."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "session's model"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Assessment model"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Ask before saving memories"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# item found} other{# items found}}"
   },

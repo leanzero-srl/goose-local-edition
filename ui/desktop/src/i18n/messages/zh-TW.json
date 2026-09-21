@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "可供設定"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "正在檢查連線…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "已設定"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "尚未設定雲端服務供應商。請在下方選擇一個進行設定。"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "重新檢查連線"
   },
   "cloudProviders.retry": {
     "defaultMessage": "重試"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在子母畫面中播放"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "關閉"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "編輯"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "已過期 — 未儲存"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "負面"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "否"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "正面"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "儲存"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "將此儲存為知識？"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "將此儲存為記憶？"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "全域"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "此專案"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "來源：{sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "原因：{why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "每輪結束時，goose 會判斷這一輪進行得如何——好或壞——當有值得記住的內容時，在回覆下方顯示一張卡片。在你點擊儲存之前不會儲存任何內容。"
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "用於判斷這一輪的模型。留空則使用工作階段自身的模型；設定一個小而快的模型可讓評估更省。"
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "工作階段的模型"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "評估模型"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "儲存記憶前先詢問"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{找到 # 個項目} other{找到 # 個項目}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "正在登入..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "儲存和啟動應用程式時會向此模型傳送簡短請求以檢查存取權限。可能產生供應商的一般使用費用。"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "連線測試模型"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "供應商連線需要檢查"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "新增提供者"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "{providerName} 目前正在使用中，您無法將其刪除。請先切換到其他模型再刪除此提供者。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "正在檢查連線…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "確認刪除"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "以編輯後的訊息建立新的工作階段"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "重新檢查連線"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "正在檢查連線…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "連線測試模型"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "儲存和啟動應用程式時會向此模型傳送簡短請求以檢查存取權限。可能產生供應商的一般使用費用。"
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "正在檢查連線…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "供應商連線需要檢查"
   }
 }

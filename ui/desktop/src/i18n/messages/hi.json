@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "सेटअप के लिए उपलब्ध"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "कनेक्शन जाँचे जा रहे हैं…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "कॉन्फ़िगर किए गए"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "अभी कोई क्लाउड प्रदाता कॉन्फ़िगर नहीं है। सेटअप के लिए नीचे किसी एक को चुनें।"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "कनेक्शन दोबारा जाँचें"
   },
   "cloudProviders.retry": {
     "defaultMessage": "फिर कोशिश करें"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "पिक्चर-इन-पिक्चर में बजाना"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "समाप्त — सहेजा नहीं गया"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "नकारात्मक"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "नहीं"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "सकारात्मक"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "सहेजें"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "इसे ज्ञान के रूप में सहेजें?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "इसे याद के रूप में सहेजें?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "वैश्विक"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "यह प्रोजेक्ट"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "स्रोत: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "क्यों: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "एक टर्न के अंत में goose आँकता है कि यह कैसा रहा — अच्छा या बुरा — और जब कुछ याद रखने लायक हो, तो जवाब के नीचे एक कार्ड दिखाता है। जब तक आप सहेजें पर क्लिक नहीं करते, कुछ भी सहेजा नहीं जाता।"
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "वह मॉडल जो टर्न को आँकता है। सत्र के अपने मॉडल के लिए खाली छोड़ें; एक छोटा तेज़ मॉडल मूल्यांकन को सस्ता रखता है।"
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "सत्र का मॉडल"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "मूल्यांकन मॉडल"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "यादें सहेजने से पहले पूछें"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# आइटम मिला} other{# आइटम मिले}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "साइन इन किया जा रहा है..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "सहेजते समय और ऐप शुरू होने पर पहुँच जाँचने के लिए इस मॉडल को एक छोटा अनुरोध भेजा जाता है। प्रदाता के सामान्य उपयोग शुल्क लागू हो सकते हैं।"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "कनेक्शन परीक्षण मॉडल"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "प्रदाता कनेक्शन पर ध्यान देने की आवश्यकता है"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "प्रदाता जोड़ें"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "जब तक यह वर्तमान में उपयोग में है तब तक आप {providerName} को हटा नहीं सकते। कृपया इस प्रदाता को हटाने से पहले किसी भिन्न मॉडल पर स्विच करें।"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "कनेक्शन जाँचा जा रहा है…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "हटाने की पुष्टि करें"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "संपादित संदेश के साथ एक नया सत्र बनाएं"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "कनेक्शन दोबारा जाँचें"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "कनेक्शन जाँचे जा रहे हैं…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "कनेक्शन परीक्षण मॉडल"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "सहेजते समय और ऐप शुरू होने पर पहुँच जाँचने के लिए इस मॉडल को एक छोटा अनुरोध भेजा जाता है। प्रदाता के सामान्य उपयोग शुल्क लागू हो सकते हैं।"
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "कनेक्शन जाँचा जा रहा है…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "प्रदाता कनेक्शन पर ध्यान देने की आवश्यकता है"
   }
 }

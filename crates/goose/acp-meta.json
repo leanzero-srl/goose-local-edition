@@ -681,6 +681,16 @@
       "responseType": "LeanzeroLinkNodesResponse_unstable"
     },
     {
+      "method": "_goose/unstable/memory_proposals/list",
+      "requestType": "ListMemoryProposalsRequest_unstable",
+      "responseType": "ListMemoryProposalsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/memory_proposals/answer",
+      "requestType": "AnswerMemoryProposalRequest_unstable",
+      "responseType": "AnswerMemoryProposalResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/leanzeroLink/remoteExecute",
       "requestType": "LeanzeroLinkRemoteExecuteRequest_unstable",
       "responseType": "LeanzeroLinkRemoteExecuteResponse_unstable"

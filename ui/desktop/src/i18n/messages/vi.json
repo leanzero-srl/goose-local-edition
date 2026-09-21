@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Có thể thiết lập"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Đang kiểm tra kết nối…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Đã cấu hình"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Chưa có nhà cung cấp đám mây nào được cấu hình. Chọn một nhà cung cấp bên dưới để thiết lập."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Kiểm tra lại kết nối"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Thử lại"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Đang phát ở chế độ Hình-trong-hình"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Sửa"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Đã hết hạn — chưa lưu"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Tiêu cực"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Không"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Tích cực"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Lưu"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Lưu điều này làm kiến thức?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Lưu điều này làm ký ức?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "toàn cục"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "dự án này"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Nguồn: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Vì sao: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "Cuối mỗi lượt, goose đánh giá mọi việc diễn ra thế nào — tốt hay xấu — và khi có điều đáng nhớ, hiển thị một thẻ bên dưới câu trả lời. Không có gì được lưu cho đến khi bạn bấm Lưu."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Mô hình đánh giá lượt. Để trống để dùng mô hình của phiên; một mô hình nhỏ và nhanh giúp việc đánh giá rẻ."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "mô hình của phiên"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Mô hình đánh giá"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Hỏi trước khi lưu ký ức"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# mục được tìm thấy} other{# mục được tìm thấy}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Đang đăng nhập..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Khi lưu và khởi động ứng dụng, một yêu cầu ngắn sẽ được gửi đến mô hình này để kiểm tra quyền truy cập. Có thể áp dụng phí sử dụng thông thường của nhà cung cấp."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Mô hình kiểm tra kết nối"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Kết nối nhà cung cấp cần được kiểm tra"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Thêm nhà cung cấp"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Bạn không thể xóa {providerName} trong khi nó đang được sử dụng. Vui lòng chuyển sang mô hình khác trước khi xóa nhà cung cấp này."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Đang kiểm tra kết nối…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Xác nhận xóa"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Tạo một phiên làm việc mới với tin nhắn đã chỉnh sửa"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Kiểm tra lại kết nối"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Đang kiểm tra kết nối…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Mô hình kiểm tra kết nối"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Khi lưu và khởi động ứng dụng, một yêu cầu ngắn sẽ được gửi đến mô hình này để kiểm tra quyền truy cập. Có thể áp dụng phí sử dụng thông thường của nhà cung cấp."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Đang kiểm tra kết nối…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Kết nối nhà cung cấp cần được kiểm tra"
   }
 }

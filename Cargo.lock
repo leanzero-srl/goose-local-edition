@@ -5158,6 +5158,8 @@ name = "goose-memory-store"
 version = "3.0.2"
 dependencies = [
  "rust-stemmers",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

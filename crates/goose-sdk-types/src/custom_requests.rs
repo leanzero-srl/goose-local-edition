@@ -8,6 +8,8 @@ mod recipe;
 pub use recipe::*;
 mod schedule;
 pub use schedule::*;
+mod proposals;
+pub use proposals::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

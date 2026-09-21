@@ -1138,6 +1138,31 @@ config_value!(GOOSE_PROMPT_EDITOR, Option<String>);
 config_value!(GOOSE_PROMPT_EDITOR_ALWAYS, Option<bool>);
 config_value!(GOOSE_MAX_ACTIVE_AGENTS, usize);
 config_value!(GOOSE_DISABLE_SESSION_NAMING, bool);
+config_value!(GOOSE_MEMORY_PROPOSALS, bool);
+config_value!(GOOSE_ASSESSMENT_MODEL, Option<String>);
+impl Config {
+    /// FRAME 1.14: at the end of a turn goose judges the outcome — positive OR negative — and, when
+    /// it is worth remembering, ASKS with a card; nothing is stored without a click. Default TRUE,
+    /// the deliberate exception to "booleans default false": the owner asked for it in so many
+    /// words — "both cogni and goose should ask the user if they want to store a new memory and it
+    /// should be negative as well … if the user answers angrily goose or cognirunner should assess
+    /// and ask if to save a memory." Do not "fix" this back to false. The memory extension's own
+    /// "write PROACTIVELY, WITHOUT asking" instruction is a different event and stays as it is.
+    pub fn memory_proposals_enabled(&self) -> bool {
+        self.get_goose_memory_proposals().unwrap_or(true)
+    }
+
+    /// The model the end-of-turn assessment runs on; unset = the session's own model. goose has
+    /// no cheap-model tier to inherit, so on a frontier session this is what brings the ~1.5k-token
+    /// judgement back to Haiku territory. Empty string reads as unset.
+    pub fn assessment_model(&self) -> Option<String> {
+        self.get_goose_assessment_model()
+            .ok()
+            .flatten()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+    }
+}
 config_value!(GOOSE_DISABLE_TOOL_CALL_SUMMARY, bool);
 
 impl Config {

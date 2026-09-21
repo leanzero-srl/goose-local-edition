@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Disponibili da configurare"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Verifica delle connessioni…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Configurati"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Nessun provider cloud configurato. Scegline uno qui sotto per configurarlo."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Ricontrolla connessioni"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Riprova"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "In riproduzione in Picture-in-Picture"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Ignora"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Modifica"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Scaduto — non salvato"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negativo"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "No"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positivo"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Salva"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Salvare come conoscenza?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Salvare come ricordo?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "globale"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "questo progetto"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Fonti: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Perché: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "Alla fine di un turno goose giudica com'è andata — bene o male — e, quando c'è qualcosa da ricordare, mostra una scheda sotto la risposta. Nulla viene salvato finché non fai clic su Salva."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Il modello che giudica il turno. Lascia vuoto per usare il modello della sessione; un modello piccolo e veloce mantiene la valutazione economica."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "modello della sessione"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Modello di valutazione"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Chiedi prima di salvare i ricordi"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# elemento trovato} other{# elementi trovati}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Accesso in corso..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Il salvataggio e l’avvio dell’app inviano una breve richiesta a questo modello per verificare l’accesso. Possono essere applicate le normali tariffe del fornitore."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modello per il test della connessione"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Le connessioni ai fornitori richiedono attenzione"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Aggiungi provider"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Non puoi eliminare {providerName} mentre è attualmente in uso. Passa a un modello diverso prima di eliminare questo provider."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Verifica della connessione…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Conferma eliminazione"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Crea una nuova sessione con il messaggio modificato"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Ricontrolla connessioni"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Verifica delle connessioni…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Modello per il test della connessione"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Il salvataggio e l’avvio dell’app inviano una breve richiesta a questo modello per verificare l’accesso. Possono essere applicate le normali tariffe del fornitore."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Verifica della connessione…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Le connessioni ai fornitori richiedono attenzione"
   }
 }

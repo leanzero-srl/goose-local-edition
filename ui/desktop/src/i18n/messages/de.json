@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Zur Einrichtung verfügbar"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Verbindungen werden geprüft…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Konfiguriert"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Noch keine Cloud-Anbieter konfiguriert. Wählen Sie unten einen Anbieter aus."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Verbindungen prüfen"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Erneut versuchen"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Wiedergabe im Bild-in-Bild-Modus"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "Ausblenden"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "Bearbeiten"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "Abgelaufen — nicht gespeichert"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "Negativ"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "Nein"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "Positiv"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "Speichern"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "Als Wissensstück speichern?"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "Als Erinnerung speichern?"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "global"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "dieses Projekt"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "Quellen: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "Warum: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "Am Ende eines Zuges beurteilt goose, wie es lief — gut oder schlecht — und zeigt, wenn etwas merkenswert ist, eine Karte unter der Antwort. Nichts wird gespeichert, bis du auf Speichern klickst."
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "Das Modell, das den Zug beurteilt. Leer lassen, um das Modell der Sitzung zu verwenden; ein kleines schnelles Modell hält die Bewertung günstig."
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "Modell der Sitzung"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "Bewertungsmodell"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "Vor dem Speichern von Erinnerungen fragen"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# Element gefunden} other{# Elemente gefunden}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Anmeldung läuft..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Beim Speichern und App-Start wird eine kurze Anfrage an dieses Modell gesendet. Die üblichen Nutzungsgebühren des Anbieters können anfallen."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modell für Verbindungstest"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Anbieterverbindungen benötigen Aufmerksamkeit"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Anbieter hinzufügen"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "Sie können {providerName} nicht löschen, während er gerade verwendet wird. Bitte wechseln Sie zu einem anderen Modell, bevor Sie diesen Anbieter löschen."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Verbindung wird geprüft…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Löschen bestätigen"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Eine neue Sitzung mit der bearbeiteten Nachricht erstellen"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "Verbindungen prüfen"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "Verbindungen werden geprüft…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Modell für Verbindungstest"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Beim Speichern und App-Start wird eine kurze Anfrage an dieses Modell gesendet. Die üblichen Nutzungsgebühren des Anbieters können anfallen."
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "Verbindung wird geprüft…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "Anbieterverbindungen benötigen Aufmerksamkeit"
   }
 }

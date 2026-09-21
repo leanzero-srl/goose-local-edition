@@ -11,6 +11,8 @@ import type { Client } from "@agentclientprotocol/sdk";
 import type {
   AddConfigExtensionRequest_unstable,
   AddSessionExtensionRequest_unstable,
+  AnswerMemoryProposalRequest_unstable,
+  AnswerMemoryProposalResponse_unstable,
   AppsExportRequest_unstable,
   AppsExportResponse_unstable,
   AppsImportRequest_unstable,
@@ -113,6 +115,8 @@ import type {
   LeanzeroLinkVerifyResponse_unstable,
   ListAgentMentionsRequest_unstable,
   ListAgentMentionsResponse_unstable,
+  ListMemoryProposalsRequest_unstable,
+  ListMemoryProposalsResponse_unstable,
   ListPromptsRequest_unstable,
   ListPromptsResponse_unstable,
   ListProvidersRequest_unstable,
@@ -240,6 +244,7 @@ import type {
   UpdateWorkingDirRequest_unstable,
 } from './types.gen.js';
 import {
+  zAnswerMemoryProposalResponse_unstable,
   zAppsExportResponse_unstable,
   zAppsImportResponse_unstable,
   zAppsListResponse_unstable,
@@ -283,6 +288,7 @@ import {
   zLeanzeroLinkStateResponse_unstable,
   zLeanzeroLinkVerifyResponse_unstable,
   zListAgentMentionsResponse_unstable,
+  zListMemoryProposalsResponse_unstable,
   zListPromptsResponse_unstable,
   zListProvidersResponse_unstable,
   zListRecipesResponse_unstable,
@@ -1760,6 +1766,30 @@ export class GooseExtClient {
     return zLeanzeroLinkNodesResponse_unstable.parse(
       raw,
     ) as LeanzeroLinkNodesResponse_unstable;
+  }
+
+  async memoryProposalsList_unstable(
+    params: ListMemoryProposalsRequest_unstable,
+  ): Promise<ListMemoryProposalsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/memory_proposals/list",
+      params,
+    );
+    return zListMemoryProposalsResponse_unstable.parse(
+      raw,
+    ) as ListMemoryProposalsResponse_unstable;
+  }
+
+  async memoryProposalsAnswer_unstable(
+    params: AnswerMemoryProposalRequest_unstable,
+  ): Promise<AnswerMemoryProposalResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/memory_proposals/answer",
+      params,
+    );
+    return zAnswerMemoryProposalResponse_unstable.parse(
+      raw,
+    ) as AnswerMemoryProposalResponse_unstable;
   }
 
   async leanzeroLinkRemoteExecute_unstable(

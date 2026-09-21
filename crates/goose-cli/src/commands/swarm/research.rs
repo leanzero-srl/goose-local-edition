@@ -23,6 +23,7 @@ use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
 use super::{EventSink, SpecSection, FINAL_OUTPUT_TOOL};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
+use goose_swarm::ToolCallRecord;
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
 /// activity key and the brief partition all share. `kind`/`cite` are the opener's own words
@@ -115,6 +116,11 @@ pub(crate) struct ResearchRow {
     /// fact or a covered row (no lane).
     #[serde(default)]
     pub(crate) batch: usize,
+    /// The tool calls that GROUNDED this answer — a successful external lookup per
+    /// `research_lookups` (a `developer__shell` grounds nothing). Empty = the model's own recall.
+    /// Read by `file_grounded_research` (frame 1.14 G1): only a grounded answer becomes knowledge.
+    #[serde(default)]
+    pub(crate) lookups: Vec<String>,
 }
 
 impl ResearchRow {
@@ -140,6 +146,7 @@ impl ResearchRow {
             cite: q.cite.clone(),
             origin: ORIGIN_SPEC_FACT.to_string(),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 
@@ -177,6 +184,7 @@ impl ResearchRow {
             cite,
             origin: format!("{ORIGIN_COVERED_PREFIX}{original}"),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 }
@@ -292,6 +300,7 @@ fn unanswered_row(q: &ResearchQuestion, model: &str, secs: u64, batch: usize) ->
         cite: q.cite.clone(),
         origin: String::new(),
         batch,
+        lookups: Vec::new(),
     }
 }
 
@@ -434,6 +443,7 @@ pub(super) fn fold_research_panic(q: &ResearchQuestion, error: &str) -> Research
         cite: q.cite.clone(),
         origin: String::new(),
         batch: 0,
+        lookups: Vec::new(),
     }
 }
 
@@ -2106,6 +2116,7 @@ mod tests {
             cite: String::new(),
             origin: String::new(),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 
@@ -3570,6 +3581,7 @@ mod tests {
                 cite: String::new(),
                 origin: String::new(),
                 batch: 0,
+                lookups: Vec::new(),
             },
             ResearchRow {
                 slice: "api".into(),
@@ -3586,6 +3598,7 @@ mod tests {
                 cite: String::new(),
                 origin: String::new(),
                 batch: 0,
+                lookups: Vec::new(),
             },
         ];
         let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
@@ -4632,5 +4645,388 @@ Exact attribute names (`table-progress`, `table-empty`, `data-state` values) and
             !briefs[4].brief.contains("THE USER CHOSE: json"),
             "notifierd's routed question names the user's decision, so it is notifierd's alone"
         );
+    }
+}
+
+// ---- RESEARCH PROVENANCE (grounded vs invented) ---------------------------------------------
+// Moved verbatim from swarm.rs (incremental-split law), paying for the benchmark invariant's
+// worker-door wiring (frame 1.14 G1b). `research_lookups` is the ONE grounding predicate — the
+// frame's G1 write reads it live; the attempt classifier and the finding substrate stay test-only.
+
+/// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
+/// recall, which may be good planning context but must never be routed to workers as a verified fact.
+pub(super) fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
+    tool_calls
+        .iter()
+        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.fetched_external))
+        .map(|t| t.name.clone())
+        .collect()
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    /// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
+    /// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
+    /// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
+    /// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
+    ///
+    /// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
+    /// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
+    /// without guessing.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ResearchAttempt {
+        /// No research tool call at all — pure model reasoning.
+        NeverCalled,
+        /// A lookup was attempted and failed or was cut off (`ok == Some(false)` / `ok == None`).
+        Errored,
+        /// A tool ran but grounded nothing usable — only non-MCP calls, or MCP calls returning nothing.
+        CalledEmpty,
+        /// At least one successful MCP lookup (today's `grounded: true`).
+        Grounded,
+    }
+
+    /// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
+    /// events only) so it is unit-testable and no model opinion enters. `Grounded` wins over any failure, then
+    /// an attempted-but-failed lookup is `Errored`, tools-ran-but-nothing-grounded is `CalledEmpty`, and an
+    /// empty trace is `NeverCalled`.
+    fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
+        if tool_calls.is_empty() {
+            return ResearchAttempt::NeverCalled;
+        }
+        if tool_calls.iter().any(|t| t.ok == Some(true) && t.is_mcp) {
+            return ResearchAttempt::Grounded;
+        }
+        if tool_calls
+            .iter()
+            .any(|t| matches!(t.ok, Some(false) | None))
+        {
+            return ResearchAttempt::Errored;
+        }
+        ResearchAttempt::CalledEmpty
+    }
+
+    #[allow(dead_code)]
+    struct ResearchFinding {
+        question: String,
+        kind: String,
+        findings: String,
+        /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
+        /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
+        /// tool call means it consulted an external source. A finding with none is the model's own reasoning.
+        /// This is the deterministic signal that separates a grounded fact (safe to trust / cache / learn) from
+        /// an invented one (which must never silently close a user's product decision). A tool call is an engine
+        /// event, so no model opinion enters the classification.
+        grounded: bool,
+        /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
+        lookups: Vec<String>,
+        /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
+        /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
+        #[allow(dead_code)]
+        attempt: ResearchAttempt,
+    }
+
+    // ---- RESEARCH PROVENANCE (grounded vs invented) -----------------------------------------
+    /// A finding is GROUNDED only when the agent made a SUCCESSFUL EXTERNAL lookup — a research MCP call
+    /// (web-search/context7). A failed call, no call, or a mere `developer__` shell command is not
+    /// grounding: a pure guess (optionally dressed with a trivial `echo`) must never close a product decision.
+    #[test]
+    fn research_lookups_counts_only_successful_lookups() {
+        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
+            name: name.to_string(),
+            is_mcp,
+            ok,
+            fetched_external: false,
+        };
+        // A successful web-search / context7 call grounds it.
+        let grounded = vec![
+            mk("web-search__search", true, Some(true)),
+            mk("context7__get-library-docs", true, Some(true)),
+        ];
+        assert_eq!(research_lookups(&grounded).len(), 2);
+
+        // A shell command does NOT ground a product/convention decision — else a trivial `echo` before an
+        // invented answer would launder the guess through the gate this exists to close.
+        assert!(research_lookups(&[mk("developer__shell", false, Some(true))]).is_empty());
+        assert!(research_lookups(&[mk("developer__text_editor", false, Some(true))]).is_empty());
+
+        // NO tool calls -> pure reasoning -> NOT grounded (the laundering case).
+        assert!(research_lookups(&[]).is_empty());
+
+        // A FAILED lookup is not grounding — it looked nothing up.
+        assert!(research_lookups(&[mk("web-search__search", true, Some(false))]).is_empty());
+        // No response at all (max-turns cutoff) is not grounding.
+        assert!(research_lookups(&[mk("context7__resolve-library-id", true, None)]).is_empty());
+        // A shell BEFORE a real web-search still yields exactly the one EXTERNAL lookup.
+        assert_eq!(
+            research_lookups(&[
+                mk("developer__shell", false, Some(true)),
+                mk("web-search__search", true, Some(true)),
+            ]),
+            vec!["web-search__search".to_string()]
+        );
+    }
+
+    /// P1 substrate: `classify_research_attempt` widens `grounded:bool` into the four cases the ASK-AWAY
+    /// interim routing needs (CalledEmpty → ask the user; Errored/NeverCalled → retry the fetch). The
+    /// CalledEmpty-vs-Errored boundary is the load-bearing distinction — verify it explicitly.
+    #[test]
+    fn classify_research_attempt_separates_the_four_cases() {
+        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
+            name: name.to_string(),
+            is_mcp,
+            ok,
+            fetched_external: false,
+        };
+        // NeverCalled: no tool call at all — pure model reasoning.
+        assert_eq!(classify_research_attempt(&[]), ResearchAttempt::NeverCalled);
+        // Grounded: at least one successful MCP lookup, and it wins even alongside a failed one.
+        assert_eq!(
+            classify_research_attempt(&[mk("web-search__search", true, Some(true))]),
+            ResearchAttempt::Grounded
+        );
+        assert_eq!(
+            classify_research_attempt(&[
+                mk("web-search__search", true, Some(false)),
+                mk("context7__get-library-docs", true, Some(true)),
+            ]),
+            ResearchAttempt::Grounded
+        );
+        // Errored: a lookup was attempted and failed or was cut off (Some(false) / None), none succeeded.
+        assert_eq!(
+            classify_research_attempt(&[mk("web-search__search", true, Some(false))]),
+            ResearchAttempt::Errored
+        );
+        assert_eq!(
+            classify_research_attempt(&[mk("context7__resolve-library-id", true, None)]),
+            ResearchAttempt::Errored
+        );
+        // CalledEmpty: tools ran and none errored, but nothing grounded — only non-MCP shell calls.
+        assert_eq!(
+            classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
+            ResearchAttempt::CalledEmpty
+        );
+        // The field is populated on the struct — read it so the P1 substrate is exercised end to end.
+        let f = ResearchFinding {
+            question: "q".into(),
+            kind: "web".into(),
+            findings: "f".into(),
+            grounded: false,
+            lookups: Vec::new(),
+            attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
+        };
+        assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
+    }
+}
+
+/// FRAME 1.14 G1 — knowledge that research creates. After the fan, every row that is BOTH answered
+/// by a lane AND grounded (`lookups` non-empty) is filed into the project-local memory store as a
+/// `reference` entry: headline = the answer's first sentence (a statement, which is what the
+/// store's name-scoring was measured on), then the question, the answer, and a `Sources:` line.
+/// Ungrounded answers are not written anywhere — an invented answer promoted to durable
+/// knowledge is the laundering `research_lookups` exists to prevent. Spec facts and covered rows
+/// (`origin` set) are not lane research and are not filed. A BENCHMARK writes nothing and says so
+/// (§2.6): the run's own findings must never land in the store the next benchmark reads. The
+/// write goes through `goose_memory_store` — the one owner of the on-disk format, never a second
+/// writer. Headless surface, nobody to ask: `auto`, the same policy CogniRunner's post-functions get.
+pub(super) fn file_grounded_research(
+    working_dir: &Path,
+    global_memory_dir: PathBuf,
+    rows: &[ResearchRow],
+    benchmark: bool,
+    events: &dyn EventSink,
+) -> usize {
+    use goose_memory_store::{MemoryStore, RememberOutcome};
+    let grounded: Vec<&ResearchRow> = rows
+        .iter()
+        .filter(|r| r.status == RESEARCH_ANSWERED && r.origin.is_empty() && !r.lookups.is_empty())
+        .collect();
+    let ungrounded = rows
+        .iter()
+        .filter(|r| r.status == RESEARCH_ANSWERED && r.origin.is_empty() && r.lookups.is_empty())
+        .count();
+    if benchmark {
+        events.write_value(serde_json::json!({
+            "event": "research_knowledge_refused",
+            "reason": "benchmark",
+            "grounded": grounded.len(),
+            "ungrounded": ungrounded,
+        }));
+        return 0;
+    }
+    let store = MemoryStore::new(global_memory_dir, working_dir);
+    let tags = vec!["reference".to_string(), "research".to_string()];
+    let (mut added, mut updated, mut unchanged, mut failed) = (0usize, 0usize, 0usize, 0usize);
+    for row in &grounded {
+        let content = research_knowledge_entry(row);
+        match store.remember(RESEARCH_KNOWLEDGE_CATEGORY, &content, &tags, false) {
+            Ok(RememberOutcome::Added) => added += 1,
+            Ok(RememberOutcome::Updated) => updated += 1,
+            Ok(RememberOutcome::Unchanged) => unchanged += 1,
+            Err(error) => {
+                failed += 1;
+                events.write_value(serde_json::json!({
+                    "event": "research_knowledge_write_failed",
+                    "slice": row.slice,
+                    "q_index": row.q_index,
+                    "error": error.to_string(),
+                }));
+            }
+        }
+    }
+    events.write_value(serde_json::json!({
+        "event": "research_knowledge_filed",
+        "category": RESEARCH_KNOWLEDGE_CATEGORY,
+        "added": added,
+        "updated": updated,
+        "unchanged": unchanged,
+        "failed": failed,
+        "ungrounded_skipped": ungrounded,
+    }));
+    added + updated
+}
+
+pub(super) const RESEARCH_KNOWLEDGE_CATEGORY: &str = "research";
+
+/// The entry text: first line a statement (the answer's first sentence, cut at the store's own
+/// headline width), then `Q:`, the full answer, and the lookups that ground it.
+pub(super) fn research_knowledge_entry(row: &ResearchRow) -> String {
+    let answer = row.answer.trim();
+    let first_sentence = answer
+        .split_inclusive(['.', '!', '?', '\n'])
+        .next()
+        .unwrap_or(answer)
+        .trim();
+    let statement = if first_sentence.is_empty() {
+        row.question.trim().trim_end_matches('?').to_string()
+    } else {
+        first_sentence.to_string()
+    };
+    let mut lookups: Vec<&str> = row.lookups.iter().map(String::as_str).collect();
+    lookups.sort_unstable();
+    lookups.dedup();
+    format!(
+        "{statement}\nQ: {}\n{answer}\nSources: {}",
+        row.question.trim(),
+        lookups.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod knowledge_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ValueSink(Mutex<Vec<serde_json::Value>>);
+    impl EventSink for ValueSink {
+        fn emit(&self, _event: &goose_swarm::SwarmEvent) {}
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().unwrap().push(value);
+        }
+    }
+    impl ValueSink {
+        fn values(&self) -> Vec<serde_json::Value> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn lane_row(q_index: usize, answer: &str, lookups: &[&str]) -> ResearchRow {
+        let mut row = unanswered_row(
+            &ResearchQuestion::of(
+                "api",
+                q_index,
+                &OpenQuestion {
+                    text: format!("what does endpoint {q_index} return?"),
+                    kind: QuestionKind::Design,
+                    cite: String::new(),
+                    ignored_fact_chars: 0,
+                    decision: None,
+                },
+            ),
+            "m",
+            1,
+            1,
+        );
+        row.status = RESEARCH_ANSWERED.to_string();
+        row.answer = answer.to_string();
+        row.lookups = lookups.iter().map(|s| s.to_string()).collect();
+        row
+    }
+
+    /// J7: grounded answers are filed as `reference` entries under `.goose/memory/research.txt`;
+    /// the ungrounded one is not written anywhere; the entry carries its sources.
+    #[test]
+    fn grounded_answers_are_filed_and_invented_ones_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![
+            lane_row(
+                0,
+                "It returns 409 on a conflict. Body is the error envelope.",
+                &["web-search__search"],
+            ),
+            lane_row(1, "Probably JSON.", &[]),
+        ];
+        let n = file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        assert_eq!(n, 1);
+        let text = std::fs::read_to_string(dir.path().join(".goose/memory/research.txt")).unwrap();
+        assert!(
+            text.starts_with("# reference research\nIt returns 409 on a conflict."),
+            "{text}"
+        );
+        assert!(text.contains("Sources: web-search__search"));
+        assert!(!text.contains("Probably JSON"));
+        let filed = sink
+            .values()
+            .into_iter()
+            .find(|v| v["event"] == "research_knowledge_filed")
+            .unwrap();
+        assert_eq!(filed["added"], 1);
+        assert_eq!(filed["ungrounded_skipped"], 1);
+    }
+
+    /// THE BENCHMARK INVARIANT (§2.6): a measured run files nothing, and the store stays absent.
+    #[test]
+    fn a_benchmark_files_nothing_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![lane_row(0, "It returns 409.", &["web-search__search"])];
+        let n = file_grounded_research(dir.path(), dir.path().join("global"), &rows, true, &sink);
+        assert_eq!(n, 0);
+        assert!(!dir.path().join(".goose/memory").exists());
+        assert!(sink
+            .values()
+            .iter()
+            .any(|v| v["event"] == "research_knowledge_refused"));
+    }
+
+    /// A second run with the same grounded answer updates the entry in place (same headline),
+    /// never appends a duplicate.
+    #[test]
+    fn refiling_the_same_finding_updates_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![lane_row(
+            0,
+            "It returns 409. Old detail.",
+            &["context7__get-library-docs"],
+        )];
+        file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        let rows = vec![lane_row(
+            0,
+            "It returns 409. New detail.",
+            &["context7__get-library-docs"],
+        )];
+        file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        let text = std::fs::read_to_string(dir.path().join(".goose/memory/research.txt")).unwrap();
+        assert_eq!(
+            text.matches("Q: what does endpoint 0 return?").count(),
+            1,
+            "{text}"
+        );
+        assert!(text.contains("New detail"));
+        assert!(!text.contains("Old detail"));
     }
 }

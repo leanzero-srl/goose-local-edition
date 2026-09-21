@@ -425,6 +425,7 @@ mod tests {
             cite: String::new(),
             origin: String::new(),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 

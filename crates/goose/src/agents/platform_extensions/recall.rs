@@ -232,6 +232,10 @@ impl RecallClient {
         Ok(Self { info, context })
     }
 
+    /// Whether recall may READ from (memories, skills) or WRITE to (the correction capture) the
+    /// named knowledge source. Both halves answer false on a knowledge-blind agent — a benchmark
+    /// (frame 1.14 §2.6): the score must not depend on what this machine has learned, and the
+    /// run's own corrections must not land in the store the next benchmark reads.
     async fn extension_enabled(&self, name: &str) -> bool {
         match self
             .context
@@ -239,10 +243,19 @@ impl RecallClient {
             .as_ref()
             .and_then(|weak| weak.upgrade())
         {
-            Some(manager) => manager.is_extension_enabled(name).await,
+            Some(manager) => knowledge_source_open(
+                manager.knowledge_blind(),
+                manager.is_extension_enabled(name).await,
+            ),
             None => false,
         }
     }
+}
+
+/// The one predicate behind recall's three gates (memory read, skills read, correction write):
+/// a source is open only when its extension is enabled AND the agent is not knowledge-blind.
+pub fn knowledge_source_open(knowledge_blind: bool, extension_enabled: bool) -> bool {
+    !knowledge_blind && extension_enabled
 }
 
 /// The user's text when the last message is a fresh request; None during a tool loop, where the last
@@ -897,6 +910,27 @@ impl McpClientTrait for RecallClient {
 mod tests {
     use super::*;
     use goose_memory_store::MemoryEntry;
+
+    /// THE BENCHMARK INVARIANT, recall's half (frame 1.14 §2.6): with the agent knowledge-blind,
+    /// an enabled memory extension still opens NEITHER the injection nor the correction capture —
+    /// the same predicate guards `get_moim`'s three `extension_enabled` gates.
+    #[test]
+    fn knowledge_blind_closes_every_recall_gate_even_with_the_extension_enabled() {
+        assert!(!knowledge_source_open(true, true));
+        assert!(!knowledge_source_open(true, false));
+        assert!(!knowledge_source_open(false, false));
+        assert!(knowledge_source_open(false, true));
+    }
+
+    #[tokio::test]
+    async fn a_blind_extension_manager_reports_blind_and_a_fresh_one_does_not() {
+        let manager = crate::agents::extension_manager::ExtensionManager::new_without_provider(
+            std::env::temp_dir(),
+        );
+        assert!(!manager.knowledge_blind());
+        manager.set_knowledge_blind(true);
+        assert!(manager.knowledge_blind());
+    }
 
     fn hit(category: &str, score: f64, rare_terms: usize) -> SearchHit {
         named_hit(category, score, rare_terms, 1)

@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "可供设置"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "正在检查连接…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "已配置"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "尚未配置云服务提供商。请在下方选择一个进行设置。"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "重新检查连接"
   },
   "cloudProviders.retry": {
     "defaultMessage": "重试"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在以画中画播放"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "关闭"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "编辑"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "已过期 — 未保存"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "负面"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "否"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "正面"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "保存"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "将此保存为知识？"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "将此保存为记忆？"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "全局"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "此项目"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "来源：{sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "原因：{why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "每轮结束时，goose 会判断这一轮进行得如何——好或坏——当有值得记住的内容时，在回复下方显示一张卡片。在你点击保存之前不会保存任何内容。"
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "用于判断这一轮的模型。留空则使用会话自身的模型；设置一个小而快的模型可让评估更省。"
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "会话的模型"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "评估模型"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "保存记忆前先询问"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{找到 # 项} other{找到 # 项}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "登录中…"
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "保存和启动应用时会向此模型发送简短请求以检查访问权限。可能产生提供商的正常使用费用。"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "连接测试模型"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "提供商连接需要检查"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "添加提供商"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "{providerName} 正在使用中，无法删除。请先切换到其他模型。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "正在检查连接…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "确认删除"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "用编辑过的消息创建新会话"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "重新检查连接"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "正在检查连接…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "连接测试模型"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "保存和启动应用时会向此模型发送简短请求以检查访问权限。可能产生提供商的正常使用费用。"
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "正在检查连接…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "提供商连接需要检查"
   }
 }

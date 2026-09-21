@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "設定できるプロバイダー"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "接続を確認中…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "設定済み"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "クラウドプロバイダーはまだ設定されていません。下から選んで設定してください。"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "接続を再確認"
   },
   "cloudProviders.retry": {
     "defaultMessage": "再試行"
@@ -2141,6 +2147,63 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "ピクチャ・イン・ピクチャで再生中"
   },
+  "memoryProposal.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "memoryProposal.edit": {
+    "defaultMessage": "編集"
+  },
+  "memoryProposal.expired": {
+    "defaultMessage": "期限切れ — 保存されていません"
+  },
+  "memoryProposal.negative": {
+    "defaultMessage": "ネガティブ"
+  },
+  "memoryProposal.no": {
+    "defaultMessage": "いいえ"
+  },
+  "memoryProposal.positive": {
+    "defaultMessage": "ポジティブ"
+  },
+  "memoryProposal.save": {
+    "defaultMessage": "保存"
+  },
+  "memoryProposal.saveKnowledge": {
+    "defaultMessage": "これをナレッジとして保存しますか？"
+  },
+  "memoryProposal.saveMemory": {
+    "defaultMessage": "これをメモリーとして保存しますか？"
+  },
+  "memoryProposal.scope": {
+    "defaultMessage": "{category} · {scope}"
+  },
+  "memoryProposal.scopeGlobal": {
+    "defaultMessage": "グローバル"
+  },
+  "memoryProposal.scopeLocal": {
+    "defaultMessage": "このプロジェクト"
+  },
+  "memoryProposal.sources": {
+    "defaultMessage": "ソース: {sources}"
+  },
+  "memoryProposal.why": {
+    "defaultMessage": "理由: {why}"
+  },
+  "memoryProposals.description": {
+    "defaultMessage": "ターンの終わりに goose はその結果 — 良かったか悪かったか — を判断し、覚えておく価値があるときは返答の下にカードを表示します。保存をクリックするまで何も保存されません。"
+  },
+  "memoryProposals.modelDescription": {
+    "defaultMessage": "ターンを判断するモデル。空欄にするとセッションのモデルを使います。小さく速いモデルにすると評価が安く済みます。"
+  },
+  "memoryProposals.modelPlaceholder": {
+    "defaultMessage": "セッションのモデル"
+  },
+  "memoryProposals.modelTitle": {
+    "defaultMessage": "評価モデル"
+  },
+  "memoryProposals.title": {
+    "defaultMessage": "メモリーを保存する前に確認する"
+  },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# 件見つかりました} other{# 件見つかりました}}"
   },
@@ -3059,6 +3122,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "サインイン中..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "保存時とアプリ起動時に、このモデルへ短いリクエストを送信してアクセスを確認します。通常のプロバイダー利用料金が発生する場合があります。"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "接続テスト用モデル"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "プロバイダー接続の確認が必要です"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "プロバイダーを追加"
   },
@@ -3127,6 +3199,9 @@
   },
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "現在使用中のため、{providerName}は削除できません。このプロバイダーを削除する前に、別のモデルに切り替えてください。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "接続を確認中…"
   },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "削除を確認"
@@ -4957,23 +5032,5 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "編集したメッセージで新しいセッションを作成"
-  },
-  "cloudProviders.recheck": {
-    "defaultMessage": "接続を再確認"
-  },
-  "cloudProviders.checking": {
-    "defaultMessage": "接続を確認中…"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "接続テスト用モデル"
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "保存時とアプリ起動時に、このモデルへ短いリクエストを送信してアクセスを確認します。通常のプロバイダー利用料金が発生する場合があります。"
-  },
-  "providerSetupActions.checking": {
-    "defaultMessage": "接続を確認中…"
-  },
-  "providerConnections.attention": {
-    "defaultMessage": "プロバイダー接続の確認が必要です"
   }
 }

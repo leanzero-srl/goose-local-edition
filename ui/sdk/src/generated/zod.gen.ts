@@ -3446,6 +3446,75 @@ export const zLeanzeroLinkNodesResponse_unstable = z.object({
 });
 
 /**
+ * Every proposal for a session: those the end-of-turn assessment filed under the session id
+ * and those `propose_knowledge` filed under the session's working directory.
+ */
+export const zListMemoryProposalsRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zMemoryProposalKind = z.enum(['memory', 'knowledge']);
+
+export const zMemoryProposalPolarity = z.enum(['positive', 'negative']);
+
+export const zMemoryProposalState = z.enum([
+    'open',
+    'saved',
+    'declined',
+    'expired'
+]);
+
+export const zMemoryProposalDto = z.object({
+    id: z.string(),
+    key: z.string(),
+    kind: zMemoryProposalKind,
+    polarity: z.union([
+        zMemoryProposalPolarity,
+        z.null()
+    ]).optional(),
+    text: z.string(),
+    why: z.string(),
+    category: z.string(),
+    tags: z.array(z.string()),
+    isGlobal: z.boolean(),
+    sources: z.array(z.string()),
+    createdAt: z.number().int().gte(0),
+    state: zMemoryProposalState
+});
+
+export const zListMemoryProposalsResponse_unstable = z.object({
+    proposals: z.array(zMemoryProposalDto)
+});
+
+export const zMemoryProposalDecision = z.enum(['save', 'decline']);
+
+/**
+ * The human's answer. Save writes the (possibly edited) text through the memory store;
+ * Decline writes nothing. Either way the proposal leaves the open state.
+ */
+export const zAnswerMemoryProposalRequest_unstable = z.object({
+    sessionId: z.string(),
+    key: z.string(),
+    proposalId: z.string(),
+    decision: zMemoryProposalDecision,
+    text: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zAnswerMemoryProposalResponse_unstable = z.object({
+    proposal: z.union([
+        zMemoryProposalDto,
+        z.null()
+    ]).optional(),
+    outcome: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
  * Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
  * there. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks
  * `targetNodeId` from `leanzeroLink/nodes` (filter to `status == "Idle"`); the receive
@@ -3679,6 +3748,8 @@ export const zExtRequest = z.object({
             zLeanzeroLinkStatusRequest_unstable,
             zLeanzeroLinkLogoutRequest_unstable,
             zLeanzeroLinkNodesRequest_unstable,
+            zListMemoryProposalsRequest_unstable,
+            zAnswerMemoryProposalRequest_unstable,
             zLeanzeroLinkRemoteExecuteRequest_unstable
         ]),
         z.union([
@@ -3782,6 +3853,8 @@ export const zExtResponse = z.union([
                 zLeanzeroLinkVerifyResponse_unstable,
                 zLeanzeroLinkStateResponse_unstable,
                 zLeanzeroLinkNodesResponse_unstable,
+                zListMemoryProposalsResponse_unstable,
+                zAnswerMemoryProposalResponse_unstable,
                 zLeanzeroLinkRemoteExecuteResponse_unstable
             ]),
             z.unknown()
