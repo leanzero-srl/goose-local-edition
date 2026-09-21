@@ -2761,6 +2761,17 @@ impl GooseAcpAgent {
         if let Some(usage) = build_prompt_usage(&session) {
             response = response.usage(usage);
         }
+        // FRAME 1.14 event B: the end-of-turn assessment rides a DETACHED task, spawned after the
+        // response is built and only on EndTurn — a cancelled turn is never assessed, and a turn's
+        // result never waits on (or fails because of) its judgement.
+        if !was_cancelled {
+            tokio::spawn(crate::turn_assessment::assess_turn(
+                agent.clone(),
+                self.session_manager.clone(),
+                session_id.clone(),
+                self.config_dir.clone(),
+            ));
+        }
         Ok(response)
     }
 
