@@ -1,7 +1,8 @@
 import { isLocalEditionCloudProvider } from '../models/leanzeroSelectorPolicy';
-import React, { memo, useMemo, useCallback, useState } from 'react';
+import { memo, useMemo, useCallback, useState } from 'react';
 import { ProviderCard } from './subcomponents/ProviderCard';
 import CardContainer from './subcomponents/CardContainer';
+import GridLayout from './subcomponents/GridLayout';
 import ProviderConfigurationModal from './modal/ProviderConfigurationModal';
 import type { CustomProviderConfigDto } from '@aaif/goose-sdk';
 import type { ProviderDetails, UpdateCustomProviderRequest } from '../../../types/providers';
@@ -44,20 +45,6 @@ const i18n = defineMessages({
     id: 'providerGrid.chooseModel',
     defaultMessage: 'Choose Model',
   },
-});
-
-const GridLayout = memo(function GridLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="grid gap-4 [&_*]:z-20 p-1"
-      style={{
-        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 200px))',
-        justifyContent: 'center',
-      }}
-    >
-      {children}
-    </div>
-  );
 });
 
 const CustomProviderCard = memo(function CustomProviderCard({ onClick }: { onClick: () => void }) {

@@ -41,7 +41,7 @@ export default function CardContainer({
   return (
     <div
       data-testid={testId}
-      className={`relative h-full p-[2px] overflow-hidden rounded-[9px] group/card
+      className={`relative h-auto p-[2px] overflow-hidden rounded-[9px] group/card
                  ${
                    grayedOut
                      ? 'bg-background-secondary hover:bg-gray-700'
@@ -54,7 +54,7 @@ export default function CardContainer({
     >
       {!grayedOut && <GlowingRing />}
       <div
-        className={`relative bg-background-primary rounded-lg p-3 transition-all duration-200 h-[160px] flex flex-col
+        className={`relative bg-background-primary rounded-lg p-3 transition-all duration-200 h-auto min-h-[120px] overflow-visible flex flex-col gap-2
                    ${header ? 'justify-between' : 'justify-center'}
                    ${borderStyle === 'dashed' ? 'border-2 border-dashed' : 'border'}
                    ${
@@ -70,7 +70,7 @@ export default function CardContainer({
           </div>
         )}
 
-        <div>{body}</div>
+        <div className="mt-auto">{body}</div>
       </div>
     </div>
   );

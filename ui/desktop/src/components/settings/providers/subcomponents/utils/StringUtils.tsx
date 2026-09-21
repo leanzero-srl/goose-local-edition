@@ -49,7 +49,10 @@ interface ProviderDescriptionProps {
 
 export function ProviderDescription({ description }: ProviderDescriptionProps) {
   return (
-    <p className="text-xs text-text-secondary mt-1.5 mb-3 leading-normal overflow-y-auto max-h-[54px]">
+    <p
+      data-testid="provider-description"
+      className="text-xs text-text-secondary mt-1.5 mb-1 leading-normal whitespace-normal break-words overflow-visible"
+    >
       {description}
     </p>
   );

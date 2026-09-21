@@ -5,5 +5,5 @@ interface CardBodyProps {
 }
 
 export default function CardBody({ children }: CardBodyProps) {
-  return <div className="flex items-center justify-start">{children}</div>;
+  return <div className="flex flex-wrap items-center justify-start gap-2">{children}</div>;
 }
