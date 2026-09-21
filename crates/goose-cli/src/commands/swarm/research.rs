@@ -23,7 +23,6 @@ use super::{orientation_armed, spec_sections, SliceBrief};
 use super::{phase_banner, spec_orientation, spec_vendor, write_forming_atomic};
 use super::{EventSink, SpecSection, FINAL_OUTPUT_TOOL};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
-#[cfg(test)]
 use goose_swarm::ToolCallRecord;
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
@@ -117,6 +116,11 @@ pub(crate) struct ResearchRow {
     /// fact or a covered row (no lane).
     #[serde(default)]
     pub(crate) batch: usize,
+    /// The tool calls that GROUNDED this answer — a successful external lookup per
+    /// `research_lookups` (a `developer__shell` grounds nothing). Empty = the model's own recall.
+    /// Read by `file_grounded_research` (frame 1.14 G1): only a grounded answer becomes knowledge.
+    #[serde(default)]
+    pub(crate) lookups: Vec<String>,
 }
 
 impl ResearchRow {
@@ -142,6 +146,7 @@ impl ResearchRow {
             cite: q.cite.clone(),
             origin: ORIGIN_SPEC_FACT.to_string(),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 
@@ -179,6 +184,7 @@ impl ResearchRow {
             cite,
             origin: format!("{ORIGIN_COVERED_PREFIX}{original}"),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 }
@@ -294,6 +300,7 @@ fn unanswered_row(q: &ResearchQuestion, model: &str, secs: u64, batch: usize) ->
         cite: q.cite.clone(),
         origin: String::new(),
         batch,
+        lookups: Vec::new(),
     }
 }
 
@@ -436,6 +443,7 @@ pub(super) fn fold_research_panic(q: &ResearchQuestion, error: &str) -> Research
         cite: q.cite.clone(),
         origin: String::new(),
         batch: 0,
+        lookups: Vec::new(),
     }
 }
 
@@ -2108,6 +2116,7 @@ mod tests {
             cite: String::new(),
             origin: String::new(),
             batch: 0,
+            lookups: Vec::new(),
         }
     }
 
@@ -3572,6 +3581,7 @@ mod tests {
                 cite: String::new(),
                 origin: String::new(),
                 batch: 0,
+                lookups: Vec::new(),
             },
             ResearchRow {
                 slice: "api".into(),
@@ -3588,6 +3598,7 @@ mod tests {
                 cite: String::new(),
                 origin: String::new(),
                 batch: 0,
+                lookups: Vec::new(),
             },
         ];
         let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
@@ -4642,7 +4653,6 @@ Exact attribute names (`table-progress`, `table-empty`, `data-state` values) and
 // worker-door wiring (frame 1.14 G1b). `research_lookups` is the ONE grounding predicate — the
 // frame's G1 write reads it live; the attempt classifier and the finding substrate stay test-only.
 
-#[cfg(test)]
 /// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
 /// recall, which may be good planning context but must never be routed to workers as a verified fact.
 pub(super) fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
@@ -4807,5 +4817,216 @@ mod provenance_tests {
             attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
         };
         assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
+    }
+}
+
+/// FRAME 1.14 G1 — knowledge that research creates. After the fan, every row that is BOTH answered
+/// by a lane AND grounded (`lookups` non-empty) is filed into the project-local memory store as a
+/// `reference` entry: headline = the answer's first sentence (a statement, which is what the
+/// store's name-scoring was measured on), then the question, the answer, and a `Sources:` line.
+/// Ungrounded answers are not written anywhere — an invented answer promoted to durable
+/// knowledge is the laundering `research_lookups` exists to prevent. Spec facts and covered rows
+/// (`origin` set) are not lane research and are not filed. A BENCHMARK writes nothing and says so
+/// (§2.6): the run's own findings must never land in the store the next benchmark reads. The
+/// write goes through `goose_memory_store` — the one owner of the on-disk format, never a second
+/// writer. Headless surface, nobody to ask: `auto`, the same policy CogniRunner's post-functions get.
+pub(super) fn file_grounded_research(
+    working_dir: &Path,
+    global_memory_dir: PathBuf,
+    rows: &[ResearchRow],
+    benchmark: bool,
+    events: &dyn EventSink,
+) -> usize {
+    use goose_memory_store::{MemoryStore, RememberOutcome};
+    let grounded: Vec<&ResearchRow> = rows
+        .iter()
+        .filter(|r| r.status == RESEARCH_ANSWERED && r.origin.is_empty() && !r.lookups.is_empty())
+        .collect();
+    let ungrounded = rows
+        .iter()
+        .filter(|r| r.status == RESEARCH_ANSWERED && r.origin.is_empty() && r.lookups.is_empty())
+        .count();
+    if benchmark {
+        events.write_value(serde_json::json!({
+            "event": "research_knowledge_refused",
+            "reason": "benchmark",
+            "grounded": grounded.len(),
+            "ungrounded": ungrounded,
+        }));
+        return 0;
+    }
+    let store = MemoryStore::new(global_memory_dir, working_dir);
+    let tags = vec!["reference".to_string(), "research".to_string()];
+    let (mut added, mut updated, mut unchanged, mut failed) = (0usize, 0usize, 0usize, 0usize);
+    for row in &grounded {
+        let content = research_knowledge_entry(row);
+        match store.remember(RESEARCH_KNOWLEDGE_CATEGORY, &content, &tags, false) {
+            Ok(RememberOutcome::Added) => added += 1,
+            Ok(RememberOutcome::Updated) => updated += 1,
+            Ok(RememberOutcome::Unchanged) => unchanged += 1,
+            Err(error) => {
+                failed += 1;
+                events.write_value(serde_json::json!({
+                    "event": "research_knowledge_write_failed",
+                    "slice": row.slice,
+                    "q_index": row.q_index,
+                    "error": error.to_string(),
+                }));
+            }
+        }
+    }
+    events.write_value(serde_json::json!({
+        "event": "research_knowledge_filed",
+        "category": RESEARCH_KNOWLEDGE_CATEGORY,
+        "added": added,
+        "updated": updated,
+        "unchanged": unchanged,
+        "failed": failed,
+        "ungrounded_skipped": ungrounded,
+    }));
+    added + updated
+}
+
+pub(super) const RESEARCH_KNOWLEDGE_CATEGORY: &str = "research";
+
+/// The entry text: first line a statement (the answer's first sentence, cut at the store's own
+/// headline width), then `Q:`, the full answer, and the lookups that ground it.
+pub(super) fn research_knowledge_entry(row: &ResearchRow) -> String {
+    let answer = row.answer.trim();
+    let first_sentence = answer
+        .split_inclusive(['.', '!', '?', '\n'])
+        .next()
+        .unwrap_or(answer)
+        .trim();
+    let statement = if first_sentence.is_empty() {
+        row.question.trim().trim_end_matches('?').to_string()
+    } else {
+        first_sentence.to_string()
+    };
+    let mut lookups: Vec<&str> = row.lookups.iter().map(String::as_str).collect();
+    lookups.sort_unstable();
+    lookups.dedup();
+    format!(
+        "{statement}\nQ: {}\n{answer}\nSources: {}",
+        row.question.trim(),
+        lookups.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod knowledge_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ValueSink(Mutex<Vec<serde_json::Value>>);
+    impl EventSink for ValueSink {
+        fn emit(&self, _event: &goose_swarm::SwarmEvent) {}
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().unwrap().push(value);
+        }
+    }
+    impl ValueSink {
+        fn values(&self) -> Vec<serde_json::Value> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn lane_row(q_index: usize, answer: &str, lookups: &[&str]) -> ResearchRow {
+        let mut row = unanswered_row(
+            &ResearchQuestion::of(
+                "api",
+                q_index,
+                &OpenQuestion {
+                    text: format!("what does endpoint {q_index} return?"),
+                    kind: QuestionKind::Design,
+                    cite: String::new(),
+                    ignored_fact_chars: 0,
+                    decision: None,
+                },
+            ),
+            "m",
+            1,
+            1,
+        );
+        row.status = RESEARCH_ANSWERED.to_string();
+        row.answer = answer.to_string();
+        row.lookups = lookups.iter().map(|s| s.to_string()).collect();
+        row
+    }
+
+    /// J7: grounded answers are filed as `reference` entries under `.goose/memory/research.txt`;
+    /// the ungrounded one is not written anywhere; the entry carries its sources.
+    #[test]
+    fn grounded_answers_are_filed_and_invented_ones_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![
+            lane_row(
+                0,
+                "It returns 409 on a conflict. Body is the error envelope.",
+                &["web-search__search"],
+            ),
+            lane_row(1, "Probably JSON.", &[]),
+        ];
+        let n = file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        assert_eq!(n, 1);
+        let text = std::fs::read_to_string(dir.path().join(".goose/memory/research.txt")).unwrap();
+        assert!(
+            text.starts_with("# reference research\nIt returns 409 on a conflict."),
+            "{text}"
+        );
+        assert!(text.contains("Sources: web-search__search"));
+        assert!(!text.contains("Probably JSON"));
+        let filed = sink
+            .values()
+            .into_iter()
+            .find(|v| v["event"] == "research_knowledge_filed")
+            .unwrap();
+        assert_eq!(filed["added"], 1);
+        assert_eq!(filed["ungrounded_skipped"], 1);
+    }
+
+    /// THE BENCHMARK INVARIANT (§2.6): a measured run files nothing, and the store stays absent.
+    #[test]
+    fn a_benchmark_files_nothing_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![lane_row(0, "It returns 409.", &["web-search__search"])];
+        let n = file_grounded_research(dir.path(), dir.path().join("global"), &rows, true, &sink);
+        assert_eq!(n, 0);
+        assert!(!dir.path().join(".goose/memory").exists());
+        assert!(sink
+            .values()
+            .iter()
+            .any(|v| v["event"] == "research_knowledge_refused"));
+    }
+
+    /// A second run with the same grounded answer updates the entry in place (same headline),
+    /// never appends a duplicate.
+    #[test]
+    fn refiling_the_same_finding_updates_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = ValueSink::default();
+        let rows = vec![lane_row(
+            0,
+            "It returns 409. Old detail.",
+            &["context7__get-library-docs"],
+        )];
+        file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        let rows = vec![lane_row(
+            0,
+            "It returns 409. New detail.",
+            &["context7__get-library-docs"],
+        )];
+        file_grounded_research(dir.path(), dir.path().join("global"), &rows, false, &sink);
+        let text = std::fs::read_to_string(dir.path().join(".goose/memory/research.txt")).unwrap();
+        assert_eq!(
+            text.matches("Q: what does endpoint 0 return?").count(),
+            1,
+            "{text}"
+        );
+        assert!(text.contains("New detail"));
+        assert!(!text.contains("Old detail"));
     }
 }

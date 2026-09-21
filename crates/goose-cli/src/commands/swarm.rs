@@ -20013,6 +20013,14 @@ async fn run_linear_plan(
     let (decision_rows, research_rows): (Vec<ResearchRow>, Vec<ResearchRow>) = fan_rows
         .into_iter()
         .partition(|r| r.slice == decisions::DECISION_SLICE);
+    // FRAME 1.14 G1: what the fan GROUNDED becomes project-local knowledge; a benchmark files nothing.
+    research::file_grounded_research(
+        &dispatcher.working_dir,
+        goose::config::paths::Paths::config_dir().join("memory"),
+        &research_rows,
+        benchmark(),
+        sink.as_ref(),
+    );
     let plan_decisions =
         decisions::partition_decisions(&decision_lines, user_decisions, &decision_rows);
     if !plan_decisions.is_empty() {
@@ -20403,9 +20411,12 @@ impl GooseAgentDispatcher {
                         )
                         .await;
                     let secs = t.elapsed().as_secs();
-                    let folded = match out {
-                        Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
-                        Err(e) => Err(e.to_string()),
+                    let (folded, lookups) = match out {
+                        Ok(o) => {
+                            let lookups = research::research_lookups(&o.tool_calls);
+                            (Ok(o.final_output.unwrap_or(o.text)), lookups)
+                        }
+                        Err(e) => (Err(e.to_string()), Vec::new()),
                     };
                     // ONE row per question of the batch, every one terminal (answered, or
                     // unanswered with the reason — including "no entry for [qN]" when the
@@ -20423,7 +20434,8 @@ impl GooseAgentDispatcher {
                         }));
                     }
                     me.research_running.lock().unwrap().remove(&key);
-                    for row in lane_rows {
+                    for mut row in lane_rows {
+                        row.lookups = lookups.clone();
                         // The mini is written for BOTH outcomes — the absence is a fact the
                         // ledger holds — and the events (one funnel, `emit_research_outcome`:
                         // the answered/unanswered row plus one `research_raised_folded` per
@@ -32959,6 +32971,7 @@ mod audit_regressions {
             cite: String::new(),
             origin: String::new(),
             batch: 0,
+            lookups: Vec::new(),
         };
         research::write_research_ledger(root, &row).expect("the mini writes through the funnel");
         let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
@@ -33012,6 +33025,7 @@ mod audit_regressions {
             cite: String::new(),
             origin: String::new(),
             batch: 0,
+            lookups: Vec::new(),
         };
         research::write_research_ledger(
             root,

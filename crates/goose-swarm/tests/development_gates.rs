@@ -505,7 +505,11 @@ fn swarm_rs_line_count_only_decreases() {
     // moved verbatim to commands/swarm/cli_args.rs, paying for the `Agent` sub-command variant,
     // its handle arm and `mod agent_work;` — the second swarm operation lives entirely in
     // commands/swarm/agent_work/ and calls the golden engine's worker door without editing it.
-    const SWARM_RS_LINE_BASELINE: usize = 33_735;
+    // Tightened to 33,606 (frame 1.14 G1b/G1): the dead research-provenance cluster
+    // (ResearchAttempt, classify_research_attempt, ResearchFinding, research_lookups + tests) moved
+    // to commands/swarm/research.rs, paying for the benchmark invariant's worker-door wiring, the
+    // lane rows' `lookups` stamp and the grounded-research filing at the splice point.
+    const SWARM_RS_LINE_BASELINE: usize = 33_606;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
