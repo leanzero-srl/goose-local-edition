@@ -497,9 +497,55 @@ fn chunk_json(id: &str, created: i64, model: &str, delta: Value, finish: Option<
 }
 
 enum TurnEvent {
-    Text(String),
+    /// Assistant text with the message id it belongs to: goose streams one reply as many
+    /// `Message` events sharing an id, so consecutive texts with the same id are deltas of one
+    /// message and glue together; a new id is a new message.
+    Text {
+        id: Option<String>,
+        text: String,
+    },
     Error(String),
     Done(TokenState),
+}
+
+/// Folds streamed assistant texts into one completion body.
+#[derive(Default)]
+pub struct TextAccumulator {
+    text: String,
+    last_id: Option<String>,
+}
+
+impl TextAccumulator {
+    pub fn push(&mut self, id: Option<String>, delta: &str) {
+        let same_message = self.last_id.is_none() || id.is_none() || self.last_id == id;
+        if !same_message && !self.text.is_empty() {
+            self.text.push_str("\n\n");
+        }
+        self.text.push_str(delta);
+        if id.is_some() {
+            self.last_id = id;
+        }
+    }
+
+    pub fn finish(self) -> String {
+        self.text.trim().to_string()
+    }
+}
+
+/// The agent turns a provider failure into an assistant message and ends the turn normally
+/// (`crates/goose/src/agents/agent.rs`, the two `provider_errored` arms) — the desktop shows it as
+/// a chat bubble. An OpenAI client must see an error, not a 200 with `finish_reason: stop` and a
+/// stack trace as content, so those two fixed sign-offs are recognised and re-raised as errors.
+const PROVIDER_ERROR_SIGN_OFFS: [&str; 2] = [
+    "Please retry if you think this is a transient or recoverable error.",
+    "Please resend your message to try again.",
+];
+
+pub fn is_provider_error_message(text: &str) -> bool {
+    let text = text.trim_end();
+    PROVIDER_ERROR_SIGN_OFFS
+        .iter()
+        .any(|sign_off| text.ends_with(sign_off))
 }
 
 /// Runs one turn on the session and forwards assistant text as it arrives.
@@ -573,7 +619,19 @@ async fn run_turn(
             Ok(AgentEvent::Message(message)) => {
                 if message.role == Role::Assistant {
                     let text = message.as_concat_text();
-                    if !text.is_empty() && tx.send(TurnEvent::Text(text)).await.is_err() {
+                    if text.is_empty() {
+                        continue;
+                    }
+                    if is_provider_error_message(&text) {
+                        let _ = tx.send(TurnEvent::Error(text)).await;
+                        cancel.cancel();
+                        return;
+                    }
+                    let event = TurnEvent::Text {
+                        id: message.id.clone(),
+                        text,
+                    };
+                    if tx.send(event).await.is_err() {
                         cancel.cancel();
                         return;
                     }
@@ -671,7 +729,7 @@ async fn chat_completions(
                         }
                     }
                     event = rx.recv() => match event {
-                        Some(TurnEvent::Text(text)) => {
+                        Some(TurnEvent::Text { text, .. }) => {
                             let chunk = chunk_json(&id, created, &model_name, json!({ "content": text }), None);
                             if sse_tx.send(format!("data: {}\n\n", chunk)).await.is_err() {
                                 break;
@@ -710,16 +768,11 @@ async fn chat_completions(
             .map_err(|e| OpenAiError::internal(e.to_string()));
     }
 
-    let mut text = String::new();
+    let mut text = TextAccumulator::default();
     let mut outcome: Result<TokenState, OpenAiError> = Ok(TokenState::default());
     while let Some(event) = rx.recv().await {
         match event {
-            TurnEvent::Text(t) => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(&t);
-            }
+            TurnEvent::Text { id, text: delta } => text.push(id, &delta),
             TurnEvent::Error(message) => {
                 outcome = Err(OpenAiError::internal(message));
                 break;
@@ -732,7 +785,13 @@ async fn chat_completions(
     }
     cleanup_session(&state, &session_id, keep).await;
     let token_state = outcome?;
-    let body = completion_json(&id, created, &model_name, &text, usage_json(&token_state));
+    let body = completion_json(
+        &id,
+        created,
+        &model_name,
+        &text.finish(),
+        usage_json(&token_state),
+    );
     Ok(Json(body).into_response())
 }
 
@@ -863,6 +922,35 @@ mod tests {
         let t = translate_messages(&messages, None);
         assert!(t.history.is_empty());
         assert_eq!(t.user_message.unwrap().as_concat_text(), "a");
+    }
+
+    #[test]
+    fn a_provider_failure_the_agent_phrased_as_a_message_is_an_error() {
+        assert!(is_provider_error_message(
+            "Ran into this error: Server error: boom.\n\nPlease retry if you think this is a transient or recoverable error."
+        ));
+        assert!(is_provider_error_message(
+            "Rate limited.\n\nPlease resend your message to try again.\n"
+        ));
+        assert!(!is_provider_error_message("The sky is blue."));
+        assert!(!is_provider_error_message(
+            "Please retry if you think this is a transient or recoverable error. Anyway, blue."
+        ));
+    }
+
+    #[test]
+    fn streamed_deltas_of_one_message_glue_and_a_new_message_starts_a_paragraph() {
+        let mut acc = TextAccumulator::default();
+        acc.push(Some("m1".into()), "A");
+        acc.push(Some("m1".into()), " clear");
+        acc.push(Some("m1".into()), " sky.");
+        acc.push(Some("m2".into()), "Second message.");
+        assert_eq!(acc.finish(), "A clear sky.\n\nSecond message.");
+
+        let mut acc = TextAccumulator::default();
+        acc.push(None, "\n\nP");
+        acc.push(None, "ong");
+        assert_eq!(acc.finish(), "Pong");
     }
 
     #[test]
