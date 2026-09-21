@@ -50,5 +50,12 @@
       "digest": "sha256:b1fca7de40d7f17f64c654782a3a5199aee524f3670831ced1abacecde8c57fb",
       "size": 351
     }
-  ]
+  ],
+  "normalProfileAcceptance": {
+    "currentBenchmark": "sb-7.1",
+    "optionalTools": "Benchmark tools ready",
+    "installedVersion": "3.0.2",
+    "updateCheck": "You are running the latest version!",
+    "automaticDownloadPreference": "unchanged"
+  }
 }
