@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Absenden"
+    "defaultMessage": "Speichern und Verbindung prüfen"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Die einleitenden Prompts und Aktivitätsschaltflächen, die im Rezept-Chatfenster angezeigt werden."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Eine neue Sitzung mit der bearbeiteten Nachricht erstellen"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Verbindungen prüfen"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Verbindungen werden geprüft…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modell für Verbindungstest"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Beim Speichern und App-Start wird eine kurze Anfrage an dieses Modell gesendet. Die üblichen Nutzungsgebühren des Anbieters können anfallen."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Verbindung wird geprüft…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Anbieterverbindungen benötigen Aufmerksamkeit"
   }
 }

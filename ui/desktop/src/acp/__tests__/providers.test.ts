@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAcpClient } from '../acpConnection';
-import { acpSetSessionProviderModel } from '../providers';
+import {
+  acpSetSessionProviderModel,
+  acpListProviderDetails,
+  acpRecheckProviderConnections,
+} from '../providers';
 
 vi.mock('../acpConnection', () => ({
   getAcpClient: vi.fn(),
@@ -76,5 +80,56 @@ describe('ACP providers', () => {
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4-5',
     });
+  });
+});
+
+describe('saved provider connection checks', () => {
+  it('checks once per backend connection and hides failed or unchecked providers', async () => {
+    const entries = ['google', 'openai', 'anthropic'].map((providerId) => ({
+      providerId,
+      providerName: providerId,
+      configured: true,
+      configKeys: [],
+      models: [],
+      defaultModel: 'test-model',
+    }));
+    const status = vi.fn().mockResolvedValue({
+      statuses: [
+        {
+          providerId: 'google',
+          isConfigured: true,
+          connectionChecked: true,
+          connectionError: null,
+        },
+        {
+          providerId: 'openai',
+          isConfigured: true,
+          connectionChecked: true,
+          connectionError: 'Expired API key',
+        },
+      ],
+    });
+    const client = {
+      goose: {
+        providersConfigStatus_unstable: status,
+        providersList_unstable: vi.fn().mockResolvedValue({ entries }),
+      },
+    };
+    vi.mocked(getAcpClient).mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getAcpClient>>
+    );
+    const first = await acpListProviderDetails();
+    expect(first.map((provider) => provider.is_configured)).toEqual([true, false, false]);
+    expect(first[1].connection_error).toBe('Expired API key');
+    await acpListProviderDetails();
+    expect(status.mock.calls.filter(([request]) => request.checkConnections)).toHaveLength(1);
+    await acpRecheckProviderConnections();
+    expect(status.mock.calls.filter(([request]) => request.checkConnections)).toHaveLength(2);
+    const newClient = { goose: { ...client.goose } };
+    vi.mocked(getAcpClient).mockResolvedValue(
+      newClient as unknown as Awaited<ReturnType<typeof getAcpClient>>
+    );
+    await acpListProviderDetails();
+    expect(status.mock.calls.filter(([request]) => request.checkConnections)).toHaveLength(3);
   });
 });

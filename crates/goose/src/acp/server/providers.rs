@@ -706,9 +706,15 @@ impl GooseAcpAgent {
             Err(_) => false,
         };
 
+        let connection = is_configured
+            .then(|| crate::providers::key_connection::status(&provider_id))
+            .flatten();
         ProviderConfigStatusDto {
+            test_model: crate::providers::key_connection::saved_test_model(&provider_id),
             provider_id,
             is_configured,
+            connection_checked: connection.is_some(),
+            connection_error: connection.flatten(),
         }
     }
 
@@ -857,6 +863,28 @@ impl GooseAcpAgent {
         &self,
         req: ProviderConfigStatusRequest,
     ) -> Result<ProviderConfigStatusResponse, agent_client_protocol::Error> {
+        let statuses = Self::provider_config_statuses(&req.provider_ids).await;
+        if req.check_connections {
+            use futures::StreamExt;
+            futures::stream::iter(statuses.into_iter().filter(|status| {
+                status.is_configured
+                    && crate::providers::key_connection::requires_connection_check(
+                        &status.provider_id,
+                    )
+            }))
+            .map(|status| async move {
+                if let Ok(entry) = crate::providers::get_from_registry(&status.provider_id).await {
+                    let _ = crate::providers::key_connection::check_and_record(
+                        &status.provider_id,
+                        entry.metadata(),
+                    )
+                    .await;
+                }
+            })
+            .buffer_unordered(2)
+            .collect::<Vec<_>>()
+            .await;
+        }
         Ok(ProviderConfigStatusResponse {
             statuses: Self::provider_config_statuses(&req.provider_ids).await,
         })
@@ -866,6 +894,7 @@ impl GooseAcpAgent {
         &self,
         req: ProviderConfigSaveRequest,
     ) -> Result<ProviderConfigChangeResponse, agent_client_protocol::Error> {
+        let _connection_guard = crate::providers::key_connection::lock().await;
         let entry = crate::providers::get_from_registry(&req.provider_id)
             .await
             .invalid_params_err_ctx("Unknown provider")?;
@@ -902,6 +931,21 @@ impl GooseAcpAgent {
             }
         }
 
+        let field_keys: Vec<(&str, bool)> = req
+            .fields
+            .iter()
+            .map(|field| {
+                let key = metadata
+                    .config_keys
+                    .iter()
+                    .find(|key| key.name == field.key)
+                    .expect("validated field");
+                (field.key.as_str(), key.secret)
+            })
+            .collect();
+        let mut pending =
+            crate::providers::key_connection::PendingConfig::capture(config, &field_keys)
+                .internal_err_ctx("Failed to snapshot provider settings")?;
         for (key, value) in config_updates {
             config
                 .set_param(&key, &value)
@@ -911,6 +955,41 @@ impl GooseAcpAgent {
             .set_secret_values(&secret_updates)
             .internal_err_ctx("Failed to save provider secret fields")?;
 
+        if crate::providers::key_connection::requires_connection_check(&req.provider_id) {
+            for (key, secret) in &field_keys {
+                let submitted = req
+                    .fields
+                    .iter()
+                    .find(|field| field.key == *key)
+                    .expect("validated field");
+                let effective = config
+                    .get(key, *secret)
+                    .internal_err_ctx("Cannot read effective provider setting")?;
+                if effective.as_str() != Some(submitted.value.trim()) {
+                    pending
+                        .restore()
+                        .internal_err_ctx("Failed to restore previous provider settings")?;
+                    return Err(agent_client_protocol::Error::invalid_params().data(format!("{key} is overridden by the process environment. Remove that override before saving a different value.")));
+                }
+            }
+            if let Err(error) = crate::providers::key_connection::check(
+                &req.provider_id,
+                &metadata,
+                req.test_model.as_deref(),
+            )
+            .await
+            {
+                pending
+                    .restore()
+                    .internal_err_ctx("Failed to restore previous provider settings")?;
+                return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                    "Connection check failed; previous settings retained. {error}"
+                )));
+            }
+        }
+
+        pending.commit();
+        crate::providers::key_connection::mark_validated(&req.provider_id);
         let provider_ids = [req.provider_id.clone()];
         let status = Self::provider_config_status(req.provider_id.clone()).await;
         let refresh = self.start_provider_inventory_refresh(&provider_ids).await?;
@@ -921,6 +1000,7 @@ impl GooseAcpAgent {
         &self,
         req: ProviderConfigDeleteRequest,
     ) -> Result<ProviderConfigChangeResponse, agent_client_protocol::Error> {
+        let _connection_guard = crate::providers::key_connection::lock().await;
         let entry = crate::providers::get_from_registry(&req.provider_id)
             .await
             .invalid_params_err_ctx("Unknown provider")?;

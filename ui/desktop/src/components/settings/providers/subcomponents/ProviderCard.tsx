@@ -61,6 +61,11 @@ export const ProviderCard = function ProviderCard({
       }
       body={
         <CardBody>
+          {provider.connection_error && (
+            <p role="alert" className="mb-3 text-sm text-red-500 break-words">
+              {provider.connection_error}
+            </p>
+          )}
           <DefaultCardButtons
             provider={provider}
             onConfigure={onConfigure}

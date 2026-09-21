@@ -571,6 +571,7 @@ export default function AddNodeDialog({
               <WeightStepper value={weight} onChange={setWeight} />
             </div>
             <CloudPane
+              allowKeySetup={false}
               key={activeCloud.cli}
               def={activeCloud}
               devices={cloudDevices}

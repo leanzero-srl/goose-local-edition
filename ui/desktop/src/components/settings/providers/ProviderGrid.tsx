@@ -1,3 +1,4 @@
+import { isLocalEditionCloudProvider } from '../models/leanzeroSelectorPolicy';
 import React, { memo, useMemo, useCallback, useState } from 'react';
 import { ProviderCard } from './subcomponents/ProviderCard';
 import CardContainer from './subcomponents/CardContainer';
@@ -124,7 +125,7 @@ function ProviderCards({
 
   const configureProviderViaModal = useCallback(
     async (provider: ProviderDetails) => {
-      if (provider.provider_type === 'Custom') {
+      if (provider.provider_type === 'Custom' && !isLocalEditionCloudProvider(provider.name)) {
         const result = await acpGetCustomProvider(provider.name);
 
         if (result) {

@@ -8,7 +8,7 @@ const i18n = defineMessages({
   cannotDeleteActive: {
     id: 'providerSetupActions.cannotDeleteActive',
     defaultMessage:
-      'You cannot delete {providerName} while it\'s currently in use. Please switch to a different model before deleting this provider.',
+      "You cannot delete {providerName} while it's currently in use. Please switch to a different model before deleting this provider.",
   },
   ok: {
     id: 'providerSetupActions.ok',
@@ -31,9 +31,10 @@ const i18n = defineMessages({
     id: 'providerSetupActions.deleteProvider',
     defaultMessage: 'Delete Provider',
   },
+  checking: { id: 'providerSetupActions.checking', defaultMessage: 'Checking connection…' },
   submit: {
     id: 'providerSetupActions.submit',
-    defaultMessage: 'Submit',
+    defaultMessage: 'Save and check connection',
   },
   enableProvider: {
     id: 'providerSetupActions.enableProvider',
@@ -42,6 +43,7 @@ const i18n = defineMessages({
 });
 
 interface ProviderSetupActionsProps {
+  checkingConnection?: boolean;
   onCancel: () => void;
   onSubmit: (e: SyntheticEvent) => void;
   onDelete?: () => void;
@@ -59,6 +61,7 @@ interface ProviderSetupActionsProps {
  * Includes submit, cancel, and delete functionality with confirmation.
  */
 export default function ProviderSetupActions({
+  checkingConnection = false,
   onCancel,
   onSubmit,
   onDelete,
@@ -81,9 +84,7 @@ export default function ProviderSetupActions({
           <div className="w-full px-6 py-4 bg-yellow-600/20 border-t border-yellow-500/30">
             <p className="text-yellow-500 text-sm mb-2 flex items-start">
               <AlertTriangle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
-              <span>
-                {intl.formatMessage(i18n.cannotDeleteActive, { providerName })}
-              </span>
+              <span>{intl.formatMessage(i18n.cannotDeleteActive, { providerName })}</span>
             </p>
           </div>
           <Button
@@ -137,12 +138,13 @@ export default function ProviderSetupActions({
       {primaryParameters && primaryParameters.length > 0 ? (
         <>
           <Button
+            disabled={checkingConnection}
             type="submit"
             variant="ghost"
             onClick={onSubmit}
             className="w-full h-[60px] rounded-none border-t border-border-primary text-md hover:bg-background-secondary text-text-primary font-medium"
           >
-            {intl.formatMessage(i18n.submit)}
+            {intl.formatMessage(checkingConnection ? i18n.checking : i18n.submit)}
           </Button>
           <Button
             type="button"
@@ -156,6 +158,7 @@ export default function ProviderSetupActions({
       ) : (
         <>
           <Button
+            disabled={checkingConnection}
             type="submit"
             variant="ghost"
             onClick={onSubmit}

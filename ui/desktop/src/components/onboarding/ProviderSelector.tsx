@@ -241,7 +241,7 @@ export default function ProviderSelector({
             />
           </div>
 
-          {
+          {!isLocal && (
             <button
               onClick={() => setShowCustomModal(true)}
               className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors mb-6"
@@ -249,7 +249,7 @@ export default function ProviderSelector({
               <Plus size={14} />
               <span>{intl.formatMessage(i18n.addCustomProvider)}</span>
             </button>
-          }
+          )}
 
           {selectedProvider && (
             <ProviderConfigForm

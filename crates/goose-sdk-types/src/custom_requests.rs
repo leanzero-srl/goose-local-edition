@@ -839,6 +839,9 @@ pub struct ProviderConfigFieldValueDto {
 pub struct ProviderConfigStatusDto {
     pub provider_id: String,
     pub is_configured: bool,
+    pub connection_checked: bool,
+    pub connection_error: Option<String>,
+    pub test_model: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -875,6 +878,8 @@ pub struct ProviderConfigReadResponse {
 pub struct ProviderConfigStatusRequest {
     #[serde(default)]
     pub provider_ids: Vec<String>,
+    #[serde(default)]
+    pub check_connections: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -892,6 +897,7 @@ pub struct ProviderConfigStatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfigSaveRequest {
     pub provider_id: String,
+    pub test_model: Option<String>,
     pub fields: Vec<ProviderConfigFieldUpdate>,
 }
 

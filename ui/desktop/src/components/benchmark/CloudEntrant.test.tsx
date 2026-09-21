@@ -18,14 +18,14 @@ const row = (name: string, configured = true) => ({
     known_models: [],
   },
 });
-it('lists configured provider identities including custom, without assuming four providers or Google', async () => {
+it('lists configured supported providers and excludes removed providers', async () => {
   vi.mocked(acpListProviderDetails).mockResolvedValue(
     [
       'google',
       'anthropic',
       'openai',
       'aws_bedrock',
-      'deepseek',
+      'custom_deepseek',
       'custom_team',
       'lmstudio',
       'ollama',
@@ -39,12 +39,12 @@ it('lists configured provider identities including custom, without assuming four
   render(<CloudEntrant provider="" model="" disabled={false} onChange={change} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled());
   fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
-  expect(await screen.findAllByRole('menuitem')).toHaveLength(6);
-  for (const name of ['unconfigured', 'lmstudio', 'ollama', 'omlx', 'local']) {
+  expect(await screen.findAllByRole('menuitem')).toHaveLength(5);
+  for (const name of ['unconfigured', 'lmstudio', 'ollama', 'omlx', 'local', 'custom_team']) {
     expect(screen.queryByRole('menuitem', { name })).toBeNull();
   }
-  fireEvent.click(screen.getByRole('menuitem', { name: 'custom_team' }));
-  expect(change).toHaveBeenCalledWith('custom_team', '');
+  fireEvent.click(screen.getByRole('menuitem', { name: 'custom_deepseek' }));
+  expect(change).toHaveBeenCalledWith('custom_deepseek', '');
 });
 it('shows fresh-profile setup and an explicit failed-read state', async () => {
   vi.mocked(acpListProviderDetails).mockResolvedValue([]);

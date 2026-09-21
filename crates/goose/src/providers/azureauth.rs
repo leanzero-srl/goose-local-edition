@@ -73,9 +73,9 @@ impl AzureAuth {
     /// # Returns
     /// * `Result<Self, AuthError>` - A new AzureAuth instance or an error if initialization fails
     pub fn new(api_key: Option<String>, ad_token: Option<String>) -> Result<Self, AuthError> {
-        let credentials = match (ad_token, api_key) {
-            (Some(token), _) => AzureCredentials::BearerToken(token),
-            (None, Some(key)) => AzureCredentials::ApiKey(key),
+        let credentials = match (api_key, ad_token) {
+            (Some(key), _) => AzureCredentials::ApiKey(key),
+            (None, Some(token)) => AzureCredentials::BearerToken(token),
             (None, None) => AzureCredentials::DefaultCredential,
         };
 
@@ -184,11 +184,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ad_token_takes_precedence_over_api_key() {
+    fn test_explicit_api_key_takes_precedence_over_saved_ad_token() {
         let auth = AzureAuth::new(Some("key".to_string()), Some("token".to_string())).unwrap();
         assert!(matches!(
             auth.credential_type(),
-            AzureCredentials::BearerToken(_)
+            AzureCredentials::ApiKey(_)
         ));
     }
 

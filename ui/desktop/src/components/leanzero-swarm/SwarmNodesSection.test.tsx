@@ -373,6 +373,16 @@ describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
       'zai',
       'google',
       'custom_deepseek',
+      'azure_openai',
+      'openai',
+      'anthropic',
+      'alibaba',
+      'openrouter',
+      'ollama_cloud',
+      'minimax',
+      'mistral',
+      'xai',
+      'moonshot',
     ]);
   });
 
@@ -399,7 +409,7 @@ describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
     await userEvent.click(await screen.findByTestId('swarm-add-node'));
     await userEvent.click(screen.getAllByRole('combobox')[0]);
     const opts = await screen.findAllByRole('option');
-    expect(opts.map((o) => o.textContent)).toEqual(['LeanZero MLX', 'Z.ai']);
+    expect(opts.map((o) => o.textContent)).toEqual(['LeanZero MLX', 'Z.ai', 'Claude']);
     await userEvent.click(screen.getByRole('option', { name: 'Z.ai' }));
     await userEvent.click(screen.getByTestId('add-node-configure-cloud'));
     expect(openCloud).toHaveBeenCalledTimes(1);

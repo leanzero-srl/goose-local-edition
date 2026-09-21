@@ -3144,7 +3144,7 @@
     "defaultMessage": "確定"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "提交"
+    "defaultMessage": "儲存並檢查連線"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "將顯示在配方交談視窗中的頂端提示與活動按鈕。"
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "以編輯後的訊息建立新的工作階段"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "重新檢查連線"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "正在檢查連線…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "連線測試模型"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "儲存和啟動應用程式時會向此模型傳送簡短請求以檢查存取權限。可能產生供應商的一般使用費用。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "正在檢查連線…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "供應商連線需要檢查"
   }
 }

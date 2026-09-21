@@ -84,7 +84,7 @@ describe('ProviderSettingsPage (/configure-providers)', () => {
       'zai',
     ]);
     expect(gridSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ allowCustomProvider: true })
+      expect.objectContaining({ allowCustomProvider: false })
     );
   });
 

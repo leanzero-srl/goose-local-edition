@@ -120,7 +120,7 @@ export default function ProviderSettings({
                   refreshProviders={refreshProviders}
                   setView={setView}
                   onModelSelected={onProviderLaunched}
-                  allowCustomProvider
+                  allowCustomProvider={!isLocal}
                 />
               )}
             </div>

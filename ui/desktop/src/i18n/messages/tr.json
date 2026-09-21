@@ -3144,7 +3144,7 @@
     "defaultMessage": "Tamam"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Gönder"
+    "defaultMessage": "Kaydet ve bağlantıyı denetle"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Tarif sohbeti penceresinde görüntülenecek üst satırdaki istemler ve etkinlik düğmeleri."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Düzenlenen mesajla yeni bir oturum oluşturun"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Bağlantıları yeniden denetle"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Bağlantılar denetleniyor…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Bağlantı testi modeli"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Kaydetme ve uygulama başlangıcında erişimi denetlemek için bu modele kısa bir istek gönderilir. Sağlayıcının normal kullanım ücretleri uygulanabilir."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Bağlantı denetleniyor…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Sağlayıcı bağlantıları dikkat gerektiriyor"
   }
 }

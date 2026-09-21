@@ -13,6 +13,15 @@ export async function safeJsonParse<T>(
 }
 
 export function errorMessage(err: Error | unknown, default_value?: string) {
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    'data' in err &&
+    typeof err.data === 'string' &&
+    err.data.trim()
+  ) {
+    return err.data;
+  }
   if (err instanceof Error) {
     return err.message;
   } else if (typeof err === 'object' && err !== null && 'message' in err) {

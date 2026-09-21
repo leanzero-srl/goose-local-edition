@@ -51,6 +51,76 @@ const CLOUD_DEFS: &[CloudDef] = &[
         needs_region: false,
         label: "DeepSeek",
     },
+    CloudDef {
+        name: "azure_openai",
+        registry: "azure_openai",
+        secret_key: "AZURE_OPENAI_API_KEY",
+        needs_region: false,
+        label: "Azure Foundry",
+    },
+    CloudDef {
+        name: "openai",
+        registry: "openai",
+        secret_key: "OPENAI_API_KEY",
+        needs_region: false,
+        label: "OpenAI",
+    },
+    CloudDef {
+        name: "anthropic",
+        registry: "anthropic",
+        secret_key: "ANTHROPIC_API_KEY",
+        needs_region: false,
+        label: "Claude",
+    },
+    CloudDef {
+        name: "alibaba",
+        registry: "alibaba",
+        secret_key: "DASHSCOPE_API_KEY",
+        needs_region: false,
+        label: "Qwen",
+    },
+    CloudDef {
+        name: "openrouter",
+        registry: "openrouter",
+        secret_key: "OPENROUTER_API_KEY",
+        needs_region: false,
+        label: "OpenRouter",
+    },
+    CloudDef {
+        name: "ollama_cloud",
+        registry: "ollama_cloud",
+        secret_key: "OLLAMA_CLOUD_API_KEY",
+        needs_region: false,
+        label: "Ollama Cloud",
+    },
+    CloudDef {
+        name: "minimax",
+        registry: "minimax",
+        secret_key: "MINIMAX_API_KEY",
+        needs_region: false,
+        label: "MiniMax",
+    },
+    CloudDef {
+        name: "mistral",
+        registry: "mistral",
+        secret_key: "MISTRAL_API_KEY",
+        needs_region: false,
+        label: "Mistral AI",
+    },
+    CloudDef {
+        name: "xai",
+        registry: "xai",
+        secret_key: "XAI_API_KEY",
+        needs_region: false,
+        label: "xAI",
+    },
+    CloudDef {
+        name: "moonshot",
+        registry: "moonshot",
+        secret_key: "MOONSHOT_API_KEY",
+        needs_region: false,
+        label: "Moonshot",
+    },
 ];
 
 pub(super) fn cloud_def(name: &str) -> Option<&'static CloudDef> {
@@ -78,8 +148,7 @@ pub(super) fn cloud_stored_key(def: &CloudDef) -> Option<String> {
         })
 }
 
-/// The provider's usable model ids, fetched with ONLY the API key — the shared
-/// validate-by-listing seam. A rejection is a bad key; a listing is both proof and roster.
+/// List provider models where supported; otherwise expose the model verified during setup.
 pub(super) async fn cloud_roster(provider: &str, key: &str, region: &str) -> Result<Vec<String>> {
     match provider {
         "bedrock" => bedrock_roster(key, region).await,
@@ -87,9 +156,39 @@ pub(super) async fn cloud_roster(provider: &str, key: &str, region: &str) -> Res
         "zai" => openai_style_roster("https://api.z.ai/api/paas/v4/models", key, "Z.ai").await,
         "deepseek" => openai_style_roster("https://api.deepseek.com/models", key, "DeepSeek").await,
         "google" => google_roster(key).await,
-        other => anyhow::bail!(
-            "unknown cloud provider '{other}' — one of: bedrock, zai, google, deepseek"
-        ),
+        other => {
+            let def =
+                cloud_def(other).ok_or_else(|| anyhow!("Unsupported cloud provider '{other}'"))?;
+            if cloud_stored_key(def).as_deref() != Some(key) {
+                anyhow::bail!(
+                    "Configure and check {} in Cloud Providers before adding a node",
+                    def.label
+                );
+            }
+            let config = goose::config::Config::global();
+            let checked_models: std::collections::HashMap<String, String> = config
+                .get_param("provider_connection_models")
+                .map_err(|_| {
+                    anyhow!(
+                        "Save and check {} in Cloud Providers before adding a node",
+                        def.label
+                    )
+                })?;
+            let model = if other == "azure_openai" {
+                config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?
+            } else {
+                checked_models.get(def.registry).cloned().ok_or_else(|| {
+                    anyhow!(
+                        "Save a connection test model for {} in Cloud Providers",
+                        def.label
+                    )
+                })?
+            };
+            if model.trim().is_empty() {
+                anyhow::bail!("No checked model is saved for {}", def.label);
+            }
+            Ok(vec![model])
+        }
     }
 }
 

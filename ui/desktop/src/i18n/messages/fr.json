@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Envoyer"
+    "defaultMessage": "Enregistrer et vérifier la connexion"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Les invites principales et les boutons d'activité qui s'afficheront dans la fenêtre de discussion de la recette."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Créer une nouvelle session avec le message modifié"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Revérifier les connexions"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Vérification des connexions…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modèle de test de connexion"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "L’enregistrement et le démarrage de l’application envoient une courte requête à ce modèle pour vérifier l’accès. Les frais habituels du fournisseur peuvent s’appliquer."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Vérification de la connexion…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Les connexions aux fournisseurs nécessitent votre attention"
   }
 }

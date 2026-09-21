@@ -3144,7 +3144,7 @@
     "defaultMessage": "OK"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "送信"
+    "defaultMessage": "保存して接続を確認"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "レシピチャットウィンドウに表示される冒頭プロンプトとアクティビティボタンです。"
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "編集したメッセージで新しいセッションを作成"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "接続を再確認"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "接続を確認中…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "接続テスト用モデル"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "保存時とアプリ起動時に、このモデルへ短いリクエストを送信してアクセスを確認します。通常のプロバイダー利用料金が発生する場合があります。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "接続を確認中…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "プロバイダー接続の確認が必要です"
   }
 }

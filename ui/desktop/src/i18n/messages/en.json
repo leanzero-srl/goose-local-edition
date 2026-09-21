@@ -329,6 +329,9 @@
   "cloudProviders.available": {
     "defaultMessage": "Available to set up"
   },
+  "cloudProviders.checking": {
+    "defaultMessage": "Checking connections…"
+  },
   "cloudProviders.configured": {
     "defaultMessage": "Configured"
   },
@@ -346,6 +349,9 @@
   },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "No cloud providers configured yet. Choose one below to set it up."
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Recheck connections"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Retry"
@@ -3059,6 +3065,15 @@
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Signing in..."
   },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Saving and app startup send a brief request to this model to check access. Normal provider usage charges may apply."
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Connection test model"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Provider connections need attention"
+  },
   "providerGrid.addProvider": {
     "defaultMessage": "Add Provider"
   },
@@ -3128,6 +3143,9 @@
   "providerSetupActions.cannotDeleteActive": {
     "defaultMessage": "You cannot delete {providerName} while it's currently in use. Please switch to a different model before deleting this provider."
   },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Checking connection…"
+  },
   "providerSetupActions.confirmDelete": {
     "defaultMessage": "Confirm Delete"
   },
@@ -3144,7 +3162,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Submit"
+    "defaultMessage": "Save and check connection"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "The top-line prompts and activity buttons that will display in the recipe session window."

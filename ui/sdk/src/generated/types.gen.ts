@@ -1117,6 +1117,9 @@ export type CustomProviderCreateResponse_unstable = {
 export type ProviderConfigStatusDto = {
     providerId: string;
     isConfigured: boolean;
+    connectionChecked: boolean;
+    connectionError?: string | null;
+    testModel?: string | null;
 };
 
 /**
@@ -1243,6 +1246,7 @@ export type ProviderConfigFieldValueDto = {
  */
 export type ProviderConfigStatusRequest_unstable = {
     providerIds?: Array<string>;
+    checkConnections?: boolean;
 };
 
 export type ProviderConfigStatusResponse_unstable = {
@@ -1254,6 +1258,7 @@ export type ProviderConfigStatusResponse_unstable = {
  */
 export type ProviderConfigSaveRequest_unstable = {
     providerId: string;
+    testModel?: string | null;
     fields: Array<ProviderConfigFieldUpdate>;
 };
 

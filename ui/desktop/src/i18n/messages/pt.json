@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Submeter"
+    "defaultMessage": "Salvar e verificar conexão"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Os prompts principais e os botões de atividade que serão apresentados na janela de conversa da receita."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Criar uma nova sessão com a mensagem editada"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Verificar conexões novamente"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Verificando conexões…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Modelo de teste de conexão"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Ao salvar e iniciar o aplicativo, uma breve solicitação é enviada a este modelo para verificar o acesso. As tarifas normais do provedor podem ser aplicadas."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Verificando conexão…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "As conexões dos provedores precisam de atenção"
   }
 }

@@ -6,7 +6,15 @@ import type {
   ProviderTemplateCatalogEntryDto,
   ProviderTemplateDto,
 } from '@aaif/goose-sdk';
-import type { ProviderDetails, ThinkingEffort, UpdateCustomProviderRequest } from '../types/providers';
+import type {
+  ProviderDetails,
+  ThinkingEffort,
+  UpdateCustomProviderRequest,
+} from '../types/providers';
+import {
+  CLOUD_PROVIDER_LABELS,
+  isLocalEditionCloudProvider,
+} from '../components/settings/models/leanzeroSelectorPolicy';
 import { getAcpClient } from './acpConnection';
 
 export type { CanonicalModelInfoDto, ProviderSecretDto };
@@ -29,29 +37,74 @@ function updateRequestToCreate(
   };
 }
 
+const startupConnectionChecks = new WeakMap<object, Promise<unknown>>();
+
+export async function acpRecheckProviderConnections(): Promise<void> {
+  const client = await getAcpClient();
+  await client.goose.providersConfigStatus_unstable({
+    providerIds: Object.keys(CLOUD_PROVIDER_LABELS),
+    checkConnections: true,
+  });
+}
+
 export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
   const client = await getAcpClient();
+  let startupCheck = startupConnectionChecks.get(client);
+  if (!startupCheck) {
+    startupCheck = client.goose.providersConfigStatus_unstable({
+      providerIds: Object.keys(CLOUD_PROVIDER_LABELS),
+      checkConnections: true,
+    });
+    startupConnectionChecks.set(client, startupCheck);
+    startupCheck.catch(() => startupConnectionChecks.delete(client));
+  }
+  await startupCheck;
+  const { statuses } = await client.goose.providersConfigStatus_unstable({
+    providerIds: Object.keys(CLOUD_PROVIDER_LABELS),
+  });
   const { entries } = await client.goose.providersList_unstable({});
   return entries.map((entry) => ({
     name: entry.providerId,
-    is_configured: entry.configured,
+    is_configured:
+      entry.configured &&
+      (!isLocalEditionCloudProvider(entry.providerId) ||
+        statuses.some(
+          (status) =>
+            status.providerId === entry.providerId &&
+            status.connectionChecked &&
+            !status.connectionError
+        )),
+    saved_model: statuses.find((status) => status.providerId === entry.providerId)?.testModel,
+    connection_error: statuses.find((status) => status.providerId === entry.providerId)
+      ?.connectionError,
+    connection_checked: statuses.find((status) => status.providerId === entry.providerId)
+      ?.connectionChecked,
     provider_type: entry.providerType as ProviderDetails['provider_type'],
     metadata: {
       name: entry.providerId,
-      display_name: entry.providerName,
+      display_name: CLOUD_PROVIDER_LABELS[entry.providerId] ?? entry.providerName,
       description: entry.description,
       default_model: entry.defaultModel,
       model_doc_link: '',
       model_selection_hint: entry.modelSelectionHint ?? null,
-      config_keys: entry.configKeys.map((key) => ({
-        name: key.name,
-        required: key.required,
-        secret: key.secret,
-        default: key.default ?? null,
-        oauth_flow: key.oauthFlow ?? false,
-        device_code_flow: key.deviceCodeFlow ?? false,
-        primary: key.primary ?? false,
-      })),
+      config_keys: entry.configKeys
+        .filter((key) => {
+          if (entry.providerId === 'aws_bedrock')
+            return ['AWS_BEARER_TOKEN_BEDROCK', 'AWS_REGION'].includes(key.name);
+          if (entry.providerId === 'azure_openai') return key.name !== 'AZURE_OPENAI_AD_TOKEN';
+          return true;
+        })
+        .map((key) => ({
+          name: key.name,
+          required:
+            key.required ||
+            ['AWS_BEARER_TOKEN_BEDROCK', 'AWS_REGION', 'AZURE_OPENAI_API_KEY'].includes(key.name),
+          secret: key.secret,
+          default: key.default ?? null,
+          oauth_flow: key.oauthFlow ?? false,
+          device_code_flow: key.deviceCodeFlow ?? false,
+          primary: key.primary ?? false,
+        })),
       known_models: entry.models.map((model) => ({
         name: model.id,
         context_limit: model.contextLimit ?? 0,
@@ -128,10 +181,11 @@ export async function acpDeleteProviderConfig(providerId: string): Promise<void>
 
 export async function acpSaveProviderConfig(
   providerId: string,
-  fields: { key: string; value: string }[]
+  fields: { key: string; value: string }[],
+  testModel?: string
 ): Promise<void> {
   const client = await getAcpClient();
-  await client.goose.providersConfigSave_unstable({ providerId, fields });
+  await client.goose.providersConfigSave_unstable({ providerId, fields, testModel });
 }
 
 export async function acpAuthenticateProvider(providerId: string): Promise<void> {

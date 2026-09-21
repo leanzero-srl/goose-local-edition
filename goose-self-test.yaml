@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, mcp_setup, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, delegation, advanced"
 
   - key: test_depth
     input_type: string
@@ -451,6 +451,17 @@ prompt: |
   1. Archive results to {{ workspace_dir }}/archive/
   2. Remove temporary test artifacts
   3. Keep only the final report and logs
+  {% endif %}
+
+  {% if test_phases == "provider_connections" %}
+  ## Saved cloud provider connections
+  Verify the installed desktop app on its actual profile. Cloud Providers must show only the
+  fourteen supported key-based providers. Save checks must send an authenticated inference
+  request; rejected or cancelled saves must retain previous settings. Restart the app and
+  confirm every saved provider is checked again. Failed or unchecked providers must not appear
+  in Benchmark or Add node, and their settings must remain available for correction.
+  Never print secrets or claim vendor-account success from mocked transport tests. Record
+  unavailable credentials as unverified; do not substitute another account.
   {% endif %}
 
   ## 🎯 META-TESTING NOTES

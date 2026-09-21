@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Kirim"
+    "defaultMessage": "Simpan dan periksa koneksi"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Prompt utama dan tombol aktivitas yang akan ditampilkan di jendela obrolan resep."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Buat sesi baru dengan pesan yang diedit"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Periksa ulang koneksi"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Memeriksa koneksi…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Model uji koneksi"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Saat menyimpan dan memulai aplikasi, permintaan singkat dikirim ke model ini untuk memeriksa akses. Biaya penggunaan normal penyedia mungkin berlaku."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Memeriksa koneksi…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Koneksi penyedia memerlukan perhatian"
   }
 }

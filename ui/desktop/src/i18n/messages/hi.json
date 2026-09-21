@@ -3144,7 +3144,7 @@
     "defaultMessage": "ठीक है"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "सबमिट करें"
+    "defaultMessage": "सहेजें और कनेक्शन जाँचें"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "शीर्ष-पंक्ति संकेत और गतिविधि बटन जो रेसिपी चैट विंडो में प्रदर्शित होंगे।"
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "संपादित संदेश के साथ एक नया सत्र बनाएं"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "कनेक्शन दोबारा जाँचें"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "कनेक्शन जाँचे जा रहे हैं…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "कनेक्शन परीक्षण मॉडल"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "सहेजते समय और ऐप शुरू होने पर पहुँच जाँचने के लिए इस मॉडल को एक छोटा अनुरोध भेजा जाता है। प्रदाता के सामान्य उपयोग शुल्क लागू हो सकते हैं।"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "कनेक्शन जाँचा जा रहा है…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "प्रदाता कनेक्शन पर ध्यान देने की आवश्यकता है"
   }
 }

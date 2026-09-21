@@ -37,6 +37,8 @@ export type ProviderMetadata = {
 };
 
 export type ProviderDetails = {
+  connection_error?: string | null;
+  connection_checked?: boolean;
   is_configured: boolean;
   metadata: ProviderMetadata;
   name: string;

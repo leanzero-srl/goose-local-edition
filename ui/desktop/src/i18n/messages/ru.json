@@ -3144,7 +3144,7 @@
     "defaultMessage": "ОК"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Отправить"
+    "defaultMessage": "Сохранить и проверить подключение"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Верхнеуровневые промпты и кнопки активностей, которые будут отображаться в окне чата рецепта."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Создать новый сеанс с измененным сообщением"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Перепроверить подключения"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Проверка подключений…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Модель для проверки подключения"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "При сохранении и запуске приложения этой модели отправляется короткий запрос для проверки доступа. Может взиматься обычная плата провайдера."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Проверка подключения…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Подключения провайдеров требуют внимания"
   }
 }

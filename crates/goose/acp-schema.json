@@ -2359,11 +2359,27 @@
         },
         "isConfigured": {
           "type": "boolean"
+        },
+        "connectionChecked": {
+          "type": "boolean"
+        },
+        "connectionError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "testModel": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "providerId",
-        "isConfigured"
+        "isConfigured",
+        "connectionChecked"
       ]
     },
     "RefreshProviderInventoryResponse_unstable": {
@@ -2735,6 +2751,10 @@
             "type": "string"
           },
           "default": []
+        },
+        "checkConnections": {
+          "type": "boolean",
+          "default": false
         }
       },
       "description": "Return provider configured statuses. Empty provider_ids means all providers.",
@@ -2762,6 +2782,12 @@
       "properties": {
         "providerId": {
           "type": "string"
+        },
+        "testModel": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "fields": {
           "type": "array",

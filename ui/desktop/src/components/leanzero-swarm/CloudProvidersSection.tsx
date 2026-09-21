@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ProviderGrid from '../settings/providers/ProviderGrid';
-import { acpListProviderDetails } from '../../acp/providers';
+import { acpListProviderDetails, acpRecheckProviderConnections } from '../../acp/providers';
 import type { ProviderDetails } from '../../types/providers';
 import { isLocalEditionCloudProvider } from '../settings/models/leanzeroSelectorPolicy';
 import { createNavigationHandler } from '../../utils/navigationUtils';
@@ -13,6 +13,8 @@ const i18n = defineMessages({
     defaultMessage:
       'Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. Local backends (LM Studio, the MLX engine) need no credentials and live in the other tabs.',
   },
+  recheck: { id: 'cloudProviders.recheck', defaultMessage: 'Recheck connections' },
+  checking: { id: 'cloudProviders.checking', defaultMessage: 'Checking connections…' },
   loading: { id: 'cloudProviders.loading', defaultMessage: 'Loading providers…' },
   loadFailed: {
     id: 'cloudProviders.loadFailed',
@@ -37,6 +39,7 @@ export default function CloudProvidersSection() {
   const navigate = useNavigate();
   const [providers, setProviders] = useState<ProviderDetails[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const initialLoadDone = useRef(false);
 
   const setView = useMemo(() => createNavigationHandler(navigate), [navigate]);
@@ -92,6 +95,24 @@ export default function CloudProvidersSection() {
         )}
       </div>
 
+      <button
+        type="button"
+        disabled={checking || providers == null}
+        className="self-start rounded-lg border border-border-primary px-3 py-2 text-sm font-semibold"
+        onClick={async () => {
+          setChecking(true);
+          try {
+            await acpRecheckProviderConnections();
+            await loadProviders();
+          } catch (error) {
+            setError(error instanceof Error ? error.message : String(error));
+          } finally {
+            setChecking(false);
+          }
+        }}
+      >
+        {intl.formatMessage(checking ? i18n.checking : i18n.recheck)}
+      </button>
       {error != null ? (
         <div
           className="flex items-center gap-3 rounded px-4 py-3 text-sm font-semibold text-white"
@@ -141,7 +162,7 @@ export default function CloudProvidersSection() {
               isOnboarding={false}
               refreshProviders={() => void refreshProviders()}
               setView={setView}
-              allowCustomProvider
+              allowCustomProvider={false}
             />
           </section>
         </>

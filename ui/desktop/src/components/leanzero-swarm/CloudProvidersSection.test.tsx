@@ -93,7 +93,7 @@ describe('CloudProvidersSection', () => {
       expect(screen.queryByTestId(`grid-provider-${hidden}`)).not.toBeInTheDocument();
     }
     expect(gridSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ allowCustomProvider: true })
+      expect.objectContaining({ allowCustomProvider: false })
     );
     expect(gridSpy.mock.lastCall?.[0].providers).toHaveLength(3);
     expect(screen.getByRole('region', { name: 'Configured' })).toHaveTextContent('anthropic');

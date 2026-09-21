@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { acpListProviderDetails } from '../../acp/providers';
+import { acpListProviderDetails, acpRecheckProviderConnections } from '../../acp/providers';
 import type { ProviderDetails } from '../../types/providers';
 import {
   DropdownMenu,
@@ -29,7 +29,11 @@ export function CloudEntrant({
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    void acpListProviderDetails()
+    void (
+      revision > 0
+        ? acpRecheckProviderConnections().then(() => acpListProviderDetails())
+        : acpListProviderDetails()
+    )
       .then((rows) => {
         if (!alive) return;
         setProviders(

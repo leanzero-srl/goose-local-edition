@@ -113,7 +113,7 @@ describe('ProviderSelector (onboarding) — Goose Swarm (local) edition', () => 
     ).toBeInTheDocument();
   });
 
-  it('the cloud select lists registry cloud providers and permits custom setup', async () => {
+  it('the cloud select lists supported providers without custom setup', async () => {
     mockIsLocal = true;
     render(<ProviderSelector onConfigured={vi.fn()} />);
     await waitFor(() => expect(mockList).toHaveBeenCalled());
@@ -127,7 +127,7 @@ describe('ProviderSelector (onboarding) — Goose Swarm (local) edition', () => 
       'OpenAI',
       'Z.ai',
     ]);
-    expect(screen.getByText('Add a custom provider')).toBeInTheDocument();
+    expect(screen.queryByText('Add a custom provider')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: 'Google Gemini' }));
     expect(await screen.findByTestId('config-form-google')).toBeInTheDocument();
   });

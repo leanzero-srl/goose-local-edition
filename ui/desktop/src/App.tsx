@@ -1,3 +1,4 @@
+import { ProviderConnectionStartup } from './components/ProviderConnectionStartup';
 import { useEffect, useState, useRef } from 'react';
 import { IpcRendererEvent } from 'electron';
 import {
@@ -833,6 +834,7 @@ export default function App() {
         <FeaturesProvider>
           <ModelAndProviderProvider>
             <HashRouter>
+              <ProviderConnectionStartup />
               <AppInner />
             </HashRouter>
             <AnnouncementModal />

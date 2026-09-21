@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Gửi"
+    "defaultMessage": "Lưu và kiểm tra kết nối"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Các lời nhắc nổi bật và nút hoạt động sẽ hiển thị trong cửa sổ trò chuyện công thức."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Tạo một phiên làm việc mới với tin nhắn đã chỉnh sửa"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Kiểm tra lại kết nối"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Đang kiểm tra kết nối…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Mô hình kiểm tra kết nối"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Khi lưu và khởi động ứng dụng, một yêu cầu ngắn sẽ được gửi đến mô hình này để kiểm tra quyền truy cập. Có thể áp dụng phí sử dụng thông thường của nhà cung cấp."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Đang kiểm tra kết nối…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Kết nối nhà cung cấp cần được kiểm tra"
   }
 }

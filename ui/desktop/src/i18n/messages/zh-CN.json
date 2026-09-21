@@ -3144,7 +3144,7 @@
     "defaultMessage": "确定"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "提交"
+    "defaultMessage": "保存并检查连接"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "将在配方聊天窗口中显示的顶部提示和活动按钮。"
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "用编辑过的消息创建新会话"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "重新检查连接"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "正在检查连接…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "连接测试模型"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "保存和启动应用时会向此模型发送简短请求以检查访问权限。可能产生提供商的正常使用费用。"
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "正在检查连接…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "提供商连接需要检查"
   }
 }

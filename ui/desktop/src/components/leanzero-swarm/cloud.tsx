@@ -49,6 +49,7 @@ export function CloudPane({
   onChanged,
   onAdded,
   addWeight = 2,
+  allowKeySetup = true,
 }: {
   def: CloudProviderDef;
   devices: SwarmDeviceRow[];
@@ -59,6 +60,7 @@ export function CloudPane({
   onAdded?: (modelId: string) => Promise<void>;
   /** Weight passed to `goose swarm cloud <p> add <model> --weight N` (the add-node dialog's stepper). */
   addWeight?: number;
+  allowKeySetup?: boolean;
 }) {
   const [phase, setPhase] = useState<'checking' | 'no-key' | 'ready'>('checking');
   const [error, setError] = useState<string | null>(null);
@@ -254,14 +256,14 @@ export function CloudPane({
           Checking for a stored {def.label} key…
         </p>
       ) : phase === 'no-key' || editKey ? (
-        keyEntry
+        allowKeySetup ? keyEntry : <p className={TYPE.bodyMuted}>Update this connection in Cloud Providers, then reopen Add node.</p>
       ) : (
         <Panel
           title={`${def.label} key`}
           headerRight={
-            <Button size="sm" variant="ghost" onClick={() => setEditKey(true)}>
+            allowKeySetup ? <Button size="sm" variant="ghost" onClick={() => setEditKey(true)}>
               Replace key
-            </Button>
+            </Button> : null
           }
           padded={false}
         >
@@ -312,7 +314,7 @@ export function CloudPane({
           padded={false}
         >
           <p className={cx('border-b px-4 py-2', TYPE.meta, SURFACE.hairline)}>
-            What this key can actually invoke — add one as a swarm node.
+            Models reported by this provider or verified during setup. Model access depends on your account.
           </p>
           <div className="max-h-52 overflow-y-auto">
             <DataTable

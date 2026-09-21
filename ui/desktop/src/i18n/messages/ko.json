@@ -3144,7 +3144,7 @@
     "defaultMessage": "좋아요"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "제출"
+    "defaultMessage": "저장하고 연결 확인"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "레시피 채팅 창에 표시되는 상단 프롬프트와 활동 버튼입니다."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "편집한 메시지로 새 세션 만들기"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "연결 다시 확인"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "연결 확인 중…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "연결 테스트 모델"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "저장하거나 앱을 시작하면 이 모델에 짧은 요청을 보내 접근을 확인합니다. 일반 제공업체 사용 요금이 부과될 수 있습니다."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "연결 확인 중…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "제공업체 연결을 확인해야 합니다"
   }
 }

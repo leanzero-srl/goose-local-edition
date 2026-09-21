@@ -26,23 +26,30 @@ export function isLocalProviderName(name: string): boolean {
   return p === 'local' || LOCAL_PROVIDER_FRAGMENTS.some((frag) => p.includes(frag));
 }
 
-/** All registered cloud providers remain available in the Goose Swarm edition. */
+/** Only the supported key-based cloud providers appear in the Goose Swarm edition. */
 export function keepProviderInLocalEdition(registryId: string): boolean {
   return registryId === SWARM_PROVIDER_ID || isLocalEditionCloudProvider(registryId);
 }
 
-/** Exact local IDs: cloud services such as ollama_cloud must not be hidden by substring. */
+export const CLOUD_PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  aws_bedrock: 'Amazon Bedrock',
+  azure_openai: 'Azure Foundry',
+  openai: 'OpenAI',
+  anthropic: 'Claude',
+  google: 'Gemini',
+  alibaba: 'Qwen',
+  openrouter: 'OpenRouter',
+  ollama_cloud: 'Ollama Cloud',
+  minimax: 'MiniMax',
+  mistral: 'Mistral AI',
+  zai: 'Z.AI',
+  xai: 'xAI',
+  moonshot: 'Moonshot',
+  custom_deepseek: 'DeepSeek',
+};
+
 export function isLocalEditionCloudProvider(registryId: string): boolean {
-  return ![
-    'swarm',
-    'omlx',
-    'lmstudio',
-    'ollama',
-    'llama_swap',
-    'local',
-    'localai',
-    'mlx-sidecar',
-  ].includes(registryId);
+  return Object.prototype.hasOwnProperty.call(CLOUD_PROVIDER_LABELS, registryId);
 }
 
 /** The providers a migrated install may still carry as its ACTIVE provider: the MLX sidecar and the

@@ -993,7 +993,16 @@ export const zCustomProviderCreateRequest_unstable = z.object({
 
 export const zProviderConfigStatusDto = z.object({
     providerId: z.string(),
-    isConfigured: z.boolean()
+    isConfigured: z.boolean(),
+    connectionChecked: z.boolean(),
+    connectionError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    testModel: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zRefreshProviderInventorySkipReasonDto = z.enum([
@@ -1147,7 +1156,8 @@ export const zProviderConfigReadResponse_unstable = z.object({
  * Return provider configured statuses. Empty provider_ids means all providers.
  */
 export const zProviderConfigStatusRequest_unstable = z.object({
-    providerIds: z.array(z.string()).optional().default([])
+    providerIds: z.array(z.string()).optional().default([]),
+    checkConnections: z.boolean().optional().default(false)
 });
 
 export const zProviderConfigStatusResponse_unstable = z.object({
@@ -1164,6 +1174,10 @@ export const zProviderConfigFieldUpdate = z.object({
  */
 export const zProviderConfigSaveRequest_unstable = z.object({
     providerId: z.string(),
+    testModel: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     fields: z.array(zProviderConfigFieldUpdate)
 });
 

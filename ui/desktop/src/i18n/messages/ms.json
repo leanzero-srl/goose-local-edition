@@ -3144,7 +3144,7 @@
     "defaultMessage": "Ok"
   },
   "providerSetupActions.submit": {
-    "defaultMessage": "Hantar"
+    "defaultMessage": "Simpan dan semak sambungan"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Gesaan utama dan butang aktiviti yang akan dipaparkan dalam tetingkap sembang resipi."
@@ -4957,5 +4957,23 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Cipta sesi baharu dengan mesej yang disunting"
+  },
+  "cloudProviders.recheck": {
+    "defaultMessage": "Semak semula sambungan"
+  },
+  "cloudProviders.checking": {
+    "defaultMessage": "Menyemak sambungan…"
+  },
+  "providerConfigurationModal.testModel": {
+    "defaultMessage": "Model ujian sambungan"
+  },
+  "providerConfigurationModal.testHint": {
+    "defaultMessage": "Apabila menyimpan dan memulakan aplikasi, permintaan ringkas dihantar kepada model ini untuk menyemak akses. Caj penggunaan biasa penyedia mungkin dikenakan."
+  },
+  "providerSetupActions.checking": {
+    "defaultMessage": "Menyemak sambungan…"
+  },
+  "providerConnections.attention": {
+    "defaultMessage": "Sambungan penyedia memerlukan perhatian"
   }
 }

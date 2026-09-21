@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CLOUD_PROVIDER_LABELS,
   isLocalProviderName,
   keepProviderInLocalEdition,
   isLocalEditionCloudProvider,
@@ -10,25 +11,37 @@ import {
   SWARM_CHAT_MODEL_ID,
 } from './leanzeroSelectorPolicy';
 describe('leanzeroSelectorPolicy', () => {
-  it('admits registry cloud providers without a second fixed catalog', () => {
-    for (const id of [
+  it('offers exactly the fourteen key providers requested', () => {
+    expect(Object.keys(CLOUD_PROVIDER_LABELS)).toEqual([
       'aws_bedrock',
-      'zai',
-      'google',
-      'custom_deepseek',
-      'anthropic',
+      'azure_openai',
       'openai',
+      'anthropic',
+      'google',
+      'alibaba',
       'openrouter',
       'ollama_cloud',
-      'custom_new_vendor',
-    ]) {
+      'minimax',
+      'mistral',
+      'zai',
+      'xai',
+      'moonshot',
+      'custom_deepseek',
+    ]);
+    for (const id of Object.keys(CLOUD_PROVIDER_LABELS))
       expect(keepProviderInLocalEdition(id)).toBe(true);
-      expect(isLocalEditionCloudProvider(id)).toBe(true);
-    }
-    expect(keepProviderInLocalEdition('swarm')).toBe(true);
-    for (const id of ['swarm', 'omlx', 'lmstudio', 'ollama', 'llama_swap', 'local']) {
+    for (const id of [
+      'gemini_oauth',
+      'claude_code',
+      'chatgpt_codex',
+      'cursor_agent',
+      'custom_new_vendor',
+      'lmstudio',
+      'omlx',
+    ]) {
       expect(isLocalEditionCloudProvider(id)).toBe(false);
     }
+    expect(keepProviderInLocalEdition('swarm')).toBe(true);
   });
 
   it('isLocalProviderName stays the edition-derivation fragment test (mainBrand parity)', () => {

@@ -20,6 +20,20 @@ fn is_v1_endpoint(endpoint: &str) -> bool {
     normalized.ends_with("/v1") || endpoint.contains("/v1/")
 }
 
+fn azure_request_route(endpoint: &str, deployment: &str) -> (String, String) {
+    let endpoint = endpoint.trim_end_matches('/');
+    if is_v1_endpoint(endpoint) {
+        (endpoint.to_owned(), String::new())
+    } else {
+        let host = if endpoint.ends_with("/openai") {
+            endpoint.to_owned()
+        } else {
+            format!("{endpoint}/openai")
+        };
+        (host, format!("deployments/{deployment}/"))
+    }
+}
+
 pub struct AzureProvider;
 
 // Custom auth provider that wraps AzureAuth
@@ -80,16 +94,15 @@ impl ProviderDef for AzureProvider {
             let config = crate::config::Config::global();
             let endpoint: String = config.get_param("AZURE_OPENAI_ENDPOINT")?;
             let deployment_name: String = config.get_param("AZURE_OPENAI_DEPLOYMENT_NAME")?;
-            let api_version: Option<String> = config
-                .get_param("AZURE_OPENAI_API_VERSION")
-                .ok()
-                .or_else(|| {
-                    if is_v1_endpoint(&endpoint) {
-                        None
-                    } else {
-                        Some(AZURE_DEFAULT_API_VERSION.to_string())
-                    }
-                });
+            let api_version: Option<String> = if is_v1_endpoint(&endpoint) {
+                None
+            } else {
+                Some(
+                    config
+                        .get_param("AZURE_OPENAI_API_VERSION")
+                        .unwrap_or_else(|_| AZURE_DEFAULT_API_VERSION.to_string()),
+                )
+            };
 
             let api_key = config
                 .get_secret("AZURE_OPENAI_API_KEY")
@@ -105,7 +118,7 @@ impl ProviderDef for AzureProvider {
             })?;
 
             let auth_provider = AzureAuthProvider { auth };
-            let host = format!("{}/openai", endpoint.trim_end_matches('/'));
+            let (host, base_path) = azure_request_route(&endpoint, &deployment_name);
             let mut api_client = ApiClient::new_with_tls(
                 host,
                 AuthMethod::Custom(Box::new(auth_provider)),
@@ -119,7 +132,7 @@ impl ProviderDef for AzureProvider {
             Ok(OpenAiCompatibleProvider::new(
                 AZURE_PROVIDER_NAME.to_string(),
                 api_client,
-                format!("deployments/{}/", deployment_name),
+                base_path,
             ))
         })
     }
@@ -128,6 +141,34 @@ impl ProviderDef for AzureProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foundry_routes_do_not_append_legacy_paths_to_v1() {
+        assert_eq!(
+            azure_request_route(
+                "https://resource.services.ai.azure.com/openai/v1/",
+                "my-deployment"
+            ),
+            (
+                "https://resource.services.ai.azure.com/openai/v1".into(),
+                "".into()
+            )
+        );
+        assert_eq!(
+            azure_request_route("https://resource.openai.azure.com", "my-deployment"),
+            (
+                "https://resource.openai.azure.com/openai".into(),
+                "deployments/my-deployment/".into()
+            )
+        );
+        assert_eq!(
+            azure_request_route("https://resource.openai.azure.com/openai/", "my-deployment"),
+            (
+                "https://resource.openai.azure.com/openai".into(),
+                "deployments/my-deployment/".into()
+            )
+        );
+    }
 
     #[test]
     fn test_is_v1_endpoint() {
