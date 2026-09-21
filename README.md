@@ -200,7 +200,7 @@ Model ids are `provider/model`, split on the first `/` (`openrouter/anthropic/cl
 
 Auth is the server secret, sent either as `X-Secret-Key: <secret>` (every goosed route) or as `Authorization: Bearer <secret>` (these two routes only).
 
-Start a reachable goosed:
+`goosed` is the `goose-server` crate's binary. The desktop app does not bundle it (the app's own engine is `goose serve`, which speaks ACP, not this HTTP surface), so get it from the release — each macOS release carries a Developer-ID-signed, notarized `goosed-<version>-darwin-arm64.zip` — or build it: `cargo build --release -p goose-server --bin goosed`. Start it reachable:
 
 ```bash
 GOOSE_HOST=0.0.0.0 GOOSE_PORT=3000 GOOSE_SERVER__SECRET_KEY=change-me goosed agent
