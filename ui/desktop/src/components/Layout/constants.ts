@@ -1,6 +1,8 @@
 export const NAV_DIMENSIONS = {
-  /** Width of the navigation sidebar */
-  NAV_WIDTH: 240,
+  /** Default width of the navigation sidebar; the user drags its edge between MIN and MAX. */
+  NAV_WIDTH: 280,
+  NAV_MIN_WIDTH: 200,
+  NAV_MAX_WIDTH: 560,
 } as const;
 
 export const Z_INDEX = {

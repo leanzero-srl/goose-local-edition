@@ -56,7 +56,29 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
     return () => window.electron.off('fullscreen-change', handler);
   }, [safeIsMacOS]);
 
-  const { isNavExpanded, setIsNavExpanded } = useNavigationContext();
+  const { isNavExpanded, setIsNavExpanded, navWidth, setNavWidth } = useNavigationContext();
+  const [dragging, setDragging] = useState(false);
+
+  // The sidebar's right edge is a drag handle (ChatGPT's sidebar resizes the same way): pointer
+  // capture keeps the drag alive off the handle; the width is clamped and remembered by the context.
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = navWidth;
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => setNavWidth(startWidth + (ev.clientX - startX));
+    const onUp = () => {
+      setDragging(false);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
 
   if (!chatContext) {
     throw new Error('AppLayoutContent must be used within ChatProvider');
@@ -95,8 +117,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
         <motion.div
           key="nav"
           initial={false}
-          animate={{ width: isNavExpanded ? NAV_DIMENSIONS.NAV_WIDTH : 0 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 40 }}
+          animate={{ width: isNavExpanded ? navWidth : 0 }}
+          transition={dragging ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 40 }}
           style={{ height: '100%' }}
           className="relative flex-shrink-0 overflow-hidden h-full p-2"
         >
@@ -106,6 +128,23 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
           >
             <Navigation />
           </div>
+          {isNavExpanded && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize navigation"
+              aria-valuemin={NAV_DIMENSIONS.NAV_MIN_WIDTH}
+              aria-valuemax={NAV_DIMENSIONS.NAV_MAX_WIDTH}
+              aria-valuenow={navWidth}
+              data-testid="nav-resize-handle"
+              onPointerDown={startResize}
+              onDoubleClick={() => setNavWidth(NAV_DIMENSIONS.NAV_WIDTH)}
+              className={cx(
+                'absolute inset-y-2 right-0 w-2 cursor-col-resize select-none',
+                dragging ? 'bg-lz-accent' : 'hover:bg-lz-accent'
+              )}
+            />
+          )}
         </motion.div>
 
         {/* Main content — no border / no card; just flows on the canvas. */}

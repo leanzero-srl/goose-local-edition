@@ -104,7 +104,7 @@ describe('ProjectLanding', () => {
     expect(screen.getByText('What a project gives you')).toBeInTheDocument();
     expect(screen.getAllByTestId('lz-key-value-row')).toHaveLength(3);
     expect(screen.getByText('Working directory')).toBeInTheDocument();
-    expect(screen.getByText('Kept in Unfiled')).toBeInTheDocument();
+    expect(screen.getByText(/Becomes a project the moment/)).toBeInTheDocument();
     expect(container.querySelector('[data-variant="primary"]')).toBeNull();
     expect(container.querySelector('[style]')).toBeNull();
 

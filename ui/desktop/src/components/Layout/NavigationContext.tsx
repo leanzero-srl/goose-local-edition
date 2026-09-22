@@ -1,3 +1,4 @@
+import { NAV_DIMENSIONS } from './constants';
 import React, {
   createContext,
   ReactNode,
@@ -18,6 +19,28 @@ const NARROW_WINDOW_THRESHOLD = 700;
 interface NavigationContextValue {
   isNavExpanded: boolean;
   setIsNavExpanded: (expanded: boolean) => void;
+  /** The sidebar's width in CSS px, dragged at its right edge and remembered per viewer. */
+  navWidth: number;
+  setNavWidth: (width: number) => void;
+}
+
+const NAV_WIDTH_KEY = 'navigation_width';
+
+export function clampNavWidth(width: number): number {
+  if (!Number.isFinite(width)) return NAV_DIMENSIONS.NAV_WIDTH;
+  return Math.min(
+    NAV_DIMENSIONS.NAV_MAX_WIDTH,
+    Math.max(NAV_DIMENSIONS.NAV_MIN_WIDTH, Math.round(width))
+  );
+}
+
+function readStoredNavWidth(): number {
+  try {
+    const stored = localStorage.getItem(NAV_WIDTH_KEY);
+    return stored == null ? NAV_DIMENSIONS.NAV_WIDTH : clampNavWidth(Number(stored));
+  } catch {
+    return NAV_DIMENSIONS.NAV_WIDTH;
+  }
 }
 
 const NavigationContext = createContext<NavigationContextValue | null>(null);
@@ -47,6 +70,17 @@ export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children
   const setIsNavExpanded = useCallback((expanded: boolean) => {
     setIsNavExpandedState(expanded);
     localStorage.setItem('navigation_expanded', String(expanded));
+  }, []);
+
+  const [navWidth, setNavWidthState] = useState<number>(readStoredNavWidth);
+  const setNavWidth = useCallback((width: number) => {
+    const next = clampNavWidth(width);
+    setNavWidthState(next);
+    try {
+      localStorage.setItem(NAV_WIDTH_KEY, String(next));
+    } catch {
+      // a blocked store only loses the remembered width
+    }
   }, []);
 
   const isNavExpandedRef = useRef(isNavExpanded);
@@ -90,6 +124,8 @@ export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children
   const value: NavigationContextValue = {
     isNavExpanded,
     setIsNavExpanded,
+    navWidth,
+    setNavWidth,
   };
 
   return <NavigationContext.Provider value={value}>{children}</NavigationContext.Provider>;

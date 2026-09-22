@@ -120,14 +120,13 @@ describe('ProjectsSection (Studio look)', () => {
   });
 
   it('an expanded project draws a hairline guide beside 32px session rows; the current session carries the accent dot and the inset ring', async () => {
-    electronMocks([{ path: '/proj/goose', addedAt: 1 }]);
+    electronMocks([]);
     navMocks.activeSessionId.current = 'sess-1';
-    vi.mocked(acpListSessions).mockResolvedValue({
-      sessions: [listItem(), listItem({ id: 'sess-2', name: 'Ship the tree' })],
-      nextCursor: null,
-    });
+    navMocks.recentSessions.current = [
+      listItem(),
+      listItem({ id: 'sess-2', name: 'Ship the tree' }),
+    ];
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
     await screen.findByText('Fix the panel');
 
     const guide = screen.getByTestId('tree-guide');
@@ -158,8 +157,13 @@ describe('ProjectsSection (Studio look)', () => {
       expect(rest.ring).toBe(studioToken('--color-lz-accent', theme));
       const ink = await resolvedPaint(label, theme, { inherit: { bg: rest.bg ?? surface } });
       expect(contrast(ink.bg, ink.text)).toBeGreaterThan(4.5);
-      const hovered = await resolvedPaint(current, theme, { hover: true, inherit: { bg: surface } });
-      const hoveredInk = await resolvedPaint(label, theme, { inherit: { bg: hovered.bg ?? surface } });
+      const hovered = await resolvedPaint(current, theme, {
+        hover: true,
+        inherit: { bg: surface },
+      });
+      const hoveredInk = await resolvedPaint(label, theme, {
+        inherit: { bg: hovered.bg ?? surface },
+      });
       expect(contrast(hoveredInk.bg, hoveredInk.text)).toBeGreaterThan(4.5);
     }
   }, 30_000);
@@ -198,38 +202,41 @@ describe('ProjectsSection (Studio look)', () => {
   });
 
   it('the failure twin and the paging row keep the register: err meta plus a ghost Retry, a ghost More', async () => {
-    electronMocks([{ path: '/proj/goose', addedAt: 1 }]);
+    electronMocks([]);
+    navMocks.recentSessions.current = Array.from({ length: 5 }, (_, i) =>
+      listItem({ id: `s${i}`, name: `Session ${i}` })
+    );
     vi.mocked(acpListSessions)
       .mockRejectedValueOnce(new Error('agent down'))
       .mockResolvedValueOnce({ sessions: [listItem()], nextCursor: 'cursor-1' });
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
+    fireEvent.click(await screen.findByText('Show more'));
     const failed = await screen.findByText("Couldn't load sessions");
     expect(failed.className).toContain('text-lz-err');
     const retry = screen.getByText('Retry').closest('button') as HTMLElement;
     expect(retry.dataset.variant).toBe('ghost');
     fireEvent.click(retry);
     await screen.findByText('Fix the panel');
-    const more = screen.getByText('More sessions…').closest('button') as HTMLElement;
+    const more = screen.getByText('Show more').closest('button') as HTMLElement;
     expect(more.dataset.variant).toBe('ghost');
     expect(more.getAttribute('style')).toBeNull();
   });
 
-  it('with the tree, Unfiled and the menu all open: no banned pattern, and every class compiles against main.css', async () => {
+  it('with the tree, a paged folder and the menu all open: no banned pattern, and every class compiles against main.css', async () => {
     electronMocks([{ path: '/proj/goose', addedAt: 1 }]);
     navMocks.activeSessionId.current = 'loose';
     navMocks.recentSessions.current = [
       listItem({ id: 'loose', name: 'Loose chat', workingDir: '/elsewhere' }),
+      ...Array.from({ length: 5 }, (_, i) => listItem({ id: `s${i}`, name: `Session ${i}` })),
     ];
     vi.mocked(acpListSessions).mockResolvedValue({
       sessions: [listItem()],
       nextCursor: 'cursor-1',
     });
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
-    await screen.findByText('Fix the panel');
-    fireEvent.click(screen.getByText('Unfiled'));
     await screen.findByText('Loose chat');
+    fireEvent.click(await screen.findByText('Show more'));
+    await screen.findByText('Fix the panel');
     fireEvent.contextMenu(screen.getByText('goose'));
     screen.getByTestId('project-context-menu');
 

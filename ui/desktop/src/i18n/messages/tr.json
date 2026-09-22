@@ -2940,10 +2940,10 @@
     "defaultMessage": "Projelerinin altında listelenir"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Proje dışında"
+    "defaultMessage": "Başka herhangi bir klasör"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "“Sınıflandırılmamış” altında tutulur"
+    "defaultMessage": "Orada bir oturum çalıştığı anda proje olur"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Bir projenin size sağladıkları"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Geçerli oturum"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Oturumlarınızı gruplamak için bir proje klasörü ekleyin"
+    "defaultMessage": "Oturumlarınız burada çalıştıkları klasörün altında görünür. Bir tane başlatın veya bir klasör ekleyin."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Oturumlar yükleniyor…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Burada yeni oturum"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Klasör yok"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Henüz oturum yok"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Oturumlar yüklenemedi"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Sınıflandırılmamış"
+  "projectsSection.showLess": {
+    "defaultMessage": "Daha az göster"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Daha fazla göster"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Adsız oturum"

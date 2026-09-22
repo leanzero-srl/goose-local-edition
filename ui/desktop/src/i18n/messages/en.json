@@ -2940,10 +2940,10 @@
     "defaultMessage": "Listed under their project"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Outside a project"
+    "defaultMessage": "Any other folder"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Kept in Unfiled"
+    "defaultMessage": "Becomes a project the moment a session runs there"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "What a project gives you"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Current session"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Add a project folder to scope your sessions"
+    "defaultMessage": "Your sessions appear here under the folder they ran in. Start one, or add a folder."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Loading sessions…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "New session here"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "No folder"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "No sessions yet"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Couldn't load sessions"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Unfiled"
+  "projectsSection.showLess": {
+    "defaultMessage": "Show less"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Show more"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Untitled session"

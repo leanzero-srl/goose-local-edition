@@ -2940,10 +2940,10 @@
     "defaultMessage": "列在所屬專案之下"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "專案之外"
+    "defaultMessage": "任何其他資料夾"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "保留在「未歸檔」中"
+    "defaultMessage": "一旦在那裡執行工作階段，就會成為專案"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "專案為你提供什麼"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "目前的工作階段"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "新增專案資料夾來歸類您的工作階段"
+    "defaultMessage": "你的工作階段會依執行時所在的資料夾顯示在這裡。開始一個工作階段，或新增一個資料夾。"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "正在載入工作階段…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "在此開新工作階段"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "無資料夾"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "還沒有工作階段"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "無法載入工作階段"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "未歸檔"
+  "projectsSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "顯示更多"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "未命名的工作階段"

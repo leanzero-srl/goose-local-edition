@@ -2940,10 +2940,10 @@
     "defaultMessage": "해당 프로젝트 아래에 표시"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "프로젝트 외부"
+    "defaultMessage": "다른 모든 폴더"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "“미분류”에 보관"
+    "defaultMessage": "거기서 세션이 실행되는 순간 프로젝트가 됩니다"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "프로젝트가 제공하는 것"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "현재 세션"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "프로젝트 폴더를 추가해 세션을 정리하세요"
+    "defaultMessage": "세션은 실행된 폴더 아래 여기에 표시됩니다. 세션을 시작하거나 폴더를 추가하세요."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "세션 불러오는 중…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "여기에 새 세션"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "폴더 없음"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "아직 세션이 없습니다"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "세션을 불러올 수 없습니다"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "미분류"
+  "projectsSection.showLess": {
+    "defaultMessage": "간략히 보기"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "더 보기"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "제목 없는 세션"

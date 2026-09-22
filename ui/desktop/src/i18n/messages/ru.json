@@ -2940,10 +2940,10 @@
     "defaultMessage": "Перечислены под своим проектом"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Вне проекта"
+    "defaultMessage": "Любая другая папка"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Хранятся в «Без проекта»"
+    "defaultMessage": "Становится проектом, как только там запускается сессия"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Что даёт проект"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Текущая сессия"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Добавьте папку проекта, чтобы сгруппировать сеансы"
+    "defaultMessage": "Ваши сессии появляются здесь под папкой, в которой они выполнялись. Начните одну или добавьте папку."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Загрузка сеансов…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Новый сеанс здесь"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Без папки"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Пока нет сеансов"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Не удалось загрузить сеансы"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Без проекта"
+  "projectsSection.showLess": {
+    "defaultMessage": "Свернуть"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Показать ещё"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Сеанс без названия"

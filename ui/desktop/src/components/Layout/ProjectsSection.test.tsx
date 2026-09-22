@@ -1,20 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
-import { ProjectsSection, isUnfiledSession, normalizeDirPath } from './ProjectsSection';
+import {
+  ProjectsSection,
+  deriveProjects,
+  normalizeDirPath,
+  PREVIEW_COUNT,
+} from './ProjectsSection';
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
 import { startNewSession } from '../../sessions';
 import { AppEvents } from '../../constants/events';
 
 /**
- * The Projects tree: user-curated folders in the sidebar, each expanding to ITS sessions via the
- * server-side cwd filter, with new sessions inheriting the project's directory and removal
- * touching the registry only. Every claim here is one the sidebar makes to the user.
+ * The Projects tree: folders DERIVED from where sessions ran, each showing its sessions newest
+ * first with "Show more" behind the preview, no "Unfiled" bucket, the "+" registry only adding an
+ * empty folder to start from. Every claim here is one the sidebar makes to the user.
  */
 
 const navMocks = vi.hoisted(() => ({
   recentSessions: { current: [] as unknown[] },
+  activeSessionId: { current: undefined as string | undefined },
   fetchSessions: vi.fn(),
   handleSessionClick: vi.fn(),
 }));
@@ -35,24 +41,25 @@ vi.mock('../../acp/sessions', () => ({
 }));
 
 vi.mock('../../hooks/useNavigationSessions', () => ({
-  sessionToListItem: (s: Record<string, unknown>) => s,
   useNavigationSessions: () => ({
     recentSessions: navMocks.recentSessions.current,
-    activeSessionId: undefined,
+    activeSessionId: navMocks.activeSessionId.current,
     fetchSessions: navMocks.fetchSessions,
     handleNavClick: vi.fn(),
     handleSessionClick: navMocks.handleSessionClick,
   }),
 }));
 
+const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+
 function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
   return {
     id: 'sess-1',
     name: 'Fix the panel',
     workingDir: '/proj/goose',
-    updatedAt: new Date().toISOString(),
+    updatedAt: at(1),
     messageCount: 4,
-    createdAt: new Date().toISOString(),
+    createdAt: at(1),
     ...overrides,
   };
 }
@@ -90,89 +97,134 @@ describe('ProjectsSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     navMocks.recentSessions.current = [];
+    navMocks.activeSessionId.current = undefined;
     vi.mocked(acpListSessions).mockResolvedValue({ sessions: [], nextCursor: null });
     vi.mocked(startNewSession).mockResolvedValue(undefined as never);
   });
 
-  it('shows the inviting empty state when no projects are registered', async () => {
+  it('with no sessions and no folders it says where sessions will appear', async () => {
     electronMocks();
     renderSection();
     expect(
-      await screen.findByText('Add a project folder to scope your sessions')
+      await screen.findByText(/Your sessions appear here under the folder/)
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Add a project folder')).toBeInTheDocument();
+    expect(screen.queryByText('Unfiled')).not.toBeInTheDocument();
   });
 
-  it('expanding a project fetches ITS sessions with the server-side cwd filter', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
-    vi.mocked(acpListSessions).mockResolvedValue({
-      sessions: [listItem(), listItem({ id: 'sess-2', name: 'Ship the tree' })],
-      nextCursor: null,
-    });
-
+  it('groups sessions by their working directory — one folder row each, sessions under it, newest folder first', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = [
+      listItem({ id: 'a', name: 'Older goose work', workingDir: '/proj/goose', updatedAt: at(50) }),
+      listItem({ id: 'b', name: 'Forge fix', workingDir: '/proj/lz-ppm-forge/', updatedAt: at(5) }),
+      listItem({ id: 'c', name: 'Newest goose work', workingDir: '/proj/goose', updatedAt: at(2) }),
+    ];
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
 
-    await waitFor(() => expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/proj/goose' }));
-    expect(await screen.findByText('Fix the panel')).toBeInTheDocument();
-    expect(screen.getByText('Ship the tree')).toBeInTheDocument();
+    const rows = await screen.findAllByRole('button', { expanded: true });
+    expect(rows.map((r) => r.textContent)).toEqual(['goose', 'lz-ppm-forge']);
+    expect(screen.queryByText('Unfiled')).not.toBeInTheDocument();
+
+    const goose = screen.getByTestId('project-row-/proj/goose');
+    const names = within(goose)
+      .getAllByRole('button')
+      .map((b) => b.textContent)
+      .filter((t) => /goose work/.test(t ?? ''));
+    expect(names[0]).toMatch(/Newest goose work/);
+    expect(names[1]).toMatch(/Older goose work/);
+    expect(
+      within(screen.getByTestId('project-row-/proj/lz-ppm-forge')).getByText('Forge fix')
+    ).toBeInTheDocument();
+    expect(acpListSessions).not.toHaveBeenCalled();
   });
 
-  it('an expanded project with no sessions says so honestly', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
-
-    renderSection();
-    fireEvent.click(await screen.findByText('goose'));
-
-    expect(await screen.findByText('No sessions yet')).toBeInTheDocument();
-  });
-
-  it('offers a More row while a cursor remains and pages with that cursor', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
+  it('previews the newest sessions, "Show more" reveals the rest, then pages the server with the exact cwd', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = Array.from({ length: PREVIEW_COUNT + 2 }, (_, i) =>
+      listItem({ id: `s${i}`, name: `Session ${i}`, updatedAt: at(i + 1) })
+    );
     vi.mocked(acpListSessions)
-      .mockResolvedValueOnce({ sessions: [listItem()], nextCursor: 'cursor-1' })
       .mockResolvedValueOnce({
-        sessions: [listItem({ id: 'sess-2', name: 'Older work' })],
+        sessions: [listItem({ id: 'old-1', name: 'Paged from the server', updatedAt: at(999) })],
+        nextCursor: 'cursor-1',
+      })
+      .mockResolvedValueOnce({
+        sessions: [listItem({ id: 'old-2', name: 'Even older', updatedAt: at(1999) })],
         nextCursor: null,
       });
-
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
 
-    fireEvent.click(await screen.findByText('More sessions…'));
+    expect(await screen.findByText('Session 0')).toBeInTheDocument();
+    expect(screen.getByText(`Session ${PREVIEW_COUNT - 1}`)).toBeInTheDocument();
+    expect(screen.queryByText(`Session ${PREVIEW_COUNT}`)).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByText('Show more'));
+    expect(await screen.findByText(`Session ${PREVIEW_COUNT + 1}`)).toBeInTheDocument();
+    expect(acpListSessions).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Show more'));
+    await waitFor(() => expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/proj/goose' }));
+    expect(await screen.findByText('Paged from the server')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Show more'));
     await waitFor(() =>
       expect(acpListSessions).toHaveBeenCalledWith('cursor-1', { cwd: '/proj/goose' })
     );
-    expect(await screen.findByText('Older work')).toBeInTheDocument();
-    expect(screen.queryByText('More sessions…')).not.toBeInTheDocument();
+    expect(await screen.findByText('Even older')).toBeInTheDocument();
+    expect(screen.queryByText('Show more')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Show less'));
+    expect(screen.queryByText('Even older')).not.toBeInTheDocument();
+    expect(screen.getByText('Session 0')).toBeInTheDocument();
   });
 
-  it('renders the FAILURE twin when the session list cannot load, with a retry', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
+  it('renders the FAILURE twin when paging cannot load, with a retry', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = Array.from({ length: PREVIEW_COUNT }, (_, i) =>
+      listItem({ id: `s${i}`, name: `Session ${i}`, updatedAt: at(i + 1) })
+    );
     vi.mocked(acpListSessions)
       .mockRejectedValueOnce(new Error('agent down'))
-      .mockResolvedValueOnce({ sessions: [listItem()], nextCursor: null });
-
+      .mockResolvedValueOnce({
+        sessions: [listItem({ id: 'old', name: 'Recovered', updatedAt: at(500) })],
+        nextCursor: null,
+      });
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
+    fireEvent.click(await screen.findByText('Show more'));
 
     expect(await screen.findByText("Couldn't load sessions")).toBeInTheDocument();
     fireEvent.click(screen.getByText('Retry'));
-    expect(await screen.findByText('Fix the panel')).toBeInTheDocument();
+    expect(await screen.findByText('Recovered')).toBeInTheDocument();
   });
 
-  it('a new session from the project row inherits the PROJECT path via startNewSession', async () => {
+  it('a registered folder with no sessions is listed, says so, and is the only kind that can be removed', async () => {
     const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
+    mocks.listProjects.mockResolvedValue([{ path: '/proj/empty', addedAt: 1 }]);
+    mocks.removeProject.mockResolvedValue([]);
+    navMocks.recentSessions.current = [listItem()];
+    renderSection();
 
+    const empty = await screen.findByTestId('project-row-/proj/empty');
+    expect(within(empty).getByText('No sessions yet')).toBeInTheDocument();
+
+    fireEvent.contextMenu(screen.getByText('goose'));
+    expect(await screen.findByTestId('project-context-menu')).toBeInTheDocument();
+    expect(screen.queryByText('Remove from projects')).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.contextMenu(screen.getByText('empty'));
+    fireEvent.click(await screen.findByText('Remove from projects'));
+    fireEvent.click(await screen.findByText('Confirm remove (keeps files & sessions)'));
+    await waitFor(() => expect(mocks.removeProject).toHaveBeenCalledWith('/proj/empty'));
+    const { acpDeleteSession } = await import('../../acp/sessions');
+    expect(acpDeleteSession).not.toHaveBeenCalled();
+  });
+
+  it('a new session from a folder row inherits that directory via startNewSession', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = [listItem()];
     renderSection();
     fireEvent.click(await screen.findByLabelText('New session here — goose'));
-
     await waitFor(() =>
       expect(startNewSession).toHaveBeenCalledWith(undefined, expect.any(Function), '/proj/goose', {
         allExtensions: [],
@@ -180,110 +232,71 @@ describe('ProjectsSection', () => {
     );
   });
 
-  it('remove goes through the registry ONLY: removeProject IPC, never session deletion', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([
-      { path: '/proj/goose', addedAt: 1 },
-      { path: '/proj/other', addedAt: 2 },
-    ]);
-    mocks.removeProject.mockResolvedValue([{ path: '/proj/other', addedAt: 2 }]);
-
-    renderSection();
-    fireEvent.contextMenu(await screen.findByText('goose'));
-    fireEvent.click(await screen.findByText('Remove from projects'));
-    fireEvent.click(await screen.findByText('Confirm remove (keeps files & sessions)'));
-
-    await waitFor(() => expect(mocks.removeProject).toHaveBeenCalledWith('/proj/goose'));
-    await waitFor(() => expect(screen.queryByText('goose')).not.toBeInTheDocument());
-    expect(screen.getByText('other')).toBeInTheDocument();
-
-    const { acpDeleteSession } = await import('../../acp/sessions');
-    expect(acpDeleteSession).not.toHaveBeenCalled();
-  });
-
-  it('Unfiled lists ONLY sessions whose workingDir matches no project (exact, like the server)', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
-    navMocks.recentSessions.current = [
-      listItem({ id: 'filed', name: 'Filed chat', workingDir: '/proj/goose/' }),
-      listItem({ id: 'sub', name: 'Subdir chat', workingDir: '/proj/goose/deep' }),
-      listItem({ id: 'loose', name: 'Loose chat', workingDir: '/elsewhere' }),
-    ];
-
-    renderSection();
-
-    const unfiledHeader = await screen.findByText('Unfiled');
-    expect(screen.getByText('2')).toBeInTheDocument();
-
-    fireEvent.click(unfiledHeader);
-    expect(await screen.findByText('Subdir chat')).toBeInTheDocument();
-    expect(screen.getByText('Loose chat')).toBeInTheDocument();
-    expect(screen.queryByText('Filed chat')).not.toBeInTheDocument();
-  });
-
   it('clicking a session row opens it through the existing open-session handler', async () => {
-    const mocks = electronMocks();
-    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
-    vi.mocked(acpListSessions).mockResolvedValue({ sessions: [listItem()], nextCursor: null });
-
+    electronMocks();
+    navMocks.recentSessions.current = [listItem()];
     renderSection();
-    fireEvent.click(await screen.findByText('goose'));
     fireEvent.click(await screen.findByText('Fix the panel'));
-
     expect(navMocks.handleSessionClick).toHaveBeenCalledWith('sess-1');
   });
 
-  it('adding a project seeds the OS picker, registers the pick, and expands it', async () => {
-    const mocks = electronMocks();
-    mocks.directoryChooser.mockResolvedValue({ canceled: false, filePaths: ['/picked/app'] });
-    mocks.addProject.mockResolvedValue([{ path: '/picked/app', addedAt: 3 }]);
-
+  it('a folder collapses and expands, showing its count while collapsed', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = [listItem(), listItem({ id: 's2', name: 'Second' })];
     renderSection();
-    fireEvent.click(await screen.findByLabelText('Add a project folder'));
-
-    await waitFor(() => expect(mocks.addProject).toHaveBeenCalledWith('/picked/app'));
-    expect(await screen.findByText('app')).toBeInTheDocument();
-    await waitFor(() => expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/picked/app' }));
+    const row = await screen.findByRole('button', { name: /goose/, expanded: true });
+    fireEvent.click(row);
+    expect(screen.queryByText('Fix the panel')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('project-row-/proj/goose')).getByText('2')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /goose/, expanded: false }));
+    expect(await screen.findByText('Fix the panel')).toBeInTheDocument();
   });
 
-  it('a PROJECTS_CHANGED broadcast from another surface (the home landing) registers AND expands', async () => {
+  it('a PROJECTS_CHANGED broadcast from another surface (the home landing) lists the new folder', async () => {
     electronMocks();
     renderSection();
-    await screen.findByText('Add a project folder to scope your sessions');
-
+    await screen.findByText(/Your sessions appear here/);
     const entry = { path: '/from/landing', addedAt: 9 };
     window.dispatchEvent(
-      new CustomEvent(AppEvents.PROJECTS_CHANGED, {
-        detail: { projects: [entry], added: [entry] },
-      })
+      new CustomEvent(AppEvents.PROJECTS_CHANGED, { detail: { projects: [entry], added: [entry] } })
     );
-
     expect(await screen.findByText('landing')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/from/landing' })
-    );
   });
 });
 
-describe('unfiled membership (mirrors the server exact-match cwd filter)', () => {
-  const projects = new Set(['/proj/goose']);
+describe('deriveProjects', () => {
+  const s = (id: string, dir: string, minutesAgo: number): SessionListItem =>
+    listItem({ id, workingDir: dir, updatedAt: at(minutesAgo) });
 
-  it('exact match is filed, trailing slashes notwithstanding', () => {
-    expect(isUnfiledSession('/proj/goose', projects)).toBe(false);
-    expect(isUnfiledSession('/proj/goose/', projects)).toBe(false);
+  it('one folder per normalized directory, sessions newest first, folders by last activity', () => {
+    const projects = deriveProjects(
+      [s('a', '/x/goose/', 30), s('b', '/y/forge', 10), s('c', '/x/goose', 1)],
+      []
+    );
+    expect(projects.map((p) => p.path)).toEqual(['/x/goose', '/y/forge']);
+    expect(projects[0].sessions.map((x) => x.id)).toEqual(['c', 'a']);
+    expect(projects[0].name).toBe('goose');
+    expect(projects.every((p) => !p.registered)).toBe(true);
   });
 
-  it('a SUBdirectory is unfiled — the server would never list it under the project', () => {
-    expect(isUnfiledSession('/proj/goose/sub', projects)).toBe(true);
-  });
-
-  it('unknown and missing dirs are unfiled', () => {
-    expect(isUnfiledSession('/elsewhere', projects)).toBe(true);
-    expect(isUnfiledSession(undefined, projects)).toBe(true);
+  it('a registered folder joins its sessions, or stands empty at the end', () => {
+    const projects = deriveProjects(
+      [s('a', '/x/goose', 1)],
+      [
+        { path: '/x/goose/', addedAt: 1 },
+        { path: '/z/empty', addedAt: 2 },
+      ]
+    );
+    expect(projects.map((p) => [p.path, p.registered, p.sessions.length])).toEqual([
+      ['/x/goose', true, 1],
+      ['/z/empty', true, 0],
+    ]);
   });
 
   it('normalizeDirPath keeps root as root', () => {
     expect(normalizeDirPath('/')).toBe('/');
-    expect(normalizeDirPath('/a/b/')).toBe('/a/b');
+    expect(normalizeDirPath('///')).toBe('/');
   });
 });

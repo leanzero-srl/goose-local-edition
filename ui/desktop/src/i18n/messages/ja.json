@@ -2940,10 +2940,10 @@
     "defaultMessage": "所属するプロジェクトの下に一覧表示"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "プロジェクト外"
+    "defaultMessage": "その他のフォルダー"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "「未分類」に保持"
+    "defaultMessage": "そこでセッションを実行した時点でプロジェクトになります"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "プロジェクトでできること"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "現在のセッション"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "プロジェクトフォルダを追加してセッションを整理しましょう"
+    "defaultMessage": "セッションは実行したフォルダーの下にここに表示されます。セッションを開始するか、フォルダーを追加してください。"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "セッションを読み込み中…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "ここで新しいセッション"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "フォルダーなし"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "まだセッションはありません"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "セッションを読み込めませんでした"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "未分類"
+  "projectsSection.showLess": {
+    "defaultMessage": "表示を減らす"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "もっと見る"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "無題のセッション"

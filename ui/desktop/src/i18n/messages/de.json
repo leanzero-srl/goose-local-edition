@@ -2940,10 +2940,10 @@
     "defaultMessage": "Unter ihrem Projekt aufgeführt"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Außerhalb eines Projekts"
+    "defaultMessage": "Jeder andere Ordner"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Unter „Nicht zugeordnet“ abgelegt"
+    "defaultMessage": "Wird zum Projekt, sobald dort eine Sitzung läuft"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Was ein Projekt dir gibt"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Aktuelle Sitzung"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Fügen Sie einen Projektordner hinzu, um Ihre Sitzungen zu bündeln"
+    "defaultMessage": "Deine Sitzungen erscheinen hier unter dem Ordner, in dem sie liefen. Starte eine oder füge einen Ordner hinzu."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Sitzungen werden geladen…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Neue Sitzung hier"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Kein Ordner"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Noch keine Sitzungen"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Sitzungen konnten nicht geladen werden"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Nicht zugeordnet"
+  "projectsSection.showLess": {
+    "defaultMessage": "Weniger anzeigen"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Mehr anzeigen"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Unbenannte Sitzung"

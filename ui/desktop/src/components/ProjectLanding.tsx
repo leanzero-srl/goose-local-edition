@@ -51,11 +51,11 @@ const i18n = defineMessages({
   },
   giveUnfiledLabel: {
     id: 'projectLanding.giveUnfiledLabel',
-    defaultMessage: 'Outside a project',
+    defaultMessage: 'Any other folder',
   },
   giveUnfiledValue: {
     id: 'projectLanding.giveUnfiledValue',
-    defaultMessage: 'Kept in Unfiled',
+    defaultMessage: 'Becomes a project the moment a session runs there',
   },
 });
 

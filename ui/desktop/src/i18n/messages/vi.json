@@ -2940,10 +2940,10 @@
     "defaultMessage": "Được liệt kê dưới dự án của chúng"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Ngoài dự án"
+    "defaultMessage": "Bất kỳ thư mục nào khác"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Được giữ trong “Chưa phân loại”"
+    "defaultMessage": "Trở thành dự án ngay khi một phiên chạy ở đó"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Dự án mang lại cho bạn điều gì"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Phiên hiện tại"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Thêm một thư mục dự án để gom các phiên của bạn"
+    "defaultMessage": "Các phiên của bạn xuất hiện ở đây dưới thư mục nơi chúng chạy. Bắt đầu một phiên, hoặc thêm thư mục."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Đang tải phiên…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Phiên mới tại đây"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Không có thư mục"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Chưa có phiên nào"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Không thể tải phiên"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Chưa phân loại"
+  "projectsSection.showLess": {
+    "defaultMessage": "Ẩn bớt"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Hiện thêm"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Phiên không tên"

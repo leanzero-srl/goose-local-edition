@@ -2940,10 +2940,10 @@
     "defaultMessage": "अपने प्रोजेक्ट के अंतर्गत सूचीबद्ध"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "प्रोजेक्ट से बाहर"
+    "defaultMessage": "कोई अन्य फ़ोल्डर"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "“अवर्गीकृत” में रखे जाते हैं"
+    "defaultMessage": "जैसे ही वहाँ कोई सत्र चलता है, प्रोजेक्ट बन जाता है"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "एक प्रोजेक्ट आपको क्या देता है"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "वर्तमान सत्र"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "अपने सत्रों को व्यवस्थित करने के लिए एक प्रोजेक्ट फ़ोल्डर जोड़ें"
+    "defaultMessage": "आपके सत्र यहाँ उस फ़ोल्डर के नीचे दिखते हैं जिसमें वे चले। एक शुरू करें, या कोई फ़ोल्डर जोड़ें।"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "सत्र लोड हो रहे हैं…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "यहाँ नया सत्र"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "कोई फ़ोल्डर नहीं"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "अभी कोई सत्र नहीं"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "सत्र लोड नहीं हो सके"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "अवर्गीकृत"
+  "projectsSection.showLess": {
+    "defaultMessage": "कम दिखाएँ"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "और दिखाएँ"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "बिना शीर्षक सत्र"

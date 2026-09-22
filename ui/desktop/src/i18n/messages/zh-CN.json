@@ -2940,10 +2940,10 @@
     "defaultMessage": "列在所属项目之下"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "项目之外"
+    "defaultMessage": "任何其他文件夹"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "保留在“未归档”中"
+    "defaultMessage": "一旦在那里运行会话，就会成为项目"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "项目为你提供什么"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "当前会话"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "添加项目文件夹来归类你的会话"
+    "defaultMessage": "你的会话会按运行时所在的文件夹显示在这里。开始一个会话，或添加一个文件夹。"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "正在加载会话…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "在此新建会话"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "无文件夹"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "还没有会话"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "无法加载会话"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "未归档"
+  "projectsSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "显示更多"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "无标题会话"

@@ -2940,10 +2940,10 @@
     "defaultMessage": "Tercantum di bawah proyeknya"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Di luar proyek"
+    "defaultMessage": "Folder lain apa pun"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Disimpan di “Tanpa kategori”"
+    "defaultMessage": "Menjadi proyek begitu sesi berjalan di sana"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Apa yang diberikan sebuah proyek"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Sesi saat ini"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Tambahkan folder proyek untuk mengelompokkan sesi Anda"
+    "defaultMessage": "Sesi Anda muncul di sini di bawah folder tempat sesi berjalan. Mulai satu, atau tambahkan folder."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Memuat sesi…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Sesi baru di sini"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Tanpa folder"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Belum ada sesi"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Tidak dapat memuat sesi"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Tanpa kategori"
+  "projectsSection.showLess": {
+    "defaultMessage": "Tampilkan lebih sedikit"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Tampilkan lebih banyak"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesi tanpa judul"

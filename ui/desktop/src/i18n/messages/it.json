@@ -2940,10 +2940,10 @@
     "defaultMessage": "Elencate sotto il loro progetto"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Fuori da un progetto"
+    "defaultMessage": "Qualsiasi altra cartella"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Conservate in «Non archiviate»"
+    "defaultMessage": "Diventa un progetto non appena vi gira una sessione"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "Cosa ti dà un progetto"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Sessione corrente"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Aggiungi una cartella di progetto per raggruppare le tue sessioni"
+    "defaultMessage": "Le tue sessioni compaiono qui sotto la cartella in cui sono state eseguite. Avviane una o aggiungi una cartella."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Caricamento sessioni…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Nuova sessione qui"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Nessuna cartella"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Ancora nessuna sessione"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Impossibile caricare le sessioni"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Non archiviate"
+  "projectsSection.showLess": {
+    "defaultMessage": "Mostra meno"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Mostra altro"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sessione senza titolo"

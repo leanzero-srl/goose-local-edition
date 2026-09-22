@@ -7,7 +7,6 @@ import {
   Copy,
   Folder,
   FolderOpen,
-  Inbox,
   MessageSquarePlus,
   MoreVertical,
   Plus,
@@ -16,7 +15,7 @@ import {
 import { toast } from 'react-toastify';
 import { useConfig } from '../ConfigContext';
 import { useNavigation } from '../../hooks/useNavigation';
-import { useNavigationSessions, sessionToListItem } from '../../hooks/useNavigationSessions';
+import { useNavigationSessions } from '../../hooks/useNavigationSessions';
 import { startNewSession, displaySessionListName } from '../../sessions';
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
 import { AppEvents } from '../../constants/events';
@@ -27,7 +26,6 @@ import {
 } from '../../utils/addProjectFlow';
 import { sessionActivityAt } from '../../utils/dateUtils';
 import type { ProjectEntry } from '../../utils/projectDirs';
-import type { Session } from '../../types/session';
 import {
   Button,
   SectionHeader,
@@ -56,7 +54,8 @@ const i18n = defineMessages({
   },
   emptyState: {
     id: 'projectsSection.emptyState',
-    defaultMessage: 'Add a project folder to scope your sessions',
+    defaultMessage:
+      'Your sessions appear here under the folder they ran in. Start one, or add a folder.',
   },
   newSessionHere: {
     id: 'projectsSection.newSessionHere',
@@ -102,9 +101,17 @@ const i18n = defineMessages({
     id: 'projectsSection.moreSessions',
     defaultMessage: 'More sessions…',
   },
-  unfiled: {
-    id: 'projectsSection.unfiled',
-    defaultMessage: 'Unfiled',
+  showMore: {
+    id: 'projectsSection.showMore',
+    defaultMessage: 'Show more',
+  },
+  showLess: {
+    id: 'projectsSection.showLess',
+    defaultMessage: 'Show less',
+  },
+  noFolder: {
+    id: 'projectsSection.noFolder',
+    defaultMessage: 'No folder',
   },
   moreActions: {
     id: 'projectsSection.moreActions',
@@ -134,17 +141,70 @@ export function normalizeDirPath(dir: string): string {
   return trimmed.length > 0 ? trimmed : '/';
 }
 
+/** How many sessions a folder shows before "Show more" — the sidebar's density, not a storage cap. */
+export const PREVIEW_COUNT = 5;
+
+export interface DerivedProject {
+  /** The normalized working directory; the grouping key and the cwd filter for paging. */
+  path: string;
+  name: string;
+  /** Sessions known from the recent list, newest first. */
+  sessions: SessionListItem[];
+  /** In the user's folder registry (added with "+"); such a folder stays listed with no sessions. */
+  registered: boolean;
+  lastActivity: number;
+}
+
 /**
- * A session is UNFILED when its workingDir exactly matches no registered project. Exact match on
- * purpose: the server's cwd filter is exact, so a session in a project's SUBdirectory would never
- * appear under the project row — calling it "filed" here would make it vanish from the sidebar.
+ * Projects are DERIVED from where sessions ran — one folder per distinct working directory, its
+ * sessions under it, newest folder first — the way ChatGPT Codex groups work. The "+" registry
+ * only adds empty folders the user wants to start from; a folder with sessions needs no registry.
+ * There is no "Unfiled": every session has a directory, so every session has a folder.
  */
-export function isUnfiledSession(
-  workingDir: string | undefined,
-  projectPaths: ReadonlySet<string>
-): boolean {
-  if (!workingDir) return true;
-  return !projectPaths.has(normalizeDirPath(workingDir));
+export function deriveProjects(
+  sessions: readonly SessionListItem[],
+  registry: readonly ProjectEntry[]
+): DerivedProject[] {
+  const byPath = new Map<string, DerivedProject>();
+  const activityOf = (s: SessionListItem) => Date.parse(sessionActivityAt(s) ?? '') || 0;
+  for (const session of sessions) {
+    const path = normalizeDirPath(session.workingDir ?? '');
+    const at = activityOf(session);
+    const cur = byPath.get(path);
+    if (cur) {
+      cur.sessions.push(session);
+      cur.lastActivity = Math.max(cur.lastActivity, at);
+    } else {
+      byPath.set(path, {
+        path,
+        name: folderName(path),
+        sessions: [session],
+        registered: false,
+        lastActivity: at,
+      });
+    }
+  }
+  for (const entry of registry) {
+    const path = normalizeDirPath(entry.path);
+    const cur = byPath.get(path);
+    if (cur) {
+      cur.registered = true;
+    } else {
+      byPath.set(path, {
+        path,
+        name: folderName(path),
+        sessions: [],
+        registered: true,
+        lastActivity: 0,
+      });
+    }
+  }
+  const projects = [...byPath.values()];
+  for (const project of projects) {
+    project.sessions.sort((a, b) => activityOf(b) - activityOf(a));
+  }
+  projects.sort((a, b) => b.lastActivity - a.lastActivity || a.name.localeCompare(b.name));
+  return projects;
 }
 
 /** Last path segment of a directory — the display name of a project. */
@@ -171,6 +231,8 @@ function timeAgo(iso: string | undefined): string {
   return w < 5 ? `${w}w ago` : `${Math.round(d / 30)}mo ago`;
 }
 
+/** Sessions PAGED from the server beyond the recent list, per folder; `expandedAll` once the
+ *  user asked for more than the preview. */
 export interface ProjectSessionsState {
   sessions: SessionListItem[];
   nextCursor: string | null;
@@ -222,7 +284,8 @@ const ProjectContextMenu: React.FC<{
   onNewSession: () => void;
   onReveal: () => void;
   onCopyPath: () => void;
-  onRemove: () => void;
+  /** Absent for a folder derived from sessions — nothing to remove from. */
+  onRemove?: () => void;
   onClose: () => void;
 }> = ({ x, y, onNewSession, onReveal, onCopyPath, onRemove, onClose }) => {
   const intl = useIntl();
@@ -273,8 +336,8 @@ const ProjectContextMenu: React.FC<{
         <button className={itemCls} onClick={onCopyPath}>
           <Copy className="size-3.5 text-lz-ink-3" /> {intl.formatMessage(i18n.copyPath)}
         </button>
-        <div className={cx('my-1 border-t', SURFACE.hairline)} />
-        {confirming ? (
+        {onRemove && <div className={cx('my-1 border-t', SURFACE.hairline)} />}
+        {!onRemove ? null : confirming ? (
           <button className={cx(itemBase, TONE_FILL.err, 'hover:bg-lz-err')} onClick={onRemove}>
             <Check className="size-3.5" strokeWidth={3} /> {intl.formatMessage(i18n.confirmRemove)}
           </button>
@@ -315,15 +378,18 @@ const SessionLeafRow: React.FC<{
 };
 
 interface ProjectRowProps {
-  project: ProjectEntry;
+  project: DerivedProject;
   expanded: boolean;
+  /** Sessions beyond the recent list, paged from the server (after "Show more"). */
   state: ProjectSessionsState | undefined;
+  showAll: boolean;
   activeSessionId?: string;
   onToggle: () => void;
   onNewSession: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   onOpenSession: (sessionId: string) => void;
-  onLoadMore: (cursor: string) => void;
+  onShowMore: () => void;
+  onShowLess: () => void;
   onRetry: () => void;
 }
 
@@ -331,17 +397,19 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   project,
   expanded,
   state,
+  showAll,
   activeSessionId,
   onToggle,
   onNewSession,
   onRemove,
   onOpenSession,
-  onLoadMore,
+  onShowMore,
+  onShowLess,
   onRetry,
 }) => {
   const intl = useIntl();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const name = folderName(project.path);
+  const name = project.name || intl.formatMessage(i18n.noFolder);
 
   const reveal = useCallback(() => {
     setMenu(null);
@@ -359,15 +427,34 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
     onNewSession();
   }, [onNewSession]);
 
-  const remove = useCallback(() => {
-    setMenu(null);
-    onRemove();
-  }, [onRemove]);
+  const remove = useMemo(
+    () =>
+      onRemove
+        ? () => {
+            setMenu(null);
+            onRemove();
+          }
+        : undefined,
+    [onRemove]
+  );
+
+  // The recent list first, then whatever the server paged beyond it; one row per session.
+  const known = useMemo(() => {
+    const seen = new Set(project.sessions.map((s) => s.id));
+    const paged = (state?.sessions ?? []).filter((s) => !seen.has(s.id));
+    return [...project.sessions, ...paged];
+  }, [project.sessions, state?.sessions]);
+  const shown = showAll ? known : known.slice(0, PREVIEW_COUNT);
+  const hiddenKnown = known.length - shown.length;
+  // The server may hold sessions older than the recent list; it is asked only once the folder is
+  // at least a full preview (a two-session folder is not hiding anything).
+  const canPage = known.length >= PREVIEW_COUNT && !state?.loaded;
+  const moreAvailable = hiddenKnown > 0 || canPage || !!state?.nextCursor;
 
   return (
-    <div>
+    <div data-testid={`project-row-${project.path}`}>
       <div
-        className="group relative flex items-center gap-px pr-1"
+        className="group relative flex items-center"
         onContextMenu={(e) => {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
@@ -390,33 +477,47 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
             <Folder className="size-4 shrink-0 text-lz-ink-2" />
           )}
           <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>{name}</span>
+          {!expanded && known.length > 0 && (
+            <span className={cx('ml-auto', TYPE.meta, TNUM)}>{known.length}</span>
+          )}
         </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Plus />}
-          onClick={(e) => {
-            e.stopPropagation();
-            onNewSession();
-          }}
-          aria-label={`${intl.formatMessage(i18n.newSessionHere)} — ${name}`}
-          title={intl.formatMessage(i18n.newSessionHere)}
-          className={rowActionClass(false)}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<MoreVertical />}
-          onClick={(e) => {
-            e.stopPropagation();
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            setMenu({ x: r.right - 4, y: r.bottom + 2 });
-          }}
-          aria-label={intl.formatMessage(i18n.moreActions)}
-          title={intl.formatMessage(i18n.moreActions)}
-          className={rowActionClass(menu != null)}
-        />
+        {/* The actions float over the row's right edge so the folder name keeps the full width;
+            they surface on hover/focus on the surface-2 step so the name under them stays legible. */}
+        <div
+          className={cx(
+            'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-px pl-1',
+            RADIUS.control,
+            SURFACE.inset,
+            rowActionClass(menu != null)
+          )}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Plus />}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNewSession();
+            }}
+            aria-label={`${intl.formatMessage(i18n.newSessionHere)} — ${name}`}
+            title={intl.formatMessage(i18n.newSessionHere)}
+            className={rowActionClass(false)}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<MoreVertical />}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenu({ x: r.right - 4, y: r.bottom + 2 });
+            }}
+            aria-label={intl.formatMessage(i18n.moreActions)}
+            title={intl.formatMessage(i18n.moreActions)}
+            className={rowActionClass(menu != null)}
+          />
+        </div>
 
         {menu && (
           <ProjectContextMenu
@@ -433,6 +534,17 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
 
       {expanded && (
         <TreeChildren>
+          {shown.map((session) => (
+            <SessionLeafRow
+              key={session.id}
+              session={session}
+              active={session.id === activeSessionId}
+              onClick={() => onOpenSession(session.id)}
+            />
+          ))}
+          {known.length === 0 && !state?.loading && !state?.error ? (
+            <div className={treeStateRowClass}>{intl.formatMessage(i18n.noSessionsYet)}</div>
+          ) : null}
           {state?.error ? (
             <div className={cx('flex items-center gap-2 px-2', ROW.dense)}>
               <span className="text-lz-meta text-lz-err">
@@ -442,35 +554,17 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
                 {intl.formatMessage(i18n.retry)}
               </Button>
             </div>
-          ) : !state || (state.loading && !state.loaded) ? (
+          ) : state?.loading ? (
             <div className={treeStateRowClass}>{intl.formatMessage(i18n.loadingSessions)}</div>
-          ) : state.sessions.length === 0 ? (
-            <div className={treeStateRowClass}>{intl.formatMessage(i18n.noSessionsYet)}</div>
-          ) : (
-            <>
-              {state.sessions.map((session) => (
-                <SessionLeafRow
-                  key={session.id}
-                  session={session}
-                  active={session.id === activeSessionId}
-                  onClick={() => onOpenSession(session.id)}
-                />
-              ))}
-              {state.nextCursor && !state.loading ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="self-start"
-                  onClick={() => onLoadMore(state.nextCursor as string)}
-                >
-                  {intl.formatMessage(i18n.moreSessions)}
-                </Button>
-              ) : null}
-              {state.loading ? (
-                <div className={treeStateRowClass}>{intl.formatMessage(i18n.loadingSessions)}</div>
-              ) : null}
-            </>
-          )}
+          ) : moreAvailable ? (
+            <Button variant="ghost" size="sm" className="self-start" onClick={onShowMore}>
+              {intl.formatMessage(i18n.showMore)}
+            </Button>
+          ) : showAll && known.length > PREVIEW_COUNT ? (
+            <Button variant="ghost" size="sm" className="self-start" onClick={onShowLess}>
+              {intl.formatMessage(i18n.showLess)}
+            </Button>
+          ) : null}
         </TreeChildren>
       )}
     </div>
@@ -478,11 +572,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
 };
 
 /**
- * ChatGPT-style Projects tree: a user-curated registry of local folders; each project expands to
- * that folder's historical sessions, fetched with the SERVER-SIDE cwd filter (exact, paginated).
- * "New session here" inherits the project's directory through the ordinary startNewSession path.
- * Below the projects, "Unfiled" lists recent sessions whose workingDir matches no project — a nav
- * nicety over the recent-sessions hook, not paginated truth.
+ * The Projects tree: folders DERIVED from where sessions ran (deriveProjects), each expanded to its
+ * sessions — the recent list first, then the server's cwd-filtered pages behind "Show more". The
+ * "+" registry only adds an empty folder to start from. "New session here" inherits the folder
+ * through the ordinary startNewSession path.
  */
 export const ProjectsSection: React.FC<{ className?: string }> = ({ className }) => {
   const intl = useIntl();
@@ -491,9 +584,9 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   const { recentSessions, activeSessionId, fetchSessions, handleSessionClick } =
     useNavigationSessions();
 
-  const [projects, setProjects] = useState<ProjectEntry[]>([]);
-  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(new Set());
-  const [unfiledOpen, setUnfiledOpen] = useState(false);
+  const [registry, setRegistry] = useState<ProjectEntry[]>([]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, ProjectSessionsState>>(
     {}
   );
@@ -501,34 +594,36 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   useEffect(() => {
     window.electron
       .listProjects()
-      .then(setProjects)
+      .then(setRegistry)
       .catch((error) => console.error('Failed to load projects:', error));
     void fetchSessions();
   }, [fetchSessions]);
 
-  const loadProjectSessions = useCallback(async (projectPath: string) => {
+  const projects = useMemo(
+    () => deriveProjects(recentSessions, registry),
+    [recentSessions, registry]
+  );
+
+  const loadProjectSessions = useCallback(async (projectPath: string, cursor: string | null) => {
     setSessionsByProject((prev) => ({
       ...prev,
       [projectPath]: {
         sessions: prev[projectPath]?.sessions ?? [],
-        nextCursor: null,
+        nextCursor: prev[projectPath]?.nextCursor ?? null,
         loading: true,
         loaded: prev[projectPath]?.loaded ?? false,
         error: false,
       },
     }));
     try {
-      const page = await acpListSessions(null, { cwd: projectPath });
+      const page = await acpListSessions(cursor, { cwd: projectPath });
       setSessionsByProject((prev) => {
-        // Keep locally-known zero-message sessions the server doesn't list yet (it only returns
-        // sessions with messages) — a just-created chat must not vanish from its project.
-        const localEmpty = (prev[projectPath]?.sessions ?? []).filter(
-          (s) => s.messageCount === 0 && !page.sessions.some((listed) => listed.id === s.id)
-        );
+        const cur = prev[projectPath]?.sessions ?? [];
+        const fresh = page.sessions.filter((s) => !cur.some((x) => x.id === s.id));
         return {
           ...prev,
           [projectPath]: {
-            sessions: [...localEmpty, ...page.sessions],
+            sessions: cursor ? [...cur, ...fresh] : [...fresh],
             nextCursor: page.nextCursor,
             loading: false,
             loaded: true,
@@ -542,70 +637,56 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         ...prev,
         [projectPath]: {
           sessions: prev[projectPath]?.sessions ?? [],
-          nextCursor: null,
+          nextCursor: prev[projectPath]?.nextCursor ?? null,
           loading: false,
-          loaded: true,
+          loaded: prev[projectPath]?.loaded ?? false,
           error: true,
         },
       }));
     }
   }, []);
 
-  const loadMoreProjectSessions = useCallback(async (projectPath: string, cursor: string) => {
-    setSessionsByProject((prev) => {
-      const cur = prev[projectPath];
-      if (!cur) return prev;
-      return { ...prev, [projectPath]: { ...cur, loading: true } };
+  const toggleProject = useCallback((projectPath: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectPath)) next.delete(projectPath);
+      else next.add(projectPath);
+      return next;
     });
-    try {
-      const page = await acpListSessions(cursor, { cwd: projectPath });
-      setSessionsByProject((prev) => {
-        const cur = prev[projectPath];
-        if (!cur) return prev;
-        const fresh = page.sessions.filter((s) => !cur.sessions.some((x) => x.id === s.id));
-        return {
-          ...prev,
-          [projectPath]: {
-            sessions: [...cur.sessions, ...fresh],
-            nextCursor: page.nextCursor,
-            loading: false,
-            loaded: true,
-            error: false,
-          },
-        };
-      });
-    } catch (error) {
-      console.error('Failed to load more project sessions:', error);
-      setSessionsByProject((prev) => {
-        const cur = prev[projectPath];
-        if (!cur) return prev;
-        return { ...prev, [projectPath]: { ...cur, loading: false, error: true } };
-      });
-    }
   }, []);
 
-  const toggleProject = useCallback(
-    (projectPath: string) => {
-      const isOpen = expandedPaths.has(projectPath);
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        if (isOpen) {
-          next.delete(projectPath);
-        } else {
-          next.add(projectPath);
+  // "Show more" first reveals what the recent list already knows, then pages the server (the
+  // exact cwd filter) until it runs out; "Show less" folds back to the preview.
+  const showMore = useCallback(
+    (project: DerivedProject) => {
+      const state = sessionsByProject[project.path];
+      if (!showAll.has(project.path)) {
+        setShowAll((prev) => new Set(prev).add(project.path));
+        if (project.sessions.length <= PREVIEW_COUNT && !state?.loaded) {
+          void loadProjectSessions(project.path, null);
         }
-        return next;
-      });
-      if (!isOpen) {
-        void loadProjectSessions(projectPath);
+        return;
+      }
+      if (!state?.loaded) {
+        void loadProjectSessions(project.path, null);
+      } else if (state.nextCursor) {
+        void loadProjectSessions(project.path, state.nextCursor);
       }
     },
-    [expandedPaths, loadProjectSessions]
+    [sessionsByProject, showAll, loadProjectSessions]
   );
 
-  // ONE add-project path (shared with the home landing): the flow broadcasts PROJECTS_CHANGED
-  // and the listener below applies it — registry update, expand the new project, load its
-  // sessions — no matter which surface ran the picker.
+  const showLess = useCallback((projectPath: string) => {
+    setShowAll((prev) => {
+      const next = new Set(prev);
+      next.delete(projectPath);
+      return next;
+    });
+  }, []);
+
+  // ONE add-folder path (shared with the home landing): the flow broadcasts PROJECTS_CHANGED and
+  // the listener below applies it — registry update, the new folder open — whichever surface ran
+  // the picker.
   const handleAddProject = useCallback(async () => {
     try {
       await chooseAndAddProject();
@@ -631,15 +712,18 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     const onProjectsChanged = (event: Event) => {
       const detail = (event as CustomEvent<ProjectsChangedDetail>).detail;
       if (!detail) return;
-      setProjects(detail.projects);
+      setRegistry(detail.projects);
       for (const p of detail.added) {
-        setExpandedPaths((prev) => new Set(prev).add(p.path));
-        void loadProjectSessions(p.path);
+        setCollapsed((prev) => {
+          const next = new Set(prev);
+          next.delete(normalizeDirPath(p.path));
+          return next;
+        });
       }
     };
     window.addEventListener(AppEvents.PROJECTS_CHANGED, onProjectsChanged);
     return () => window.removeEventListener(AppEvents.PROJECTS_CHANGED, onProjectsChanged);
-  }, [loadProjectSessions]);
+  }, []);
 
   const handleNewSession = useCallback(
     async (projectPath: string) => {
@@ -655,23 +739,9 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     [setView, extensionsList, intl]
   );
 
-  // Keep expanded project lists truthful against the session event stream: a created session is
-  // prepended under its project immediately; deletes remove; renames update in place.
+  // The recent list (the hook) already follows create/rename/delete; the paged extras follow
+  // deletes and renames here so a folded-out folder never shows a ghost.
   useEffect(() => {
-    const onCreated = (event: Event) => {
-      const { session } = (event as CustomEvent<{ session?: Session }>).detail || {};
-      if (!session) return;
-      const dir = normalizeDirPath(session.working_dir ?? '');
-      setSessionsByProject((prev) => {
-        const key = Object.keys(prev).find((p) => normalizeDirPath(p) === dir);
-        if (!key) return prev;
-        const cur = prev[key];
-        const item = sessionToListItem(session);
-        if (cur.sessions.some((s) => s.id === item.id)) return prev;
-        return { ...prev, [key]: { ...cur, sessions: [item, ...cur.sessions] } };
-      });
-    };
-
     const onDeleted = (event: Event) => {
       const { sessionId } = (event as CustomEvent<{ sessionId: string }>).detail;
       setSessionsByProject((prev) => {
@@ -682,7 +752,6 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         return next;
       });
     };
-
     const onRenamed = (event: Event) => {
       const { sessionId, newName } = (event as CustomEvent<{ sessionId: string; newName: string }>)
         .detail;
@@ -697,25 +766,13 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         return next;
       });
     };
-
-    window.addEventListener(AppEvents.SESSION_CREATED, onCreated);
     window.addEventListener(AppEvents.SESSION_DELETED, onDeleted);
     window.addEventListener(AppEvents.SESSION_RENAMED, onRenamed);
     return () => {
-      window.removeEventListener(AppEvents.SESSION_CREATED, onCreated);
       window.removeEventListener(AppEvents.SESSION_DELETED, onDeleted);
       window.removeEventListener(AppEvents.SESSION_RENAMED, onRenamed);
     };
   }, []);
-
-  const projectPathSet = useMemo(
-    () => new Set(projects.map((p) => normalizeDirPath(p.path))),
-    [projects]
-  );
-  const unfiledSessions = useMemo(
-    () => recentSessions.filter((s) => isUnfiledSession(s.workingDir, projectPathSet)),
-    [recentSessions, projectPathSet]
-  );
 
   return (
     <div className={cx('flex min-h-0 flex-col', className)}>
@@ -745,50 +802,28 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
             <ProjectRow
               key={project.path}
               project={project}
-              expanded={expandedPaths.has(project.path)}
+              expanded={!collapsed.has(project.path)}
               state={sessionsByProject[project.path]}
+              showAll={showAll.has(project.path)}
               activeSessionId={activeSessionId}
               onToggle={() => toggleProject(project.path)}
               onNewSession={() => void handleNewSession(project.path)}
-              onRemove={() => void handleRemoveProject(project.path)}
+              onRemove={
+                project.registered && project.sessions.length === 0
+                  ? () => void handleRemoveProject(project.path)
+                  : undefined
+              }
               onOpenSession={handleSessionClick}
-              onLoadMore={(cursor) => void loadMoreProjectSessions(project.path, cursor)}
-              onRetry={() => void loadProjectSessions(project.path)}
+              onShowMore={() => showMore(project)}
+              onShowLess={() => showLess(project.path)}
+              onRetry={() =>
+                void loadProjectSessions(
+                  project.path,
+                  sessionsByProject[project.path]?.nextCursor ?? null
+                )
+              }
             />
           ))
-        )}
-
-        {unfiledSessions.length > 0 && (
-          <div className="mt-2">
-            <button
-              onClick={() => setUnfiledOpen((v) => !v)}
-              aria-expanded={unfiledOpen}
-              className={cx(treeRowClass, SURFACE.hover)}
-            >
-              {unfiledOpen ? (
-                <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
-              ) : (
-                <ChevronRight className="size-3.5 shrink-0 text-lz-ink-3" />
-              )}
-              <Inbox className="size-4 shrink-0 text-lz-ink-2" />
-              <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>
-                {intl.formatMessage(i18n.unfiled)}
-              </span>
-              <span className={cx('ml-auto', TYPE.meta, TNUM)}>{unfiledSessions.length}</span>
-            </button>
-            {unfiledOpen && (
-              <TreeChildren>
-                {unfiledSessions.map((session) => (
-                  <SessionLeafRow
-                    key={session.id}
-                    session={session}
-                    active={session.id === activeSessionId}
-                    onClick={() => handleSessionClick(session.id)}
-                  />
-                ))}
-              </TreeChildren>
-            )}
-          </div>
         )}
       </div>
     </div>

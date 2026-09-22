@@ -2940,10 +2940,10 @@
     "defaultMessage": "Listadas sob o seu projeto"
   },
   "projectLanding.giveUnfiledLabel": {
-    "defaultMessage": "Fora de um projeto"
+    "defaultMessage": "Qualquer outra pasta"
   },
   "projectLanding.giveUnfiledValue": {
-    "defaultMessage": "Mantidas em «Sem projeto»"
+    "defaultMessage": "Torna-se um projeto assim que uma sessão corre lá"
   },
   "projectLanding.givesTitle": {
     "defaultMessage": "O que um projeto lhe dá"
@@ -2967,7 +2967,7 @@
     "defaultMessage": "Sessão atual"
   },
   "projectsSection.emptyState": {
-    "defaultMessage": "Adicione uma pasta de projeto para agrupar suas sessões"
+    "defaultMessage": "As suas sessões aparecem aqui sob a pasta em que correram. Inicie uma ou adicione uma pasta."
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Carregando sessões…"
@@ -2980,6 +2980,9 @@
   },
   "projectsSection.newSessionHere": {
     "defaultMessage": "Nova sessão aqui"
+  },
+  "projectsSection.noFolder": {
+    "defaultMessage": "Sem pasta"
   },
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Ainda não há sessões"
@@ -3008,8 +3011,11 @@
   "projectsSection.sessionsFailed": {
     "defaultMessage": "Não foi possível carregar as sessões"
   },
-  "projectsSection.unfiled": {
-    "defaultMessage": "Sem projeto"
+  "projectsSection.showLess": {
+    "defaultMessage": "Mostrar menos"
+  },
+  "projectsSection.showMore": {
+    "defaultMessage": "Mostrar mais"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sessão sem título"
