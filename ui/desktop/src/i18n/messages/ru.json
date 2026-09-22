@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Вес — чем выше, тем большая доля задач"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Начать ИИ-сессию об этом агенте"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Подтвердить удаление (папка сохранится)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Скопировать путь"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Открыть агента"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Пока нет агентов. Создайте одного, или добавьте папку, в которой уже есть agent.yaml."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Чтение рабочего места…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Новый агент"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "нет agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Пока нет запусков"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Открыть рабочее место"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Путь к агенту скопирован"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Убрать из списка"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Не удалось убрать агента"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Показать в Finder"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Свернуть"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Показать ещё"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Запуск {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Не удалось прочитать рабочее место"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Автосжимать при"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Начать ИИ-сессию об этом запуске"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "У этой сессии ещё нет id запуска — он появляется через несколько мгновений после старта"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Выполняющуюся сессию нельзя удалить — сначала отмените запуск"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Подтвердить удаление (удаляет его файлы)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "ТЕКУЩИЙ"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Не удалось удалить запуск"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Удалить запуск"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "На этом компьютере пока нет запусков benchmark. Запустите один из раздела Benchmark."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "ЗАМОРОЖЕН"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Новый запуск benchmark"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Пока нет запусков"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Открыть запуск"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Свернуть"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Показать ещё"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Расширение обновлено"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Настроить расширение {name}"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Начать ИИ-сессию об этом MCP"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Подтвердить удаление {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Отключить"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Редактировать"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Включить"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Встроенные и поставляемые в комплекте расширения нельзя редактировать или удалять"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Удалить"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Включить или отключить расширение {name}"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Добавить папку проекта"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Начать ИИ-сессию об этой сессии"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Подтвердить удаление (нельзя отменить)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Подтвердить удаление (файлы и чаты сохранятся)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Текущая сессия"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Не удалось удалить сессию"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Удалить сессию"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Ваши сессии появляются здесь под папкой, в которой они выполнялись. Начните одну или добавьте папку."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Не удалось форкнуть сессию"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Форкнуть сессию"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Загрузка сеансов…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Пока нет сеансов"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Открыть"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Путь к проекту скопирован"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Убрать из проектов"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Не удалось переименовать сессию"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Имя"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Переименовать"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Переименовать сессию"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Повторить"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Показать в Finder"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Сохранить"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Не удалось начать сеанс"

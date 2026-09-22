@@ -9,6 +9,9 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import { inspectConfigExtension } from '../../../../acp/extensions';
 import { McpCapabilities } from '../../../extensions/McpCapabilities';
 import { Button } from '../../../lz';
+import { TreeContextMenu } from '../../../Layout/tree';
+import { useStartChatAbout } from '../../../Layout/useStartChatAbout';
+import { Pencil, Power, Sparkles, Trash2 } from 'lucide-react';
 import type { McpToolInfo } from '../../../../types/mcpSetup';
 
 const i18n = defineMessages({
@@ -20,12 +23,39 @@ const i18n = defineMessages({
     id: 'extensionItem.toggleExtension',
     defaultMessage: 'Toggle {name} extension On or Off',
   },
+  menuEdit: { id: 'extensionItem.menuEdit', defaultMessage: 'Edit' },
+  menuEnable: { id: 'extensionItem.menuEnable', defaultMessage: 'Enable' },
+  menuDisable: { id: 'extensionItem.menuDisable', defaultMessage: 'Disable' },
+  menuAsk: { id: 'extensionItem.menuAsk', defaultMessage: 'Start an AI session about this MCP' },
+  menuRemove: { id: 'extensionItem.menuRemove', defaultMessage: 'Remove' },
+  menuConfirmRemove: {
+    id: 'extensionItem.menuConfirmRemove',
+    defaultMessage: 'Confirm remove {name}',
+  },
+  menuNotEditable: {
+    id: 'extensionItem.menuNotEditable',
+    defaultMessage: 'Built-in and bundled extensions cannot be edited or removed',
+  },
 });
+
+/** What is asked of the model when an MCP is opened as a chat about it. */
+export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string {
+  const kind = extension.type;
+  const where =
+    'cmd' in extension && typeof extension.cmd === 'string'
+      ? ` (command: ${extension.cmd}${'args' in extension && Array.isArray(extension.args) ? ' ' + extension.args.join(' ') : ''})`
+      : 'uri' in extension && typeof extension.uri === 'string'
+        ? ` (${extension.uri})`
+        : '';
+  return `I want to work on my goose MCP extension "${getFriendlyTitle(extension)}" — type ${kind}${where}. Read its configuration first (it is one of my configured extensions), then help me tweak, modify or fork it.`;
+}
 
 interface ExtensionItemProps {
   extension: FixedExtensionEntry;
   onToggle: (extension: FixedExtensionEntry) => Promise<boolean | void> | void;
   onConfigure?: (extension: FixedExtensionEntry) => void;
+  /** Remove the extension from the config (the list's context menu; confirmed in-menu). */
+  onDelete?: (extension: FixedExtensionEntry) => void;
   isStatic?: boolean; // to not allow users to edit configuration
 }
 
@@ -33,6 +63,7 @@ export default function ExtensionItem({
   extension,
   onToggle,
   onConfigure,
+  onDelete,
   isStatic,
 }: ExtensionItemProps) {
   const intl = useIntl();
@@ -97,9 +128,16 @@ export default function ExtensionItem({
   const editable =
     !(extension.type === 'builtin' || ('bundled' in extension && extension.bundled)) && !isStatic;
 
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const startChat = useStartChatAbout();
+  const title = getFriendlyTitle(extension);
   return (
     <Card
       id={`extension-${kebabCase(extension.name)}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
       className="transition-colors duration-200 min-h-[120px] overflow-hidden border-lz-border bg-lz-surface text-lz-ink"
     >
       <CardHeader>
@@ -157,6 +195,60 @@ export default function ExtensionItem({
           </p>
         )}
       </CardContent>
+      {menu && (
+        <TreeContextMenu
+          x={menu.x}
+          y={menu.y}
+          testId="extension-context-menu"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              key: 'edit',
+              label: intl.formatMessage(i18n.menuEdit),
+              icon: <Pencil />,
+              disabled: !editable || !onConfigure,
+              title: editable ? undefined : intl.formatMessage(i18n.menuNotEditable),
+              onClick: () => {
+                setMenu(null);
+                onConfigure?.(extension);
+              },
+            },
+            {
+              key: 'toggle',
+              label: intl.formatMessage(visuallyEnabled ? i18n.menuDisable : i18n.menuEnable),
+              icon: <Power />,
+              disabled: isToggling,
+              onClick: () => {
+                setMenu(null);
+                void handleToggle(extension);
+              },
+            },
+            {
+              key: 'ask',
+              label: intl.formatMessage(i18n.menuAsk),
+              icon: <Sparkles />,
+              onClick: () => {
+                setMenu(null);
+                void startChat(askAboutExtensionPrompt(extension));
+              },
+            },
+            {
+              key: 'remove',
+              label: intl.formatMessage(i18n.menuRemove),
+              icon: <Trash2 />,
+              danger: true,
+              separator: true,
+              disabled: !editable || !onDelete,
+              title: editable ? undefined : intl.formatMessage(i18n.menuNotEditable),
+              confirmLabel: intl.formatMessage(i18n.menuConfirmRemove, { name: title }),
+              onClick: () => {
+                setMenu(null);
+                onDelete?.(extension);
+              },
+            },
+          ]}
+        />
+      )}
     </Card>
   );
 }

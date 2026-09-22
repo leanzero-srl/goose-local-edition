@@ -4,6 +4,7 @@ import ExtensionItem from './ExtensionItem';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import type { FixedExtensionEntry } from '../../../ConfigContext';
 
+vi.mock('../../../Layout/useStartChatAbout', () => ({ useStartChatAbout: () => vi.fn() }));
 vi.mock('./ExtensionList', () => ({
   getSubtitle: () => ({ description: '', command: '' }),
   getFriendlyTitle: (ext: { name: string }) => ext.name,

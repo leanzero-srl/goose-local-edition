@@ -9,31 +9,22 @@ import {
   KeyValue,
   PageHeader,
   Panel,
-  StatusDot,
   SURFACE,
   TNUM,
   TYPE,
   WEIGHT,
   cx,
   nodeClasses,
-  type Tone,
 } from '../lz';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
-import {
-  countdown,
-  liveness,
-  scheduleLine,
-  type AgentWorkRosterRow,
-  type DeskModel,
-} from './agentWorkModel';
+import { scheduleLine, type DeskModel } from './agentWorkModel';
 import { useAgentRoster, useDesk } from './useAgentWork';
 import { TickClock } from './TickClock';
 import { LaneBoard, nodeIndexOf } from './LaneBoard';
 import { NeedsYou } from './NeedsYou';
 import { LedgerPanel } from './LedgerPanel';
 import { NewAgentDialog } from './NewAgentDialog';
-
-const LIVE_TONE: Record<string, Tone> = { running: 'ok', stale: 'err', stopped: 'stopped' };
+import { useHashQuery } from '../Layout/useHashQuery';
 
 /**
  * AGENT WORK — the second swarm operation. Not a build: a desk that ticks. The values here are the
@@ -43,13 +34,24 @@ const LIVE_TONE: Record<string, Tone> = { running: 'ok', stale: 'err', stopped: 
  */
 export default function AgentWorkView() {
   const roster = useAgentRoster();
-  const [selected, setSelected] = useState<string | null>(null);
+  // The sidebar's Agent Work tree is THE roster; this view opens the desk the URL names
+  // (`?desk=…`, `?tick=…`, `?new=1`) and falls back to the first desk when it names none.
+  const query = useHashQuery();
+  const queryDesk = query.get('desk');
+  const wantsNew = query.get('new') === '1';
+  const [selected, setSelected] = useState<string | null>(queryDesk);
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const desk = useDesk(selected);
 
+  useEffect(() => {
+    if (queryDesk) setSelected(queryDesk);
+  }, [queryDesk]);
+  useEffect(() => {
+    if (wantsNew) setCreating(true);
+  }, [wantsNew]);
   useEffect(() => {
     if (!selected && roster.rows.length > 0) setSelected(roster.rows[0].dir);
     if (selected && roster.loaded && !roster.rows.some((r) => r.dir === selected))
@@ -132,36 +134,7 @@ export default function AgentWorkView() {
             }
           />
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-0">
-          <aside
-            className={cx(
-              'flex min-h-0 max-h-40 md:max-h-none flex-col overflow-auto border-r',
-              SURFACE.hairline
-            )}
-            aria-label="Agents"
-          >
-            {roster.loaded && roster.rows.length === 0 ? (
-              <div className="p-4">
-                <EmptyState
-                  icon={<Bot />}
-                  title="No agents yet"
-                  body="Create one, or add a directory that already has an agent.yaml."
-                />
-              </div>
-            ) : (
-              <ul className="flex flex-col gap-px p-2" data-testid="agent-roster">
-                {roster.rows.map((r) => (
-                  <RosterCard
-                    key={r.dir}
-                    row={r}
-                    active={r.dir === selected}
-                    now={desk.now}
-                    onClick={() => setSelected(r.dir)}
-                  />
-                ))}
-              </ul>
-            )}
-          </aside>
+        <div className="flex min-h-0 flex-1 flex-col">
           <main className="flex min-h-0 flex-col gap-4 overflow-auto p-lz-page">
             {roster.error && (
               <p role="alert" className="text-lz-err">
@@ -182,6 +155,12 @@ export default function AgentWorkView() {
             {!selected || !desk.model || !desk.read ? (
               selected ? (
                 <p className={TYPE.bodyMuted}>{desk.error ?? 'reading the desk…'}</p>
+              ) : roster.loaded ? (
+                <EmptyState
+                  icon={<Bot />}
+                  title="No agents yet"
+                  body="Create one, or add a directory that already has an agent.yaml. Your agents and their ticks are listed in the sidebar."
+                />
               ) : null
             ) : (
               <Desk
@@ -228,58 +207,6 @@ export default function AgentWorkView() {
         }}
       />
     </MainPanelLayout>
-  );
-}
-
-function RosterCard({
-  row,
-  active,
-  now,
-  onClick,
-}: {
-  row: AgentWorkRosterRow;
-  active: boolean;
-  now: number;
-  onClick: () => void;
-}) {
-  const live = liveness(row.pid, row.heartbeatMs, now);
-  const st = row.state;
-  const next = st?.next_tick_at && live !== 'stopped' ? Date.parse(st.next_tick_at) - now : null;
-  const name = row.manifest?.title || row.manifest?.name || row.dir.split('/').pop() || row.dir;
-  const status =
-    live === 'stopped' ? 'stopped' : live === 'stale' ? 'stale' : (st?.status ?? 'unknown');
-  const needs = live !== 'stopped' || st ? '' : '';
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        aria-current={active ? 'true' : undefined}
-        className={cx(
-          'flex w-full flex-col gap-1 rounded-lz-control px-3 py-2.5 text-left',
-          active ? 'bg-lz-accent text-lz-accent-ink' : 'hover:bg-lz-surface-2'
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <StatusDot tone={LIVE_TONE[live]} live={status === 'ticking'} label="" />
-          <span
-            className={cx(TYPE.body, WEIGHT.semibold, 'truncate', active && 'text-lz-accent-ink')}
-          >
-            {name}
-          </span>
-          {!row.exists && <Chip tone="err">no agent.yaml</Chip>}
-        </div>
-        <div className={cx(TYPE.meta, TNUM, active && 'text-lz-accent-ink')}>
-          {status}
-          {status === 'ticking' && st ? ` · tick ${st.tick} · ${st.phase}` : ''}
-          {next != null && status !== 'ticking' ? ` · next ${countdown(next)}` : ''}
-        </div>
-        <div className={cx(TYPE.meta, 'truncate', active && 'text-lz-accent-ink')}>
-          {scheduleLine(row.manifest)}
-          {needs}
-        </div>
-      </button>
-    </li>
   );
 }
 

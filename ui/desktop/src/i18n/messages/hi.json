@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "भार — जितना अधिक, कार्यों का उतना बड़ा हिस्सा"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "इस एजेंट के बारे में एआई सत्र शुरू करें"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "हटाने की पुष्टि करें (फ़ोल्डर बना रहेगा)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "पथ कॉपी करें"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "एजेंट खोलें"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "अभी कोई एजेंट नहीं। एक बनाएँ, या ऐसा फ़ोल्डर जोड़ें जिसमें पहले से agent.yaml हो।"
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "कार्यक्षेत्र पढ़ा जा रहा है…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "नया एजेंट"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "agent.yaml नहीं"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "अभी कोई रन नहीं"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "कार्यक्षेत्र खोलें"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "एजेंट पथ कॉपी किया गया"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "सूची से हटाएँ"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "एजेंट हटाया नहीं जा सका"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "पुनः प्रयास करें"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Finder में दिखाएँ"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "कम दिखाएँ"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "और दिखाएँ"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "रन {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "कार्यक्षेत्र पढ़ा नहीं जा सका"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "ऑटो कॉम्पैक्ट पर"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "इस रन के बारे में एआई सत्र शुरू करें"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "इस सत्र की अभी तक कोई रन आईडी नहीं है — यह लॉन्च के कुछ क्षण बाद दिखाई देती है"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "चल रहे सत्र को हटाया नहीं जा सकता — पहले रन रद्द करें"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "हटाने की पुष्टि करें (इसकी फ़ाइलें हटा देता है)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "वर्तमान"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "रन हटाया नहीं जा सका"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "रन हटाएँ"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "इस मशीन पर अभी तक कोई Benchmark रन नहीं है। Benchmark दृश्य से एक शुरू करें।"
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "फ़्रोज़न"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "नया Benchmark रन"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "अभी कोई रन नहीं"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "रन खोलें"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "कम दिखाएँ"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "और दिखाएँ"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "एक्सटेंशन अपडेट किया गया"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} एक्सटेंशन कॉन्फ़िगर करें"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "इस MCP के बारे में एआई सत्र शुरू करें"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "{name} हटाने की पुष्टि करें"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "अक्षम करें"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "सक्षम करें"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "अंतर्निहित और बंडल किए गए एक्सटेंशन संपादित या हटाए नहीं जा सकते"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "हटाएँ"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} एक्सटेंशन को चालू या बंद टॉगल करें"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ें"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "इस सत्र के बारे में एआई सत्र शुरू करें"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "हटाने की पुष्टि करें (वापस नहीं किया जा सकता)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "हटाने की पुष्टि करें (फ़ाइलें और चैट बनी रहेंगी)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "वर्तमान सत्र"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "सत्र हटाया नहीं जा सका"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "सत्र हटाएँ"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "आपके सत्र यहाँ उस फ़ोल्डर के नीचे दिखते हैं जिसमें वे चले। एक शुरू करें, या कोई फ़ोल्डर जोड़ें।"
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "सत्र फ़ोर्क नहीं किया जा सका"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "कांटा सत्र"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "सत्र लोड हो रहे हैं…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "अभी कोई सत्र नहीं"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "खोलें"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "प्रोजेक्ट पथ कॉपी किया गया"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "प्रोजेक्ट से हटाएँ"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "सत्र का नाम नहीं बदला जा सका"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "नाम"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "नाम बदलें"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "सत्र का नाम बदलें"
+  },
   "projectsSection.retry": {
     "defaultMessage": "पुनः प्रयास करें"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Finder में दिखाएँ"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "सहेजें"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "सत्र शुरू नहीं हो सका"

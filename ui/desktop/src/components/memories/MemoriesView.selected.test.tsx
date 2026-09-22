@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import MemoriesView from './MemoriesView';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { SURFACE } from '../lz';
@@ -15,6 +15,7 @@ import { contrast, resolveExpr, resolvedPaint, studioToken } from '../lz/resolve
  * the row's resolved fill is the accent and its ink contrasts, at rest and under the pointer.
  */
 
+vi.mock('../Layout/useStartChatAbout', () => ({ useStartChatAbout: () => vi.fn() }));
 vi.mock('../../utils/workingDir', () => ({ getInitialWorkingDir: () => '/proj/goose' }));
 
 const memories = [
@@ -96,7 +97,9 @@ describe('MemoriesView — a selected memory is visible in both themes', () => {
       expect(hovered.bg).toBe(studioToken('--color-lz-surface-2', theme));
       expect(contrast(hovered.bg, hovered.text)).toBeGreaterThan(4.5);
       const snippet = idle.querySelector('.line-clamp-1') as HTMLElement;
-      const snippetPaint = await resolvedPaint(snippet, theme, { inherit: { bg: rest.bg ?? undefined } });
+      const snippetPaint = await resolvedPaint(snippet, theme, {
+        inherit: { bg: rest.bg ?? undefined },
+      });
       expect(contrast(snippetPaint.bg, snippetPaint.text)).toBeGreaterThan(4.5);
     }
   }, 30_000);
@@ -113,4 +116,14 @@ describe('MemoriesView — a selected memory is visible in both themes', () => {
     expect(second.className).toContain('bg-lz-accent');
     assertStudioClean(first.parentElement as HTMLElement);
   }, 30_000);
+
+  it('right-click → Edit selects the memory and opens it in editing', async () => {
+    mount();
+    const row = await rowOf('Swarm End Goal');
+    fireEvent.contextMenu(row);
+    const menu = await screen.findByTestId('memory-context-menu');
+    fireEvent.click(within(menu).getByText('Edit'));
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(await screen.findByDisplayValue('Functional apps on local models.')).toBeInTheDocument();
+  });
 });

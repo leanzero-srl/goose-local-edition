@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Ağırlık — yükseldikçe görevlerden daha büyük pay alır"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Bu temsilci hakkında bir AI oturumu başlat"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Kaldırmayı onayla (klasör korunur)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Yolu kopyala"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Temsilciyi aç"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Henüz temsilci yok. Bir tane oluşturun veya zaten agent.yaml içeren bir klasör ekleyin."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Çalışma alanı okunuyor…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Yeni temsilci"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "agent.yaml yok"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Henüz çalıştırma yok"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Çalışma alanını aç"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Temsilci yolu kopyalandı"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Listeden kaldır"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Temsilci kaldırılamadı"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Finder'da göster"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Daha az göster"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Daha fazla göster"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Çalıştırma {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Çalışma alanı okunamadı"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Otomatik sıkıştırma eşiği"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Bu çalıştırma hakkında bir AI oturumu başlat"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "Bu oturumun henüz bir çalıştırma kimliği yok — başlatmadan birkaç an sonra görünür"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Çalışan bir oturum silinemez — önce çalıştırmayı iptal edin"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Silmeyi onayla (dosyalarını kaldırır)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "GEÇERLİ"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Çalıştırma silinemedi"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Çalıştırmayı sil"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "Bu makinede henüz benchmark çalıştırması yok. Benchmark görünümünden bir tane başlatın."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "DONDURULDU"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Yeni benchmark çalıştırması"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Henüz çalıştırma yok"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Çalıştırmayı aç"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Daha az göster"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Daha fazla göster"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Uzantı Güncellendi"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} Uzantısını Yapılandırın"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Bu MCP hakkında bir AI oturumu başlat"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "{name} kaldırmayı onayla"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Devre Dışı Bırak"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Düzenle"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Etkinleştir"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Yerleşik ve pakette gelen uzantılar düzenlenemez veya kaldırılamaz"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Kaldır"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} uzantısını Açık veya Kapalı duruma getirin"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Proje klasörü ekle"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Bu oturum hakkında bir AI oturumu başlat"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Silmeyi onayla (geri alınamaz)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Kaldırmayı onayla (dosyalar ve sohbetler korunur)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Geçerli oturum"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Oturum silinemedi"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Oturumu sil"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Oturumlarınız burada çalıştıkları klasörün altında görünür. Bir tane başlatın veya bir klasör ekleyin."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Oturum çatallanamadı"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Çatal Oturumu"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Oturumlar yükleniyor…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Henüz oturum yok"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Aç"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Proje yolu kopyalandı"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Projelerden kaldır"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Oturum yeniden adlandırılamadı"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Ad"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Yeniden adlandır"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Oturumu yeniden adlandır"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Yeniden dene"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Finder'da göster"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Kaydet"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Oturum başlatılamadı"

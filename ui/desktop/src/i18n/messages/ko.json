@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "가중치 — 높을수록 더 많은 작업을 받습니다"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "이 에이전트에 대한 AI 세션 시작"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "제거 확인 (폴더는 유지됨)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "경로 복사"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "에이전트 열기"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "아직 에이전트가 없습니다. 하나를 만들거나 이미 agent.yaml이 있는 폴더를 추가하세요."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "작업 공간을 읽는 중…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "새 에이전트"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "agent.yaml 없음"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "아직 실행이 없습니다"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "작업 공간 열기"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "에이전트 경로가 복사되었습니다"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "목록에서 제거"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "에이전트를 제거할 수 없습니다"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Finder에서 보기"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "간략히 보기"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "더 보기"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "실행 {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "작업 공간을 읽을 수 없습니다"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "자동 압축 기준"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "이 실행에 대한 AI 세션 시작"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "이 세션에는 아직 실행 id가 없습니다 — 시작 직후 잠시 후에 나타납니다"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "실행 중인 세션은 삭제할 수 없습니다 — 먼저 실행을 취소하세요"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "삭제 확인 (해당 파일도 제거됨)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "현재"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "실행을 삭제할 수 없습니다"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "실행 삭제"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "이 기기에는 아직 Benchmark 실행이 없습니다. Benchmark 화면에서 하나를 시작하세요."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "고정됨"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "새 Benchmark 실행"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "아직 실행이 없습니다"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "실행 열기"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "간략히 보기"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "더 보기"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "익스텐션이 업데이트되었습니다."
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} 익스텐션 구성"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "이 MCP에 대한 AI 세션 시작"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "{name} 제거 확인"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "비활성화"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "편집"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "활성화"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "내장 및 번들로 제공되는 익스텐션은 편집하거나 제거할 수 없습니다"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "제거"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} 익스텐션 켜기/끄기"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "프로젝트 폴더 추가"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "이 세션에 대한 AI 세션 시작"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "취소"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "삭제 확인 (취소할 수 없음)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "제거 확인 (파일과 채팅은 유지됨)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "현재 세션"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "세션을 삭제할 수 없습니다"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "세션 삭제"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "세션은 실행된 폴더 아래 여기에 표시됩니다. 세션을 시작하거나 폴더를 추가하세요."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "세션을 포크할 수 없습니다"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "세션 포크"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "세션 불러오는 중…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "아직 세션이 없습니다"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "열기"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "프로젝트 경로가 복사되었습니다"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "프로젝트에서 제거"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "세션 이름을 변경할 수 없습니다"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "이름"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "이름 변경"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "세션 이름 변경"
+  },
   "projectsSection.retry": {
     "defaultMessage": "다시 시도"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Finder에서 보기"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "저장"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "세션을 시작할 수 없습니다"

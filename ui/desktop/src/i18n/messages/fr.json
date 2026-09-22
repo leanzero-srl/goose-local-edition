@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Poids — plus il est élevé, plus grande est la part des tâches"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Démarrer une session IA à propos de cet agent"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Confirmer le retrait (conserve le dossier)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Copier le chemin"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Ouvrir l'agent"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Aucun agent pour l'instant. Créez-en un, ou ajoutez un dossier qui a déjà un agent.yaml."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Lecture de l'espace de travail…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Nouvel agent"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "pas d'agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Aucune exécution pour l'instant"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Ouvrir l'espace de travail"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Chemin de l'agent copié"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Retirer de la liste"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Impossible de retirer l'agent"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Afficher dans le Finder"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Afficher moins"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Afficher plus"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Exécution {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Impossible de lire l'espace de travail"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Compactage automatique à"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Démarrer une session IA à propos de cette exécution"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "Cette session n'a pas encore d'id d'exécution — il apparaît quelques instants après le lancement"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Une session en cours ne peut pas être supprimée — annulez d'abord l'exécution"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Confirmer la suppression (supprime ses fichiers)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "EN COURS"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Impossible de supprimer l'exécution"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Supprimer l'exécution"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "Aucune exécution de benchmark sur cette machine pour l'instant. Lancez-en une depuis la vue Benchmark."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "GELÉE"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Nouvelle exécution de benchmark"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Aucune exécution pour l'instant"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Ouvrir l'exécution"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Afficher moins"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Afficher plus"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Extension mise à jour"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Configurer l'extension {name}"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Démarrer une session IA à propos de ce MCP"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Confirmer le retrait de {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Désactiver"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Modifier"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Activer"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Les extensions intégrées et fournies ne peuvent pas être modifiées ni retirées"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Retirer"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Activer ou désactiver l'extension {name}"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Ajouter un dossier de projet"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Démarrer une session IA à propos de cette session"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Confirmer la suppression (irréversible)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Confirmer le retrait (conserve fichiers et discussions)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Session en cours"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Impossible de supprimer la session"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Supprimer la session"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Vos sessions apparaissent ici sous le dossier où elles ont tourné. Lancez-en une ou ajoutez un dossier."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Impossible de dériver la session"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Dériver la session"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Chargement des sessions…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Aucune session pour l'instant"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Ouvrir"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Chemin du projet copié"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Retirer des projets"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Impossible de renommer la session"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Nom"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Renommer"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Renommer la session"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Réessayer"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Afficher dans le Finder"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Enregistrer"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Impossible de démarrer une session"

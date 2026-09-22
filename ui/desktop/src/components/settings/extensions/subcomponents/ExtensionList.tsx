@@ -28,6 +28,7 @@ interface ExtensionListProps {
   extensions: FixedExtensionEntry[];
   onToggle: (extension: FixedExtensionEntry) => Promise<boolean | void> | void;
   onConfigure?: (extension: FixedExtensionEntry) => void;
+  onDelete?: (extension: FixedExtensionEntry) => void;
   isStatic?: boolean;
   disableConfiguration?: boolean;
   searchTerm?: string;
@@ -37,6 +38,7 @@ export default function ExtensionList({
   extensions,
   onToggle,
   onConfigure,
+  onDelete,
   isStatic,
   disableConfiguration: _disableConfiguration,
   searchTerm = '',
@@ -84,6 +86,7 @@ export default function ExtensionList({
                 extension={extension}
                 onToggle={onToggle}
                 onConfigure={onConfigure}
+                onDelete={onDelete}
                 isStatic={isStatic}
               />
             ))}
@@ -106,6 +109,7 @@ export default function ExtensionList({
                 extension={extension}
                 onToggle={onToggle}
                 onConfigure={onConfigure}
+                onDelete={onDelete}
                 isStatic={isStatic}
               />
             ))}

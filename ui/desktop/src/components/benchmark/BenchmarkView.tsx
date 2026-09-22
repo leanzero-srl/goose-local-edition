@@ -10,24 +10,20 @@ import {
   AlertTriangle,
   BadgeCheck,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   CircleSlash,
+  Gauge,
   Loader2,
   Play,
   Trash2,
   Upload,
   XCircle,
 } from 'lucide-react';
+import { fmtWhen, OutcomeChip, OUTCOME_WORDS } from './outcome';
+import { useHashQuery } from '../Layout/useHashQuery';
+import { StudioSelect, type StudioSelectOption } from '../leanzero-swarm/studio';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { SB8_TIERS, isSb8, TIER_LABELS, type BenchmarkRow, type Tier } from './baselines';
-import type {
-  BenchSession,
-  CatalogBaseline,
-  CatalogBenchmark,
-  CatalogMismatch,
-  SessionOutcome,
-} from './bridge';
+import type { BenchSession, CatalogBaseline, CatalogBenchmark, CatalogMismatch } from './bridge';
 import { ScoreBars } from './ScoreBars';
 import { TierBreakdown } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
@@ -135,17 +131,6 @@ function fmtElapsed(ms: number): string {
 
 /** Short stamp for a moment ("Aug 17, 18:27") — how a stored result or a live run stays
  *  identifiable. Takes the ISO string a result carries or the epoch ms a live run keeps. */
-function fmtWhen(when: string | number | undefined | null): string | null {
-  if (when == null || when === '') return null;
-  const t = typeof when === 'number' ? when : Date.parse(when);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 /** A Studio text input: outline, radius 6, ink-4 placeholder, the err border when aria-invalid. */
 const INPUT = cx(
@@ -388,94 +373,6 @@ function boardColumns(own: {
 }
 
 /** Solid tone per outcome — every state names itself; a dead run never looks finished. */
-const OUTCOME_TONE: Record<SessionOutcome, Tone> = {
-  running: 'accent',
-  finished: 'ok',
-  did_not_finish: 'err',
-  did_not_start: 'stopped',
-};
-const OUTCOME_WORDS: Record<SessionOutcome, string> = {
-  running: 'Running',
-  finished: 'Finished',
-  did_not_finish: 'Did not finish',
-  did_not_start: 'Did not start',
-};
-
-function OutcomeChip({ session }: { session: BenchSession }) {
-  return (
-    <Chip
-      tone={OUTCOME_TONE[session.outcome]}
-      icon={
-        session.outcome === 'running' ? (
-          // DESIGN.md motion: the live dot SCALES (animate-lz-live), it never fades.
-          <span className={cx('inline-block size-1.5 animate-lz-live bg-white', RADIUS.pill)} />
-        ) : undefined
-      }
-    >
-      {OUTCOME_WORDS[session.outcome]}
-      {session.outcome === 'finished' && (
-        <span className={TNUM}>
-          {session.score != null ? ` · ${(session.score * 100).toFixed(1)}%` : ' · score missing'}
-        </span>
-      )}
-    </Chip>
-  );
-}
-
-/** One session under its benchmark's section: started stamp, honest state, delete. Keyed by runId. */
-function SessionRow({
-  session,
-  selected,
-  onSelect,
-  onDelete,
-}: {
-  session: BenchSession;
-  selected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-}) {
-  const when = fmtWhen(session.startedAt) ?? session.startedAt;
-  // Deleting needs the engine's runId; the just-launched row has none yet (and the running
-  // session refuses deletion in main anyway).
-  const undeletable =
-    session.outcome === 'running'
-      ? 'A running session cannot be deleted — cancel the run first'
-      : session.runId == null
-        ? 'This session has no run id yet — it appears moments after launch'
-        : null;
-  return (
-    <div
-      className={cx(
-        'flex items-center gap-3 px-3 py-2',
-        RADIUS.control,
-        selected ? cx(SURFACE.selectedRing, 'border border-transparent') : SURFACE.outline
-      )}
-      data-selected={selected || undefined}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-pressed={selected}
-        title="Show this session's result"
-        className={cx('flex flex-1 items-center gap-3 text-left', RADIUS.control, FOCUS)}
-      >
-        <span className={cx('text-lz-body text-lz-ink', WEIGHT.semibold, TNUM)}>{when}</span>
-        <OutcomeChip session={session} />
-      </button>
-      <Button
-        variant="ghost"
-        size="sm"
-        iconOnly
-        onClick={onDelete}
-        disabled={undeletable != null}
-        aria-label={`Delete session ${session.runId ?? session.startedAt}`}
-        title={undeletable ?? 'Delete this session'}
-        icon={<Trash2 />}
-      />
-    </div>
-  );
-}
-
 /**
  * The selected session's result, rendered INSIDE its own benchmark's section — a session compares
  * only within its own era. Every outcome renders its own truth: a run that died before scoring
@@ -797,7 +694,6 @@ export default function BenchmarkView() {
   // The 'benchmark-started' fact that the site's current benchmark outruns this app's bundle —
   // each new launch restates or clears it, so a stale notice cannot outlive an app update.
   const [catalogMismatch, setCatalogMismatch] = useState<CatalogMismatch | null>(null);
-  const [expandedByEra, setExpandedByEra] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<BenchSession | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -1071,6 +967,36 @@ export default function BenchmarkView() {
     () => sessions.find((s) => sessionKey(s) === selectedKey) ?? null,
     [sessions, selectedKey]
   );
+
+  // The sidebar's Benchmark tree drives the selection by URL (`?era=…&run=…`); `?new=1` lands on
+  // the run setup. The view lists no runs of its own any more — one list, in the sidebar.
+  const query = useHashQuery();
+  const queryRun = query.get('run');
+  const wantsNew = query.get('new') === '1';
+  useEffect(() => {
+    if (queryRun && sessions.some((s) => sessionKey(s) === queryRun)) setSelectedKey(queryRun);
+  }, [queryRun, sessions]);
+  const setupRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (wantsNew) setupRef.current?.scrollIntoView({ block: 'start' });
+  }, [wantsNew]);
+
+  // The benchmark (SB tier) is a dropdown at run setup: every era the catalog and this machine
+  // know, the runnable one enabled; the others are history and say so.
+  const tierOptions = useMemo<(StudioSelectOption & { current: boolean })[]>(
+    () =>
+      sections.map((sec) => ({
+        value: sec.scorerVersion,
+        label: `${sec.scorerVersion} — ${sec.title}${sec.current ? '' : sec.frozen ? ' (frozen)' : ' (history)'}`,
+        disabled: !sec.current,
+        current: sec.current,
+      })),
+    [sections]
+  );
+  const tierOption =
+    tierOptions.find((o) => o.value === DEFAULT_BENCHMARK_TIER) ??
+    tierOptions.find((o) => o.current) ??
+    null;
 
   // The stored result (mine/result.json) is THE LAST run's row — attribute its verdict, shots and
   // publishability only to the newest finished session of its own era; an older sibling with a
@@ -1444,7 +1370,25 @@ export default function BenchmarkView() {
             {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}. Previous results
             below are history only.
           </p>
-          <section aria-label="Run setup" className="flex flex-col gap-3">
+          <section aria-label="Run setup" className="flex flex-col gap-3" ref={setupRef}>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TYPE.meta}>Benchmark</span>
+              <StudioSelect
+                aria-label="Benchmark"
+                className="w-full max-w-[440px]"
+                options={tierOptions}
+                value={tierOption}
+                placeholder={
+                  catalog.kind === 'loading' ? 'Reading the catalog…' : 'No benchmark available'
+                }
+                onChange={() => {
+                  // Only the current benchmark can be run; the others are disabled options and
+                  // their runs open from the sidebar.
+                }}
+                disabled={running}
+                loading={catalog.kind === 'loading'}
+              />
+            </div>
             <Segmented
               as="buttons"
               aria-label="Benchmark entrant"
@@ -1542,99 +1486,80 @@ export default function BenchmarkView() {
           {status && <ToneBand tone={statusTone(status)}>{status}</ToneBand>}
           {failureDetails && <FailureDetails text={failureDetails} />}
 
-          {sections.map((sec) => {
-            const selInSection =
-              selectedSession != null && selectedSession.scorerVersion === sec.scorerVersion;
-            // Open by default: the CURRENT era, the era holding the selected session (the
-            // latest session's result shows without a click), and everything when the catalog
-            // is absent. An explicit user toggle always wins.
-            const expanded =
-              expandedByEra[sec.scorerVersion] ??
-              (sec.current || selInSection || catalog.kind !== 'ok');
-            return (
-              <Panel
-                key={sec.scorerVersion}
-                padded={false}
-                header={
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedByEra((prev) => ({ ...prev, [sec.scorerVersion]: !expanded }))
+          {selectedSession && selectedEra ? (
+            <Panel
+              key={sessionKey(selectedSession)}
+              padded={false}
+              header={
+                <div className="flex h-full w-full items-center gap-3">
+                  <span className={TYPE.h2}>{selectedEra.title}</span>
+                  <span className="font-mono text-lz-mono text-lz-ink-3">
+                    {selectedEra.scorerVersion}
+                  </span>
+                  {selectedEra.current ? (
+                    <Chip tone="ok">CURRENT</Chip>
+                  ) : selectedEra.frozen ? (
+                    <Chip tone="warn">FROZEN</Chip>
+                  ) : null}
+                  <span className={cx('ml-auto text-lz-body text-lz-ink', WEIGHT.semibold, TNUM)}>
+                    {fmtWhen(selectedSession.startedAt) ?? selectedSession.startedAt}
+                  </span>
+                  <OutcomeChip session={selectedSession} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    onClick={() => setDeleteTarget(selectedSession)}
+                    disabled={
+                      selectedSession.outcome === 'running' || selectedSession.runId == null
                     }
-                    aria-expanded={expanded}
-                    className={cx(
-                      'flex h-full w-full items-center gap-3 text-left [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
-                      FOCUS
-                    )}
-                  >
-                    {expanded ? <ChevronDown /> : <ChevronRight />}
-                    <span className={TYPE.h2}>{sec.title}</span>
-                    <span className="font-mono text-lz-mono text-lz-ink-3">
-                      {sec.scorerVersion}
-                    </span>
-                    {sec.current ? (
-                      <Chip tone="ok">CURRENT</Chip>
-                    ) : sec.frozen ? (
-                      <Chip tone="warn">FROZEN</Chip>
-                    ) : null}
-                    <span className={cx('ml-auto', TYPE.meta, TNUM)}>
-                      {sec.sessions.length} session{sec.sessions.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                }
-              >
-                {expanded && (
-                  <div className={cx('flex flex-col gap-3', SPACE.card)}>
-                    {sec.frozen && (
-                      <p className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}>
-                        Frozen on the site — sessions stay viewable; submissions are closed.
-                      </p>
-                    )}
-                    {sec.sessions.length === 0 ? (
-                      <p className={TYPE.bodyMuted}>
-                        {sec.current
-                          ? 'No sessions yet — Run benchmark starts the first one.'
-                          : 'No sessions from this benchmark on this machine.'}
-                      </p>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {sec.sessions.map((s) => (
-                          <SessionRow
-                            key={sessionKey(s)}
-                            session={s}
-                            selected={sessionKey(s) === selectedKey}
-                            onSelect={() => setSelectedKey(sessionKey(s))}
-                            onDelete={() => setDeleteTarget(s)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                    {selInSection && selectedSession && (
-                      <div className={cx('mt-2 border-t pt-4', SURFACE.hairline)}>
-                        <SessionDetail
-                          session={selectedSession}
-                          baselines={sec.baselines}
-                          catalogAbsent={catalog.kind === 'absent'}
-                          fromCatalog={sec.fromCatalog}
-                          mine={mine}
-                          mineMatched={sessionKey(selectedSession) === mineSessionKey}
-                          shots={shots}
-                          publishSlot={publishSection}
-                          onRetryScoring={() => void retryScoring(selectedSession)}
-                          retryBusy={
-                            running ||
-                            !runtimeReady ||
-                            !!launchProblem ||
-                            selectedSession.scorerVersion !== DEFAULT_BENCHMARK_TIER
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
+                    aria-label={`Delete session ${selectedSession.runId ?? selectedSession.startedAt}`}
+                    title={
+                      selectedSession.outcome === 'running'
+                        ? 'A running session cannot be deleted — cancel the run first'
+                        : selectedSession.runId == null
+                          ? 'This session has no run id yet — it appears moments after launch'
+                          : 'Delete this session'
+                    }
+                    icon={<Trash2 />}
+                  />
+                </div>
+              }
+            >
+              <div className={cx('flex flex-col gap-3', SPACE.card)}>
+                {selectedEra.frozen && (
+                  <p className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}>
+                    Frozen on the site — sessions stay viewable; submissions are closed.
+                  </p>
                 )}
-              </Panel>
-            );
-          })}
+                <SessionDetail
+                  session={selectedSession}
+                  baselines={selectedEra.baselines}
+                  catalogAbsent={catalog.kind === 'absent'}
+                  fromCatalog={selectedEra.fromCatalog}
+                  mine={mine}
+                  mineMatched={sessionKey(selectedSession) === mineSessionKey}
+                  shots={shots}
+                  publishSlot={publishSection}
+                  onRetryScoring={() => void retryScoring(selectedSession)}
+                  retryBusy={
+                    running ||
+                    !runtimeReady ||
+                    !!launchProblem ||
+                    selectedSession.scorerVersion !== DEFAULT_BENCHMARK_TIER
+                  }
+                />
+              </div>
+            </Panel>
+          ) : sessions.length > 0 ? (
+            <Panel>
+              <EmptyState
+                icon={<Gauge />}
+                title="Pick a run in the sidebar"
+                body="Every benchmark run on this machine is listed under its benchmark in the sidebar's Benchmark tree."
+              />
+            </Panel>
+          ) : null}
           {sections.length === 0 && catalog.kind !== 'absent' && (
             <Panel>
               <EmptyState

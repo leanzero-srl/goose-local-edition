@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Gewicht — höher bekommt einen größeren Anteil der Aufgaben"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "KI-Sitzung über diesen Agenten starten"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Entfernen bestätigen (Ordner bleibt erhalten)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Pfad kopieren"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Agent öffnen"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Noch keine Agenten. Erstelle einen, oder füge einen Ordner hinzu, der bereits eine agent.yaml enthält."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Arbeitsbereich wird gelesen…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Neuer Agent"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "keine agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Noch keine Läufe"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Arbeitsbereich öffnen"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Agentenpfad kopiert"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Aus der Liste entfernen"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Agent konnte nicht entfernt werden"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Im Finder anzeigen"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Weniger anzeigen"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Mehr anzeigen"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Lauf {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Arbeitsbereich konnte nicht gelesen werden"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Automatisch verdichten bei"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "KI-Sitzung über diesen Lauf starten"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "Diese Sitzung hat noch keine Lauf-ID — sie erscheint kurz nach dem Start"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Eine laufende Sitzung kann nicht gelöscht werden — brich zuerst den Lauf ab"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Löschen bestätigen (entfernt die zugehörigen Dateien)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "AKTUELL"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Lauf konnte nicht gelöscht werden"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Lauf löschen"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "Noch keine Benchmark-Läufe auf diesem Rechner. Starte einen in der Benchmark-Ansicht."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "EINGEFROREN"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Neuer Benchmark-Lauf"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Noch keine Läufe"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Lauf öffnen"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Weniger anzeigen"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Mehr anzeigen"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Erweiterung aktualisiert"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Erweiterung {name} konfigurieren"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "KI-Sitzung über dieses MCP starten"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Entfernen von {name} bestätigen"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Deaktivieren"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Bearbeiten"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Aktivieren"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Integrierte und mitgelieferte Erweiterungen können nicht bearbeitet oder entfernt werden"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Entfernen"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Erweiterung {name} ein- oder ausschalten"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Projektordner hinzufügen"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "KI-Sitzung über diese Sitzung starten"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Löschen bestätigen (kann nicht rückgängig gemacht werden)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Entfernen bestätigen (Dateien & Chats bleiben)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Aktuelle Sitzung"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Sitzung konnte nicht gelöscht werden"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Sitzung löschen"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Deine Sitzungen erscheinen hier unter dem Ordner, in dem sie liefen. Starte eine oder füge einen Ordner hinzu."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Sitzung konnte nicht verzweigt werden"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Sitzung verzweigen"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Sitzungen werden geladen…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Noch keine Sitzungen"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Öffnen"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Projektpfad kopiert"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Aus Projekten entfernen"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Sitzung konnte nicht umbenannt werden"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Name"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Umbenennen"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Sitzung umbenennen"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Erneut versuchen"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Im Finder anzeigen"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Speichern"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Sitzung konnte nicht gestartet werden"

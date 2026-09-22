@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "重み — 高いほどタスクの取り分が大きくなります"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "このエージェントについてAIセッションを開始"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "削除を確認（フォルダーは残ります）"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "パスをコピー"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "エージェントを開く"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "まだエージェントがありません。作成するか、agent.yaml がすでにあるフォルダーを追加してください。"
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "ワークスペースを読み込み中…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "新しいエージェント"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "agent.yaml なし"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "まだランがありません"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "ワークスペースを開く"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "エージェントのパスをコピーしました"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "リストから削除"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "エージェントを削除できませんでした"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "再試行"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Finder に表示"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "表示を減らす"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "もっと見る"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "ラン {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "ワークスペースを読み込めませんでした"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "自動圧縮の実行タイミング"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "このランについてAIセッションを開始"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "このセッションにはまだランIDがありません — 起動から少し経つと表示されます"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "実行中のセッションは削除できません — 先にランをキャンセルしてください"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "削除を確認（関連ファイルも削除されます）"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "現在"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "ランを削除できませんでした"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "ランを削除"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "このマシンにはまだ Benchmark ランがありません。Benchmark ビューから開始してください。"
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "フリーズ中"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "新しい Benchmark ラン"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "まだランがありません"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "ランを開く"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "表示を減らす"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "もっと見る"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "拡張機能を更新しました"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "{name}拡張機能を設定"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "この MCP についてAIセッションを開始"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "{name} の削除を確認"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "無効にする"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "編集"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "有効にする"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "組み込みおよびバンドルされた拡張機能は編集または削除できません"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "削除"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name}拡張機能のオン/オフを切り替え"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "プロジェクトフォルダを追加"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "このセッションについてAIセッションを開始"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "削除を確認（元に戻せません）"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "削除を確認（ファイルとチャットは残ります）"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "現在のセッション"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "セッションを削除できませんでした"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "セッションを削除"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "セッションは実行したフォルダーの下にここに表示されます。セッションを開始するか、フォルダーを追加してください。"
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "セッションをフォークできませんでした"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "セッションをフォーク"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "セッションを読み込み中…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "まだセッションはありません"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "開く"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "プロジェクトのパスをコピーしました"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "プロジェクトから削除"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "セッション名を変更できませんでした"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "名前"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "名前を変更"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "セッション名を変更"
+  },
   "projectsSection.retry": {
     "defaultMessage": "再試行"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Finder に表示"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "保存"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "セッションを開始できませんでした"

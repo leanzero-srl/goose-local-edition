@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Pemberat — lebih tinggi mendapat bahagian tugasan yang lebih besar"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Mulakan sesi AI tentang ejen ini"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Sahkan buang (folder kekal)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Salin laluan"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Buka ejen"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Belum ada ejen. Cipta satu, atau tambah folder yang sudah mempunyai agent.yaml."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Membaca ruang kerja…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Ejen baharu"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "tiada agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Belum ada larian"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Buka ruang kerja"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Laluan ejen disalin"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Buang daripada senarai"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Tidak dapat membuang ejen"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Tunjukkan dalam Finder"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Tunjuk kurang"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Tunjuk lagi"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Larian {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Tidak dapat membaca ruang kerja"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Padatkan automatik pada"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Mulakan sesi AI tentang larian ini"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "Sesi ini belum mempunyai id larian — ia muncul sebentar selepas dilancarkan"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Sesi yang sedang berjalan tidak boleh dipadam — batalkan larian dahulu"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Sahkan padam (membuang failnya)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "SEMASA"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Tidak dapat memadam larian"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Padam larian"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "Belum ada larian benchmark pada mesin ini. Mulakan satu daripada paparan Benchmark."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "BEKU"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Larian benchmark baharu"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Belum ada larian"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Buka larian"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Tunjuk kurang"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Tunjuk lagi"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Sambungan Dikemas Kini"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Konfigurasikan Sambungan {name}"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Mulakan sesi AI tentang MCP ini"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Sahkan buang {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Lumpuhkan"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Edit"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Dayakan"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Sambungan terbina dalam dan dibungkus bersama tidak boleh diedit atau dibuang"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Buang"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Togol sambungan {name} Hidup atau Mati"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Tambah folder projek"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Mulakan sesi AI tentang sesi ini"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Sahkan padam (tidak boleh dibuat asal)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Sahkan buang (fail & sembang kekal)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Sesi semasa"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Tidak dapat memadam sesi"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Padam sesi"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Sesi anda muncul di sini di bawah folder tempat ia dijalankan. Mulakan satu, atau tambah folder."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Tidak dapat mencabangkan sesi"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Cabang Sesi"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Memuatkan sesi…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Belum ada sesi"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Buka"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Laluan projek disalin"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Buang daripada projek"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Tidak dapat menamakan semula sesi"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Nama"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Namakan semula"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Namakan semula sesi"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Cuba lagi"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Tunjukkan dalam Finder"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Simpan"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Tidak dapat memulakan sesi"

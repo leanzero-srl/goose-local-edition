@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Trọng số — càng cao càng nhận phần việc lớn hơn"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Bắt đầu phiên AI về tác nhân này"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Xác nhận gỡ bỏ (giữ nguyên thư mục)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Sao chép đường dẫn"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Mở tác nhân"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "Chưa có tác nhân nào. Tạo một tác nhân, hoặc thêm thư mục đã có sẵn agent.yaml."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Đang đọc không gian làm việc…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "Tác nhân mới"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "không có agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "Chưa có lượt chạy nào"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Mở không gian làm việc"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Đã sao chép đường dẫn tác nhân"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Xóa khỏi danh sách"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Không thể xóa tác nhân"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Hiện trong Finder"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Ẩn bớt"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Hiện thêm"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Lượt chạy {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Không thể đọc không gian làm việc"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Tự động nén tại"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Bắt đầu phiên AI về lượt chạy này"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "Phiên này chưa có id lượt chạy — nó xuất hiện ngay sau khi khởi chạy"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "Không thể xóa một phiên đang chạy — hãy hủy lượt chạy trước"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Xác nhận xóa (xóa luôn các tệp của nó)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "HIỆN TẠI"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Không thể xóa lượt chạy"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Xóa lượt chạy"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "Máy này chưa có lượt chạy benchmark nào. Bắt đầu một lượt từ màn hình Benchmark."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "ĐÃ ĐÓNG BĂNG"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "Lượt chạy benchmark mới"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "Chưa có lượt chạy nào"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Mở lượt chạy"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Ẩn bớt"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Hiện thêm"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Đã cập nhật tiện ích mở rộng"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Cấu hình tiện ích mở rộng {name}"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Bắt đầu phiên AI về MCP này"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Xác nhận gỡ bỏ {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Tắt"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Sửa"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Bật"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Các tiện ích mở rộng tích hợp sẵn và đi kèm không thể chỉnh sửa hoặc xóa"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Xóa"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Bật hoặc tắt tiện ích mở rộng {name}"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Thêm thư mục dự án"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Bắt đầu phiên AI về phiên này"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Xác nhận xóa (không thể hoàn tác)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Xác nhận gỡ bỏ (giữ nguyên tệp & cuộc trò chuyện)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Phiên hiện tại"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Không thể xóa phiên"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Xóa phiên"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Các phiên của bạn xuất hiện ở đây dưới thư mục nơi chúng chạy. Bắt đầu một phiên, hoặc thêm thư mục."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Không thể tách nhánh phiên"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Tách nhánh phiên"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Đang tải phiên…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "Chưa có phiên nào"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Mở"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Đã sao chép đường dẫn dự án"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Gỡ khỏi dự án"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Không thể đổi tên phiên"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Tên"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Đổi tên"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Đổi tên phiên"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Thử lại"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Hiện trong Finder"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Lưu"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Không thể bắt đầu phiên"

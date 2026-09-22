@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "權重 — 越高分到的任務越多"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "開始一個關於此代理的 AI 工作階段"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "確認移除（保留資料夾）"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "複製路徑"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "開啟代理"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "還沒有代理。建立一個，或新增一個已經有 agent.yaml 的資料夾。"
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "正在讀取工作區…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "新增代理"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "無 agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "還沒有執行紀錄"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "開啟工作區"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "已複製代理路徑"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "從清單中移除"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "無法移除代理"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "重試"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "在 Finder 中顯示"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "顯示更多"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "第 {n} 次執行"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "無法讀取工作區"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "自動壓縮於"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "開始一個關於此次執行的 AI 工作階段"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "此工作階段還沒有執行 id —— 它會在啟動後不久出現"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "正在執行的工作階段無法刪除 —— 請先取消執行"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "確認刪除（會移除其檔案）"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "目前"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "無法刪除該次執行"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "刪除執行"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "這台機器上還沒有 benchmark 執行紀錄。從 Benchmark 檢視開始一個。"
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "已凍結"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "新增 benchmark 執行"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "還沒有執行紀錄"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "開啟執行"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "顯示更多"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "擴充功能已更新"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "設定 {name} 擴充功能"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "開始一個關於此 MCP 的 AI 工作階段"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "確認移除 {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "停用"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "編輯"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "啟用"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "內建與隨附的擴充功能無法編輯或移除"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "移除"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "開啟或關閉 {name} 擴充功能"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "新增專案資料夾"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "開始一個關於此工作階段的 AI 工作階段"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "取消"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "確認刪除（無法復原）"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "確認移除（保留檔案與聊天）"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "目前的工作階段"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "無法刪除該工作階段"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "刪除工作階段"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "你的工作階段會依執行時所在的資料夾顯示在這裡。開始一個工作階段，或新增一個資料夾。"
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "無法分支該工作階段"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "分支工作階段"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "正在載入工作階段…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "還沒有工作階段"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "開啟"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "已複製專案路徑"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "從專案中移除"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "無法重新命名該工作階段"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "名稱"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "重新命名"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "重新命名工作階段"
+  },
   "projectsSection.retry": {
     "defaultMessage": "重試"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "在 Finder 中顯示"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "儲存"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "無法開始工作階段"

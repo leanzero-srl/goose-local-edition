@@ -1,15 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronRight,
-  Check,
   Copy,
   Folder,
   FolderOpen,
+  GitFork,
   MessageSquarePlus,
   MoreVertical,
+  Pencil,
   Plus,
+  Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
@@ -17,7 +19,13 @@ import { useConfig } from '../ConfigContext';
 import { useNavigation } from '../../hooks/useNavigation';
 import { useNavigationSessions } from '../../hooks/useNavigationSessions';
 import { startNewSession, displaySessionListName } from '../../sessions';
-import { acpListSessions, type SessionListItem } from '../../acp/sessions';
+import {
+  acpDeleteSession,
+  acpForkSession,
+  acpListSessions,
+  acpRenameSession,
+  type SessionListItem,
+} from '../../acp/sessions';
 import { AppEvents } from '../../constants/events';
 import {
   chooseAndAddProject,
@@ -30,18 +38,27 @@ import {
   Button,
   SectionHeader,
   StatusDot,
-  FOCUS,
-  MOTION,
   RADIUS,
   ROW,
   SURFACE,
   TNUM,
-  TONE_FILL,
   TYPE,
   WEIGHT,
   cx,
 } from '../lz';
+import {
+  TreeChildren,
+  TreeContextMenu,
+  rowActionClass,
+  timeAgo,
+  treeParentClass,
+  treeRowClass,
+  treeStateRowClass,
+  TREE_PREVIEW_COUNT,
+} from './tree';
 import { defineMessages, useIntl } from '../../i18n';
+import { RenameDialog } from './RenameDialog';
+import { useStartChatAbout } from './useStartChatAbout';
 
 const i18n = defineMessages({
   projects: {
@@ -133,7 +150,38 @@ const i18n = defineMessages({
     id: 'projectsSection.currentSession',
     defaultMessage: 'Current session',
   },
+  openSession: { id: 'projectsSection.openSession', defaultMessage: 'Open' },
+  renameSession: { id: 'projectsSection.renameSession', defaultMessage: 'Rename' },
+  renameTitle: { id: 'projectsSection.renameTitle', defaultMessage: 'Rename session' },
+  renameLabel: { id: 'projectsSection.renameLabel', defaultMessage: 'Name' },
+  save: { id: 'projectsSection.save', defaultMessage: 'Save' },
+  cancel: { id: 'projectsSection.cancel', defaultMessage: 'Cancel' },
+  renameFailed: {
+    id: 'projectsSection.renameFailed',
+    defaultMessage: 'Could not rename the session',
+  },
+  forkSession: { id: 'projectsSection.forkSession', defaultMessage: 'Fork session' },
+  forkFailed: { id: 'projectsSection.forkFailed', defaultMessage: 'Could not fork the session' },
+  askAboutSession: {
+    id: 'projectsSection.askAboutSession',
+    defaultMessage: 'Start an AI session about this session',
+  },
+  deleteSession: { id: 'projectsSection.deleteSession', defaultMessage: 'Delete session' },
+  confirmDeleteSession: {
+    id: 'projectsSection.confirmDeleteSession',
+    defaultMessage: 'Confirm delete (cannot be undone)',
+  },
+  deleteFailed: {
+    id: 'projectsSection.deleteFailed',
+    defaultMessage: 'Could not delete the session',
+  },
 });
+
+/** What is asked of the model when a session is opened as a new chat about it. */
+export function askAboutSessionPrompt(session: SessionListItem): string {
+  const name = displaySessionListName(session.name);
+  return `I want to talk about my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}). Read that session's conversation first, then help me try something out or ask me what I want to do with it.`;
+}
 
 /** Trailing-slash-insensitive normalization so membership tests mirror the server's exact-match cwd filter. */
 export function normalizeDirPath(dir: string): string {
@@ -142,7 +190,9 @@ export function normalizeDirPath(dir: string): string {
 }
 
 /** How many sessions a folder shows before "Show more" — the sidebar's density, not a storage cap. */
-export const PREVIEW_COUNT = 5;
+export const PREVIEW_COUNT = TREE_PREVIEW_COUNT;
+/** How many of the newest folders start open. */
+export const DEFAULT_OPEN_FOLDERS = 3;
 
 export interface DerivedProject {
   /** The normalized working directory; the grouping key and the cwd filter for paging. */
@@ -214,23 +264,6 @@ export function folderName(dir: string): string {
   return seg ?? trimmed;
 }
 
-/** Compact "time since last activity". */
-function timeAgo(iso: string | undefined): string {
-  if (!iso) return '';
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return '';
-  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (s < 45) return 'now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 7) return `${d}d ago`;
-  const w = Math.round(d / 7);
-  return w < 5 ? `${w}w ago` : `${Math.round(d / 30)}mo ago`;
-}
-
 /** Sessions PAGED from the server beyond the recent list, per folder; `expandedAll` once the
  *  user asked for more than the preview. */
 export interface ProjectSessionsState {
@@ -241,139 +274,155 @@ export interface ProjectSessionsState {
   error: boolean;
 }
 
-// The tree registers, composed from the Studio tokens (ui/desktop/DESIGN.md). One dense 32px row
-// for parents and leaves alike; hover is a solid step to surface-2; the current session is a 2px
-// inset accent ring (a fill would hide its dot and meta).
-const treeRowClass = cx(
-  'flex w-full items-center gap-2 px-2 text-left',
-  ROW.dense,
-  RADIUS.control,
-  MOTION,
-  FOCUS
-);
-const treeParentClass = cx(treeRowClass, 'min-w-0 flex-1', SURFACE.hover);
-const treeStateRowClass = cx('flex items-center px-2', ROW.dense, TYPE.meta);
-
-/**
- * Children of an expanded row sit beside a 1px hairline guide (bg-lz-border, structural — it is
- * a separate element under the parent's chevron, never a border-left on the rows).
- */
-const TreeChildren: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="flex">
-    <span
-      aria-hidden
-      data-testid="tree-guide"
-      className={cx('ml-4 w-px shrink-0 self-stretch', 'bg-lz-border')}
-    />
-    <div className="flex min-w-0 flex-1 flex-col gap-px pl-2">{children}</div>
-  </div>
-);
-
-// Row actions stay out of the way until the row is hovered or holds focus. Visibility, not
-// opacity (opacity utilities are banned as faded colour); group-focus-within keeps them reachable
-// by keyboard — focusing the row's own button reveals them for the next Tab.
-const rowActionClass = (shown: boolean) =>
-  shown ? 'visible' : 'invisible group-hover:visible group-focus-within:visible';
-
-// Custom portaled context menu on the one overlay elevation; never a native menu. Remove has an
-// in-menu confirm step so a single click can't drop a project, and the confirm label says out
-// loud that removal touches the registry only.
-const ProjectContextMenu: React.FC<{
-  x: number;
-  y: number;
-  onNewSession: () => void;
-  onReveal: () => void;
-  onCopyPath: () => void;
-  /** Absent for a folder derived from sessions — nothing to remove from. */
-  onRemove?: () => void;
-  onClose: () => void;
-}> = ({ x, y, onNewSession, onReveal, onCopyPath, onRemove, onClose }) => {
-  const intl = useIntl();
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const MENU_W = 240;
-  const left = Math.min(x, window.innerWidth - MENU_W - 8);
-  const top = Math.min(y, window.innerHeight - 180);
-  const itemBase = cx(
-    'flex w-full items-center gap-2 px-3 text-left text-lz-body',
-    ROW.dense,
-    MOTION,
-    FOCUS
-  );
-  const itemCls = cx(itemBase, 'text-lz-ink', SURFACE.hover);
-
-  return createPortal(
-    <>
-      <div
-        className="fixed inset-0 z-[190]"
-        onClick={onClose}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onClose();
-        }}
-      />
-      <div
-        data-testid="project-context-menu"
-        className={cx('fixed z-[200] py-1', SURFACE.overlay)}
-        style={{ left, top, minWidth: MENU_W }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button className={itemCls} onClick={onNewSession}>
-          <MessageSquarePlus className="size-3.5 text-lz-ink-3" />{' '}
-          {intl.formatMessage(i18n.newSessionHere)}
-        </button>
-        <button className={itemCls} onClick={onReveal}>
-          <FolderOpen className="size-3.5 text-lz-ink-3" />{' '}
-          {intl.formatMessage(i18n.revealInFinder)}
-        </button>
-        <button className={itemCls} onClick={onCopyPath}>
-          <Copy className="size-3.5 text-lz-ink-3" /> {intl.formatMessage(i18n.copyPath)}
-        </button>
-        {onRemove && <div className={cx('my-1 border-t', SURFACE.hairline)} />}
-        {!onRemove ? null : confirming ? (
-          <button className={cx(itemBase, TONE_FILL.err, 'hover:bg-lz-err')} onClick={onRemove}>
-            <Check className="size-3.5" strokeWidth={3} /> {intl.formatMessage(i18n.confirmRemove)}
-          </button>
-        ) : (
-          <button
-            className={cx(itemBase, 'text-lz-err', SURFACE.hover)}
-            onClick={() => setConfirming(true)}
-          >
-            <X className="size-3.5" /> {intl.formatMessage(i18n.removeFromProjects)}
-          </button>
-        )}
-      </div>
-    </>,
-    document.body
-  );
-};
-
 const SessionLeafRow: React.FC<{
   session: SessionListItem;
   active: boolean;
   onClick: () => void;
-}> = ({ session, active, onClick }) => {
+  onRenamed: (name: string) => void;
+  onDeleted: () => void;
+  onForked: (newSessionId: string) => void;
+  onAsk: () => void;
+}> = ({ session, active, onClick, onRenamed, onDeleted, onForked, onAsk }) => {
   const intl = useIntl();
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const when = timeAgo(sessionActivityAt(session));
   const name = displaySessionListName(session.name);
+
+  const rename = async (value: string) => {
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await acpRenameSession(session.id, value);
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_RENAMED, {
+          detail: { sessionId: session.id, newName: value, userInitiated: true },
+        })
+      );
+      onRenamed(value);
+      setRenaming(false);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    try {
+      await acpDeleteSession(session.id);
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_DELETED, { detail: { sessionId: session.id } })
+      );
+      onDeleted();
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      toast.error(intl.formatMessage(i18n.deleteFailed));
+    }
+  };
+
+  const fork = async () => {
+    try {
+      const id = await acpForkSession(session.id);
+      onForked(id);
+    } catch (error) {
+      console.error('Failed to fork session:', error);
+      toast.error(intl.formatMessage(i18n.forkFailed));
+    }
+  };
+
   return (
-    <button
-      onClick={onClick}
-      title={name}
-      aria-current={active ? 'true' : undefined}
-      className={cx(treeRowClass, active ? SURFACE.selectedRing : SURFACE.hover)}
+    <div
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
-      <span className="flex-1 truncate text-lz-body text-lz-ink">{name}</span>
-      {active && <StatusDot tone="accent" label={intl.formatMessage(i18n.currentSession)} />}
-      {when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
-    </button>
+      <button
+        onClick={onClick}
+        title={name}
+        aria-current={active ? 'true' : undefined}
+        data-testid={`session-row-${session.id}`}
+        className={cx(treeRowClass, active ? SURFACE.selectedRing : SURFACE.hover)}
+      >
+        <span className="flex-1 truncate text-lz-body text-lz-ink">{name}</span>
+        {active && <StatusDot tone="accent" label={intl.formatMessage(i18n.currentSession)} />}
+        {when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
+      </button>
+      {menu && (
+        <TreeContextMenu
+          x={menu.x}
+          y={menu.y}
+          testId="session-context-menu"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              key: 'open',
+              label: intl.formatMessage(i18n.openSession),
+              icon: <MessageSquarePlus />,
+              onClick: () => {
+                setMenu(null);
+                onClick();
+              },
+            },
+            {
+              key: 'rename',
+              label: intl.formatMessage(i18n.renameSession),
+              icon: <Pencil />,
+              onClick: () => {
+                setMenu(null);
+                setRenaming(true);
+              },
+            },
+            {
+              key: 'fork',
+              label: intl.formatMessage(i18n.forkSession),
+              icon: <GitFork />,
+              onClick: () => {
+                setMenu(null);
+                void fork();
+              },
+            },
+            {
+              key: 'ask',
+              label: intl.formatMessage(i18n.askAboutSession),
+              icon: <Sparkles />,
+              onClick: () => {
+                setMenu(null);
+                onAsk();
+              },
+            },
+            {
+              key: 'delete',
+              label: intl.formatMessage(i18n.deleteSession),
+              icon: <Trash2 />,
+              danger: true,
+              separator: true,
+              confirmLabel: intl.formatMessage(i18n.confirmDeleteSession),
+              onClick: () => {
+                setMenu(null);
+                void remove();
+              },
+            },
+          ]}
+        />
+      )}
+      {renaming && (
+        <RenameDialog
+          title={intl.formatMessage(i18n.renameTitle)}
+          label={intl.formatMessage(i18n.renameLabel)}
+          initial={name}
+          saveLabel={intl.formatMessage(i18n.save)}
+          cancelLabel={intl.formatMessage(i18n.cancel)}
+          busy={busy}
+          error={renameError}
+          onSave={(value) => void rename(value)}
+          onCancel={() => setRenaming(false)}
+        />
+      )}
+    </div>
   );
 };
 
@@ -388,6 +437,7 @@ interface ProjectRowProps {
   onNewSession: () => void;
   onRemove?: () => void;
   onOpenSession: (sessionId: string) => void;
+  onAskSession: (session: SessionListItem) => void;
   onShowMore: () => void;
   onShowLess: () => void;
   onRetry: () => void;
@@ -403,6 +453,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   onNewSession,
   onRemove,
   onOpenSession,
+  onAskSession,
   onShowMore,
   onShowLess,
   onRetry,
@@ -520,14 +571,44 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
         </div>
 
         {menu && (
-          <ProjectContextMenu
+          <TreeContextMenu
             x={menu.x}
             y={menu.y}
-            onNewSession={newSession}
-            onReveal={reveal}
-            onCopyPath={copyPath}
-            onRemove={remove}
+            testId="project-context-menu"
             onClose={() => setMenu(null)}
+            items={[
+              {
+                key: 'new',
+                label: intl.formatMessage(i18n.newSessionHere),
+                icon: <MessageSquarePlus />,
+                onClick: newSession,
+              },
+              {
+                key: 'reveal',
+                label: intl.formatMessage(i18n.revealInFinder),
+                icon: <FolderOpen />,
+                onClick: reveal,
+              },
+              {
+                key: 'copy',
+                label: intl.formatMessage(i18n.copyPath),
+                icon: <Copy />,
+                onClick: copyPath,
+              },
+              ...(remove
+                ? [
+                    {
+                      key: 'remove',
+                      label: intl.formatMessage(i18n.removeFromProjects),
+                      icon: <X />,
+                      onClick: remove,
+                      danger: true,
+                      separator: true,
+                      confirmLabel: intl.formatMessage(i18n.confirmRemove),
+                    },
+                  ]
+                : []),
+            ]}
           />
         )}
       </div>
@@ -540,6 +621,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
               session={session}
               active={session.id === activeSessionId}
               onClick={() => onOpenSession(session.id)}
+              onRenamed={() => undefined}
+              onDeleted={() => undefined}
+              onForked={(id) => onOpenSession(id)}
+              onAsk={() => onAskSession(session)}
             />
           ))}
           {known.length === 0 && !state?.loading && !state?.error ? (
@@ -583,9 +668,12 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   const { extensionsList } = useConfig();
   const { recentSessions, activeSessionId, fetchSessions, handleSessionClick } =
     useNavigationSessions();
+  const startChat = useStartChatAbout();
 
   const [registry, setRegistry] = useState<ProjectEntry[]>([]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Folders the user flipped; the default is open for the newest few and the one holding the open
+  // session, closed for the rest (a 30-folder history is a wall when every folder starts open).
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, ProjectSessionsState>>(
     {}
@@ -647,13 +735,22 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   }, []);
 
   const toggleProject = useCallback((projectPath: string) => {
-    setCollapsed((prev) => {
+    setToggled((prev) => {
       const next = new Set(prev);
       if (next.has(projectPath)) next.delete(projectPath);
       else next.add(projectPath);
       return next;
     });
   }, []);
+  const isExpanded = useCallback(
+    (project: DerivedProject, index: number) => {
+      const defaultOpen =
+        index < DEFAULT_OPEN_FOLDERS ||
+        (activeSessionId != null && project.sessions.some((s) => s.id === activeSessionId));
+      return toggled.has(project.path) ? !defaultOpen : defaultOpen;
+    },
+    [toggled, activeSessionId]
+  );
 
   // "Show more" first reveals what the recent list already knows, then pages the server (the
   // exact cwd filter) until it runs out; "Show less" folds back to the preview.
@@ -714,9 +811,10 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
       if (!detail) return;
       setRegistry(detail.projects);
       for (const p of detail.added) {
-        setCollapsed((prev) => {
+        // a freshly added folder opens regardless of its position
+        setToggled((prev) => {
           const next = new Set(prev);
-          next.delete(normalizeDirPath(p.path));
+          next.add(`open:${normalizeDirPath(p.path)}`);
           return next;
         });
       }
@@ -792,17 +890,17 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2">
+      <div className="flex flex-col gap-px px-2 pb-2">
         {projects.length === 0 ? (
           <div className={cx('px-2 py-2', TYPE.bodyMuted)}>
             {intl.formatMessage(i18n.emptyState)}
           </div>
         ) : (
-          projects.map((project) => (
+          projects.map((project, index) => (
             <ProjectRow
               key={project.path}
               project={project}
-              expanded={!collapsed.has(project.path)}
+              expanded={toggled.has(`open:${project.path}`) || isExpanded(project, index)}
               state={sessionsByProject[project.path]}
               showAll={showAll.has(project.path)}
               activeSessionId={activeSessionId}
@@ -814,6 +912,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
                   : undefined
               }
               onOpenSession={handleSessionClick}
+              onAskSession={(session) => void startChat(askAboutSessionPrompt(session))}
               onShowMore={() => showMore(project)}
               onShowLess={() => showLess(project.path)}
               onRetry={() =>

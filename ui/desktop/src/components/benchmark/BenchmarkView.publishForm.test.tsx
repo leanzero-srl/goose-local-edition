@@ -189,9 +189,9 @@ describe('the publish form', () => {
     const errorLine = await findByText(new RegExp('checksSummary\\[49\\]'));
     expect(errorLine.textContent).toContain(serverWords);
     expect(getByRole('status').getAttribute('aria-live')).toBe('polite');
-    expect(
-      (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    ).toEqual({ title: 'sb-7 first try' }); // no model in the payload — engine truth lives in main
+    expect((electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0]).toEqual({
+      title: 'sb-7 first try',
+    }); // no model in the payload — engine truth lives in main
   });
 
   it("surfaces main's frozen refusal verbatim — the {ok:false, status:'error', message} shape", async () => {
@@ -237,7 +237,7 @@ describe('the publish form', () => {
     expect(accepted.textContent).toContain('/agentic-benchmarks/run/brun-1234');
   });
 
-  it('locks the node-count toggles during a run with the reason — and offers NO benchmark chooser', async () => {
+  it('locks the node-count toggles and the benchmark dropdown during a run, with the reason', async () => {
     mockElectron({ running: true, modelId: 'qwen3.6-27b-mtp' });
     const { findByRole, getByRole, queryByRole } = render(
       <IntlTestWrapper>
@@ -252,11 +252,11 @@ describe('the publish form', () => {
     expect(two.getAttribute('title')).toMatch(/Locked while a run is live/);
     expect(describedBy(two)).toMatch(/locked while the run is live/);
 
-    // The tier chooser is GONE: the user cannot choose a benchmark — only the catalog's current
-    // one is runnable. 'sb-5.3' survives only as the era section's scorer stamp, never a button.
+    // The benchmark is a DROPDOWN (Mihai 2026-09-22: "the type of SB should be a drop down"), not
+    // a row of tier buttons; it is locked with the rest of the setup while a run is live.
     expect(queryByRole('button', { name: 'sb-5.3' })).toBeNull();
     expect(queryByRole('button', { name: /sb-6/ })).toBeNull();
-    expect(queryByRole('button', { name: /sb-7/ })).toBeNull();
+    expect(getByRole('combobox', { name: 'Benchmark' })).toBeDisabled();
   });
 
   it('disables Publish on a FROZEN era with submissions-closed as the reason', async () => {

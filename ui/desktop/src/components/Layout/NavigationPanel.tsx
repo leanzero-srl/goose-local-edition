@@ -4,6 +4,8 @@ import { useEdition } from '../../contexts/EditionContext';
 import { motion } from 'framer-motion';
 import { useNavigationContext } from './NavigationContext';
 import { ProjectsSection } from './ProjectsSection';
+import { AgentWorkSection } from './AgentWorkSection';
+import { BenchmarkSection } from './BenchmarkSection';
 import { ThemeSwitch } from './ThemeSwitch';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
@@ -142,8 +144,13 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
         ))}
       </nav>
 
-      {/* Projects tree — the pass-B replacement for the removed CHATS section. */}
-      <ProjectsSection className="mt-2 flex-1" />
+      {/* The three trees, one shape (Mihai 2026-09-22): Projects, then Agent Work desks and
+          Benchmark runs, each with its sessions under it. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <ProjectsSection className="mt-2 shrink-0" />
+        {isLocal && <AgentWorkSection className="mt-2 shrink-0" />}
+        {isLocal && <BenchmarkSection className="mt-2 shrink-0" />}
+      </div>
 
       {/* The bottom block under a hairline: the theme switch (System | Light | Dark) on its OWN
           36px row, then Settings as one more full-width nav row. Side by side, the switch left the

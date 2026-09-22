@@ -217,7 +217,7 @@ describe('the benchmark sections and their sessions', () => {
     expect(cloud).toHaveBeenCalledTimes(1);
   });
 
-  it('renders all four outcomes honestly — running pulses, finished carries its score, the dead ones say so', async () => {
+  it('the selected run (the running one by default) renders under its era with its badges; the run list itself lives in the sidebar', async () => {
     mockElectron();
     render(
       <IntlTestWrapper>
@@ -225,33 +225,40 @@ describe('the benchmark sections and their sessions', () => {
       </IntlTestWrapper>
     );
 
-    // Every state names itself: the four chips of the current (expanded) era.
+    // The running session is selected by default: ONE chip for the selected run, the era's title
+    // and badge beside it, and a detail that promises, never invents.
     const runningChip = (await screen.findByText('Running')).closest('span')!;
     // The live mark scales on the motion token (DESIGN.md) — never the fading pulse.
     expect(runningChip.querySelector('.animate-lz-live')).not.toBeNull();
     expect(runningChip.querySelector('.animate-pulse')).toBeNull();
-    expect(screen.getByText('Finished')).toBeInTheDocument();
-    expect(screen.getByText(/· 2\.7%/)).toBeInTheDocument();
-    expect(screen.getByText('Did not finish')).toBeInTheDocument();
-    expect(screen.getByText('Did not start')).toBeInTheDocument();
-
-    // The era badges come from the catalog: current is runnable, frozen only viewable.
-    expect(screen.getByText('CURRENT')).toBeInTheDocument();
-    expect(screen.getByText('FROZEN')).toBeInTheDocument();
     expect(screen.getByText('Meridian Payments Console')).toBeInTheDocument();
-
-    // The running session is selected by default and its detail promises, never invents:
     expect(screen.getByText(/result lands here when the run finishes/i)).toBeInTheDocument();
+    // No second list of runs in the main view (one list, in the sidebar).
+    expect(screen.queryByText('Did not finish')).toBeNull();
+    expect(screen.queryByText('Did not start')).toBeNull();
+    // The benchmark is a dropdown at run setup, its value the current benchmark.
+    const chooser = screen.getByRole('combobox', { name: 'Benchmark' });
+    expect(chooser.textContent).toContain('sb-7.1');
+    fireEvent.click(chooser);
+    const options = screen.getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual([
+      'sb-7.1 — SB7.1 payments',
+      'sb-7.0-rc — Meridian Payments Console (history)',
+      'sb-6.0 — VendorSync Pro (frozen)',
+    ]);
+    expect(options[1].getAttribute('aria-disabled')).toBe('true');
+    expect(options[2].getAttribute('aria-disabled')).toBe('true');
   });
 
   it("a finished session's detail compares against the catalog's retrieved baselines for ITS era", async () => {
     mockElectron();
+    window.location.hash = '#/benchmark?era=sb-7.0-rc&run=s-fin';
     render(
       <IntlTestWrapper>
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    fireEvent.click((await screen.findByText('Finished')).closest('button')!);
+    await screen.findByText('Finished');
     // The comparison row is RETRIEVED (catalog), and it is the era's own board — never sb-6's.
     // The Board table and the Overall bars both carry the row — one comparison, two registers.
     await screen.findAllByText('Claude Opus 5');
@@ -259,6 +266,7 @@ describe('the benchmark sections and their sessions', () => {
     // The session's own row and score render from the stored session, not a baked table
     // (the stat tile and the chart's own bar both carry it).
     expect(screen.getAllByText('2.7%').length).toBeGreaterThanOrEqual(1);
+    window.location.hash = '';
   });
 
   it('a stored result carrying runId joins its OWN session exactly — never the newer finished sibling', async () => {
@@ -290,28 +298,27 @@ describe('the benchmark sections and their sessions', () => {
         repairRounds: 2,
       },
     }));
+    window.location.hash = '#/benchmark?era=sb-7.0-rc&run=s-fin';
     render(
       <IntlTestWrapper>
         <BenchmarkView />
       </IntlTestWrapper>
     );
 
-    // Newest-first in the era: s-fin (Aug 29) renders before s-fin-old (Aug 26). The NEWER
-    // finished session must not borrow the stored result's runMeta tiles…
-    const finishedChips = await screen.findAllByText('Finished');
-    fireEvent.click(finishedChips[0].closest('button')!);
-    // The Board table and the Overall bars both carry the row — one comparison, two registers.
+    // The NEWER finished session (s-fin, Aug 29) must not borrow the stored result's runMeta tiles…
     await screen.findAllByText('Claude Opus 5');
     expect(screen.queryByText('Repair rounds')).toBeNull();
 
-    // …while the session the row NAMES carries them.
-    fireEvent.click(screen.getAllByText('Finished')[1].closest('button')!);
+    // …while the session the row NAMES carries them (the sidebar selects it by URL).
+    window.location.hash = '#/benchmark?era=sb-7.0-rc&run=s-fin-old';
+    window.dispatchEvent(new Event('hashchange'));
     await screen.findByText('Repair rounds');
     expect(screen.getByText('Engine events')).toBeInTheDocument();
     expect(screen.getByText('424')).toBeInTheDocument();
+    window.location.hash = '';
   });
 
-  it('deletes a session through the custom confirm dialog, never a native confirm', async () => {
+  it('deletes the selected session through the custom confirm dialog, never a native confirm', async () => {
     mockElectron();
     render(
       <IntlTestWrapper>
@@ -319,12 +326,14 @@ describe('the benchmark sections and their sessions', () => {
       </IntlTestWrapper>
     );
 
-    // The running session cannot be deleted (and its runId is still null — the label falls back
-    // to the startedAt stamp); a dead one can.
+    // The running session (selected by default) cannot be deleted; its runId is still null so the
+    // label falls back to the startedAt stamp.
     const liveDelete = await screen.findByLabelText('Delete session 2026-08-30T10:00:00.000Z');
     expect(liveDelete).toBeDisabled();
 
-    fireEvent.click(screen.getByLabelText('Delete session s-dnf'));
+    window.location.hash = '#/benchmark?era=sb-7.0-rc&run=s-dnf';
+    window.dispatchEvent(new Event('hashchange'));
+    fireEvent.click(await screen.findByLabelText('Delete session s-dnf'));
     await screen.findByText('Delete this benchmark session?');
     fireEvent.click(screen.getByRole('button', { name: 'Delete session' }));
 
@@ -333,6 +342,7 @@ describe('the benchmark sections and their sessions', () => {
         ['s-dnf'],
       ])
     );
+    window.location.hash = '';
   });
 
   it('renders the catalog-mismatch notice from benchmark-started — the site moved on, the app has not', async () => {

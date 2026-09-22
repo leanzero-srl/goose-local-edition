@@ -179,6 +179,7 @@ export default function ExtensionsSection({
           extensions={extensions}
           onToggle={handleExtensionToggle}
           onConfigure={handleConfigureClick}
+          onDelete={(extension) => void handleDeleteExtension(extension.name)}
           disableConfiguration={disableConfiguration}
           searchTerm={searchTerm}
         />

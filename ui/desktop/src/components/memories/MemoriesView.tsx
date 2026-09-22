@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Brain, AlertCircle } from 'lucide-react';
+import { Brain, AlertCircle, BookOpen, Pencil, Sparkles, Trash2 } from 'lucide-react';
+import { TreeContextMenu } from '../Layout/tree';
+import { useStartChatAbout } from '../Layout/useStartChatAbout';
 import { ScrollArea } from '../ui/scroll-area';
 import { Card } from '../ui/card';
 import { Skeleton } from '../ui/skeleton';
@@ -48,7 +50,10 @@ function prettyTitle(category: string): string {
 function firstLine(content: string): string {
   const line = content.split('\n').find((l) => l.trim().length > 0) ?? '';
   // Strip markdown emphasis so the snippet reads as plain prose.
-  return line.replace(/\*\*/g, '').replace(/^#+\s*/, '').trim();
+  return line
+    .replace(/\*\*/g, '')
+    .replace(/^#+\s*/, '')
+    .trim();
 }
 
 const SCOPE_DOT: Record<MemoryEntry['scope'], string> = {
@@ -71,36 +76,103 @@ const rowClass = (selected: boolean) =>
     selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
   );
 
+/** What is asked of the model when a memory is opened as a chat about it. */
+export function askAboutMemoryPrompt(memory: MemoryEntry): string {
+  return `I want to work on one of my goose memories — category "${memory.category}" (${memory.scope}). It currently says:\n\n${memory.content}\n\nHelp me tweak, modify or fork it; ask me what I want changed.`;
+}
+
 function MemoryCardItem({
   memory,
   selected,
   onSelect,
+  onEdit,
+  onDelete,
+  onAsk,
 }: {
   memory: MemoryEntry;
   selected: boolean;
   onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onAsk: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-current={selected ? 'true' : undefined}
-      data-testid="memory-row"
-      className={rowClass(selected)}
+    <div
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
-      <span className={`w-2 h-2 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-lz-body">{prettyTitle(memory.category)}</span>
-        <span
-          className={cx(
-            'block line-clamp-1 text-lz-meta',
-            selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
-          )}
-        >
-          {firstLine(memory.content)}
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? 'true' : undefined}
+        data-testid="memory-row"
+        className={rowClass(selected)}
+      >
+        <span className={`w-2 h-2 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-lz-body">{prettyTitle(memory.category)}</span>
+          <span
+            className={cx(
+              'block line-clamp-1 text-lz-meta',
+              selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
+            )}
+          >
+            {firstLine(memory.content)}
+          </span>
         </span>
-      </span>
-    </button>
+      </button>
+      {menu && (
+        <TreeContextMenu
+          x={menu.x}
+          y={menu.y}
+          testId="memory-context-menu"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              key: 'open',
+              label: 'Open',
+              icon: <BookOpen />,
+              onClick: () => {
+                setMenu(null);
+                onSelect();
+              },
+            },
+            {
+              key: 'edit',
+              label: 'Edit',
+              icon: <Pencil />,
+              onClick: () => {
+                setMenu(null);
+                onEdit();
+              },
+            },
+            {
+              key: 'ask',
+              label: 'Start an AI session about this memory',
+              icon: <Sparkles />,
+              onClick: () => {
+                setMenu(null);
+                onAsk();
+              },
+            },
+            {
+              key: 'delete',
+              label: 'Delete',
+              icon: <Trash2 />,
+              danger: true,
+              separator: true,
+              onClick: () => {
+                setMenu(null);
+                onDelete();
+              },
+            },
+          ]}
+        />
+      )}
+    </div>
   );
 }
 
@@ -131,11 +203,16 @@ function MemoryDetail({
   workingDir,
   onSaved,
   onDeleted,
+  requestEdit,
+  requestDelete,
 }: {
   memory: MemoryEntry;
   workingDir?: string;
   onSaved: () => void;
   onDeleted: () => void;
+  /** Bumped by the list's context menu: enter editing / open the delete confirm from outside. */
+  requestEdit?: number;
+  requestDelete?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(memory.content);
@@ -151,6 +228,14 @@ function MemoryDetail({
     setError(null);
     setConfirmDelete(false);
   }, [memory.id, memory.content]);
+  // The list's context menu may select AND ask to edit/delete in one motion: these run AFTER the
+  // reset above so the request wins over it.
+  useEffect(() => {
+    if (requestEdit) setEditing(true);
+  }, [requestEdit]);
+  useEffect(() => {
+    if (requestDelete) setConfirmDelete(true);
+  }, [requestDelete]);
 
   const dirty = body !== memory.content;
 
@@ -199,7 +284,11 @@ function MemoryDetail({
         <div className="flex items-center gap-2 mb-1">
           <span className={`w-2.5 h-2.5 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
           <h2 className="text-xl font-medium truncate flex-1">{prettyTitle(memory.category)}</h2>
-          <Button size="sm" variant={editing ? 'default' : 'outline'} onClick={() => setEditing((e) => !e)}>
+          <Button
+            size="sm"
+            variant={editing ? 'default' : 'outline'}
+            onClick={() => setEditing((e) => !e)}
+          >
             {editing ? 'Done editing' : 'Edit'}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setConfirmDelete(true)}>
@@ -269,6 +358,9 @@ export default function MemoriesView() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editRequest, setEditRequest] = useState(0);
+  const [deleteRequest, setDeleteRequest] = useState(0);
+  const startChat = useStartChatAbout();
 
   const loadMemories = useCallback(async () => {
     try {
@@ -326,7 +418,11 @@ export default function MemoriesView() {
       local: 'This project',
     };
     return order
-      .map((scope) => ({ scope, title: titles[scope], items: filtered.filter((m) => m.scope === scope) }))
+      .map((scope) => ({
+        scope,
+        title: titles[scope],
+        items: filtered.filter((m) => m.scope === scope),
+      }))
       .filter((g) => g.items.length > 0);
   }, [filtered]);
 
@@ -362,8 +458,8 @@ export default function MemoriesView() {
         <div className="flex flex-col justify-center pt-2 h-full">
           <p className="text-lg">No memories yet</p>
           <p className="text-sm text-text-secondary">
-            Memories are stored in ~/.config/goose/memory/ — imported from your cloud profile and learned by
-            goose as it works.
+            Memories are stored in ~/.config/goose/memory/ — imported from your cloud profile and
+            learned by goose as it works.
           </p>
         </div>
       );
@@ -390,6 +486,15 @@ export default function MemoriesView() {
                 memory={m}
                 selected={m.id === selectedId}
                 onSelect={() => setSelectedId(m.id)}
+                onEdit={() => {
+                  setSelectedId(m.id);
+                  setEditRequest((n) => n + 1);
+                }}
+                onDelete={() => {
+                  setSelectedId(m.id);
+                  setDeleteRequest((n) => n + 1);
+                }}
+                onAsk={() => void startChat(askAboutMemoryPrompt(m))}
               />
             ))}
           </div>
@@ -433,6 +538,8 @@ export default function MemoriesView() {
               <MemoryDetail
                 memory={selected}
                 workingDir={getInitialWorkingDir()}
+                requestEdit={editRequest}
+                requestDelete={deleteRequest}
                 onSaved={() => loadMemories()}
                 onDeleted={() => {
                   setSelectedId(null);

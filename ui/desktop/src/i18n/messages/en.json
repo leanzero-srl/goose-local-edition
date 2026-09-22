@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "Weight — higher gets a bigger share of the tasks"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "Start an AI session about this agent"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "Confirm remove (keeps the folder)"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "Copy path"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "Open agent"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "No agents yet. Create one, or add a folder that already has an agent.yaml."
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "Reading the desk…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "New agent"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "no agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "No ticks yet"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "Open desk"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "Agent path copied"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "Remove from roster"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "Could not remove the agent"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "Retry"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "Reveal in Finder"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "Show less"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "Show more"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "Tick {n}"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "Couldn't read the desk"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Auto compact at"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "Start an AI session about this run"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "This session has no run id yet — it appears moments after launch"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "A running session cannot be deleted — cancel the run first"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "Confirm delete (removes its files)"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "CURRENT"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "Could not delete the run"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "Delete run"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "No benchmark runs on this machine yet. Start one from the Benchmark view."
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "FROZEN"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "New benchmark run"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "No runs yet"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "Open run"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "Show less"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "Show more"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Extension Updated"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "Configure {name} Extension"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "Start an AI session about this MCP"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "Confirm remove {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "Disable"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "Edit"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "Enable"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "Built-in and bundled extensions cannot be edited or removed"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "Remove"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Toggle {name} extension On or Off"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "Add a project folder"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "Start an AI session about this session"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "Confirm delete (cannot be undone)"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "Confirm remove (keeps files & sessions)"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "Current session"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "Could not delete the session"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "Delete session"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Your sessions appear here under the folder they ran in. Start one, or add a folder."
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "Could not fork the session"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "Fork session"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "Loading sessions…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "No sessions yet"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "Open"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "Project path copied"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "Remove from projects"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "Could not rename the session"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "Name"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "Rename"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "Rename session"
+  },
   "projectsSection.retry": {
     "defaultMessage": "Retry"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "Reveal in Finder"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "Save"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "Could not start a session"

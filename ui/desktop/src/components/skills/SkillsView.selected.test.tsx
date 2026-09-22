@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import SkillsView from './SkillsView';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { SURFACE } from '../lz';
@@ -12,6 +12,7 @@ import { contrast, resolveExpr, resolvedPaint, studioToken } from '../lz/resolve
  * fill is the accent and the ink contrasts, at rest and under the pointer.
  */
 
+vi.mock('../Layout/useStartChatAbout', () => ({ useStartChatAbout: () => vi.fn() }));
 vi.mock('../../utils/workingDir', () => ({ getInitialWorkingDir: () => '/proj/goose' }));
 
 const skills = [
@@ -97,4 +98,18 @@ describe('SkillsView — a selected skill is visible in both themes', () => {
     }
     assertStudioClean(idle.parentElement as HTMLElement);
   }, 30_000);
+
+  it('right-click → Edit selects the skill and opens it in editing; → Delete opens the confirm; → ask starts a chat', async () => {
+    mount();
+    const row = await rowOf('panel-surgeon');
+    fireEvent.contextMenu(row);
+    const menu = await screen.findByTestId('skill-context-menu');
+    fireEvent.click(within(menu).getByText('Edit'));
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(await screen.findByText('Done editing')).toBeInTheDocument();
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(within(await screen.findByTestId('skill-context-menu')).getByText('Delete'));
+    expect(await screen.findByRole('button', { name: /^Delete$/ })).toBeInTheDocument();
+  });
 });

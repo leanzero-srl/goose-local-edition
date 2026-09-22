@@ -37,6 +37,12 @@ vi.mock('../../contexts/FeaturesContext', () => ({
   }),
 }));
 
+vi.mock('./AgentWorkSection', () => ({
+  AgentWorkSection: () => <div data-testid="agent-work-section" />,
+}));
+vi.mock('./BenchmarkSection', () => ({
+  BenchmarkSection: () => <div data-testid="benchmark-section" />,
+}));
 vi.mock('./ProjectsSection', () => ({
   ProjectsSection: () => <div data-testid="projects-section" />,
 }));
@@ -153,7 +159,9 @@ describe('NavigationPanel (Studio shell)', () => {
       const label = row.querySelector('span.flex-1') as HTMLElement | null;
       expect(label, row.textContent ?? '').not.toBeNull();
       expect(label?.className).toContain('whitespace-nowrap');
-      expect(label?.className).not.toMatch(/truncate|overflow-hidden|max-w-|text-ellipsis|line-clamp/);
+      expect(label?.className).not.toMatch(
+        /truncate|overflow-hidden|max-w-|text-ellipsis|line-clamp/
+      );
     }
   });
 

@@ -95,6 +95,66 @@
   "addNode.weightLabel": {
     "defaultMessage": "权重 — 越高分到的任务越多"
   },
+  "agentWorkSection.askAbout": {
+    "defaultMessage": "开始一个关于此 agent 的 AI 会话"
+  },
+  "agentWorkSection.confirmRemove": {
+    "defaultMessage": "确认移除（保留文件夹）"
+  },
+  "agentWorkSection.copyPath": {
+    "defaultMessage": "复制路径"
+  },
+  "agentWorkSection.current": {
+    "defaultMessage": "打开 agent"
+  },
+  "agentWorkSection.empty": {
+    "defaultMessage": "还没有 agent。创建一个，或添加一个已经包含 agent.yaml 的文件夹。"
+  },
+  "agentWorkSection.loadingTicks": {
+    "defaultMessage": "正在读取工作区…"
+  },
+  "agentWorkSection.newAgent": {
+    "defaultMessage": "新建 agent"
+  },
+  "agentWorkSection.noManifest": {
+    "defaultMessage": "无 agent.yaml"
+  },
+  "agentWorkSection.noTicks": {
+    "defaultMessage": "还没有运行记录"
+  },
+  "agentWorkSection.openDesk": {
+    "defaultMessage": "打开工作区"
+  },
+  "agentWorkSection.pathCopied": {
+    "defaultMessage": "已复制 agent 路径"
+  },
+  "agentWorkSection.remove": {
+    "defaultMessage": "从列表中移除"
+  },
+  "agentWorkSection.removeFailed": {
+    "defaultMessage": "无法移除该 agent"
+  },
+  "agentWorkSection.retry": {
+    "defaultMessage": "重试"
+  },
+  "agentWorkSection.revealInFinder": {
+    "defaultMessage": "在 Finder 中显示"
+  },
+  "agentWorkSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "agentWorkSection.showMore": {
+    "defaultMessage": "显示更多"
+  },
+  "agentWorkSection.tick": {
+    "defaultMessage": "第 {n} 次运行"
+  },
+  "agentWorkSection.ticksFailed": {
+    "defaultMessage": "无法读取工作区"
+  },
+  "agentWorkSection.title": {
+    "defaultMessage": "Agent Work"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "自动压缩阈值"
   },
@@ -226,6 +286,51 @@
   },
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "benchmarkSection.askAbout": {
+    "defaultMessage": "开始一个关于此次运行的 AI 会话"
+  },
+  "benchmarkSection.cannotDeleteNoId": {
+    "defaultMessage": "此会话还没有运行 id —— 它会在启动后不久出现"
+  },
+  "benchmarkSection.cannotDeleteRunning": {
+    "defaultMessage": "正在运行的会话无法删除 —— 请先取消运行"
+  },
+  "benchmarkSection.confirmDelete": {
+    "defaultMessage": "确认删除（会移除其文件）"
+  },
+  "benchmarkSection.current": {
+    "defaultMessage": "当前"
+  },
+  "benchmarkSection.deleteFailed": {
+    "defaultMessage": "无法删除该运行"
+  },
+  "benchmarkSection.deleteRun": {
+    "defaultMessage": "删除运行"
+  },
+  "benchmarkSection.empty": {
+    "defaultMessage": "这台机器上还没有 benchmark 运行记录。从 Benchmark 视图开始一个。"
+  },
+  "benchmarkSection.frozen": {
+    "defaultMessage": "已冻结"
+  },
+  "benchmarkSection.newRun": {
+    "defaultMessage": "新建 benchmark 运行"
+  },
+  "benchmarkSection.noRuns": {
+    "defaultMessage": "还没有运行记录"
+  },
+  "benchmarkSection.openRun": {
+    "defaultMessage": "打开运行"
+  },
+  "benchmarkSection.showLess": {
+    "defaultMessage": "收起"
+  },
+  "benchmarkSection.showMore": {
+    "defaultMessage": "显示更多"
+  },
+  "benchmarkSection.title": {
+    "defaultMessage": "Benchmark"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "扩展已更新"
@@ -1345,6 +1450,27 @@
   },
   "extensionItem.configureExtension": {
     "defaultMessage": "配置 {name} 扩展"
+  },
+  "extensionItem.menuAsk": {
+    "defaultMessage": "开始一个关于此 MCP 的 AI 会话"
+  },
+  "extensionItem.menuConfirmRemove": {
+    "defaultMessage": "确认移除 {name}"
+  },
+  "extensionItem.menuDisable": {
+    "defaultMessage": "禁用"
+  },
+  "extensionItem.menuEdit": {
+    "defaultMessage": "编辑"
+  },
+  "extensionItem.menuEnable": {
+    "defaultMessage": "启用"
+  },
+  "extensionItem.menuNotEditable": {
+    "defaultMessage": "内置和随附的扩展无法编辑或移除"
+  },
+  "extensionItem.menuRemove": {
+    "defaultMessage": "移除"
   },
   "extensionItem.toggleExtension": {
     "defaultMessage": "启用或禁用 {name} 扩展"
@@ -2957,6 +3083,15 @@
   "projectsSection.addProject": {
     "defaultMessage": "添加项目文件夹"
   },
+  "projectsSection.askAboutSession": {
+    "defaultMessage": "开始一个关于此会话的 AI 会话"
+  },
+  "projectsSection.cancel": {
+    "defaultMessage": "取消"
+  },
+  "projectsSection.confirmDeleteSession": {
+    "defaultMessage": "确认删除（无法撤销）"
+  },
   "projectsSection.confirmRemove": {
     "defaultMessage": "确认移除（保留文件和聊天）"
   },
@@ -2966,8 +3101,20 @@
   "projectsSection.currentSession": {
     "defaultMessage": "当前会话"
   },
+  "projectsSection.deleteFailed": {
+    "defaultMessage": "无法删除该会话"
+  },
+  "projectsSection.deleteSession": {
+    "defaultMessage": "删除会话"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "你的会话会按运行时所在的文件夹显示在这里。开始一个会话，或添加一个文件夹。"
+  },
+  "projectsSection.forkFailed": {
+    "defaultMessage": "无法分叉该会话"
+  },
+  "projectsSection.forkSession": {
+    "defaultMessage": "分叉会话"
   },
   "projectsSection.loadingSessions": {
     "defaultMessage": "正在加载会话…"
@@ -2987,6 +3134,9 @@
   "projectsSection.noSessionsYet": {
     "defaultMessage": "还没有会话"
   },
+  "projectsSection.openSession": {
+    "defaultMessage": "打开"
+  },
   "projectsSection.pathCopied": {
     "defaultMessage": "已复制项目路径"
   },
@@ -2999,11 +3149,26 @@
   "projectsSection.removeFromProjects": {
     "defaultMessage": "从项目中移除"
   },
+  "projectsSection.renameFailed": {
+    "defaultMessage": "无法重命名该会话"
+  },
+  "projectsSection.renameLabel": {
+    "defaultMessage": "名称"
+  },
+  "projectsSection.renameSession": {
+    "defaultMessage": "重命名"
+  },
+  "projectsSection.renameTitle": {
+    "defaultMessage": "重命名会话"
+  },
   "projectsSection.retry": {
     "defaultMessage": "重试"
   },
   "projectsSection.revealInFinder": {
     "defaultMessage": "在 Finder 中显示"
+  },
+  "projectsSection.save": {
+    "defaultMessage": "保存"
   },
   "projectsSection.sessionFailed": {
     "defaultMessage": "无法开始会话"

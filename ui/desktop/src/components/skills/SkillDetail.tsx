@@ -102,8 +102,9 @@ function PersonaEditor({
           {dirty && <span className="text-[11px] font-bold text-[#b45309]">UNSAVED</span>}
         </div>
         <p className="text-xs text-text-secondary mb-3">
-          Goose keeps this section word for word every time it rewrites the rest of this skill. A correction
-          here is permanent; one written above is regenerated away on the next successful build.
+          Goose keeps this section word for word every time it rewrites the rest of this skill. A
+          correction here is permanent; one written above is regenerated away on the next successful
+          build.
         </p>
         <textarea
           value={notes}
@@ -206,7 +207,12 @@ function BodyEditor({
         <Button size="sm" onClick={() => save(false)} disabled={!dirty || saving}>
           {saving ? 'Saving…' : 'Save'}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => setBody(entry.content)} disabled={!dirty}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setBody(entry.content)}
+          disabled={!dirty}
+        >
           Revert
         </Button>
       </div>
@@ -262,7 +268,9 @@ function FileTree({
           // The open file is the Studio accent fill (bg-background-accent compiled to nothing).
           className={cx(
             'w-full flex items-center gap-1.5 py-1 px-2 text-left text-xs transition-colors',
-            selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
+            selected
+              ? cx(SURFACE.selected, SURFACE.selectedHover)
+              : cx('text-lz-ink', SURFACE.hover)
           )}
           style={{ paddingLeft: 8 + depth * 14 }}
         >
@@ -280,7 +288,10 @@ function FileTree({
               )}
               <span className="truncate font-medium">{n.name}</span>
               <span
-                className={cx('ml-auto shrink-0 text-[10px]', selected ? 'text-lz-accent-ink' : 'text-lz-ink-3')}
+                className={cx(
+                  'ml-auto shrink-0 text-[10px]',
+                  selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
+                )}
               >
                 {n.fileCount}
               </span>
@@ -307,18 +318,25 @@ export function SkillDetail({
   projectDir,
   onSaved,
   onDeleted,
+  requestEdit,
+  requestDelete,
 }: {
   entry: SourceEntry;
   origin: string;
   projectDir: string;
   onSaved: (updated: SourceEntry) => void;
   onDeleted: () => void;
+  /** Bumped by the list's context menu: enter editing / open the delete confirm from outside. */
+  requestEdit?: number;
+  requestDelete?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [openFile, setOpenFile] = useState<{ path: string; abs: string; body: string } | null>(null);
+  const [openFile, setOpenFile] = useState<{ path: string; abs: string; body: string } | null>(
+    null
+  );
   const [fileError, setFileError] = useState<string | null>(null);
   const persona = isPersonaPath(entry.path);
   const editable = isEditable(entry);
@@ -333,6 +351,14 @@ export function SkillDetail({
     setOpenFile(null);
     setFileError(null);
   }, [entry.path]);
+  // The list's context menu may select AND ask to edit/delete in one motion: these run AFTER the
+  // per-entry reset above so the request wins over it.
+  useEffect(() => {
+    if (requestEdit) setEditing(true);
+  }, [requestEdit]);
+  useEffect(() => {
+    if (requestDelete) setConfirmDelete(true);
+  }, [requestDelete]);
 
   // Read a supporting file straight off disk. There is no ACP verb for "read an arbitrary file inside a
   // skill" — sources/export returns the SKILL.md body only — so this goes through the same main-process
@@ -342,7 +368,8 @@ export function SkillDetail({
     setFileError(null);
     try {
       const res = await window.electron.readFile(n.abs);
-      if (!res.found || res.file === undefined) throw new Error(res.error || 'could not read the file');
+      if (!res.found || res.file === undefined)
+        throw new Error(res.error || 'could not read the file');
       setOpenFile({ path: n.path, abs: n.abs, body: res.file });
     } catch (e) {
       setOpenFile(null);
@@ -374,7 +401,11 @@ export function SkillDetail({
         <p className="text-[11px] font-mono text-text-tertiary break-all">{entry.path}</p>
         <div className="flex gap-2 mt-3">
           {editable && (
-            <Button size="sm" variant={editing ? 'default' : 'outline'} onClick={() => setEditing(!editing)}>
+            <Button
+              size="sm"
+              variant={editing ? 'default' : 'outline'}
+              onClick={() => setEditing(!editing)}
+            >
               {editing ? 'Done editing' : persona ? 'Correct this' : 'Edit'}
             </Button>
           )}
@@ -398,9 +429,10 @@ export function SkillDetail({
             <div className="mb-4 p-3 bg-[#7c3aed] text-white">
               <p className="text-xs font-bold mb-1">Goose wrote this about itself.</p>
               <p className="text-xs">
-                It was written after a build of this stack that the engine proved compiled and passed its
-                checks — but the lesson was phrased by a local model and can still be wrong. Everything except
-                your own notes is rewritten after the next successful build of this stack.
+                It was written after a build of this stack that the engine proved compiled and
+                passed its checks — but the lesson was phrased by a local model and can still be
+                wrong. Everything except your own notes is rewritten after the next successful build
+                of this stack.
               </p>
             </div>
           )}
@@ -414,7 +446,9 @@ export function SkillDetail({
           ) : openFile ? (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-xs text-text-secondary truncate">{openFile.path}</span>
+                <span className="font-mono text-xs text-text-secondary truncate">
+                  {openFile.path}
+                </span>
                 <Button size="sm" variant="outline" onClick={() => setOpenFile(null)}>
                   Back to SKILL.md
                 </Button>

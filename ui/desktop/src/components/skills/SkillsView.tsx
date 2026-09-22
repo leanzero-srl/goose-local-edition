@@ -13,6 +13,10 @@ import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 import { listSkillSources } from '../../acp/sources';
 import type { SourceEntry } from '@aaif/goose-sdk';
 import { SkillDetail } from './SkillDetail';
+import { TreeContextMenu } from '../Layout/tree';
+import { useStartChatAbout } from '../Layout/useStartChatAbout';
+import { BookOpen, Pencil, Sparkles, Trash2 } from 'lucide-react';
+import { isEditable } from './skillKinds';
 import { skillOrigin, type SkillOrigin } from './skillKinds';
 import { FOCUS, MOTION, RADIUS, SURFACE, cx } from '../lz';
 
@@ -92,36 +96,108 @@ const rowClass = (selected: boolean) =>
     selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
   );
 
+/** What is asked of the model when a skill is opened as a chat about it. */
+export function askAboutSkillPrompt(skill: SkillEntry): string {
+  return `I want to work on my goose skill "${skill.name}" at ${skill.path} (${skill.description}). Read it first, then help me tweak, modify or fork it.`;
+}
+
 function SkillItem({
   skill,
   selected,
   onSelect,
+  onEdit,
+  onDelete,
+  onAsk,
 }: {
   skill: SkillEntry;
   selected: boolean;
   onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onAsk: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const editable = isEditable(skill);
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-current={selected ? 'true' : undefined}
-      data-testid="skill-row"
-      className={rowClass(selected)}
+    <div
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
-      <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-lz-body">{skill.name}</span>
-        <span
-          className={cx(
-            'block line-clamp-1 text-lz-meta',
-            selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
-          )}
-        >
-          {skill.description}
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? 'true' : undefined}
+        data-testid="skill-row"
+        className={rowClass(selected)}
+      >
+        <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-lz-body">{skill.name}</span>
+          <span
+            className={cx(
+              'block line-clamp-1 text-lz-meta',
+              selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
+            )}
+          >
+            {skill.description}
+          </span>
         </span>
-      </span>
-    </button>
+      </button>
+      {menu && (
+        <TreeContextMenu
+          x={menu.x}
+          y={menu.y}
+          testId="skill-context-menu"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              key: 'open',
+              label: 'Open',
+              icon: <BookOpen />,
+              onClick: () => {
+                setMenu(null);
+                onSelect();
+              },
+            },
+            {
+              key: 'edit',
+              label: 'Edit',
+              icon: <Pencil />,
+              disabled: !editable,
+              title: editable ? undefined : 'Built-in skills ship with goose and cannot be edited',
+              onClick: () => {
+                setMenu(null);
+                onEdit();
+              },
+            },
+            {
+              key: 'ask',
+              label: 'Start an AI session about this skill',
+              icon: <Sparkles />,
+              onClick: () => {
+                setMenu(null);
+                onAsk();
+              },
+            },
+            {
+              key: 'delete',
+              label: 'Delete',
+              icon: <Trash2 />,
+              danger: true,
+              separator: true,
+              disabled: !editable,
+              title: editable ? undefined : 'Built-in skills ship with goose and cannot be deleted',
+              onClick: () => {
+                setMenu(null);
+                onDelete();
+              },
+            },
+          ]}
+        />
+      )}
+    </div>
   );
 }
 
@@ -147,6 +223,9 @@ export default function SkillsView() {
   const [showContent, setShowContent] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [editRequest, setEditRequest] = useState(0);
+  const [deleteRequest, setDeleteRequest] = useState(0);
+  const startChat = useStartChatAbout();
 
   const filteredSkills = useMemo(() => {
     if (!searchTerm) return skills;
@@ -280,6 +359,15 @@ export default function SkillsView() {
                 skill={skill}
                 selected={skill.path === selectedPath}
                 onSelect={() => setSelectedPath(skill.path)}
+                onEdit={() => {
+                  setSelectedPath(skill.path);
+                  setEditRequest((n) => n + 1);
+                }}
+                onDelete={() => {
+                  setSelectedPath(skill.path);
+                  setDeleteRequest((n) => n + 1);
+                }}
+                onAsk={() => void startChat(askAboutSkillPrompt(skill))}
               />
             ))}
           </div>
@@ -338,6 +426,8 @@ export default function SkillsView() {
                 entry={selected}
                 origin={skillOrigin(selected)}
                 projectDir={getInitialWorkingDir()}
+                requestEdit={editRequest}
+                requestDelete={deleteRequest}
                 onSaved={(updated) =>
                   setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
                 }
