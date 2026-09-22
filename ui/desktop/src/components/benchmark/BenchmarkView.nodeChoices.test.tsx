@@ -22,8 +22,19 @@ import BenchmarkView, { nodeCapFor } from './BenchmarkView';
 type ElectronMock = Record<string, unknown>;
 const electron = () => (window as unknown as { electron: ElectronMock }).electron;
 
-const MLX = { id: 'workhorse-mlx', model_id: 'workhorse-qwen3.5-9b-4bit-mlx', weight: 1, enabled: true, engine: 'mlx-sidecar' };
-const LMS = (n: string) => ({ id: `${n}-27b`, model_id: `${n}-qwen3.6-27b`, weight: 2, enabled: true });
+const MLX = {
+  id: 'workhorse-mlx',
+  model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+  weight: 1,
+  enabled: true,
+  engine: 'mlx-sidecar',
+};
+const LMS = (n: string) => ({
+  id: `${n}-27b`,
+  model_id: `${n}-qwen3.6-27b`,
+  weight: 2,
+  enabled: true,
+});
 
 function mockElectron() {
   const e = electron();
@@ -42,7 +53,8 @@ const nodeButtons = async () => {
   return within(group).getAllByRole('button');
 };
 const values = (bs: HTMLElement[]) => bs.map((b) => b.getAttribute('data-value'));
-const pressed = (bs: HTMLElement[]) => bs.find((b) => b.getAttribute('aria-pressed') === 'true')?.getAttribute('data-value');
+const pressed = (bs: HTMLElement[]) =>
+  bs.find((b) => b.getAttribute('aria-pressed') === 'true')?.getAttribute('data-value');
 
 describe('nodeCapFor', () => {
   it('counts ENABLED devices, floors at 1, caps at 3, and keeps 3 for the legacy empty pool', () => {
@@ -68,21 +80,33 @@ describe('BenchmarkView — the node choice follows the configured pool', () => 
 
   it('MLX-only pool: the only choice is 1 and it is selected', async () => {
     mockReadConfig.mockResolvedValue({ devices: [MLX] });
-    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
     await waitFor(async () => expect(values(await nodeButtons())).toEqual(['1']));
     expect(pressed(await nodeButtons())).toBe('1');
   });
 
   it('two devices: 1 and 2 offered, 2 selected', async () => {
     mockReadConfig.mockResolvedValue({ devices: [MLX, LMS('gabee')] });
-    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
     await waitFor(async () => expect(values(await nodeButtons())).toEqual(['1', '2']));
     expect(pressed(await nodeButtons())).toBe('2');
   });
 
   it('three or more devices: nothing changes — 1/2/3 with 3 selected, the hooks bench_dispatch.mjs drives', async () => {
     mockReadConfig.mockResolvedValue({ devices: [LMS('gabee'), LMS('mihai'), LMS('workhorse')] });
-    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
     await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
     const bs = await nodeButtons();
     expect(values(bs)).toEqual(['1', '2', '3']);
@@ -92,7 +116,11 @@ describe('BenchmarkView — the node choice follows the configured pool', () => 
 
   it('an unreadable config keeps every choice', async () => {
     mockReadConfig.mockRejectedValue(new Error('no config'));
-    render(<IntlTestWrapper><BenchmarkView /></IntlTestWrapper>);
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
     await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
     const bs = await nodeButtons();
     expect(values(bs)).toEqual(['1', '2', '3']);

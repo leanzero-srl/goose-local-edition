@@ -50,7 +50,9 @@ describe('ScoreBars', () => {
       scorerVersion: 'sb-7.0-rc',
     };
     const { container } = render(<ScoreBars rows={[baseline, row(0.68)]} />);
-    const bars = [...container.querySelectorAll('rect')].filter((r) => r.getAttribute('rx') === '2');
+    const bars = [...container.querySelectorAll('rect')].filter(
+      (r) => r.getAttribute('rx') === '2'
+    );
     // Two tracks (surface-2) and two fills: the baseline's neutral, the user's accent.
     expect(bars.filter((r) => r.classList.contains('fill-lz-surface-2'))).toHaveLength(2);
     expect(bars.filter((r) => r.classList.contains('fill-lz-ink-3'))).toHaveLength(1);
