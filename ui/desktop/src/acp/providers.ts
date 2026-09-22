@@ -74,7 +74,7 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
             status.connectionChecked &&
             !status.connectionError
         )),
-    saved_model: statuses.find((status) => status.providerId === entry.providerId)?.testModel,
+    default_model: statuses.find((status) => status.providerId === entry.providerId)?.testModel,
     connection_error: statuses.find((status) => status.providerId === entry.providerId)
       ?.connectionError,
     connection_checked: statuses.find((status) => status.providerId === entry.providerId)
@@ -113,6 +113,25 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
       setup_steps: entry.setupSteps,
     },
   }));
+}
+
+/** The models the saved key can see, asked of the provider RIGHT NOW (the setup dialog's default
+ *  picker). An empty list means the provider has no listing endpoint, never a bad key — that is
+ *  an error. */
+export async function acpListProviderLiveModels(providerId: string): Promise<string[]> {
+  const client = await getAcpClient();
+  const { models } = await client.goose.providersSupportedModelsList_unstable({ providerId });
+  return models;
+}
+
+/** Run the chosen model once and store it as the provider's default (the wire field keeps its
+ *  pre-3.0.7 name `testModel`; the engine reads it as the default). */
+export async function acpSaveProviderDefaultModel(
+  providerId: string,
+  model: string
+): Promise<void> {
+  const client = await getAcpClient();
+  await client.goose.providersConfigSave_unstable({ providerId, fields: [], testModel: model });
 }
 
 export async function acpListProviderModels(providerId: string) {
@@ -179,13 +198,14 @@ export async function acpDeleteProviderConfig(providerId: string): Promise<void>
   await client.goose.providersConfigDelete_unstable({ providerId });
 }
 
+/** Save credential fields; the engine verifies the key by listing the provider's models (or by
+ *  running the saved default when one exists) before the new values stick. */
 export async function acpSaveProviderConfig(
   providerId: string,
-  fields: { key: string; value: string }[],
-  testModel?: string
+  fields: { key: string; value: string }[]
 ): Promise<void> {
   const client = await getAcpClient();
-  await client.goose.providersConfigSave_unstable({ providerId, fields, testModel });
+  await client.goose.providersConfigSave_unstable({ providerId, fields });
 }
 
 export async function acpAuthenticateProvider(providerId: string): Promise<void> {

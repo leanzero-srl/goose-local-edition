@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "प्रतिक्रिया शैलियाँ"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure वही डिप्लॉयमेंट चलाता है जिसे आपने नाम दिया है; चुनने के लिए कोई अलग मॉडल नहीं है।"
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "वापस"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "कनेक्ट करें"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "{provider} से जाँचा जा रहा है…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "मौजूदा डिफ़ॉल्ट"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} आवश्यक है"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "मॉडल फ़िल्टर करें"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "रखें"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "अपनी कुंजी पेस्ट करें। {provider} से वे मॉडल पूछे जाते हैं जिन्हें वह चला सकता है, और कुंजी तभी सहेजी जाती है (आपके goose गुप्त भंडार में एन्क्रिप्टेड) जब वह जवाब देता है।"
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "एक कुंजी पहले से सहेजी हुई है। इसे बदलने के लिए नई कुंजी दर्ज करें — पुरानी को हटाने से पहले इसे {provider} के साथ जाँचा जाता है।"
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "{provider} से उसके मॉडल पूछे जा रहे हैं…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "वह मॉडल चुनें जिससे यह प्रदाता शुरू होता है। जब भी आप कोई नोड जोड़ते हैं तो यह सूची में सबसे ऊपर रहता है और वहाँ प्रति नोड बदला जा सकता है।"
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# मॉडल जिसे आपकी कुंजी चला सकती है} other{# मॉडल जिन्हें आपकी कुंजी चला सकती है}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} के पास कोई मॉडल सूची नहीं है। ये वे id हैं जिन्हें goose इसके लिए जानता है — पहुँच आपके खाते पर निर्भर करती है।"
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "फ़िल्टर से कोई मॉडल मेल नहीं खाता"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "हटाएँ"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "इस ऐप से {provider} कुंजी और उसका डिफ़ॉल्ट मॉडल हटाएँ?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "हाँ, हटाएँ"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "कुंजी बदलें"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "फिर से पूछें"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "डिफ़ॉल्ट मॉडल सहेजें"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "सहेजी गई — रखने के लिए खाली छोड़ें"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "{model} चल रहा है…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "{provider} डिफ़ॉल्ट मॉडल"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "{provider} कनेक्ट करें"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "या एक मॉडल id टाइप करें"
+  },
   "cloudProviders.available": {
     "defaultMessage": "सेटअप के लिए उपलब्ध"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "बदलें"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "जाँच विफल"
   },
   "cloudProviders.checking": {
     "defaultMessage": "कनेक्शन जाँचे जा रहे हैं…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} में से {configured} कॉन्फ़िगर"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "कनेक्टेड"
+  },
   "cloudProviders.description": {
     "defaultMessage": "उन क्लाउड प्रदाताओं की साख जिन्हें यह ऐप कॉल कर सकता है — कुंजियाँ goose के गुप्त भंडार में एन्क्रिप्ट होती हैं। स्थानीय बैकएंड (LM Studio, MLX इंजन) को साख की ज़रूरत नहीं और वे दूसरे टैब में हैं।"
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "प्रदाता लोड हो रहे हैं…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "अभी कोई डिफ़ॉल्ट मॉडल नहीं"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "अभी कोई क्लाउड प्रदाता कॉन्फ़िगर नहीं है। सेटअप के लिए नीचे किसी एक को चुनें।"
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "सेटअप नहीं किया गया"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "कनेक्शन दोबारा जाँचें"
   },
   "cloudProviders.retry": {
     "defaultMessage": "फिर कोशिश करें"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "सेटअप करें"
   },
   "configSettings.configReset": {
     "defaultMessage": "कॉन्फ़िगरेशन रीसेट"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "साइन इन किया जा रहा है..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "सहेजते समय और ऐप शुरू होने पर पहुँच जाँचने के लिए इस मॉडल को एक छोटा अनुरोध भेजा जाता है। प्रदाता के सामान्य उपयोग शुल्क लागू हो सकते हैं।"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "कनेक्शन परीक्षण मॉडल"
   },
   "providerConnections.attention": {
     "defaultMessage": "प्रदाता कनेक्शन पर ध्यान देने की आवश्यकता है"

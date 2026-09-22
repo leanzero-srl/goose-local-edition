@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Yanıt Stilleri"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure, adlandırdığınız dağıtımı çalıştırır; seçilecek ayrı bir model yoktur."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Geri"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Bağlan"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "{provider} ile kontrol ediliyor…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "geçerli varsayılan"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} gerekli"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Modelleri filtrele"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Sakla"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Anahtarınızı yapıştırın. {provider}'a çalıştırabildiği modeller sorulur ve anahtar yalnızca yanıt verdiğinde kaydedilir (goose gizli deponuzda şifrelenmiş olarak)."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Zaten kayıtlı bir anahtar var. Değiştirmek için yenisini girin — eskisi atılmadan önce {provider} ile kontrol edilir."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "{provider}'dan modelleri isteniyor…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Bu sağlayıcının başladığı modeli seçin. Bir node eklediğinizde listenin başında yer alır ve orada node başına değiştirilebilir."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{Anahtarınızın çalıştırabildiği # model} other{Anahtarınızın çalıştırabildiği # model}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider}'ın model listesi yok. Bunlar goose'un onun için bildiği id'ler — erişim hesabınıza bağlıdır."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "filtreyle eşleşen model yok"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Kaldır"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "{provider} anahtarı ve varsayılan modeli bu uygulamadan kaldırılsın mı?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Evet, kaldır"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Anahtarı değiştir"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Tekrar sor"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Varsayılan modeli kaydet"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "kaydedildi — korumak için boş bırakın"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "{model} çalıştırılıyor…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "{provider} varsayılan modeli"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "{provider}'a Bağlan"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Veya bir model id'si yazın"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Kuruluma hazır"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Değiştir"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Kontrol başarısız oldu"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Bağlantılar denetleniyor…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} sağlayıcıdan {configured} tanesi yapılandırıldı"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Bağlandı"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Bu uygulamanın çağırabildiği bulut sağlayıcılarının kimlik bilgileri — anahtarlar goose gizli deposuna şifrelenerek yazılır. Yerel arka uçların (LM Studio, MLX motoru) kimlik bilgisine ihtiyacı yoktur ve diğer sekmelerde yaşarlar."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Sağlayıcılar yükleniyor…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "henüz varsayılan model yok"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Henüz yapılandırılmış bulut sağlayıcısı yok. Kurmak için aşağıdan birini seçin."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Kurulmadı"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Bağlantıları yeniden denetle"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Yeniden dene"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Kur"
   },
   "configSettings.configReset": {
     "defaultMessage": "Yapılandırma Sıfırlama"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Oturum açılıyor..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Kaydetme ve uygulama başlangıcında erişimi denetlemek için bu modele kısa bir istek gönderilir. Sağlayıcının normal kullanım ücretleri uygulanabilir."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Bağlantı testi modeli"
   },
   "providerConnections.attention": {
     "defaultMessage": "Sağlayıcı bağlantıları dikkat gerektiriyor"

@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Stili di risposta"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure esegue il deployment che hai nominato; non c'è un modello separato da scegliere."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Indietro"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Annulla"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Connetti"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Verifica con {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "predefinito attuale"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} è obbligatorio"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Filtra modelli"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Mantieni"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Incolla la tua chiave. A {provider} vengono richiesti i modelli che può eseguire, e la chiave viene salvata (cifrata, nel deposito segreti di goose) solo quando risponde."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Una chiave è già salvata. Inseriscine una nuova per sostituirla — viene verificata con {provider} prima che quella vecchia venga eliminata."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Richiesta dei modelli a {provider}…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Scegli il modello con cui parte questo provider. Guida l'elenco ogni volta che aggiungi un node e può essere cambiato lì per node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# modello che la tua chiave può eseguire} other{# modelli che la tua chiave può eseguire}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} non ha un elenco di modelli. Questi sono gli id che goose conosce per lui — l'accesso dipende dal tuo account."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "nessun modello corrisponde al filtro"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Rimuovi"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Rimuovere la chiave di {provider} e il suo modello predefinito da questa app?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Sì, rimuovi"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Sostituisci chiave"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Richiedi di nuovo"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Salva modello predefinito"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "salvata — lascia vuoto per mantenerla"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Esecuzione di {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "Modello predefinito di {provider}"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Connetti {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Oppure digita un id di modello"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Disponibili da configurare"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Modifica"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Verifica non riuscita"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Verifica delle connessioni…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} di {total} configurati"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Connesso"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Le credenziali dei provider cloud che questa app può chiamare — le chiavi vengono cifrate nel deposito segreti di goose. I backend locali (LM Studio, il motore MLX) non richiedono credenziali e vivono nelle altre schede."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Caricamento provider…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "ancora nessun modello predefinito"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Nessun provider cloud configurato. Scegline uno qui sotto per configurarlo."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Non configurato"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Ricontrolla connessioni"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Riprova"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Configura"
   },
   "configSettings.configReset": {
     "defaultMessage": "Configurazione reimpostata"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Accesso in corso..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Il salvataggio e l’avvio dell’app inviano una breve richiesta a questo modello per verificare l’accesso. Possono essere applicate le normali tariffe del fornitore."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Modello per il test della connessione"
   },
   "providerConnections.attention": {
     "defaultMessage": "Le connessioni ai fornitori richiedono attenzione"

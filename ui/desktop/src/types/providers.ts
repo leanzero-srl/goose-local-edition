@@ -43,7 +43,8 @@ export type ProviderDetails = {
   metadata: ProviderMetadata;
   name: string;
   provider_type: ProviderType;
-  saved_model?: string | null;
+  /** The default model chosen in Cloud Providers — the first pick wherever a model is chosen. */
+  default_model?: string | null;
 };
 
 export type UpdateCustomProviderRequest = {

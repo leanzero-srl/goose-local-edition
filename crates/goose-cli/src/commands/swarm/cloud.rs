@@ -148,48 +148,60 @@ pub(super) fn cloud_stored_key(def: &CloudDef) -> Option<String> {
         })
 }
 
-/// List provider models where supported; otherwise expose the model verified during setup.
+/// The default model chosen for a provider in Cloud Providers, if any — it leads the roster.
+pub(super) fn cloud_default_model(def: &CloudDef) -> Result<Option<String>> {
+    if def.registry == "azure_openai" {
+        return Ok(goose::config::Config::global()
+            .get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")
+            .ok()
+            .filter(|deployment| !deployment.trim().is_empty()));
+    }
+    goose::providers::key_connection::saved_default_model(def.registry)
+}
+
+/// The chosen default leads the roster and is present even when the listing omits it (an
+/// account-scoped alias the /models endpoint never reports still runs).
+fn default_first(mut roster: Vec<String>, default: Option<String>) -> Vec<String> {
+    if let Some(default) = default {
+        roster.retain(|model| *model != default);
+        roster.insert(0, default);
+    }
+    roster
+}
+
+/// The models this key can run, the chosen default first. Every provider is listed live through
+/// its own goose provider (the same client the dispatcher uses); a provider with no listing
+/// endpoint exposes only the default verified in Cloud Providers.
 pub(super) async fn cloud_roster(provider: &str, key: &str, region: &str) -> Result<Vec<String>> {
-    match provider {
-        "bedrock" => bedrock_roster(key, region).await,
+    let def =
+        cloud_def(provider).ok_or_else(|| anyhow!("Unsupported cloud provider '{provider}'"))?;
+    let listed = match provider {
+        "bedrock" => bedrock_roster(key, region).await?,
         // OpenAI-shaped /models listings (Authorization: Bearer).
-        "zai" => openai_style_roster("https://api.z.ai/api/paas/v4/models", key, "Z.ai").await,
-        "deepseek" => openai_style_roster("https://api.deepseek.com/models", key, "DeepSeek").await,
-        "google" => google_roster(key).await,
-        other => {
-            let def =
-                cloud_def(other).ok_or_else(|| anyhow!("Unsupported cloud provider '{other}'"))?;
+        "zai" => openai_style_roster("https://api.z.ai/api/paas/v4/models", key, "Z.ai").await?,
+        "deepseek" => {
+            openai_style_roster("https://api.deepseek.com/models", key, "DeepSeek").await?
+        }
+        "google" => google_roster(key).await?,
+        _ => {
             if cloud_stored_key(def).as_deref() != Some(key) {
                 anyhow::bail!(
                     "Configure and check {} in Cloud Providers before adding a node",
                     def.label
                 );
             }
-            let config = goose::config::Config::global();
-            let checked_models: std::collections::HashMap<String, String> = config
-                .get_param("provider_connection_models")
-                .map_err(|_| {
-                    anyhow!(
-                        "Save and check {} in Cloud Providers before adding a node",
-                        def.label
-                    )
-                })?;
-            let model = if other == "azure_openai" {
-                config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?
-            } else {
-                checked_models.get(def.registry).cloned().ok_or_else(|| {
-                    anyhow!(
-                        "Save a connection test model for {} in Cloud Providers",
-                        def.label
-                    )
-                })?
-            };
-            if model.trim().is_empty() {
-                anyhow::bail!("No checked model is saved for {}", def.label);
-            }
-            Ok(vec![model])
+            let provider = goose::providers::create(def.registry, vec![]).await?;
+            goose::providers::key_connection::list_models(provider.as_ref(), def.label).await?
         }
+    };
+    let default = cloud_default_model(def)?;
+    if listed.is_empty() && default.is_none() {
+        anyhow::bail!(
+            "{} reports no models and no default model is chosen — pick one in Cloud Providers",
+            def.label
+        );
     }
+    Ok(default_first(listed, default))
 }
 
 /// GET an OpenAI-shaped model listing (`{"data":[{"id":…}]}`) with a bearer key. Pure transport;
@@ -406,6 +418,19 @@ fn bedrock_ids_from_models(v: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_default_leads_the_roster_and_is_never_duplicated() {
+        let roster = vec!["b".to_string(), "a".to_string(), "c".to_string()];
+        assert_eq!(
+            super::default_first(roster.clone(), Some("a".to_string())),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(
+            super::default_first(roster.clone(), Some("z".to_string())),
+            vec!["z", "b", "a", "c"]
+        );
+        assert_eq!(super::default_first(roster.clone(), None), roster);
+    }
     use super::*;
 
     #[test]

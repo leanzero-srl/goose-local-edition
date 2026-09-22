@@ -24,10 +24,16 @@ pub(crate) fn requires_connection_check(provider: &str) -> bool {
     )
 }
 
+/// Verify a provider's credentials. With an explicit `model` (the user's chosen default) the model
+/// is run once and saved as the provider's default; otherwise the saved default is run, and when
+/// none exists yet the key is verified by LISTING the provider's models — the free call that
+/// authenticates the key and is what the setup dialog offers the default from. A provider that
+/// reports no listing at all falls through to a run of its registry default model, which is NOT
+/// saved: the default stays the user's choice.
 pub(crate) async fn check(
     provider_id: &str,
     metadata: &ProviderMetadata,
-    test_model: Option<&str>,
+    model: Option<&str>,
 ) -> Result<()> {
     let config = Config::global();
     config.invalidate_secrets_cache();
@@ -42,27 +48,46 @@ pub(crate) async fn check(
             return Err(anyhow!("{} requires {}", metadata.display_name, key.name));
         }
     }
-    let model = if provider_id == "azure_openai" {
-        config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?
-    } else if let Some(model) = test_model.filter(|model| !model.trim().is_empty()) {
-        model.trim().to_owned()
-    } else if let Some(model) = saved_test_model(provider_id) {
-        model
-    } else {
-        crate::config::providers::get_provider_entry(config, provider_id)
-            .map(|entry| entry.model)
-            .filter(|model| !model.trim().is_empty())
-            .unwrap_or_else(|| metadata.default_model.clone())
-    };
-    if model.trim().is_empty() {
+    let provider = crate::providers::create(provider_id, vec![]).await?;
+    if provider_id == "azure_openai" {
+        let deployment = config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?;
+        probe(provider.as_ref(), &deployment, &metadata.display_name).await?;
+        return save_default_model(provider_id, &deployment);
+    }
+    let chosen = model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_owned)
+        .or(saved_default_model(provider_id)?);
+    if let Some(model) = chosen {
+        probe(provider.as_ref(), &model, &metadata.display_name).await?;
+        return save_default_model(provider_id, &model);
+    }
+    let listed = list_models(provider.as_ref(), &metadata.display_name).await?;
+    if !listed.is_empty() {
+        return Ok(());
+    }
+    let registry_default = metadata.default_model.trim();
+    if registry_default.is_empty() {
         return Err(anyhow!(
-            "No test model is configured for {}",
+            "{} lists no models and has no registry default to run",
             metadata.display_name
         ));
     }
-    let provider = crate::providers::create(provider_id, vec![]).await?;
-    probe(provider.as_ref(), &model, &metadata.display_name).await?;
-    save_test_model(provider_id, &model)
+    probe(provider.as_ref(), registry_default, &metadata.display_name).await
+}
+
+/// The models this key can see, as the provider reports them. An empty answer means the provider
+/// has no listing endpoint (the trait default), never that the key is bad — a rejected key is an
+/// error from the provider.
+pub async fn list_models(
+    provider: &dyn crate::providers::base::Provider,
+    label: &str,
+) -> Result<Vec<String>> {
+    provider
+        .fetch_supported_models()
+        .await
+        .map_err(|error| anyhow!("{} could not list models: {}", label, error))
 }
 
 async fn probe(
@@ -125,21 +150,32 @@ pub(crate) async fn lock() -> tokio::sync::MutexGuard<'static, ()> {
     CONFIG_CHECK_LOCK.lock().await
 }
 
-pub(crate) fn saved_test_model(provider: &str) -> Option<String> {
-    Config::global()
-        .get_param::<std::collections::HashMap<String, String>>("provider_connection_models")
-        .ok()
-        .and_then(|models| models.get(provider).cloned())
+const DEFAULT_MODELS_KEY: &str = "provider_default_models";
+/// The key installs before 3.0.7 wrote the checked model under; read once, never written again.
+const LEGACY_CONNECTION_MODELS_KEY: &str = "provider_connection_models";
+
+fn default_models(config: &Config) -> Result<std::collections::HashMap<String, String>> {
+    for key in [DEFAULT_MODELS_KEY, LEGACY_CONNECTION_MODELS_KEY] {
+        match config.get_param::<std::collections::HashMap<String, String>>(key) {
+            Ok(models) => return Ok(models),
+            Err(crate::config::ConfigError::NotFound(_)) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(std::collections::HashMap::new())
 }
 
-pub(crate) fn save_test_model(provider: &str, model: &str) -> Result<()> {
-    Config::global().update_param::<std::collections::HashMap<String, String>, _, _>(
-        "provider_connection_models",
-        |mut models| {
-            models.insert(provider.to_owned(), model.trim().to_owned());
-            models
-        },
-    )?;
+/// The default model the user chose for a provider — the first pick in node selection. `None`
+/// means no choice was saved under either key; a corrupt map is an error, never an absence.
+pub fn saved_default_model(provider: &str) -> Result<Option<String>> {
+    Ok(default_models(Config::global())?.get(provider).cloned())
+}
+
+pub(crate) fn save_default_model(provider: &str, model: &str) -> Result<()> {
+    let config = Config::global();
+    let mut models = default_models(config)?;
+    models.insert(provider.to_owned(), model.trim().to_owned());
+    config.set_param(DEFAULT_MODELS_KEY, serde_json::to_value(models)?)?;
     Ok(())
 }
 

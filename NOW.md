@@ -1,5 +1,20 @@
 # NOW — what we are researching and doing, this week
 
+> **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
+> 0. IN FLIGHT — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
+>    DEFAULT model that leads node selection (changeable per node). Rows redesigned (solid tile, state chip, default, one action).
+> 1. PROJECTS: kill the "Unfiled" bucket. Derive projects from each session's working DIRECTORY (the way ChatGPT Codex
+>    does — image 4 in his message: a folder row per directory, its sessions nested under it, "Show more" after ~5) and list
+>    every session under its project. His words: "current look disgusting".
+> 2. AGENT WORK + BENCHMARK reshaped EXACTLY like projects: one expandable row per agent / per benchmark with its sessions
+>    nested under it, in the SAME sidebar list — never a second list beside a detail pane that repeats the same info
+>    (images 5/6: "we have one list and then we have another list and then the same info duplicated"). Benchmark tier (SB)
+>    becomes a dropdown chosen when a session is created for that benchmark; the sections derive from it.
+> 3. CONTEXT MENU (our own, never the native one) on right-click over a session, skill, memory, agent work row and MCP:
+>    edit / rename / delete / fork session, and the one original ask — "start an AI session about this" for skills,
+>    memories and MCPs (tweak/modify/fork them through a chat) and for sessions ("ask an AI about this session").
+>    Inspiration: ChatGPT's sidebar menus.
+
 > **TEST BAGGAGE (written 2026-09-06 ~21:30 — read this FIRST when the fine-tune ends and the fleet is free).** Everything
 > below shipped today with proof that stops short of a local model, a real compaction or the running app. Numbered so a session
 > can pick one and prove it; each step names the command, what PASS looks like, and what must go IN and come OUT again.

@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回應樣式"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure 會執行你命名的那個部署，沒有其他模型可供選擇。"
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "返回"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "取消"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "連線"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "正在與 {provider} 核對…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "目前的預設值"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field}為必填"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "篩選模型"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "保留"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "貼上你的金鑰。系統會詢問 {provider} 它能執行哪些模型，只有在它回應後，金鑰才會被儲存(加密後存入你的 goose 機密儲存庫)。"
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "已儲存一個金鑰。輸入新金鑰即可取代它 — 系統會先用 {provider} 核對新金鑰，再捨棄舊金鑰。"
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "正在向 {provider} 查詢其模型…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "選擇此提供方啟動時使用的模型。每次你新增節點時，它都會排在清單最前面，也可以在那裡依節點個別變更。"
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{你的金鑰可執行 # 個模型} other{你的金鑰可執行 # 個模型}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} 沒有模型清單。以下是 goose 為它記錄的 id — 能否存取取決於你的帳戶。"
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "沒有模型符合篩選條件"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "移除"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "要從此應用程式移除 {provider} 金鑰及其預設模型嗎？"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "是，移除"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "更換金鑰"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "重新查詢"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "儲存預設模型"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "已儲存 — 留空以保留"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "正在執行 {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "{provider} 預設模型"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "連線 {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "或輸入模型 id"
+  },
   "cloudProviders.available": {
     "defaultMessage": "可供設定"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "變更"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "檢查失敗"
   },
   "cloudProviders.checking": {
     "defaultMessage": "正在檢查連線…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "已設定 {configured}/{total}"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "已連線"
+  },
   "cloudProviders.description": {
     "defaultMessage": "此應用程式可呼叫的雲端提供方憑證 — 金鑰會加密存入 goose 的機密儲存庫。本機後端(LM Studio、MLX 引擎)無需憑證,位於其他分頁。"
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "正在載入提供方…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "尚無預設模型"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "尚未設定雲端服務供應商。請在下方選擇一個進行設定。"
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "尚未設定"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "重新檢查連線"
   },
   "cloudProviders.retry": {
     "defaultMessage": "重試"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "設定"
   },
   "configSettings.configReset": {
     "defaultMessage": "設定已重設"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "正在登入..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "儲存和啟動應用程式時會向此模型傳送簡短請求以檢查存取權限。可能產生供應商的一般使用費用。"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "連線測試模型"
   },
   "providerConnections.attention": {
     "defaultMessage": "供應商連線需要檢查"

@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Gaya Respons"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure menjalankan deployment yang anda namakan; tiada model berasingan untuk dipilih."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Kembali"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Sambung"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Menyemak dengan {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "lalai semasa"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} diperlukan"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Tapis model"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Kekalkan"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Tampal kunci anda. {provider} akan ditanya model yang boleh dijalankannya, dan kunci hanya disimpan (disulitkan, dalam stor rahsia goose anda) apabila ia menjawab."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Kunci sudah disimpan. Masukkan kunci baharu untuk menggantikannya — ia disemak dengan {provider} sebelum yang lama dibuang."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Bertanya model kepada {provider}…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Pilih model permulaan penyedia ini. Ia mendahului senarai apabila anda menambah node dan boleh ditukar di sana bagi setiap node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# model yang boleh dijalankan kunci anda} other{# model yang boleh dijalankan kunci anda}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} tiada senarai model. Ini ialah id yang diketahui goose untuknya — akses bergantung pada akaun anda."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "tiada model sepadan dengan tapisan"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Alih keluar"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Alih keluar kunci {provider} dan model lalainya daripada aplikasi ini?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Ya, alih keluar"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Gantikan kunci"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Tanya semula"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Simpan model lalai"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "disimpan — biarkan kosong untuk mengekalkannya"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Menjalankan {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "Model lalai {provider}"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Sambung {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Atau taip id model"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Tersedia untuk disediakan"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Tukar"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Semakan gagal"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Menyemak sambungan…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} daripada {total} dikonfigurasi"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Disambungkan"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Kelayakan penyedia awan yang boleh dipanggil aplikasi ini — kunci disulitkan ke dalam stor rahsia goose. Backend tempatan (LM Studio, enjin MLX) tidak memerlukan kelayakan dan berada di tab lain."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Memuatkan penyedia…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "belum ada model lalai"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Belum ada penyedia awan yang dikonfigurasi. Pilih satu di bawah untuk menyediakannya."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Belum disediakan"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Semak semula sambungan"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Cuba lagi"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Sediakan"
   },
   "configSettings.configReset": {
     "defaultMessage": "Konfigurasi Ditetapkan Semula"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Sedang log masuk..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Apabila menyimpan dan memulakan aplikasi, permintaan ringkas dihantar kepada model ini untuk menyemak akses. Caj penggunaan biasa penyedia mungkin dikenakan."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Model ujian sambungan"
   },
   "providerConnections.attention": {
     "defaultMessage": "Sambungan penyedia memerlukan perhatian"

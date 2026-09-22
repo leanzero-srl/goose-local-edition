@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Response Styles"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure runs the deployment you named; there is no separate model to choose."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Back"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Connect"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Checking with {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "current default"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} is required"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Filter models"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Keep"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Paste your key. {provider} is asked for the models it can run, and the key is stored (encrypted, in your goose secret store) only when it answers."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "A key is already stored. Enter a new one to replace it — it is checked with {provider} before the old one is dropped."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Asking {provider} for its models…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Pick the model this provider starts with. It leads the list whenever you add a node and can be changed there per node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# model your key can run} other{# models your key can run}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} has no model listing. These are the ids goose knows for it — access depends on your account."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "no model matches the filter"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Remove"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Remove the {provider} key and its default model from this app?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Yes, remove"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Replace key"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Ask again"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Save default model"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "saved — leave blank to keep"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Running {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "{provider} default model"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Connect {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Or type a model id"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Available to set up"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Change"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Check failed"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Checking connections…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} of {total} configured"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Connected"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. Local backends (LM Studio, the MLX engine) need no credentials and live in the other tabs."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Loading providers…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "no default model yet"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "No cloud providers configured yet. Choose one below to set it up."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Not set up"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Recheck connections"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Retry"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Set up"
   },
   "configSettings.configReset": {
     "defaultMessage": "Configuration Reset"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Signing in..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Saving and app startup send a brief request to this model to check access. Normal provider usage charges may apply."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Connection test model"
   },
   "providerConnections.attention": {
     "defaultMessage": "Provider connections need attention"

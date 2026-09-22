@@ -687,8 +687,8 @@ export const SwitchModelModal = ({
 
     // Use saved model from provider config if available
     const providerInfo = activeProvidersList.find((p) => p.name === provider);
-    if (providerInfo?.saved_model) {
-      setModel(providerInfo.saved_model);
+    if (providerInfo?.default_model) {
+      setModel(providerInfo.default_model);
       return;
     }
 

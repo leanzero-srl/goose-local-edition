@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Gaya Respons"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure menjalankan deployment yang Anda beri nama; tidak ada model terpisah untuk dipilih."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Kembali"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Hubungkan"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Memeriksa dengan {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "default saat ini"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} wajib diisi"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Filter model"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Pertahankan"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Tempel kunci Anda. {provider} akan ditanya soal model yang bisa dijalankannya, dan kunci hanya disimpan (terenkripsi, di penyimpanan rahasia goose Anda) saat menjawab."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Kunci sudah tersimpan. Masukkan kunci baru untuk menggantinya — kunci itu diperiksa dengan {provider} sebelum yang lama dihapus."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Menanyakan model ke {provider}…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Pilih model awal penyedia ini. Model ini memimpin daftar setiap kali Anda menambahkan node dan bisa diubah di sana per node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# model yang bisa dijalankan kunci Anda} other{# model yang bisa dijalankan kunci Anda}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} tidak punya daftar model. Berikut id yang diketahui goose untuknya — akses tergantung akun Anda."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "tidak ada model yang cocok dengan filter"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Hapus"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Hapus kunci {provider} dan model default-nya dari aplikasi ini?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Ya, hapus"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Ganti kunci"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Tanya lagi"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Simpan model default"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "tersimpan — biarkan kosong untuk mempertahankannya"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Menjalankan {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "Model default {provider}"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Hubungkan {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Atau ketik id model"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Tersedia untuk disiapkan"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Ubah"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Pemeriksaan gagal"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Memeriksa koneksi…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{configured} dari {total} terkonfigurasi"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Terhubung"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Kredensial penyedia cloud yang bisa dipanggil aplikasi ini — kunci dienkripsi ke penyimpanan rahasia goose. Backend lokal (LM Studio, mesin MLX) tidak butuh kredensial dan ada di tab lain."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Memuat penyedia…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "belum ada model default"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Belum ada penyedia cloud yang dikonfigurasi. Pilih salah satu di bawah untuk menyiapkannya."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Belum disiapkan"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Periksa ulang koneksi"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Coba lagi"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Siapkan"
   },
   "configSettings.configReset": {
     "defaultMessage": "Konfigurasi Disetel Ulang"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Sedang masuk..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Saat menyimpan dan memulai aplikasi, permintaan singkat dikirim ke model ini untuk memeriksa akses. Biaya penggunaan normal penyedia mungkin berlaku."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Model uji koneksi"
   },
   "providerConnections.attention": {
     "defaultMessage": "Koneksi penyedia memerlukan perhatian"

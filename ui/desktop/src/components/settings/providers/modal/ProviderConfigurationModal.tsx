@@ -1,4 +1,3 @@
-import { isLocalEditionCloudProvider } from '../../models/leanzeroSelectorPolicy';
 import { useState, Fragment } from 'react';
 import {
   Dialog,
@@ -30,15 +29,6 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import HuggingFaceSignInPrompt from '../../auth/HuggingFaceSignInPrompt';
 
 const i18n = defineMessages({
-  testModel: {
-    id: 'providerConfigurationModal.testModel',
-    defaultMessage: 'Connection test model',
-  },
-  testHint: {
-    id: 'providerConfigurationModal.testHint',
-    defaultMessage:
-      'Saving and app startup send a brief request to this model to check access. Normal provider usage charges may apply.',
-  },
   deleteConfigHeader: {
     id: 'providerConfigurationModal.deleteConfigHeader',
     defaultMessage: 'Delete configuration for {providerName}',
@@ -174,9 +164,6 @@ export default function ProviderConfigurationModal({
   onConfigured,
 }: ProviderConfigurationModalProps) {
   const intl = useIntl();
-  const [testModel, setTestModel] = useState(
-    provider.saved_model || provider.metadata.default_model
-  );
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const { getCurrentModelAndProvider } = useModelAndProvider();
@@ -290,11 +277,7 @@ export default function ProviderConfigurationModal({
 
     setCheckingConnection(true);
     try {
-      await providerConfigSubmitHandler(
-        provider,
-        toSubmit,
-        isLocalEditionCloudProvider(provider.name) ? testModel : undefined
-      );
+      await providerConfigSubmitHandler(provider, toSubmit);
       if (onConfigured) {
         onConfigured(provider);
       } else {
@@ -391,18 +374,6 @@ export default function ProviderConfigurationModal({
             {/* Only show the form when NOT in delete confirmation mode */}
             {!showDeleteConfirmation && (
               <>
-                {isLocalEditionCloudProvider(provider.name) && provider.name !== 'azure_openai' && (
-                  <label className="mb-4 flex flex-col gap-2 text-sm">
-                    {intl.formatMessage(i18n.testModel)}
-                    <input
-                      value={testModel}
-                      onChange={(event) => setTestModel(event.target.value)}
-                      disabled={checkingConnection}
-                      className="rounded-lg border border-border-primary bg-background-primary px-3 py-2 text-text-primary"
-                    />
-                    <span className="text-text-secondary">{intl.formatMessage(i18n.testHint)}</span>
-                  </label>
-                )}
                 {hasOAuth && (
                   <div className="flex flex-col items-center gap-4 py-6">
                     <Button

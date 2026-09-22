@@ -93,4 +93,4 @@ pub use init::{
 };
 pub use retry::{retry_operation, RetryConfig};
 
-pub(crate) mod key_connection;
+pub mod key_connection;

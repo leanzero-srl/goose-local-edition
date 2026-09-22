@@ -710,7 +710,13 @@ impl GooseAcpAgent {
             .then(|| crate::providers::key_connection::status(&provider_id))
             .flatten();
         ProviderConfigStatusDto {
-            test_model: crate::providers::key_connection::saved_test_model(&provider_id),
+            test_model: match crate::providers::key_connection::saved_default_model(&provider_id) {
+                Ok(model) => model,
+                Err(error) => {
+                    warn!(provider = %provider_id, error = %error, "default model map unreadable");
+                    None
+                }
+            },
             provider_id,
             is_configured,
             connection_checked: connection.is_some(),

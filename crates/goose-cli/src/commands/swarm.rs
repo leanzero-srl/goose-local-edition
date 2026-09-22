@@ -39,7 +39,8 @@ use super::swarm_engine::{
 };
 pub(crate) mod cloud;
 use cloud::{
-    bedrock_stored_region, cloud_def, cloud_registry_name, cloud_roster, cloud_stored_key, CloudDef,
+    bedrock_stored_region, cloud_def, cloud_default_model, cloud_registry_name, cloud_roster,
+    cloud_stored_key, CloudDef,
 };
 mod judge_context;
 use judge_context::{
@@ -1613,11 +1614,8 @@ pub enum SwarmCommand {
 mod cli_args;
 pub use cli_args::{CloudCommand, PoolCommand, RunOpts};
 
-// The cloud-provider roster cluster — `CloudDef`/`CLOUD_DEFS`, `cloud_def`,
-// `cloud_registry_name`, `cloud_stored_key`, `cloud_roster`, the three provider listings and
-// their id parsers, with their tests — moved to commands/swarm/cloud.rs under the
-// incremental-split law, paying for the restream-abort wiring below (the apply-time re-read
-// that refuses to wipe a stream whose tool call is still forming).
+// The cloud-provider roster cluster (`CloudDef`, `cloud_roster`, the provider listings and their
+// tests) lives in commands/swarm/cloud.rs under the incremental-split law.
 
 /// The spec a tree was built from: an explicit file, else the `run_started.prompt` recorded in the
 /// tree's own run log (searched recursively — the bench harness nests its log path).
@@ -1919,7 +1917,8 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
             println!(
                 "{}",
                 serde_json::json!({
-                    "provider": name, "region": region, "models": roster, "devices": devices
+                    "provider": name, "region": region, "models": roster, "devices": devices,
+                    "default": cloud_default_model(def)?,
                 })
             );
             Ok(())

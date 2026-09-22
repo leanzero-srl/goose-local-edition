@@ -14,8 +14,7 @@ export const providerConfigSubmitHandler = async (
       config_keys?: Array<{ name: string; default?: unknown }>;
     };
   },
-  configValues: Record<string, string>,
-  testModel?: string
+  configValues: Record<string, string>
 ) => {
   const fields: { key: string; value: string }[] = [];
   for (const { name, default: defaultValue } of provider.metadata.config_keys ?? []) {
@@ -26,5 +25,5 @@ export const providerConfigSubmitHandler = async (
     fields.push({ key: name, value: String(value) });
   }
 
-  await acpSaveProviderConfig(provider.name, fields, testModel);
+  await acpSaveProviderConfig(provider.name, fields);
 };

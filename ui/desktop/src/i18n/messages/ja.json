@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回答スタイル"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure は指定したデプロイをそのまま実行します。選択できる別のモデルはありません。"
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "戻る"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "接続"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "{provider}に確認中…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "現在のデフォルト"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field}は必須です"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "モデルを絞り込む"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "保持"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "キーを貼り付けてください。{provider}に実行可能なモデルを問い合わせ、応答があった場合のみキーが保存されます(goose のシークレットストアに暗号化して)。"
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "キーはすでに保存されています。置き換えるには新しいキーを入力してください — 古いキーを破棄する前に{provider}で確認します。"
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "{provider}にモデルを問い合わせ中…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "このプロバイダーが開始時に使うモデルを選んでください。node を追加するたびにリストの先頭に表示され、そこで node ごとに変更できます。"
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{キーで実行できるモデルが#件} other{キーで実行できるモデルが#件}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider}にはモデル一覧がありません。以下は goose が把握しているこのプロバイダーの id です — アクセスできるかはアカウント次第です。"
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "フィルターに一致するモデルがありません"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "削除"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "このアプリから{provider}のキーとそのデフォルトモデルを削除しますか？"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "はい、削除します"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "キーを置き換え"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "再度問い合わせる"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "デフォルトモデルを保存"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "保存済み — そのまま使う場合は空欄にします"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "{model}を実行中…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "{provider}のデフォルトモデル"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "{provider}に接続"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "またはモデル id を入力"
+  },
   "cloudProviders.available": {
     "defaultMessage": "設定できるプロバイダー"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "変更"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "確認に失敗しました"
   },
   "cloudProviders.checking": {
     "defaultMessage": "接続を確認中…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "{total} 中 {configured} 件設定済み"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "接続済み"
+  },
   "cloudProviders.description": {
     "defaultMessage": "このアプリが呼び出せるクラウドプロバイダーの認証情報 — キーは goose のシークレットストアに暗号化して保存されます。ローカルバックエンド(LM Studio、MLX エンジン)には認証情報は不要で、他のタブにあります。"
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "プロバイダーを読み込み中…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "デフォルトモデル未設定"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "クラウドプロバイダーはまだ設定されていません。下から選んで設定してください。"
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "未設定"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "接続を再確認"
   },
   "cloudProviders.retry": {
     "defaultMessage": "再試行"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "設定"
   },
   "configSettings.configReset": {
     "defaultMessage": "設定をリセットしました"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "サインイン中..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "保存時とアプリ起動時に、このモデルへ短いリクエストを送信してアクセスを確認します。通常のプロバイダー利用料金が発生する場合があります。"
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "接続テスト用モデル"
   },
   "providerConnections.attention": {
     "defaultMessage": "プロバイダー接続の確認が必要です"

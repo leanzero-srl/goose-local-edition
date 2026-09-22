@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Стили ответов"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure запускает развёртывание, которое вы назвали; отдельной модели для выбора нет."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Назад"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Подключить"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Проверка через {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "текущий по умолчанию"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} — обязательное поле"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Фильтр моделей"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Оставить"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Вставьте ключ. У {provider} запрашиваются модели, которые он может запускать, и ключ сохраняется (в зашифрованном виде, в хранилище секретов goose) только когда провайдер отвечает."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Ключ уже сохранён. Введите новый, чтобы заменить его — он проверяется через {provider}, прежде чем старый будет удалён."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Запрос моделей у {provider}…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Выберите модель, с которой начинает работу этот провайдер. Она возглавляет список при добавлении node и может быть изменена там для каждого node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count, plural, one {# модель, которую может запускать ваш ключ} few {# модели, которые может запускать ваш ключ} many {# моделей, которые может запускать ваш ключ} other {# модели, которые может запускать ваш ключ}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "У {provider} нет списка моделей. Вот id, которые goose знает для него — доступ зависит от вашего аккаунта."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "ни одна модель не соответствует фильтру"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Удалить"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Удалить ключ {provider} и его модель по умолчанию из этого приложения?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Да, удалить"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Заменить ключ"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Запросить снова"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Сохранить модель по умолчанию"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "сохранён — оставьте пустым, чтобы сохранить его"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Запуск {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "Модель {provider} по умолчанию"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Подключить {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Или введите id модели"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Доступны для настройки"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Изменить"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Проверка не удалась"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Проверка подключений…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "Настроено {configured} из {total}"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Подключено"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Учётные данные облачных провайдеров, которых может вызывать это приложение — ключи шифруются в хранилище секретов goose. Локальным бэкендам (LM Studio, движок MLX) учётные данные не нужны, они живут на других вкладках."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Загрузка провайдеров…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "пока нет модели по умолчанию"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Облачные провайдеры ещё не настроены. Выберите провайдера ниже для настройки."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Не настроено"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Перепроверить подключения"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Повторить"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Настроить"
   },
   "configSettings.configReset": {
     "defaultMessage": "Конфигурация сброшена"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Вход..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "При сохранении и запуске приложения этой модели отправляется короткий запрос для проверки доступа. Может взиматься обычная плата провайдера."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Модель для проверки подключения"
   },
   "providerConnections.attention": {
     "defaultMessage": "Подключения провайдеров требуют внимания"

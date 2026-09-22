@@ -326,8 +326,95 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Phong cách phản hồi"
   },
+  "cloudProviderSetup.azureDone": {
+    "defaultMessage": "Azure chạy bản triển khai bạn đã đặt tên; không có mô hình riêng nào để chọn."
+  },
+  "cloudProviderSetup.back": {
+    "defaultMessage": "Quay lại"
+  },
+  "cloudProviderSetup.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "cloudProviderSetup.connect": {
+    "defaultMessage": "Kết nối"
+  },
+  "cloudProviderSetup.connecting": {
+    "defaultMessage": "Đang kiểm tra với {provider}…"
+  },
+  "cloudProviderSetup.current": {
+    "defaultMessage": "mặc định hiện tại"
+  },
+  "cloudProviderSetup.fieldRequired": {
+    "defaultMessage": "{field} là bắt buộc"
+  },
+  "cloudProviderSetup.filter": {
+    "defaultMessage": "Lọc mô hình"
+  },
+  "cloudProviderSetup.keep": {
+    "defaultMessage": "Giữ"
+  },
+  "cloudProviderSetup.keyIntro": {
+    "defaultMessage": "Dán khóa của bạn vào. {provider} sẽ được hỏi về các mô hình mà nó có thể chạy, và khóa chỉ được lưu (đã mã hóa, trong kho bí mật goose của bạn) khi có phản hồi."
+  },
+  "cloudProviderSetup.keyIntroReplace": {
+    "defaultMessage": "Đã có một khóa được lưu. Nhập khóa mới để thay thế — khóa mới được kiểm tra với {provider} trước khi khóa cũ bị xóa."
+  },
+  "cloudProviderSetup.listing": {
+    "defaultMessage": "Đang hỏi {provider} về các mô hình của nó…"
+  },
+  "cloudProviderSetup.modelIntro": {
+    "defaultMessage": "Chọn mô hình mà nhà cung cấp này khởi động cùng. Mô hình này dẫn đầu danh sách mỗi khi bạn thêm node và có thể được thay đổi ở đó theo từng node."
+  },
+  "cloudProviderSetup.modelsLive": {
+    "defaultMessage": "{count,plural,one{# mô hình khóa của bạn có thể chạy} other{# mô hình khóa của bạn có thể chạy}}"
+  },
+  "cloudProviderSetup.modelsRegistry": {
+    "defaultMessage": "{provider} không có danh sách mô hình. Đây là các id mà goose biết cho nó — quyền truy cập tùy thuộc vào tài khoản của bạn."
+  },
+  "cloudProviderSetup.noMatch": {
+    "defaultMessage": "không có mô hình nào khớp với bộ lọc"
+  },
+  "cloudProviderSetup.remove": {
+    "defaultMessage": "Xóa"
+  },
+  "cloudProviderSetup.removeConfirm": {
+    "defaultMessage": "Xóa khóa {provider} và mô hình mặc định của nó khỏi ứng dụng này?"
+  },
+  "cloudProviderSetup.removeYes": {
+    "defaultMessage": "Có, xóa"
+  },
+  "cloudProviderSetup.replaceKey": {
+    "defaultMessage": "Thay khóa"
+  },
+  "cloudProviderSetup.retryList": {
+    "defaultMessage": "Hỏi lại"
+  },
+  "cloudProviderSetup.saveDefault": {
+    "defaultMessage": "Lưu mô hình mặc định"
+  },
+  "cloudProviderSetup.savedKey": {
+    "defaultMessage": "đã lưu — để trống để giữ nguyên"
+  },
+  "cloudProviderSetup.savingDefault": {
+    "defaultMessage": "Đang chạy {model}…"
+  },
+  "cloudProviderSetup.titleModel": {
+    "defaultMessage": "Mô hình mặc định của {provider}"
+  },
+  "cloudProviderSetup.titleSetup": {
+    "defaultMessage": "Kết nối {provider}"
+  },
+  "cloudProviderSetup.typeModel": {
+    "defaultMessage": "Hoặc nhập id mô hình"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Có thể thiết lập"
+  },
+  "cloudProviders.change": {
+    "defaultMessage": "Thay đổi"
+  },
+  "cloudProviders.checkFailed": {
+    "defaultMessage": "Kiểm tra thất bại"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Đang kiểm tra kết nối…"
@@ -338,6 +425,9 @@
   "cloudProviders.configuredCount": {
     "defaultMessage": "Đã cấu hình {configured} trên {total}"
   },
+  "cloudProviders.connected": {
+    "defaultMessage": "Đã kết nối"
+  },
   "cloudProviders.description": {
     "defaultMessage": "Thông tin xác thực của các nhà cung cấp đám mây mà ứng dụng này có thể gọi — khóa được mã hóa vào kho bí mật của goose. Backend cục bộ (LM Studio, động cơ MLX) không cần thông tin xác thực và nằm ở các tab khác."
   },
@@ -347,14 +437,23 @@
   "cloudProviders.loading": {
     "defaultMessage": "Đang tải nhà cung cấp…"
   },
+  "cloudProviders.noDefault": {
+    "defaultMessage": "chưa có mô hình mặc định"
+  },
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Chưa có nhà cung cấp đám mây nào được cấu hình. Chọn một nhà cung cấp bên dưới để thiết lập."
+  },
+  "cloudProviders.notSetUp": {
+    "defaultMessage": "Chưa thiết lập"
   },
   "cloudProviders.recheck": {
     "defaultMessage": "Kiểm tra lại kết nối"
   },
   "cloudProviders.retry": {
     "defaultMessage": "Thử lại"
+  },
+  "cloudProviders.setUp": {
+    "defaultMessage": "Thiết lập"
   },
   "configSettings.configReset": {
     "defaultMessage": "Đặt lại cấu hình"
@@ -3121,12 +3220,6 @@
   },
   "providerConfigurationModal.signingIn": {
     "defaultMessage": "Đang đăng nhập..."
-  },
-  "providerConfigurationModal.testHint": {
-    "defaultMessage": "Khi lưu và khởi động ứng dụng, một yêu cầu ngắn sẽ được gửi đến mô hình này để kiểm tra quyền truy cập. Có thể áp dụng phí sử dụng thông thường của nhà cung cấp."
-  },
-  "providerConfigurationModal.testModel": {
-    "defaultMessage": "Mô hình kiểm tra kết nối"
   },
   "providerConnections.attention": {
     "defaultMessage": "Kết nối nhà cung cấp cần được kiểm tra"

@@ -67,6 +67,7 @@ export function CloudPane({
   const [region, setRegion] = useState('us-east-1');
   const [keyText, setKeyText] = useState('');
   const [roster, setRoster] = useState<string[]>([]);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState<string | null>(null); // 'validate' | model_id being added/removed
   const [editKey, setEditKey] = useState(false);
@@ -75,8 +76,13 @@ export function CloudPane({
     const r = await window.electron.swarmCloud(def.cli, ['models', '--json']);
     if (r.ok) {
       try {
-        const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
+        const v = JSON.parse(r.stdout) as {
+          region?: string;
+          models?: string[];
+          default?: string | null;
+        };
         setRoster(Array.isArray(v.models) ? v.models : []);
+        setDefaultModel(typeof v.default === 'string' ? v.default : null);
         if (v.region) setRegion(v.region);
         setPhase('ready');
         setError(null);
@@ -241,8 +247,11 @@ export function CloudPane({
       key: 'model',
       header: 'Model',
       cell: (m) => (
-        <span className="truncate font-mono text-lz-mono text-lz-ink" title={m}>
-          {m}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-mono text-lz-mono text-lz-ink" title={m}>
+            {m}
+          </span>
+          {m === defaultModel && <Chip tone="accent">default</Chip>}
         </span>
       ),
     },
@@ -314,7 +323,7 @@ export function CloudPane({
           padded={false}
         >
           <p className={cx('border-b px-4 py-2', TYPE.meta, SURFACE.hairline)}>
-            Models reported by this provider or verified during setup. Model access depends on your account.
+            Models reported by this provider, the default chosen in Cloud Providers first. Model access depends on your account.
           </p>
           <div className="max-h-52 overflow-y-auto">
             <DataTable
