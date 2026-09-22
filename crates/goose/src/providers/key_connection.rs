@@ -24,17 +24,30 @@ pub(crate) fn requires_connection_check(provider: &str) -> bool {
     )
 }
 
+/// What a check established. A model listing is NOT proof of a key — OpenRouter's `/models` is public
+/// and answered 444 models to a made-up key (2026-09-22) — so a key is `Proven` only when a model ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verification {
+    /// A model answered with the key: the key works.
+    Proven,
+    /// Only the provider's model listing answered; no default model is chosen yet, so nothing ran.
+    ListedOnly,
+}
+
+/// The message a `ListedOnly` state shows until a default model is chosen and run.
+pub(crate) const NO_DEFAULT_MODEL_YET: &str =
+    "No default model chosen yet — pick one to prove the key";
+
 /// Verify a provider's credentials. With an explicit `model` (the user's chosen default) the model
-/// is run once and saved as the provider's default; otherwise the saved default is run, and when
-/// none exists yet the key is verified by LISTING the provider's models — the free call that
-/// authenticates the key and is what the setup dialog offers the default from. A provider that
-/// reports no listing at all falls through to a run of its registry default model, which is NOT
-/// saved: the default stays the user's choice.
+/// is run once and saved as the provider's default; otherwise the saved default is run. When no
+/// default exists yet the provider is asked for its model list — the list the setup dialog offers
+/// the default from — but that is `ListedOnly`, never proof. A provider with no listing at all runs
+/// its registry default model, unsaved: the default stays the user's choice.
 pub(crate) async fn check(
     provider_id: &str,
     metadata: &ProviderMetadata,
     model: Option<&str>,
-) -> Result<()> {
+) -> Result<Verification> {
     let config = Config::global();
     config.invalidate_secrets_cache();
     for key in metadata.config_keys.iter().filter(|key| {
@@ -52,7 +65,8 @@ pub(crate) async fn check(
     if provider_id == "azure_openai" {
         let deployment = config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?;
         probe(provider.as_ref(), &deployment, &metadata.display_name).await?;
-        return save_default_model(provider_id, &deployment);
+        save_default_model(provider_id, &deployment)?;
+        return Ok(Verification::Proven);
     }
     let chosen = model
         .map(str::trim)
@@ -61,11 +75,12 @@ pub(crate) async fn check(
         .or(saved_default_model(provider_id)?);
     if let Some(model) = chosen {
         probe(provider.as_ref(), &model, &metadata.display_name).await?;
-        return save_default_model(provider_id, &model);
+        save_default_model(provider_id, &model)?;
+        return Ok(Verification::Proven);
     }
     let listed = list_models(provider.as_ref(), &metadata.display_name).await?;
     if !listed.is_empty() {
-        return Ok(());
+        return Ok(Verification::ListedOnly);
     }
     let registry_default = metadata.default_model.trim();
     if registry_default.is_empty() {
@@ -74,7 +89,8 @@ pub(crate) async fn check(
             metadata.display_name
         ));
     }
-    probe(provider.as_ref(), registry_default, &metadata.display_name).await
+    probe(provider.as_ref(), registry_default, &metadata.display_name).await?;
+    Ok(Verification::Proven)
 }
 
 /// The models this key can see, as the provider reports them. An empty answer means the provider
@@ -128,20 +144,25 @@ pub(crate) fn status(provider: &str) -> Option<Option<String>> {
 pub(crate) async fn check_and_record(provider: &str, metadata: &ProviderMetadata) -> Result<()> {
     let _guard = lock().await;
     let result = check(provider, metadata, None).await;
-    CHECKS.lock().expect("provider check lock poisoned").insert(
-        provider.to_owned(),
-        result.as_ref().err().map(ToString::to_string),
-    );
-    result
+    record(provider, &result);
+    result.map(|_| ())
 }
 
-pub(crate) fn mark_validated(provider: &str) {
-    if requires_connection_check(provider) {
-        CHECKS
-            .lock()
-            .expect("provider check lock poisoned")
-            .insert(provider.to_owned(), None);
+/// The status a check leaves behind: `Proven` clears it, `ListedOnly` states what is still missing,
+/// an error carries the provider's own words.
+pub(crate) fn record(provider: &str, result: &Result<Verification>) {
+    if !requires_connection_check(provider) {
+        return;
     }
+    let status = match result {
+        Ok(Verification::Proven) => None,
+        Ok(Verification::ListedOnly) => Some(NO_DEFAULT_MODEL_YET.to_owned()),
+        Err(error) => Some(error.to_string()),
+    };
+    CHECKS
+        .lock()
+        .expect("provider check lock poisoned")
+        .insert(provider.to_owned(), status);
 }
 
 static CONFIG_CHECK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

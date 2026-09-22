@@ -354,7 +354,7 @@
     "defaultMessage": "保留"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "貼上你的金鑰。系統會詢問 {provider} 它能執行哪些模型，只有在它回應後，金鑰才會被儲存(加密後存入你的 goose 機密儲存庫)。"
+    "defaultMessage": "貼上你的金鑰。系統會向 {provider} 索取模型清單，之後在你選擇的預設模型執行成功時證明金鑰有效。金鑰會加密保存到 goose 密鑰庫。"
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "已儲存一個金鑰。輸入新金鑰即可取代它 — 系統會先用 {provider} 核對新金鑰，再捨棄舊金鑰。"
@@ -363,10 +363,10 @@
     "defaultMessage": "正在向 {provider} 查詢其模型…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "選擇此提供方啟動時使用的模型。每次你新增節點時，它都會排在清單最前面，也可以在那裡依節點個別變更。"
+    "defaultMessage": "選擇此供應商的起始模型。儲存時會執行一次——這就是金鑰的證明。新增節點時它排在清單首位，並可在那裡依節點更改。"
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{你的金鑰可執行 # 個模型} other{你的金鑰可執行 # 個模型}}"
+    "defaultMessage": "{provider} 列出的 {count, plural, one {# 個模型} other {# 個模型}}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} 沒有模型清單。以下是 goose 為它記錄的 id — 能否存取取決於你的帳戶。"
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "無法連線到 Goose 伺服器"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "無法設定 {provider}：{error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "重試"

@@ -354,7 +354,7 @@
     "defaultMessage": "रखें"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "अपनी कुंजी पेस्ट करें। {provider} से वे मॉडल पूछे जाते हैं जिन्हें वह चला सकता है, और कुंजी तभी सहेजी जाती है (आपके goose गुप्त भंडार में एन्क्रिप्टेड) जब वह जवाब देता है।"
+    "defaultMessage": "अपनी कुंजी पेस्ट करें। {provider} से उसकी मॉडल सूची मांगी जाती है, फिर आपके चुने डिफ़ॉल्ट मॉडल के चलने पर कुंजी सिद्ध होती है। कुंजियाँ आपके goose सीक्रेट स्टोर में एन्क्रिप्ट की जाती हैं।"
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "एक कुंजी पहले से सहेजी हुई है। इसे बदलने के लिए नई कुंजी दर्ज करें — पुरानी को हटाने से पहले इसे {provider} के साथ जाँचा जाता है।"
@@ -363,10 +363,10 @@
     "defaultMessage": "{provider} से उसके मॉडल पूछे जा रहे हैं…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "वह मॉडल चुनें जिससे यह प्रदाता शुरू होता है। जब भी आप कोई नोड जोड़ते हैं तो यह सूची में सबसे ऊपर रहता है और वहाँ प्रति नोड बदला जा सकता है।"
+    "defaultMessage": "वह मॉडल चुनें जिससे यह प्रदाता शुरू होता है। सहेजने पर यह एक बार चलता है — यही आपकी कुंजी सिद्ध करता है। नोड जोड़ते समय यह सूची में सबसे ऊपर रहता है और वहाँ प्रति नोड बदला जा सकता है।"
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# मॉडल जिसे आपकी कुंजी चला सकती है} other{# मॉडल जिन्हें आपकी कुंजी चला सकती है}}"
+    "defaultMessage": "{provider} द्वारा सूचीबद्ध {count, plural, one {# मॉडल} other {# मॉडल}}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} के पास कोई मॉडल सूची नहीं है। ये वे id हैं जिन्हें goose इसके लिए जानता है — पहुँच आपके खाते पर निर्भर करती है।"
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Goose सर्वर से कनेक्ट करने में असमर्थ"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "{provider} सेट अप नहीं हो सका: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "पुनः प्रयास करें"

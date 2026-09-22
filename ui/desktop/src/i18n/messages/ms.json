@@ -354,7 +354,7 @@
     "defaultMessage": "Kekalkan"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Tampal kunci anda. {provider} akan ditanya model yang boleh dijalankannya, dan kunci hanya disimpan (disulitkan, dalam stor rahsia goose anda) apabila ia menjawab."
+    "defaultMessage": "Tampal kunci anda. {provider} diminta senarai modelnya, kemudian kunci dibuktikan apabila model lalai yang anda pilih dijalankan. Kunci disulitkan ke dalam stor rahsia goose anda."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Kunci sudah disimpan. Masukkan kunci baharu untuk menggantikannya — ia disemak dengan {provider} sebelum yang lama dibuang."
@@ -363,10 +363,10 @@
     "defaultMessage": "Bertanya model kepada {provider}…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Pilih model permulaan penyedia ini. Ia mendahului senarai apabila anda menambah node dan boleh ditukar di sana bagi setiap node."
+    "defaultMessage": "Pilih model permulaan pembekal ini. Menyimpan akan menjalankannya sekali — itulah yang membuktikan kunci anda. Ia mendahului senarai semasa menambah nod dan boleh ditukar di sana bagi setiap nod."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# model yang boleh dijalankan kunci anda} other{# model yang boleh dijalankan kunci anda}}"
+    "defaultMessage": "{count, plural, one {# model} other {# model}} disenaraikan oleh {provider}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} tiada senarai model. Ini ialah id yang diketahui goose untuknya — akses bergantung pada akaun anda."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Tidak dapat menyambung ke pelayan Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Tidak dapat menyediakan {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Cuba Semula"

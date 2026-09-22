@@ -138,6 +138,19 @@ pub fn huggingface_inventory() -> InventoryRegistration {
     .with_configured(|| huggingface_auth::has_configured_token().unwrap_or(false))
 }
 
+/// Goose Swarm needs no credential: `SWARM_COMMAND` defaults to the goose binary beside the app, so
+/// a fresh profile is configured before anything is written. Without this the onboarding "Use Goose
+/// Swarm" card failed on every new install — the defaults save refused an "unconfigured" provider
+/// because the generic rule counts only PRESENT values (2026-09-22).
+pub fn swarm_inventory() -> InventoryRegistration {
+    InventoryRegistration {
+        supports_refresh: false,
+        identity: default_inventory_identity_resolver(),
+        configured: None,
+    }
+    .with_configured(|| true)
+}
+
 pub fn refresh_only() -> InventoryRegistration {
     InventoryRegistration {
         supports_refresh: true,

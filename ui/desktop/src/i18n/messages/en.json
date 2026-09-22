@@ -354,7 +354,7 @@
     "defaultMessage": "Keep"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Paste your key. {provider} is asked for the models it can run, and the key is stored (encrypted, in your goose secret store) only when it answers."
+    "defaultMessage": "Paste your key. {provider} is asked for its model list, then the key is proven when the default model you pick runs. Keys are encrypted into your goose secret store."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "A key is already stored. Enter a new one to replace it — it is checked with {provider} before the old one is dropped."
@@ -363,10 +363,10 @@
     "defaultMessage": "Asking {provider} for its models…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Pick the model this provider starts with. It leads the list whenever you add a node and can be changed there per node."
+    "defaultMessage": "Pick the model this provider starts with. Saving runs it once — that is what proves your key. It leads the list whenever you add a node and can be changed there per node."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# model your key can run} other{# models your key can run}}"
+    "defaultMessage": "{count,plural,one{# model listed by {provider}} other{# models listed by {provider}}}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} has no model listing. These are the ids goose knows for it — access depends on your account."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Unable to connect to Goose server"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Could not set up {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Retry"

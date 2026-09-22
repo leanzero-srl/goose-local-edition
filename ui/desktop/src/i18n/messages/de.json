@@ -354,7 +354,7 @@
     "defaultMessage": "Behalten"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Fügen Sie Ihren Schlüssel ein. {provider} wird nach den Modellen gefragt, die er ausführen kann, und der Schlüssel wird nur gespeichert (verschlüsselt, in Ihrem goose-Geheimspeicher), wenn eine Antwort kommt."
+    "defaultMessage": "Füge deinen Schlüssel ein. {provider} wird nach seiner Modellliste gefragt; bewiesen wird der Schlüssel, wenn das von dir gewählte Standardmodell läuft. Schlüssel werden verschlüsselt in deinem goose-Geheimnisspeicher abgelegt."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Es ist bereits ein Schlüssel gespeichert. Geben Sie einen neuen ein, um ihn zu ersetzen — er wird bei {provider} geprüft, bevor der alte verworfen wird."
@@ -363,10 +363,10 @@
     "defaultMessage": "{provider} wird nach seinen Modellen gefragt…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Wählen Sie das Modell, mit dem dieser Anbieter startet. Es führt die Liste an, sobald Sie einen Node hinzufügen, und kann dort pro Node geändert werden."
+    "defaultMessage": "Wähle das Modell, mit dem dieser Anbieter startet. Beim Speichern wird es einmal ausgeführt — das beweist deinen Schlüssel. Es steht beim Hinzufügen eines Knotens ganz oben und kann dort pro Knoten geändert werden."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# Modell, das Ihr Schlüssel ausführen kann} other{# Modelle, die Ihr Schlüssel ausführen kann}}"
+    "defaultMessage": "{count, plural, one {# Modell} other {# Modelle}} von {provider} gelistet"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} hat keine Modellliste. Dies sind die IDs, die goose dafür kennt — der Zugriff hängt von Ihrem Konto ab."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Verbindung zum Goose-Server nicht möglich"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "{provider} konnte nicht eingerichtet werden: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Erneut versuchen"

@@ -1,7 +1,7 @@
 # NOW — what we are researching and doing, this week
 
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
-> 0. IN FLIGHT — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
+> 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
 >    DEFAULT model that leads node selection (changeable per node). Rows redesigned (solid tile, state chip, default, one action).
 > 1. PROJECTS: kill the "Unfiled" bucket. Derive projects from each session's working DIRECTORY (the way ChatGPT Codex
 >    does — image 4 in his message: a folder row per directory, its sessions nested under it, "Show more" after ~5) and list

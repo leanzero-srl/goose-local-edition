@@ -354,7 +354,7 @@
     "defaultMessage": "Conserver"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Collez votre clé. {provider} est interrogé sur les modèles qu'il peut exécuter, et la clé n'est stockée (chiffrée, dans votre coffre de secrets goose) que s'il répond."
+    "defaultMessage": "Collez votre clé. {provider} est interrogé pour sa liste de modèles, puis la clé est prouvée lorsque le modèle par défaut que vous choisissez s'exécute. Les clés sont chiffrées dans votre coffre de secrets goose."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Une clé est déjà stockée. Saisissez-en une nouvelle pour la remplacer — elle est vérifiée auprès de {provider} avant que l'ancienne soit supprimée."
@@ -363,10 +363,10 @@
     "defaultMessage": "Demande des modèles à {provider}…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Choisissez le modèle avec lequel ce fournisseur démarre. Il arrive en tête de liste chaque fois que vous ajoutez un node, et peut y être changé par node."
+    "defaultMessage": "Choisissez le modèle avec lequel ce fournisseur démarre. L'enregistrement l'exécute une fois : c'est ce qui prouve votre clé. Il figure en tête lors de l'ajout d'un nœud et peut y être changé par nœud."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# modèle que votre clé peut exécuter} other{# modèles que votre clé peut exécuter}}"
+    "defaultMessage": "{count, plural, one {# modèle} other {# modèles}} listés par {provider}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} n'a pas de liste de modèles. Voici les ids que goose connaît pour lui — l'accès dépend de votre compte."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Impossible de se connecter au serveur Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Impossible de configurer {provider} : {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Réessayer"

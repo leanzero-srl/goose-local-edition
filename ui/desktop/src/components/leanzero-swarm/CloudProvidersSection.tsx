@@ -124,7 +124,10 @@ export default function CloudProvidersSection() {
   }, [loadProviders]);
 
   const cloudProviders = useMemo(
-    () => (providers ?? []).filter((p) => isLocalEditionCloudProvider(p.name)),
+    () =>
+      (providers ?? [])
+        .filter((p) => isLocalEditionCloudProvider(p.name))
+        .sort((a, b) => a.metadata.display_name.localeCompare(b.metadata.display_name)),
     [providers]
   );
   const configured = cloudProviders.filter((p) => p.is_configured || p.connection_error);

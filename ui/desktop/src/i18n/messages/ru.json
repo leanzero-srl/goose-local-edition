@@ -354,7 +354,7 @@
     "defaultMessage": "Оставить"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Вставьте ключ. У {provider} запрашиваются модели, которые он может запускать, и ключ сохраняется (в зашифрованном виде, в хранилище секретов goose) только когда провайдер отвечает."
+    "defaultMessage": "Вставьте ключ. У {provider} запрашивается список моделей, а ключ подтверждается, когда запускается выбранная вами модель по умолчанию. Ключи шифруются в хранилище секретов goose."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Ключ уже сохранён. Введите новый, чтобы заменить его — он проверяется через {provider}, прежде чем старый будет удалён."
@@ -363,10 +363,10 @@
     "defaultMessage": "Запрос моделей у {provider}…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Выберите модель, с которой начинает работу этот провайдер. Она возглавляет список при добавлении node и может быть изменена там для каждого node."
+    "defaultMessage": "Выберите модель, с которой начинает этот провайдер. При сохранении она запускается один раз — это и подтверждает ключ. Она идёт первой при добавлении узла и может быть изменена там для каждого узла."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count, plural, one {# модель, которую может запускать ваш ключ} few {# модели, которые может запускать ваш ключ} many {# моделей, которые может запускать ваш ключ} other {# модели, которые может запускать ваш ключ}}"
+    "defaultMessage": "{count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}} в списке {provider}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "У {provider} нет списка моделей. Вот id, которые goose знает для него — доступ зависит от вашего аккаунта."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Не удалось подключиться к серверу Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Не удалось настроить {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Повторить"

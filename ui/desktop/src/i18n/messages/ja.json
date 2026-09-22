@@ -354,7 +354,7 @@
     "defaultMessage": "保持"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "キーを貼り付けてください。{provider}に実行可能なモデルを問い合わせ、応答があった場合のみキーが保存されます(goose のシークレットストアに暗号化して)。"
+    "defaultMessage": "キーを貼り付けてください。{provider} にモデル一覧を問い合わせ、選んだデフォルトモデルが実行できた時点でキーが証明されます。キーは goose のシークレットストアに暗号化して保存されます。"
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "キーはすでに保存されています。置き換えるには新しいキーを入力してください — 古いキーを破棄する前に{provider}で確認します。"
@@ -363,10 +363,10 @@
     "defaultMessage": "{provider}にモデルを問い合わせ中…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "このプロバイダーが開始時に使うモデルを選んでください。node を追加するたびにリストの先頭に表示され、そこで node ごとに変更できます。"
+    "defaultMessage": "このプロバイダーが最初に使うモデルを選びます。保存時に一度実行され、それがキーの証明になります。ノード追加時に一覧の先頭に表示され、ノードごとに変更できます。"
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{キーで実行できるモデルが#件} other{キーで実行できるモデルが#件}}"
+    "defaultMessage": "{provider} が一覧した {count, plural, one {# モデル} other {# モデル}}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider}にはモデル一覧がありません。以下は goose が把握しているこのプロバイダーの id です — アクセスできるかはアカウント次第です。"
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "gooseサーバーに接続できません"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "{provider} を設定できませんでした: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "再試行"

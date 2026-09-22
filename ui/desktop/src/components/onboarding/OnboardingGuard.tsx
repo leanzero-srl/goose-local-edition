@@ -37,6 +37,10 @@ const i18n = defineMessages({
     id: 'onboardingGuard.retry',
     defaultMessage: 'Retry',
   },
+  configureFailed: {
+    id: 'onboardingGuard.configureFailed',
+    defaultMessage: 'Could not set up {provider}: {error}',
+  },
 });
 
 const TELEMETRY_CONFIG_KEY = 'GOOSE_TELEMETRY_ENABLED';
@@ -60,6 +64,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
     null
   );
   const [configuredModel, setConfiguredModel] = useState<string | null>(null);
+  const [configureError, setConfigureError] = useState<string | null>(null);
   const hasTrackedOnboardingStart = useRef(false);
 
   const checkProvider = async (retries = 3, delay = 1000) => {
@@ -106,7 +111,12 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
   }, []);
 
   useEffect(() => {
-    if (!isCheckingProvider && !hasProvider && !checkProviderError && !hasTrackedOnboardingStart.current) {
+    if (
+      !isCheckingProvider &&
+      !hasProvider &&
+      !checkProviderError &&
+      !hasTrackedOnboardingStart.current
+    ) {
       trackOnboardingStarted();
       hasTrackedOnboardingStart.current = true;
     }
@@ -114,14 +124,29 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
 
   const handleConfigured = async (providerName: string, modelId?: string) => {
     trackOnboardingProviderSelected({ provider: providerName });
-    const providers = await acpListProviderDetails();
-    const matchedProvider = providers.find((p) => p.name === providerName);
-    const resolvedModel = modelId ?? matchedProvider?.metadata.default_model ?? null;
-    await acpSaveDefaults(providerName, resolvedModel);
-    setConfiguredModel(resolvedModel);
-    await refreshCurrentModelAndProvider();
-    setConfiguredProvider(providerName);
-    setConfiguredProviderDisplayName(matchedProvider?.metadata.display_name || providerName);
+    setConfigureError(null);
+    try {
+      const providers = await acpListProviderDetails();
+      const matchedProvider = providers.find((p) => p.name === providerName);
+      const resolvedModel = modelId ?? matchedProvider?.metadata.default_model ?? null;
+      await acpSaveDefaults(providerName, resolvedModel);
+      setConfiguredModel(resolvedModel);
+      await refreshCurrentModelAndProvider();
+      setConfiguredProvider(providerName);
+      setConfiguredProviderDisplayName(matchedProvider?.metadata.display_name || providerName);
+    } catch (error) {
+      // The engine's refusal (an unconfigured provider, a rejected key) must be READ, never a
+      // silent stay on the same screen.
+      const detail =
+        error && typeof error === 'object' && 'data' in error && typeof error.data === 'string'
+          ? error.data
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      setConfigureError(
+        intl.formatMessage(i18n.configureFailed, { provider: providerName, error: detail })
+      );
+    }
   };
 
   const finishOnboarding = async (telemetryEnabled: boolean) => {
@@ -152,11 +177,13 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
           <div className="mb-4">
             <Goose className="size-8 mx-auto" />
           </div>
-          <h1 className="text-xl font-light mb-3">{intl.formatMessage(i18n.checkProviderErrorTitle)}</h1>
-          <p className="text-text-muted mb-6">{intl.formatMessage(i18n.checkProviderErrorDescription)}</p>
-          <Button onClick={() => checkProvider()}>
-            {intl.formatMessage(i18n.retry)}
-          </Button>
+          <h1 className="text-xl font-light mb-3">
+            {intl.formatMessage(i18n.checkProviderErrorTitle)}
+          </h1>
+          <p className="text-text-muted mb-6">
+            {intl.formatMessage(i18n.checkProviderErrorDescription)}
+          </p>
+          <Button onClick={() => checkProvider()}>{intl.formatMessage(i18n.retry)}</Button>
         </div>
       </div>
     );
@@ -185,12 +212,24 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
               <div className="mb-4">
                 <Goose className="size-8" />
               </div>
-              <h1 className="text-2xl sm:text-4xl font-light mb-3">{intl.formatMessage(i18n.welcomeTitle)}</h1>
+              <h1 className="text-2xl sm:text-4xl font-light mb-3">
+                {intl.formatMessage(i18n.welcomeTitle)}
+              </h1>
               <p className="text-text-muted text-base sm:text-lg">
                 {intl.formatMessage(i18n.welcomeDescription)}
               </p>
             </div>
 
+            {configureError && (
+              <div
+                role="alert"
+                data-testid="onboarding-configure-error"
+                className="mb-4 rounded px-4 py-3 text-sm font-semibold text-white"
+                style={{ backgroundColor: '#e5484d' }}
+              >
+                {configureError}
+              </div>
+            )}
             <ProviderSelector
               onConfigured={handleConfigured}
               onFirstSelection={() => setHasSelection(true)}

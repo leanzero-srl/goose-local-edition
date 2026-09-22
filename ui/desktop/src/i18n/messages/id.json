@@ -354,7 +354,7 @@
     "defaultMessage": "Pertahankan"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Tempel kunci Anda. {provider} akan ditanya soal model yang bisa dijalankannya, dan kunci hanya disimpan (terenkripsi, di penyimpanan rahasia goose Anda) saat menjawab."
+    "defaultMessage": "Tempel kunci Anda. {provider} diminta daftar modelnya, lalu kunci dibuktikan saat model default yang Anda pilih dijalankan. Kunci dienkripsi ke penyimpanan rahasia goose Anda."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Kunci sudah tersimpan. Masukkan kunci baru untuk menggantinya — kunci itu diperiksa dengan {provider} sebelum yang lama dihapus."
@@ -363,10 +363,10 @@
     "defaultMessage": "Menanyakan model ke {provider}…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Pilih model awal penyedia ini. Model ini memimpin daftar setiap kali Anda menambahkan node dan bisa diubah di sana per node."
+    "defaultMessage": "Pilih model awal penyedia ini. Menyimpan akan menjalankannya sekali — itulah yang membuktikan kunci Anda. Model ini memimpin daftar saat menambah node dan dapat diubah di sana per node."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# model yang bisa dijalankan kunci Anda} other{# model yang bisa dijalankan kunci Anda}}"
+    "defaultMessage": "{count, plural, one {# model} other {# model}} terdaftar oleh {provider}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} tidak punya daftar model. Berikut id yang diketahui goose untuknya — akses tergantung akun Anda."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Tidak dapat terhubung ke server Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Tidak dapat menyiapkan {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Coba Lagi"

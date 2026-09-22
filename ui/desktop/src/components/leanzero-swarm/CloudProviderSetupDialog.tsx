@@ -31,7 +31,7 @@ const i18n = defineMessages({
   keyIntro: {
     id: 'cloudProviderSetup.keyIntro',
     defaultMessage:
-      'Paste your key. {provider} is asked for the models it can run, and the key is stored (encrypted, in your goose secret store) only when it answers.',
+      'Paste your key. {provider} is asked for its model list, then the key is proven when the default model you pick runs. Keys are encrypted into your goose secret store.',
   },
   keyIntroReplace: {
     id: 'cloudProviderSetup.keyIntroReplace',
@@ -41,17 +41,20 @@ const i18n = defineMessages({
   modelIntro: {
     id: 'cloudProviderSetup.modelIntro',
     defaultMessage:
-      'Pick the model this provider starts with. It leads the list whenever you add a node and can be changed there per node.',
+      'Pick the model this provider starts with. Saving runs it once — that is what proves your key. It leads the list whenever you add a node and can be changed there per node.',
   },
   fieldRequired: { id: 'cloudProviderSetup.fieldRequired', defaultMessage: '{field} is required' },
   savedKey: { id: 'cloudProviderSetup.savedKey', defaultMessage: 'saved — leave blank to keep' },
   connect: { id: 'cloudProviderSetup.connect', defaultMessage: 'Connect' },
   connecting: { id: 'cloudProviderSetup.connecting', defaultMessage: 'Checking with {provider}…' },
-  listing: { id: 'cloudProviderSetup.listing', defaultMessage: 'Asking {provider} for its models…' },
+  listing: {
+    id: 'cloudProviderSetup.listing',
+    defaultMessage: 'Asking {provider} for its models…',
+  },
   filter: { id: 'cloudProviderSetup.filter', defaultMessage: 'Filter models' },
   modelsLive: {
     id: 'cloudProviderSetup.modelsLive',
-    defaultMessage: '{count, plural, one {# model} other {# models}} your key can run',
+    defaultMessage: '{count, plural, one {# model} other {# models}} listed by {provider}',
   },
   modelsRegistry: {
     id: 'cloudProviderSetup.modelsRegistry',
@@ -108,7 +111,9 @@ export default function CloudProviderSetupDialog({
   const intl = useIntl();
   const label = provider.metadata.display_name;
   const deploymentOnly = DEPLOYMENT_PROVIDERS.has(provider.name);
-  const [step, setStep] = useState<Step>(provider.is_configured ? 'model' : 'key');
+  // A stored key — proven or still waiting on its default model — is what makes Replace/Remove real.
+  const hasKey = provider.credentials_saved || provider.is_configured;
+  const [step, setStep] = useState<Step>(hasKey ? 'model' : 'key');
   const [values, setValues] = useState<Record<string, string>>({});
   const [serverValues, setServerValues] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -126,7 +131,7 @@ export default function CloudProviderSetupDialog({
   );
 
   useEffect(() => {
-    if (!provider.is_configured) return;
+    if (!hasKey) return;
     let cancelled = false;
     acpReadProviderConfig(provider.name)
       .then((saved) => {
@@ -145,7 +150,7 @@ export default function CloudProviderSetupDialog({
     return () => {
       cancelled = true;
     };
-  }, [provider.is_configured, provider.name, fields]);
+  }, [hasKey, provider.name, fields]);
 
   const listModels = useCallback(async () => {
     setBusy('list');
@@ -179,7 +184,7 @@ export default function CloudProviderSetupDialog({
       const kept = serverValues[field.name]?.trim() ?? '';
       const value = entered || kept;
       if (!value) {
-        if (field.required && !(field.secret && provider.is_configured)) {
+        if (field.required && !(field.secret && hasKey)) {
           errors[field.name] = intl.formatMessage(i18n.fieldRequired, { field: field.name });
         }
         continue;
@@ -260,10 +265,9 @@ export default function CloudProviderSetupDialog({
             {step === 'remove'
               ? intl.formatMessage(i18n.removeConfirm, { provider: label })
               : step === 'key'
-                ? intl.formatMessage(
-                    provider.is_configured ? i18n.keyIntroReplace : i18n.keyIntro,
-                    { provider: label }
-                  )
+                ? intl.formatMessage(hasKey ? i18n.keyIntroReplace : i18n.keyIntro, {
+                    provider: label,
+                  })
                 : intl.formatMessage(i18n.modelIntro)}
           </DialogDescription>
         </DialogHeader>
@@ -281,7 +285,7 @@ export default function CloudProviderSetupDialog({
                 <span className={cx(TYPE.meta, 'flex items-center gap-2')}>
                   {field.name}
                   {field.required && <span className="text-lz-err">*</span>}
-                  {field.secret && provider.is_configured && (
+                  {field.secret && hasKey && (
                     <Chip tone="ok">{intl.formatMessage(i18n.savedKey)}</Chip>
                   )}
                 </span>
@@ -301,7 +305,7 @@ export default function CloudProviderSetupDialog({
             ))}
             {error && <ToneBanner tone="err" label={label} text={error} />}
             <DialogFooter>
-              {provider.is_configured ? (
+              {hasKey ? (
                 <Button variant="ghost" type="button" onClick={() => setStep('model')}>
                   {intl.formatMessage(i18n.back)}
                 </Button>
@@ -346,7 +350,10 @@ export default function CloudProviderSetupDialog({
                   {models != null && busy !== 'list' && (
                     <Chip tone={liveListing ? 'ok' : 'warn'}>
                       {liveListing
-                        ? intl.formatMessage(i18n.modelsLive, { count: models.length })
+                        ? intl.formatMessage(i18n.modelsLive, {
+                            count: models.length,
+                            provider: label,
+                          })
                         : label}
                     </Chip>
                   )}
@@ -365,10 +372,16 @@ export default function CloudProviderSetupDialog({
                   <div
                     role="listbox"
                     aria-label={intl.formatMessage(i18n.titleModel, { provider: label })}
-                    className={cx('max-h-64 overflow-y-auto', SURFACE.outline, 'rounded-lz-control')}
+                    className={cx(
+                      'max-h-64 overflow-y-auto',
+                      SURFACE.outline,
+                      'rounded-lz-control'
+                    )}
                   >
                     {shown.length === 0 ? (
-                      <p className={cx('px-3 py-2', TYPE.meta)}>{intl.formatMessage(i18n.noMatch)}</p>
+                      <p className={cx('px-3 py-2', TYPE.meta)}>
+                        {intl.formatMessage(i18n.noMatch)}
+                      </p>
                     ) : (
                       shown.map((model) => {
                         const selected = model === chosen;
@@ -436,7 +449,7 @@ export default function CloudProviderSetupDialog({
               />
             )}
             <DialogFooter className="items-center">
-              {provider.is_configured && (
+              {hasKey && (
                 <>
                   <Button
                     variant="ghost"

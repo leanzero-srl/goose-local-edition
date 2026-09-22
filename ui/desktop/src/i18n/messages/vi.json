@@ -354,7 +354,7 @@
     "defaultMessage": "Giữ"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Dán khóa của bạn vào. {provider} sẽ được hỏi về các mô hình mà nó có thể chạy, và khóa chỉ được lưu (đã mã hóa, trong kho bí mật goose của bạn) khi có phản hồi."
+    "defaultMessage": "Dán khóa của bạn. {provider} được hỏi danh sách mô hình, rồi khóa được chứng minh khi mô hình mặc định bạn chọn chạy được. Khóa được mã hóa vào kho bí mật goose của bạn."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Đã có một khóa được lưu. Nhập khóa mới để thay thế — khóa mới được kiểm tra với {provider} trước khi khóa cũ bị xóa."
@@ -363,10 +363,10 @@
     "defaultMessage": "Đang hỏi {provider} về các mô hình của nó…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Chọn mô hình mà nhà cung cấp này khởi động cùng. Mô hình này dẫn đầu danh sách mỗi khi bạn thêm node và có thể được thay đổi ở đó theo từng node."
+    "defaultMessage": "Chọn mô hình mà nhà cung cấp này bắt đầu với. Lưu sẽ chạy nó một lần — đó là điều chứng minh khóa của bạn. Nó đứng đầu danh sách khi thêm nút và có thể đổi ở đó theo từng nút."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# mô hình khóa của bạn có thể chạy} other{# mô hình khóa của bạn có thể chạy}}"
+    "defaultMessage": "{count, plural, one {# mô hình} other {# mô hình}} do {provider} liệt kê"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} không có danh sách mô hình. Đây là các id mà goose biết cho nó — quyền truy cập tùy thuộc vào tài khoản của bạn."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Không thể kết nối với máy chủ Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "Không thể thiết lập {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Thử lại"

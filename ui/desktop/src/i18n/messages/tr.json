@@ -354,7 +354,7 @@
     "defaultMessage": "Sakla"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Anahtarınızı yapıştırın. {provider}'a çalıştırabildiği modeller sorulur ve anahtar yalnızca yanıt verdiğinde kaydedilir (goose gizli deponuzda şifrelenmiş olarak)."
+    "defaultMessage": "Anahtarınızı yapıştırın. {provider} model listesi için sorgulanır, ardından seçtiğiniz varsayılan model çalıştığında anahtar kanıtlanır. Anahtarlar goose gizli deposuna şifrelenerek kaydedilir."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Zaten kayıtlı bir anahtar var. Değiştirmek için yenisini girin — eskisi atılmadan önce {provider} ile kontrol edilir."
@@ -363,10 +363,10 @@
     "defaultMessage": "{provider}'dan modelleri isteniyor…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Bu sağlayıcının başladığı modeli seçin. Bir node eklediğinizde listenin başında yer alır ve orada node başına değiştirilebilir."
+    "defaultMessage": "Bu sağlayıcının başlayacağı modeli seçin. Kaydetmek onu bir kez çalıştırır — anahtarınızı kanıtlayan budur. Düğüm eklerken listenin başında yer alır ve orada düğüm başına değiştirilebilir."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{Anahtarınızın çalıştırabildiği # model} other{Anahtarınızın çalıştırabildiği # model}}"
+    "defaultMessage": "{provider} tarafından listelenen {count, plural, one {# model} other {# model}}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider}'ın model listesi yok. Bunlar goose'un onun için bildiği id'ler — erişim hesabınıza bağlıdır."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "Goose sunucusuna bağlanılamıyor"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "{provider} kurulamadı: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Yeniden dene"

@@ -74,6 +74,7 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
             status.connectionChecked &&
             !status.connectionError
         )),
+    credentials_saved: entry.configured,
     default_model: statuses.find((status) => status.providerId === entry.providerId)?.testModel,
     connection_error: statuses.find((status) => status.providerId === entry.providerId)
       ?.connectionError,

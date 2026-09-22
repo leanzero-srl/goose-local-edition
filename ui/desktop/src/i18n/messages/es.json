@@ -354,7 +354,7 @@
     "defaultMessage": "Mantener"
   },
   "cloudProviderSetup.keyIntro": {
-    "defaultMessage": "Pega tu clave. Se le pide a {provider} los modelos que puede ejecutar, y la clave solo se guarda (cifrada, en tu almacén secreto de goose) cuando responde."
+    "defaultMessage": "Pega tu clave. Se pide a {provider} su lista de modelos y la clave se comprueba cuando se ejecuta el modelo predeterminado que elijas. Las claves se cifran en tu almacén de secretos de goose."
   },
   "cloudProviderSetup.keyIntroReplace": {
     "defaultMessage": "Ya hay una clave guardada. Introduce una nueva para reemplazarla — se comprueba con {provider} antes de descartar la anterior."
@@ -363,10 +363,10 @@
     "defaultMessage": "Pidiendo a {provider} sus modelos…"
   },
   "cloudProviderSetup.modelIntro": {
-    "defaultMessage": "Elige el modelo con el que empieza este proveedor. Encabeza la lista cada vez que añadas un node y se puede cambiar ahí por node."
+    "defaultMessage": "Elige el modelo con el que empieza este proveedor. Al guardar se ejecuta una vez: eso es lo que prueba tu clave. Encabeza la lista al añadir un nodo y puede cambiarse allí por nodo."
   },
   "cloudProviderSetup.modelsLive": {
-    "defaultMessage": "{count,plural,one{# modelo que tu clave puede ejecutar} other{# modelos que tu clave puede ejecutar}}"
+    "defaultMessage": "{count, plural, one {# modelo} other {# modelos}} listados por {provider}"
   },
   "cloudProviderSetup.modelsRegistry": {
     "defaultMessage": "{provider} no tiene listado de modelos. Estos son los ids que goose conoce para él — el acceso depende de tu cuenta."
@@ -2698,6 +2698,9 @@
   },
   "onboardingGuard.checkProviderErrorTitle": {
     "defaultMessage": "No se pudo conectar con el servidor de Goose"
+  },
+  "onboardingGuard.configureFailed": {
+    "defaultMessage": "No se pudo configurar {provider}: {error}"
   },
   "onboardingGuard.retry": {
     "defaultMessage": "Reintentar"

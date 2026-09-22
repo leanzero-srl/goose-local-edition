@@ -18,10 +18,15 @@ vi.mock('../../acp/providers', () => ({
   acpDeleteProviderConfig: (...a: unknown[]) => mockDelete(...a),
 }));
 
-function provider(configured: boolean, defaultModel: string | null = null): ProviderDetails {
+function provider(
+  configured: boolean,
+  defaultModel: string | null = null,
+  credentialsSaved = configured
+): ProviderDetails {
   return {
     name: 'openai',
     is_configured: configured,
+    credentials_saved: credentialsSaved,
     default_model: defaultModel,
     provider_type: 'Native',
     metadata: {
@@ -83,7 +88,7 @@ describe('CloudProviderSetupDialog', () => {
       expect(screen.getByTestId('cloud-model-gpt-5-mini')).toBeInTheDocument();
     });
     expect(mockLive).toHaveBeenCalledWith('openai');
-    expect(screen.getByText('3 models your key can run')).toBeInTheDocument();
+    expect(screen.getByText('3 models listed by OpenAI')).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Filter models'), 'mini');
     expect(screen.queryByTestId('cloud-model-o4')).not.toBeInTheDocument();
@@ -162,5 +167,18 @@ describe('CloudProviderSetupDialog', () => {
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith('openai');
     });
+  });
+
+  it('a stored but unproven key (listing only) still opens on the models with Replace key and Remove', async () => {
+    mockLive.mockResolvedValue(['gpt-5']);
+    render(provider(false, null, true));
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-model-gpt-5')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Replace key' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Replace key' }));
+    expect(screen.getByLabelText('OPENAI_API_KEY')).toBeInTheDocument();
+    expect(screen.getByText('saved — leave blank to keep')).toBeInTheDocument();
   });
 });

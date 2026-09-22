@@ -978,13 +978,13 @@ impl GooseAcpAgent {
                     return Err(agent_client_protocol::Error::invalid_params().data(format!("{key} is overridden by the process environment. Remove that override before saving a different value.")));
                 }
             }
-            if let Err(error) = crate::providers::key_connection::check(
+            let verification = crate::providers::key_connection::check(
                 &req.provider_id,
                 &metadata,
                 req.test_model.as_deref(),
             )
-            .await
-            {
+            .await;
+            if let Err(error) = &verification {
                 pending
                     .restore()
                     .internal_err_ctx("Failed to restore previous provider settings")?;
@@ -992,10 +992,10 @@ impl GooseAcpAgent {
                     "Connection check failed; previous settings retained. {error}"
                 )));
             }
+            crate::providers::key_connection::record(&req.provider_id, &verification);
         }
 
         pending.commit();
-        crate::providers::key_connection::mark_validated(&req.provider_id);
         let provider_ids = [req.provider_id.clone()];
         let status = Self::provider_config_status(req.provider_id.clone()).await;
         let refresh = self.start_provider_inventory_refresh(&provider_ids).await?;

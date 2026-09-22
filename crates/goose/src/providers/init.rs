@@ -83,7 +83,8 @@ async fn init_registry() -> RwLock<ProviderRegistry> {
             Some(registrations::claude_acp_inventory()),
         );
         registry.register::<ClaudeCodeProvider>(true);
-        registry.register::<SwarmProvider>(true);
+        registry
+            .register_with_inventory::<SwarmProvider>(true, Some(registrations::swarm_inventory()));
         registry.register_with_inventory::<CodexAcpProvider>(
             false,
             Some(registrations::codex_acp_inventory()),

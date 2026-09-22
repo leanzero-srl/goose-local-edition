@@ -43,6 +43,9 @@ export type ProviderDetails = {
   metadata: ProviderMetadata;
   name: string;
   provider_type: ProviderType;
+  /** The engine holds credentials for this provider (a key is stored), proven or not — `is_configured`
+   *  additionally requires the connection check to have passed. */
+  credentials_saved?: boolean;
   /** The default model chosen in Cloud Providers — the first pick wherever a model is chosen. */
   default_model?: string | null;
 };
