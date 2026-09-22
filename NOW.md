@@ -14,6 +14,11 @@
 >    edit / rename / delete / fork session, and the one original ask — "start an AI session about this" for skills,
 >    memories and MCPs (tweak/modify/fork them through a chat) and for sessions ("ask an AI about this session").
 >    Inspiration: ChatGPT's sidebar menus.
+>    3b. LANDED cc11c9bb1 (2026-09-22) — that AI session can CHANGE the item, not only discuss it: the chat always carries
+>    developer + memory + skills + extensionmanager (WORK_ON_ITEM_EXTENSIONS, useStartChatAbout.ts) and every prompt names
+>    where the item lives, the tool that writes it and how to fork it. Verified live: the session loaded Developer, Skills,
+>    Extension Manager, Memory (sessions.db extension_data). NOT yet exercised: a model performing the write — no node was
+>    up (MLX engine not listening on 8090); the first chat with a live node should end with a real remember_memory.
 
 > **TEST BAGGAGE (written 2026-09-06 ~21:30 — read this FIRST when the fine-tune ends and the fleet is free).** Everything
 > below shipped today with proof that stops short of a local model, a real compaction or the running app. Numbered so a session
