@@ -74,7 +74,12 @@ export function deskHref(dir: string, tick?: number): string {
 
 /** What is asked of the model when a desk is opened as a chat. */
 export function askAboutAgentPrompt(row: AgentWorkRosterRow): string {
-  return `I want to work on my Agent Work desk "${deskName(row)}" at ${row.dir} (its agent.yaml, its ledger and its ticks live under that folder). Read it first, then help me tweak, modify or fork it.`;
+  return [
+    `I want to work on my Agent Work desk "${deskName(row)}" at ${row.dir}.`,
+    'Its agent.yaml (the brief, cadence and tools), its ledger and its ticks live under that folder. Read agent.yaml and the latest ticks first with the developer tools.',
+    'You can modify agent.yaml in place, or fork the desk by copying the folder to a new directory with a new name and adjusting its agent.yaml.',
+    'Ask me what I want changed before you write anything, then make the edit and show me the result.',
+  ].join('\n');
 }
 
 interface TicksState {

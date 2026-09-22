@@ -121,6 +121,8 @@ export async function startNewSession(
     recipeDeeplink?: string;
     recipeId?: string;
     allExtensions?: FixedExtensionEntry[];
+    /** An explicit extension set for this session, overriding the enabled selection. */
+    extensionConfigs?: ExtensionConfig[];
   }
 ): Promise<Session> {
   const session = await createSession(workingDir, options);

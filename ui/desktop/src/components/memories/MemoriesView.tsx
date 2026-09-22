@@ -76,9 +76,22 @@ const rowClass = (selected: boolean) =>
     selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
   );
 
-/** What is asked of the model when a memory is opened as a chat about it. */
+/** What is asked of the model when a memory is opened as a chat about it: the memory's text,
+ *  where it is stored, and the memory tools that rewrite it. */
 export function askAboutMemoryPrompt(memory: MemoryEntry): string {
-  return `I want to work on one of my goose memories — category "${memory.category}" (${memory.scope}). It currently says:\n\n${memory.content}\n\nHelp me tweak, modify or fork it; ask me what I want changed.`;
+  const store =
+    memory.scope === 'global'
+      ? '~/.config/goose/memory/<category>.txt (global, every project)'
+      : '<working dir>/.goose/memory/<category>.txt (local to this project)';
+  const tags = memory.tags.length > 0 ? memory.tags.join(', ') : 'none';
+  return [
+    `I want to work on one of my goose memories — category "${memory.category}", ${memory.scope} scope, tags: ${tags}. It currently says:`,
+    '',
+    memory.content,
+    '',
+    `Memories live in ${store}; you change them with the memory tools: remember_memory (category, data, tags, is_global) adds an entry, remove_specific_memory removes one, remove_memory_category drops the whole category, retrieve_memories reads it back. To modify this one, remove the old entry and remember the new text under the same category and scope; to fork it, remember it under a new category.`,
+    'Ask me what I want changed before you write anything, then make the change and read the category back to confirm.',
+  ].join('\n');
 }
 
 function MemoryCardItem({

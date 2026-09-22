@@ -180,7 +180,11 @@ const i18n = defineMessages({
 /** What is asked of the model when a session is opened as a new chat about it. */
 export function askAboutSessionPrompt(session: SessionListItem): string {
   const name = displaySessionListName(session.name);
-  return `I want to talk about my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}). Read that session's conversation first, then help me try something out or ask me what I want to do with it.`;
+  return [
+    `I want to work from my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}).`,
+    'Read that session\'s conversation first (goose sessions are stored in its session database; use the session tools if you have them, otherwise ask me to paste the part that matters), then help me continue it, redo part of it, or turn what it learned into a skill or memory.',
+    'Ask me what I want before you write anything.',
+  ].join('\n');
 }
 
 /** Trailing-slash-insensitive normalization so membership tests mirror the server's exact-match cwd filter. */

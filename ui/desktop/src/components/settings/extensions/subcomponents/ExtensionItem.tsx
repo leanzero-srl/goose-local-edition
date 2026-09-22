@@ -38,7 +38,8 @@ const i18n = defineMessages({
   },
 });
 
-/** What is asked of the model when an MCP is opened as a chat about it. */
+/** What is asked of the model when an MCP is opened as a chat about it: how it is launched, where
+ *  its configuration lives, and the tools that enable, disable and rewrite it. */
 export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string {
   const kind = extension.type;
   const where =
@@ -47,7 +48,12 @@ export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string 
       : 'uri' in extension && typeof extension.uri === 'string'
         ? ` (${extension.uri})`
         : '';
-  return `I want to work on my goose MCP extension "${getFriendlyTitle(extension)}" — type ${kind}${where}. Read its configuration first (it is one of my configured extensions), then help me tweak, modify or fork it.`;
+  return [
+    `I want to work on my goose MCP extension "${getFriendlyTitle(extension)}" — config name "${extension.name}", type ${kind}${where}.`,
+    `Its configuration is the "${extension.name}" entry under extensions: in ~/.config/goose/config.yaml (name, type, cmd/args or uri, envs, timeout, enabled). Read that entry first with the developer tools.`,
+    'You can change it in place by editing that entry, fork it by adding a new entry with a new name beside it, or add a brand-new MCP the same way; manage_extensions enables or disables an extension by name and search_available_extensions lists the ones goose knows about. Changes to config.yaml apply to the next session.',
+    'Ask me what I want changed before you write anything, then make the change and show me the resulting entry.',
+  ].join('\n');
 }
 
 interface ExtensionItemProps {

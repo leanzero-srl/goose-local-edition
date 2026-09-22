@@ -96,9 +96,15 @@ const rowClass = (selected: boolean) =>
     selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
   );
 
-/** What is asked of the model when a skill is opened as a chat about it. */
+/** What is asked of the model when a skill is opened as a chat about it: where the skill lives,
+ *  how a skill is shaped, and that the chat may rewrite or fork it with the developer tools. */
 export function askAboutSkillPrompt(skill: SkillEntry): string {
-  return `I want to work on my goose skill "${skill.name}" at ${skill.path} (${skill.description}). Read it first, then help me tweak, modify or fork it.`;
+  return [
+    `I want to work on my goose skill "${skill.name}" (${skill.description}).`,
+    `It is the file ${skill.path} — a SKILL.md with YAML frontmatter (name, description) followed by the instructions goose follows when the skill is loaded; sibling files in the same folder are its references.`,
+    'Read it first with the developer tools. You can modify it in place, or fork it as a new skill by creating <skills root>/<new-name>/SKILL.md with its own frontmatter beside it (a global skill lives under ~/.agents/skills/<name>/, a project skill under <project>/.agents/skills/<name>/).',
+    'Ask me what I want changed before you write anything, then make the edit and show me the result.',
+  ].join('\n');
 }
 
 function SkillItem({
