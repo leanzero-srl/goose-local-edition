@@ -1,4 +1,17 @@
 import { cx } from '../lz';
+import openai from './provider-logos/openai.svg?raw';
+import anthropic from './provider-logos/anthropic.svg?raw';
+import google from './provider-logos/google.svg?raw';
+import awsBedrock from './provider-logos/aws_bedrock.svg?raw';
+import azureOpenai from './provider-logos/azure_openai.svg?raw';
+import deepseek from './provider-logos/custom_deepseek.svg?raw';
+import mistral from './provider-logos/mistral.svg?raw';
+import ollamaCloud from './provider-logos/ollama_cloud.svg?raw';
+import alibaba from './provider-logos/alibaba.svg?raw';
+import openrouter from './provider-logos/openrouter.svg?raw';
+import minimax from './provider-logos/minimax.svg?raw';
+import moonshot from './provider-logos/moonshot.svg?raw';
+import xaiPng from './provider-logos/xai.png';
 
 /** One solid hue per cloud provider — brand-adjacent, saturated, identity only (never state). */
 const PROVIDER_HUE: Readonly<Record<string, string>> = {
@@ -18,13 +31,30 @@ const PROVIDER_HUE: Readonly<Record<string, string>> = {
   zai: '#16a34a',
 };
 
-const SIZE = { sm: 'size-8 text-[13px]', md: 'size-10 text-[16px]' } as const;
+/** The provider's own mark (simple-icons, monochrome) drawn in white on its tile. Z.ai has no
+ *  published mark in that set and keeps its initial; xAI ships as a PNG. */
+const PROVIDER_MARK: Readonly<Record<string, string>> = {
+  openai,
+  anthropic,
+  google,
+  aws_bedrock: awsBedrock,
+  azure_openai: azureOpenai,
+  custom_deepseek: deepseek,
+  mistral,
+  ollama_cloud: ollamaCloud,
+  alibaba,
+  openrouter,
+  minimax,
+  moonshot,
+};
+
+const SIZE = { sm: 'size-8 text-[13px] p-1.5', md: 'size-10 text-[16px] p-2' } as const;
 
 export function providerHue(providerId: string): string {
   return PROVIDER_HUE[providerId] ?? '#64748b';
 }
 
-/** A solid colour tile carrying the provider's initial — the visual anchor of every provider row. */
+/** A solid colour tile carrying the provider's real mark — the visual anchor of every provider row. */
 export function ProviderTile({
   providerId,
   label,
@@ -34,16 +64,26 @@ export function ProviderTile({
   label: string;
   size?: keyof typeof SIZE;
 }) {
+  const mark = PROVIDER_MARK[providerId];
   return (
     <span
       aria-hidden
+      data-testid={`provider-tile-${providerId}`}
+      data-mark={mark ? 'svg' : providerId === 'xai' ? 'png' : 'initial'}
       className={cx(
         'inline-flex shrink-0 items-center justify-center rounded-lz-control font-lz-semibold text-white',
+        '[&_svg]:size-full [&_svg]:fill-current',
         SIZE[size]
       )}
       style={{ backgroundColor: providerHue(providerId) }}
     >
-      {label.trim().charAt(0).toUpperCase()}
+      {mark ? (
+        <span className="contents" dangerouslySetInnerHTML={{ __html: mark }} />
+      ) : providerId === 'xai' ? (
+        <img src={xaiPng} alt="" className="size-full invert" />
+      ) : (
+        label.trim().charAt(0).toUpperCase()
+      )}
     </span>
   );
 }
