@@ -76,7 +76,7 @@ describe('MlxStateTile RUNNING — the live instrument', () => {
   });
 
   it('prefill only: "Reading prompt" is the activity, and the rate is labelled the LAST run', () => {
-    tile({ live: parseMlxLiveStatus(PREFILL_STATUS) });
+    tile({ live: parseMlxLiveStatus(PREFILL_STATUS), history: [{ uptimeS: 1, tps: 19.9 }] });
     const t = screen.getByTestId('mlx-state-badge');
     expect(screen.getByTestId('mlx-live')).toHaveAttribute('data-activity', 'prefill');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
@@ -84,14 +84,23 @@ describe('MlxStateTile RUNNING — the live instrument', () => {
     expect(screen.getByTestId('mlx-live-request')).toHaveTextContent('Reading prompt · 32k tokens');
   });
 
-  it('idle (the verbatim engine body): Idle, the sticky rate as last run, no request rows', () => {
-    tile({ live: parseMlxLiveStatus(IDLE_STATUS) });
+  it("idle shows the last rate THIS VIEW measured, never the engine's sticky aggregate", () => {
+    tile({ live: parseMlxLiveStatus(IDLE_STATUS), history: [{ uptimeS: 1, tps: 19.9 }] });
     const t = screen.getByTestId('mlx-state-badge');
     expect(within(t).getByText('Idle')).toBeInTheDocument();
     expect(within(t).getByText('tokens per second, last run')).toBeInTheDocument();
     expect(screen.queryAllByTestId('mlx-live-request')).toHaveLength(0);
     expect(within(t).getByText('54.3 GB')).toBeInTheDocument();
     expect(within(t).getByText('20%')).toBeInTheDocument();
+  });
+
+  it('idle with nothing measured yet: a dash, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
+    tile({
+      live: parseMlxLiveStatus({ status: 'idle', generation_tps: 1048576.0, requests: [] }),
+      history: [],
+    });
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('—');
+    expect(screen.getByText('no generation measured yet')).toBeInTheDocument();
   });
 
   it('a failed read says "Live stats unavailable" with the reason — nothing invented', async () => {

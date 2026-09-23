@@ -107,9 +107,26 @@ export function mlxActivity(stats: MlxLiveStats): MlxActivity {
   return 'idle';
 }
 
-/** The decode rate this instant: the engine's rate while something generates, 0 while nothing does. */
+/**
+ * The decode rate this instant, from the generating requests' OWN rates — only those that have
+ * written at least two tokens, because a rate needs an interval between tokens. The engine's
+ * aggregate `generation_tps` divides by seconds-since-first-token, so a one-token request (a title,
+ * a probe) reads as 1,048,576 tok/s — measured 2026-09-23 after three tiny requests totalling 4
+ * tokens — and it stays sticky at that value once idle; it is never displayed.
+ */
 export function liveDecodeTps(stats: MlxLiveStats): number {
-  return mlxActivity(stats) === 'generating' ? (stats.generationTps ?? 0) : 0;
+  if (mlxActivity(stats) !== 'generating') return 0;
+  return stats.requests
+    .filter((r) => r.phase === 'generation' && r.completionTokens >= 2)
+    .reduce((sum, r) => sum + (r.tokensPerSecond ?? 0), 0);
+}
+
+/** The last decode rate this view MEASURED while something generated — the idle tile's "last run". */
+export function lastMeasuredTps(history: readonly TpsSample[]): number | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].tps > 0) return history[i].tps;
+  }
+  return null;
 }
 
 export interface TpsSample {

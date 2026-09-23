@@ -4,6 +4,7 @@ import {
   advanceMountWatch,
   compactTokens,
   formatElapsed,
+  lastMeasuredTps,
   liveDecodeTps,
   mlxActivity,
   mountCost,
@@ -218,5 +219,37 @@ describe('formatters', () => {
     expect(formatElapsed(45.4)).toBe('45s');
     expect(formatElapsed(1574)).toBe('26m 14s');
     expect(formatElapsed(3725)).toBe('1h 2m');
+  });
+});
+
+describe('a rate needs two tokens — the engine aggregate is never shown (2026-09-23: 1,048,576 tok/s)', () => {
+  it('a one-token request reads as no rate, not 2^20', () => {
+    const body = {
+      status: 'generating',
+      generation_tps: 1048576.0,
+      requests: [
+        {
+          request_id: 'title',
+          status: 'running',
+          phase: 'generation',
+          completion_tokens: 1,
+          tokens_per_second: 1048576.0,
+        },
+      ],
+    };
+    const read = parseMlxLiveStatus(body);
+    if (!read.ok) throw new Error(read.detail);
+    expect(liveDecodeTps(read.stats)).toBe(0);
+  });
+
+  it('idle shows the last rate this view measured, and none before any', () => {
+    expect(lastMeasuredTps([])).toBeNull();
+    expect(
+      lastMeasuredTps([
+        { uptimeS: 1, tps: 18.2 },
+        { uptimeS: 3, tps: 19.9 },
+        { uptimeS: 5, tps: 0 },
+      ])
+    ).toBe(19.9);
   });
 });

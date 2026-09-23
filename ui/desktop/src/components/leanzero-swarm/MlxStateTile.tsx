@@ -5,6 +5,7 @@ import type { MlxEngineState } from '../../acp/mlx-engine';
 import {
   compactTokens,
   formatElapsed,
+  lastMeasuredTps,
   liveDecodeTps,
   mlxActivity,
   sparklinePoints,
@@ -189,7 +190,7 @@ function RunningInstrument({
 function LiveReadout({ stats, history }: { stats: MlxLiveStats; history: readonly TpsSample[] }) {
   const activity = mlxActivity(stats);
   const generating = activity === 'generating';
-  const rate = generating ? liveDecodeTps(stats) : stats.generationTps;
+  const rate = generating ? liveDecodeTps(stats) : lastMeasuredTps(history);
   // Running requests first, then the queue — the engine's own order within each.
   const requests = [
     ...stats.requests.filter((r) => r.status !== 'waiting'),
