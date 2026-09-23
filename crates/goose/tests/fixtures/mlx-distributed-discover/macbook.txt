@@ -1,0 +1,681 @@
+
+@@home
+/Users/mihaiperdum
+
+@@names
+Mihai Macbook
+Mihai-Macbook-2
+
+@@sysctl
+137438953472
+1
+49152
+
+@@vm
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                  2012000.
+Pages active:                                2680006.
+Pages inactive:                              2355783.
+Pages speculative:                            334835.
+Pages throttled:                                   0.
+Pages wired down:                             352922.
+Pages purgeable:                               11345.
+"Translation faults":                     4330596065.
+Pages copy-on-write:                      1112260779.
+Pages zero filled:                        4927223178.
+Pages reactivated:                           6567275.
+Pages purged:                                4913225.
+File-backed pages:                           1189821.
+Anonymous pages:                             4180803.
+Pages stored in compressor:                  1363746.
+Pages occupied by compressor:                 592704.
+Decompressions:                              6332776.
+Compressions:                                8924219.
+Pageins:                                   143648300.
+Pageouts:                                      23876.
+Swapins:                                         320.
+Swapouts:                                       1628.
+
+@@ifconfig
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	options=1203<RXCSUM,TXCSUM,TXSTATUS,SW_TIMESTAMP>
+	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128 
+	inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1 
+	nd6 options=201<PERFORMNUD,DAD>
+gif0: flags=8010<POINTOPOINT,MULTICAST> mtu 1280
+stf0: flags=0<> mtu 1280
+anpi2: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:2f
+	inet6 fe80::f8cb:4dff:fe37:882f%anpi2 prefixlen 64 scopeid 0x4 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: 100baseTX <full-duplex>
+	status: active
+anpi1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:2e
+	media: none
+	status: inactive
+anpi0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:2d
+	media: none
+	status: inactive
+en4: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:0d
+	media: none
+	status: inactive
+en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:0e
+	media: none
+	status: inactive
+en6: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether fa:cb:4d:37:88:0f
+	media: none
+	status: inactive
+en1: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:e4:49:c8:e3:40
+	media: autoselect <full-duplex>
+	status: inactive
+en2: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:e4:49:c8:e3:44
+	media: autoselect <full-duplex>
+	status: inactive
+en3: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:e4:49:c8:e3:48
+	inet6 fe80::1c78:2801:b40:6b27%en3 prefixlen 64 secured scopeid 0xc 
+	inet 192.168.0.1 netmask 0xfffffffc broadcast 192.168.0.3
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect <full-duplex>
+	status: active
+ap1: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 92:d1:7a:c9:81:b6
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	ether a6:0c:bf:ea:fa:fe
+	inet6 fe80::4ad:c223:94dc:9c8c%en0 prefixlen 64 secured scopeid 0xe 
+	inet 192.168.10.127 netmask 0xffffff00 broadcast 192.168.10.255
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+awdl0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	ether 4e:b2:93:7e:c2:33
+	inet6 fe80::4cb2:93ff:fe7e:c233%awdl0 prefixlen 64 scopeid 0xf 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+llw0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 4e:b2:93:7e:c2:33
+	inet6 fe80::4cb2:93ff:fe7e:c233%llw0 prefixlen 64 scopeid 0x10 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+	inet 100.83.119.44 --> 100.83.119.44 netmask 0xffffffff
+	inet6 fe80::8c1e:1955:3a7d:4f41%utun0 prefixlen 64 scopeid 0x11 
+	inet6 fd7a:115c:a1e0::1c33:772c --> fd7a:115c:a1e0::1c33:772c prefixlen 128 
+	nd6 options=201<PERFORMNUD,DAD>
+utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500
+	inet6 fe80::3be6:19b6:664e:a14e%utun1 prefixlen 64 scopeid 0x12 
+	nd6 options=201<PERFORMNUD,DAD>
+utun2: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::24aa:d330:bf43:42c6%utun2 prefixlen 64 scopeid 0x13 
+	nd6 options=201<PERFORMNUD,DAD>
+utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 2000
+	inet6 fe80::cc64:ea0:7272:9f74%utun3 prefixlen 64 scopeid 0x14 
+	nd6 options=201<PERFORMNUD,DAD>
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000
+	inet6 fe80::ce81:b1c:bd2c:69e%utun4 prefixlen 64 scopeid 0x15 
+	nd6 options=201<PERFORMNUD,DAD>
+utun5: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::aeb:c200:a092:5a56%utun5 prefixlen 64 scopeid 0x16 
+	nd6 options=201<PERFORMNUD,DAD>
+utun6: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::d288:b2a5:3e2c:af13%utun6 prefixlen 64 scopeid 0x17 
+	nd6 options=201<PERFORMNUD,DAD>
+utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::ca8d:68cb:dd1d:487b%utun7 prefixlen 64 scopeid 0x18 
+	nd6 options=201<PERFORMNUD,DAD>
+
+@@hwports
+
+Hardware Port: Ethernet Adapter (en4)
+Device: en4
+Ethernet Address: fa:cb:4d:37:88:0d
+
+Hardware Port: Ethernet Adapter (en5)
+Device: en5
+Ethernet Address: fa:cb:4d:37:88:0e
+
+Hardware Port: Ethernet Adapter (en6)
+Device: en6
+Ethernet Address: fa:cb:4d:37:88:0f
+
+Hardware Port: Wi-Fi
+Device: en0
+Ethernet Address: 84:2f:57:5e:b7:31
+
+Hardware Port: Thunderbolt 1
+Device: en1
+Ethernet Address: 36:e4:49:c8:e3:40
+
+Hardware Port: Thunderbolt 2
+Device: en2
+Ethernet Address: 36:e4:49:c8:e3:44
+
+Hardware Port: Thunderbolt 3
+Device: en3
+Ethernet Address: 36:e4:49:c8:e3:48
+
+VLAN Configurations
+===================
+
+@@services
+An asterisk (*) denotes that a network service is disabled.
+(1) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en0)
+
+(*) EXO Thunderbolt 1
+(Hardware Port: Thunderbolt 1, Device: en1)
+
+(*) EXO Thunderbolt 2
+(Hardware Port: Thunderbolt 2, Device: en2)
+
+(2) EXO Thunderbolt 3
+(Hardware Port: Thunderbolt 3, Device: en3)
+
+
+@@tb
+{
+  "SPThunderboltDataType" : [
+    {
+      "_items" : [
+        {
+          "_name" : "Mac Studio",
+          "device_id_key" : "0xA",
+          "device_name_key" : "Mac15,14",
+          "domain_uuid_key" : "CDF1106C-8FEF-4945-AED5-88A371543554",
+          "services_title" : [
+            {
+              "_name" : "service_ip",
+              "protocol_id_key" : 1,
+              "protocol_revision_key" : 1,
+              "protocol_version_key" : 1,
+              "service_uuid_key" : "D54AABFA-05FC-433F-98D7-4D6B0EB19182"
+            },
+            {
+              "_name" : "unknown_xd_service",
+              "protocol_id_key" : 64087,
+              "protocol_revision_key" : 0,
+              "protocol_version_key" : 1,
+              "service_key_key" : "ˇˇˇˇˇˇAD",
+              "service_uuid_key" : "BD7351FC-AFF4-49C6-A00C-0CDBA36D17B1"
+            }
+          ],
+          "vendor_id_key" : "0x0A27",
+          "vendor_name_key" : "Apple Inc."
+        }
+      ],
+      "_name" : "thunderboltusb4_bus_2",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "E44FA7FC-0682-46B5-892A-6A09C908C171",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "80 Gb/s",
+        "link_status_key" : "0x2",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "3",
+        "receptacle_status_key" : "receptacle_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC4A8D40F238D2",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_1",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "6E26F8F6-22CC-43BF-8A50-D01BEE7BDC68",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "2",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC4A8D40F238D1",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_0",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "6F0DFD90-7371-44D6-BBE3-3F8A34A808CE",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "1",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05AC4A8D40F238D0",
+      "vendor_name_key" : "Apple Inc."
+    }
+  ]
+}
+@@ibv
+hca_id:	rdma_en1
+	transport:			Thunderbolt (100)
+	node_guid:			d038:f240:8d4a:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		1
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::34e4:49ff:fec8:e340
+
+hca_id:	rdma_en2
+	transport:			Thunderbolt (100)
+	node_guid:			d138:f240:8d4a:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		2
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::34e4:49ff:fec8:e344
+
+hca_id:	rdma_en3
+	transport:			Thunderbolt (100)
+	node_guid:			d238:f240:8d4a:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_ACTIVE (4)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		3
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::34e4:49ff:fec8:e348
+			GID[  1]:		::ffff:192.168.0.1
+			GID[  2]:		fe80::1c78:2801:b40:6b27
+
+
+@@listen
+COMMAND     PID        USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+rapportd    997 mihaiperdum   10u  IPv4  0x8bcb902fefc70bb      0t0  TCP *:49159 (LISTEN)
+rapportd    997 mihaiperdum   11u  IPv6 0x9016e215517f287f      0t0  TCP *:49159 (LISTEN)
+ControlCe  1185 mihaiperdum    9u  IPv4 0x1af3a3b9aec46ff9      0t0  TCP *:7000 (LISTEN)
+ControlCe  1185 mihaiperdum   10u  IPv6 0x5de98196b2fbfded      0t0  TCP *:7000 (LISTEN)
+ControlCe  1185 mihaiperdum   11u  IPv4 0xbb56c1b585e40989      0t0  TCP *:5000 (LISTEN)
+ControlCe  1185 mihaiperdum   12u  IPv6 0xe2c8c62fba42cdf7      0t0  TCP *:5000 (LISTEN)
+stable     1374 mihaiperdum   39u  IPv4 0x3385aee3afcd5df6      0t0  TCP 127.0.0.1:9277 (LISTEN)
+Discord    1530 mihaiperdum   38u  IPv4 0x4653d282acb0cac7      0t0  TCP 127.0.0.1:6463 (LISTEN)
+LM\x20Stu  2915 mihaiperdum   56u  IPv4  0xf59daa31891f8e2      0t0  TCP 127.0.0.1:41343 (LISTEN)
+LM\x20Stu  2915 mihaiperdum   58u  IPv4 0xf3d8597d8c766b0a      0t0  TCP 127.0.0.1:1234 (LISTEN)
+lmlink-co  3112 mihaiperdum   14u  IPv4 0xd53db1ac5031c36b      0t0  TCP *:58329 (LISTEN)
+Goose\x20 14663 mihaiperdum   33u  IPv4 0xa54a462808385100      0t0  TCP 127.0.0.1:9333 (LISTEN)
+goose     14692 mihaiperdum   10u  IPv4 0x55c59608c7ffa6a3      0t0  TCP 127.0.0.1:55470 (LISTEN)
+goose     14692 mihaiperdum   11u  IPv4 0x5dfd751fc412f1f8      0t0  TCP 127.0.0.1:55457 (LISTEN)
+python3.1 15861 mihaiperdum   12u  IPv4 0x64ee8a1c643d8206      0t0  TCP 127.0.0.1:8090 (LISTEN)
+node      30779 mihaiperdum   17u  IPv6 0x43798079c1b185e9      0t0  TCP *:7393 (LISTEN)
+node      45859 mihaiperdum   22u  IPv6 0x3f90d290a22cbb32      0t0  TCP [::1]:4200 (LISTEN)
+TalentVau 52704 mihaiperdum  475u  IPv4 0xfbfad39c2cb8d157      0t0  TCP 127.0.0.1:5200 (LISTEN)
+TalentVau 52704 mihaiperdum  476u  IPv6 0x2773f577ba0b48d2      0t0  TCP [::1]:5200 (LISTEN)
+
+@@uv
+/opt/homebrew/bin/uv|uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin)
+/opt/homebrew/bin/uv|uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin)
+
+@@env
+absent /Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python
+
+@@envpipeline
+absent /Users/mihaiperdum/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python
+
+@@models
+R /Users/mihaiperdum/.goose/models
+M /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx
+T qwen3_5
+F 24894 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/README.md
+F 8952 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/chat_template.jinja
+F 4075 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/config.json
+F 202 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/generation_config.json
+F 3353259 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/merges.txt
+F 5309034401 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00001-of-00006.safetensors
+F 5354102618 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00002-of-00006.safetensors
+F 5340689742 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00003-of-00006.safetensors
+F 5347222141 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00004-of-00006.safetensors
+F 5296430945 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00005-of-00006.safetensors
+F 5237610310 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00006-of-00006.safetensors
+F 204877 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/model.safetensors.index.json
+F 849400447 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/mtp.safetensors
+F 415 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/mtplx_runtime.json
+F 390 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/preprocessor_config.json
+F 12809320 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer.json
+F 17928 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer_config.json
+F 385 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/video_preprocessor_config.json
+F 6722759 /Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx/vocab.json
+M /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit
+T qwen4_exp
+F 3235 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/LICENSE
+F 13638 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/README.md
+F 3279 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/SHA256SUMS.txt
+F 324507 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/config.json
+F 202 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/generation_config.json
+F 4153497896 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00001-of-00028.safetensors
+F 4250028749 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00002-of-00028.safetensors
+F 4250028741 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00003-of-00028.safetensors
+F 4250028696 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00004-of-00028.safetensors
+F 4250028703 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00005-of-00028.safetensors
+F 4250028696 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00006-of-00028.safetensors
+F 4250028697 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00007-of-00028.safetensors
+F 4250028684 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00008-of-00028.safetensors
+F 3689157429 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00009-of-00028.safetensors
+F 3936684321 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00010-of-00028.safetensors
+F 3387872856 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00011-of-00028.safetensors
+F 3875078473 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00012-of-00028.safetensors
+F 3420536270 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00013-of-00028.safetensors
+F 3875078453 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00014-of-00028.safetensors
+F 3420536336 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00015-of-00028.safetensors
+F 3904020819 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00016-of-00028.safetensors
+F 3358930505 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00017-of-00028.safetensors
+F 3932963168 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00018-of-00028.safetensors
+F 3391593944 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00019-of-00028.safetensors
+F 3904020849 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00020-of-00028.safetensors
+F 3358930520 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00021-of-00028.safetensors
+F 3936684201 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00022-of-00028.safetensors
+F 3358930458 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00023-of-00028.safetensors
+F 3936684357 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00024-of-00028.safetensors
+F 3387872738 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00025-of-00028.safetensors
+F 3904020632 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00026-of-00028.safetensors
+F 3818161404 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00027-of-00028.safetensors
+F 980579778 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00028-of-00028.safetensors
+F 411134 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model.safetensors.index.json
+F 12809320 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/tokenizer.json
+F 17928 /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/tokenizer_config.json
+S 826f00b27d6b534b6c02f35954b8f2c339a16817d54442db2adbfa9ec5c4b144  /Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/SHA256SUMS.txt
+R /Users/mihaiperdum/.lmstudio/models
+R /Users/mihaiperdum/.omlx/models
+M /Users/mihaiperdum/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/2293023686ca76e7f4a08220ea08f34251dd9c2d
+T qwen3_5
+F 160333 /Users/mihaiperdum/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/2293023686ca76e7f4a08220ea08f34251dd9c2d/config.json
+F 1308 /Users/mihaiperdum/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/2293023686ca76e7f4a08220ea08f34251dd9c2d/mtplx_runtime.json
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912
+T llama
+F 1121 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/config.json
+F 695283921 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/model.safetensors
+F 26159 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/model.safetensors.index.json
+F 296 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/special_tokens_map.json
+F 17209920 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/tokenizer.json
+F 54558 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/tokenizer_config.json
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5
+T qwen3_next
+F 6068 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5/chat_template.jinja
+F 22196 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5/config.json
+F 11422650 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5/tokenizer.json
+F 702 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5/tokenizer_config.json
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3
+T qwen3_5
+F 7756 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3/chat_template.jinja
+F 3366 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3/config.json
+F 19989343 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3/tokenizer.json
+F 1139 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3/tokenizer_config.json
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e
+T llama
+F 638 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/README.md
+F 803 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/config.json
+F 466391 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/merges.txt
+F 75789919 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/model.safetensors
+F 48978 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/model.safetensors.index.json
+F 655 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/special_tokens_map.json
+F 2104556 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/tokenizer.json
+F 3590 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/tokenizer_config.json
+F 800662 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--SmolLM-135M-Instruct-4bit/snapshots/642e06afe3fab57fd6cc518637c471af0a569e1e/vocab.json
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58
+T step3p7
+F 18148 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/config.json
+F 8375 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/configuration_step3p7.py
+F 190558 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/model.safetensors.index.json
+F 56765 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/modeling_step3p7.py
+F 18686 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/processing_step3.py
+F 9976972 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/tokenizer.json
+F 453 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/tokenizer_config.json
+F 17706 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--Step-3.7-Flash-4bit/snapshots/123635da9dc9e06250f5150e8773a5a1992edc58/vision_encoder.py
+M /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-mlx/snapshots/49e6aa286ad60c14352c404340ded53710378a11
+T whisper
+F 269 /Users/mihaiperdum/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-mlx/snapshots/49e6aa286ad60c14352c404340ded53710378a11/config.json
+
+@@end

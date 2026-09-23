@@ -155,8 +155,14 @@ import type {
   MlxEngineBrowseResponse_unstable,
   MlxEngineDistributedConfigResponse_unstable,
   MlxEngineDistributedConfigUpdateRequest_unstable,
+  MlxEngineDistributedDiscoverRequest_unstable,
+  MlxEngineDistributedDiscoverResponse_unstable,
+  MlxEngineDistributedPeerCandidatesRequest_unstable,
+  MlxEngineDistributedPeerCandidatesResponse_unstable,
   MlxEngineDistributedPreflightRequest_unstable,
   MlxEngineDistributedPreflightResponse_unstable,
+  MlxEngineDistributedProvisionRequest_unstable,
+  MlxEngineDistributedProvisionResponse_unstable,
   MlxEngineDistributedStartRequest_unstable,
   MlxEngineDistributedStartResponse_unstable,
   MlxEngineDistributedStatusRequest_unstable,
@@ -327,7 +333,10 @@ import {
   zMlxEngineBrowseFiltersResponse_unstable,
   zMlxEngineBrowseResponse_unstable,
   zMlxEngineDistributedConfigResponse_unstable,
+  zMlxEngineDistributedDiscoverResponse_unstable,
+  zMlxEngineDistributedPeerCandidatesResponse_unstable,
   zMlxEngineDistributedPreflightResponse_unstable,
+  zMlxEngineDistributedProvisionResponse_unstable,
   zMlxEngineDistributedStartResponse_unstable,
   zMlxEngineDistributedStatusResponse_unstable,
   zMlxEngineDistributedStopResponse_unstable,
@@ -1750,6 +1759,42 @@ export class GooseExtClient {
     return zMlxEngineDistributedStopResponse_unstable.parse(
       raw,
     ) as MlxEngineDistributedStopResponse_unstable;
+  }
+
+  async mlxEngineDistributedPeerCandidates_unstable(
+    params: MlxEngineDistributedPeerCandidatesRequest_unstable,
+  ): Promise<MlxEngineDistributedPeerCandidatesResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedPeerCandidates",
+      params,
+    );
+    return zMlxEngineDistributedPeerCandidatesResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedPeerCandidatesResponse_unstable;
+  }
+
+  async mlxEngineDistributedDiscover_unstable(
+    params: MlxEngineDistributedDiscoverRequest_unstable,
+  ): Promise<MlxEngineDistributedDiscoverResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedDiscover",
+      params,
+    );
+    return zMlxEngineDistributedDiscoverResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedDiscoverResponse_unstable;
+  }
+
+  async mlxEngineDistributedProvision_unstable(
+    params: MlxEngineDistributedProvisionRequest_unstable,
+  ): Promise<MlxEngineDistributedProvisionResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedProvision",
+      params,
+    );
+    return zMlxEngineDistributedProvisionResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedProvisionResponse_unstable;
   }
 
   async mlxEngineDistributedConfigUpdate_unstable(

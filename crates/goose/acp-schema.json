@@ -7930,6 +7930,17 @@
             }
           ],
           "description": "The running config, else the persisted one (`mlx_distributed` config key)."
+        },
+        "provision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedProvisionDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last (or running) provisioning of the nodes' goose-managed Python."
         }
       },
       "required": [
@@ -8524,7 +8535,8 @@
         },
         "rdmaDevice": {
           "type": "string",
-          "description": "The RDMA device JACCL uses (e.g. rdma_en3)."
+          "description": "The RDMA device JACCL uses (e.g. rdma_en3); empty under ring, which needs none.",
+          "default": ""
         },
         "python": {
           "type": "string",
@@ -8548,11 +8560,102 @@
         "tbNetmask",
         "tbInterface",
         "tbService",
-        "rdmaDevice",
         "python",
         "modelDir"
       ],
       "description": "One node of the distributed engine. `ssh` absent = this Mac, which must be `nodes[0]` (rank 0)."
+    },
+    "MlxDistributedProvisionDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "startedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finishedMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedProvisionNodeDto"
+          }
+        }
+      },
+      "required": [
+        "state",
+        "startedMs",
+        "nodes"
+      ],
+      "description": "`state`: \"running\" | \"done\" (every node done or skipped) | \"failed\" (a node failed)."
+    },
+    "MlxDistributedProvisionNodeDto": {
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "step": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every line the node's script printed, in order."
+        },
+        "startedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finishedMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "rank",
+        "name",
+        "python",
+        "state",
+        "detail",
+        "lines",
+        "startedMs"
+      ],
+      "description": "One node's provisioning. `state`: \"running\" | \"done\" | \"failed\" | \"skipped\" (its Python is the\noperator's own, set under Advanced — goose never touches it). `step`: the last `GOOSE_PROV`\nstep (check | uv | venv | install | done | fail)."
     },
     "MlxEngineDistributedPreflightRequest_unstable": {
       "type": "object",
@@ -8698,6 +8801,391 @@
         "verified"
       ],
       "description": "The verified stop: each step (what was signalled, per pid, and what was observed)."
+    },
+    "MlxEngineDistributedPeerCandidatesRequest_unstable": {
+      "type": "object",
+      "description": "The peers this Mac could reach: every non-wildcard `Host` alias in `~/.ssh/config`, probed.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedPeerCandidates"
+    },
+    "MlxEngineDistributedPeerCandidatesResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedPeerCandidateDto"
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "The file read (absent `~/.ssh/config` = no candidates, and this says so)."
+        }
+      },
+      "required": [
+        "candidates",
+        "source"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedPeerCandidates"
+    },
+    "MlxDistributedPeerCandidateDto": {
+      "type": "object",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "answered": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string",
+          "description": "The peer's `hostname -s` when it answered, else ssh's own error."
+        }
+      },
+      "required": [
+        "alias",
+        "answered",
+        "detail"
+      ],
+      "description": "One ssh alias from `~/.ssh/config` (a `Host` line without wildcards) and whether it answered a\nnon-interactive ssh (`BatchMode=yes`) just now."
+    },
+    "MlxEngineDistributedDiscoverRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ssh aliases of the peers, in rank order (rank 0 is this Mac)."
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Prefer this model when it is on every node."
+        }
+      },
+      "required": [
+        "peers"
+      ],
+      "description": "Probe this Mac locally and each peer over ssh (one script each) and return a filled config:\nnames, the Thunderbolt link (interface, IPv4, netmask, network service — the LeanZero Link path\ndetector), RDMA devices and their IPv4-mapped GID, the backend with its reason, the models on\nevery node, free ports, memory and each node's goose-managed Python. Read-only.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedDiscover"
+    },
+    "MlxEngineDistributedDiscoverResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "discovery": {
+          "$ref": "#/$defs/MlxDistributedDiscoveryDto"
+        }
+      },
+      "required": [
+        "discovery"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedDiscover"
+    },
+    "MlxDistributedDiscoveryDto": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/MlxDistributedConfigDto",
+          "description": "The config, filled from evidence. A field listed in `gaps` is empty here."
+        },
+        "backendReason": {
+          "type": "string",
+          "description": "Why this backend: JACCL needs RDMA on both ends of a Thunderbolt link, else ring."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedEvidenceDto"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedGapDto"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedDiscoveredNodeDto"
+          }
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedDiscoveredModelDto"
+          }
+        },
+        "probeMs": {
+          "type": "integer",
+          "description": "Wall time of the probe (every node in parallel), ms.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "config",
+        "backendReason",
+        "evidence",
+        "gaps",
+        "nodes",
+        "models",
+        "probeMs"
+      ]
+    },
+    "MlxDistributedEvidenceDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "field": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "value",
+        "evidence"
+      ],
+      "description": "Where one discovered value came from. `node` absent = a config-level field (`modelId`,\n`backend`, `port`, `coordinatorPort`); else the rank, and `field` is the node field's wire name\n(`name`, `tbIp`, `tbNetmask`, `tbInterface`, `tbService`, `rdmaDevice`, `python`,\n`pipelinePython`, `modelDir`)."
+    },
+    "MlxDistributedGapDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "field": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "reason"
+      ],
+      "description": "A field discovery could NOT fill, and why. The config carries it empty — never a guess."
+    },
+    "MlxDistributedDiscoveredNodeDto": {
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The ssh alias; absent for this Mac."
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "totalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pressure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"normal\" | \"warn\" | \"critical\"."
+        },
+        "uv": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "`path · version` of the uv that provisions this node."
+        },
+        "env": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedDiscoveredEnvDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "linkSpeed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The Thunderbolt receptacle's negotiated speed (\"80 Gb/s\")."
+        }
+      },
+      "required": [
+        "rank",
+        "name",
+        "reachable"
+      ]
+    },
+    "MlxDistributedDiscoveredEnvDto": {
+      "type": "object",
+      "properties": {
+        "python": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "python",
+        "state",
+        "detail"
+      ],
+      "description": "A node's goose-managed Python. `state`: \"ready\" (imports the pinned mlx + mlx_lm) | \"absent\"\n(not provisioned yet — Save provisions it) | \"broken\" (present, wrong or failing import) |\n\"noUv\" (absent and the node has no uv to build it)."
+    },
+    "MlxDistributedDiscoveredModelDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "modelType": {
+          "type": "string"
+        },
+        "runner": {
+          "type": "string",
+          "description": "\"mlxLmTensor\" | \"pipelineQwen4\"."
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "description": "What a rank loads on this Mac (config, tokenizer, index, model*.safetensors), in bytes.",
+          "minimum": 0
+        },
+        "onEveryNode": {
+          "type": "boolean"
+        },
+        "manifest": {
+          "type": "string"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedDiscoveredModelNodeDto"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "modelType",
+        "runner",
+        "weightsBytes",
+        "onEveryNode",
+        "manifest",
+        "nodes"
+      ],
+      "description": "A splittable model on this Mac (a `model_type` a runner exists for) and where it is on every\nother node. `manifest`: \"agree\" (SHA256SUMS identical on every node) | \"differ\" | \"absent\" (no\nmanifest on rank 0; files compared by name and size)."
+    },
+    "MlxDistributedDiscoveredModelNodeDto": {
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string"
+        },
+        "dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "state",
+        "detail"
+      ],
+      "description": "One model's presence on one node. `state`: \"match\" (same loaded files, same sizes as rank 0's)\n| \"differs\" (a directory of that name whose files differ) | \"absent\"."
+    },
+    "MlxEngineDistributedProvisionRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Build each node's goose-managed Python (uv venv, pinned mlx + mlx_lm; the fork too when a node\ncarries a managed `pipelinePython`), idempotently, in the background. Progress rides\n`distributedStatus.provision`. `config` absent = the persisted one. Refused while a\nprovisioning run is in flight.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedProvision"
+    },
+    "MlxEngineDistributedProvisionResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "provision": {
+          "$ref": "#/$defs/MlxDistributedProvisionDto"
+        }
+      },
+      "required": [
+        "provision"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedProvision"
     },
     "MlxEngineDistributedConfigUpdateRequest_unstable": {
       "type": "object",
@@ -11212,6 +11700,33 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineDistributedPeerCandidatesRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedPeerCandidates",
+                  "title": "MlxEngineDistributedPeerCandidatesRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedDiscoverRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedDiscover",
+                  "title": "MlxEngineDistributedDiscoverRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedProvisionRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedProvision",
+                  "title": "MlxEngineDistributedProvisionRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineDistributedConfigUpdateRequest_unstable"
                     }
                   ],
@@ -12104,6 +12619,30 @@
                         }
                       ],
                       "title": "MlxEngineDistributedStopResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedPeerCandidatesResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedPeerCandidatesResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedDiscoverResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedDiscoverResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedProvisionResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedProvisionResponse_unstable"
                     },
                     {
                       "allOf": [

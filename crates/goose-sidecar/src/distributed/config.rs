@@ -73,7 +73,8 @@ pub struct NodeConfig {
     /// The macOS network service on that interface ("EXO Thunderbolt 3"). The link repair
     /// toggles THIS service only, and only after proving its hardware port is a Thunderbolt one.
     pub tb_service: String,
-    /// The RDMA device JACCL uses on this node (rdma_en3).
+    /// The RDMA device JACCL uses on this node (rdma_en3). Empty under ring, which uses none.
+    #[serde(default)]
     pub rdma_device: String,
     /// The interpreter carrying mlx + mlx_lm on this node.
     pub python: String,
@@ -161,7 +162,6 @@ impl DistributedConfig {
                 ("tb_netmask", &node.tb_netmask),
                 ("tb_interface", &node.tb_interface),
                 ("tb_service", &node.tb_service),
-                ("rdma_device", &node.rdma_device),
                 ("python", &node.python),
                 ("model_dir", &node.model_dir),
             ] {
@@ -171,6 +171,11 @@ impl DistributedConfig {
                     node.name
                 );
             }
+            ensure!(
+                self.backend != Backend::Jaccl || !node.rdma_device.trim().is_empty(),
+                "node '{}': rdma_device is empty (JACCL needs the node's RDMA device)",
+                node.name
+            );
             node.tb_ip
                 .parse::<std::net::Ipv4Addr>()
                 .with_context(|| format!("node '{}': tb_ip '{}'", node.name, node.tb_ip))?;
@@ -289,6 +294,16 @@ pub(crate) mod tests {
         let mut config = two_mac_config();
         config.nodes[1].tb_ip = "workhorse.lan".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn only_jaccl_needs_an_rdma_device() {
+        let mut config = two_mac_config();
+        config.nodes[1].rdma_device = String::new();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("rdma_device"), "{err}");
+        config.backend = Backend::Ring;
+        config.validate().unwrap();
     }
 
     #[test]

@@ -105,6 +105,7 @@ mod load_session;
 mod local_inference;
 mod manage_sessions;
 mod mlx_distributed;
+mod mlx_distributed_discover;
 mod mlx_engine;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;

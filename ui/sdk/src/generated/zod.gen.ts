@@ -3523,7 +3523,7 @@ export const zMlxDistributedNodeConfigDto = z.object({
     tbNetmask: z.string(),
     tbInterface: z.string(),
     tbService: z.string(),
-    rdmaDevice: z.string(),
+    rdmaDevice: z.string().optional().default(''),
     python: z.string(),
     pipelinePython: z.union([
         z.string(),
@@ -3552,6 +3552,46 @@ export const zMlxDistributedConfigDto = z.object({
         z.null()
     ]).optional(),
     nodes: z.array(zMlxDistributedNodeConfigDto)
+});
+
+/**
+ * One node's provisioning. `state`: "running" | "done" | "failed" | "skipped" (its Python is the
+ * operator's own, set under Advanced — goose never touches it). `step`: the last `GOOSE_PROV`
+ * step (check | uv | venv | install | done | fail).
+ */
+export const zMlxDistributedProvisionNodeDto = z.object({
+    rank: z.number().int().gte(0),
+    name: z.string(),
+    host: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    python: z.string(),
+    state: z.string(),
+    step: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    detail: z.string(),
+    lines: z.array(z.string()),
+    startedMs: z.number().int().gte(0),
+    finishedMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * `state`: "running" | "done" (every node done or skipped) | "failed" (a node failed).
+ */
+export const zMlxDistributedProvisionDto = z.object({
+    state: z.string(),
+    startedMs: z.number().int().gte(0),
+    finishedMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    nodes: z.array(zMlxDistributedProvisionNodeDto)
 });
 
 export const zMlxDistributedStatusDto = z.object({
@@ -3599,6 +3639,10 @@ export const zMlxDistributedStatusDto = z.object({
     ]).optional(),
     config: z.union([
         zMlxDistributedConfigDto,
+        z.null()
+    ]).optional(),
+    provision: z.union([
+        zMlxDistributedProvisionDto,
         z.null()
     ]).optional()
 });
@@ -3676,6 +3720,177 @@ export const zMlxDistributedStopReportDto = z.object({
 export const zMlxEngineDistributedStopResponse_unstable = z.object({
     stop: zMlxDistributedStopReportDto,
     status: zMlxDistributedStatusDto
+});
+
+/**
+ * The peers this Mac could reach: every non-wildcard `Host` alias in `~/.ssh/config`, probed.
+ */
+export const zMlxEngineDistributedPeerCandidatesRequest_unstable = z.record(z.unknown());
+
+/**
+ * One ssh alias from `~/.ssh/config` (a `Host` line without wildcards) and whether it answered a
+ * non-interactive ssh (`BatchMode=yes`) just now.
+ */
+export const zMlxDistributedPeerCandidateDto = z.object({
+    alias: z.string(),
+    answered: z.boolean(),
+    detail: z.string()
+});
+
+export const zMlxEngineDistributedPeerCandidatesResponse_unstable = z.object({
+    candidates: z.array(zMlxDistributedPeerCandidateDto),
+    source: z.string()
+});
+
+/**
+ * Probe this Mac locally and each peer over ssh (one script each) and return a filled config:
+ * names, the Thunderbolt link (interface, IPv4, netmask, network service — the LeanZero Link path
+ * detector), RDMA devices and their IPv4-mapped GID, the backend with its reason, the models on
+ * every node, free ports, memory and each node's goose-managed Python. Read-only.
+ */
+export const zMlxEngineDistributedDiscoverRequest_unstable = z.object({
+    peers: z.array(z.string()),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Where one discovered value came from. `node` absent = a config-level field (`modelId`,
+ * `backend`, `port`, `coordinatorPort`); else the rank, and `field` is the node field's wire name
+ * (`name`, `tbIp`, `tbNetmask`, `tbInterface`, `tbService`, `rdmaDevice`, `python`,
+ * `pipelinePython`, `modelDir`).
+ */
+export const zMlxDistributedEvidenceDto = z.object({
+    node: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    field: z.string(),
+    value: z.string(),
+    evidence: z.string()
+});
+
+/**
+ * A field discovery could NOT fill, and why. The config carries it empty — never a guess.
+ */
+export const zMlxDistributedGapDto = z.object({
+    node: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    field: z.string(),
+    reason: z.string()
+});
+
+/**
+ * A node's goose-managed Python. `state`: "ready" (imports the pinned mlx + mlx_lm) | "absent"
+ * (not provisioned yet — Save provisions it) | "broken" (present, wrong or failing import) |
+ * "noUv" (absent and the node has no uv to build it).
+ */
+export const zMlxDistributedDiscoveredEnvDto = z.object({
+    python: z.string(),
+    state: z.string(),
+    detail: z.string()
+});
+
+export const zMlxDistributedDiscoveredNodeDto = z.object({
+    rank: z.number().int().gte(0),
+    name: z.string(),
+    host: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    reachable: z.boolean(),
+    home: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    totalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    availableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    pressure: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    uv: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    env: z.union([
+        zMlxDistributedDiscoveredEnvDto,
+        z.null()
+    ]).optional(),
+    linkSpeed: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One model's presence on one node. `state`: "match" (same loaded files, same sizes as rank 0's)
+ * | "differs" (a directory of that name whose files differ) | "absent".
+ */
+export const zMlxDistributedDiscoveredModelNodeDto = z.object({
+    rank: z.number().int().gte(0),
+    state: z.string(),
+    dir: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    detail: z.string()
+});
+
+/**
+ * A splittable model on this Mac (a `model_type` a runner exists for) and where it is on every
+ * other node. `manifest`: "agree" (SHA256SUMS identical on every node) | "differ" | "absent" (no
+ * manifest on rank 0; files compared by name and size).
+ */
+export const zMlxDistributedDiscoveredModelDto = z.object({
+    id: z.string(),
+    modelType: z.string(),
+    runner: z.string(),
+    weightsBytes: z.number().int().gte(0),
+    onEveryNode: z.boolean(),
+    manifest: z.string(),
+    nodes: z.array(zMlxDistributedDiscoveredModelNodeDto)
+});
+
+export const zMlxDistributedDiscoveryDto = z.object({
+    config: zMlxDistributedConfigDto,
+    backendReason: z.string(),
+    evidence: z.array(zMlxDistributedEvidenceDto),
+    gaps: z.array(zMlxDistributedGapDto),
+    nodes: z.array(zMlxDistributedDiscoveredNodeDto),
+    models: z.array(zMlxDistributedDiscoveredModelDto),
+    probeMs: z.number().int().gte(0)
+});
+
+export const zMlxEngineDistributedDiscoverResponse_unstable = z.object({
+    discovery: zMlxDistributedDiscoveryDto
+});
+
+/**
+ * Build each node's goose-managed Python (uv venv, pinned mlx + mlx_lm; the fork too when a node
+ * carries a managed `pipelinePython`), idempotently, in the background. Progress rides
+ * `distributedStatus.provision`. `config` absent = the persisted one. Refused while a
+ * provisioning run is in flight.
+ */
+export const zMlxEngineDistributedProvisionRequest_unstable = z.object({
+    config: z.union([
+        zMlxDistributedConfigDto,
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineDistributedProvisionResponse_unstable = z.object({
+    provision: zMlxDistributedProvisionDto
 });
 
 /**
@@ -4373,6 +4588,9 @@ export const zExtRequest = z.object({
             zMlxEngineDistributedPreflightRequest_unstable,
             zMlxEngineDistributedStartRequest_unstable,
             zMlxEngineDistributedStopRequest_unstable,
+            zMlxEngineDistributedPeerCandidatesRequest_unstable,
+            zMlxEngineDistributedDiscoverRequest_unstable,
+            zMlxEngineDistributedProvisionRequest_unstable,
             zMlxEngineDistributedConfigUpdateRequest_unstable,
             zMlxEngineDownloadCancelRequest_unstable,
             zMlxEngineLinkFactsRequest_unstable,
@@ -4492,6 +4710,9 @@ export const zExtResponse = z.union([
                 zMlxEngineDistributedPreflightResponse_unstable,
                 zMlxEngineDistributedStartResponse_unstable,
                 zMlxEngineDistributedStopResponse_unstable,
+                zMlxEngineDistributedPeerCandidatesResponse_unstable,
+                zMlxEngineDistributedDiscoverResponse_unstable,
+                zMlxEngineDistributedProvisionResponse_unstable,
                 zMlxEngineDistributedConfigResponse_unstable,
                 zMlxEngineLinkFactsResponse_unstable,
                 zMlxEngineReplicaTargetsResponse_unstable,

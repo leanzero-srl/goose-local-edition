@@ -16,6 +16,7 @@
 //! - [`plan`]: the per-rank memory arithmetic (tensor split computed here; the qwen4_exp
 //!   pipeline split read from the fork's own planner).
 //! - [`preflight`]: every check, per node, with its numbers; the documented TB link repair.
+//! - [`provision`]: the ranks' Python, a goose-owned uv venv per node (pinned mlx + mlx_lm).
 //! - [`launch`]: the rank processes (goose's own launcher — see its doc for why not mlx.launch)
 //!   and the embedded rank wrapper (in-process memory caps, admission, progress counter).
 //! - [`supervisor`]: readiness, liveness (the soak's hang rule), the memory watchdog, the
@@ -27,6 +28,7 @@ pub mod launch;
 pub mod plan;
 pub mod preflight;
 pub mod probe;
+pub mod provision;
 pub mod supervisor;
 
 pub use config::{Backend, DistributedConfig, NodeConfig, Runner};

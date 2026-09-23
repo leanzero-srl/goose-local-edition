@@ -248,6 +248,44 @@ pub fn choose_path(local: &[InterfaceFact], peer: &[InterfaceFact]) -> Option<Li
     best.map(|(_, path)| path)
 }
 
+/// The same `(device, address, prefix length)` list [`raw_ipv4_addrs`] reads from
+/// `getifaddrs`, parsed from another node's `ifconfig` answer (a peer reached over ssh):
+/// interfaces that are UP and RUNNING and not loopback, every `inet` they carry, the prefix
+/// from the hex netmask.
+pub fn parse_ifconfig_addrs(text: &str) -> Vec<(String, Ipv4Addr, u8)> {
+    let mut out = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            current = line.split_once(": flags=").and_then(|(device, rest)| {
+                let flags = rest.split_once('<')?.1.split_once('>')?.0;
+                let flags: Vec<&str> = flags.split(',').collect();
+                (flags.contains(&"UP")
+                    && flags.contains(&"RUNNING")
+                    && !flags.contains(&"LOOPBACK"))
+                .then(|| device.to_string())
+            });
+            continue;
+        }
+        let Some(device) = &current else { continue };
+        let Some(rest) = line.trim().strip_prefix("inet ") else {
+            continue;
+        };
+        let mut words = rest.split_whitespace();
+        let Some(ipv4) = words.next().and_then(|a| a.parse::<Ipv4Addr>().ok()) else {
+            continue;
+        };
+        let mask = rest
+            .split_once("netmask ")
+            .and_then(|(_, m)| m.split_whitespace().next())
+            .and_then(|m| u32::from_str_radix(m.trim_start_matches("0x"), 16).ok());
+        if let Some(mask) = mask {
+            out.push((device.clone(), ipv4, mask.count_ones() as u8));
+        }
+    }
+    out
+}
+
 /// This node's IPv4 addresses, as `(device, address, prefix length)`, for interfaces that
 /// are UP and RUNNING and not loopback.
 #[cfg(unix)]
@@ -542,6 +580,39 @@ mod tests {
         );
         assert_eq!(facts[0].kind, InterfaceKind::Thunderbolt);
         assert_eq!(facts[1].kind, InterfaceKind::Other);
+    }
+
+    /// The Studio's own `ifconfig` (2026-09-24, over ssh): the down TB ports, the utun /32,
+    /// loopback and the up-but-addressless ports must not appear; en3's /30 and en1's /24 must.
+    #[test]
+    fn a_peers_ifconfig_yields_the_same_addresses_getifaddrs_would() {
+        let text = "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+en2: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+en3: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet6 fe80::cb2:6f95:519a:a7cd%en3 prefixlen 64 secured scopeid 0x10
+\tinet 192.168.0.2 netmask 0xfffffffc broadcast 192.168.0.3
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.10.161 netmask 0xffffff00 broadcast 192.168.10.255
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+\tinet 100.122.51.13 --> 100.122.51.13 netmask 0xffffffff
+";
+        let addrs = parse_ifconfig_addrs(text);
+        assert_eq!(
+            addrs,
+            vec![
+                ("en3".to_string(), ip("192.168.0.2"), 30),
+                ("en1".to_string(), ip("192.168.10.161"), 24),
+                ("utun0".to_string(), ip("100.122.51.13"), 32),
+            ]
+        );
+        let facts = facts_from(
+            &addrs,
+            Some(&parse_hardware_ports(STUDIO_PORTS)),
+            &parse_thunderbolt_speeds(STUDIO_TB).unwrap(),
+        );
+        assert_eq!(facts, studio()[..2].to_vec());
     }
 
     #[cfg(unix)]

@@ -661,6 +661,21 @@
       "responseType": "MlxEngineDistributedStopResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/distributedPeerCandidates",
+      "requestType": "MlxEngineDistributedPeerCandidatesRequest_unstable",
+      "responseType": "MlxEngineDistributedPeerCandidatesResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/distributedDiscover",
+      "requestType": "MlxEngineDistributedDiscoverRequest_unstable",
+      "responseType": "MlxEngineDistributedDiscoverResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/distributedProvision",
+      "requestType": "MlxEngineDistributedProvisionRequest_unstable",
+      "responseType": "MlxEngineDistributedProvisionResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/distributedConfigUpdate",
       "requestType": "MlxEngineDistributedConfigUpdateRequest_unstable",
       "responseType": "MlxEngineDistributedConfigResponse_unstable"

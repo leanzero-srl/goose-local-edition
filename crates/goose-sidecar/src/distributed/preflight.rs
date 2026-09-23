@@ -125,7 +125,7 @@ impl PreflightReport {
     }
 }
 
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -438,27 +438,11 @@ fn read_answer(
         .into_iter()
         .collect();
     match probe::section(&sections, "ps") {
-        Ok(text) => {
-            let foreign = probe::foreign_engine_processes(text, &own_pid);
-            if foreign.is_empty() {
-                answer.checks.push(Check::pass(
-                    "foreignEngines",
-                    "no other MLX engine runs here",
-                ));
-            } else {
-                answer.checks.push(Check::fail(
-                    "foreignEngines",
-                    format!(
-                        "another MLX engine runs on this node — one engine owns a Mac at a time: {}",
-                        foreign
-                            .iter()
-                            .map(|(pid, cmd)| format!("pid {pid} `{cmd}`"))
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    ),
-                ));
-            }
-        }
+        Ok(text) => answer
+            .checks
+            .push(foreign_engines_check(&probe::classify_foreign_engines(
+                text, &own_pid,
+            ))),
         Err(e) => answer
             .checks
             .push(Check::fail("foreignEngines", format!("{e:#}"))),
@@ -501,10 +485,9 @@ fn read_answer(
     }
 
     match probe::section(&sections, "model") {
-        Ok(text) if text.contains("No such file") => answer.checks.push(Check::fail(
-            "model",
-            format!("{} does not exist on this node", node.model_dir),
-        )),
+        Ok(text) if text.contains("No such file") => answer
+            .checks
+            .push(Check::fail("model", missing_model_message(node, rank))),
         Ok(text) => answer.model_files = Some(probe::parse_file_sizes(text)),
         Err(e) => answer.checks.push(Check::fail("model", format!("{e:#}"))),
     }
@@ -603,6 +586,45 @@ fn read_answer(
     answer
 }
 
+/// A foreign DISTRIBUTED process (mlx.launch, the fork's pipeline, a goose rank another goosed
+/// left) holds a coordinator port or an RDMA queue pair: FAIL. A foreign SINGLE server (the
+/// owner's `rapid-mlx serve` on its own port) is an independent engine: its resident memory is
+/// already out of the `available` figure the memory check plans against, so it is a WARN naming
+/// the pid and the cost it does carry (GPU contention: decode on this node slows while it works).
+fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check {
+    let list = |kind: probe::ForeignKind| {
+        foreign
+            .iter()
+            .filter(|(_, _, k)| *k == kind)
+            .map(|(pid, cmd, _)| format!("pid {pid} `{cmd}`"))
+            .collect::<Vec<_>>()
+    };
+    let distributed = list(probe::ForeignKind::Distributed);
+    let single = list(probe::ForeignKind::SingleServer);
+    if !distributed.is_empty() {
+        return Check::fail(
+            "foreignEngines",
+            format!(
+                "another distributed MLX process runs on this node (it holds a coordinator port or \
+                 an RDMA queue pair this launch needs): {}",
+                distributed.join("; ")
+            ),
+        );
+    }
+    if !single.is_empty() {
+        return Check::warn(
+            "foreignEngines",
+            format!(
+                "a single MLX server shares this node: {} — its memory is already outside the \
+                 available figure the plan is measured against; it contends for the GPU, so \
+                 decode here slows while it serves",
+                single.join("; ")
+            ),
+        );
+    }
+    Check::pass("foreignEngines", "no other MLX engine runs here")
+}
+
 /// The qwen4_exp split serves only if the fork's module offers a `serve` subcommand. Branch
 /// lz/pipeline-qwen4 (7a9b622a5, 2026-09-24) offers `{plan,run}` — a planner and a one-shot
 /// generator, no OpenAI server — so this check fails loudly with what the module does offer.
@@ -647,9 +669,25 @@ fn pipeline_runner_check(node: &NodeConfig, help: Option<&String>) -> Check {
     }
 }
 
+/// A model directory absent on a node. The fix that exists is the Thunderbolt copy (Models tab ›
+/// Downloaded › "Copy to <device> · Thunderbolt", `mlx_replica`): its control messages ride the
+/// LeanZero Link mesh, so it needs both Macs signed in to Link — without that, copy the directory
+/// over the cable yourself (rsync to the peer's TB address).
+fn missing_model_message(node: &NodeConfig, rank: usize) -> String {
+    if rank == 0 {
+        return format!("{} does not exist on this Mac", node.model_dir);
+    }
+    format!(
+        "{} does not exist on {} — copy it over Thunderbolt from this Mac's Models tab \
+         (Downloaded › Copy to {}; that copy needs both Macs signed in to LeanZero Link), then \
+         Detect again",
+        node.model_dir, node.name, node.name
+    )
+}
+
 /// The files a rank loads: config, tokenizer, the index and every `model*.safetensors` (what
 /// mlx_lm's loader globs). Compared by name AND size across nodes.
-fn loaded_files(files: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
+pub fn loaded_files(files: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
     files
         .iter()
         .filter(|(name, _)| {
