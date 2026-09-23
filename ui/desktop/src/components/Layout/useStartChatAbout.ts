@@ -70,11 +70,16 @@ export function useStartChatAbout() {
   const setView = useNavigation();
   const { extensionsList } = useConfig();
   return useCallback(
-    async (prompt: string) => {
+    /** `alsoEnable`: extensions this item's prompt TELLS the model to use (a session ask names
+     *  chatrecall), turned on for this session when the profile has them. */
+    async (prompt: string, options?: { alsoEnable?: readonly string[] }) => {
       const configured: unknown = window.electron.getConfig?.().GOOSE_WORKING_DIR;
       const workingDir = typeof configured === 'string' && configured ? configured : '~';
       await startNewSession(prompt, setView, workingDir, {
-        extensionConfigs: extensionsForWorkOnItem(extensionsList),
+        extensionConfigs: extensionsForWorkOnItem(extensionsList, [
+          ...WORK_ON_ITEM_EXTENSIONS,
+          ...(options?.alsoEnable ?? []),
+        ]),
         title: chatAboutTitle(prompt) ?? undefined,
       });
     },

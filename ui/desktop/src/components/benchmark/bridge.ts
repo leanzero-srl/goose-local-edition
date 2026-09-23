@@ -41,6 +41,9 @@ export interface BenchSession {
   /** null while the engine has not yet written .swarm/current-run.json (reconciles ~2s after
    *  launch) — the view keys such a row by its startedAt and refuses to delete it. */
   runId: string | null;
+  /** The run's folder on disk (the live-run slot or sessions/<runId>) — present only when main
+   *  found it there, so a prompt may state it as a fact. */
+  dataDir?: string;
   scorerVersion: string;
   startedAt: string;
   endedAt?: string;

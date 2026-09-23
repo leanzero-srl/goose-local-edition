@@ -5,6 +5,7 @@ import {
   upsertArchivedRow,
   catalogMismatchOf,
   frozenPublishRefusal,
+  benchRunDataDir,
   type BenchSessionRow,
   type BenchCatalogBenchmark,
 } from './benchSessions';
@@ -193,4 +194,17 @@ it('only a finite bounded explicit score is a completed verdict', () => {
     expect(hasScoredVerdict(value)).toBe(false);
   expect(hasScoredVerdict({ score: 0 })).toBe(true);
   expect(hasScoredVerdict({ score: 1 })).toBe(true);
+});
+
+describe('benchRunDataDir — where a session’s files live', () => {
+  it('the live-run slot while it holds them, else sessions/<runId>, else none', () => {
+    expect(
+      benchRunDataDir(
+        { runId: 'r1', slot: true, slotDir: '/b/runs/build/swarm-3node-r0' },
+        '/b/sessions'
+      )
+    ).toBe('/b/runs/build/swarm-3node-r0');
+    expect(benchRunDataDir({ runId: 'r1' }, '/b/sessions')).toBe('/b/sessions/r1');
+    expect(benchRunDataDir({ runId: null }, '/b/sessions')).toBeNull();
+  });
 });

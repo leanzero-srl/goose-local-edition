@@ -120,9 +120,32 @@ export function deriveEras(
   return list;
 }
 
+/** What is asked of the model when a benchmark run is opened as a chat: the run's row as the app
+ *  holds it — outcome, score, tiers, the scoring error — and its folder only when main found it on
+ *  disk (`dataDir`); a run without one is said to have no folder, never pointed at a guessed one. */
 export function askAboutRunPrompt(era: BenchEra, run: BenchSession): string {
   const score = run.score != null ? `${(run.score * 100).toFixed(1)}%` : 'no score';
-  return `I want to look at my benchmark run ${run.runId ?? run.startedAt} on ${era.scorerVersion} (${era.title}), started ${run.startedAt}, outcome ${run.outcome}, ${score}. Its files live under the app's benchmark/runs folder. Help me understand what happened and what to try next.`;
+  const facts = [
+    `started ${run.startedAt}`,
+    ...(run.endedAt ? [`ended ${run.endedAt}`] : []),
+    `outcome ${run.outcome}`,
+    score,
+    ...(run.nodes != null ? [`${run.nodes} nodes`] : []),
+  ].join(', ');
+  const tiers = run.tiers
+    ? Object.entries(run.tiers)
+        .map(([tier, value]) => `${tier} ${(value * 100).toFixed(1)}%`)
+        .join(', ')
+    : null;
+  return [
+    `I want to look at my benchmark run ${run.runId ?? run.startedAt} on ${era.scorerVersion} (${era.title}), ${facts}.`,
+    ...(tiers ? [`Tier scores: ${tiers}.`] : []),
+    ...(run.scoringError ? [`Scoring failed: ${run.scoringError}`] : []),
+    run.dataDir
+      ? `Its files are in ${run.dataDir} — read them with the developer tools before you explain anything.`
+      : 'The app has no folder on disk for this run, so there are no files to read.',
+    'Help me understand what happened and what to try next.',
+  ].join('\n');
 }
 
 const RunLeafRow: React.FC<{

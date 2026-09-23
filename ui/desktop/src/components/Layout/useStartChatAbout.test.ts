@@ -60,12 +60,16 @@ describe('chatAboutTitle', () => {
     ).toBe('Memory · lms-ps-is-fleet-ground-truth');
     expect(
       chatAboutTitle(
-        askAboutSkillPrompt({
-          name: 'goose-feature-dev',
-          description: 'build features in goose',
-          path: '/Users/me/.agents/skills/goose-feature-dev/SKILL.md',
-          origin: 'global',
-        } as never)
+        askAboutSkillPrompt(
+          {
+            name: 'goose-feature-dev',
+            description: 'build features in goose',
+            path: '/Users/me/.agents/skills/goose-feature-dev',
+            type: 'skill',
+            global: true,
+          } as never,
+          '/Users/me'
+        )
       )
     ).toBe('Skill · goose-feature-dev');
     expect(
@@ -92,7 +96,9 @@ describe('chatAboutTitle', () => {
     ).toBe('Desk · Public web research');
     expect(
       chatAboutTitle(
-        askAboutSessionPrompt({ id: 's1', name: 'Fix login', workingDir: '/w' } as never)
+        askAboutSessionPrompt({ id: 's1', name: 'Fix login', workingDir: '/w' } as never, {
+          chatRecall: true,
+        })
       )
     ).toBe('Session · Fix login');
     expect(

@@ -93,9 +93,11 @@ describe('the session context menu', () => {
 
     fireEvent.contextMenu(screen.getByText('Fix the panel'));
     fireEvent.click(await screen.findByText('Start an AI session about this session'));
-    expect(navMocks.startChat).toHaveBeenCalledWith(askAboutSessionPrompt(session));
-    expect(askAboutSessionPrompt(session)).toContain('sess-1');
-    expect(askAboutSessionPrompt(session)).toContain('/proj/goose');
+    // The mocked profile carries no chatrecall, so the prompt says nothing of the session is attached.
+    const prompt = askAboutSessionPrompt(session, { chatRecall: false });
+    expect(navMocks.startChat).toHaveBeenCalledWith(prompt, { alsoEnable: ['chatrecall'] });
+    expect(prompt).toContain('sess-1');
+    expect(prompt).toContain('/proj/goose');
   });
 
   it('deletes only after the in-menu confirm and broadcasts SESSION_DELETED', async () => {

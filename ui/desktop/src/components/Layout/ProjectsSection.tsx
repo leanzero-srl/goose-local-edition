@@ -193,12 +193,27 @@ const i18n = defineMessages({
   },
 });
 
-/** What is asked of the model when a session is opened as a new chat about it. */
-export function askAboutSessionPrompt(session: SessionListItem): string {
+/** The platform extension whose load mode (`session_id`) returns a past session's first and last
+ *  three messages (chatrecall.rs). A session ask turns it on when the profile has it. */
+export const SESSION_RECALL_EXTENSION = 'chatrecall';
+
+/**
+ * What is asked of the model when a session is opened as a new chat about it: the session's own
+ * facts from the list row, and the ONE way the new chat can read it — chatrecall when the profile
+ * has it (the ask turns it on), otherwise the plain statement that nothing of it is attached.
+ */
+export function askAboutSessionPrompt(
+  session: SessionListItem,
+  facts: { chatRecall: boolean }
+): string {
   const name = displaySessionListName(session.name);
+  const lastActive = session.lastMessageAt ?? session.updatedAt;
+  const read = facts.chatRecall
+    ? `Read it first: the chatrecall tool with session_id "${session.id}" returns its first and last 3 messages.`
+    : `None of its messages are attached here and this profile has no chatrecall extension to load them, so ask me to paste the part that matters.`;
   return [
-    `I want to work from my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}).`,
-    "Read that session's conversation first (goose sessions are stored in its session database; use the session tools if you have them, otherwise ask me to paste the part that matters), then help me continue it, redo part of it, or turn what it learned into a skill or memory.",
+    `I want to work from my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}, ${session.messageCount} messages, created ${session.createdAt}, last active ${lastActive}).`,
+    `${read} Then help me continue it, redo part of it, or turn what it learned into a skill or memory.`,
     'Ask me what I want before you write anything.',
   ].join('\n');
 }
@@ -721,6 +736,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   const [collapsed, toggleCollapsed] = useSectionCollapsed('projects');
   const setView = useNavigation();
   const { extensionsList } = useConfig();
+  const chatRecall = extensionsList.some((e) => e.name === SESSION_RECALL_EXTENSION);
   const { recentSessions, activeSessionId, fetchSessions, handleSessionClick } =
     useNavigationSessions();
   const startChat = useStartChatAbout();
@@ -1025,7 +1041,11 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
                       : undefined
                   }
                   onOpenSession={handleSessionClick}
-                  onAskSession={(session) => void startChat(askAboutSessionPrompt(session))}
+                  onAskSession={(session) =>
+                    void startChat(askAboutSessionPrompt(session, { chatRecall }), {
+                      alsoEnable: [SESSION_RECALL_EXTENSION],
+                    })
+                  }
                   onShowMore={() => showMore(project)}
                   onShowLess={() => showLess(project.path)}
                   onRetry={() =>

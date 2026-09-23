@@ -4,6 +4,7 @@ import { Switch } from '../../../ui/switch';
 import { Gear } from '../../../icons';
 import { FixedExtensionEntry } from '../../../ConfigContext';
 import { getSubtitle, getFriendlyTitle } from './ExtensionList';
+import { nameToKey } from '../utils';
 import { Card, CardHeader, CardTitle, CardContent, CardAction } from '../../../ui/card';
 import { defineMessages, useIntl } from '../../../../i18n';
 import { inspectConfigExtension } from '../../../../acp/extensions';
@@ -49,6 +50,9 @@ const i18n = defineMessages({
  *  its configuration lives, and the tools that enable, disable and rewrite it. */
 export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string {
   const kind = extension.type;
+  // The YAML key is not the display name: "LeanZero Documents" is stored under `leanzerodocuments`
+  // (the key the config context read it from, else the same derivation the config writer uses).
+  const configKey = extension.configKey ?? nameToKey(extension.name);
   const where =
     'cmd' in extension && typeof extension.cmd === 'string'
       ? ` (command: ${extension.cmd}${'args' in extension && Array.isArray(extension.args) ? ' ' + extension.args.join(' ') : ''})`
@@ -57,7 +61,7 @@ export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string 
         : '';
   return [
     `I want to work on my goose MCP extension "${getFriendlyTitle(extension)}" — config name "${extension.name}", type ${kind}${where}.`,
-    `Its configuration is the "${extension.name}" entry under extensions: in ~/.config/goose/config.yaml (name, type, cmd/args or uri, envs, timeout, enabled). Read that entry first with the developer tools.`,
+    `Its configuration is the "${configKey}" key under extensions: in ~/.config/goose/config.yaml (name, type, cmd/args or uri, envs, timeout, enabled). Read that entry first with the developer tools.`,
     'You can change it in place by editing that entry, fork it by adding a new entry with a new name beside it, or add a brand-new MCP the same way; manage_extensions enables or disables an extension by name and search_available_extensions lists the ones goose knows about. Changes to config.yaml apply to the next session.',
     'Ask me what I want changed before you write anything, then make the change and show me the resulting entry.',
   ].join('\n');

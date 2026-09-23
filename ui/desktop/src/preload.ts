@@ -163,7 +163,11 @@ type ElectronAPI = {
   benchmarkRead: () => Promise<unknown | null>;
   benchmarkRuntimeStatus: () => Promise<BenchmarkRuntimeStatus>;
   benchmarkRuntimeInstall: () => Promise<void>;
-  benchmarkRunCloud: (provider: string, model: string, tier: CloudBenchmarkTier) => Promise<unknown>;
+  benchmarkRunCloud: (
+    provider: string,
+    model: string,
+    tier: CloudBenchmarkTier
+  ) => Promise<unknown>;
   /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
    *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
    *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion, catalogMismatch?} fires
@@ -184,6 +188,8 @@ type ElectronAPI = {
   benchmarkSessions: () => Promise<{
     sessions: Array<{
       runId: string | null;
+      /** The run's folder on disk — present only when it exists. */
+      dataDir?: string;
       scorerVersion: string;
       startedAt: string;
       endedAt?: string;
@@ -245,9 +251,7 @@ type ElectronAPI = {
     runId?: string | null;
   }>;
   /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
-  benchmarkMedia: (
-    workdir: string
-  ) => Promise<{
+  benchmarkMedia: (workdir: string) => Promise<{
     videos: Array<{ url: string; caption: string; sha256: string; bytes: number }>;
     error?: string;
   }>;

@@ -13,6 +13,8 @@
  *   purpose: the loop-state scripts read `runs/build/swarm-3node-r0` as THE live-run location.
  */
 
+import path from 'node:path';
+
 export type BenchSessionOutcome = 'running' | 'finished' | 'did_not_finish' | 'did_not_start';
 
 export interface BenchSessionRow {
@@ -31,6 +33,14 @@ export interface BenchSessionRow {
   completionReceipt?: string;
   scoringError?: string;
 }
+
+/** Where a session's files live: the live-run slot while it still holds them, else
+ *  `<sessionsRoot>/<runId>`; null while the run has no id and no slot. */
+export const benchRunDataDir = (
+  row: Pick<BenchSessionRow, 'runId' | 'slot' | 'slotDir'>,
+  sessionsRoot: string
+): string | null =>
+  row.slot && row.slotDir ? row.slotDir : row.runId ? path.join(sessionsRoot, row.runId) : null;
 
 /** The one rule for what a slot's contents testify: a verdict is a finished run; engine events
  *  without a verdict are a run that started and died; neither is a launch that never reached OPEN. */

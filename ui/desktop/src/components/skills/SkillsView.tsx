@@ -8,8 +8,7 @@ import type { SourceEntry } from '@aaif/goose-sdk';
 import { SkillDetail } from './SkillDetail';
 import { TreeContextMenu } from '../Layout/tree';
 import { useStartChatAbout } from '../Layout/useStartChatAbout';
-import { isEditable } from './skillKinds';
-import { skillOrigin, type SkillOrigin } from './skillKinds';
+import { isEditable, PERSONA_USER_MARKER, skillOrigin, type SkillOrigin } from './skillKinds';
 import { Button, EmptyState, TYPE, cx } from '../lz';
 import { LibraryGroup, LibraryRow, LibraryShell, shownSelection } from '../library/Library';
 
@@ -67,14 +66,59 @@ const i18n = defineMessages({
  */
 type SkillEntry = SourceEntry;
 
-/** What is asked of the model when a skill is opened as a chat about it: where the skill lives,
- *  how a skill is shaped, and that the chat may rewrite or fork it with the developer tools. */
-export function askAboutSkillPrompt(skill: SkillEntry): string {
+/** How many of a skill's files the prompt names before it counts the rest — the same bound goose's
+ *  own load_skill manifest uses (MAX_LISTED_SUPPORTING_FILES, skills/mod.rs), so the chat is never
+ *  handed a longer list than loading the skill would print. */
+const PROMPT_LISTED_FILES = 60;
+
+const ASK_FIRST =
+  'Ask me what I want changed before you write anything, then make the edit and show me the result.';
+
+/**
+ * What is asked of the model when a skill is opened as a chat about it. Every sentence is a fact the
+ * app holds for THIS entry — where its SKILL.md is, which other files goose's scan found in its folder
+ * (or that it found none), its scope — never an assumed structure. The old text told the model
+ * "sibling files in the same folder are its references" and called the folder "the file"; on a folder
+ * holding only SKILL.md a local model answered, with no tool call, that it had read "four sibling
+ * reference files" and cited two invented ones (UX audit T2, 2026-09-23).
+ */
+export function askAboutSkillPrompt(skill: SkillEntry, projectDir: string): string {
+  const head = `I want to work on my goose skill "${skill.name}" (${skill.description}).`;
+  const project = projectDir.replace(/\/+$/, '');
+  const forkRoots = `a global skill goes in ~/.agents/skills/<new-name>/SKILL.md, a project skill in ${project || '<project>'}/.agents/skills/<new-name>/SKILL.md`;
+  const origin = skillOrigin(skill);
+  if (origin === 'builtin') {
+    return [
+      head,
+      `It is built into goose (${skill.path}): there is no file on disk to read or edit. load_skill with the name "${skill.name}" shows its instructions.`,
+      `It cannot be changed in place. To make your own version, fork it as a new skill with YAML frontmatter (name, description) followed by the instructions — ${forkRoots}.`,
+      ASK_FIRST,
+    ].join('\n');
+  }
+
+  const dir = skill.path.replace(/\/+$/, '');
+  const skillMd = `${dir}/SKILL.md`;
+  const files = (skill.supportingFiles ?? [])
+    .map((abs) => (abs.startsWith(`${dir}/`) ? abs.slice(dir.length + 1) : abs))
+    .sort();
+  const listed = files.slice(0, PROMPT_LISTED_FILES);
+  const unlisted = files.length - listed.length;
+  const folder =
+    files.length === 0
+      ? `goose's scan of its folder ${dir} found no other files (dependency folders such as node_modules are never listed): SKILL.md is all there is.`
+      : `goose's scan of its folder ${dir} found ${files.length} other file${files.length === 1 ? '' : 's'}: ${listed.join(', ')}${unlisted > 0 ? `, and ${unlisted} more not named here` : ''}. Open a file before you say anything about what it holds.`;
+  const scope =
+    origin === 'persona'
+      ? `goose wrote this skill about itself: after each successful build of its stack the swarm rewrites everything above the "${PERSONA_USER_MARKER}" heading and keeps what is under it, so a lasting change goes under that heading.`
+      : origin === 'global'
+        ? 'It is a global skill: goose sees it in every project.'
+        : `It is a project skill: goose sees it only when working in ${project || 'its project'}.`;
   return [
-    `I want to work on my goose skill "${skill.name}" (${skill.description}).`,
-    `It is the file ${skill.path} — a SKILL.md with YAML frontmatter (name, description) followed by the instructions goose follows when the skill is loaded; sibling files in the same folder are its references.`,
-    'Read it first with the developer tools. You can modify it in place, or fork it as a new skill by creating <skills root>/<new-name>/SKILL.md with its own frontmatter beside it (a global skill lives under ~/.agents/skills/<name>/, a project skill under <project>/.agents/skills/<name>/).',
-    'Ask me what I want changed before you write anything, then make the edit and show me the result.',
+    head,
+    `Its instructions are the file ${skillMd} — YAML frontmatter (name, description) followed by the instructions goose follows when the skill is loaded. ${folder}`,
+    scope,
+    `Read ${skillMd} first with the developer tools. You can edit it in place, or fork it as a new skill with its own frontmatter — ${forkRoots}.`,
+    ASK_FIRST,
   ].join('\n');
 }
 
@@ -277,7 +321,7 @@ export default function SkillsView() {
               setSelectedPath(skill.path);
               setDeleteRequest((n) => n + 1);
             }}
-            onAsk={() => void startChat(askAboutSkillPrompt(skill))}
+            onAsk={() => void startChat(askAboutSkillPrompt(skill, getInitialWorkingDir()))}
           />
         ))}
       </LibraryGroup>
@@ -305,6 +349,7 @@ export default function SkillsView() {
               projectDir={getInitialWorkingDir()}
               requestEdit={editRequest}
               requestDelete={deleteRequest}
+              onAsk={() => void startChat(askAboutSkillPrompt(selected, getInitialWorkingDir()))}
               onSaved={(updated) =>
                 setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
               }

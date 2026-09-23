@@ -76,11 +76,23 @@ export function deskHref(dir: string, tick?: number): string {
   return `${AGENT_WORK_PATH}?${params.toString()}`;
 }
 
-/** What is asked of the model when a desk is opened as a chat. */
+/**
+ * What is asked of the model when a desk is opened as a chat: only what the roster read for THIS
+ * desk — whether its agent.yaml parsed and what it says, whether its run state exists — and where the
+ * app itself reads each from. A desk whose agent.yaml did not parse is said to be so, never described.
+ */
 export function askAboutAgentPrompt(row: AgentWorkRosterRow): string {
+  const runtime = `${row.dir}/.swarm/agent`;
+  const m = row.manifest;
+  const definition = m
+    ? `Its definition is ${row.dir}/agent.yaml, which the app read: cadence ${m.cadence ?? 'not set'}, timezone ${m.timezone ?? 'not set'}, surgeons ${m.surgeons?.length ? m.surgeons.map((s) => s.name).join(', ') : 'none'}.`
+    : `The app could not read ${row.dir}/agent.yaml (it is missing or not valid YAML) — find out why before anything else.`;
+  const state = row.state
+    ? `Its run state is ${runtime}/state.json: status ${row.state.status}, tick ${row.state.tick}, phase ${row.state.phase}. The app reads its tick records from ${runtime}/ticks/<n>.json.`
+    : `The app found no readable run state at ${runtime}/state.json.`;
   return [
     `I want to work on my Agent Work desk "${deskName(row)}" at ${row.dir}.`,
-    'Its agent.yaml (the brief, cadence and tools), its ledger and its ticks live under that folder. Read agent.yaml and the latest ticks first with the developer tools.',
+    `${definition} ${state} Read agent.yaml first with the developer tools.`,
     'You can modify agent.yaml in place, or fork the desk by copying the folder to a new directory with a new name and adjusting its agent.yaml.',
     'Ask me what I want changed before you write anything, then make the edit and show me the result.',
   ].join('\n');

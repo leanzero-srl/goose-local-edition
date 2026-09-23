@@ -79,6 +79,7 @@ import {
   findLaunchRow,
   upsertArchivedRow,
   frozenPublishRefusal,
+  benchRunDataDir,
   type BenchSessionRow,
   type BenchSessionOutcome,
   type BenchCatalogBenchmark,
@@ -3016,12 +3017,7 @@ ipcMain.handle('benchmark-sessions', async () => {
     }
     const cloud = r.runId?.startsWith('cloud-') === true;
     if (r.outcome === 'running' || (r.outcome === 'did_not_start' && cloud)) {
-      const dataDir =
-        r.slot && r.slotDir
-          ? r.slotDir
-          : r.runId
-            ? path.join(benchSessionsRoot(), r.runId)
-            : null;
+      const dataDir = benchRunDataDir(r, benchSessionsRoot());
       const exists = dataDir
         ? await fs.stat(dataDir).then(
             () => true,
@@ -3070,11 +3066,27 @@ ipcMain.handle('benchmark-sessions', async () => {
       )
     )
   );
+  // The run's folder, reported only when it EXISTS — an ask-AI prompt states it as a fact.
+  const dataDirByStart = new Map(
+    await Promise.all(
+      rows.map(async (row) => {
+        const dir = benchRunDataDir(row, benchSessionsRoot());
+        const exists = dir
+          ? await fs.stat(dir).then(
+              (st) => st.isDirectory(),
+              () => false
+            )
+          : false;
+        return [row.startedAt, exists ? dir : null] as const;
+      })
+    )
+  );
   const sessions = rows
     .slice()
     .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
     .map((r) => ({
       runId: r.runId,
+      ...(dataDirByStart.get(r.startedAt) ? { dataDir: dataDirByStart.get(r.startedAt)! } : {}),
       scorerVersion: r.scorerVersion,
       startedAt: r.startedAt,
       ...(r.endedAt ? { endedAt: r.endedAt } : {}),

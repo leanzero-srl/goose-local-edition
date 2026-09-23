@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { SourceEntry } from '@aaif/goose-sdk';
-import { ChevronRight, ChevronDown, FileText, Folder, FolderOpen } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Folder, FolderOpen, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { ScrollArea } from '../ui/scroll-area';
@@ -9,7 +9,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { updateSkillSource, deleteSkillSource, readSkillSourceFresh } from '../../acp/sources';
 import { isEditable, isPersonaPath, splitPersona, recomposePersona } from './skillKinds';
 import { buildSkillTree, defaultExpanded, type TreeNode } from './skillTree';
-import { SURFACE, TYPE, cx } from '../lz';
+import { Button as LzButton, SURFACE, TYPE, cx } from '../lz';
 
 /** Solid, saturated origin colors — one hue per root, no tints. */
 const ORIGIN_STYLE: Record<string, { label: string; className: string }> = {
@@ -320,6 +320,7 @@ export function SkillDetail({
   onDeleted,
   requestEdit,
   requestDelete,
+  onAsk,
 }: {
   entry: SourceEntry;
   origin: string;
@@ -329,6 +330,8 @@ export function SkillDetail({
   /** Bumped by the list's context menu: enter editing / open the delete confirm from outside. */
   requestEdit?: number;
   requestDelete?: number;
+  /** Start an AI session about this skill — the same action as the list's context menu. */
+  onAsk: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -399,7 +402,12 @@ export function SkillDetail({
         </div>
         <p className={cx(TYPE.bodyMuted, 'mb-2')}>{entry.description}</p>
         <p className="break-all font-mono text-lz-meta text-lz-ink-3">{entry.path}</p>
-        <div className="flex gap-2 mt-3">
+        <div className="flex items-center gap-2 mt-3">
+          {!editing && (
+            <LzButton size="sm" variant="ghost" icon={<Sparkles />} onClick={onAsk}>
+              Ask AI about it
+            </LzButton>
+          )}
           {editable && (
             <Button
               size="sm"
