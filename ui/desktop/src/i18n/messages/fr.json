@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "Ajouter une compétence"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Essayez d'ajuster vos termes de recherche"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "Bientôt disponible"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "Erreur lors du chargement des compétences"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "Aucune compétence installée"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "Rechercher des skills par nom ou description"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "Rechercher des compétences..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "Affichez les compétences installées qui étendent les capacités de Goose. {shortcut} pour rechercher."
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "Compétences"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "Les skills installés qui étendent ce que goose sait faire : les vôtres, ceux de ce projet et les leçons écrites par goose."
   },
   "skillsView.tryAgain": {
     "defaultMessage": "Réessayer"

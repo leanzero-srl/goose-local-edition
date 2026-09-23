@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "कौशल जोड़ें"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "अपने खोज शब्दों को समायोजित करने का प्रयास करें"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "जल्द आ रहा है"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "कौशल लोड करने में त्रुटि"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "कोई कौशल स्थापित नहीं"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "नाम या विवरण से स्किल्स खोजें"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "खोज कौशल..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "स्थापित कौशल देखें जो Goose क्षमताओं का विस्तार करते हैं। {shortcut} खोजने के लिए."
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "कौशल"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "इंस्टॉल की गई स्किल्स जो goose की क्षमता बढ़ाती हैं — आपकी, इस प्रोजेक्ट की, और goose द्वारा लिखे गए सबक।"
   },
   "skillsView.tryAgain": {
     "defaultMessage": "पुनः प्रयास करें"

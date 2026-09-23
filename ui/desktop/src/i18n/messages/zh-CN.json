@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "添加技能"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "尝试调整搜索关键词"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "即将推出"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "加载技能出错"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "未安装任何技能"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "按名称或描述搜索技能"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "搜索技能…"
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "查看已安装的用于扩展 Goose 能力的技能。按 {shortcut} 搜索。"
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "技能"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "扩展 goose 能力的已安装技能——你的、本项目的，以及 goose 自己写下的经验。"
   },
   "skillsView.tryAgain": {
     "defaultMessage": "重试"

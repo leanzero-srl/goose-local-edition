@@ -27,6 +27,15 @@ export function assertStudioClean(container: HTMLElement): void {
     for (const [re, why] of CLASS_BANS) {
       expect(cls, `<${tag} class="${cls}"> carries ${why}`).not.toMatch(re);
     }
+    // MEASURED (2026-09-23, the Skills/Memories lists printed 25-line descriptions): Tailwind emits
+    // `.block`/`.flex`/… AFTER `.line-clamp-N`, so a bare display utility beside a clamp wins the
+    // `display` property and the clamp (which needs `-webkit-box`) silently does nothing.
+    if (/(^|\s)line-clamp-\d/.test(cls)) {
+      expect(
+        cls,
+        `<${tag} class="${cls}"> pairs a display utility with line-clamp — the clamp is dead`
+      ).not.toMatch(/(^|\s)(block|inline-block|inline|flex|inline-flex|grid|inline-grid)(?=\s|$)/);
+    }
     const style = el.getAttribute('style') ?? '';
     for (const [re, why] of STYLE_BANS) {
       expect(style, `<${tag} style="${style}"> carries ${why}`).not.toMatch(re);

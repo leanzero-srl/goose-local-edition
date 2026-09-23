@@ -87,6 +87,7 @@ import log from './utils/logger';
 import { ensureWinShims } from './utils/winShims';
 import { addRecentDir, loadRecentDirs } from './utils/recentDirs';
 import { addProject, loadProjects, removeProject } from './utils/projectDirs';
+import { indexSavedProposals, originOf, type MemoryOrigin } from './utils/memoryProvenance';
 import { formatAppName, errorMessage, formatErrorForLogging } from './utils/conversionUtils';
 import { isRetiredGooseChatApp } from './utils/retiredApps';
 import type { Settings, SettingKey } from './utils/settings';
@@ -5761,6 +5762,8 @@ async function appMain() {
         tags: string[];
         content: string;
         updatedAt: number;
+        filePath: string;
+        origin?: MemoryOrigin;
       }> = [];
       let mtime = 0;
       try {
@@ -5789,6 +5792,7 @@ async function appMain() {
           tags,
           content,
           updatedAt: mtime,
+          filePath,
         });
       }
       return out;
@@ -5814,6 +5818,31 @@ async function appMain() {
     const all = [...readDir(path.join(os.homedir(), '.config', 'goose', 'memory'), 'global')];
     if (workingDir) {
       all.push(...readDir(path.join(workingDir, '.goose', 'memory'), 'local'));
+    }
+    // Provenance: a memory saved from an agent's proposal keeps that proposal on disk (see
+    // utils/memoryProvenance.ts). A missing proposals dir is an install that never proposed one.
+    const proposalsDir = path.join(os.homedir(), '.config', 'goose', 'proposals');
+    const proposalFiles: Array<{ key: string; json: string }> = [];
+    if (fsSync.existsSync(proposalsDir)) {
+      for (const name of fsSync.readdirSync(proposalsDir)) {
+        if (!name.endsWith('.json')) continue;
+        try {
+          proposalFiles.push({
+            key: name.replace(/\.json$/, ''),
+            json: fsSync.readFileSync(path.join(proposalsDir, name), 'utf8'),
+          });
+        } catch (error) {
+          console.error('Error reading memory proposal file', name, error);
+        }
+      }
+    }
+    const { index, unreadable } = indexSavedProposals(proposalFiles);
+    if (unreadable.length > 0) {
+      console.error('Memory proposal files that are not a proposal list:', unreadable);
+    }
+    for (const entry of all) {
+      const origin = originOf(index, entry);
+      if (origin) entry.origin = origin;
     }
     all.sort((a, b) => b.updatedAt - a.updatedAt);
     return all;

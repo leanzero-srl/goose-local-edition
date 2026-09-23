@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "Thêm kỹ năng"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Hãy thử điều chỉnh từ khóa tìm kiếm của bạn"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "Sắp ra mắt"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "Lỗi khi tải kỹ năng"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "Chưa cài đặt kỹ năng nào"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "Tìm kỹ năng theo tên hoặc mô tả"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "Tìm kiếm kỹ năng..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "Xem các kỹ năng đã cài đặt giúp mở rộng khả năng của Goose. {shortcut} để tìm kiếm."
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "Kỹ năng"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "Các kỹ năng đã cài đặt mở rộng khả năng của goose — của bạn, của dự án này và các bài học do goose viết."
   },
   "skillsView.tryAgain": {
     "defaultMessage": "Thử lại"

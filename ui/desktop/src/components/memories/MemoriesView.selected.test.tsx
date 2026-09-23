@@ -49,7 +49,9 @@ const mount = () => {
 };
 
 const rowOf = async (title: string) =>
-  (await screen.findByText(title, {}, { timeout: 3000 })).closest('button') as HTMLElement;
+  (await screen.findByText(title, { selector: 'button *' }, { timeout: 3000 })).closest(
+    'button'
+  ) as HTMLElement;
 
 describe('MemoriesView — a selected memory is visible in both themes', () => {
   it('light theme → click a memory → accent fill with accent ink; hover deepens the fill, never a neutral step', async () => {
@@ -73,7 +75,7 @@ describe('MemoriesView — a selected memory is visible in both themes', () => {
       expect(contrast(hovered.bg, hovered.text)).toBeGreaterThan(4.5);
 
       // The one-line snippet under the title sets its own ink: it must read on the accent too.
-      const snippet = row.querySelector('.line-clamp-1') as HTMLElement;
+      const snippet = row.querySelector('[data-testid="library-row-preview"]') as HTMLElement;
       const snippetPaint = await resolvedPaint(snippet, theme, {
         inherit: { bg: rest.bg ?? undefined, text: rest.text ?? undefined },
       });
@@ -96,7 +98,7 @@ describe('MemoriesView — a selected memory is visible in both themes', () => {
       const hovered = await resolvedPaint(idle, theme, { hover: true, inherit: { bg: page } });
       expect(hovered.bg).toBe(studioToken('--color-lz-surface-2', theme));
       expect(contrast(hovered.bg, hovered.text)).toBeGreaterThan(4.5);
-      const snippet = idle.querySelector('.line-clamp-1') as HTMLElement;
+      const snippet = idle.querySelector('[data-testid="library-row-preview"]') as HTMLElement;
       const snippetPaint = await resolvedPaint(snippet, theme, {
         inherit: { bg: rest.bg ?? undefined },
       });

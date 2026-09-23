@@ -5,6 +5,7 @@ import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { Recipe } from './recipe';
 import type { GooseApp } from './types/apps';
 import type { ProjectEntry } from './utils/projectDirs';
+import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
@@ -430,7 +431,11 @@ type ElectronAPI = {
       scope: 'global' | 'local';
       tags: string[];
       content: string;
+      /** The category FILE's mtime — the store keeps no per-entry time. */
       updatedAt: number;
+      filePath: string;
+      /** Present only when the entry is a saved agent proposal (utils/memoryProvenance.ts). */
+      origin?: MemoryOrigin;
     }>
   >;
   editMemory: (args: {

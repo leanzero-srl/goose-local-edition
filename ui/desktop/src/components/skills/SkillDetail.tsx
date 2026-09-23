@@ -9,7 +9,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { updateSkillSource, deleteSkillSource, readSkillSourceFresh } from '../../acp/sources';
 import { isEditable, isPersonaPath, splitPersona, recomposePersona } from './skillKinds';
 import { buildSkillTree, defaultExpanded, type TreeNode } from './skillTree';
-import { SURFACE, cx } from '../lz';
+import { SURFACE, TYPE, cx } from '../lz';
 
 /** Solid, saturated origin colors — one hue per root, no tints. */
 const ORIGIN_STYLE: Record<string, { label: string; className: string }> = {
@@ -395,10 +395,10 @@ export function SkillDetail({
       <div className="pb-4 border-b border-borderSubtle">
         <div className="flex items-center gap-2 mb-2">
           <OriginBadge origin={origin} />
-          <h2 className="text-xl truncate">{entry.name}</h2>
+          <h2 className={cx(TYPE.h1, 'truncate')}>{entry.name}</h2>
         </div>
-        <p className="text-sm text-text-secondary mb-2">{entry.description}</p>
-        <p className="text-[11px] font-mono text-text-tertiary break-all">{entry.path}</p>
+        <p className={cx(TYPE.bodyMuted, 'mb-2')}>{entry.description}</p>
+        <p className="break-all font-mono text-lz-meta text-lz-ink-3">{entry.path}</p>
         <div className="flex gap-2 mt-3">
           {editable && (
             <Button

@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "Добавить навык"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Попробуйте изменить поисковый запрос"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "Скоро"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "Ошибка загрузки навыков"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "Навыки не установлены"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "Искать навыки по названию или описанию"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "Поиск навыков..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "Просматривайте установленные навыки, расширяющие возможности Goose. {shortcut} для поиска."
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "Навыки"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "Установленные навыки, расширяющие возможности goose: ваши, навыки этого проекта и уроки, которые записал goose."
   },
   "skillsView.tryAgain": {
     "defaultMessage": "Повторить попытку"

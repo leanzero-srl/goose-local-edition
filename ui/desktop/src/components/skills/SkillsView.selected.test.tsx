@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import SkillsView from './SkillsView';
 import { IntlTestWrapper } from '../../i18n/test-utils';
-import { SURFACE } from '../lz';
+import { SURFACE, TYPE } from '../lz';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import { contrast, resolveExpr, resolvedPaint, studioToken } from '../lz/resolvedPaint';
 
@@ -74,7 +74,7 @@ describe('SkillsView — a selected skill is visible in both themes', () => {
       const hovered = await resolvedPaint(row, theme, { hover: true });
       expect(hovered.bg).toBe(studioToken('--color-lz-accent-hover', theme));
       expect(contrast(hovered.bg, hovered.text)).toBeGreaterThan(4.5);
-      const snippet = row.querySelector('.line-clamp-1') as HTMLElement;
+      const snippet = row.querySelector('[data-testid="library-row-preview"]') as HTMLElement;
       const snippetPaint = await resolvedPaint(snippet, theme, {
         inherit: { bg: rest.bg ?? undefined, text: rest.text ?? undefined },
       });
@@ -85,7 +85,8 @@ describe('SkillsView — a selected skill is visible in both themes', () => {
 
   it('idle rows are ink on the page with the neutral hover step, and the list carries no ban', async () => {
     mount();
-    const idle = await rowOf('panel-surgeon');
+    // panel-surgeon (This project) leads the list and is shown on open; campaign (Yours) is idle.
+    const idle = await rowOf('campaign');
     expect(idle.getAttribute('aria-current')).toBeNull();
     for (const theme of ['light', 'dark'] as const) {
       const page = resolveExpr('var(--color-background-primary)', theme);
@@ -111,5 +112,49 @@ describe('SkillsView — a selected skill is visible in both themes', () => {
     fireEvent.contextMenu(row);
     fireEvent.click(within(await screen.findByTestId('skill-context-menu')).getByText('Delete'));
     expect(await screen.findByRole('button', { name: /^Delete$/ })).toBeInTheDocument();
+  });
+
+  it('opens on the first listed skill — the reading pane is never an empty "select a skill"', async () => {
+    mount();
+    const first = await rowOf('panel-surgeon');
+    expect(first.getAttribute('aria-current')).toBe('true');
+    const detail = screen.getByTestId('library-detail');
+    expect(
+      within(detail).getByRole('heading', { level: 2, name: 'panel-surgeon' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Select a skill/)).toBeNull();
+  });
+
+  it('the title is the display step in full ink, and the list shows a two-line preview, not the whole description', async () => {
+    mount();
+    const title = await screen.findByRole('heading', { level: 1, name: 'Skills' });
+    for (const c of TYPE.display.split(' ')) expect(title.className).toContain(c);
+    const row = await rowOf('campaign');
+    const preview = row.querySelector('[data-testid="library-row-preview"]') as HTMLElement;
+    expect(preview.className).toContain('line-clamp-2');
+    assertStudioClean(screen.getByTestId('library-list-column'));
+  });
+
+  it('a visible search field filters by name and description, and ⌘F focuses it', async () => {
+    mount();
+    await rowOf('campaign');
+    const search = screen.getByRole('textbox', { name: 'Search skills by name or description' });
+    fireEvent.change(search, { target: { value: 'benchmark' } });
+    expect(screen.getAllByTestId('skill-row')).toHaveLength(1);
+    expect(screen.getByTestId('skill-row').textContent).toContain('campaign');
+    // the one match is what the pane shows
+    expect(
+      within(screen.getByTestId('library-detail')).getByRole('heading', {
+        level: 2,
+        name: 'campaign',
+      })
+    ).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'nothing-like-this' } });
+    expect(screen.queryAllByTestId('skill-row')).toHaveLength(0);
+    expect(screen.getByText('No matching skills found')).toBeInTheDocument();
+
+    (search as HTMLInputElement).blur();
+    fireEvent.keyDown(window, { key: 'f', metaKey: true });
+    expect(document.activeElement).toBe(search);
   });
 });

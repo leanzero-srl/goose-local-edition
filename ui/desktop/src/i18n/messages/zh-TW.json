@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "新增技能"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "請嘗試調整您的搜尋字詞"
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "即將推出"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "載入技能時發生錯誤"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "未安裝任何技能"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "依名稱或描述搜尋技能"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "搜尋技能..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "檢視可擴充 Goose 功能的已安裝技能。{shortcut} 即可搜尋。"
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "技能"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "擴充 goose 能力的已安裝技能——你的、本專案的，以及 goose 自己寫下的經驗。"
   },
   "skillsView.tryAgain": {
     "defaultMessage": "重試"

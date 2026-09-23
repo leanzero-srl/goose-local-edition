@@ -1,24 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Zap, AlertCircle, Plus } from 'lucide-react';
-import { ScrollArea } from '../ui/scroll-area';
-import { Card } from '../ui/card';
-import { Button } from '../ui/button';
-import { Skeleton } from '../ui/skeleton';
-import { MainPanelLayout } from '../Layout/MainPanelLayout';
+import { BookOpen, Pencil, Sparkles, Trash2, Zap } from 'lucide-react';
 import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import { defineMessages, useIntl } from '../../i18n';
-import { SearchView } from '../conversation/SearchView';
-import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 import { listSkillSources } from '../../acp/sources';
 import type { SourceEntry } from '@aaif/goose-sdk';
 import { SkillDetail } from './SkillDetail';
 import { TreeContextMenu } from '../Layout/tree';
 import { useStartChatAbout } from '../Layout/useStartChatAbout';
-import { BookOpen, Pencil, Sparkles, Trash2 } from 'lucide-react';
 import { isEditable } from './skillKinds';
 import { skillOrigin, type SkillOrigin } from './skillKinds';
-import { FOCUS, MOTION, RADIUS, SURFACE, cx } from '../lz';
+import { Button, EmptyState, TYPE, cx } from '../lz';
+import { LibraryGroup, LibraryRow, LibraryShell, shownSelection } from '../library/Library';
 
 const i18n = defineMessages({
   errorLoadingSkills: {
@@ -50,21 +43,18 @@ const i18n = defineMessages({
     id: 'skillsView.skillsTitle',
     defaultMessage: 'Skills',
   },
-  addSkill: {
-    id: 'skillsView.addSkill',
-    defaultMessage: 'Add Skill',
-  },
-  skillsDescription: {
-    id: 'skillsView.skillsDescription',
-    defaultMessage: 'View installed skills that extend Goose capabilities. {shortcut} to search.',
+  skillsSubtitle: {
+    id: 'skillsView.subtitle',
+    defaultMessage:
+      'Installed skills that extend what goose can do — yours, this project’s, and the lessons goose wrote.',
   },
   searchSkillsPlaceholder: {
     id: 'skillsView.searchSkillsPlaceholder',
     defaultMessage: 'Search skills...',
   },
-  comingSoon: {
-    id: 'skillsView.comingSoon',
-    defaultMessage: 'Coming soon',
+  searchSkillsLabel: {
+    id: 'skillsView.searchSkillsLabel',
+    defaultMessage: 'Search skills by name or description',
   },
 });
 
@@ -76,25 +66,6 @@ const i18n = defineMessages({
  * away. Nothing needed a new backend call to make skills readable; the content was already here.
  */
 type SkillEntry = SourceEntry;
-
-const ORIGIN_DOT: Record<SkillOrigin, string> = {
-  persona: 'bg-[#7c3aed]',
-  builtin: 'bg-[#0f766e]',
-  global: 'bg-[#1d4ed8]',
-  project: 'bg-[#b45309]',
-};
-
-// Same recipe as MemoriesView's row: selected = the accent fill + accent ink with the accent-hover
-// step; idle = ink on the page with the neutral hover step. The old `bg-background-accent` compiled
-// to no rule, so a selected skill was `text-white` over nothing — invisible on the light theme.
-const rowClass = (selected: boolean) =>
-  cx(
-    'mb-1 flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left',
-    RADIUS.control,
-    FOCUS,
-    MOTION,
-    selected ? cx(SURFACE.selected, SURFACE.selectedHover) : cx('text-lz-ink', SURFACE.hover)
-  );
 
 /** What is asked of the model when a skill is opened as a chat about it: where the skill lives,
  *  how a skill is shaped, and that the chat may rewrite or fork it with the developer tools. */
@@ -125,32 +96,18 @@ function SkillItem({
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const editable = isEditable(skill);
   return (
-    <div
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setMenu({ x: e.clientX, y: e.clientY });
-      }}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-current={selected ? 'true' : undefined}
-        data-testid="skill-row"
-        className={rowClass(selected)}
-      >
-        <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-lz-body">{skill.name}</span>
-          <span
-            className={cx(
-              'block line-clamp-1 text-lz-meta',
-              selected ? 'text-lz-accent-ink' : 'text-lz-ink-3'
-            )}
-          >
-            {skill.description}
-          </span>
-        </span>
-      </button>
+    <div>
+      <LibraryRow
+        testId="skill-row"
+        title={skill.name}
+        preview={skill.description.slice(0, 400)}
+        selected={selected}
+        onSelect={onSelect}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      />
       {menu && (
         <TreeContextMenu
           x={menu.x}
@@ -207,26 +164,11 @@ function SkillItem({
   );
 }
 
-function SkillSkeleton() {
-  return (
-    <Card className="p-2 mb-2 bg-background-primary">
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <Skeleton className="h-5 w-3/4 mb-2" />
-          <Skeleton className="h-4 w-full" />
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 export default function SkillsView() {
   const intl = useIntl();
   const [skills, setSkills] = useState<SkillEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showSkeleton, setShowSkeleton] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showContent, setShowContent] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [editRequest, setEditRequest] = useState(0);
@@ -234,13 +176,10 @@ export default function SkillsView() {
   const startChat = useStartChatAbout();
 
   const filteredSkills = useMemo(() => {
-    if (!searchTerm) return skills;
-    const searchLower = searchTerm.toLowerCase();
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return skills;
     return skills.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(searchLower) ||
-        skill.description.toLowerCase().includes(searchLower) ||
-        skill.content.toLowerCase().includes(searchLower)
+      (skill) => skill.name.toLowerCase().includes(q) || skill.description.toLowerCase().includes(q)
     );
   }, [skills, searchTerm]);
 
@@ -264,22 +203,17 @@ export default function SkillsView() {
       .filter((g) => g.items.length > 0);
   }, [filteredSkills]);
 
-  const selected = useMemo(
-    () => skills.find((s) => s.path === selectedPath) ?? null,
-    [skills, selectedPath]
-  );
+  const visible = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const selected = shownSelection(visible, selectedPath, (s) => s.path);
 
   const loadSkills = useCallback(async () => {
     try {
-      setLoading(true);
-      setShowSkeleton(true);
-      setShowContent(false);
       setError(null);
       setSkills(await listSkillSources(getInitialWorkingDir()));
     } catch (err) {
       setError(errorMessage(err, 'Failed to load skills'));
     } finally {
-      setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
@@ -296,164 +230,101 @@ export default function SkillsView() {
     return () => window.removeEventListener('focus', onFocus);
   }, [loadSkills]);
 
-  useEffect(() => {
-    if (!loading && showSkeleton) {
-      const timer = setTimeout(() => {
-        setShowSkeleton(false);
-        setTimeout(() => setShowContent(true), 50);
-      }, 300);
-      return () => clearTimeout(timer);
+  const renderList = () => {
+    if (!loaded) {
+      return <p className={cx(TYPE.meta, 'px-2 py-2')}>Reading skills…</p>;
     }
-    return undefined;
-  }, [loading, showSkeleton]);
-
-  const renderContent = () => {
-    if (loading || showSkeleton) {
-      return (
-        <div className="space-y-2">
-          <SkillSkeleton />
-          <SkillSkeleton />
-          <SkillSkeleton />
-        </div>
-      );
-    }
-
     if (error) {
       return (
-        <div className="flex flex-col items-center justify-center h-full text-text-secondary">
-          <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
-          <p className="text-lg mb-2">{intl.formatMessage(i18n.errorLoadingSkills)}</p>
-          <p className="text-sm text-center mb-4">{error}</p>
-          <Button onClick={loadSkills} variant="default">
+        <div className="flex flex-col items-start gap-2 px-2 py-2">
+          <p role="alert" className="text-lz-body text-lz-err">
+            {intl.formatMessage(i18n.errorLoadingSkills)}: {error}
+          </p>
+          <Button size="sm" variant="secondary" onClick={loadSkills}>
             {intl.formatMessage(i18n.tryAgain)}
           </Button>
         </div>
       );
     }
-
     if (skills.length === 0) {
       return (
-        <div className="flex flex-col justify-center pt-2 h-full">
-          <p className="text-lg">{intl.formatMessage(i18n.noSkillsInstalled)}</p>
-          <p className="text-sm text-text-secondary">
-            {intl.formatMessage(i18n.noSkillsDescription)}
-          </p>
-        </div>
+        <p className={cx(TYPE.bodyMuted, 'px-2 py-2')}>
+          {intl.formatMessage(i18n.noSkillsDescription)}
+        </p>
       );
     }
-
-    if (filteredSkills.length === 0 && searchTerm) {
+    if (visible.length === 0) {
       return (
-        <div className="flex flex-col items-center justify-center h-full text-text-secondary mt-4">
-          <Zap className="h-12 w-12 mb-4" />
-          <p className="text-lg mb-2">{intl.formatMessage(i18n.noMatchingSkills)}</p>
-          <p className="text-sm">{intl.formatMessage(i18n.adjustSearchTerms)}</p>
+        <div className="px-2 py-2">
+          <p className={TYPE.body}>{intl.formatMessage(i18n.noMatchingSkills)}</p>
+          <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.adjustSearchTerms)}</p>
         </div>
       );
     }
-
-    return (
-      <div className="space-y-4">
-        {groups.map((group) => (
-          <div key={group.origin}>
-            <h2 className="text-[10px] font-bold tracking-wider text-text-tertiary mb-1 px-1">
-              {group.title.toUpperCase()} · {group.items.length}
-            </h2>
-            {group.items.map((skill) => (
-              <SkillItem
-                key={skill.path}
-                skill={skill}
-                selected={skill.path === selectedPath}
-                onSelect={() => setSelectedPath(skill.path)}
-                onEdit={() => {
-                  setSelectedPath(skill.path);
-                  setEditRequest((n) => n + 1);
-                }}
-                onDelete={() => {
-                  setSelectedPath(skill.path);
-                  setDeleteRequest((n) => n + 1);
-                }}
-                onAsk={() => void startChat(askAboutSkillPrompt(skill))}
-              />
-            ))}
-          </div>
+    return groups.map((group) => (
+      <LibraryGroup key={group.origin} title={group.title} count={group.items.length}>
+        {group.items.map((skill) => (
+          <SkillItem
+            key={skill.path}
+            skill={skill}
+            selected={skill.path === selected?.path}
+            onSelect={() => setSelectedPath(skill.path)}
+            onEdit={() => {
+              setSelectedPath(skill.path);
+              setEditRequest((n) => n + 1);
+            }}
+            onDelete={() => {
+              setSelectedPath(skill.path);
+              setDeleteRequest((n) => n + 1);
+            }}
+            onAsk={() => void startChat(askAboutSkillPrompt(skill))}
+          />
         ))}
-      </div>
-    );
+      </LibraryGroup>
+    ));
   };
 
   return (
-    <MainPanelLayout>
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="bg-background-primary px-8 pb-8 pt-16">
-          <div className="flex flex-col page-transition">
-            <div className="flex justify-between items-center mb-1">
-              <h1 className="text-4xl font-light">{intl.formatMessage(i18n.skillsTitle)}</h1>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-                hidden
-                title={intl.formatMessage(i18n.comingSoon)}
-              >
-                <Plus className="w-4 h-4" />
-                {intl.formatMessage(i18n.addSkill)}
-              </Button>
-            </div>
-            <p className="text-sm text-text-secondary mb-1">
-              {intl.formatMessage(i18n.skillsDescription, {
-                shortcut: getSearchShortcutText(),
-              })}
-            </p>
+    <LibraryShell
+      testId="skills-view"
+      title={intl.formatMessage(i18n.skillsTitle)}
+      subtitle={intl.formatMessage(i18n.skillsSubtitle)}
+      search={{
+        value: searchTerm,
+        onChange: setSearchTerm,
+        placeholder: intl.formatMessage(i18n.searchSkillsPlaceholder),
+        label: intl.formatMessage(i18n.searchSkillsLabel),
+      }}
+      list={renderList()}
+      detail={
+        selected ? (
+          <div className="h-full min-h-0 px-lz-page pt-4">
+            <SkillDetail
+              entry={selected}
+              origin={skillOrigin(selected)}
+              projectDir={getInitialWorkingDir()}
+              requestEdit={editRequest}
+              requestDelete={deleteRequest}
+              onSaved={(updated) =>
+                setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
+              }
+              onDeleted={() => {
+                setSelectedPath(null);
+                // Re-list rather than splice: `scan_skills_from_dir` keeps a `seen` set and DROPS a
+                // same-named skill in a lower-priority root, so deleting a visible one can UNSHADOW a
+                // different skill that was never in this list. Only the backend knows what is there now.
+                loadSkills();
+              }}
+            />
           </div>
-        </div>
-
-        <div className="flex-1 min-h-0 relative px-8 flex gap-6">
-          <div className="w-[300px] shrink-0 min-h-0">
-            <ScrollArea className="h-full">
-              <SearchView
-                onSearch={(term) => setSearchTerm(term)}
-                placeholder={intl.formatMessage(i18n.searchSkillsPlaceholder)}
-              >
-                <div
-                  className={`h-full relative transition-all duration-300 ${
-                    showContent || showSkeleton ? 'opacity-100 animate-in fade-in' : 'opacity-0'
-                  }`}
-                >
-                  {renderContent()}
-                </div>
-              </SearchView>
-            </ScrollArea>
-          </div>
-
-          <div className="flex-1 min-w-0 min-h-0 border-l border-borderSubtle pl-6">
-            {selected ? (
-              <SkillDetail
-                entry={selected}
-                origin={skillOrigin(selected)}
-                projectDir={getInitialWorkingDir()}
-                requestEdit={editRequest}
-                requestDelete={deleteRequest}
-                onSaved={(updated) =>
-                  setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
-                }
-                onDeleted={() => {
-                  setSelectedPath(null);
-                  // Re-list rather than splice: `scan_skills_from_dir` keeps a `seen` set and DROPS a
-                  // same-named skill in a lower-priority root, so deleting a visible one can UNSHADOW a
-                  // different skill that was never in this list. Only the backend knows what is there now.
-                  loadSkills();
-                }}
-              />
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
-                <Zap className="h-10 w-10 mb-3" />
-                <p className="text-sm">Select a skill to read it</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </MainPanelLayout>
+        ) : loaded && !error && skills.length === 0 ? (
+          <EmptyState
+            icon={<Zap />}
+            title={intl.formatMessage(i18n.noSkillsInstalled)}
+            body={intl.formatMessage(i18n.noSkillsDescription)}
+          />
+        ) : null
+      }
+    />
   );
 }

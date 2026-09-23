@@ -4787,14 +4787,8 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
-  "skillsView.addSkill": {
-    "defaultMessage": "스킬 추가"
-  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "검색어를 조정해 보세요."
-  },
-  "skillsView.comingSoon": {
-    "defaultMessage": "곧 출시 예정"
   },
   "skillsView.errorLoadingSkills": {
     "defaultMessage": "스킬 로딩 오류"
@@ -4808,14 +4802,17 @@
   "skillsView.noSkillsInstalled": {
     "defaultMessage": "설치된 스킬 없음"
   },
+  "skillsView.searchSkillsLabel": {
+    "defaultMessage": "이름이나 설명으로 스킬 검색"
+  },
   "skillsView.searchSkillsPlaceholder": {
     "defaultMessage": "스킬 검색..."
   },
-  "skillsView.skillsDescription": {
-    "defaultMessage": "Goose 기능을 확장하는 설치된 스킬을 확인하세요. {shortcut}로 검색할 수 있습니다."
-  },
   "skillsView.skillsTitle": {
     "defaultMessage": "스킬"
+  },
+  "skillsView.subtitle": {
+    "defaultMessage": "goose의 기능을 넓혀 주는 설치된 스킬 — 내 스킬, 이 프로젝트의 스킬, goose가 작성한 교훈."
   },
   "skillsView.tryAgain": {
     "defaultMessage": "다시 시도"
