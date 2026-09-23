@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Пределы движка"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} из {limit, number} байт — превышение на {over, number}"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} из {limit, number} байт — в пределах лимита"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Глубина вложенности {total, number} из {limit, number} — слишком глубоко"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Скрыть все расширения ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Не удалось прочитать инструменты этой сессии, поэтому их размеры неизвестны: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "В этой сессии нет расширений, которые можно отключить."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, one {# расширение не добавляет инструментов} few {# расширения не добавляют инструментов} many {# расширений не добавляют инструментов} other {# расширения не добавляют инструментов}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Открыть MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, one {Отключить # и повторить} few {Отключить эти # и повторить} many {Отключить эти # и повторить} other {Отключить эти # и повторить}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, one {Отключение # расширения возвращает сессию в пределы движка.} few {Отключение этих # расширений возвращает сессию в пределы движка.} many {Отключение этих # расширений возвращает сессию в пределы движка.} other {Отключение этих # расширений возвращает сессию в пределы движка.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, one {Отключение # расширения доводит сессию до {after, number} из {limit, number} байт.} few {Отключение этих # расширений доводит сессию до {after, number} из {limit, number} байт.} many {Отключение этих # расширений доводит сессию до {after, number} из {limit, number} байт.} other {Отключение этих # расширений доводит сессию до {after, number} из {limit, number} байт.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, one {Отключить #} few {Отключить эти #} many {Отключить эти #} other {Отключить эти #}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Повторить"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "глубина {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Эта сессия отправляет"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Показать все расширения ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Размеры измеряет приложение по списку инструментов этой сессии в единицах самого движка: имя и параметры каждого инструмента в виде компактного JSON. Описания не компилируются и не учитываются."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Слишком много инструментов для этого движка"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} байт"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "глубина {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, one {# инструмент} few {# инструмента} many {# инструментов} other {# инструмента}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} из {limit, number} инструментов — превышение на {over, number}"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Отключить для этой сессии"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Собственные инструменты goose (нет расширения, которое можно отключить)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Даже если отключить все расширения, сессия не уложится в пределы — собственные инструменты goose уже их превышают."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Инструменты сессии теперь в пределах движка — повторите, чтобы отправить сообщение снова."

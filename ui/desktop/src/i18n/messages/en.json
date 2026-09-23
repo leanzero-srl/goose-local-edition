@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Engine bounds"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} of {limit, number} bytes — {over, number} over"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} of {limit, number} bytes — within the limit"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Nesting depth {total, number} of {limit, number} — too deep"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Hide all extensions ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Could not read this session’s tools, so their sizes are unknown: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "This session has no extensions to turn off."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n,plural,one{# extension adds no tools} other{# extensions add no tools}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Open MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n,plural,one{Turn off this one and retry} other{Turn off these # and retry}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n,plural,one{Turning off this extension brings the session within the engine’s bounds.} other{Turning off these # extensions brings the session within the engine’s bounds.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n,plural,one{Turning off this extension brings the session to {after, number} of {limit, number} bytes.} other{Turning off these # extensions brings the session to {after, number} of {limit, number} bytes.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n,plural,one{Turn off this one} other{Turn off these #}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Retry"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "depth {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "This session sends"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Show all extensions ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Sizes are measured by the app from this session’s tool list in the engine’s own units: each tool’s name and parameters as compact JSON. Descriptions are not compiled and not counted."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Too many tools for this engine"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} bytes"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "depth {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n,plural,one{# tool} other{# tools}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} of {limit, number} tools — {over, number} over"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Turn off for this session"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "goose’s own tools (no extension to turn off)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Turning off every extension would not bring this session within the bounds — goose’s own tools alone exceed them."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "The session’s tools are now within the engine’s bounds — retry to send your message again."

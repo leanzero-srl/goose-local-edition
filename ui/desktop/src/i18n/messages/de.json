@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Grenzen der Engine"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} von {limit, number} Bytes — {over, number} zu viel"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} von {limit, number} Bytes — innerhalb des Limits"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Verschachtelungstiefe {total, number} von {limit, number} — zu tief"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Alle Erweiterungen ausblenden ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Die Tools dieser Sitzung konnten nicht gelesen werden, ihre Größen sind daher unbekannt: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Diese Sitzung hat keine Erweiterungen, die sich ausschalten lassen."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, one {# Erweiterung liefert keine Tools} other {# Erweiterungen liefern keine Tools}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "MCPs öffnen"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, one {Diese ausschalten und erneut versuchen} other {Diese # ausschalten und erneut versuchen}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, one {Das Ausschalten dieser Erweiterung bringt die Sitzung in die Grenzen der Engine.} other {Das Ausschalten dieser # Erweiterungen bringt die Sitzung in die Grenzen der Engine.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, one {Das Ausschalten dieser Erweiterung bringt die Sitzung auf {after, number} von {limit, number} Bytes.} other {Das Ausschalten dieser # Erweiterungen bringt die Sitzung auf {after, number} von {limit, number} Bytes.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, one {Diese ausschalten} other {Diese # ausschalten}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Erneut versuchen"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "Tiefe {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Diese Sitzung sendet"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Alle Erweiterungen anzeigen ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Die Größen misst die App aus der Tool-Liste dieser Sitzung in den Einheiten der Engine: Name und Parameter jedes Tools als kompaktes JSON. Beschreibungen werden nicht kompiliert und nicht gezählt."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Zu viele Tools für diese Engine"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} Bytes"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "Tiefe {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, one {# Tool} other {# Tools}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} von {limit, number} Tools — {over, number} zu viel"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Für diese Sitzung ausschalten"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Eigene Tools von goose (keine Erweiterung zum Ausschalten)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Selbst mit allen Erweiterungen aus bliebe diese Sitzung über den Grenzen — schon gooses eigene Tools überschreiten sie."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Die Tools der Sitzung liegen jetzt innerhalb der Grenzen der Engine — versuche es erneut, um deine Nachricht noch einmal zu senden."

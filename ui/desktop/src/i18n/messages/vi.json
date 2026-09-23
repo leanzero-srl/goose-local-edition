@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Giới hạn của engine"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} trên {limit, number} byte — vượt {over, number}"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} trên {limit, number} byte — trong giới hạn"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Độ sâu lồng nhau {total, number} trên {limit, number} — quá sâu"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Ẩn tất cả tiện ích mở rộng ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Không đọc được các công cụ của phiên này nên chưa biết kích thước của chúng: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Phiên này không có tiện ích mở rộng nào để tắt."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# tiện ích mở rộng không thêm công cụ nào}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Mở MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {Tắt # tiện ích này và thử lại}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {Tắt # tiện ích mở rộng này đưa phiên về trong giới hạn của engine.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {Tắt # tiện ích mở rộng này đưa phiên về {after, number} trên {limit, number} byte.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {Tắt # tiện ích này}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Thử lại"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "độ sâu {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Phiên này gửi"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Hiện tất cả tiện ích mở rộng ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Ứng dụng đo kích thước từ danh sách công cụ của phiên này theo đơn vị của chính engine: tên và tham số của mỗi công cụ dưới dạng JSON gọn. Phần mô tả không được biên dịch và không được tính."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Quá nhiều công cụ cho engine này"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} byte"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "độ sâu {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# công cụ}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} trên {limit, number} công cụ — vượt {over, number}"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Tắt cho phiên này"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Công cụ riêng của goose (không có tiện ích mở rộng để tắt)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Kể cả khi tắt mọi tiện ích mở rộng, phiên này vẫn vượt giới hạn — riêng các công cụ của goose đã vượt rồi."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Các công cụ của phiên giờ đã nằm trong giới hạn của engine — hãy thử lại để gửi lại tin nhắn."

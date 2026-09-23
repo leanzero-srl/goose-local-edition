@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Had enjin"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} daripada {limit, number} bait — lebihan {over, number}"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} daripada {limit, number} bait — dalam had"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Kedalaman bersarang {total, number} daripada {limit, number} — terlalu dalam"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Sembunyikan semua sambungan ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Alat sesi ini tidak dapat dibaca, jadi saiznya tidak diketahui: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Sesi ini tiada sambungan untuk dimatikan."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# sambungan tidak menambah alat}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Buka MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {Matikan # ini dan cuba semula}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {Mematikan # sambungan ini membawa sesi ke dalam had enjin.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {Mematikan # sambungan ini membawa sesi kepada {after, number} daripada {limit, number} bait.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {Matikan # ini}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Cuba lagi"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "kedalaman {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Sesi ini menghantar"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Tunjukkan semua sambungan ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Saiz diukur oleh apl daripada senarai alat sesi ini dalam unit enjin itu sendiri: nama dan parameter setiap alat sebagai JSON padat. Penerangan tidak dikompil dan tidak dikira."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Terlalu banyak alat untuk enjin ini"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} bait"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "kedalaman {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# alat}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} daripada {limit, number} alat — lebihan {over, number}"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Matikan untuk sesi ini"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Alat goose sendiri (tiada sambungan untuk dimatikan)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Walaupun semua sambungan dimatikan, sesi ini tidak akan masuk had — alat goose sendiri sudah melebihinya."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Alat sesi kini berada dalam had enjin — cuba lagi untuk menghantar semula mesej anda."

@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Limites du moteur"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} sur {limit, number} octets — {over, number} de trop"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} sur {limit, number} octets — dans la limite"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Profondeur d’imbrication {total, number} sur {limit, number} — trop profonde"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Masquer toutes les extensions ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Impossible de lire les outils de cette session, leurs tailles sont donc inconnues : {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Cette session n’a aucune extension à désactiver."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, one {# extension n’apporte aucun outil} other {# extensions n’apportent aucun outil}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Ouvrir les MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, one {Désactiver celle-ci et réessayer} other {Désactiver ces # et réessayer}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, one {Désactiver cette extension ramène la session dans les limites du moteur.} other {Désactiver ces # extensions ramène la session dans les limites du moteur.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, one {Désactiver cette extension ramène la session à {after, number} sur {limit, number} octets.} other {Désactiver ces # extensions ramène la session à {after, number} sur {limit, number} octets.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, one {Désactiver celle-ci} other {Désactiver ces #}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Réessayer"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "profondeur {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Cette session envoie"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Afficher toutes les extensions ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Les tailles sont mesurées par l’app à partir de la liste d’outils de cette session, dans les unités du moteur : le nom et les paramètres de chaque outil en JSON compact. Les descriptions ne sont ni compilées ni comptées."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Trop d’outils pour ce moteur"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} octets"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "profondeur {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, one {# outil} other {# outils}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} sur {limit, number} outils — {over, number} de trop"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Désactiver pour cette session"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Outils propres à goose (aucune extension à désactiver)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Même en désactivant toutes les extensions, cette session resterait hors limites — les outils propres à goose les dépassent déjà."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Les outils de la session respectent maintenant les limites du moteur — réessayez pour renvoyer votre message."

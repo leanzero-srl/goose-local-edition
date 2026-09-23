@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Motor sınırları"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} / {limit, number} bayt — {over, number} fazla"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} / {limit, number} bayt — sınırın içinde"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "İç içe derinlik {total, number} / {limit, number} — çok derin"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Tüm uzantıları gizle ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Bu oturumun araçları okunamadı, bu yüzden boyutları bilinmiyor: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Bu oturumda kapatılacak uzantı yok."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# uzantı hiç araç eklemiyor}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "MCPs’i aç"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {Bu # uzantıyı kapat ve yeniden dene}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {Bu # uzantıyı kapatmak oturumu motorun sınırlarına getirir.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {Bu # uzantıyı kapatmak oturumu {after, number} / {limit, number} bayta indirir.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {Bu # uzantıyı kapat}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Yeniden dene"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "derinlik {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Bu oturumun gönderdiği"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Tüm uzantıları göster ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Boyutlar, uygulama tarafından bu oturumun araç listesinden motorun kendi birimleriyle ölçülür: her aracın adı ve parametreleri sıkıştırılmış JSON olarak. Açıklamalar derlenmez ve sayılmaz."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Bu motor için çok fazla araç"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} bayt"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "derinlik {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# araç}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} / {limit, number} araç — {over, number} fazla"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Bu oturum için kapat"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "goose’un kendi araçları (kapatılacak uzantı yok)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Tüm uzantılar kapatılsa bile bu oturum sınırlara sığmaz — goose’un kendi araçları bile onları aşıyor."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Oturumun araçları artık motorun sınırları içinde — mesajınızı yeniden göndermek için yeniden deneyin."

@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "引擎上限"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} / {limit, number} 字节 — 超出 {over, number}"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} / {limit, number} 字节 — 在上限内"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "嵌套深度 {total, number} / {limit, number} — 过深"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "隐藏所有扩展（{n, number}）"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "无法读取此会话的工具，因此其大小未知：{error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "此会话没有可关闭的扩展。"
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# 个扩展未添加任何工具}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "打开 MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {关闭这 # 个并重试}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {关闭这 # 个扩展后，会话将处于引擎的上限内。}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {关闭这 # 个扩展后，会话为 {after, number} / {limit, number} 字节。}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {关闭这 # 个}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "重试"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "深度 {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "此会话发送"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "显示所有扩展（{n, number}）"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "大小由应用根据此会话的工具列表、按引擎自身的单位测量：每个工具的名称和参数以紧凑 JSON 计。描述不会被编译，也不计入。"
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "工具太多，此引擎无法处理"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} 字节"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "深度 {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# 个工具}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} / {limit, number} 个工具 — 超出 {over, number}"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "在此会话中关闭"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "goose 自带工具（没有可关闭的扩展）"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "即使关闭所有扩展，此会话仍超出上限——仅 goose 自身的工具就已超出。"
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "此会话的工具现已在引擎上限之内——重试即可再次发送你的消息。"

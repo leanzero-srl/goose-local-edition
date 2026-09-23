@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "エンジンの上限"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} / {limit, number} バイト — {over, number} 超過"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} / {limit, number} バイト — 上限内"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "ネストの深さ {total, number} / {limit, number} — 深すぎます"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "すべての拡張機能を隠す ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "このセッションのツールを読み取れなかったため、サイズは不明です: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "このセッションにはオフにできる拡張機能がありません。"
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# 個の拡張機能はツールを追加しません}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "MCPs を開く"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {この # 個をオフにして再試行}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {この # 個の拡張機能をオフにすると、セッションはエンジンの上限内に収まります。}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {この # 個の拡張機能をオフにすると、セッションは {after, number} / {limit, number} バイトになります。}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {この # 個をオフにする}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "再試行"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "深さ {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "このセッションが送信"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "すべての拡張機能を表示 ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "サイズは、このセッションのツール一覧からエンジン自身の単位でアプリが計測しています: 各ツールの名前とパラメーターをコンパクトな JSON にしたもの。説明はコンパイルされず、数えられません。"
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "このエンジンにはツールが多すぎます"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} バイト"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "深さ {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# ツール}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} / {limit, number} ツール — {over, number} 超過"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "このセッションでオフにする"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "goose 自身のツール (オフにできる拡張機能なし)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "すべての拡張機能をオフにしても、このセッションは上限内に収まりません — goose 自身のツールだけで上限を超えています。"
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "セッションのツールがエンジンの上限内に収まりました — 再試行してメッセージをもう一度送信してください。"

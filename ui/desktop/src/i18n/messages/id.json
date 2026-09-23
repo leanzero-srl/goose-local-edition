@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "Batas mesin"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{total, number} dari {limit, number} byte — kelebihan {over, number}"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{total, number} dari {limit, number} byte — dalam batas"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "Kedalaman bersarang {total, number} dari {limit, number} — terlalu dalam"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "Sembunyikan semua ekstensi ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "Alat sesi ini tidak dapat dibaca, jadi ukurannya tidak diketahui: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "Sesi ini tidak memiliki ekstensi untuk dimatikan."
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, other {# ekstensi tidak menambahkan alat}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "Buka MCPs"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, other {Matikan # ini dan coba lagi}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, other {Mematikan # ekstensi ini membawa sesi ke dalam batas mesin.}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, other {Mematikan # ekstensi ini membawa sesi ke {after, number} dari {limit, number} byte.}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, other {Matikan # ini}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "Coba lagi"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "kedalaman {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "Sesi ini mengirim"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "Tampilkan semua ekstensi ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "Ukuran diukur oleh aplikasi dari daftar alat sesi ini dalam satuan mesin itu sendiri: nama dan parameter setiap alat sebagai JSON ringkas. Deskripsi tidak dikompilasi dan tidak dihitung."
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "Terlalu banyak alat untuk mesin ini"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} byte"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "kedalaman {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, other {# alat}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{total, number} dari {limit, number} alat — kelebihan {over, number}"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "Matikan untuk sesi ini"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "Alat bawaan goose (tidak ada ekstensi untuk dimatikan)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "Bahkan dengan semua ekstensi dimatikan, sesi ini tidak akan masuk batas — alat bawaan goose saja sudah melampauinya."
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "Alat sesi kini berada dalam batas mesin — coba lagi untuk mengirim pesan Anda kembali."

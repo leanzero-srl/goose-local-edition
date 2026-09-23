@@ -126,3 +126,85 @@ export function withinBounds(bounds: ToolBounds, total: ToolGroupSize): boolean 
   if (bounds.maxDepth != null) checks.push(total.depth <= bounds.maxDepth);
   return checks.length === 0 ? null : checks.every(Boolean);
 }
+
+export interface NamedToolGroup extends ToolGroupSize {
+  name: string;
+}
+
+/**
+ * What turning extensions off would do for a refused session, measured against the bounds the
+ * engine stated:
+ * - `within`: the session already fits every stated bound;
+ * - `unstated`: the engine stated no number, so there is nothing to compare against;
+ * - `fix`: the SMALLEST set of extensions whose removal brings the session within every stated
+ *   bound, largest first, and the session's size after removing them;
+ * - `unreachable`: even with every extension off, goose's own tools alone exceed a bound.
+ */
+export type TurnOffPlan<T extends NamedToolGroup = NamedToolGroup> =
+  | { kind: 'within' }
+  | { kind: 'unstated' }
+  | { kind: 'fix'; remove: T[]; after: ToolGroupSize }
+  | { kind: 'unreachable' };
+
+function sizeWithout(
+  total: ToolGroupSize,
+  removed: ReadonlyArray<ToolGroupSize>,
+  kept: ReadonlyArray<ToolGroupSize>,
+  unowned: ToolGroupSize
+): ToolGroupSize {
+  let tools = total.tools;
+  let bytes = total.bytes;
+  for (const r of removed) {
+    tools -= r.tools;
+    bytes -= r.bytes;
+  }
+  const depth = Math.max(unowned.depth, ...kept.filter((k) => k.tools > 0).map((k) => k.depth));
+  return { tools, bytes, depth };
+}
+
+/**
+ * The minimal set of extensions to turn off. A container deeper than the depth bound can only go
+ * by removing its extension, so those are taken first; the rest are taken largest-first in the
+ * dimension that is over (bytes when the byte bound is exceeded, else tool count) — taking the k
+ * largest removes the most any k can, so the first prefix that fits is the smallest set.
+ * `total` is the session's measured list (the extensions' groups need not sum to it exactly).
+ */
+export function planTurnOff<T extends NamedToolGroup>(
+  bounds: ToolBounds,
+  total: ToolGroupSize,
+  extensions: ReadonlyArray<T>,
+  unowned: ToolGroupSize
+): TurnOffPlan<T> {
+  const fits = withinBounds(bounds, total);
+  if (fits === null) return { kind: 'unstated' };
+  if (fits) return { kind: 'within' };
+
+  const candidates = extensions.filter((e) => e.tools > 0);
+  const tooDeep = (e: ToolGroupSize) => bounds.maxDepth != null && e.depth > bounds.maxDepth;
+  const forced = candidates.filter(tooDeep);
+  const bytesOver =
+    bounds.maxBytes != null && listEnvelopeBytes(total.tools, total.bytes) > bounds.maxBytes;
+  const rest = candidates
+    .filter((e) => !tooDeep(e))
+    .sort(
+      bytesOver ? (a, b) => b.bytes - a.bytes || b.tools - a.tools : (a, b) => b.tools - a.tools
+    );
+
+  const remove = [...forced];
+  const planFor = (): ToolGroupSize =>
+    sizeWithout(
+      total,
+      remove,
+      candidates.filter((c) => !remove.includes(c)),
+      unowned
+    );
+  let after = planFor();
+  for (const next of rest) {
+    if (withinBounds(bounds, after)) break;
+    remove.push(next);
+    after = planFor();
+  }
+  if (!withinBounds(bounds, after)) return { kind: 'unreachable' };
+  const byBytes = [...remove].sort((a, b) => b.bytes - a.bytes || b.tools - a.tools);
+  return { kind: 'fix', remove: byBytes, after };
+}

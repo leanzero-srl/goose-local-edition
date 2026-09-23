@@ -33,9 +33,10 @@ export function useSessionToolSizes(sessionId: string, armed: boolean) {
   const [sizes, setSizes] = useState<SessionToolSizes>({ state: 'idle' });
   const generation = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<SessionToolSizes | null> => {
     const mine = ++generation.current;
-    setSizes({ state: 'loading' });
+    // A re-measure (after a turn-off) keeps the last numbers on screen until the new ones land.
+    setSizes((prev) => (prev.state === 'ready' ? prev : { state: 'loading' }));
     try {
       const extensions = await getSessionExtensions(sessionId);
       const [all, ...perExtension] = await Promise.all([
@@ -46,16 +47,20 @@ export function useSessionToolSizes(sessionId: string, armed: boolean) {
       const rows = extensions
         .map((extension, i) => ({ name: extension.name, ...measureTools(perExtension[i]) }))
         .sort((a, b) => b.bytes - a.bytes || b.tools - a.tools);
-      if (mine !== generation.current) return;
-      setSizes({
+      if (mine !== generation.current) return null;
+      const next: SessionToolSizes = {
         state: 'ready',
         extensions: rows,
         unowned: measureTools(all.filter((tool) => !owned.has(tool.name))),
         total: measureTools(all),
-      });
+      };
+      setSizes(next);
+      return next;
     } catch (error) {
-      if (mine !== generation.current) return;
-      setSizes({ state: 'failed', error: errorMessage(error) });
+      if (mine !== generation.current) return null;
+      const next: SessionToolSizes = { state: 'failed', error: errorMessage(error) };
+      setSizes(next);
+      return next;
     }
   }, [sessionId]);
 

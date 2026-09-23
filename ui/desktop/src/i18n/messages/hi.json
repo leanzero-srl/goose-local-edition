@@ -5429,6 +5429,18 @@
   "toolBoundsNotice.boundsLabel": {
     "defaultMessage": "इंजन की सीमाएँ"
   },
+  "toolBoundsNotice.bytesOver": {
+    "defaultMessage": "{limit, number} में से {total, number} बाइट — {over, number} अधिक"
+  },
+  "toolBoundsNotice.bytesWithin": {
+    "defaultMessage": "{limit, number} में से {total, number} बाइट — सीमा के भीतर"
+  },
+  "toolBoundsNotice.depthOver": {
+    "defaultMessage": "नेस्टिंग गहराई {limit, number} में से {total, number} — बहुत गहरी"
+  },
+  "toolBoundsNotice.hideAll": {
+    "defaultMessage": "सभी एक्सटेंशन छिपाएँ ({n, number})"
+  },
   "toolBoundsNotice.measureFailed": {
     "defaultMessage": "इस सत्र के टूल पढ़े नहीं जा सके, इसलिए उनके आकार अज्ञात हैं: {error}"
   },
@@ -5441,8 +5453,23 @@
   "toolBoundsNotice.noExtensions": {
     "defaultMessage": "इस सत्र में बंद करने के लिए कोई एक्सटेंशन नहीं है।"
   },
+  "toolBoundsNotice.noTools": {
+    "defaultMessage": "{n, plural, one {# एक्सटेंशन कोई टूल नहीं जोड़ता} other {# एक्सटेंशन कोई टूल नहीं जोड़ते}}"
+  },
   "toolBoundsNotice.openMcps": {
     "defaultMessage": "MCPs खोलें"
+  },
+  "toolBoundsNotice.planAndRetry": {
+    "defaultMessage": "{n, plural, one {इसे बंद करें और फिर से कोशिश करें} other {इन # को बंद करें और फिर से कोशिश करें}}"
+  },
+  "toolBoundsNotice.planLead": {
+    "defaultMessage": "{n, plural, one {इस एक्सटेंशन को बंद करने से सत्र इंजन की सीमाओं के भीतर आ जाता है।} other {इन # एक्सटेंशन को बंद करने से सत्र इंजन की सीमाओं के भीतर आ जाता है।}}"
+  },
+  "toolBoundsNotice.planLeadBytes": {
+    "defaultMessage": "{n, plural, one {इस एक्सटेंशन को बंद करने से सत्र {limit, number} में से {after, number} बाइट पर आ जाता है।} other {इन # एक्सटेंशन को बंद करने से सत्र {limit, number} में से {after, number} बाइट पर आ जाता है।}}"
+  },
+  "toolBoundsNotice.planOnly": {
+    "defaultMessage": "{n, plural, one {इसे बंद करें} other {इन # को बंद करें}}"
   },
   "toolBoundsNotice.retry": {
     "defaultMessage": "फिर से कोशिश करें"
@@ -5453,8 +5480,8 @@
   "toolBoundsNotice.rowTooDeep": {
     "defaultMessage": "गहराई {n, number}"
   },
-  "toolBoundsNotice.sessionSends": {
-    "defaultMessage": "यह सत्र भेजता है"
+  "toolBoundsNotice.showAll": {
+    "defaultMessage": "सभी एक्सटेंशन दिखाएँ ({n, number})"
   },
   "toolBoundsNotice.sizesNote": {
     "defaultMessage": "आकार ऐप इस सत्र की टूल सूची से इंजन की अपनी इकाइयों में मापता है: हर टूल का नाम और पैरामीटर कॉम्पैक्ट JSON के रूप में। विवरण कंपाइल नहीं होते और गिने नहीं जाते।"
@@ -5465,14 +5492,8 @@
   "toolBoundsNotice.title": {
     "defaultMessage": "इस इंजन के लिए बहुत अधिक टूल"
   },
-  "toolBoundsNotice.totalBytes": {
-    "defaultMessage": "{n, number} बाइट"
-  },
-  "toolBoundsNotice.totalDepth": {
-    "defaultMessage": "गहराई {n, number}"
-  },
-  "toolBoundsNotice.totalTools": {
-    "defaultMessage": "{n, plural, one {# टूल} other {# टूल}}"
+  "toolBoundsNotice.toolsOver": {
+    "defaultMessage": "{limit, number} में से {total, number} टूल — {over, number} अधिक"
   },
   "toolBoundsNotice.turnOff": {
     "defaultMessage": "इस सत्र के लिए बंद करें"
@@ -5485,6 +5506,9 @@
   },
   "toolBoundsNotice.unowned": {
     "defaultMessage": "goose के अपने टूल (बंद करने के लिए कोई एक्सटेंशन नहीं)"
+  },
+  "toolBoundsNotice.unreachable": {
+    "defaultMessage": "सभी एक्सटेंशन बंद करने पर भी यह सत्र सीमाओं के भीतर नहीं आएगा — goose के अपने टूल ही उनसे अधिक हैं।"
   },
   "toolBoundsNotice.within": {
     "defaultMessage": "सत्र के टूल अब इंजन की सीमाओं के भीतर हैं — अपना संदेश फिर से भेजने के लिए दोबारा कोशिश करें।"
