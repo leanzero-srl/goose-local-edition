@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "你的会话会按运行时所在的文件夹显示在这里。开始一个会话，或添加一个文件夹。"
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "按名称筛选项目，按标题筛选会话"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "没有与“{query}”匹配的项目或会话。"
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "筛选项目和会话"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "无法分叉该会话"
   },

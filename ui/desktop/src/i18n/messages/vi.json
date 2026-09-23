@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Các phiên của bạn xuất hiện ở đây dưới thư mục nơi chúng chạy. Bắt đầu một phiên, hoặc thêm thư mục."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Lọc dự án theo tên và phiên theo tiêu đề"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Không có dự án hay phiên nào khớp với “{query}”."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Lọc dự án và phiên"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Không thể tách nhánh phiên"
   },

@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "你的工作階段會依執行時所在的資料夾顯示在這裡。開始一個工作階段，或新增一個資料夾。"
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "依名稱篩選專案，依標題篩選工作階段"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "沒有與「{query}」相符的專案或工作階段。"
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "篩選專案與工作階段"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "無法分支該工作階段"
   },

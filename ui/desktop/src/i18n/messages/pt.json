@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "As suas sessões aparecem aqui sob a pasta em que correram. Inicie uma ou adicione uma pasta."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Filtrar projetos por nome e sessões por título"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Nenhum projeto ou sessão corresponde a “{query}”."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Filtrar projetos e sessões"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Não foi possível bifurcar a sessão"
   },

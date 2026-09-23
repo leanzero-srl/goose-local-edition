@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Ваши сессии появляются здесь под папкой, в которой они выполнялись. Начните одну или добавьте папку."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Фильтровать проекты по имени, а сеансы по названию"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Нет проектов или сеансов, совпадающих с «{query}»."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Фильтр проектов и сеансов"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Не удалось форкнуть сессию"
   },

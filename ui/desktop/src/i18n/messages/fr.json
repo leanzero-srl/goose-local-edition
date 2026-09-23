@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Vos sessions apparaissent ici sous le dossier où elles ont tourné. Lancez-en une ou ajoutez un dossier."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Filtrer les projets par nom et les sessions par titre"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Aucun projet ni aucune session ne correspond à « {query} »."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Filtrer les projets et les sessions"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Impossible de dériver la session"
   },

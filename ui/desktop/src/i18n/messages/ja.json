@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "セッションは実行したフォルダーの下にここに表示されます。セッションを開始するか、フォルダーを追加してください。"
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "プロジェクトを名前で、セッションをタイトルで絞り込む"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "「{query}」に一致するプロジェクトやセッションはありません。"
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "プロジェクトとセッションを絞り込む"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "セッションをフォークできませんでした"
   },

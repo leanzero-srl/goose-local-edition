@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Your sessions appear here under the folder they ran in. Start one, or add a folder."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Filter projects by name and sessions by title"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "No project or session matches “{query}”."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Filter projects and sessions"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Could not fork the session"
   },

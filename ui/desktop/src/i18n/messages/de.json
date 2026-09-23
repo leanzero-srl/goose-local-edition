@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Deine Sitzungen erscheinen hier unter dem Ordner, in dem sie liefen. Starte eine oder füge einen Ordner hinzu."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Projekte nach Name und Sitzungen nach Titel filtern"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Kein Projekt und keine Sitzung passt zu „{query}“."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Projekte und Sitzungen filtern"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Sitzung konnte nicht verzweigt werden"
   },

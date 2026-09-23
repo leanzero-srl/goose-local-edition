@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "आपके सत्र यहाँ उस फ़ोल्डर के नीचे दिखते हैं जिसमें वे चले। एक शुरू करें, या कोई फ़ोल्डर जोड़ें।"
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "प्रोजेक्ट को नाम से और सत्रों को शीर्षक से फ़िल्टर करें"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "“{query}” से कोई प्रोजेक्ट या सत्र मेल नहीं खाता।"
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "प्रोजेक्ट और सत्र फ़िल्टर करें"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "सत्र फ़ोर्क नहीं किया जा सका"
   },

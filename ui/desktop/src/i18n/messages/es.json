@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Tus sesiones aparecen aquí bajo la carpeta en la que se ejecutaron. Inicia una o añade una carpeta."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Filtrar proyectos por nombre y sesiones por título"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Ningún proyecto ni sesión coincide con «{query}»."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Filtrar proyectos y sesiones"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "No se pudo duplicar la sesión"
   },

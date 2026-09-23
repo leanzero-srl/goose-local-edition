@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Sesi anda muncul di sini di bawah folder tempat ia dijalankan. Mulakan satu, atau tambah folder."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Tapis projek mengikut nama dan sesi mengikut tajuk"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Tiada projek atau sesi yang sepadan dengan “{query}”."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Tapis projek dan sesi"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Tidak dapat mencabangkan sesi"
   },

@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Oturumlarınız burada çalıştıkları klasörün altında görünür. Bir tane başlatın veya bir klasör ekleyin."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Projeleri ada, oturumları başlığa göre filtrele"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "“{query}” ile eşleşen proje veya oturum yok."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Projeleri ve oturumları filtrele"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Oturum çatallanamadı"
   },

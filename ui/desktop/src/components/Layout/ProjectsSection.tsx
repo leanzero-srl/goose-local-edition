@@ -38,6 +38,7 @@ import {
   Button,
   SectionHeader,
   StatusDot,
+  Toolbar,
   RADIUS,
   ROW,
   SURFACE,
@@ -175,6 +176,18 @@ const i18n = defineMessages({
     id: 'projectsSection.deleteFailed',
     defaultMessage: 'Could not delete the session',
   },
+  filterPlaceholder: {
+    id: 'projectsSection.filterPlaceholder',
+    defaultMessage: 'Filter projects and sessions',
+  },
+  filterLabel: {
+    id: 'projectsSection.filterLabel',
+    defaultMessage: 'Filter projects by name and sessions by title',
+  },
+  filterNoMatch: {
+    id: 'projectsSection.filterNoMatch',
+    defaultMessage: 'No project or session matches “{query}”.',
+  },
 });
 
 /** What is asked of the model when a session is opened as a new chat about it. */
@@ -182,7 +195,7 @@ export function askAboutSessionPrompt(session: SessionListItem): string {
   const name = displaySessionListName(session.name);
   return [
     `I want to work from my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}).`,
-    'Read that session\'s conversation first (goose sessions are stored in its session database; use the session tools if you have them, otherwise ask me to paste the part that matters), then help me continue it, redo part of it, or turn what it learned into a skill or memory.',
+    "Read that session's conversation first (goose sessions are stored in its session database; use the session tools if you have them, otherwise ask me to paste the part that matters), then help me continue it, redo part of it, or turn what it learned into a skill or memory.",
     'Ask me what I want before you write anything.',
   ].join('\n');
 }
@@ -266,6 +279,36 @@ export function folderName(dir: string): string {
   const trimmed = dir.replace(/\/+$/, '');
   const seg = trimmed.split('/').filter(Boolean).pop();
   return seg ?? trimmed;
+}
+
+/**
+ * The sidebar filter: a folder whose name or path holds the query is listed whole; otherwise it is
+ * listed with ONLY its sessions whose title holds it (null = no filter on that folder's sessions),
+ * and a folder with neither is hidden. Case-insensitive. Only sessions the tree already knows are
+ * searched — the recent list plus whatever "Show more" paged in.
+ */
+export function filterProjects(
+  projects: readonly DerivedProject[],
+  query: string,
+  pagedByPath: Readonly<Record<string, { sessions: SessionListItem[] } | undefined>> = {}
+): Array<{ project: DerivedProject; sessions: SessionListItem[] | null }> {
+  const q = query.trim().toLowerCase();
+  if (!q) return projects.map((project) => ({ project, sessions: null }));
+  const out: Array<{ project: DerivedProject; sessions: SessionListItem[] | null }> = [];
+  for (const project of projects) {
+    if (project.name.toLowerCase().includes(q) || project.path.toLowerCase().includes(q)) {
+      out.push({ project, sessions: null });
+      continue;
+    }
+    const seen = new Set(project.sessions.map((s) => s.id));
+    const known = [
+      ...project.sessions,
+      ...(pagedByPath[project.path]?.sessions ?? []).filter((s) => !seen.has(s.id)),
+    ];
+    const hits = known.filter((s) => displaySessionListName(s.name).toLowerCase().includes(q));
+    if (hits.length > 0) out.push({ project, sessions: hits });
+  }
+  return out;
 }
 
 /** Sessions PAGED from the server beyond the recent list, per folder; `expandedAll` once the
@@ -432,6 +475,8 @@ const SessionLeafRow: React.FC<{
 
 interface ProjectRowProps {
   project: DerivedProject;
+  /** Under a filter: exactly the sessions to draw, with no paging controls. */
+  matches?: SessionListItem[] | null;
   expanded: boolean;
   /** Sessions beyond the recent list, paged from the server (after "Show more"). */
   state: ProjectSessionsState | undefined;
@@ -449,6 +494,7 @@ interface ProjectRowProps {
 
 const ProjectRow: React.FC<ProjectRowProps> = ({
   project,
+  matches,
   expanded,
   state,
   showAll,
@@ -499,12 +545,13 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
     const paged = (state?.sessions ?? []).filter((s) => !seen.has(s.id));
     return [...project.sessions, ...paged];
   }, [project.sessions, state?.sessions]);
-  const shown = showAll ? known : known.slice(0, PREVIEW_COUNT);
+  const filtering = matches != null;
+  const shown = filtering ? matches : showAll ? known : known.slice(0, PREVIEW_COUNT);
   const hiddenKnown = known.length - shown.length;
   // The server may hold sessions older than the recent list; it is asked only once the folder is
   // at least a full preview (a two-session folder is not hiding anything).
   const canPage = known.length >= PREVIEW_COUNT && !state?.loaded;
-  const moreAvailable = hiddenKnown > 0 || canPage || !!state?.nextCursor;
+  const moreAvailable = !filtering && (hiddenKnown > 0 || canPage || !!state?.nextCursor);
 
   return (
     <div data-testid={`project-row-${project.path}`}>
@@ -649,7 +696,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
             <Button variant="ghost" size="sm" className="self-start" onClick={onShowMore}>
               {intl.formatMessage(i18n.showMore)}
             </Button>
-          ) : showAll && known.length > PREVIEW_COUNT ? (
+          ) : !filtering && showAll && known.length > PREVIEW_COUNT ? (
             <Button variant="ghost" size="sm" className="self-start" onClick={onShowLess}>
               {intl.formatMessage(i18n.showLess)}
             </Button>
@@ -682,6 +729,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, ProjectSessionsState>>(
     {}
   );
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     window.electron
@@ -694,6 +742,11 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   const projects = useMemo(
     () => deriveProjects(recentSessions, registry),
     [recentSessions, registry]
+  );
+  const filtering = query.trim() !== '';
+  const listed = useMemo(
+    () => filterProjects(projects, query, sessionsByProject),
+    [projects, query, sessionsByProject]
   );
 
   const loadProjectSessions = useCallback(async (projectPath: string, cursor: string | null) => {
@@ -880,7 +933,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     <div className={cx('flex min-h-0 flex-col', className)}>
       <SectionHeader
         title={intl.formatMessage(i18n.projects)}
-        count={projects.length}
+        count={listed.length}
         className="px-4"
         right={
           <Button
@@ -894,17 +947,48 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         }
       />
 
+      {projects.length > 0 && (
+        <div
+          className="px-2 pb-1"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && query !== '') {
+              e.stopPropagation();
+              setQuery('');
+            }
+          }}
+        >
+          <Toolbar
+            className="px-1"
+            aria-label={intl.formatMessage(i18n.filterLabel)}
+            search={{
+              value: query,
+              onChange: setQuery,
+              placeholder: intl.formatMessage(i18n.filterPlaceholder),
+              'aria-label': intl.formatMessage(i18n.filterLabel),
+              fill: true,
+            }}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-px px-2 pb-2">
         {projects.length === 0 ? (
           <div className={cx('px-2 py-2', TYPE.bodyMuted)}>
             {intl.formatMessage(i18n.emptyState)}
           </div>
+        ) : listed.length === 0 ? (
+          <div className={cx('px-2 py-2', TYPE.bodyMuted)} data-testid="projects-filter-empty">
+            {intl.formatMessage(i18n.filterNoMatch, { query: query.trim() })}
+          </div>
         ) : (
-          projects.map((project, index) => (
+          listed.map(({ project, sessions: matches }, index) => (
             <ProjectRow
               key={project.path}
               project={project}
-              expanded={toggled.has(`open:${project.path}`) || isExpanded(project, index)}
+              matches={matches}
+              expanded={
+                filtering || toggled.has(`open:${project.path}`) || isExpanded(project, index)
+              }
               state={sessionsByProject[project.path]}
               showAll={showAll.has(project.path)}
               activeSessionId={activeSessionId}

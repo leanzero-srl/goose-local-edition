@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "Le tue sessioni compaiono qui sotto la cartella in cui sono state eseguite. Avviane una o aggiungi una cartella."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "Filtra i progetti per nome e le sessioni per titolo"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "Nessun progetto o sessione corrisponde a “{query}”."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "Filtra progetti e sessioni"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "Impossibile biforcare la sessione"
   },

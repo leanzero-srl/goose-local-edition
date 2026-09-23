@@ -3170,6 +3170,15 @@
   "projectsSection.emptyState": {
     "defaultMessage": "세션은 실행된 폴더 아래 여기에 표시됩니다. 세션을 시작하거나 폴더를 추가하세요."
   },
+  "projectsSection.filterLabel": {
+    "defaultMessage": "프로젝트는 이름으로, 세션은 제목으로 필터"
+  },
+  "projectsSection.filterNoMatch": {
+    "defaultMessage": "“{query}”와 일치하는 프로젝트나 세션이 없습니다."
+  },
+  "projectsSection.filterPlaceholder": {
+    "defaultMessage": "프로젝트와 세션 필터"
+  },
   "projectsSection.forkFailed": {
     "defaultMessage": "세션을 포크할 수 없습니다"
   },

@@ -5,6 +5,7 @@ import { IntlProvider } from 'react-intl';
 import {
   ProjectsSection,
   deriveProjects,
+  filterProjects,
   normalizeDirPath,
   PREVIEW_COUNT,
 } from './ProjectsSection';
@@ -269,6 +270,80 @@ describe('ProjectsSection', () => {
 describe('deriveProjects', () => {
   const s = (id: string, dir: string, minutesAgo: number): SessionListItem =>
     listItem({ id, workingDir: dir, updatedAt: at(minutesAgo) });
+
+  it('the filter field narrows the tree: a session-title hit expands its folder with only the matches; a folder-name hit lists the folder; the header counts what shows', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = [
+      listItem({
+        id: 'a',
+        name: 'Webhook secret configuration',
+        workingDir: '/runs/f114-live',
+        updatedAt: at(3),
+      }),
+      listItem({
+        id: 'b',
+        name: 'Webhook test setup issue',
+        workingDir: '/runs/f114-live',
+        updatedAt: at(4),
+      }),
+      listItem({ id: 'c', name: 'Unrelated', workingDir: '/runs/f114-live', updatedAt: at(5) }),
+      listItem({ id: 'd', name: 'Hello', workingDir: '/proj/goose', updatedAt: at(1) }),
+      ...Array.from({ length: 6 }, (_, i) =>
+        listItem({
+          id: `o${i}`,
+          name: `Old ${i}`,
+          workingDir: `/tmp/folder-${i}`,
+          updatedAt: at(100 + i),
+        })
+      ),
+      listItem({
+        id: 'w',
+        name: 'Old webhook rewrite',
+        workingDir: '/tmp/folder-9',
+        updatedAt: at(900),
+      }),
+    ];
+    renderSection();
+    await screen.findByText('goose');
+    const filter = screen.getByRole('textbox', {
+      name: 'Filter projects by name and sessions by title',
+    });
+
+    fireEvent.change(filter, { target: { value: 'webhook' } });
+    expect(screen.getByTestId('lz-section-count').textContent).toBe('2');
+    const live = screen.getByTestId('project-row-/runs/f114-live');
+    expect(within(live).getByText('Webhook secret configuration')).toBeInTheDocument();
+    expect(within(live).getByText('Webhook test setup issue')).toBeInTheDocument();
+    expect(within(live).queryByText('Unrelated')).toBeNull();
+    // folder-9 is not among the newest three folders — the match opens it anyway
+    const old = screen.getByTestId('project-row-/tmp/folder-9');
+    expect(within(old).getByRole('button', { expanded: true })).toBeInTheDocument();
+    expect(within(old).getByText('Old webhook rewrite')).toBeInTheDocument();
+    expect(screen.queryByTestId('project-row-/proj/goose')).toBeNull();
+
+    fireEvent.change(filter, { target: { value: 'GOOSE' } });
+    expect(screen.getByTestId('lz-section-count').textContent).toBe('1');
+    expect(within(screen.getByTestId('project-row-/proj/goose')).getByText('Hello')).toBeTruthy();
+
+    fireEvent.change(filter, { target: { value: 'zzz' } });
+    expect(screen.getByTestId('projects-filter-empty').textContent).toContain('zzz');
+    expect(screen.getByTestId('lz-section-count').textContent).toBe('0');
+
+    fireEvent.keyDown(filter, { key: 'Escape' });
+    expect((filter as HTMLInputElement).value).toBe('');
+    expect(screen.getByTestId('lz-section-count').textContent).toBe('9');
+  });
+
+  it('filterProjects searches the sessions "Show more" paged in, not only the recent list', () => {
+    const projects = deriveProjects([listItem({ id: 'a', name: 'Recent', workingDir: '/p' })], []);
+    const paged = {
+      '/p': { sessions: [listItem({ id: 'z', name: 'Paged needle', workingDir: '/p' })] },
+    };
+    const hit = filterProjects(projects, 'needle', paged);
+    expect(hit).toHaveLength(1);
+    expect(hit[0].sessions?.map((s) => s.id)).toEqual(['z']);
+    expect(filterProjects(projects, '  ', paged)[0].sessions).toBeNull();
+  });
 
   it('one folder per normalized directory, sessions newest first, folders by last activity', () => {
     const projects = deriveProjects(
