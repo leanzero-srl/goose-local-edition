@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose görevi tamamladı."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Ajanı kur"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Otonom ajanı yapılandırın: döngüsü, tarifi ve becerileri"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Bağlam penceresi"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "Mesajlarda gezinmek için {prefix}↑/{prefix}↓"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "goose’tan bir şey inşa etmesini, düzeltmesini veya açıklamasını isteyin"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Bırakılan dosyalar işleniyor..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Kur"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Son takma başarısız oldu: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Kayıtlı MLX modeli {served} sunuyor; düğüm {wanted} istiyor."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "{model} modelini tak"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "{model} takılıyor"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Etkin bir swarm düğümü yok — hiçbir şey bir mesajı yanıtlayamaz"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Providers’ı aç"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Takılı model yok — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Yapılandırma Sıfırlama"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Goose kullanıcı girişi istemeden önce maksimum aracı dönüşü"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "{model} için maliyet verileri mevcut değil ({inputTokens} girişi, {outputTokens} çıkış jetonları)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Girdi: {inputTokens} belirteçleri ({inputCost}) | Çıktı: {outputTokens} belirteçleri ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Düzenlenen mesajla yeni bir oturum oluşturun"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Tüm brifingi göster"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Tüm mesajı göster"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Daha az göster"
   }
 }

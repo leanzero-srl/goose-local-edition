@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText } from 'lucide-react';
+import { ArrowUp, Bug, ScrollText, Settings2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -37,6 +37,7 @@ import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { mlxEngineStatus } from '../acp/mlx-engine';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
+import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
@@ -164,6 +165,18 @@ const i18n = defineMessages({
   viewEditRecipe: {
     id: 'chatInput.viewEditRecipe',
     defaultMessage: 'View/Edit Recipe',
+  },
+  placeholder: {
+    id: 'chatInput.placeholder',
+    defaultMessage: 'Ask goose to build, fix or explain something',
+  },
+  agentSetup: {
+    id: 'chatInput.agentSetup',
+    defaultMessage: 'Set up agent',
+  },
+  agentSetupTitle: {
+    id: 'chatInput.agentSetupTitle',
+    defaultMessage: 'Configure the autonomous agent: its loop, recipe and skills',
   },
 });
 
@@ -1520,6 +1533,7 @@ export default function ChatInput({
         style={{ display: 'none' }}
         accept="*/*"
       />
+      <ComposerReadinessStrip provider={effectiveProvider} />
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue
@@ -1543,7 +1557,7 @@ export default function ChatInput({
             data-testid="chat-input"
             autoFocus
             id="dynamic-textarea"
-            placeholder={isRecording ? '' : getNavigationShortcutText(intl)}
+            placeholder={isRecording ? '' : intl.formatMessage(i18n.placeholder)}
             value={displayValue}
             onChange={handleChange}
             onCompositionStart={handleCompositionStart}
@@ -1731,10 +1745,12 @@ export default function ChatInput({
           <StudioButton
             variant="ghost"
             size="sm"
+            icon={<Settings2 />}
+            data-testid="agent-setup"
             onClick={() => setAgentWizardOpen(true)}
-            title="Configure the autonomous Agent (loop, recipe, skills)"
+            title={intl.formatMessage(i18n.agentSetupTitle)}
           >
-            set up
+            {intl.formatMessage(i18n.agentSetup)}
           </StudioButton>
         )}
         {agentWizardOpen && (
@@ -1766,28 +1782,25 @@ export default function ChatInput({
 
         {!isBottomBarNarrow && (
           <>
-            {/* Right: cost tracker (when enabled). Never for the LeanZero MLX provider — local
-                inference has no price, so a cost readout there is a fabricated number (pass E). */}
-            {COST_TRACKING_ENABLED && effectiveProvider !== MLX_PROVIDER_ID && (
-              <Chip>
-                <CostTracker
-                  inputTokens={accumulatedInputTokens}
-                  outputTokens={accumulatedOutputTokens}
-                  accumulatedCost={accumulatedCost}
-                  model={effectiveModel}
-                  provider={effectiveProvider}
-                />
-              </Chip>
+            {/* Right: cost tracker (when enabled). It renders its OWN chip, and none at all for a
+                local provider or an unknown price — a chip around a null readout painted an empty
+                square beside the context chip (UX audit C8). */}
+            {COST_TRACKING_ENABLED && (
+              <CostTracker
+                inputTokens={accumulatedInputTokens}
+                outputTokens={accumulatedOutputTokens}
+                accumulatedCost={accumulatedCost}
+                model={effectiveModel}
+                provider={effectiveProvider}
+              />
             )}
 
-            {/* Right: context window indicator */}
-            <Chip>
-              <ContextWindowIndicator
-                totalTokens={totalTokens || 0}
-                tokenLimit={tokenLimit}
-                alerts={alerts}
-              />
-            </Chip>
+            {/* Right: context window indicator (its own chip) */}
+            <ContextWindowIndicator
+              totalTokens={totalTokens || 0}
+              tokenLimit={tokenLimit}
+              alerts={alerts}
+            />
 
             {/* Right: extension selector — hidden per pass E (SHOW_EXTENSIONS_SELECTOR) */}
             {SHOW_EXTENSIONS_SELECTOR && (
@@ -1910,6 +1923,7 @@ export default function ChatInput({
             </TooltipTrigger>
             <TooltipContent>
               <p>{getSubmitButtonTooltip()}</p>
+              <p data-testid="chat-input-history-hint">{getNavigationShortcutText(intl)}</p>
             </TooltipContent>
           </Tooltip>
         )}

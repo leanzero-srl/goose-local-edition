@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose finished the task."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Set up agent"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Configure the autonomous agent: its loop, recipe and skills"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Context window"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ to navigate messages"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Ask goose to build, fix or explain something"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Processing dropped files..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Set up"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "The last mount failed: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "The saved MLX model serves {served}; the node wants {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Mount {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Mounting {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "No swarm node is enabled — nothing can answer a message"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "No saved MLX model — pick one in Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Open Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "No model is mounted — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Configuration Reset"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Maximum agent turns before Goose asks for user input"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Cost data not available for {model} ({inputTokens} input, {outputTokens} output tokens)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Input: {inputTokens} tokens ({inputCost}) | Output: {outputTokens} tokens ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Create a new session with the edited message"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Show the full brief"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Show the full message"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Show less"
   }
 }

@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose ha completato l'attività."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Configura agente"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Configura l’agente autonomo: ciclo, ricetta e skill"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Finestra di contesto"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ per navigare tra i messaggi"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Chiedi a goose di costruire, correggere o spiegare qualcosa"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Elaborazione dei file rilasciati..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Configura"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "L’ultimo montaggio non è riuscito: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Il modello MLX salvato serve {served}; il nodo vuole {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Monta {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Montaggio di {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Nessun nodo dello swarm è attivo — niente può rispondere a un messaggio"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Nessun modello MLX salvato — scegline uno in Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Apri Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Nessun modello montato — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Configurazione reimpostata"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Numero massimo di turni dell'agente prima che Goose richieda l'input dell'utente"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Dati sui costi non disponibili per {model} ({inputTokens} token di input, {outputTokens} token di output)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Input: {inputTokens} token ({inputCost}) | Output: {outputTokens} token ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Crea una nuova sessione con il messaggio modificato"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Mostra il brief completo"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Mostra il messaggio completo"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Mostra meno"
   }
 }

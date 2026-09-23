@@ -3,16 +3,13 @@ import { CoinIcon } from '../icons';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/Tooltip';
 import { fetchCanonicalModelInfo, type CanonicalModelInfo } from '../../utils/canonical';
 import { defineMessages, useIntl } from '../../i18n';
-import { MOTION, TNUM, cx } from '../lz';
+import { Chip, MOTION, TNUM, cx } from '../lz';
+import { isLocalProviderName } from '../settings/models/leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   pricingUnavailable: {
     id: 'costTracker.pricingUnavailable',
     defaultMessage: 'Pricing data unavailable for {model}',
-  },
-  costUnavailable: {
-    id: 'costTracker.costUnavailable',
-    defaultMessage: 'Cost data not available for {model} ({inputTokens} input, {outputTokens} output tokens)',
   },
   totalSessionCost: {
     id: 'costTracker.totalSessionCost',
@@ -20,7 +17,8 @@ const i18n = defineMessages({
   },
   inputOutputTooltip: {
     id: 'costTracker.inputOutputTooltip',
-    defaultMessage: 'Input: {inputTokens} tokens ({inputCost}) | Output: {outputTokens} tokens ({outputCost})',
+    defaultMessage:
+      'Input: {inputTokens} tokens ({inputCost}) | Output: {outputTokens} tokens ({outputCost})',
   },
 });
 
@@ -32,6 +30,13 @@ interface CostTrackerProps {
   provider: string | null;
 }
 
+/**
+ * The session's cost, in its own chip — or NOTHING. A price is shown only when there is one: a
+ * local provider (swarm, the LeanZero MLX engine, LM Studio, Ollama …) has no per-token price,
+ * and a cloud model with no known pricing has an unknown cost; both used to read "0.0000", a
+ * fabricated number (UX audit C8). The chip lives here, not at the call site, so a null readout can
+ * never leave an empty chip behind.
+ */
 export function CostTracker({
   inputTokens = 0,
   outputTokens = 0,
@@ -62,9 +67,11 @@ export function CostTracker({
     return () => window.removeEventListener('showPricingChanged', handlePricingChange);
   }, []);
 
+  const local = currentProvider != null && isLocalProviderName(currentProvider);
+
   useEffect(() => {
     const loadCostInfo = async () => {
-      if (!currentModel || !currentProvider) {
+      if (!currentModel || !currentProvider || local) {
         setIsLoading(false);
         return;
       }
@@ -88,16 +95,14 @@ export function CostTracker({
     };
 
     loadCostInfo();
-  }, [currentModel, currentProvider]);
+  }, [currentModel, currentProvider, local]);
 
   // Return null early if pricing is disabled
   if (!showPricing) {
     return null;
   }
 
-  // The swarm runs on the local fleet — there is no per-token price, so a cost
-  // readout is meaningless. Hide it entirely rather than showing a fake 0.0000.
-  if (currentProvider === 'swarm') {
+  if (local) {
     return null;
   }
 
@@ -112,59 +117,15 @@ export function CostTracker({
     return null;
   }
 
-  // If still loading, show a placeholder
   if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center text-lz-ink-3">
-        <span className={cx('text-lz-meta', TNUM)}>...</span>
-      </div>
-    );
+    return null;
   }
 
   if (
     accumulatedCost == null &&
-    (!costInfo ||
-      (costInfo.inputTokenCost === undefined && costInfo.outputTokenCost === undefined))
+    (!costInfo || (costInfo.inputTokenCost === undefined && costInfo.outputTokenCost === undefined))
   ) {
-    const freeProviders = ['ollama', 'local', 'localhost'];
-    if (freeProviders.includes(currentProvider.toLowerCase())) {
-      return (
-        <div className="flex h-full cursor-default items-center justify-center text-lz-ink-3">
-          <span className={cx('text-lz-meta', TNUM)}>
-            {inputTokens.toLocaleString()}↑ {outputTokens.toLocaleString()}↓
-          </span>
-        </div>
-      );
-    }
-
-    // Otherwise show as unavailable
-    const getUnavailableTooltip = () => {
-      if (pricingFailed) {
-        return intl.formatMessage(i18n.pricingUnavailable, { model: currentModel });
-      }
-      return intl.formatMessage(i18n.costUnavailable, {
-        model: currentModel,
-        inputTokens: inputTokens.toLocaleString(),
-        outputTokens: outputTokens.toLocaleString(),
-      });
-    };
-
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div
-            className={cx(
-              'flex h-full cursor-default items-center justify-center text-lz-ink-3 hover:text-lz-ink',
-              MOTION
-            )}
-          >
-            <CoinIcon className="mr-1" size={16} />
-            <span className={cx('text-lz-meta', TNUM)}>0.0000</span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent>{getUnavailableTooltip()}</TooltipContent>
-      </Tooltip>
-    );
+    return null;
   }
 
   const totalCost = calculateCost();
@@ -172,19 +133,24 @@ export function CostTracker({
   // Build tooltip content
   const getTooltipContent = (): string => {
     if (pricingFailed) {
-      return intl.formatMessage(i18n.pricingUnavailable, { model: `${currentProvider}/${currentModel}` });
+      return intl.formatMessage(i18n.pricingUnavailable, {
+        model: `${currentProvider}/${currentModel}`,
+      });
     }
 
     const currency = costInfo?.currency || '$';
 
     if (accumulatedCost != null) {
-      return intl.formatMessage(i18n.totalSessionCost, { cost: `${currency}${totalCost.toFixed(4)}` })
-        + `\n` + intl.formatMessage(i18n.inputOutputTooltip, {
+      return (
+        intl.formatMessage(i18n.totalSessionCost, { cost: `${currency}${totalCost.toFixed(4)}` }) +
+        `\n` +
+        intl.formatMessage(i18n.inputOutputTooltip, {
           inputTokens: inputTokens.toLocaleString(),
           inputCost: `${currency}${((inputTokens * (costInfo?.inputTokenCost || 0)) / 1_000_000).toFixed(6)}`,
           outputTokens: outputTokens.toLocaleString(),
           outputCost: `${currency}${((outputTokens * (costInfo?.outputTokenCost || 0)) / 1_000_000).toFixed(6)}`,
-        });
+        })
+      );
     }
 
     const inputCostStr = `${currency}${((inputTokens * (costInfo?.inputTokenCost || 0)) / 1_000_000).toFixed(6)}`;
@@ -198,19 +164,22 @@ export function CostTracker({
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className={cx(
-            'flex h-full cursor-default items-center justify-center text-lz-ink-3 hover:text-lz-ink',
-            MOTION
-          )}
-        >
-          <CoinIcon className="mr-1" size={16} />
-          <span className={cx('text-lz-meta', TNUM)}>{formatCost(totalCost)}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>{getTooltipContent()}</TooltipContent>
-    </Tooltip>
+    <Chip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            data-testid="cost-readout"
+            className={cx(
+              'flex h-full cursor-default items-center justify-center text-lz-ink-3 hover:text-lz-ink',
+              MOTION
+            )}
+          >
+            <CoinIcon className="mr-1" size={16} />
+            <span className={cx('text-lz-meta', TNUM)}>{formatCost(totalCost)}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>{getTooltipContent()}</TooltipContent>
+      </Tooltip>
+    </Chip>
   );
 }

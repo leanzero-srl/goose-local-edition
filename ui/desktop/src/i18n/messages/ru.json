@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose завершил задачу."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Настроить агента"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Настройте автономного агента: цикл, рецепт и навыки"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Контекстное окно"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ для навигации по сообщениям"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Попросите goose что-то создать, исправить или объяснить"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Обработка перетащенных файлов..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Настроить"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Последнее монтирование не удалось: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Сохранённая модель MLX обслуживает {served}; узлу нужна {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Смонтировать {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Монтирование {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Ни один узел swarm не включён — ответить на сообщение некому"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Нет сохранённой модели MLX — выберите её в Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Открыть Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Модель не смонтирована — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Конфигурация сброшена"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Максимальное число ходов агента до запроса ввода от пользователя"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Данные о стоимости недоступны для {model} ({inputTokens} входных, {outputTokens} выходных токенов)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Ввод: {inputTokens} токенов ({inputCost}) | Вывод: {outputTokens} токенов ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Создать новый сеанс с измененным сообщением"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Показать задание целиком"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Показать сообщение целиком"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Показать меньше"
   }
 }

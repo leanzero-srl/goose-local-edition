@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Gooseがタスクを完了しました。"
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "エージェントを設定"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "自律エージェントを設定:ループ、レシピ、スキル"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "コンテキストウィンドウ"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓でメッセージを移動"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "goose に構築・修正・説明を頼む"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "ドロップしたファイルを処理中..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "設定"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "前回のマウントに失敗しました: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "保存された MLX モデルは {served} を提供していますが、ノードは {wanted} を必要としています。"
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "{model} をマウント"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "{model} をマウント中"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "有効な swarm ノードがありません — メッセージに応答できるものがありません"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "保存された MLX モデルがありません — Providers で選んでください。"
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Providers を開く"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "マウントされたモデルがありません — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "設定をリセットしました"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Gooseがユーザー入力を求めるまでのエージェントの最大ターン数"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "{model} のコストデータは利用できません（入力 {inputTokens} トークン、出力 {outputTokens} トークン）"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "入力: {inputTokens} トークン（{inputCost}） | 出力: {outputTokens} トークン（{outputCost}）"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "編集したメッセージで新しいセッションを作成"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "ブリーフ全体を表示"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "メッセージ全体を表示"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "表示を減らす"
   }
 }

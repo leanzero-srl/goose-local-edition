@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
 import { useConfig } from '../ConfigContext';
-import {
-  mlxEngineMount,
-  mlxEngineSettingsRead,
-  type MlxEngineSettings,
-  type MlxEngineStatus,
-} from '../../acp/mlx-engine';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
-import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
-import { errorMessage } from '../../utils/conversionUtils';
+import type { SwarmConfig } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Chip, SURFACE, SPACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
+import {
+  engineFact,
+  resolveMountTarget,
+  shortModelName,
+  useMlxMount,
+  useMountLookup,
+  type EngineFact,
+  type MountTarget,
+} from './mlxMount';
 
 const i18n = defineMessages({
   titleUnmounted: { id: 'noNodeNotice.titleUnmounted', defaultMessage: 'No model is mounted' },
@@ -64,49 +66,6 @@ const i18n = defineMessages({
     defaultMessage: 'The node is up — retry to send your message again.',
   },
 });
-
-/**
- * What a "Mount" click would mount for a swarm device: the engine's persisted HF model, but only
- * when that model is served under the alias the device names (mlx_engine.served_model_name, else the
- * HF id itself). Anything else is stated, never guessed — mounting a different model would leave the
- * node refusing the next turn for the same reason.
- */
-export type MountTarget =
-  | { kind: 'ok'; modelId: string; servedId: string }
-  | { kind: 'mismatch'; served: string; wanted: string }
-  | { kind: 'none' };
-
-export function resolveMountTarget(
-  nodeId: string,
-  devices: SwarmDeviceRow[],
-  settings: MlxEngineSettings
-): MountTarget {
-  const device = devices.find((d) => d.id === nodeId);
-  if (!device || device.engine !== 'mlx-sidecar' || device.host != null || !settings.modelId) {
-    return { kind: 'none' };
-  }
-  const served = settings.servedModelName || settings.modelId;
-  if (served !== device.model_id) {
-    return { kind: 'mismatch', served, wanted: device.model_id };
-  }
-  return { kind: 'ok', modelId: settings.modelId, servedId: served };
-}
-
-type Lookup =
-  | { state: 'loading' }
-  | { state: 'failed'; error: string }
-  | { state: 'ready'; devices: SwarmDeviceRow[]; settings: MlxEngineSettings };
-
-type EngineFact = 'up' | 'mounting' | 'failed' | 'down';
-
-function engineFact(status: MlxEngineStatus | null, servedId: string | null): EngineFact {
-  if (!status) return 'down';
-  if (status.state === 'mounting') return 'mounting';
-  if (status.state === 'failed') return 'failed';
-  const serving = status.servedModelId ?? status.modelId;
-  if (status.state === 'running' && servedId != null && serving === servedId) return 'up';
-  return 'down';
-}
 
 function reasonText(intl: ReturnType<typeof useIntl>, reason: NodeReason): string | null {
   switch (reason.kind) {
@@ -159,56 +118,13 @@ export default function NoNodeNotice({
   const mlxDown = rows.some((r) => r.reason.kind === 'mlx-down' && r.nodeId != null);
   const armed = live && mlxDown;
 
-  const [lookup, setLookup] = useState<Lookup>({ state: 'loading' });
-  const [mountErrors, setMountErrors] = useState<Record<string, string>>({});
-  /** The node whose mount was requested, held until a status poll that landed AFTER the request
-   *  answers — the call returns before the engine flips to mounting, and the stale "stopped" from
-   *  the previous poll must not bring the Mount button back in between. */
-  const [requesting, setRequesting] = useState<{ nodeId: string; seen: unknown } | null>(null);
+  const readSwarm = useCallback(
+    () => read('swarm', false, { throwOnError: true }) as Promise<SwarmConfig | null>,
+    [read]
+  );
+  const lookup = useMountLookup(armed, readSwarm, read);
   const { status } = useMlxEngineStatusPoll(armed, 2000);
-  const statusRef = useRef(status);
-  statusRef.current = status;
-
-  useEffect(() => {
-    if (requesting && requesting.seen !== undefined && status !== requesting.seen) {
-      setRequesting(null);
-    }
-  }, [status, requesting]);
-
-  useEffect(() => {
-    if (!armed) return undefined;
-    let alive = true;
-    void (async () => {
-      try {
-        const [raw, settings] = await Promise.all([
-          read('swarm', false, { throwOnError: true }) as Promise<SwarmConfig | null>,
-          mlxEngineSettingsRead(),
-        ]);
-        const devices = Array.isArray(raw?.devices) ? raw.devices : [];
-        if (alive) setLookup({ state: 'ready', devices, settings });
-      } catch (e) {
-        if (alive) setLookup({ state: 'failed', error: errorMessage(e, String(e)) });
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [armed, read]);
-
-  const onMount = useCallback(async (nodeId: string, modelId: string) => {
-    setRequesting({ nodeId, seen: undefined });
-    setMountErrors((prev) => {
-      const { [nodeId]: _dropped, ...rest } = prev;
-      return rest;
-    });
-    try {
-      await mlxEngineMount(modelId);
-      setRequesting({ nodeId, seen: statusRef.current });
-    } catch (e) {
-      setMountErrors((prev) => ({ ...prev, [nodeId]: errorMessage(e, String(e)) }));
-      setRequesting(null);
-    }
-  }, []);
+  const { requestingNodeId, mountErrors, mount: onMount } = useMlxMount(status);
 
   const targetOf = (nodeId: string): MountTarget | null =>
     lookup.state === 'ready' ? resolveMountTarget(nodeId, lookup.devices, lookup.settings) : null;
@@ -219,7 +135,7 @@ export default function NoNodeNotice({
     return engineFact(status, target?.kind === 'ok' ? target.servedId : null);
   };
   const mlxFacts = rows.map(liveFactOf).filter((f): f is EngineFact => f != null);
-  const anyMounting = requesting != null || mlxFacts.includes('mounting');
+  const anyMounting = requestingNodeId != null || mlxFacts.includes('mounting');
   const allUp = mlxFacts.length > 0 && mlxFacts.every((f) => f === 'up');
   const retryPrimary = !mlxDown || allUp;
 
@@ -260,7 +176,7 @@ export default function NoNodeNotice({
         </Chip>
       );
     }
-    if (fact === 'mounting' || requesting?.nodeId === nodeId) {
+    if (fact === 'mounting' || requestingNodeId === nodeId) {
       return (
         <Chip tone="warn" icon={<Loader2 className="animate-spin" />} title={target.modelId}>
           {intl.formatMessage(i18n.mounting)}
@@ -273,9 +189,10 @@ export default function NoNodeNotice({
           variant="primary"
           size="sm"
           data-testid={`no-node-mount-${nodeId}`}
+          title={target.modelId}
           onClick={() => onMount(nodeId, target.modelId)}
         >
-          {intl.formatMessage(i18n.mount, { model: target.modelId })}
+          {intl.formatMessage(i18n.mount, { model: shortModelName(target.modelId) })}
         </Button>
         {(fact === 'failed' || mountErrors[nodeId]) && (
           <p

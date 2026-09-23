@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "O Goose concluiu a tarefa."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Configurar agente"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Configure o agente autônomo: seu loop, receita e skills"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Janela de contexto"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ para navegar entre mensagens"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Peça ao goose para construir, corrigir ou explicar algo"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "A processar ficheiros largados..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Configurar"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "A última montagem falhou: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "O modelo MLX salvo serve {served}; o nó quer {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Montar {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Montando {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Nenhum nó do swarm está ativado — nada pode responder a uma mensagem"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Nenhum modelo MLX salvo — escolha um em Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Abrir Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Nenhum modelo montado — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Configuração reposta"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Número máximo de turnos do agente antes de o Goose solicitar a intervenção do utilizador"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Dados de custo não disponíveis para {model} ({inputTokens} tokens de entrada, {outputTokens} tokens de saída)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Entrada: {inputTokens} tokens ({inputCost}) | Saída: {outputTokens} tokens ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Criar uma nova sessão com a mensagem editada"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Mostrar o briefing completo"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Mostrar a mensagem completa"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Mostrar menos"
   }
 }

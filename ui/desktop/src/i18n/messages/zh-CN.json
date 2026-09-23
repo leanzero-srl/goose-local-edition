@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose 完成任务了。"
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "设置智能体"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "配置自主智能体:它的循环、配方和技能"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "上下文窗口"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ 浏览消息"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "让 goose 构建、修复或解释一些东西"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "正在处理拖入的文件…"
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "设置"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "上次挂载失败:{error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "已保存的 MLX 模型提供 {served};该节点需要 {wanted}。"
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "挂载 {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "正在挂载 {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "没有启用的 swarm 节点 — 没有任何东西能回答消息"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "打开 Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "没有已挂载的模型 — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "配置已重置"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Goose 请求用户输入前的最大 agent 轮次"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "无法获取 {model} 的费用数据（输入 {inputTokens}、输出 {outputTokens} 令牌）"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "输入：{inputTokens} 令牌（{inputCost}）| 输出：{outputTokens} 令牌（{outputCost}）"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "用编辑过的消息创建新会话"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "显示完整简报"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "显示完整消息"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "显示更少"
   }
 }

@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose telah menyelesaikan tugasan."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Sediakan ejen"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Konfigurasikan ejen autonomi: gelung, resipi dan kemahirannya"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Tetingkap konteks"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ untuk menavigasi mesej"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Minta goose membina, membaiki atau menerangkan sesuatu"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Memproses fail yang dilepaskan..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Sediakan"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Pemasangan terakhir gagal: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Model MLX tersimpan melayani {served}; nod ini mahukan {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Pasang {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Sedang memasang {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Tiada nod swarm didayakan — tiada apa yang boleh menjawab mesej"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Tiada model MLX tersimpan — pilih satu dalam Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Buka Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Tiada model dipasang — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Konfigurasi Ditetapkan Semula"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Pusingan ejen maksimum sebelum Goose meminta input pengguna"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Data kos tidak tersedia untuk {model} ({inputTokens} token input, {outputTokens} token output)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Input: {inputTokens} token ({inputCost}) | Output: {outputTokens} token ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Cipta sesi baharu dengan mesej yang disunting"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Tunjukkan taklimat penuh"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Tunjukkan mesej penuh"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Tunjukkan kurang"
   }
 }

@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose ने कार्य पूरा किया।"
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "एजेंट सेट करें"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "स्वायत्त एजेंट कॉन्फ़िगर करें: उसका लूप, रेसिपी और स्किल्स"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "प्रसंग विंडो"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "संदेशों को नेविगेट करने के लिए {prefix}↑/{prefix}↓"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "goose से कुछ बनाने, ठीक करने या समझाने को कहें"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "छोड़ी गई फ़ाइलें संसाधित हो रही हैं..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "सेटअप करें"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "पिछला माउंट विफल रहा: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "सहेजा गया MLX मॉडल {served} सर्व करता है; नोड को {wanted} चाहिए।"
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "{model} माउंट करें"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "{model} माउंट हो रहा है"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "कोई स्वार्म नोड सक्षम नहीं है — कोई भी संदेश का उत्तर नहीं दे सकता"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Providers खोलें"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "कोई मॉडल माउंट नहीं है — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "कॉन्फ़िगरेशन रीसेट"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Goose द्वारा उपयोगकर्ता इनपुट मांगने से पहले अधिकतम एजेंट मुड़ता है"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "{model} ({inputTokens} इनपुट, {outputTokens} आउटपुट टोकन) के लिए लागत डेटा उपलब्ध नहीं है"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "इनपुट: {inputTokens} टोकन ({inputCost}) | आउटपुट: {outputTokens} टोकन ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "संपादित संदेश के साथ एक नया सत्र बनाएं"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "पूरा ब्रीफ़ दिखाएँ"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "पूरा संदेश दिखाएँ"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "कम दिखाओ"
   }
 }

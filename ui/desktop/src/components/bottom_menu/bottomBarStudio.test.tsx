@@ -69,21 +69,63 @@ describe('CostTracker (Studio)', () => {
     expect(await missingUtilities(emitted(container))).toEqual([]);
   }, 30_000);
 
-  it('a free provider shows in/out tokens in the same register', async () => {
+  it('sits in its own quiet chip, so the call site never wraps a null readout', async () => {
+    mount(
+      <CostTracker
+        inputTokens={1200}
+        outputTokens={300}
+        accumulatedCost={0.1234}
+        model="claude-sonnet-4"
+        provider="anthropic"
+      />
+    );
+    const value = await screen.findByText('0.12');
+    const chip = value.closest('[data-testid="lz-chip"]');
+    expect(chip).not.toBeNull();
+    expect(chip?.getAttribute('data-tone')).toBeNull();
+  });
+
+  // UX audit C8: "$0.0000" on a free local model, and an EMPTY chip beside the context chip on the
+  // swarm (the tracker returned null inside the call site's chip). Local = no price = no chip.
+  it.each(['swarm', 'omlx', 'lmstudio', 'ollama'])(
+    'renders no chip at all for the local provider %s',
+    async (provider) => {
+      const { container } = mount(
+        <CostTracker
+          inputTokens={1200}
+          outputTokens={300}
+          accumulatedCost={null}
+          model="qwen3.5-9b-atlassian-mlx"
+          provider={provider}
+        />
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector('[data-testid="lz-chip"]')).toBeNull();
+      expect(container.textContent).toBe('');
+    }
+  );
+
+  it('renders nothing when a cloud model has no known price — never a fabricated 0.0000', async () => {
+    const canonical = await import('../../utils/canonical');
+    vi.mocked(canonical.fetchCanonicalModelInfo).mockResolvedValueOnce(null);
     const { container } = mount(
       <CostTracker
         inputTokens={1200}
         outputTokens={300}
         accumulatedCost={null}
-        model="llama3"
-        provider="ollama"
+        model="mystery-model"
+        provider="openrouter"
       />
     );
-    const value = await screen.findByText(/1,200↑ 300↓/);
-    expect(value.className).toContain('text-lz-meta');
-    expect(value.className).toContain('tnum');
-    expect((value.parentElement as HTMLElement).className).toContain('text-lz-ink-3');
-    assertStudioClean(container);
+    await waitFor(() =>
+      expect(vi.mocked(canonical.fetchCanonicalModelInfo)).toHaveBeenCalledWith(
+        'openrouter',
+        'mystery-model'
+      )
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.textContent).not.toContain('0.0000');
+    expect(container.querySelector('[data-testid="lz-chip"]')).toBeNull();
   });
 });
 
@@ -99,6 +141,11 @@ describe('ContextWindowIndicator (Studio)', () => {
     assertStudioClean(r.container);
     return { span, unmount: r.unmount };
   };
+
+  it('sits in its own quiet chip', () => {
+    const { span } = gauge(50_000);
+    expect(span.closest('[data-testid="lz-chip"]')).not.toBeNull();
+  });
 
   it('quiet ink to 75%, the warn tone to 90%, the err tone above', () => {
     let g = gauge(50_000);

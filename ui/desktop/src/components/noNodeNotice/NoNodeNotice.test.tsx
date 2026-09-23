@@ -7,7 +7,8 @@ import { IntlProvider } from 'react-intl';
 import { createUserMessage, type Message } from '../../types/message';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import GooseMessage from '../GooseMessage';
-import NoNodeNotice, { resolveMountTarget } from './NoNodeNotice';
+import NoNodeNotice from './NoNodeNotice';
+import { resolveMountTarget, shortModelName } from './mlxMount';
 import { parseNoNodeError } from './parseNoNodeError';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
@@ -142,6 +143,16 @@ describe('resolveMountTarget', () => {
   });
 });
 
+describe('shortModelName', () => {
+  it('reads an HF repo id by its last path segment and leaves a bare id alone', () => {
+    expect(shortModelName('Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx')).toBe(
+      'Qwen3.8-27B-Atlassian-Q8-mlx'
+    );
+    expect(shortModelName('qwen3.6-27b')).toBe('qwen3.6-27b');
+    expect(shortModelName('org/model/')).toBe('model');
+  });
+});
+
 describe('NoNodeNotice', () => {
   const rows = parseNoNodeError(OWNER_TEXT)!;
 
@@ -165,7 +176,9 @@ describe('NoNodeNotice', () => {
     const user = userEvent.setup();
     wrap(<NoNodeNotice rows={rows} live retryText="hello" onRetry={vi.fn()} />);
     const mount = await screen.findByTestId('no-node-mount-mihai-mlx');
-    expect(mount.textContent).toBe(`Mount ${HF}`);
+    // A1: the button names the model by its last path segment; the full HF id is the tooltip.
+    expect(mount.textContent).toBe('Mount Qwen3.6-35B-A3B-4bit');
+    expect(mount.getAttribute('title')).toBe(HF);
     mockStatus.mockResolvedValue({ ...STOPPED, state: 'mounting', modelId: HF });
     const pollsBefore = mockStatus.mock.calls.length;
     await user.click(mount);

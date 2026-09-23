@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose a terminé la tâche."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Configurer l’agent"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Configurer l’agent autonome : sa boucle, sa recette et ses skills"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Fenêtre de contexte"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ pour naviguer entre les messages"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Demandez à goose de construire, corriger ou expliquer quelque chose"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Traitement des fichiers déposés..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Configurer"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Le dernier montage a échoué : {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Le modèle MLX enregistré sert {served} ; le nœud attend {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Monter {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Montage de {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Aucun nœud du swarm n’est activé — rien ne peut répondre à un message"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Aucun modèle MLX enregistré — choisissez-en un dans Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Ouvrir Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Aucun modèle n’est monté — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Configuration réinitialisée"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Nombre maximal de tours de l'agent avant que Goose ne demande une intervention de l'utilisateur"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Données de coût non disponibles pour {model} ({inputTokens} jetons en entrée, {outputTokens} jetons en sortie)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Entrée : {inputTokens} jetons ({inputCost}) | Sortie : {outputTokens} jetons ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Créer une nouvelle session avec le message modifié"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Afficher la consigne complète"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Afficher le message complet"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Afficher moins"
   }
 }

@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose hat die Aufgabe abgeschlossen."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Agent einrichten"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Den autonomen Agenten konfigurieren: Schleife, Rezept und Skills"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Kontextfenster"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ zum Navigieren der Nachrichten"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Bitte goose, etwas zu bauen, zu reparieren oder zu erklären"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Abgelegte Dateien werden verarbeitet..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Einrichten"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Das gespeicherte MLX-Modell bedient {served}; der Knoten erwartet {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "{model} einbinden"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "{model} wird eingebunden"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Kein Swarm-Knoten ist aktiviert — nichts kann eine Nachricht beantworten"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Kein gespeichertes MLX-Modell — wähle eines unter Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Providers öffnen"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Kein Modell eingebunden — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Konfiguration zurückgesetzt"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Maximale Anzahl an Agentendurchgängen, bevor Goose eine Benutzereingabe anfordert"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Kostendaten für {model} nicht verfügbar ({inputTokens} Eingabe, {outputTokens} Ausgabe-Token)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Eingabe: {inputTokens} Token ({inputCost}) | Ausgabe: {outputTokens} Token ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Eine neue Sitzung mit der bearbeiteten Nachricht erstellen"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Den ganzen Auftrag anzeigen"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Die ganze Nachricht anzeigen"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Weniger anzeigen"
   }
 }

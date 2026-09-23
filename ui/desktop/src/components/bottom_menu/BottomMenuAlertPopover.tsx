@@ -192,14 +192,13 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
     return null;
   }
 
-  // Determine the icon and styling based on the alerts (use current alerts if available, or default to info)
+  // The dot is a WARNING mark, never a health light. An info-level alert (the context window under
+  // 75% full) used to paint it green, which read as "ready" on a session whose provider could not
+  // answer at all (UX audit C1) — readiness is the composer strip's job, from engine facts. So the
+  // dot appears only for a warning or an error; info alerts keep the popover, without the dot.
   const hasError = alerts.some((alert) => alert.type === AlertType.Error);
-  const hasInfo = alerts.some((alert) => alert.type === AlertType.Info);
-  const triggerColor = hasError
-    ? TONE_TEXT.err
-    : hasInfo || alerts.length === 0 // Default to ok for context info when no alerts
-      ? TONE_TEXT.ok
-      : TONE_TEXT.warn;
+  const hasWarning = alerts.some((alert) => alert.type === AlertType.Warning);
+  const triggerColor = hasError ? TONE_TEXT.err : hasWarning ? TONE_TEXT.warn : null;
 
   return (
     <>
@@ -231,8 +230,8 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
             }, 100);
           }}
         >
-          {shouldShowIndicator && (
-            <div className={cx('relative', triggerColor)}>
+          {shouldShowIndicator && triggerColor && (
+            <div data-testid="alert-indicator-dot" className={cx('relative', triggerColor)}>
               <FaCircle size={5} />
             </div>
           )}

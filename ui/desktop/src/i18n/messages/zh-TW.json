@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose 已完成工作。"
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "設定智慧體"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "設定自主智慧體:它的迴圈、配方與技能"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "上下文視窗"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ 可瀏覽訊息"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "請 goose 建構、修正或解釋一些東西"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "正在處理拖放的檔案…"
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "設定"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "上次掛載失敗:{error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "已儲存的 MLX 模型提供 {served};此節點需要 {wanted}。"
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "掛載 {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "正在掛載 {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "沒有啟用的 swarm 節點 — 沒有任何東西能回答訊息"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "沒有已儲存的 MLX 模型 — 請在 Providers 中選擇一個。"
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "開啟 Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "沒有已掛載的模型 — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "設定已重設"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Goose 要求使用者輸入前的最大代理回合數"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "{model} 無可用的費用資料（輸入 {inputTokens} 個權杖，輸出 {outputTokens} 個權杖）"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "輸入：{inputTokens} 個權杖（{inputCost}）｜輸出：{outputTokens} 個權杖（{outputCost}）"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "以編輯後的訊息建立新的工作階段"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "顯示完整簡報"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "顯示完整訊息"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "顯示較少"
   }
 }

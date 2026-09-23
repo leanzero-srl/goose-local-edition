@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose đã hoàn thành tác vụ."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "Thiết lập tác tử"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "Cấu hình tác tử tự động: vòng lặp, công thức và kỹ năng"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "Cửa sổ ngữ cảnh"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ để điều hướng tin nhắn"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "Nhờ goose xây dựng, sửa hoặc giải thích điều gì đó"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Đang xử lý các tệp đã thả..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Thiết lập"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "Mô hình MLX đã lưu phục vụ {served}; nút cần {wanted}."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "Gắn {model}"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "Đang gắn {model}"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "Không có nút swarm nào được bật — không gì có thể trả lời tin nhắn"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "Không có mô hình MLX đã lưu — hãy chọn một trong Providers."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Mở Providers"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "Chưa gắn mô hình nào — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Đặt lại cấu hình"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "Số lượt tác nhân tối đa trước khi Goose yêu cầu người dùng nhập liệu"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "Không có dữ liệu chi phí cho {model} ({inputTokens} token đầu vào, {outputTokens} token đầu ra)"
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "Đầu vào: {inputTokens} token ({inputCost}) | Đầu ra: {outputTokens} token ({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Tạo một phiên làm việc mới với tin nhắn đã chỉnh sửa"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "Hiện toàn bộ yêu cầu"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "Hiện toàn bộ tin nhắn"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "Hiện ít hơn"
   }
 }

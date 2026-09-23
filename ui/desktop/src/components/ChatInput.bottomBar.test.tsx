@@ -35,7 +35,9 @@ vi.mock('./bottom_menu/ContextWindowIndicator', () => ({
   ContextWindowIndicator: () => <div data-testid="context-indicator" />,
 }));
 vi.mock('./MentionPopover', () => ({
-  default: React.forwardRef(function MentionPopoverMock() { return null; }),
+  default: React.forwardRef(function MentionPopoverMock() {
+    return null;
+  }),
 }));
 vi.mock('../hooks/useAudioRecorder', () => ({
   useAudioRecorder: () => ({
@@ -97,6 +99,9 @@ const mount = (provider: string) =>
     </IntlTestWrapper>
   );
 
+const chipAround = (testId: string) =>
+  screen.getByTestId(testId).closest<HTMLElement>('[data-testid="lz-chip"]');
+
 describe('ChatInput bottom bar (pass E)', () => {
   it('never renders the extensions affordance', async () => {
     mount('anthropic');
@@ -109,21 +114,21 @@ describe('ChatInput bottom bar (pass E)', () => {
     await waitFor(() => expect(screen.getByTestId('cost-tracker')).toBeInTheDocument());
   });
 
-  it('hides the cost readout for the LeanZero MLX provider (omlx)', async () => {
-    mount('omlx');
-    await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
-    expect(screen.queryByTestId('cost-tracker')).toBeNull();
+  // The tracker itself decides local/unknown → nothing (bottom_menu/bottomBarStudio.test.tsx); the
+  // bar no longer wraps it in a chip, so a null readout leaves no empty square (UX audit C8).
+  it('never wraps the cost or context readouts in a chip of its own', async () => {
+    mount('anthropic');
+    await waitFor(() => expect(screen.getByTestId('cost-tracker')).toBeInTheDocument());
+    expect(chipAround('cost-tracker')).toBeNull();
+    expect(chipAround('context-indicator')).toBeNull();
   });
 });
 
-const chipAround = (testId: string) =>
-  screen.getByTestId(testId).closest<HTMLElement>('[data-testid="lz-chip"]');
-
 describe('ChatInput bottom bar (Studio chrome)', () => {
-  it('the model, directory, cost and context readouts each sit in a quiet chip with tabular figures', async () => {
+  it('the model and directory readouts each sit in a quiet chip with tabular figures', async () => {
     mount('anthropic');
     await waitFor(() => expect(screen.getByTestId('cost-tracker')).toBeInTheDocument());
-    for (const id of ['models-bottom-bar', 'dir-switcher', 'cost-tracker', 'context-indicator']) {
+    for (const id of ['models-bottom-bar', 'dir-switcher']) {
       const chip = chipAround(id);
       expect(chip, id).not.toBeNull();
       expect(chip?.getAttribute('data-tone'), id).toBeNull();
@@ -144,16 +149,24 @@ describe('ChatInput bottom bar (Studio chrome)', () => {
       'ghost'
     );
     expect(
-      screen.getByRole('button', { name: 'Generate diagnostics bundle' }).getAttribute('data-variant')
+      screen
+        .getByRole('button', { name: 'Generate diagnostics bundle' })
+        .getAttribute('data-variant')
     ).toBe('ghost');
-    expect(screen.getAllByRole('button').filter((b) => b.getAttribute('data-variant') === 'primary')).toHaveLength(1);
+    expect(
+      screen.getAllByRole('button').filter((b) => b.getAttribute('data-variant') === 'primary')
+    ).toHaveLength(1);
   });
 
-  it('the composer keeps its keyboard hint and its body type; the tree carries no ban', async () => {
+  it('the placeholder is an invitation, not a shortcut; the tree carries no ban', async () => {
     const { container } = mount('anthropic');
     await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
     const textarea = screen.getByTestId('chat-input');
-    expect(textarea.getAttribute('placeholder')).toMatch(/navigate messages/);
+    // UX audit C5: the history shortcut moved to the send button's tooltip.
+    expect(textarea.getAttribute('placeholder')).toBe(
+      'Ask goose to build, fix or explain something'
+    );
+    expect(textarea.getAttribute('placeholder')).not.toMatch(/navigate messages/);
     expect(textarea.className).toContain('text-lz-body');
     expect(textarea.className).toContain('placeholder:text-lz-ink-4');
     expect(container.querySelector('[style*="#"], [style*="rgb"]')).toBeNull();

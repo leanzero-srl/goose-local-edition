@@ -371,6 +371,12 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "goose가 작업을 완료했습니다."
   },
+  "chatInput.agentSetup": {
+    "defaultMessage": "에이전트 설정"
+  },
+  "chatInput.agentSetupTitle": {
+    "defaultMessage": "자율 에이전트 구성: 루프, 레시피, 스킬"
+  },
   "chatInput.contextWindow": {
     "defaultMessage": "컨텍스트 창"
   },
@@ -382,6 +388,9 @@
   },
   "chatInput.navigationShortcut": {
     "defaultMessage": "{prefix}↑/{prefix}↓ 메시지 탐색"
+  },
+  "chatInput.placeholder": {
+    "defaultMessage": "goose에게 무언가를 만들거나 고치거나 설명해 달라고 요청하세요"
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "끌어다 놓은 파일을 처리하는 중..."
@@ -560,6 +569,33 @@
   "cloudProviders.setUp": {
     "defaultMessage": "설정"
   },
+  "composerReadiness.failed": {
+    "defaultMessage": "마지막 마운트에 실패했습니다: {error}"
+  },
+  "composerReadiness.mismatch": {
+    "defaultMessage": "저장된 MLX 모델은 {served}을(를) 제공하지만 노드는 {wanted}을(를) 원합니다."
+  },
+  "composerReadiness.mlxEngine": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "composerReadiness.mount": {
+    "defaultMessage": "{model} 마운트"
+  },
+  "composerReadiness.mounting": {
+    "defaultMessage": "{model} 마운트 중"
+  },
+  "composerReadiness.noNodes": {
+    "defaultMessage": "활성화된 swarm 노드가 없습니다 — 메시지에 응답할 수 있는 것이 없습니다"
+  },
+  "composerReadiness.noTarget": {
+    "defaultMessage": "저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
+  },
+  "composerReadiness.openProviders": {
+    "defaultMessage": "Providers 열기"
+  },
+  "composerReadiness.unmounted": {
+    "defaultMessage": "마운트된 모델이 없습니다 — {nodes}"
+  },
   "configSettings.configReset": {
     "defaultMessage": "구성 재설정"
   },
@@ -673,9 +709,6 @@
   },
   "conversationLimitsDropdown.maxTurnsDescription": {
     "defaultMessage": "goose가 사용자 입력을 요청하기 전 최대 에이전트 턴 수"
-  },
-  "costTracker.costUnavailable": {
-    "defaultMessage": "{model}({inputTokens} 입력, {outputTokens} 출력 토큰)에 대한 비용 데이터는 제공되지 않습니다."
   },
   "costTracker.inputOutputTooltip": {
     "defaultMessage": "입력: {inputTokens} 토큰({inputCost}) | 출력: {outputTokens} 토큰({outputCost})"
@@ -5365,5 +5398,14 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "편집한 메시지로 새 세션 만들기"
+  },
+  "userMessage.showFullBrief": {
+    "defaultMessage": "브리프 전체 보기"
+  },
+  "userMessage.showFullMessage": {
+    "defaultMessage": "메시지 전체 보기"
+  },
+  "userMessage.showLess": {
+    "defaultMessage": "간략히 보기"
   }
 }
