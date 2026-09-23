@@ -377,6 +377,14 @@ impl LiveProbe {
     /// the base URL the local manager reports when it is the one running it, else the configured
     /// port; the local manager only enriches the reason when nothing listens.
     async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
+        // The explicit switch: while THIS process's distributed engine owns the Mac, the sidecar
+        // node is served by it (its wrapper answers /v1/models with the served id and /v1/status
+        // with the in-flight count, the same surface this probe reads).
+        if let Some(base) = goose_sidecar::distributed::global_manager().active_base_url() {
+            return self
+                .probe_mlx_at(&base, model_id, "the distributed MLX engine owns this Mac")
+                .await;
+        }
         let local = goose_sidecar::engine::global_manager().status().await;
         let base = mlx_base_url(
             &local,

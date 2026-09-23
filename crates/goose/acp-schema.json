@@ -8457,6 +8457,27 @@
           "description": "Restart automatically after a rank death or a hang (a breaker still applies; a memory\nwatchdog CRITICAL stop never restarts).",
           "default": false
         },
+        "hangRatioOnly": {
+          "type": "boolean",
+          "description": "Diagnostic: skip the ps-stat-T fast path so a stopped rank is caught only by the\nprogress-ratio hang rule. Default false.",
+          "default": false
+        },
+        "watchdogWarnRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The memory watchdog's WARN reserve as a fraction of each node's RAM (available below it →\nadmission closes, 503). Absent = 0.05."
+        },
+        "watchdogCriticalRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The CRITICAL reserve (available below it → verified stop, never restarted). Absent = 0.02.\nMust satisfy 0 < critical < warn < 1."
+        },
         "nodes": {
           "type": "array",
           "items": {

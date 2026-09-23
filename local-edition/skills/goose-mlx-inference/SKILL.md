@@ -62,7 +62,11 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   (caps as RAM ratios, /v1/models = the goose id only, /goose/progress, /goose/admission); qwen4_exp → the fork's
   `pipeline_qwen4 plan` for preflight, start REFUSED (fork has no `serve` entry yet).
 - Switch: `align_omlx_host_env` points OMLX_HOST at the distributed base URL while it owns the Mac (goosed-owned only), back
-  to the single port after stop. Swarm router / goose-cli lanes do NOT route to it (not wired).
+  to the single port after stop. The swarm router's `probe_mlx` targets it while THIS process runs it; goose-cli swarm
+  lanes (swarm_engine.rs) do not.
+- Proven LIVE 2026-09-24: the ratio hang rule on a mid-stream SIGSTOP (`hang_ratio_only`), the stream-cut rule, and the
+  watchdog on real ballast pressure (WARN/CRITICAL reserves raised via `watchdog_warn_ratio`/`watchdog_critical_ratio`).
+  Never gate on `kern.memorystatus_level` — it did not move with 18 GiB of ballast.
 - Liveness = rank-0 step counter OR every rank's CPU time advancing; hang = silent > 10 × running median (≥3 samples);
   ps stat `T` = frozen at once. Watchdog per poll: kernel pressure WARN or available < 5% RAM → admission 503; CRITICAL →
   verified stop, never restarted. Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).

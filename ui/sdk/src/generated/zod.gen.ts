@@ -3542,6 +3542,15 @@ export const zMlxDistributedConfigDto = z.object({
         z.null()
     ]).optional(),
     restartOnFailure: z.boolean().optional().default(false),
+    hangRatioOnly: z.boolean().optional().default(false),
+    watchdogWarnRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    watchdogCriticalRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
     nodes: z.array(zMlxDistributedNodeConfigDto)
 });
 

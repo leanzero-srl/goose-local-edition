@@ -3358,6 +3358,21 @@ export type MlxDistributedConfigDto = {
      * watchdog CRITICAL stop never restarts).
      */
     restartOnFailure?: boolean;
+    /**
+     * Diagnostic: skip the ps-stat-T fast path so a stopped rank is caught only by the
+     * progress-ratio hang rule. Default false.
+     */
+    hangRatioOnly?: boolean;
+    /**
+     * The memory watchdog's WARN reserve as a fraction of each node's RAM (available below it →
+     * admission closes, 503). Absent = 0.05.
+     */
+    watchdogWarnRatio?: number | null;
+    /**
+     * The CRITICAL reserve (available below it → verified stop, never restarted). Absent = 0.02.
+     * Must satisfy 0 < critical < warn < 1.
+     */
+    watchdogCriticalRatio?: number | null;
     nodes: Array<MlxDistributedNodeConfigDto>;
 };
 

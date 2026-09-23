@@ -61,5 +61,10 @@ pub const HANG_MIN_SAMPLES: usize = 3;
 // top of the live request's, so the cache never outgrows what preflight charged it.
 pub const PROMPT_CACHE_CONTEXTS: u64 = 1;
 // ratio: policy, not yet measured — a node whose available memory falls below 5% of its RAM is
-// treated as WARN even before the kernel's own pressure level says so.
-pub const WATCHDOG_RESERVE_RATIO: f64 = 0.05;
+// treated as WARN even before the kernel's own pressure level says so. Overridable per run
+// (`DistributedConfig::watchdog_warn_ratio`).
+pub const WATCHDOG_WARN_RESERVE_RATIO: f64 = 0.05;
+// ratio: policy, not yet measured — below 2% of RAM available the run is stopped as CRITICAL even
+// if the kernel has not raised its own level yet (the kernel's CRITICAL always stops it too).
+// Overridable per run (`DistributedConfig::watchdog_critical_ratio`).
+pub const WATCHDOG_CRITICAL_RESERVE_RATIO: f64 = 0.02;

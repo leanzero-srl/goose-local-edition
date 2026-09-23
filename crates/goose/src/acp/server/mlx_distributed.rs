@@ -37,6 +37,9 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         coordinator_port: dto.coordinator_port,
         context: dto.context,
         restart_on_failure: dto.restart_on_failure,
+        hang_ratio_only: dto.hang_ratio_only,
+        watchdog_warn_ratio: dto.watchdog_warn_ratio,
+        watchdog_critical_ratio: dto.watchdog_critical_ratio,
         nodes: dto
             .nodes
             .into_iter()
@@ -64,6 +67,9 @@ fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDto {
         coordinator_port: config.coordinator_port,
         context: config.context,
         restart_on_failure: config.restart_on_failure,
+        hang_ratio_only: config.hang_ratio_only,
+        watchdog_warn_ratio: config.watchdog_warn_ratio,
+        watchdog_critical_ratio: config.watchdog_critical_ratio,
         nodes: config
             .nodes
             .into_iter()
@@ -428,6 +434,9 @@ mod tests {
             coordinator_port: 32323,
             context: None,
             restart_on_failure: true,
+            hang_ratio_only: false,
+            watchdog_warn_ratio: None,
+            watchdog_critical_ratio: None,
             nodes: vec![
                 MlxDistributedNodeConfigDto {
                     name: "MacBook Pro".to_string(),
