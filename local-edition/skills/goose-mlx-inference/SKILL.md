@@ -140,3 +140,9 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 ## Fan protocol (Claude subagents on this workstream)
 Fan → reduce in code → adversarially verify → synthesize. A brief carries ONLY: goal, exact files,
 constraints, verification. No campaign history — sharp and fast beats informed and diluted.
+
+### Verifying the menu-bar tray live (2026-09-24, 3.0.17)
+Screen capture of the menu bar fails from this harness ("could not create image from rect"); read the tray through Accessibility instead:
+`osascript -e 'tell application "System Events" to tell process "Goose Swarm" to get title of menu bar items of menu bar 2'` (title) and click `menu bar item 1 of menu bar 2` then read `name of menu items of menu 1 of …` (menu; press key code 53 to close). Menu items can be CLICKED the same way ("Mount <model>", "Unmount the MLX engine") — a real user path, no CDP needed.
+Measured on 3.0.17: title '' when off (by design) → "Mounting" → "Idle" → "Reading 3.0k" (prompt 3,032 tok) → 18.0–22.7 tok/s → "Idle"; the mounted menu lists model, last run (wrote 21.5 tok/s, read 238 tok/s), cache hits, served count, uptime, GPU memory.
+The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is on the mesh (deliberate: single-Mac installs unchanged). Link sign-in is an email code — owner-only.
