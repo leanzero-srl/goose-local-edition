@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "Hentikan salinan {model} ke {host}? Salinan separa pada {host} akan dipadam."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Batalkan salinan"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "Salinan tidak dapat dibatalkan."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Hentikan salinan dan padam salinan separa pada {host}"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Semak pautan"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "Menyemak pautan…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "Disalin ke {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "Salinan ke {host} dibatalkan"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "Salinan ke {host} gagal"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "Tiada pautan Thunderbolt ke {host}, jadi salinan melalui rangkaian setempat: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Menyalin melalui kabel Thunderbolt: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Salin ke {host} · Thunderbolt} other{Salin ke {host} · rangkaian}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Menyalin ke {host} melalui Thunderbolt} other{Menyalin ke {host} melalui rangkaian}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} daripada {total} fail"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Teruskan menyalin"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "rangkaian"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Pautan ke peranti anda yang lain tidak dapat disemak: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "Pautan tidak dapat dibaca."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "Model pada peranti ini boleh disalin ke peranti terpaut dan bukannya dimuat turun semula. Setiap fail disemak dengan yang asal sebelum digunakan."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Peranti terpaut"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Tiada pautan Thunderbolt, jadi salinan melalui rangkaian setempat."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "Dimuat turun"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} kini ada pada peranti ini. {host} terpaut melalui Thunderbolt: salin ke sana dan bukannya memuat turun semula."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "Kemajuan salinan {model} ke {host}"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "Peranti penghantar membiarkan tawarannya terbuka: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{dimulakan semula dari sifar: # fail} other{dimulakan semula dari sifar: # fail}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{disambung daripada salinan separa: # fail} other{disambung daripada salinan separa: # fail}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "Salinan tidak bermula."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "Memulakan salinan ke {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "menyemak {file}"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },

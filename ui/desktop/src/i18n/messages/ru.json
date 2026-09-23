@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "Проверить"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "Остановить копирование {model} на {host}? Частичная копия на {host} будет удалена."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Отменить копирование"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "Не удалось отменить копирование."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Остановить копирование и удалить частичную копию на {host}"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Проверить связи"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "Проверка связей…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "Скопировано на {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "Копирование на {host} отменено"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "Копирование на {host} не удалось"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "Нет Thunderbolt-связи с {host}, поэтому копия идёт по локальной сети: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Копирование по кабелю Thunderbolt: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Копировать на {host} · Thunderbolt} other{Копировать на {host} · сеть}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Копирование на {host} по Thunderbolt} other{Копирование на {host} по сети}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Скрыть"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} из {total} файлов"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Продолжить копирование"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "сеть"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Не удалось проверить связи с другими устройствами: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "Не удалось прочитать связи."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "Модель на этом устройстве можно скопировать на связанное устройство вместо повторной загрузки. Каждый файл сверяется с оригиналом перед использованием."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Связанные устройства"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Нет Thunderbolt-связи, поэтому копии идут по локальной сети."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "Загружено"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} теперь на этом устройстве. {host} связан по Thunderbolt: скопируйте модель туда вместо повторной загрузки."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "Ход копирования {model} на {host}"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "Отправляющее устройство оставило предложение открытым: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{начат заново: # файл} few{начато заново: # файла} many{начато заново: # файлов} other{начато заново: # файла}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{продолжен с частичной копии: # файл} few{продолжено с частичной копии: # файла} many{продолжено с частичной копии: # файлов} other{продолжено с частичной копии: # файла}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "Копирование не началось."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "Запуск копирования на {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "проверка {file}"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Авто"
   },

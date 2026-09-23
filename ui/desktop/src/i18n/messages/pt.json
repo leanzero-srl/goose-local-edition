@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "Testar"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "Parar de copiar {model} para {host}? A cópia parcial em {host} é apagada."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Cancelar cópia"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "Não foi possível cancelar a cópia."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Parar a cópia e apagar a cópia parcial em {host}"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Verificar ligações"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "A verificar ligações…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "Copiado para {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "Cópia para {host} cancelada"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "A cópia para {host} falhou"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "Sem ligação Thunderbolt a {host}, por isso a cópia passa pela rede local: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Copia pelo cabo Thunderbolt: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Copiar para {host} · Thunderbolt} other{Copiar para {host} · rede}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{A copiar para {host} por Thunderbolt} other{A copiar para {host} pela rede}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Dispensar"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} de {total} ficheiros"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Continuar a copiar"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "rede"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Não foi possível verificar as ligações aos seus outros dispositivos: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "Não foi possível ler as ligações."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "Um modelo neste dispositivo pode ser copiado para um dispositivo ligado em vez de ser transferido de novo. Cada ficheiro é verificado com o original antes de ser usado."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Dispositivos ligados"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Sem ligação Thunderbolt, por isso as cópias passam pela rede local."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "Transferido"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} já está neste dispositivo. {host} está ligado por Thunderbolt: copie-o para lá em vez de o transferir de novo."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "Progresso da cópia de {model} para {host}"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "O dispositivo emissor deixou a oferta aberta: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{recomeçado do zero: # ficheiro} other{recomeçados do zero: # ficheiros}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{retomado de uma cópia parcial: # ficheiro} other{retomados de uma cópia parcial: # ficheiros}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "A cópia não começou."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "A iniciar a cópia para {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "a verificar {file}"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },

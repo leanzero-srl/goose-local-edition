@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "測試"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "取消"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "要停止將 {model} 複製到 {host} 嗎？{host} 上的部分副本將被刪除。"
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "取消複製"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "無法取消複製。"
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "停止複製並刪除 {host} 上的部分副本"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "檢查連線"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "正在檢查連線…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "已複製到 {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "已取消複製到 {host}"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "複製到 {host} 失敗"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "與 {host} 之間沒有 Thunderbolt 連線，因此透過區域網路複製：{local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "透過 Thunderbolt 線材複製：{local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{複製到 {host} · Thunderbolt} other{複製到 {host} · 網路}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{正在透過 Thunderbolt 複製到 {host}} other{正在透過網路複製到 {host}}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "關閉"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} / {total} 個檔案"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "繼續複製"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "網路"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "無法檢查與其他裝置的連線：{reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "無法讀取連線。"
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "此裝置上的模型可以複製到已連結的裝置，而不必重新下載。每個檔案在使用前都會與原始檔案核對。"
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "已連結的裝置"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "沒有 Thunderbolt 連線，因此透過區域網路複製。"
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "已下載"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} 現在已在此裝置上。{host} 以 Thunderbolt 連結：請複製過去，而不要重新下載。"
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "{model} 複製到 {host} 的進度"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "傳送裝置保留了其分享：{reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{從頭重新開始：# 個檔案} other{從頭重新開始：# 個檔案}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{從部分副本繼續：# 個檔案} other{從部分副本繼續：# 個檔案}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "複製未開始。"
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "正在開始複製到 {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "正在校驗 {file}"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "自動"
   },

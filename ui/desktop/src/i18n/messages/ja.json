@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "テスト"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "{model} の {host} へのコピーを停止しますか？ {host} 上の途中までのコピーは削除されます。"
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "コピーをキャンセル"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "コピーをキャンセルできませんでした。"
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "コピーを停止し、{host} 上の途中までのコピーを削除します"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "接続を確認"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "接続を確認中…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "{host} にコピーしました"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "{host} へのコピーをキャンセルしました"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "{host} へのコピーに失敗しました"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "{host} との Thunderbolt 接続がないため、ローカルネットワーク経由でコピーします: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Thunderbolt ケーブル経由でコピーします: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{{host} にコピー · Thunderbolt} other{{host} にコピー · ネットワーク}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Thunderbolt 経由で {host} にコピー中} other{ネットワーク経由で {host} にコピー中}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{total} 件中 {done} 件のファイル"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "コピーを続ける"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "ネットワーク"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "他のデバイスとの接続を確認できませんでした: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "接続を読み取れませんでした。"
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "このデバイスのモデルは、再ダウンロードする代わりにリンク済みのデバイスへコピーできます。各ファイルは使用前に元のファイルと照合されます。"
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "リンク済みのデバイス"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Thunderbolt 接続がないため、コピーはローカルネットワーク経由になります。"
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "ダウンロード済み"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} がこのデバイスに入りました。{host} は Thunderbolt で接続されています。再ダウンロードせずにそちらへコピーしてください。"
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "{model} の {host} へのコピーの進行状況"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "送信側のデバイスがオファーを開いたままにしました: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{最初からやり直し: # 件のファイル} other{最初からやり直し: # 件のファイル}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{途中までのコピーから再開: # 件のファイル} other{途中までのコピーから再開: # 件のファイル}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "コピーを開始できませんでした。"
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "{host} へのコピーを開始しています…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "{file} を検証中"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "自動"
   },

@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "Kiểm tra"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "Dừng sao chép {model} sang {host}? Bản sao dở dang trên {host} sẽ bị xóa."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Hủy sao chép"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "Không thể hủy việc sao chép."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Dừng sao chép và xóa bản sao dở dang trên {host}"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Kiểm tra kết nối"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "Đang kiểm tra kết nối…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "Đã sao chép sang {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "Đã hủy sao chép sang {host}"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "Sao chép sang {host} thất bại"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "Không có kết nối Thunderbolt tới {host}, nên bản sao đi qua mạng cục bộ: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Sao chép qua cáp Thunderbolt: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Sao chép sang {host} · Thunderbolt} other{Sao chép sang {host} · mạng}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Đang sao chép sang {host} qua Thunderbolt} other{Đang sao chép sang {host} qua mạng}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} trên {total} tệp"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Tiếp tục sao chép"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "mạng"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Không thể kiểm tra kết nối tới các thiết bị khác của bạn: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "Không thể đọc các kết nối."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "Mô hình trên thiết bị này có thể được sao chép sang thiết bị đã liên kết thay vì tải lại. Mỗi tệp được đối chiếu với bản gốc trước khi dùng."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Thiết bị đã liên kết"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Không có kết nối Thunderbolt, nên bản sao đi qua mạng cục bộ."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "Đã tải xuống"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} đã có trên thiết bị này. {host} được liên kết bằng Thunderbolt: hãy sao chép sang đó thay vì tải lại."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "Tiến độ sao chép {model} sang {host}"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "Thiết bị gửi vẫn để ngỏ lời mời: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{bắt đầu lại từ đầu: # tệp} other{bắt đầu lại từ đầu: # tệp}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{tiếp tục từ bản sao dở dang: # tệp} other{tiếp tục từ bản sao dở dang: # tệp}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "Việc sao chép chưa bắt đầu."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "Đang bắt đầu sao chép sang {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "đang kiểm tra {file}"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Tự động"
   },
