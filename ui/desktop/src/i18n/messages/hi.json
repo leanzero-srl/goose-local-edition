@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "फ़िट होता है, {reserve} GB रिज़र्व के ऊपर {spare} GB बचेगा"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} GB खाली"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB उपलब्ध"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB माउंट करने हैं"

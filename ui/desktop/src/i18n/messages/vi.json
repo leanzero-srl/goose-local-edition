@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Vừa, dư {spare} GB trên mức dự trữ {reserve} GB"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "Trống {gb} GB"
+  "mlxStateTile.available": {
+    "defaultMessage": "Khả dụng {gb} GB"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB cần nạp"

@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "収まります（予約 {reserve} GB を超えて余裕 {spare} GB）"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "空き {gb} GB"
+  "mlxStateTile.available": {
+    "defaultMessage": "利用可能 {gb} GB"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB をマウント"

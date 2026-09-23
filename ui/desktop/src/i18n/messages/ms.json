@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Muat, berbaki {spare} GB melebihi simpanan {reserve} GB"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} GB bebas"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB tersedia"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB untuk dilekapkan"

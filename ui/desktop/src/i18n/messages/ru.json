@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Помещается, запас {spare} ГБ сверх резерва {reserve} ГБ"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "Свободно {gb} ГБ"
+  "mlxStateTile.available": {
+    "defaultMessage": "Доступно {gb} ГБ"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "ГБ для монтирования"

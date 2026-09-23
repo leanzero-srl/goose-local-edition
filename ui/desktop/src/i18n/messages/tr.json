@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Sığar, {reserve} GB yedeğin üstünde {spare} GB boş kalır"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} GB boş"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB kullanılabilir"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB bağlanacak"

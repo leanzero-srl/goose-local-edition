@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Tient, {spare} Go de marge au-delà de la réserve de {reserve} Go"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} Go libres"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} Go disponibles"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "Go à monter"

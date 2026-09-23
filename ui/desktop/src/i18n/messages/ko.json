@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "들어갑니다, 예비 {reserve}GB 위로 {spare}GB 여유"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb}GB 여유"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb}GB 사용 가능"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB 마운트"

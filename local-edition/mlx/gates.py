@@ -92,8 +92,12 @@ def available_memory_bytes():
         if ":" in line:
             key, val = line.split(":", 1)
             pages[key.strip()] = int(val.strip().rstrip("."))
-    usable = ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
-    return sum(pages.get(k, 0) for k in usable) * page_size
+    # The sidecar's measure (goose-sidecar memory.rs, 2bd81c9c4): vm_stat's free count includes
+    # the speculative pages, and the file-backed cache is reclaimable on demand, so a model
+    # download filling the cache is not pressure. Kept identical so G1 and the app's mount gate agree.
+    free = pages.get("Pages free", 0) - pages.get("Pages speculative", 0)
+    usable = free + pages.get("File-backed pages", 0) + pages.get("Pages purgeable", 0)
+    return usable * page_size
 
 
 def dir_size_bytes(path):

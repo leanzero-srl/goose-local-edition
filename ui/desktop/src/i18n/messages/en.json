@@ -2729,6 +2729,9 @@
   "mlxStateTile.activity.queued": {
     "defaultMessage": "Queued"
   },
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB available"
+  },
   "mlxStateTile.claimed": {
     "defaultMessage": "Memory claimed since the mount began"
   },
@@ -2779,9 +2782,6 @@
   },
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Fits, {spare} GB spare above the {reserve} GB reserve"
-  },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} GB free"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB to mount"

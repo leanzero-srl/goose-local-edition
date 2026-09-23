@@ -141,7 +141,7 @@ const i18n = defineMessages({
     defaultMessage: 'Fits, {spare} GB spare above the {reserve} GB reserve',
   },
   fits: { id: 'mlxStateTile.fits', defaultMessage: 'Fits, {spare} GB to spare' },
-  free: { id: 'mlxStateTile.free', defaultMessage: '{gb} GB free' },
+  available: { id: 'mlxStateTile.available', defaultMessage: '{gb} GB available' },
   costBar: { id: 'mlxStateTile.costBar', defaultMessage: 'Model size against free memory' },
   failedFallback: {
     id: 'mlxStateTile.failedFallback',
@@ -681,7 +681,7 @@ function StoppedInstrument({ cost }: { cost: MountCost | null }) {
       />
       <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
         <span className={WEIGHT.semibold}>{verdictLine}</span>
-        <span className="shrink-0">{intl.formatMessage(i18n.free, { gb: gb(cost.freeGb) })}</span>
+        <span className="shrink-0">{intl.formatMessage(i18n.available, { gb: gb(cost.freeGb) })}</span>
       </div>
     </div>
   );

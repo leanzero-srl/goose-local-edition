@@ -2780,8 +2780,8 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Cabe, sobran {spare} GB por encima de la reserva de {reserve} GB"
   },
-  "mlxStateTile.free": {
-    "defaultMessage": "{gb} GB libres"
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB disponibles"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB para montar"

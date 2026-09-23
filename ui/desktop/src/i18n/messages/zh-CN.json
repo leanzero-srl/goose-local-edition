@@ -2780,7 +2780,7 @@
   "mlxStateTile.fitsTight": {
     "defaultMessage": "可容纳，在 {reserve} GB 预留之上剩余 {spare} GB"
   },
-  "mlxStateTile.free": {
+  "mlxStateTile.available": {
     "defaultMessage": "可用 {gb} GB"
   },
   "mlxStateTile.gbToMount": {

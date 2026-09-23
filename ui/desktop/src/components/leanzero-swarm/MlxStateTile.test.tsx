@@ -264,7 +264,7 @@ describe('MlxStateTile STOPPED — what mounting would cost, and Mount on the ti
     expect(screen.getByTestId('mlx-mount-cost')).toHaveAttribute('data-verdict', 'fits');
     expect(t).toHaveTextContent('31.0GB to mount');
     expect(t).toHaveTextContent('Fits, 24.8 GB to spare');
-    expect(t).toHaveTextContent('68.6 GB free');
+    expect(t).toHaveTextContent('68.6 GB available');
     expect(within(t).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '45');
     expect(within(t).getByRole('button', { name: 'Mount' })).toBeInTheDocument();
     await expectDesigned(container);
