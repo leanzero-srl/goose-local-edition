@@ -5,6 +5,7 @@ import type { setViewType } from './hooks/useNavigation';
 import type { FixedExtensionEntry } from './components/ConfigContext';
 import { AppEvents } from './constants/events';
 import { acpChatSessionController } from './acp/chatSessionController';
+import { acpChatSessionActions, acpChatSessionStore } from './acp/chatSessionStore';
 import { getConfiguredGooseExtensions, gooseExtensionName } from './acp/extensions';
 import { acpRenameSession } from './acp/sessions';
 import { toastError } from './toasts';
@@ -142,6 +143,15 @@ export async function startNewSession(
     try {
       await acpRenameSession(session.id, title);
       session = { ...session, name: title, user_set_name: true };
+      // createSession already seeded the chat store with the engine's placeholder, and the chat
+      // view reads the store (loadSession returns early on a cached session) — so without this the
+      // header said "New Session" while sessions.db already held the name (UX audit 2026-09-23).
+      const cached = acpChatSessionStore.getSnapshot(session.id)?.session;
+      acpChatSessionActions.setSessionMetadata(session.id, {
+        ...(cached ?? session),
+        name: title,
+        user_set_name: true,
+      });
     } catch (error) {
       toastError({
         title: 'The session could not be named',

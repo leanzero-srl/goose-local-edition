@@ -18,6 +18,7 @@ vi.mock('./acp/sessions', () => ({ acpRenameSession: mocks.rename }));
 vi.mock('./toasts', () => ({ toastError: mocks.toastError }));
 
 import { startNewSession } from './sessions';
+import { acpChatSessionActions, acpChatSessionStore } from './acp/chatSessionStore';
 
 const created = () => ({ id: 's-1', name: 'New Chat', user_set_name: false });
 
@@ -50,6 +51,22 @@ describe('startNewSession with a title', () => {
       user_set_name: true,
     });
     expect(created.seen).toEqual([{ session }]);
+  });
+
+  it('the chat store — what the header reads — carries the name the moment the session opens', async () => {
+    // createSession seeds the store with the engine placeholder; the chat view never reloads a
+    // cached session, so the header showed "New Session" over a named session (UX audit 2026-09-23).
+    mocks.createSession.mockImplementation(async () => {
+      acpChatSessionActions.finishSessionLoad('s-1', created() as never);
+      return created();
+    });
+    await startNewSession('I want to work on…', vi.fn(), '/w', {
+      title: 'Skill · release-checklist',
+    });
+    expect(acpChatSessionStore.getSnapshot('s-1')?.session).toMatchObject({
+      name: 'Skill · release-checklist',
+      user_set_name: true,
+    });
   });
 
   it('a failed rename is said out loud and the session still starts under its engine name', async () => {
