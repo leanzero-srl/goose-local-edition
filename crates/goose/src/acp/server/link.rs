@@ -657,6 +657,14 @@ fn record_connect_refusal(refusal: Option<String>) {
 
 static LINK: OnceLock<StdMutex<LinkHolder>> = OnceLock::new();
 
+/// The manager this process already built, for code that runs without the agent — the mesh
+/// proxy's executing side. A node reached over the mesh has one (its control service is the
+/// manager's); `None` means Link never started here.
+pub(super) fn existing_link_manager() -> Option<Arc<LinkManager>> {
+    LINK.get()
+        .map(|holder| holder.lock().unwrap().manager.clone())
+}
+
 // ---------------------------------------------------------------------------
 // The meshes this process started, so `goose serve`'s exit path can stop their daemons.
 // ---------------------------------------------------------------------------
@@ -1001,7 +1009,7 @@ fn mlx_remote_target(self_node_id: &str, requested: Option<&str>) -> Option<Stri
     }
 }
 
-fn mlx_proxy_err(error: LinkError) -> agent_client_protocol::Error {
+pub(super) fn mlx_proxy_err(error: LinkError) -> agent_client_protocol::Error {
     match error {
         LinkError::MlxControl(MlxControlError::BadRequest(_))
         | LinkError::MlxControlUnavailable
@@ -1058,7 +1066,9 @@ impl GooseAcpAgent {
     /// setting — so the manager always carries what the user configured; a manager that
     /// is Connecting/Connected is never replaced (that would drop the live mesh), the new
     /// key applies at its next connect and the status DTO shows both values meanwhile.
-    async fn link_manager(&self) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+    pub(super) async fn link_manager(
+        &self,
+    ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
         let key = current_build_key();
 
         let holder = match LINK.get() {

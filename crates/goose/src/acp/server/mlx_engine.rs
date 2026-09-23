@@ -50,11 +50,17 @@ static LAST_ENGINE_STATE: StdMutex<String> = StdMutex::new(String::new());
 
 static DOWNLOAD_TRACKER: LazyLock<DownloadTracker> = LazyLock::new(DownloadTracker::new);
 
+/// The HF download tracked for `repo_id`, for the replica pull's collision check (a pull and a
+/// download must never write the same `.part` files).
+pub(super) fn download_progress(repo_id: &str) -> Option<hf::DownloadProgress> {
+    DOWNLOAD_TRACKER.progress(repo_id)
+}
+
 /// Every settings load runs the legacy-flats → per-model-profile migration and persists
 /// it the one time it changes anything, so all paths (status, mount, read, list) see
 /// profile truth. Older configs kept sampling in flat engine-wide fields; profiles are
 /// per model.
-fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error> {
+pub(super) fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error> {
     let mut settings = match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
         Ok(settings) => settings,
         Err(ConfigError::NotFound(_)) => EngineSettings::default(),
@@ -507,6 +513,12 @@ async fn core_download(
     req: MlxEngineDownloadRequest,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
     let settings = load_engine_settings()?;
+    if super::mlx_replica::REPLICAS.is_active(&req.repo_id) {
+        return Err(agent_client_protocol::Error::invalid_params().data(format!(
+            "'{}' is being copied from a peer on this node; cancel the copy or let it finish first",
+            req.repo_id
+        )));
+    }
     let token = huggingface_token().await;
     DOWNLOAD_TRACKER
         .start_download(&req.repo_id, &expand_tilde(&settings.models_dir), token)
@@ -802,6 +814,14 @@ fn acp_error_to_mlx_control(error: agent_client_protocol::Error) -> MlxControlEr
     }
 }
 
+/// The ops that act on OTHER peers from this node (replicaTargets, replicate) need this
+/// node's Link manager; a relayed op reached us through its control service, so one exists.
+fn link_manager_for_proxy() -> Result<Arc<leanzero_link::manager::LinkManager>, MlxControlError> {
+    super::link::existing_link_manager().ok_or_else(|| {
+        MlxControlError::Failed("LeanZero Link is not running on this node".to_string())
+    })
+}
+
 #[async_trait::async_trait]
 impl MlxControl for GoosedMlxControl {
     async fn dispatch(
@@ -852,6 +872,32 @@ impl MlxControl for GoosedMlxControl {
             MlxOp::DownloadCancel => {
                 mlx_response_to_value(core_download_cancel(mlx_req_from_value(request)?).await)
             }
+            MlxOp::LinkFacts => mlx_response_to_value(
+                super::mlx_replica::core_link_facts(mlx_req_from_value(request)?).await,
+            ),
+            MlxOp::ReplicaTargets => mlx_response_to_value(
+                super::mlx_replica::core_replica_targets(
+                    link_manager_for_proxy()?,
+                    mlx_req_from_value(request)?,
+                )
+                .await,
+            ),
+            MlxOp::Replicate => mlx_response_to_value(
+                super::mlx_replica::core_replicate(
+                    link_manager_for_proxy()?,
+                    mlx_req_from_value(request)?,
+                )
+                .await,
+            ),
+            MlxOp::ReplicaPull => mlx_response_to_value(
+                super::mlx_replica::core_replica_pull(mlx_req_from_value(request)?).await,
+            ),
+            MlxOp::ReplicaProgress => mlx_response_to_value(
+                super::mlx_replica::core_replica_progress(mlx_req_from_value(request)?).await,
+            ),
+            MlxOp::ReplicaCancel => mlx_response_to_value(
+                super::mlx_replica::core_replica_cancel(mlx_req_from_value(request)?).await,
+            ),
         }
     }
 }

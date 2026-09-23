@@ -124,6 +124,17 @@ pub enum MlxOp {
     DownloadPause,
     DownloadResume,
     DownloadCancel,
+    /// This node's interface facts (addresses, hardware ports, TB speed) — what a sender
+    /// compares with its own to find a Thunderbolt or LAN path to this node.
+    LinkFacts,
+    /// Which peers this node could copy a model to, and over which path.
+    ReplicaTargets,
+    /// Copy one of THIS node's models to a named peer (this node offers, the peer pulls).
+    Replicate,
+    /// Pull a model from a sender's replica listener into this node's models dir.
+    ReplicaPull,
+    ReplicaProgress,
+    ReplicaCancel,
 }
 
 impl MlxOp {
@@ -147,6 +158,12 @@ impl MlxOp {
             Self::DownloadPause => "downloadPause",
             Self::DownloadResume => "downloadResume",
             Self::DownloadCancel => "downloadCancel",
+            Self::LinkFacts => "linkFacts",
+            Self::ReplicaTargets => "replicaTargets",
+            Self::Replicate => "replicate",
+            Self::ReplicaPull => "replicaPull",
+            Self::ReplicaProgress => "replicaProgress",
+            Self::ReplicaCancel => "replicaCancel",
         }
     }
 
@@ -168,6 +185,12 @@ impl MlxOp {
             "downloadPause" => Self::DownloadPause,
             "downloadResume" => Self::DownloadResume,
             "downloadCancel" => Self::DownloadCancel,
+            "linkFacts" => Self::LinkFacts,
+            "replicaTargets" => Self::ReplicaTargets,
+            "replicate" => Self::Replicate,
+            "replicaPull" => Self::ReplicaPull,
+            "replicaProgress" => Self::ReplicaProgress,
+            "replicaCancel" => Self::ReplicaCancel,
             _ => return None,
         })
     }
@@ -175,14 +198,45 @@ impl MlxOp {
     /// True for ops that destroy on-disk state or a running engine over the mesh: model
     /// delete, download-cancel (which also deletes the partial repo), settings-update
     /// (persists into the node's own config and can change what it serves) and unmount
-    /// (stops the engine a local session may be using). These are logged at `warn` on the
-    /// executing node so a remote destructive action is never silent.
+    /// (stops the engine a local session may be using), and replica-cancel (deletes the
+    /// partial copy). These are logged at `warn` on the executing node so a remote
+    /// destructive action is never silent.
     pub fn is_destructive(self) -> bool {
         matches!(
             self,
-            Self::ModelDelete | Self::DownloadCancel | Self::SettingsUpdate | Self::Unmount
+            Self::ModelDelete
+                | Self::DownloadCancel
+                | Self::SettingsUpdate
+                | Self::Unmount
+                | Self::ReplicaCancel
         )
     }
+
+    /// Every op, so a round-trip test cannot miss a variant added later.
+    pub const ALL: [MlxOp; 22] = [
+        Self::Status,
+        Self::Mount,
+        Self::Unmount,
+        Self::SettingsRead,
+        Self::SettingsUpdate,
+        Self::ModelsList,
+        Self::ModelDelete,
+        Self::HfSearch,
+        Self::Browse,
+        Self::BrowseFilters,
+        Self::ModelCard,
+        Self::Download,
+        Self::DownloadProgress,
+        Self::DownloadPause,
+        Self::DownloadResume,
+        Self::DownloadCancel,
+        Self::LinkFacts,
+        Self::ReplicaTargets,
+        Self::Replicate,
+        Self::ReplicaPull,
+        Self::ReplicaProgress,
+        Self::ReplicaCancel,
+    ];
 }
 
 /// A local mlxEngine failure surfaced to a remote caller through the proxy. The two
