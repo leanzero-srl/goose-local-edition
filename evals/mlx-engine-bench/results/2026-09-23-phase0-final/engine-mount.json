@@ -1,0 +1,33 @@
+{
+ "argv": [
+  "uvx",
+  "--from",
+  "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1",
+  "rapid-mlx",
+  "serve",
+  "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+  "--port",
+  "8090",
+  "--served-model-name",
+  "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "--enable-prefix-cache",
+  "--max-concurrent-requests",
+  "8",
+  "--enable-auto-tool-choice",
+  "--tool-call-parser",
+  "qwen3_coder_xml",
+  "--reasoning-parser",
+  "deepseek_r1",
+  "--speculative-config",
+  "{\"method\":\"mtp\",\"model\":\"/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx\",\"num_speculative_tokens\":3}",
+  "--text-only"
+ ],
+ "unmount_seconds": 14.27,
+ "spawn_env_over_inherited": {
+  "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+  "DO_NOT_TRACK": "1",
+  "RAPID_MLX_TELEMETRY": "0",
+  "RAPID_MLX_PREFIX_CACHE_SHUTDOWN_BUDGET": "175.2"
+ },
+ "sidecar_sigterm_grace_seconds": 176.7
+}
