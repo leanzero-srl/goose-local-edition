@@ -537,9 +537,8 @@ fn telemetry_append(path: &std::ffi::OsStr, mut line: String) {
 }
 
 /// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT ON — the
-/// title call is a 25s detached spawn off the reply critical path, so the queue-contention concern is
-/// moot and the ugly first-4-words truncation is not worth shipping). When on, a swarm-build session is titled by ONE cheap
-/// local-planner call instead of the first-4-words truncation ("Build X — a").
+/// title call is a detached spawn off the reply critical path, so it never slows a turn). When on, the
+/// session is titled by ONE completion on the pool; when off, by the first words of the message.
 fn ai_session_name_enabled() -> bool {
     if let Ok(v) = std::env::var("GOOSE_SWARM_AI_NAME") {
         return matches!(
@@ -554,60 +553,40 @@ fn ai_session_name_enabled() -> bool {
         .unwrap_or(true)
 }
 
-/// The session-title call is fired at reply START (agent.rs, a DETACHED spawn) — which means it races the build
-/// it is naming for the single PARALLEL:1 planner slot. The old 25s timeout LOST that race on every real build
-/// (planning holds the slot for minutes), silently falling back to the "Build X — a" truncation. Because the
-/// spawn is detached it blocks nothing, so we can afford to WAIT: a generous timeout lets the queued title
-/// request get served between build generations (typically within a minute or two) and return the real title.
-/// Override with GOOSE_SWARM_NAME_TIMEOUT_SECS; 0 disables the timer entirely (wait indefinitely for the fleet).
-fn name_timeout_secs() -> u64 {
-    std::env::var("GOOSE_SWARM_NAME_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(600)
-}
-
-/// Title the session with ONE local-planner call (thinking OFF via complete_fast). Passes the SAME session-title
-/// system+messages straight to the real lmstudio provider, so the planner emits a title and the outer
-/// `generate_session_name` strips the reasoning block + picks the short title. Any error/timeout bubbles up so
-/// the caller falls back to the truncation.
-async fn ai_session_title(
-    system: &str,
+/// Title the session on the POOL that serves it — the same router a chat turn and every other small
+/// completion of the session (tool titles, chain summaries) already go through — never on a model the
+/// session does not use. MEASURED 2026-09-23: the title went to LM Studio's `swarm.planner_model`
+/// while the only mounted device was the MLX sidecar; LM Studio answered `400 No models loaded` on every
+/// session, the error was dropped without a word, and every title was the first words of the message.
+///
+/// The routed stream is collected here so a failure that arrives mid-stream is caught too. When the pool
+/// cannot title the session the first-words title stands, and the log names why.
+async fn session_title_stream(
+    routed: impl std::future::Future<Output = Result<MessageStream, ProviderError>>,
+    model_name: &str,
     messages: &[Message],
 ) -> Result<MessageStream, ProviderError> {
-    let planner = crate::config::Config::global()
-        .get_param::<serde_json::Value>("swarm")
-        .ok()
-        .and_then(|c| {
-            c.get("planner_model")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "qwen/qwen3.6-27b".to_string());
-    let provider = crate::providers::create("lmstudio", vec![])
-        .await
-        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
-    let mc = crate::model_config::model_config_from_user_config("lmstudio", &planner)
-        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
-    let call = crate::model_config::complete_fast(
-        provider.as_ref(),
-        &mc,
-        "swarm-name",
-        system,
-        messages,
-        &[],
-    );
-    let secs = name_timeout_secs();
     let start = Instant::now();
-    let (message, usage) = if secs == 0 {
-        call.await?
-    } else {
-        tokio::time::timeout(std::time::Duration::from_secs(secs), call)
-            .await
-            .map_err(|_| ProviderError::ExecutionError("session-title call timed out".into()))??
+    let titled = match routed.await {
+        Ok(stream) => super::base::collect_stream(stream).await,
+        Err(e) => Err(e),
     };
-    record_call(&usage.model, start, None, Some(&usage.usage), None);
-    Ok(stream_from_single_message(message, usage))
+    match titled {
+        Ok((message, usage)) => {
+            record_call(&usage.model, start, None, Some(&usage.usage), None);
+            Ok(stream_from_single_message(message, usage))
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "swarm",
+                error = %e,
+                "session title: the swarm pool could not answer the title request; the session keeps the first words of its first message"
+            );
+            let (message, usage) =
+                super::cli_common::generate_simple_session_description(model_name, messages)?;
+            Ok(stream_from_single_message(message, usage))
+        }
+    }
 }
 
 #[async_trait]
@@ -641,16 +620,16 @@ impl Provider for SwarmProvider {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         let route = self.observe_route(model_config);
-        // Incidental-completion guard: session titles, tool summaries, etc. must NOT spawn the fleet.
+        // Incidental-completion guard: a session title must NOT spawn the fleet, on either route. It is
+        // one completion on the pool (see `session_title_stream`), whichever route the session uses.
         if super::cli_common::is_session_description_request(system) {
-            // #ai-session-names: title the session with a cheap local-planner call instead of the
-            // first-4-words truncation ("Build X — a"). Gated (default OFF); on error/timeout it falls back to
-            // the truncation below. Runs off the reply critical path (a detached spawn in agent.rs), so it
-            // never slows build start.
             if ai_session_name_enabled() {
-                if let Ok(s) = ai_session_title(system, messages).await {
-                    return Ok(s);
-                }
+                return session_title_stream(
+                    super::swarm_router::route_chat(model_config, system, messages, tools),
+                    &model_config.model_name,
+                    messages,
+                )
+                .await;
             }
             let (message, usage) = super::cli_common::generate_simple_session_description(
                 &model_config.model_name,
@@ -915,6 +894,84 @@ mod tests {
         // No file at all → no overrides, never an error.
         assert!(run_sampling_env(Some(std::path::Path::new("/no/such/dir"))).is_empty());
         assert!(run_sampling_env(None).is_empty());
+    }
+
+    fn title_request(first_message: &str) -> Vec<Message> {
+        vec![Message::user().with_text(format!(
+            "{}\n{}\n{}\n\n{}",
+            super::super::cli_common::SESSION_NAME_BEGIN_MARKER,
+            first_message,
+            super::super::cli_common::SESSION_NAME_END_MARKER,
+            super::super::cli_common::SESSION_NAME_SUFFIX,
+        ))]
+    }
+
+    async fn title_text(stream: MessageStream) -> String {
+        let (message, _) = super::super::base::collect_stream(stream).await.unwrap();
+        message.as_concat_text()
+    }
+
+    const MEASURED_FIRST_MESSAGE: &str = "Install the fetch MCP server (it runs with: uvx mcp-server-fetch) as a new extension named fetch, enable it, then use it once to fetch https://example.com and tell me the page title.";
+
+    /// The pool answered: its title is the session's title, not the first words.
+    #[tokio::test]
+    async fn a_session_title_comes_from_the_pool_node_that_answered() {
+        let routed = async {
+            Ok(stream_from_single_message(
+                Message::assistant().with_text("Fetch MCP setup"),
+                ProviderUsage::new(
+                    "mihai-qwen3.8-27b-atlassian-q8-mlx".to_string(),
+                    Usage::default(),
+                ),
+            ))
+        };
+        let messages = title_request(MEASURED_FIRST_MESSAGE);
+        let stream = session_title_stream(routed, "swarm", &messages)
+            .await
+            .unwrap();
+        assert_eq!(title_text(stream).await, "Fetch MCP setup");
+    }
+
+    /// The measured 2026-09-23 failure, replayed at the seam: the request is refused. The session still
+    /// gets a title (the first words) and the call does not fail — the reason goes to the log instead of
+    /// vanishing.
+    #[tokio::test]
+    async fn a_refused_title_request_keeps_the_first_words_title() {
+        let refused = async {
+            Err(ProviderError::ExecutionError(
+                "swarm chat: no node can serve this turn — mihai-mlx: MLX engine is not listening"
+                    .to_string(),
+            ))
+        };
+        let messages = title_request(MEASURED_FIRST_MESSAGE);
+        let stream = session_title_stream(refused, "swarm", &messages)
+            .await
+            .unwrap();
+        let title = title_text(stream).await;
+        assert!(
+            MEASURED_FIRST_MESSAGE.starts_with(title.trim()),
+            "fallback title {title:?} is not the first words of the message"
+        );
+        assert!(!title.trim().is_empty());
+    }
+
+    /// A 400 that arrives as the stream's first item (how LM Studio's "No models loaded" reached goose)
+    /// is caught the same way as a refusal to route.
+    #[tokio::test]
+    async fn a_title_stream_that_fails_mid_stream_keeps_the_first_words_title() {
+        let routed = async {
+            let failing: MessageStream = Box::pin(futures::stream::once(async {
+                Err(ProviderError::RequestFailed(
+                    "Bad request (400): No models loaded.".to_string(),
+                ))
+            }));
+            Ok(failing)
+        };
+        let messages = title_request(MEASURED_FIRST_MESSAGE);
+        let stream = session_title_stream(routed, "swarm", &messages)
+            .await
+            .unwrap();
+        assert!(MEASURED_FIRST_MESSAGE.starts_with(title_text(stream).await.trim()));
     }
 
     #[test]
