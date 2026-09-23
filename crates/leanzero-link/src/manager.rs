@@ -31,6 +31,7 @@ use tokio::task::JoinHandle;
 use crate::control::{ControlConfig, ControlError, ControlHandle, ControlService};
 use crate::identity::{Identity, IdentityError, IdentityStore};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
+use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
 use crate::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
     PeerRegistry, RemoteExecutor, SwarmStateSource,
@@ -59,6 +60,9 @@ pub const MESH_POLL_FAILURE_LOOKS: u32 = 5;
 pub trait Mesh: Send + Sync {
     async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError>;
     async fn status(&self) -> Result<MeshStatus, MeshError>;
+    /// The daemon's loopback SOCKS5 listener, through which every outbound peer call is
+    /// dialed (userspace networking gives the host no route to mesh IPs).
+    async fn peer_proxy(&self) -> Result<MeshProxy, MeshError>;
     async fn logout(&self) -> Result<(), MeshError>;
     async fn shutdown(&self);
 }
@@ -70,6 +74,9 @@ impl Mesh for MeshEngine {
     }
     async fn status(&self) -> Result<MeshStatus, MeshError> {
         MeshEngine::status(self).await
+    }
+    async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
+        MeshEngine::peer_proxy(self).await
     }
     async fn logout(&self) -> Result<(), MeshError> {
         MeshEngine::logout(self).await
@@ -192,6 +199,8 @@ pub enum LinkError {
     MlxControl(#[from] MlxControlError),
     #[error("mlx proxy request to a peer failed: {0}")]
     MlxProxy(String),
+    #[error(transparent)]
+    PeerDial(#[from] PeerDialError),
     #[error("mesh joined but reported no IP — cannot compose a Connected state")]
     NoMeshIp,
     #[error("mesh reported an unparseable self IP '{ip}': {source}")]
@@ -611,9 +620,18 @@ impl LinkManager {
             }
         };
 
+        let peer_proxy = match mesh.peer_proxy().await {
+            Ok(proxy) => proxy,
+            Err(err) => {
+                mesh.shutdown().await;
+                return Err(err.into());
+            }
+        };
+
         let mut control_config = self.config.control.clone();
         control_config.mesh_ip = Some(mesh_ip_addr);
         control_config.node_token = node_token.clone();
+        control_config.peer_proxy = Some(peer_proxy);
         let control = match ControlService::start(
             control_config,
             self.source.clone(),
@@ -771,17 +789,28 @@ impl LinkManager {
             return Ok(executor.execute(req).await?);
         }
 
-        let (base_url, token) = {
+        let (base_url, token, proxy) = {
             let inner = self.inner.lock().await;
             let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
             let base_url = active
                 .registry
                 .peer_base_url(target_node_id)
                 .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (base_url, active.node_token.clone())
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
         };
 
-        post_peer_execute(&base_url, &token, self.config.control.connect_timeout, &req).await
+        post_peer_execute(
+            proxy,
+            &base_url,
+            &token,
+            self.config.control.connect_timeout,
+            &req,
+        )
+        .await
     }
 
     /// Forward one mlxEngine model-management op to `target_node_id`. This is how node A
@@ -807,17 +836,22 @@ impl LinkManager {
             return Ok(control.dispatch(op, body).await?);
         }
 
-        let (base_url, token) = {
+        let (base_url, token, proxy) = {
             let inner = self.inner.lock().await;
             let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
             let base_url = active
                 .registry
                 .peer_base_url(target_node_id)
                 .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (base_url, active.node_token.clone())
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
         };
 
         post_peer_mlx(
+            proxy,
             &base_url,
             &token,
             self.config.control.connect_timeout,
@@ -1006,16 +1040,16 @@ fn fresh_suffix() -> String {
 ///
 /// `connect_timeout` is the ONLY timeout: reaching the peer is bounded, the peer's
 /// answer is not — a total cap would report failure while the peer completes the work.
+/// The request goes through the mesh proxy ([`crate::peer_dial`]); no proxy is
+/// [`LinkError::PeerDial`], never a direct dial.
 async fn post_peer_execute(
+    proxy: Option<MeshProxy>,
     base_url: &str,
     token: &str,
     connect_timeout: Duration,
     req: &ExecuteRequest,
 ) -> Result<ExecuteAccepted, LinkError> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(connect_timeout)
-        .build()
-        .map_err(|err| LinkError::RemoteExecute(err.to_string()))?;
+    let client = peer_http_client(proxy, PeerTimeout::ConnectOnly(connect_timeout))?;
     let response = client
         .post(format!("{base_url}/v1/swarm/execute"))
         .bearer_auth(token)
@@ -1052,16 +1086,14 @@ async fn post_peer_execute(
 /// `connect_timeout` is the ONLY timeout (see [`post_peer_execute`]): a model delete
 /// of tens of GB or an HF fetch takes as long as it takes on the peer.
 async fn post_peer_mlx(
+    proxy: Option<MeshProxy>,
     base_url: &str,
     token: &str,
     connect_timeout: Duration,
     op: MlxOp,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, LinkError> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(connect_timeout)
-        .build()
-        .map_err(|err| LinkError::MlxProxy(err.to_string()))?;
+    let client = peer_http_client(proxy, PeerTimeout::ConnectOnly(connect_timeout))?;
     let response = client
         .post(format!("{base_url}/v1/swarm/mlx/{}", op.path()))
         .bearer_auth(token)

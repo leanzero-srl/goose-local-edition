@@ -26,11 +26,14 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+use crate::peer_dial::{MeshProxy, SOCKS5_LISTENING_MARKER};
 use crate::subprocess::configure_subprocess;
 
 pub const DEFAULT_LOGIN_SERVER: &str = "https://controlplane.tailscale.com";
 
 const STDERR_TAIL_LINES: usize = 200;
+/// Where the daemon's peer SOCKS5 listener binds: loopback, kernel-chosen port.
+const PEER_PROXY_LISTEN: &str = "127.0.0.1:0";
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Per-attempt cap on the readiness `status --json` probe; the overall budget is
 /// `MeshConfig::startup_timeout`.
@@ -125,6 +128,10 @@ pub enum MeshError {
     StatusFailed { stderr: String },
     #[error("cannot parse `tailscale status --json` output: {error}; output began: {snippet}")]
     StatusParse { error: String, snippet: String },
+    /// The daemon's SOCKS5 listener — the only way this host reaches a mesh peer — is not
+    /// known: the engine holds no live daemon, or the daemon reported an unusable address.
+    #[error("no mesh peer proxy: {reason}")]
+    NoPeerProxy { reason: String },
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +223,13 @@ impl MeshConfig {
     /// forbids here). `--no-logs-no-support` keeps the goose-owned daemon from
     /// uploading logs anywhere. The WireGuard UDP port is left at its default of 0
     /// (auto-select) so a personal daemon's port is never contended.
+    ///
+    /// `--socks5-server=127.0.0.1:0`: userspace networking gives the HOST no route to
+    /// mesh IPs, so outbound peer calls must go through the daemon's proxy
+    /// (<https://tailscale.com/kb/1112/userspace-networking>). Loopback-only, and port 0 so
+    /// the KERNEL picks a free port and tailscaled reports it on stderr
+    /// ([`crate::peer_dial::SOCKS5_LISTENING_MARKER`]) — the address comes from the
+    /// daemon itself, never a pre-picked port another process could take in between.
     pub fn tailscaled_argv(&self) -> Vec<String> {
         vec![
             self.tailscaled_path.display().to_string(),
@@ -223,6 +237,7 @@ impl MeshConfig {
             format!("--statedir={}", self.state_dir.display()),
             format!("--socket={}", self.socket_path.display()),
             "--no-logs-no-support".to_string(),
+            format!("--socks5-server={PEER_PROXY_LISTEN}"),
         ]
     }
 
@@ -445,9 +460,20 @@ fn snippet(raw: &str) -> String {
     }
 }
 
+/// What the daemon's stderr reported about its SOCKS5 listener: nothing yet, a usable
+/// loopback address, or an address [`MeshProxy::socks5`] refused (carried as text).
+type ReportedProxy = Option<Result<MeshProxy, String>>;
+
 struct ChildHandle {
     child: Child,
     stderr_tail: Arc<StdMutex<VecDeque<String>>>,
+    peer_proxy: Arc<StdMutex<ReportedProxy>>,
+}
+
+impl ChildHandle {
+    fn reported_proxy(&self) -> ReportedProxy {
+        self.peer_proxy.lock().unwrap().clone()
+    }
 }
 
 pub struct MeshEngine {
@@ -512,13 +538,37 @@ impl MeshEngine {
                         }
                         match listener_pid(&engine.config.socket_path) {
                             Ok(pid) if Some(pid) == handle.child.id() => {
-                                tracing::info!(
-                                    socket = %engine.config.socket_path.display(),
-                                    pid,
-                                    "leanzero-link tailscaled ready"
-                                );
-                                *engine.state.lock().await = Some(handle);
-                                return Ok(engine);
+                                // The socket answers before tailscaled opens its proxy
+                                // listener (tailscaled.go: `startIPNServer` listens, THEN
+                                // `getLocalBackend` runs `outboundProxyListen` in a
+                                // goroutine), so readiness also waits for the report.
+                                match handle.reported_proxy() {
+                                    Some(Ok(proxy)) => {
+                                        tracing::info!(
+                                            socket = %engine.config.socket_path.display(),
+                                            pid,
+                                            peer_proxy = %proxy.addr(),
+                                            "leanzero-link tailscaled ready"
+                                        );
+                                        *engine.state.lock().await = Some(handle);
+                                        return Ok(engine);
+                                    }
+                                    Some(Err(reason)) => {
+                                        let stderr_tail = stderr_tail_string(&handle.stderr_tail);
+                                        terminate_per_pid(&mut handle.child).await;
+                                        return Err(MeshError::NoPeerProxy {
+                                            reason: format!(
+                                                "{reason}; our daemon was stopped per-pid. \
+                                                 stderr tail:\n{stderr_tail}"
+                                            ),
+                                        });
+                                    }
+                                    None => format!(
+                                        "socket answered (listener pid {pid} is ours) but \
+                                         tailscaled has not reported its SOCKS5 listener \
+                                         ('{SOCKS5_LISTENING_MARKER}…' on stderr) yet"
+                                    ),
+                                }
                             }
                             Ok(pid) => {
                                 tracing::error!(
@@ -566,6 +616,24 @@ impl MeshEngine {
 
     pub async fn pid(&self) -> Option<u32> {
         self.state.lock().await.as_ref().and_then(|h| h.child.id())
+    }
+
+    /// The live daemon's loopback SOCKS5 listener — what every outbound peer call dials
+    /// through ([`crate::peer_dial`]). Always present after a successful [`Self::start`]
+    /// (readiness waits for it); after [`Self::shutdown`] it is a loud
+    /// [`MeshError::NoPeerProxy`], never a stale address.
+    pub async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
+        let state = self.state.lock().await;
+        let handle = state.as_ref().ok_or_else(|| MeshError::NoPeerProxy {
+            reason: "this engine holds no live tailscaled (never started or shut down)".to_string(),
+        })?;
+        match handle.reported_proxy() {
+            Some(Ok(proxy)) => Ok(proxy),
+            Some(Err(reason)) => Err(MeshError::NoPeerProxy { reason }),
+            None => Err(MeshError::NoPeerProxy {
+                reason: "the live tailscaled never reported its SOCKS5 listener".to_string(),
+            }),
+        }
     }
 
     /// Join the tailnet with an injected auth key. The key is a string minted by the
@@ -747,12 +815,20 @@ impl MeshEngine {
         })?;
 
         let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        let peer_proxy: Arc<StdMutex<ReportedProxy>> = Arc::new(StdMutex::new(None));
         if let Some(stderr) = child.stderr.take() {
             let tail = Arc::clone(&stderr_tail);
+            let reported = Arc::clone(&peer_proxy);
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::debug!(daemon = "leanzero-tailscaled", "{line}");
+                    if let Some(proxy) = MeshProxy::from_tailscaled_log_line(&line) {
+                        let mut reported = reported.lock().unwrap();
+                        if reported.is_none() {
+                            *reported = Some(proxy.map_err(|err| err.to_string()));
+                        }
+                    }
                     let mut tail = tail.lock().unwrap();
                     if tail.len() == STDERR_TAIL_LINES {
                         tail.pop_front();
@@ -761,7 +837,11 @@ impl MeshEngine {
                 }
             });
         }
-        Ok(ChildHandle { child, stderr_tail })
+        Ok(ChildHandle {
+            child,
+            stderr_tail,
+            peer_proxy,
+        })
     }
 }
 

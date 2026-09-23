@@ -44,7 +44,10 @@
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
 //! mesh IP is not a kernel address, so that bind fails and is reported as
 //! [`MeshBind::UserspaceForwarded`]: tailscaled forwards inbound tailnet TCP to
-//! the same port on loopback, so the loopback listener serves peers. No mesh IP
+//! the same port on loopback, so the loopback listener serves peers (measured
+//! 2026-09-23: a peer's server bound only to 127.0.0.1 answered a tailnet dial). The
+//! OUTBOUND direction is the opposite — the host has no route to mesh IPs — so peer
+//! calls go through the daemon's SOCKS5 listener ([`crate::peer_dial`]). No mesh IP
 //! at all means [`MeshBind::LoopbackOnly`]: the node reports itself `Offline`
 //! with `peers: []` — loud, never an error dressed as an empty result.
 
@@ -70,6 +73,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
+use crate::peer_dial::{MeshProxy, PeerDialError};
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
 use crate::state::{
     ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry,
@@ -97,7 +101,7 @@ pub enum ControlError {
         source: std::io::Error,
     },
     #[error("cannot build the peer-fabric HTTP client: {0}")]
-    HttpClient(#[from] reqwest::Error),
+    HttpClient(#[from] PeerDialError),
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +133,13 @@ pub struct ControlConfig {
     /// remote prompt or model op ever runs here. The host reads the user's own setting
     /// and passes `true` to opt a node in; nothing in this crate flips it.
     pub allow_remote_execution: bool,
+    /// The mesh daemon's loopback SOCKS5 listener — every OUTBOUND peer call (the
+    /// fabric's polls and `/stream` subscriptions) is dialed through it, because
+    /// userspace networking gives the host no route to mesh IPs. `None` (a service
+    /// started with no mesh, as tests do) leaves every peer `Offline` with
+    /// [`PeerDialError::NoMeshProxy`] on record — never a direct dial.
+    /// `LinkManager::connect` fills it from the live daemon.
+    pub peer_proxy: Option<MeshProxy>,
 }
 
 impl ControlConfig {
@@ -143,6 +154,7 @@ impl ControlConfig {
             connect_timeout: Duration::from_secs(5),
             reconnect_backoff: Duration::from_secs(2),
             allow_remote_execution: false,
+            peer_proxy: None,
         }
     }
 }
@@ -209,6 +221,7 @@ impl ControlService {
                 poll_interval: config.poll_interval,
                 request_timeout: config.request_timeout,
                 reconnect_backoff: config.reconnect_backoff,
+                peer_proxy: config.peer_proxy,
             },
             pubsub.clone(),
         )?;

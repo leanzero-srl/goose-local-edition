@@ -11,6 +11,12 @@
 //! - logout while merely LoggedIn → LoggedOut, identity cleared.
 //! - a wedged daemon (alive, every status look failing) → dropped per-pid at exactly
 //!   `MESH_POLL_FAILURE_LOOKS` looks, LoggedIn, identity kept; N-1 looks stay Connected.
+//! - a daemon with no SOCKS5 peer proxy → connect refused loudly, mesh shut down.
+//!
+//! Peer calls travel [`support::fake_tailnet`] (the fake mesh's peer proxy): peers carry
+//! mesh-looking IPs only that SOCKS5 stand-in can reach.
+
+mod support;
 
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -29,6 +35,7 @@ use leanzero_link::manager::{
 use leanzero_link::mesh::{
     BackendState, MeshConfig, MeshError, MeshPeer, MeshStatus, DEFAULT_LOGIN_SERVER,
 };
+use leanzero_link::peer_dial::MeshProxy;
 use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
     RemoteExecutor, SwarmStateSource,
@@ -76,6 +83,8 @@ struct MeshScript {
     hold_join: AtomicBool,
     /// Set by `join()` on entry so a test knows the connect is inside the mesh step.
     join_entered: AtomicBool,
+    /// `peer_proxy()` answers `NoPeerProxy` — a daemon that never reported its listener.
+    no_peer_proxy: AtomicBool,
 }
 
 struct FakeMesh {
@@ -135,6 +144,14 @@ impl Mesh for FakeMesh {
         let mut status = self.status.clone();
         status.peers = self.script.peers.lock().unwrap().clone();
         Ok(status)
+    }
+    async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
+        if self.script.no_peer_proxy.load(Ordering::SeqCst) {
+            return Err(MeshError::NoPeerProxy {
+                reason: "fake: the daemon never reported its SOCKS5 listener".to_string(),
+            });
+        }
+        Ok(support::fake_tailnet().proxy())
     }
     async fn logout(&self) -> Result<(), MeshError> {
         self.calls.lock().unwrap().logout_count += 1;
@@ -1288,6 +1305,45 @@ async fn connect_failure_returns_to_logged_in_and_tears_down_mesh() {
     );
 }
 
+/// A joined daemon with no SOCKS5 peer proxy cannot reach any peer (userspace
+/// networking: no host route to mesh IPs). Connect refuses loudly with the mesh's named
+/// error BEFORE the control service starts, and the mesh is shut down per-pid — never a
+/// `Connected` node whose peer calls would all dial directly into nothing.
+#[tokio::test]
+async fn connect_without_a_peer_proxy_is_refused_and_tears_down_mesh() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.script.no_peer_proxy.store(true, Ordering::SeqCst);
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+
+    let err = manager.connect().await.expect_err("no peer proxy");
+    assert!(
+        matches!(err, LinkError::Mesh(MeshError::NoPeerProxy { .. })),
+        "the named mesh error, got {err:?}"
+    );
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "{state:?}"
+    );
+    assert!(state
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("SOCKS5")));
+    assert!(manager.active_registry().await.is_none());
+    assert_eq!(h.calls.lock().unwrap().shutdown_count, 1, "mesh torn down");
+}
+
 #[tokio::test]
 async fn logout_while_only_logged_in_clears_identity() {
     let server = MockServer::start().await;
@@ -1394,7 +1450,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
         .expect("A has a live peer registry while connected");
     let target = PeerTarget {
         hostname: "node-b".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
     };
 
@@ -1540,7 +1596,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         .expect("A has a live peer registry while connected");
     let target = PeerTarget {
         hostname: "node-b".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
     };
 
@@ -1617,7 +1673,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
     let registry = manager.active_registry().await.expect("live registry");
     let target = PeerTarget {
         hostname: "node-b".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
     };
 
@@ -1688,7 +1744,7 @@ async fn mlx_proxy_waits_past_the_fabric_request_timeout_for_a_slow_peer() {
     let registry = manager.active_registry().await.expect("live registry");
     let target = PeerTarget {
         hostname: "node-b".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -1746,7 +1802,7 @@ async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
     };
     let target = PeerTarget {
         hostname: "node-b".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
         port: dead_port,
     };
 

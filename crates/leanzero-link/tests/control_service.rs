@@ -1,7 +1,11 @@
 //! Integration tests for the `/v1/swarm` control service: a scriptable
 //! `FakeStateSource` + real axum services on ephemeral loopback ports, driven
 //! with reqwest and a tokio-tungstenite ws client (dev-side only). No goosed,
-//! no tailscaled, no tailnet contact — the mesh crate's own tests own that.
+//! no tailscaled, no tailnet contact — the mesh crate's own tests own that. Peer
+//! fabric traffic goes through [`support::fake_tailnet`], a SOCKS5 stand-in for the
+//! daemon's proxy: peers carry mesh-looking IPs only that proxy can reach.
+
+mod support;
 
 use std::future::Future;
 use std::net::{IpAddr, Ipv6Addr};
@@ -150,6 +154,7 @@ async fn spawn_node_full(
     config.heartbeat_interval = Duration::from_secs(5);
     config.reconnect_backoff = Duration::from_millis(100);
     config.allow_remote_execution = allow_remote_execution;
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
     ControlService::start(config, source, executor, None)
         .await
         .expect("control service starts")
@@ -502,9 +507,10 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
     let base_a = base_url(&a);
     let client = reqwest::Client::new();
 
+    let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
     a.set_peers(vec![PeerTarget {
         hostname: "node-b-host".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(b_mesh_ip.clone()),
         port: b.local_addr().port(),
     }]);
 
@@ -522,6 +528,10 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
         }
     })
     .await;
+    assert!(
+        support::fake_tailnet().connects_to(&b_mesh_ip) > 0,
+        "A reached B's mesh IP through the mesh proxy (no host route exists to it)"
+    );
 
     // A's /sessions mirrors B's session with its origin intact.
     wait_until("A to mirror B's session", || {
@@ -536,7 +546,8 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
     })
     .await;
 
-    // A delta published on B arrives on A's /stream (the union).
+    // A delta published on B arrives on A's /stream (the union) — B's delta travels
+    // A's `/stream` subscription, a WebSocket dialed through the same proxy.
     let mut ws_a = connect_stream(&a, None).await;
     source_b.emit(source_b.delta("sb1", 42));
     tokio::time::timeout(DEADLINE, async {
@@ -668,7 +679,7 @@ async fn peer_keeps_its_mirror_while_the_peers_index_is_unreadable() {
     let client = reqwest::Client::new();
     a.set_peers(vec![PeerTarget {
         hostname: "node-b-host".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(b.local_addr().port())),
         port: b.local_addr().port(),
     }]);
 
@@ -815,7 +826,7 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     let (stub_port, stub_task) = spawn_stub_peer("node-stub", unauthorized.clone()).await;
     handle.set_peers(vec![PeerTarget {
         hostname: "node-stub-host".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
         port: stub_port,
     }]);
 
@@ -892,7 +903,7 @@ async fn unreachable_peer_is_offline_not_an_error() {
     };
     handle.set_peers(vec![PeerTarget {
         hostname: "ghost-host".to_string(),
-        mesh_ip: Some("127.0.0.1".to_string()),
+        mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
         port: dead_port,
     }]);
 
@@ -918,6 +929,65 @@ async fn unreachable_peer_is_offline_not_an_error() {
     .await;
 
     handle.shutdown();
+}
+
+// ── No mesh proxy: a peer is never dialed directly ─────────────────────
+
+/// A service started with NO mesh proxy must not fall back to a direct dial — even when
+/// the peer IS directly reachable (negative control: a plain client reaches B). The peer
+/// shows `Offline` with the named refusal on record.
+#[tokio::test]
+async fn without_a_mesh_proxy_a_reachable_peer_is_offline_never_dialed_directly() {
+    let b = spawn_node(FakeStateSource::new("node-b"), mesh_v6()).await;
+    let client = reqwest::Client::new();
+    let direct = get_json(&client, &format!("{}/v1/swarm/nodes", base_url(&b))).await;
+    assert_eq!(
+        direct["self"]["node_id"], "node-b",
+        "negative control: B answers a direct dial on loopback"
+    );
+
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_v6());
+    config.port = 0;
+    config.poll_interval = Duration::from_millis(100);
+    config.reconnect_backoff = Duration::from_millis(100);
+    assert!(config.peer_proxy.is_none(), "the template carries no proxy");
+    let a = ControlService::start(config, FakeStateSource::new("node-a"), None, None)
+        .await
+        .expect("A starts");
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: b.local_addr().port(),
+    }]);
+
+    let base_a = base_url(&a);
+    wait_until("A to record the refused dial", || {
+        let client = &client;
+        let base_a = &base_a;
+        async move {
+            let nodes = get_json(client, &format!("{base_a}/v1/swarm/nodes")).await;
+            nodes["peers"].as_array().unwrap().iter().any(|p| {
+                p["hostname"] == "node-b-host"
+                    && p["status"] == serde_json::json!({"type": "Offline"})
+                    && p["last_poll_error"]
+                        .as_str()
+                        .is_some_and(|e| e.contains("refusing a direct dial"))
+            })
+        }
+    })
+    .await;
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    assert!(
+        !nodes["peers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["node_id"] == "node-b"),
+        "B's self-reported identity was never folded — no poll reached it"
+    );
+
+    a.shutdown();
+    b.shutdown();
 }
 
 // ── Mesh down: loopback only, self Offline, peers=[] ────────────────────

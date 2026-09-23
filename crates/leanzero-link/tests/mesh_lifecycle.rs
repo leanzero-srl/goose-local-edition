@@ -15,9 +15,14 @@ const RUNNING_JSON: &str = include_str!("fixtures/status_running.json");
 const NEEDS_LOGIN_JSON: &str = include_str!("fixtures/status_needs_login.json");
 
 /// Verifies the exact argv the engine promises (--tun=userspace-networking, --statedir,
-/// --socket, --no-logs-no-support) actually reaches the daemon, then behaves like one:
-/// LISTENS on the unix socket after a short delay (a real listener, so the engine's
-/// peer-credential proof sees THIS process as the owner), removes it on SIGTERM.
+/// --socket, --no-logs-no-support, --socks5-server=127.0.0.1:0) actually reaches the
+/// daemon, then behaves like one: LISTENS on the unix socket after a short delay (a real
+/// listener, so the engine's peer-credential proof sees THIS process as the owner), THEN
+/// opens a kernel-chosen loopback TCP listener and reports it on stderr exactly as
+/// tailscaled 1.98.8 does (`SOCKS5 listening on 127.0.0.1:<port>` — socket first, proxy
+/// second, the real order), removes the socket on SIGTERM. Hooks in the state dir:
+/// `no-proxy-report` (never report the listener), `proxy-report-wildcard` (report
+/// `0.0.0.0:<port>`).
 const FAKE_TAILSCALED: &str = r#"#!/usr/bin/env python3
 import os, signal, socket, sys, time
 args = sys.argv[1:]
@@ -33,6 +38,9 @@ if tun != "userspace-networking" or not statedir or not sock:
 if "--no-logs-no-support" not in args:
     print("fake tailscaled: missing --no-logs-no-support: %r" % (args,), file=sys.stderr)
     sys.exit(2)
+if flag("--socks5-server") != "127.0.0.1:0":
+    print("fake tailscaled: want --socks5-server=127.0.0.1:0: %r" % (args,), file=sys.stderr)
+    sys.exit(2)
 print("fake tailscaled starting", file=sys.stderr)
 sys.stderr.flush()
 time.sleep(0.3)
@@ -40,6 +48,14 @@ srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(sock)
 srv.listen(8)
 srv.settimeout(0.1)
+time.sleep(0.2)
+socks = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+socks.bind(("127.0.0.1", 0))
+socks.listen(8)
+if not os.path.exists(os.path.join(statedir, "no-proxy-report")):
+    host = "0.0.0.0" if os.path.exists(os.path.join(statedir, "proxy-report-wildcard")) else "127.0.0.1"
+    print("2026/09/23 23:03:35 SOCKS5 listening on %s:%d" % (host, socks.getsockname()[1]), file=sys.stderr)
+    sys.stderr.flush()
 def bye(signum, frame):
     os.unlink(sock)
     sys.exit(0)
@@ -637,6 +653,78 @@ async fn startup_timeout_names_the_last_probe_and_leaves_no_orphan() {
     assert!(
         !process_alive(our_pid),
         "the never-ready daemon (pid {our_pid}) was terminated per-pid on timeout"
+    );
+}
+
+/// Readiness includes the peer proxy: `start` returns only once the daemon has reported
+/// its SOCKS5 listener, and `peer_proxy()` is exactly the address the daemon reported (a
+/// real loopback listener the fake holds). After shutdown there is no proxy — a loud
+/// error, never the stale address.
+#[tokio::test]
+async fn start_records_the_daemons_socks5_listener_and_forgets_it_on_shutdown() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = MeshEngine::start(fake_config(root.path())).await.unwrap();
+
+    let proxy = engine
+        .peer_proxy()
+        .await
+        .expect("ready means the proxy is known");
+    assert!(proxy.addr().ip().is_loopback(), "{proxy:?}");
+    assert_ne!(
+        proxy.addr().port(),
+        0,
+        "the kernel-chosen port, not the request"
+    );
+    std::net::TcpStream::connect(proxy.addr())
+        .expect("the reported address is the daemon's live listener");
+
+    engine.shutdown().await;
+    let err = engine.peer_proxy().await.unwrap_err();
+    assert!(matches!(err, MeshError::NoPeerProxy { .. }), "{err}");
+}
+
+/// A daemon whose socket answers but which never reports a SOCKS5 listener is NOT
+/// ready: the timeout names the missing report, and our spawn is terminated per-pid.
+#[tokio::test]
+async fn a_daemon_that_never_reports_its_proxy_times_out_naming_it() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    std::fs::write(config.state_dir.join("no-proxy-report"), "1").unwrap();
+    config.startup_timeout = Duration::from_secs(3);
+
+    let err = match MeshEngine::start(config).await {
+        Ok(_) => panic!("start reported ready with no peer proxy"),
+        Err(e) => e,
+    };
+    match &err {
+        MeshError::StartupTimeout { last_probe, .. } => assert!(
+            last_probe.contains("SOCKS5 listener") && last_probe.contains("is ours"),
+            "the timeout names the missing proxy report: {last_probe}"
+        ),
+        other => panic!("expected StartupTimeout, got {other}"),
+    }
+}
+
+/// A reported listener that is not loopback is refused outright — peer traffic never
+/// goes through a proxy other processes on the network could reach — and our daemon is
+/// stopped per-pid.
+#[tokio::test]
+async fn a_non_loopback_proxy_report_is_refused_and_the_daemon_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    std::fs::write(config.state_dir.join("proxy-report-wildcard"), "1").unwrap();
+    let socket = config.socket_path.clone();
+
+    let err = match MeshEngine::start(config).await {
+        Ok(_) => panic!("start accepted a wildcard proxy listener"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MeshError::NoPeerProxy { .. }), "{err}");
+    assert!(err.to_string().contains("not loopback"), "{err}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !socket.exists(),
+        "SIGTERM reached our daemon (it removes its socket on exit)"
     );
 }
 

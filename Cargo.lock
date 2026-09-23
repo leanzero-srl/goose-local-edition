@@ -6531,6 +6531,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-socks",
  "tokio-tungstenite 0.29.0",
  "tracing",
  "url",
