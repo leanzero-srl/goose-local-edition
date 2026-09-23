@@ -14,6 +14,18 @@ import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { RADIUS, TNUM, TONE_FILL, WEIGHT, cx, type Tone } from '../lz';
 import type { MlxEngineState } from '../../acp/mlx-engine';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
+import {
+  gb1,
+  gib,
+  layerSpan,
+  layerSpanShort,
+  ownsTheMac,
+  planForRank,
+  runStateInFlight,
+  runStateTone,
+} from './mlxDistributed';
+import { distributedStateWord } from './mlxModeLabel';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import {
   formatElapsed,
@@ -151,6 +163,25 @@ const i18n = defineMessages({
     id: 'mlxStateTile.statusUnread',
     defaultMessage: 'The engine status could not be read.',
   },
+  distInflight: {
+    id: 'mlxStateTile.dist.inflight',
+    defaultMessage: '{count, plural, one {request in flight} other {requests in flight}}',
+  },
+  distInflightUnknown: {
+    id: 'mlxStateTile.dist.inflightUnknown',
+    defaultMessage: 'in flight: not measured',
+  },
+  distPeak: { id: 'mlxStateTile.dist.peak', defaultMessage: '{peak} of {budget} GiB peak' },
+  distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: '{peak} GiB peak' },
+  distNoPeak: { id: 'mlxStateTile.dist.noPeak', defaultMessage: 'no peak yet' },
+  distPeakBar: {
+    id: 'mlxStateTile.dist.peakBar',
+    defaultMessage: 'Peak memory against the budget',
+  },
+  distHeld: {
+    id: 'mlxStateTile.dist.held',
+    defaultMessage: 'Admission closed: a node is low on memory',
+  },
 });
 
 const STATE_TONE: Record<MlxEngineState, Tone> = {
@@ -211,6 +242,13 @@ export interface MlxStateTileProps {
   failedError: string | null;
   /** The state's own action (Mount / Retry), drawn on the tile. */
   action: ReactNode;
+  /** Which engine owns this Mac, in words ("Single · this Mac" / "Distributed · 2 nodes · JACCL"). */
+  modeLabel: string;
+  /**
+   * The distributed engine's status. While it owns this Mac the tile IS that engine: its state,
+   * requests in flight and each rank's peak memory against its budget.
+   */
+  distributed: MlxDistributedStatus | null;
 }
 
 function compact(intl: IntlShape, n: number): string {
@@ -681,19 +719,99 @@ function StoppedInstrument({ cost }: { cost: MountCost | null }) {
       />
       <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
         <span className={WEIGHT.semibold}>{verdictLine}</span>
-        <span className="shrink-0">{intl.formatMessage(i18n.available, { gb: gb(cost.freeGb) })}</span>
+        <span className="shrink-0">
+          {intl.formatMessage(i18n.available, { gb: gb(cost.freeGb) })}
+        </span>
       </div>
+    </div>
+  );
+}
+
+/** The distributed run on the tile: requests in flight, then every rank's peak against its budget. */
+function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
+  const intl = useIntl();
+  return (
+    <div data-testid="mlx-dist-tile" className="flex flex-col gap-4">
+      {status.modelId && (
+        <span className={cx('break-all font-mono text-lz-mono', WEIGHT.semibold)}>
+          {status.modelId}
+        </span>
+      )}
+      {status.inflight != null ? (
+        <div className="flex items-baseline gap-2">
+          <span data-testid="mlx-dist-tile-inflight" className={HERO}>
+            {intl.formatNumber(status.inflight)}
+          </span>
+          <span className={LABEL}>
+            {intl.formatMessage(i18n.distInflight, { count: status.inflight })}
+          </span>
+        </div>
+      ) : (
+        <span className={cx(LINE, WEIGHT.semibold)}>
+          {intl.formatMessage(i18n.distInflightUnknown)}
+        </span>
+      )}
+      {!status.admissionOpen && (
+        <span className={cx(LINE, WEIGHT.semibold)}>{intl.formatMessage(i18n.distHeld)}</span>
+      )}
+      <ul className="flex flex-col gap-3">
+        {status.nodes.map((node) => {
+          const plan = planForRank(status, node.rank);
+          const budget = plan ? gib(plan.budgetBytes) : null;
+          const peak = node.peakMemoryGb ?? null;
+          const span = layerSpanShort(layerSpan(node));
+          return (
+            <li
+              key={`${node.rank}|${node.name}`}
+              data-testid="mlx-dist-tile-node"
+              className="flex flex-col gap-1.5"
+            >
+              <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
+                <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>
+                  {span ? `${node.name} · ${span}` : node.name}
+                </span>
+                <span className="shrink-0">
+                  {peak == null
+                    ? intl.formatMessage(i18n.distNoPeak)
+                    : budget != null
+                      ? intl.formatMessage(i18n.distPeak, { peak: gb1(peak), budget: gb1(budget) })
+                      : intl.formatMessage(i18n.distPeakNoBudget, { peak: gb1(peak) })}
+                </span>
+              </div>
+              {peak != null && budget != null && budget > 0 && (
+                <TileBar fraction={peak / budget} label={intl.formatMessage(i18n.distPeakBar)} />
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
 
 export function MlxStateTile(props: MlxStateTileProps) {
   const intl = useIntl();
-  const { state, unreachable, live, history, last, serving, mount, cost, failedError, action } =
-    props;
-  const activity = state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
-  const tone: Tone =
-    state === null
+  const {
+    state,
+    unreachable,
+    live,
+    history,
+    last,
+    serving,
+    mount,
+    cost,
+    failedError,
+    action,
+    modeLabel,
+    distributed,
+  } = props;
+  const dist = ownsTheMac(distributed) ? distributed : null;
+  const activity = !dist && state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
+  const tone: Tone = dist
+    ? dist.admissionOpen
+      ? runStateTone(dist.state)
+      : 'warn'
+    : state === null
       ? unreachable
         ? 'err'
         : 'stopped'
@@ -703,50 +821,64 @@ export function MlxStateTile(props: MlxStateTileProps) {
           : 'stopped'
         : STATE_TONE[state];
   const word = state ?? (unreachable ? 'unreachable' : 'checking');
-  const wordText = intl.formatMessage(STATE_WORD[word]);
-  const icon =
-    state === 'running' ? (
-      <Play />
-    ) : state === 'mounting' || (state === null && !unreachable) ? (
+  const wordText = dist
+    ? distributedStateWord(intl, dist.state)
+    : intl.formatMessage(STATE_WORD[word]);
+  const icon = dist ? (
+    runStateInFlight(dist.state) ? (
       <Loader2 className="animate-spin" />
-    ) : state === 'failed' || unreachable ? (
-      <X />
     ) : (
-      <Square />
-    );
+      <Network />
+    )
+  ) : state === 'running' ? (
+    <Play />
+  ) : state === 'mounting' || (state === null && !unreachable) ? (
+    <Loader2 className="animate-spin" />
+  ) : state === 'failed' || unreachable ? (
+    <X />
+  ) : (
+    <Square />
+  );
   return (
     <div
       data-testid="mlx-state-badge"
-      data-state={word}
+      data-state={dist ? dist.state : word}
+      data-mode={dist ? 'distributed' : 'single'}
       data-activity={activity ?? undefined}
       role="group"
       aria-label={intl.formatMessage(i18n.groupLabel, { state: wordText })}
       className={cx(
         'flex w-full shrink-0 flex-col gap-5 p-4 [&_svg]:shrink-0',
-        state === 'running' ? 'lg:w-[32rem]' : 'lg:w-80',
+        state === 'running' || dist ? 'lg:w-[32rem]' : 'lg:w-80',
         RADIUS.card,
         TONE_FILL[tone]
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2 [&_svg]:size-5">
-          <span aria-hidden>{icon}</span>
-          <span role="status" className="text-lz-h2">
-            {wordText}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2 [&_svg]:size-5">
+            <span aria-hidden>{icon}</span>
+            <span role="status" className="text-lz-h2">
+              {wordText}
+            </span>
           </span>
+          {activity && (
+            <span data-testid="mlx-activity" className={cx('text-lz-body', WEIGHT.semibold)}>
+              {intl.formatMessage(ACTIVITY_WORD[activity])}
+            </span>
+          )}
+        </div>
+        <span data-testid="mlx-mode" className={cx(LINE, WEIGHT.semibold)}>
+          {modeLabel}
         </span>
-        {activity && (
-          <span data-testid="mlx-activity" className={cx('text-lz-body', WEIGHT.semibold)}>
-            {intl.formatMessage(ACTIVITY_WORD[activity])}
-          </span>
-        )}
       </div>
-      {state === 'running' && (
+      {dist && <DistributedInstrument status={dist} />}
+      {!dist && state === 'running' && (
         <RunningInstrument live={live} history={history} last={last} serving={serving} />
       )}
-      {state === 'mounting' && <MountingInstrument mount={mount} />}
-      {state === 'stopped' && <StoppedInstrument cost={cost} />}
-      {state === 'failed' && (
+      {!dist && state === 'mounting' && <MountingInstrument mount={mount} />}
+      {!dist && state === 'stopped' && <StoppedInstrument cost={cost} />}
+      {!dist && state === 'failed' && (
         <p
           data-testid="mlx-failed-excerpt"
           title={failedError ?? undefined}
@@ -755,7 +887,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
           {failedError ?? intl.formatMessage(i18n.failedFallback)}
         </p>
       )}
-      {state === null && unreachable && (
+      {!dist && state === null && unreachable && (
         <p className={LINE}>{intl.formatMessage(i18n.statusUnread)}</p>
       )}
       {action && <div className="mt-auto flex flex-wrap gap-2">{action}</div>}

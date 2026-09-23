@@ -21,6 +21,7 @@ import type {
 } from '../../acp/mlx-engine';
 import type { NodeState, NodesResponse } from '../../acp/leanzero-link';
 import { GENERATING_STATUS } from './mlxLiveStatus.fixtures';
+import { FLASH_READY, STOPPED_WITH_CONFIG } from './mlxDistributed.fixtures';
 
 const mockStatus = vi.fn();
 const mockMount = vi.fn();
@@ -71,14 +72,24 @@ vi.mock('../../acp/mlx-replica', () => ({
 // `leanzeroLink` capability. Default: capability OFF → the view is exactly as before, every
 // mlx op local (nodeId undefined). Tests that exercise the remote path flip mockFeatures and
 // hand the mesh a connected roster with peers.
-const mockFeatures = { leanzeroLink: false };
+const mockFeatures = { leanzeroLink: false, mlxDistributed: false };
 vi.mock('../../contexts/FeaturesContext', () => ({
   useFeatures: () => ({
     localInference: true,
     mlxEngine: true,
+    mlxDistributed: mockFeatures.mlxDistributed,
     leanzeroLink: mockFeatures.leanzeroLink,
     isLoading: false,
   }),
+}));
+
+const mockDistributedStatus = vi.fn();
+vi.mock('../../acp/mlx-distributed', () => ({
+  mlxDistributedStatus: (...a: unknown[]) => mockDistributedStatus(...a),
+  mlxDistributedPreflight: vi.fn(),
+  mlxDistributedStart: vi.fn(),
+  mlxDistributedStop: vi.fn(),
+  mlxDistributedConfigUpdate: vi.fn(),
 }));
 
 const mockLinkStatus = vi.fn();
@@ -214,6 +225,7 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
   mockFeatures.leanzeroLink = false;
+  mockFeatures.mlxDistributed = false;
   mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
   mockLinkNodes.mockResolvedValue({ self: SELF_NODE, peers: [] } as NodesResponse);
   mockStatus.mockResolvedValue(statusOf({}));
@@ -2512,3 +2524,43 @@ describe('MlxEngineView copy a model to a linked device', () => {
 function studioCleanNow() {
   assertStudioClean(document.body);
 }
+
+describe('Engine tab — which engine owns this Mac is always said', () => {
+  it('no distributed capability: "Single · this Mac" on the tab row and the tile; the section says why it is absent', async () => {
+    render(<MlxEngineView />);
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Single · this Mac')
+    );
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Single · this Mac');
+    expect(screen.getByText('Distributed inference is unavailable')).toBeInTheDocument();
+    expect(mockDistributedStatus).not.toHaveBeenCalled();
+  });
+
+  it('the distributed run owns the Mac: the tile is that run, Mount is not offered, the section shows the nodes', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(FLASH_READY);
+    render(<MlxEngineView />);
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Distributed · 2 nodes · JACCL')
+    );
+    const tile = screen.getByTestId('mlx-state-badge');
+    expect(tile).toHaveAttribute('data-mode', 'distributed');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
+    expect(within(tile).queryByRole('button', { name: 'Mount' })).toBeNull();
+    expect(screen.getByTestId('mlx-distributed-owns')).toBeInTheDocument();
+    expect(screen.getAllByTestId('mlx-dist-node')).toHaveLength(2);
+  });
+
+  it('a stopped distributed engine leaves the single engine in charge', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(STOPPED_WITH_CONFIG);
+    render(<MlxEngineView />);
+    await waitFor(() => expect(mockDistributedStatus).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Single · this Mac')
+    );
+    expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-mode', 'single');
+    expect(screen.queryByTestId('mlx-distributed-owns')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Start' })).toBeInTheDocument();
+  });
+});

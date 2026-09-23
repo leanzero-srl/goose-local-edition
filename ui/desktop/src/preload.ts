@@ -12,6 +12,7 @@ import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
 import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
+import type { MlxDistributedReport } from './utils/mlxDistributedReport';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -484,6 +485,8 @@ type ElectronAPI = {
   mlxEngineReport: (report: MlxEngineReport) => void;
   /** MAIN's latest read of the local engine: activity, rates and WHO it is serving. */
   mlxEngineActivity: () => Promise<MlxEngineSnapshot>;
+  /** Hand MAIN what goose's ACP `distributedStatus` just said (the tray has no ACP client). */
+  mlxDistributedReport: (report: MlxDistributedReport) => void;
 };
 
 type AppConfigAPI = {
@@ -558,6 +561,8 @@ const electronAPI: ElectronAPI = {
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),
   mlxEngineReport: (report: MlxEngineReport) => ipcRenderer.send('mlx-engine-report', report),
   mlxEngineActivity: () => ipcRenderer.invoke('mlx-engine-activity'),
+  mlxDistributedReport: (report: MlxDistributedReport) =>
+    ipcRenderer.send('mlx-distributed-report', report),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

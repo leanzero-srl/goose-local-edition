@@ -125,7 +125,13 @@ import {
   type MlxEngineSnapshot,
 } from './utils/mlxEngineMonitor';
 import { fetchMlxServing, serveHttpBase, type MlxServingRow } from './utils/mlxServing';
-import { buildMlxTrayModel, type MlxTrayAction, type MlxTrayItem } from './utils/mlxTray';
+import {
+  MLX_DISTRIBUTED_STALE_MS,
+  buildMlxTrayModel,
+  type MlxTrayAction,
+  type MlxTrayItem,
+} from './utils/mlxTray';
+import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
@@ -1951,7 +1957,8 @@ ipcMain.handle('open-external', async (_event, url: string) => {
 ipcMain.handle('directory-chooser', async (_event, defaultPath?: string) => {
   return dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
-    defaultPath: typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : os.homedir(),
+    defaultPath:
+      typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : os.homedir(),
   });
 });
 
@@ -2107,7 +2114,7 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
     win.webContents.send('set-view', 'leanzero-swarm');
     return;
   }
-  // Mount/unmount are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
+  // Mount/unmount/stop are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
   win.webContents.send('mlx-tray-action', action);
 };
 
@@ -2126,17 +2133,31 @@ const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
   }
 };
 
+// The DISTRIBUTED engine's presence: main has no ACP client, so a renderer reads goose's
+// `distributedStatus` (useMlxTrayActions) and hands the projection here after every read — while the
+// run owns the Mac on the view's cadence, otherwise when the tray menu opens. The read's age rides
+// along so an old read is SAID to be old (MLX_DISTRIBUTED_STALE_MS), never shown as live.
+let mlxDistributed: { report: MlxDistributedReport; atMs: number } | null = null;
+let mlxDistributedStaleTimer: ReturnType<typeof setTimeout> | null = null;
+
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   if (!tray) return;
-  // No engine configured and none reported: the tray says nothing about one.
-  const silent = snapshot.mode === 'unknown' && snapshot.baseUrl == null;
+  const distributed = mlxDistributed
+    ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
+    : null;
+  // No engine configured, none reported and no distributed run: the tray says nothing about one.
+  const silent =
+    snapshot.mode === 'unknown' &&
+    snapshot.baseUrl == null &&
+    distributed?.report.mode !== 'distributed';
   const model = buildMlxTrayModel(snapshot, {
     canAct: mlxActionWindow() != null,
     mountModelId:
       snapshot.mode === 'running' || snapshot.mode === 'mounting'
         ? null
         : mlxEngineConfig().modelId,
+    distributed,
   });
   if (process.platform === 'darwin') {
     tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
@@ -2145,11 +2166,26 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const key = JSON.stringify(items);
   if (key === lastMlxTrayMenu) return;
   lastMlxTrayMenu = key;
-  setTrayEngineSection(items.map(mlxTrayMenuItem), () => mlxMonitor.wake());
+  setTrayEngineSection(items.map(mlxTrayMenuItem), () => {
+    mlxMonitor.wake();
+    mlxActionWindow()?.webContents.send('mlx-distributed-wake');
+  });
 };
 
 ipcMain.on('mlx-engine-report', (_event, report: unknown) => {
   if (isMlxEngineReport(report)) mlxMonitor.reportFromRenderer(report);
+});
+ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
+  if (!isMlxDistributedReport(report)) return;
+  mlxDistributed = { report, atMs: Date.now() };
+  renderMlxTray(mlxMonitor.current());
+  // While the run owns the Mac a fresh read arrives every poll; if none does, redraw once the
+  // held read turns stale so the tray stops presenting it as live.
+  if (mlxDistributedStaleTimer) clearTimeout(mlxDistributedStaleTimer);
+  mlxDistributedStaleTimer =
+    report.mode === 'distributed'
+      ? setTimeout(() => renderMlxTray(mlxMonitor.current()), MLX_DISTRIBUTED_STALE_MS + 1)
+      : null;
 });
 // The state tile reads "who is using it" from here, on its own poll — main's latest read, no fetch.
 ipcMain.handle('mlx-engine-activity', () => mlxMonitor.current());
@@ -2570,18 +2606,88 @@ const BENCH_SITE_API = BENCH_PUBLISH_URL;
 // word lists so the handle is readable and stable per install — regenerating on every run would
 // scatter one user's history across many posters.
 const BENCH_ADJECTIVES = [
-  'crimson', 'amber', 'cobalt', 'emerald', 'scarlet', 'indigo', 'golden', 'silver',
-  'violet', 'copper', 'teal', 'coral', 'onyx', 'ivory', 'azure', 'jade',
-  'rapid', 'quiet', 'bold', 'bright', 'calm', 'clever', 'daring', 'eager',
-  'fierce', 'gentle', 'keen', 'lively', 'mighty', 'noble', 'prime', 'proud',
-  'sharp', 'solid', 'steady', 'swift', 'vivid', 'wild', 'wise', 'brisk',
+  'crimson',
+  'amber',
+  'cobalt',
+  'emerald',
+  'scarlet',
+  'indigo',
+  'golden',
+  'silver',
+  'violet',
+  'copper',
+  'teal',
+  'coral',
+  'onyx',
+  'ivory',
+  'azure',
+  'jade',
+  'rapid',
+  'quiet',
+  'bold',
+  'bright',
+  'calm',
+  'clever',
+  'daring',
+  'eager',
+  'fierce',
+  'gentle',
+  'keen',
+  'lively',
+  'mighty',
+  'noble',
+  'prime',
+  'proud',
+  'sharp',
+  'solid',
+  'steady',
+  'swift',
+  'vivid',
+  'wild',
+  'wise',
+  'brisk',
 ];
 const BENCH_ANIMALS = [
-  'heron', 'falcon', 'otter', 'lynx', 'raven', 'badger', 'condor', 'dolphin',
-  'elk', 'ferret', 'gecko', 'hawk', 'ibis', 'jackal', 'kestrel', 'lemur',
-  'marten', 'narwhal', 'ocelot', 'panther', 'quail', 'robin', 'stork', 'tapir',
-  'urchin', 'viper', 'walrus', 'wren', 'yak', 'zebra', 'bison', 'crane',
-  'dingo', 'egret', 'fox', 'gull', 'hare', 'iguana', 'jay', 'koala',
+  'heron',
+  'falcon',
+  'otter',
+  'lynx',
+  'raven',
+  'badger',
+  'condor',
+  'dolphin',
+  'elk',
+  'ferret',
+  'gecko',
+  'hawk',
+  'ibis',
+  'jackal',
+  'kestrel',
+  'lemur',
+  'marten',
+  'narwhal',
+  'ocelot',
+  'panther',
+  'quail',
+  'robin',
+  'stork',
+  'tapir',
+  'urchin',
+  'viper',
+  'walrus',
+  'wren',
+  'yak',
+  'zebra',
+  'bison',
+  'crane',
+  'dingo',
+  'egret',
+  'fox',
+  'gull',
+  'hare',
+  'iguana',
+  'jay',
+  'koala',
 ];
 
 interface BenchIdentity {
@@ -2631,32 +2737,60 @@ const bundledBrowserEnv = async (): Promise<Record<string, string>> => {
     executable: string;
   };
   return {
-    GOOSE_SWARM_PLAYWRIGHT_MODULE: path.join(root, 'leanzero-web-search', 'node_modules', 'playwright'),
+    GOOSE_SWARM_PLAYWRIGHT_MODULE: path.join(
+      root,
+      'leanzero-web-search',
+      'node_modules',
+      'playwright'
+    ),
     GOOSE_SWARM_CHROMIUM_EXECUTABLE: path.join(root, manifest.executable),
   };
 };
 
 const benchNodeMemo = new Map<string, string>();
-const resolveBenchNode = async (tier: ReturnType<typeof defaultBenchmarkTier>, nodeOverride?: string): Promise<string> => {
+const resolveBenchNode = async (
+  tier: ReturnType<typeof defaultBenchmarkTier>,
+  nodeOverride?: string
+): Promise<string> => {
   const memoKey = `${tier}:${nodeOverride ?? 'legacy'}`;
   const cached = benchNodeMemo.get(memoKey);
   if (cached) return cached;
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
-  const node = nodeOverride ?? path.join(app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'), 'bin', shimName);
+  const node =
+    nodeOverride ??
+    path.join(
+      app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src'),
+      'bin',
+      shimName
+    );
   const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[tier]);
   const env = { ...process.env, ...(await bundledBrowserEnv()) };
   await new Promise<void>((resolve, reject) => {
     const child = spawn(node, [probe, '--preflight'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     let stdout = '';
-    child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr?.on('data', (chunk) => { output += String(chunk); });
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Bundled benchmark browser did not start.')); }, 45000);
-    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk) => {
+      output += String(chunk);
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('Bundled benchmark browser did not start.'));
+    }, 45000);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.on('exit', (code) => {
       clearTimeout(timer);
       let ready = false;
-      try { ready = JSON.parse(stdout).ok === true; } catch { /* missing receipt is a failed preflight */ }
+      try {
+        ready = JSON.parse(stdout).ok === true;
+      } catch {
+        /* missing receipt is a failed preflight */
+      }
       if (code === 0 && ready) resolve();
       else reject(new Error(`Bundled benchmark browser failed: ${output.slice(-1500)}`));
     });
@@ -2672,17 +2806,19 @@ const benchWorkRoot = (): string => path.join(app.getPath('userData'), 'benchmar
 let benchmarkRuntimeInstallation: Promise<void> | null = null;
 ipcMain.handle('benchmark-runtime-status', () => inspectBenchmarkRuntime(benchWorkRoot()));
 ipcMain.handle('benchmark-runtime-install', async () => {
-  if (activeBenchRun) throw new Error('Wait for the active benchmark to finish before changing its tools.');
+  if (activeBenchRun)
+    throw new Error('Wait for the active benchmark to finish before changing its tools.');
   if (!benchmarkRuntimeInstallation) {
     benchmarkRuntimeInstallation = installBenchmarkRuntime(benchWorkRoot(), (progress) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('benchmark-runtime-progress', progress);
       }
-    }).finally(() => { benchmarkRuntimeInstallation = null; });
+    }).finally(() => {
+      benchmarkRuntimeInstallation = null;
+    });
   }
   return benchmarkRuntimeInstallation;
 });
-
 
 interface RunSampling {
   temperature?: number;
@@ -2745,7 +2881,13 @@ let benchmarkResultCommitInProgress = false;
 // .swarm log for anything that ran without the flag.
 const benchRunLog = async (workdir: string): Promise<string | null> => {
   const direct = path.join(workdir, 'run.jsonl');
-  if (await fs.stat(direct).then(() => true, () => false)) return direct;
+  if (
+    await fs.stat(direct).then(
+      () => true,
+      () => false
+    )
+  )
+    return direct;
   const swarmDir = path.join(workdir, '.swarm');
   const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
   const logs = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
@@ -2753,7 +2895,10 @@ const benchRunLog = async (workdir: string): Promise<string | null> => {
   const withMtime = await Promise.all(
     logs.map(async (f) => ({
       f,
-      m: await fs.stat(path.join(swarmDir, f)).then((s) => s.mtimeMs).catch(() => 0),
+      m: await fs
+        .stat(path.join(swarmDir, f))
+        .then((s) => s.mtimeMs)
+        .catch(() => 0),
     }))
   );
   withMtime.sort((a, b) => b.m - a.m);
@@ -3062,7 +3207,9 @@ ipcMain.handle('benchmark-read', async () => {
     const stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8'));
     if (typeof stored?.workdir === 'string' && /^sb-8(?:\.|$)/.test(stored.scorerVersion ?? '')) {
       try {
-        const canonical = JSON.parse(await fs.readFile(path.join(stored.workdir, 'verdict.json'), 'utf8'));
+        const canonical = JSON.parse(
+          await fs.readFile(path.join(stored.workdir, 'verdict.json'), 'utf8')
+        );
         return recoverStoredSb8Score(stored, canonical);
       } catch {
         // The archived source is unavailable; retain the stored evidence and its explicit missing-input notice.
@@ -3308,7 +3455,8 @@ ipcMain.handle('benchmark-status', async () => {
 const benchMediaServer = new BenchMediaServer();
 app.on('will-quit', () => benchMediaServer.close());
 ipcMain.handle('benchmark-media', async (_event, workdir: string) => {
-  if (typeof workdir !== 'string' || !workdir) return { videos: [], error: 'Missing run directory' };
+  if (typeof workdir !== 'string' || !workdir)
+    return { videos: [], error: 'Missing run directory' };
   const media = await readBenchMedia(workdir);
   if (media.error) return media;
   return {
@@ -4086,8 +4234,12 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
   const owned = benchmarkCancellationPids(snapshot, pid, run.workdir, process.pid);
   const errors: string[] = [];
   for (const ownedPid of owned) {
-    try { process.kill(ownedPid, 'SIGKILL'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') errors.push(`${ownedPid}: ${String(error)}`); }
+    try {
+      process.kill(ownedPid, 'SIGKILL');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH')
+        errors.push(`${ownedPid}: ${String(error)}`);
+    }
   }
   log.info(`[benchmark-cancel] ${why}: per-pid ${owned.join(',')}`);
   if (errors.length)
@@ -4853,7 +5005,8 @@ ipcMain.handle('read-file', async (_event, filePath) => {
 ipcMain.handle(
   'read-swarm-activity-log',
   async (_event, runDir: string, taskKey: string, channel: 'thinking' | 'transcript') => {
-    if (!runDir || typeof runDir !== 'string' || !taskKey || typeof taskKey !== 'string') return null;
+    if (!runDir || typeof runDir !== 'string' || !taskKey || typeof taskKey !== 'string')
+      return null;
     const ext = channel === 'thinking' ? '.think.log' : '.log';
     const actDir = path.resolve(path.join(expandTilde(runDir), '.swarm', 'activity'));
     // The engine flattens path separators out of the digest FILENAME (activity_digest_key: `~`->`~t`,
@@ -4883,9 +5036,13 @@ ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string
     if (!t) return false;
     const inbox = path.join(expandTilde(workingDir), '.swarm', 'inbox');
     await fs.mkdir(inbox, { recursive: true });
-    await fs.writeFile(path.join(inbox, `${Date.now()}.json`), JSON.stringify({ text: t }, null, 2), {
-      encoding: 'utf8',
-    });
+    await fs.writeFile(
+      path.join(inbox, `${Date.now()}.json`),
+      JSON.stringify({ text: t }, null, 2),
+      {
+        encoding: 'utf8',
+      }
+    );
     return true;
   } catch (error) {
     console.error('Error queueing swarm note:', error);
@@ -5267,8 +5424,7 @@ const guardCloseAndQuitAccelerators = (items: MenuItem[]): void => {
           label: item.label,
           accelerator: item.accelerator ?? (action === 'close' ? 'CmdOrCtrl+W' : 'CmdOrCtrl+Q'),
           click(_menuItem, _window, event) {
-            if (refuseShortcutDuringRun(action, event.triggeredByAccelerator === true))
-              return;
+            if (refuseShortcutDuringRun(action, event.triggeredByAccelerator === true)) return;
             if (action === 'quit') {
               app.quit();
               return;
@@ -5312,7 +5468,6 @@ const registerGlobalShortcuts = () => {
       console.error('Error registering focus window hotkey:', e);
     }
   }
-
 };
 
 async function appMain() {
@@ -5512,8 +5667,7 @@ async function appMain() {
           label: menuT('New Window'),
           accelerator: shortcuts.newChatWindow,
           async click(_menuItem, _window, event) {
-            if (refuseShortcutDuringRun('spawn', event.triggeredByAccelerator === true))
-              return;
+            if (refuseShortcutDuringRun('spawn', event.triggeredByAccelerator === true)) return;
             await createNewWindow(app, await focusedWindowWorkingDir());
           },
         })
@@ -6037,7 +6191,8 @@ async function appMain() {
           return trimmed;
         })
         .filter((b) => b.length > 0);
-      if (!found) throw new Error('Memory entry not found — it may have changed on disk. Reopen and retry.');
+      if (!found)
+        throw new Error('Memory entry not found — it may have changed on disk. Reopen and retry.');
       fsSync.writeFileSync(fp, out.join('\n\n') + '\n');
       return true;
     }
@@ -6297,7 +6452,10 @@ async function readJsonFile<T>(p: string): Promise<T | null> {
   }
 }
 
-async function readTextTail(p: string, maxBytes: number): Promise<{ text: string; bytes: number } | null> {
+async function readTextTail(
+  p: string,
+  maxBytes: number
+): Promise<{ text: string; bytes: number } | null> {
   try {
     const st = await fs.stat(p);
     const start = Math.max(0, st.size - maxBytes);
@@ -6322,7 +6480,10 @@ async function readTextTail(p: string, maxBytes: number): Promise<{ text: string
 /** pid in `<runtime>/lock` when that process is alive. */
 async function agentLockHolder(dir: string): Promise<number | null> {
   try {
-    const pid = Number.parseInt((await fs.readFile(path.join(agentRuntimeDir(dir), 'lock'), 'utf8')).trim(), 10);
+    const pid = Number.parseInt(
+      (await fs.readFile(path.join(agentRuntimeDir(dir), 'lock'), 'utf8')).trim(),
+      10
+    );
     if (!Number.isFinite(pid) || pid <= 0) return null;
     process.kill(pid, 0);
     return pid;
@@ -6512,7 +6673,11 @@ ipcMain.handle('agent-work-note', async (_event, dir: string, text: string) => {
   if (!t) return false;
   const inbox = path.join(agentRuntimeDir(expandTilde(String(dir || ''))), 'inbox');
   await fs.mkdir(inbox, { recursive: true });
-  await fs.writeFile(path.join(inbox, `${Date.now()}.json`), JSON.stringify({ text: t }, null, 2), 'utf8');
+  await fs.writeFile(
+    path.join(inbox, `${Date.now()}.json`),
+    JSON.stringify({ text: t }, null, 2),
+    'utf8'
+  );
   return true;
 });
 
@@ -6573,7 +6738,11 @@ ipcMain.handle('agent-work-read', async (_event, dir: string) => {
     .sort((a, b) => b - a)
     .slice(0, 12);
   const ticks = (
-    await Promise.all(tickFiles.map((n) => readJsonFile<Record<string, unknown>>(path.join(rt, 'ticks', `${n}.json`))))
+    await Promise.all(
+      tickFiles.map((n) =>
+        readJsonFile<Record<string, unknown>>(path.join(rt, 'ticks', `${n}.json`))
+      )
+    )
   ).filter((t): t is Record<string, unknown> => t != null);
   // Lane digests: the same files the build panel reads, plus the forming sidecar and the mtime.
   const actDir = path.join(d, '.swarm', 'activity');
@@ -6589,7 +6758,9 @@ ipcMain.handle('agent-work-read', async (_event, dir: string) => {
           const st = await fs.stat(p);
           const parsed = JSON.parse(await fs.readFile(p, 'utf8')) as Record<string, unknown>;
           try {
-            const fj = JSON.parse(await fs.readFile(p.replace(/\.json$/, '.forming.json'), 'utf8')) as {
+            const fj = JSON.parse(
+              await fs.readFile(p.replace(/\.json$/, '.forming.json'), 'utf8')
+            ) as {
               forming?: unknown[];
             };
             if (Array.isArray(fj.forming) && fj.forming.length > 0) parsed.forming = fj.forming;
@@ -6645,7 +6816,9 @@ ipcMain.handle('agent-work-read', async (_event, dir: string) => {
 
 async function bundledMcps() {
   const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'src');
-  const node = app.isPackaged ? path.join(root, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node') : process.execPath;
+  const node = app.isPackaged
+    ? path.join(root, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node')
+    : process.execPath;
   const bundledRoot = path.join(
     app.isPackaged ? process.resourcesPath : app.getAppPath(),
     'bundled-mcps'

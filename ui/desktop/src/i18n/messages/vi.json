@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "Kiểm tra"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "Preflight (chạy thử)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "Khởi động"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "Dừng"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "đang dùng {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "Thêm node"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "Ngừng nhận yêu cầu"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "Một node sắp hết bộ nhớ: yêu cầu mới phải chờ đến khi nó hồi phục."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "Đang nhận yêu cầu"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "Áp dụng"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "Còn {available} trên {total} GiB"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · RDMA qua Thunderbolt 5"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · TCP qua liên kết Thunderbolt"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "Chọn backend"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "Kiểm tra cụm"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "Chưa lưu cấu hình phân tán nào."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "Cấu hình"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "suy ra từ bộ nhớ"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "ngữ cảnh {limit} ({source}) · lớn nhất vừa đủ: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "Sửa {name}"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "Lỗi preflight"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "Lỗi khi lưu"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "Lỗi khi khởi động"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "Lỗi khi dừng"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "Lỗi khi gỡ"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "Ngừng nhận yêu cầu"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "Nhận yêu cầu trở lại"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "Cầu dao khởi động lại đã ngắt"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "Phát hiện treo"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "Đã khởi chạy"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "Đã sửa liên kết"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "Đã thu hồi tiến trình mồ côi"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "Rank đã chết"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "Rank bị đóng băng"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "Sẵn sàng"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "Khởi động lại"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "Khởi động thất bại"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "Đã yêu cầu dừng"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "Đã dừng"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "Luồng không có [DONE]"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "Không đọc được bộ nhớ"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "Bộ nhớ nguy cấp"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "Cảnh báo bộ nhớ"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "Chưa có sự kiện nào."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "Sự kiện của bộ giám sát"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "URL gốc"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "Giới hạn ngữ cảnh"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "Mô hình"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "Số lần khởi động lại"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "Trình chạy"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "Các kiểm tra thất bại"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "Ngữ cảnh (token)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "Cổng điều phối"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "Thư mục mô hình trên node này"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "Mô hình"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "Tên"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "ít nhất 2 node"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "Python của pipeline (tùy chọn)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "Cổng API"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "Thiết bị RDMA"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "Khởi động lại khi một rank chết hoặc treo"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "Bí danh ssh"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Giao diện Thunderbolt"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "IPv4 Thunderbolt"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "Mặt nạ mạng"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "Dịch vụ mạng"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "vừa"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "Đang xử lý"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Một mô hình được chia trên nhiều máy Mac qua Thunderbolt. Máy Mac này là rank 0: nó phục vụ API và giám sát mọi rank."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "Lỗi gần nhất"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, other {Lớp {first}–{last} · # lớp}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "Giới hạn: bộ nhớ {memory} · wired {wired} · cache {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "Chưa báo cáo giới hạn"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "Độ sống"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "Thời gian im lặng so với ngưỡng treo"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, other {# mẫu · trung vị {median} · ngưỡng treo {bound} · im lặng {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, other {# mẫu · im lặng {silent} · chưa có ngưỡng treo}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "Chưa đo được tiến triển nào"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "Cấu hình bị khóa khi engine phân tán đang chiếm máy Mac này. Hãy dừng nó để đổi node hoặc mô hình."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "Chưa đọc được bộ nhớ: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "Còn trống: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "không có trong thư mục mô hình của máy Mac này"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "Chọn mô hình"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "không vừa"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "Chưa báo cáo lớp"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "Chưa báo cáo mức đỉnh"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "Không có kế hoạch cho rank này"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "Thêm node"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "Rank {rank}. Rank 0 là máy Mac này; mọi node khác được truy cập qua bí danh ssh của nó."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "Sửa node"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "Các node"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "chưa đo"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "Đạt"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB đỉnh · chưa báo cáo ngân sách"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB đỉnh trên ngân sách {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "Bạn đang quản lý {host}. Chuyển “Manage on” về “This device” để cấu hình, kiểm tra, khởi động hoặc dừng nó."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "Engine phân tán được giám sát từ máy Mac này"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "Bộ nhớ dự kiến so với ngân sách"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "trọng số {weights} · trạng thái {state} · vùng làm việc {workspace} · cache prompt {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB dự kiến kèm chi phí phụ, trên ngân sách {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "dự kiến {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "Chưa chạy preflight nào. Một lần chạy thử kiểm tra từng node (khả năng kết nối, bộ nhớ, mô hình, Python, liên kết Thunderbolt, cổng) và lập kế hoạch lớp cho từng node mà không khởi chạy gì cả."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "Áp lực nguy cấp"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "Áp lực bình thường"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "Áp lực cao"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "chạy lúc {time}"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "Đang đọc engine phân tán…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "Xóa {name}"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "Sửa liên kết Thunderbolt nếu một kiểm tra JACCL thất bại"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "Sửa liên kết"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "Hoàn tác"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "điều phối"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "xử lý"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "Lưu cấu hình"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "Thiết lập"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "Phân đoạn {index} trên {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "suy ra"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "yêu cầu"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "chưa báo cáo tốc độ"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "Khởi động sẽ chạy preflight, sửa liên kết Thunderbolt khi JACCL cần, rồi khởi chạy từng rank dưới sự giám sát."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "Từ chối khởi động"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "Tiếp tục chạy"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "Mọi rank trên {nodes} sẽ bị dừng và được xác minh đã kết thúc, từng pid một. Các yêu cầu đang xử lý sẽ bị cắt."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "Dừng engine phân tán?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "Chưa xác minh được việc dừng"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "Đã dừng, đã xác minh"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "máy Mac này"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "Engine phân tán"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "Backend goose này không cung cấp engine phân tán: thiếu khả năng mlxDistributed, nghĩa là nó cũ hơn bản dựng đã thêm tính năng này. Hãy cập nhật goose để chia một mô hình trên nhiều máy Mac."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "Suy luận phân tán không khả dụng"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "Giữ engine đơn"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "Gỡ và tiếp tục"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "Engine MLX đơn đang được gắn trên máy Mac này ({detail}). Mỗi máy Mac chỉ thuộc một engine tại một thời điểm: gỡ nó sẽ dừng mô hình đó để engine phân tán có thể khởi động."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "Gỡ engine đơn?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "Không đọc được trạng thái"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "lỗi"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "đạt"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "cảnh báo"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "Phân tán"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "Phục vụ trên nhiều máy Mac"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, other {Phân tán · # node · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, other {Phân tán · # node}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "Đơn · máy Mac này"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "Engine đơn trên {host}"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "Đang tải"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "Sẵn sàng"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "Đang khởi động"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "Đã dừng"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "Đang dừng"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "Kích thước mô hình so với bộ nhớ trống"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "Ngừng nhận yêu cầu: một node sắp hết bộ nhớ"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, other {yêu cầu đang xử lý}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "đang xử lý: chưa đo"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "chưa có mức đỉnh"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} trên {budget} GiB đỉnh"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} GiB đỉnh"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "lượt tra cứu cache trúng"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Không có điều khiển suy nghĩ: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "Không thể dừng engine phân tán"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "Việc dừng engine phân tán chưa được xác minh: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Không nạp được engine MLX"

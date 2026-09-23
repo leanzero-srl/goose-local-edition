@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "테스트"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "프리플라이트(시험 실행)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "시작"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "중지"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "사용 중 {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "노드 추가"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "요청 수락 중단"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "노드의 메모리가 부족합니다. 회복될 때까지 새 요청은 대기합니다."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "요청 수락 중"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "적용"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{total} GiB 중 {available} GiB 사용 가능"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · Thunderbolt 5를 통한 RDMA"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · Thunderbolt 링크를 통한 TCP"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "백엔드 선택"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "취소"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "클러스터 점검"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "저장된 분산 구성이 아직 없습니다."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "구성"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "메모리에서 계산"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "컨텍스트 {limit}({source}) · 들어가는 최대값 {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "{name} 편집"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "프리플라이트 오류"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "저장 오류"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "시작 오류"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "중지 오류"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "마운트 해제 오류"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "수락 중단"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "수락 재개"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "재시작 차단기 작동"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "멈춤 감지"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "실행됨"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "링크 복구됨"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "고아 프로세스 회수"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "프리플라이트"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "랭크 종료"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "랭크 멈춤"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "준비됨"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "재시작"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "시작 실패"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "중지 요청됨"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "중지됨"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "[DONE] 없는 스트림"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "메모리를 읽을 수 없음"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "메모리 위험"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "메모리 경고"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "아직 이벤트가 없습니다."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "감독자 이벤트"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "기본 URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "컨텍스트 한도"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "모델"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "재시작 횟수"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "러너"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "실패"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "실패한 점검"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "백엔드"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "컨텍스트(토큰)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "코디네이터 포트"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "이 노드의 모델 폴더"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "모델"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "이름"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "노드 2개 이상"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "파이프라인 Python(선택)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "API 포트"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python(mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "RDMA 장치"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "랭크가 종료되거나 멈추면 재시작"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "ssh 별칭"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Thunderbolt 인터페이스"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "Thunderbolt IPv4"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "넷마스크"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "네트워크 서비스"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "들어감"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "처리 중"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Thunderbolt로 여러 Mac에 나눈 하나의 모델입니다. 이 Mac은 랭크 0으로, API를 제공하고 모든 랭크를 감독합니다."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "마지막 오류"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, other {레이어 {first}–{last} · #개 레이어}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "한도: 메모리 {memory} · wired {wired} · 캐시 {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "한도가 아직 보고되지 않음"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "활성 상태"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "멈춤 한도 대비 무응답 시간"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, other {샘플 #개 · 중앙값 {median} · 멈춤 한도 {bound} · 무응답 {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, other {샘플 #개 · 무응답 {silent} · 아직 멈춤 한도 없음}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "아직 측정된 진행 상황이 없습니다"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "분산 엔진이 이 Mac을 사용하는 동안 구성이 잠깁니다. 노드나 모델을 바꾸려면 중지하세요."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "메모리를 읽지 못함: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "아직 비어 있음: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "이 Mac의 모델 폴더에 없음"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "모델 선택"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "들어가지 않음"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "레이어가 보고되지 않음"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "아직 보고된 최고치 없음"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "이 랭크에 대한 계획 없음"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "노드 추가"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "랭크 {rank}. 랭크 0은 이 Mac이며, 다른 노드는 각자의 ssh 별칭으로 접속합니다."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "노드 편집"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "노드"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "측정 안 됨"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "통과"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "예산 대비 최고 메모리"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB 최고치 · 예산 미보고"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB 최고치 / 예산 {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "{host}을(를) 관리하고 있습니다. 구성, 점검, 시작, 중지하려면 “Manage on”을 “This device”로 되돌리세요."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "분산 엔진은 이 Mac에서 감독합니다"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "예산 대비 계획 메모리"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "가중치 {weights} · 상태 {state} · 작업 공간 {workspace} · 프롬프트 캐시 {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB(오버헤드 포함 계획) / 예산 {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "계획 {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "아직 프리플라이트를 실행하지 않았습니다. 시험 실행은 각 노드(연결 가능 여부, 메모리, 모델, Python, Thunderbolt 링크, 포트)를 점검하고 아무것도 실행하지 않고 노드별 레이어를 계획합니다."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "프리플라이트"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "메모리 압박 위험"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "메모리 압박 정상"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "메모리 압박 경고"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "{time}에 실행"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "랭크 {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "분산 엔진을 읽는 중…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "{name} 제거"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "JACCL 점검이 실패하면 Thunderbolt 링크 복구"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "링크 복구"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "되돌리기"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "코디네이터"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "워커"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "구성 저장"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "설정"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "샤드 {index}/{count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "계산됨"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "요청됨"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "속도 미보고"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "시작하면 프리플라이트를 실행하고, JACCL에 필요하면 Thunderbolt 링크를 복구한 뒤, 모든 랭크를 감독하에 실행합니다."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "시작 거부됨"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "계속 실행"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "{nodes}의 모든 랭크를 중지하고 pid별로 종료를 확인합니다. 처리 중인 요청은 중단됩니다."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "분산 엔진을 중지할까요?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "중지가 확인되지 않음"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "중지됨, 확인됨"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "이 Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "분산 엔진"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "이 goose 백엔드는 분산 엔진을 제공하지 않습니다. mlxDistributed 기능이 없으므로 이를 추가한 빌드보다 오래된 버전입니다. 하나의 모델을 여러 Mac에 나누려면 goose를 업데이트하세요."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "분산 추론을 사용할 수 없습니다"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "단일 엔진 유지"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "마운트 해제 후 계속"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "이 Mac에 단일 MLX 엔진이 마운트되어 있습니다({detail}). 한 Mac은 한 번에 하나의 엔진만 사용할 수 있습니다. 마운트를 해제하면 그 모델이 중지되어 분산 엔진을 시작할 수 있습니다."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "단일 엔진을 마운트 해제할까요?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "랭크 {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "상태를 읽을 수 없음"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "실패"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "통과"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "경고"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "분산"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "여러 Mac에서 제공 중"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, other {분산 · 노드 #개 · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, other {분산 · 노드 #개}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "단일 · 이 Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "{host}의 단일 엔진"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "실패"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "로드 중"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "프리플라이트"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "준비됨"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "제공 중"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "시작 중"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "중지됨"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "중지 중"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "취소"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "여유 메모리 대비 모델 크기"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "수락 중단: 노드 메모리 부족"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, other {개 요청 처리 중}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "처리 중: 측정 안 됨"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "아직 최고치 없음"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "최고 {peak} / {budget} GiB"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "예산 대비 최고 메모리"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "최고 {peak} GiB"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "캐시 조회 적중"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "사고 제어를 사용할 수 없음: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "분산 엔진을 중지하지 못했습니다"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "분산 엔진 중지가 확인되지 않았습니다: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX 엔진을 마운트할 수 없습니다"

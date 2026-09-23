@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "Probar"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "Preflight (prueba en seco)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "Iniciar"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "Detener"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "activa {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "Añadir nodo"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "Admisión cerrada"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "Un nodo tiene poca memoria: las solicitudes nuevas esperan hasta que se recupere."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "Admitiendo solicitudes"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "Aplicar"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{available} de {total} GiB disponibles"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · RDMA sobre Thunderbolt 5"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · TCP sobre el enlace Thunderbolt"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "Elige un backend"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "Comprobaciones del clúster"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "Todavía no hay ninguna configuración distribuida guardada."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "Configuración"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "derivado de la memoria"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "contexto {limit} ({source}) · el mayor que cabe: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "Editar {name}"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "Error de preflight"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "Error al guardar"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "Error al iniciar"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "Error al detener"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "Error al desmontar"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "Admisión cerrada"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "Admisión abierta"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "Disyuntor de reinicios abierto"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "Bloqueo detectado"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "Lanzado"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "Enlace reparado"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "Huérfano recuperado"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "Rank caído"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "Rank congelado"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "Listo"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "Reinicio"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "Inicio fallido"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "Detención solicitada"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "Detenido"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "Stream sin [DONE]"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "Memoria ilegible"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "Memoria crítica"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "Aviso de memoria"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "Aún no hay eventos."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "Eventos del supervisor"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "URL base"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "Límite de contexto"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "Modelo"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "Reinicios"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "Ejecutor"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "Fallido"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "Comprobaciones fallidas"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "Contexto (tokens)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "Puerto del coordinador"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "Carpeta del modelo en este nodo"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "Modelo"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "Nombre"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "al menos 2 nodos"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "Python del pipeline (opcional)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "Puerto de la API"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "Dispositivo RDMA"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "Reiniciar si un rank muere o se bloquea"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "Alias ssh"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Interfaz Thunderbolt"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "IPv4 de Thunderbolt"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "Máscara de red"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "Servicio de red"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "cabe"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "En curso"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Un modelo repartido entre varios Mac por Thunderbolt. Este Mac es el rank 0: sirve la API y supervisa cada rank."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "Último error"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, one {Capas {first}–{last} · # capa} other {Capas {first}–{last} · # capas}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "Límites: memoria {memory} · wired {wired} · caché {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "Límites aún no informados"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "Actividad"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "Silencio frente al límite de bloqueo"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, one {# muestra · mediana {median} · límite de bloqueo {bound} · en silencio {silent}} other {# muestras · mediana {median} · límite de bloqueo {bound} · en silencio {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, one {# muestra · en silencio {silent} · aún sin límite de bloqueo} other {# muestras · en silencio {silent} · aún sin límite de bloqueo}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "Aún no se ha medido progreso"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "La configuración está bloqueada mientras el motor distribuido ocupa este Mac. Detenlo para cambiar los nodos o el modelo."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "Memoria sin leer: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "Aún vacío: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "no está en la carpeta de modelos de este Mac"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "Elige un modelo"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "no cabe"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "Capas no informadas"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "Aún no se ha informado un pico"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "No hay plan para este rank"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "Añadir nodo"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "Rank {rank}. El rank 0 es este Mac; a cada otro nodo se llega por su alias ssh."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "Editar nodo"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "Nodos"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "sin medir"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "Superado"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "Memoria pico frente al presupuesto"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB de pico · sin presupuesto informado"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB de pico de un presupuesto de {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "Estás gestionando {host}. Vuelve a poner “Manage on” en “This device” para configurarlo, comprobarlo, iniciarlo o detenerlo."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "El motor distribuido se supervisa desde este Mac"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "Memoria planificada frente al presupuesto"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "pesos {weights} · estado {state} · espacio de trabajo {workspace} · caché de prompts {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB planificados con sobrecarga, de un presupuesto de {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "planificado {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "Todavía no se ha ejecutado ningún preflight. Una prueba en seco comprueba cada nodo (accesibilidad, memoria, el modelo, Python, el enlace Thunderbolt, puertos) y planifica las capas por nodo sin lanzar nada."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "Presión crítica"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "Presión normal"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "Presión alta"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "ejecutado a las {time}"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "Leyendo el motor distribuido…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "Quitar {name}"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "Reparar el enlace Thunderbolt si falla una comprobación de JACCL"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "Reparaciones del enlace"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "Revertir"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "coordinador"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "trabajador"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "Guardar configuración"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "Configurar"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "Fragmento {index} de {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "derivado"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "solicitado"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "velocidad no informada"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "Iniciar ejecuta el preflight, repara el enlace Thunderbolt cuando JACCL lo necesita y luego lanza cada rank bajo supervisión."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "Inicio rechazado"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "Seguir en marcha"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "Cada rank en {nodes} se detiene y se verifica que ha terminado, pid a pid. Las solicitudes en curso se interrumpen."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "¿Detener el motor distribuido?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "Detención no verificada"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "Detenido, verificado"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "este Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "Motor distribuido"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "Este backend de goose no ofrece el motor distribuido: falta la capacidad mlxDistributed, así que es anterior a la versión que lo añadió. Actualiza goose para repartir un modelo entre varios Mac."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "La inferencia distribuida no está disponible"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "Mantener el motor único"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "Desmontar y continuar"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "El motor MLX único está montado en este Mac ({detail}). Un Mac pertenece a un solo motor a la vez: al desmontarlo se detiene ese modelo para que pueda arrancar el motor distribuido."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "¿Desmontar el motor único?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "Estado ilegible"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "falla"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "ok"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "aviso"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "Distribuido"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "El motor distribuido ocupa este Mac: el motor único no puede montarse hasta que se detenga en la sección Motor distribuido de abajo."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "Sirviendo entre varios Mac"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, one {Distribuido · # nodo · {backend}} other {Distribuido · # nodos · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, one {Distribuido · # nodo} other {Distribuido · # nodos}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "Único · este Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "Motor único en {host}"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "Fallido"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "Cargando"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "Listo"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "Sirviendo"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "Iniciando"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "Detenido"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "Deteniendo"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "Tamaño del modelo frente a la memoria libre"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "Admisión cerrada: un nodo tiene poca memoria"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, one {solicitud en curso} other {solicitudes en curso}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "en curso: sin medir"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "aún sin pico"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} de {budget} GiB de pico"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "Memoria pico frente al presupuesto"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} GiB de pico"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "de las consultas a la caché acertadas"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Controles de razonamiento no disponibles: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "No se pudo detener el motor distribuido"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "La detención del motor distribuido no se verificó: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "No se pudo montar el motor MLX"

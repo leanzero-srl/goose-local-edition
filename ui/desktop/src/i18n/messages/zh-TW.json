@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "測試"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "預檢（試執行）"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "啟動"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "停止"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "使用中 {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "新增節點"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "已停止接收"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "某個節點記憶體不足：新請求會等待它恢復。"
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "正在接收請求"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "套用"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · 經 Thunderbolt 5 的 RDMA"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · 經 Thunderbolt 連結的 TCP"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "選擇後端"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "取消"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "叢集檢查"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "尚未儲存分散式設定。"
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "設定"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "依記憶體推算"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "上下文 {limit}（{source}）· 可容納的最大值 {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "編輯 {name}"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "預檢錯誤"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "儲存錯誤"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "啟動錯誤"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "停止錯誤"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "卸載錯誤"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "停止接收"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "恢復接收"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "重新啟動斷路器已開啟"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "偵測到卡住"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "已啟動"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "連結已修復"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "已回收孤兒程序"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "預檢"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "rank 已結束"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "rank 已凍結"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "就緒"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "重新啟動"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "啟動失敗"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "已要求停止"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "已停止"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "串流未以 [DONE] 結束"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "無法讀取記憶體"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "記憶體危急"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "記憶體警告"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "目前沒有事件。"
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "監督器事件"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "基礎 URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "上下文上限"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "模型"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "重新啟動次數"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "執行器"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "未通過"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "未通過的檢查"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "後端"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "上下文（token）"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "協調器連接埠"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "此節點上的模型資料夾"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "模型"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "名稱"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "至少 2 個節點"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "管線 Python（選用）"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "API 連接埠"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python（mlx + mlx_lm）"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "RDMA 裝置"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "rank 結束或卡住時重新啟動"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "ssh 別名"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Thunderbolt 介面"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "Thunderbolt IPv4"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "子網路遮罩"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "網路服務"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "可容納"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "處理中"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "透過 Thunderbolt 將一個模型拆分到多台 Mac 上。這台 Mac 是 rank 0：它提供 API 並監督每個 rank。"
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "最近錯誤"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, other {第 {first}–{last} 層 · 共 # 層}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "上限：記憶體 {memory} · wired {wired} · 快取 {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "尚未回報上限"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "存活監測"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "靜默時間與卡住門檻之比"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, other {# 個樣本 · 中位數 {median} · 卡住門檻 {bound} · 已靜默 {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, other {# 個樣本 · 已靜默 {silent} · 尚無卡住門檻}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "尚未測得進度"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "分散式引擎佔用這台 Mac 時設定會鎖定。停止它才能變更節點或模型。"
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "未讀取到記憶體：{error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "仍為空：{fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}：{field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "不在這台 Mac 的模型資料夾中"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "選擇模型"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "放不下"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "未回報層"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "尚未回報峰值"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "此 rank 沒有計畫"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "新增節點"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "rank {rank}。rank 0 是這台 Mac；其他每個節點都透過其 ssh 別名連線。"
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "編輯節點"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "節點"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "未測量"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "通過"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "峰值記憶體與預算之比"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB 峰值 · 未回報預算"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB 峰值，預算 {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "你正在管理 {host}。要設定、預檢、啟動或停止它，請將「Manage on」切回「This device」。"
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "分散式引擎由這台 Mac 監督"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "計畫記憶體與預算之比"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "權重 {weights} · 狀態 {state} · 工作區 {workspace} · 提示快取 {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB 含開銷的計畫用量，預算 {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "計畫 {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "尚未執行預檢。試執行會檢查每個節點（可達性、記憶體、模型、Python、Thunderbolt 連結、連接埠），並在不啟動任何東西的情況下規劃各節點的層。"
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "預檢"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "記憶體壓力：危急"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "記憶體壓力：正常"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "記憶體壓力：警告"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "執行於 {time}"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "正在讀取分散式引擎…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "移除 {name}"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "JACCL 檢查失敗時修復 Thunderbolt 連結"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "連結修復"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "重試"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "還原"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "協調器"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "工作節點"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "儲存設定"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "設定"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "分片 {index}/{count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "推算"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "指定"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "未回報速度"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "啟動會先執行預檢，在 JACCL 需要時修復 Thunderbolt 連結，然後在監督下啟動每個 rank。"
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "啟動遭拒"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "繼續執行"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "{nodes} 上的每個 rank 都會停止，並逐一依 pid 確認已結束。處理中的請求會中斷。"
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "要停止分散式引擎嗎？"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "停止未經確認"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "已停止，已確認"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "這台 Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "分散式引擎"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "此 goose 後端不提供分散式引擎：缺少 mlxDistributed 能力，表示它早於加入此功能的版本。請更新 goose，才能將一個模型拆分到多台 Mac 上。"
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "無法使用分散式推論"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "保留單機引擎"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "卸載並繼續"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "這台 Mac 上掛載著單機 MLX 引擎（{detail}）。一台 Mac 同一時間只能屬於一個引擎：卸載會停止該模型，讓分散式引擎可以啟動。"
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "要卸載單機引擎嗎？"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "無法讀取狀態"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "失敗"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "通過"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "警告"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "分散式"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "分散式引擎正佔用這台 Mac：在下方「分散式引擎」區段停止它之前，單機引擎無法掛載。"
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "跨多台 Mac 提供服務"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, other {分散式 · # 個節點 · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, other {分散式 · # 個節點}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "單機 · 這台 Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "{host} 上的單機引擎"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "失敗"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "載入中"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "預檢"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "就緒"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "服務中"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "啟動中"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "已停止"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "停止中"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "模型大小佔可用記憶體的比例"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "已停止接收：某個節點記憶體不足"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, other {個請求處理中}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "處理中：未測量"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "尚無峰值"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "峰值 {peak} / {budget} GiB"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "峰值記憶體與預算之比"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "峰值 {peak} GiB"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "的快取查詢命中"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "思考控制無法使用：{reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "無法停止分散式引擎"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "分散式引擎的停止未經確認：{steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "無法掛載 MLX 引擎"

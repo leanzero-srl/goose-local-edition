@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "テスト"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "プリフライト（ドライラン）"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "起動"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "停止"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "使用中 {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "ノードを追加"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "受付停止中"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "ノードのメモリが不足しています。回復するまで新しいリクエストは待機します。"
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "リクエスト受付中"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "適用"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{total} GiB 中 {available} GiB 使用可能"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · Thunderbolt 5 経由の RDMA"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · Thunderbolt リンク経由の TCP"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "バックエンドを選択"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "クラスタのチェック"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "分散構成はまだ保存されていません。"
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "構成"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "メモリから算出"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "コンテキスト {limit}（{source}）· 収まる最大値 {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "{name} を編集"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "プリフライトのエラー"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "保存のエラー"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "起動のエラー"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "停止のエラー"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "アンマウントのエラー"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "受付停止"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "受付再開"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "再起動ブレーカー作動"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "ハングを検出"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "起動済み"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "リンクを修復"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "孤立プロセスを回収"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "プリフライト"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "ランク終了"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "ランク停止"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "準備完了"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "再起動"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "起動失敗"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "停止を要求"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "停止済み"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "[DONE] のないストリーム"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "メモリを読み取れない"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "メモリが危険域"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "メモリ警告"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "イベントはまだありません。"
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "スーパーバイザのイベント"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "ベース URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "コンテキスト上限"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "モデル"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "再起動回数"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "ランナー"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "失敗"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "失敗したチェック"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "バックエンド"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "コンテキスト（トークン）"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "コーディネーターのポート"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "このノードのモデルフォルダ"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "モデル"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "名前"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "ノード 2 台以上"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "パイプラインの Python（任意）"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "API ポート"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python（mlx + mlx_lm）"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "RDMA デバイス"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "ランクが終了またはハングしたら再起動"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "ssh エイリアス"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Thunderbolt インターフェース"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "Thunderbolt IPv4"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "ネットマスク"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "ネットワークサービス"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "収まる"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "処理中"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Thunderbolt で複数の Mac に分割した 1 つのモデル。この Mac はランク 0 で、API を提供し、すべてのランクを監視します。"
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "最後のエラー"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, other {レイヤー {first}–{last} · # 層}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "上限: メモリ {memory} · wired {wired} · キャッシュ {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "上限はまだ報告されていません"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "稼働監視"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "ハング上限に対する無応答時間"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, other {# サンプル · 中央値 {median} · ハング上限 {bound} · 無応答 {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, other {# サンプル · 無応答 {silent} · ハング上限はまだなし}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "進捗はまだ測定されていません"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "分散エンジンがこの Mac を使用している間、構成はロックされます。ノードやモデルを変更するには停止してください。"
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "メモリ未取得: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "未入力: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "この Mac のモデルフォルダにありません"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "モデルを選択"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "収まらない"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "レイヤー未報告"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "ピークはまだ報告されていません"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "このランクの計画はありません"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "ノードを追加"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "ランク {rank}。ランク 0 はこの Mac で、その他のノードには ssh エイリアスで接続します。"
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "ノードを編集"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "ノード"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "未測定"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "合格"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "予算に対するピークメモリ"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB ピーク · 予算未報告"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB ピーク / 予算 {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "{host} を管理しています。構成・チェック・起動・停止を行うには、「Manage on」を「This device」に戻してください。"
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "分散エンジンはこの Mac から監視されます"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "予算に対する計画メモリ"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "重み {weights} · 状態 {state} · ワークスペース {workspace} · プロンプトキャッシュ {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB（オーバーヘッド込みの計画）/ 予算 {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "計画 {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "プリフライトはまだ実行されていません。ドライランは各ノード（到達性、メモリ、モデル、Python、Thunderbolt リンク、ポート）をチェックし、何も起動せずにノードごとのレイヤーを計画します。"
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "プリフライト"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "メモリ圧迫: 危険"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "メモリ圧迫: 正常"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "メモリ圧迫: 警告"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "{time} に実行"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "ランク {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "分散エンジンを読み取り中…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "{name} を削除"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "JACCL のチェックが失敗したら Thunderbolt リンクを修復"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "リンクの修復"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "再試行"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "元に戻す"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "コーディネーター"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "ワーカー"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "構成を保存"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "設定する"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "シャード {index} / {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "算出"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "指定"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "速度未報告"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "起動するとプリフライトを実行し、JACCL が必要とする場合は Thunderbolt リンクを修復してから、各ランクを監視下で起動します。"
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "起動が拒否されました"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "実行を続ける"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "{nodes} のすべてのランクを停止し、pid ごとに終了を確認します。処理中のリクエストは中断されます。"
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "分散エンジンを停止しますか？"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "停止を確認できません"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "停止済み（確認済み）"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "この Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "分散エンジン"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "この goose バックエンドは分散エンジンを提供していません。mlxDistributed 機能がないため、追加されたビルドより古いものです。1 つのモデルを複数の Mac に分割するには goose を更新してください。"
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "分散推論は利用できません"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "単一エンジンを維持"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "アンマウントして続行"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "この Mac には単一の MLX エンジンがマウントされています（{detail}）。1 台の Mac を使えるのは同時に 1 つのエンジンだけです。アンマウントするとそのモデルが停止し、分散エンジンを起動できます。"
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "単一エンジンをアンマウントしますか？"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "ランク {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "ステータスを読み取れません"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "失敗"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "合格"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "警告"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "分散"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "複数の Mac で提供中"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, other {分散 · # ノード · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, other {分散 · # ノード}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "単一 · この Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "{host} の単一エンジン"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "失敗"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "読み込み中"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "プリフライト"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "準備完了"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "提供中"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "起動中"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "停止済み"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "停止中"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "キャンセル"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "空きメモリに対するモデルサイズ"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "受付停止: ノードのメモリが不足"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, other {件のリクエストを処理中}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "処理中: 未測定"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "ピークなし"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "ピーク {peak} / {budget} GiB"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "予算に対するピークメモリ"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "ピーク {peak} GiB"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "のキャッシュ参照がヒット"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "思考の制御を利用できません: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "分散エンジンを停止できませんでした"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "分散エンジンの停止を確認できませんでした: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX エンジンをマウントできませんでした"

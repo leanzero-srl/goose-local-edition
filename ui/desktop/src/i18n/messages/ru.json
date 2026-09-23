@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "Проверить"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "Preflight (пробный прогон)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "Запустить"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "Остановить"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "активно {gb} ГиБ"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "Добавить узел"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "Приём закрыт"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "На узле мало памяти: новые запросы ждут, пока он не восстановится."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "Принимает запросы"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "Применить"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "Доступно {available} из {total} ГиБ"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · RDMA по Thunderbolt 5"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · TCP по каналу Thunderbolt"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "Выберите бэкенд"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "Проверки кластера"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "Распределённая конфигурация ещё не сохранена."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "Конфигурация"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "выводится из памяти"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "контекст {limit} ({source}) · наибольший, что помещается: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "Изменить {name}"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "Ошибка preflight"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "Ошибка сохранения"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "Ошибка запуска"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "Ошибка остановки"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "Ошибка выгрузки"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "Приём закрыт"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "Приём открыт"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "Сработал предохранитель перезапусков"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "Обнаружено зависание"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "Запущено"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "Канал восстановлен"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "Осиротевший процесс возвращён"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "Ранг завершился"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "Ранг завис"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "Готово"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "Перезапуск"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "Запуск не удался"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "Запрошена остановка"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "Остановлено"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "Поток без [DONE]"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "Память не читается"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "Память на критическом уровне"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "Предупреждение о памяти"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "Событий пока нет."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "События супервизора"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "Базовый URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "Предел контекста"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "Модель"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "Перезапуски"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "Исполнитель"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "Не пройдено"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "Непройденные проверки"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "Бэкенд"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "Контекст (токены)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "Порт координатора"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "Папка модели на этом узле"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "Модель"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "Имя"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "не меньше 2 узлов"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "Python конвейера (необязательно)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "Порт API"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "Устройство RDMA"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "Перезапускать, если ранг умер или завис"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "Псевдоним ssh"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Интерфейс Thunderbolt"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "IPv4 Thunderbolt"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "Маска сети"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "Сетевая служба"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "помещается"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "В работе"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Одна модель, разделённая между несколькими Mac по Thunderbolt. Этот Mac — ранг 0: он обслуживает API и следит за каждым рангом."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "Последняя ошибка"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, one {Слои {first}–{last} · # слой} few {Слои {first}–{last} · # слоя} many {Слои {first}–{last} · # слоёв} other {Слои {first}–{last} · # слоя}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "Пределы: память {memory} · wired {wired} · кэш {cache} ГиБ"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "Пределы ещё не сообщены"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "Живость"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "Тишина относительно порога зависания"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, one {# замер · медиана {median} · порог зависания {bound} · тишина {silent}} few {# замера · медиана {median} · порог зависания {bound} · тишина {silent}} many {# замеров · медиана {median} · порог зависания {bound} · тишина {silent}} other {# замера · медиана {median} · порог зависания {bound} · тишина {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, one {# замер · тишина {silent} · порога зависания ещё нет} few {# замера · тишина {silent} · порога зависания ещё нет} many {# замеров · тишина {silent} · порога зависания ещё нет} other {# замера · тишина {silent} · порога зависания ещё нет}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "Прогресс ещё не измерен"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "Конфигурация заблокирована, пока распределённый движок занимает этот Mac. Остановите его, чтобы изменить узлы или модель."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "Память не прочитана: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "Ещё не заполнено: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "нет в папке моделей этого Mac"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "Выберите модель"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "не помещается"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "Слои не сообщены"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "Пик ещё не сообщён"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "Для этого ранга нет плана"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "Добавить узел"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "Ранг {rank}. Ранг 0 — этот Mac; к каждому другому узлу обращаются по его псевдониму ssh."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "Изменить узел"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "Узлы"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "не измерено"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "Пройдено"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "Пиковая память относительно бюджета"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "ГиБ пик · бюджет не сообщён"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "ГиБ пик из бюджета {budget} ГиБ"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "Вы управляете {host}. Переключите «Manage on» обратно на «This device», чтобы настроить, проверить, запустить или остановить его."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "Распределённым движком управляет этот Mac"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "Запланированная память относительно бюджета"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "веса {weights} · состояние {state} · рабочая область {workspace} · кэш промптов {cache} ГиБ"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "ГиБ по плану с накладными расходами, из бюджета {budget} ГиБ"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "по плану {gb} ГиБ"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "Preflight ещё не запускался. Пробный прогон проверяет каждый узел (доступность, память, модель, Python, канал Thunderbolt, порты) и распределяет слои по узлам, ничего не запуская."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "Давление критическое"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "Давление нормальное"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "Давление повышенное"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "выполнено в {time}"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "ранг {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "Чтение распределённого движка…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "Удалить {name}"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "Восстановить канал Thunderbolt, если проверка JACCL не пройдена"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "Восстановления канала"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "Отменить изменения"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "координатор"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "исполнитель"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "Сохранить конфигурацию"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "Настроить"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "Шард {index} из {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "выведено"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "запрошено"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "скорость не сообщена"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "Запуск выполняет preflight, восстанавливает канал Thunderbolt, когда это нужно JACCL, и затем запускает каждый ранг под надзором."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "Запуск отклонён"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "Оставить работать"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "Каждый ранг на {nodes} останавливается, и его завершение проверяется по каждому pid. Запросы в работе будут прерваны."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "Остановить распределённый движок?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "Остановка не подтверждена"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "Остановлено, подтверждено"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "этот Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "Распределённый движок"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "Этот бэкенд goose не предлагает распределённый движок: нет возможности mlxDistributed, значит, он старше сборки, в которой она появилась. Обновите goose, чтобы разделить одну модель между несколькими Mac."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "Распределённый инференс недоступен"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "Оставить одиночный движок"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "Выгрузить и продолжить"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "Одиночный движок MLX загружен на этом Mac ({detail}). Mac одновременно принадлежит только одному движку: выгрузка остановит эту модель, чтобы распределённый движок смог запуститься."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "Выгрузить одиночный движок?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "ранг {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "Статус не читается"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "ошибка"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "ок"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "внимание"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "Распределённо"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "Обслуживает на нескольких Mac"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, one {Распределённо · # узел · {backend}} few {Распределённо · # узла · {backend}} many {Распределённо · # узлов · {backend}} other {Распределённо · # узла · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, one {Распределённо · # узел} few {Распределённо · # узла} many {Распределённо · # узлов} other {Распределённо · # узла}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "Одиночный · этот Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "Одиночный движок на {host}"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "Загрузка"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "Готово"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "Обслуживает"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "Запуск"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "Остановлено"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "Остановка"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Отмена"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "Размер модели относительно свободной памяти"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "Приём закрыт: на узле мало памяти"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, one {запрос в работе} few {запроса в работе} many {запросов в работе} other {запроса в работе}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "в работе: не измерено"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "пика ещё нет"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} из {budget} ГиБ пик"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "Пиковая память относительно бюджета"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} ГиБ пик"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "обращений к кешу — попадания"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Управление размышлением недоступно: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "Не удалось остановить распределённый движок"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "Остановка распределённого движка не подтверждена: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Не удалось смонтировать движок MLX"

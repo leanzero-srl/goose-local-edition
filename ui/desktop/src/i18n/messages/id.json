@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "Preflight (uji coba)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "Mulai"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "Hentikan"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "aktif {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "Tambah node"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "Penerimaan ditutup"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "Memori sebuah node menipis: permintaan baru menunggu sampai pulih."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "Menerima permintaan"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "Terapkan"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{available} dari {total} GiB tersedia"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · RDMA melalui Thunderbolt 5"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · TCP melalui tautan Thunderbolt"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "Pilih backend"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "Pemeriksaan klaster"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "Belum ada konfigurasi terdistribusi yang disimpan."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "Konfigurasi"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "diturunkan dari memori"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "konteks {limit} ({source}) · terbesar yang muat: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "Edit {name}"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "Galat preflight"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "Galat penyimpanan"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "Galat saat memulai"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "Galat saat menghentikan"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "Galat saat melepas"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "Penerimaan ditutup"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "Penerimaan dibuka"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "Pemutus restart terbuka"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "Macet terdeteksi"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "Diluncurkan"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "Tautan diperbaiki"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "Proses yatim diambil alih"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "Rank mati"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "Rank membeku"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "Siap"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "Restart"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "Gagal memulai"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "Penghentian diminta"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "Berhenti"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "Stream tanpa [DONE]"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "Memori tidak terbaca"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "Memori kritis"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "Peringatan memori"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "Belum ada peristiwa."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "Peristiwa supervisor"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "URL dasar"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "Batas konteks"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "Jumlah restart"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "Pelaksana"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "Pemeriksaan yang gagal"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "Konteks (token)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "Port koordinator"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "Folder model di node ini"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "Nama"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "minimal 2 node"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "Python pipeline (opsional)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "Port API"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "Perangkat RDMA"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "Restart jika sebuah rank mati atau macet"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "Alias ssh"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Antarmuka Thunderbolt"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "IPv4 Thunderbolt"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "Netmask"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "Layanan jaringan"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "muat"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "Sedang diproses"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Satu model dibagi ke beberapa Mac melalui Thunderbolt. Mac ini adalah rank 0: melayani API dan mengawasi setiap rank."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "Galat terakhir"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, other {Lapisan {first}–{last} · # lapisan}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "Batas: memori {memory} · wired {wired} · cache {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "Batas belum dilaporkan"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "Keaktifan"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "Keheningan terhadap batas macet"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, other {# sampel · median {median} · batas macet {bound} · hening {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, other {# sampel · hening {silent} · belum ada batas macet}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "Belum ada kemajuan yang terukur"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "Konfigurasi dikunci selama mesin terdistribusi menguasai Mac ini. Hentikan untuk mengubah node atau model."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "Memori tidak terbaca: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "Masih kosong: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "tidak ada di folder model Mac ini"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "Pilih model"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "tidak muat"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "Lapisan tidak dilaporkan"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "Belum ada puncak yang dilaporkan"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "Tidak ada rencana untuk rank ini"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "Tambah node"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "Rank {rank}. Rank 0 adalah Mac ini; setiap node lain dijangkau melalui alias ssh-nya."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "Edit node"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "Node"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "tidak terukur"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "Lolos"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "Memori puncak terhadap anggaran"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB puncak · tidak ada anggaran yang dilaporkan"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB puncak dari anggaran {budget} GiB"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "Anda sedang mengelola {host}. Kembalikan “Manage on” ke “This device” untuk mengonfigurasi, memeriksa, memulai, atau menghentikannya."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "Mesin terdistribusi diawasi dari Mac ini"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "Memori yang direncanakan terhadap anggaran"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "bobot {weights} · status {state} · ruang kerja {workspace} · cache prompt {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB direncanakan dengan overhead, dari anggaran {budget} GiB"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "direncanakan {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "Belum ada preflight yang dijalankan. Uji coba memeriksa setiap node (keterjangkauan, memori, model, Python, tautan Thunderbolt, port) dan merencanakan lapisan per node tanpa meluncurkan apa pun."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "Tekanan kritis"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "Tekanan normal"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "Tekanan tinggi"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "dijalankan pukul {time}"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "Membaca mesin terdistribusi…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "Hapus {name}"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "Perbaiki tautan Thunderbolt jika pemeriksaan JACCL gagal"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "Perbaikan tautan"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "Kembalikan"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "koordinator"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "pekerja"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "Simpan konfigurasi"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "Siapkan"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "Shard {index} dari {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "diturunkan"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "diminta"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "kecepatan tidak dilaporkan"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "Mulai menjalankan preflight, memperbaiki tautan Thunderbolt bila JACCL membutuhkannya, lalu meluncurkan setiap rank di bawah pengawasan."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "Mulai ditolak"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "Setiap rank di {nodes} dihentikan dan dipastikan hilang, pid demi pid. Permintaan yang sedang berjalan akan terputus."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "Hentikan mesin terdistribusi?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "Penghentian tidak terverifikasi"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "Berhenti, terverifikasi"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "Mesin terdistribusi"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "Backend goose ini tidak menyediakan mesin terdistribusi: kapabilitas mlxDistributed tidak ada, jadi versinya lebih lama dari build yang menambahkannya. Perbarui goose untuk membagi satu model ke beberapa Mac."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "Inferensi terdistribusi tidak tersedia"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "Pertahankan mesin tunggal"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "Lepas dan lanjutkan"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "Mesin MLX tunggal terpasang di Mac ini ({detail}). Satu Mac hanya dikuasai satu mesin pada satu waktu: melepasnya menghentikan model itu agar mesin terdistribusi bisa dimulai."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "Lepas mesin tunggal?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "Status tidak terbaca"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "gagal"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "lolos"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "peringatan"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "Terdistribusi"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "Melayani lintas Mac"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, other {Terdistribusi · # node · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, other {Terdistribusi · # node}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "Tunggal · Mac ini"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "Mesin tunggal di {host}"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "Memuat"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "Siap"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "Melayani"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "Memulai"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "Berhenti"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "Menghentikan"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "Ukuran model terhadap memori bebas"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "Penerimaan ditutup: memori sebuah node menipis"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, other {permintaan sedang diproses}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "sedang diproses: tidak terukur"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "belum ada puncak"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} dari {budget} GiB puncak"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "Memori puncak terhadap anggaran"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} GiB puncak"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "pencarian cache yang kena"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Kontrol berpikir tidak tersedia: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "Tidak dapat menghentikan mesin terdistribusi"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "Penghentian mesin terdistribusi tidak terverifikasi: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Mesin MLX tidak dapat dipasang"

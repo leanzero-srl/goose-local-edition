@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "प्रीफ़्लाइट (ड्राई रन)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "शुरू करें"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "रोकें"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "सक्रिय {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "नोड जोड़ें"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "प्रवेश बंद"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "किसी नोड की मेमोरी कम है: नए अनुरोध उसके सँभलने तक प्रतीक्षा करते हैं।"
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "अनुरोध स्वीकार हो रहे हैं"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "लागू करें"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · Thunderbolt 5 पर RDMA"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · Thunderbolt लिंक पर TCP"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "बैकएंड चुनें"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "क्लस्टर जाँचें"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "अभी तक कोई वितरित कॉन्फ़िगरेशन सहेजा नहीं गया है।"
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "कॉन्फ़िगरेशन"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "मेमोरी से निकाला गया"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "संदर्भ {limit} ({source}) · सबसे बड़ा जो समाए: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "{name} संपादित करें"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "प्रीफ़्लाइट त्रुटि"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "सहेजने में त्रुटि"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "शुरू करने में त्रुटि"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "रोकने में त्रुटि"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "अनमाउंट त्रुटि"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "प्रवेश बंद हुआ"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "प्रवेश खुला"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "रीस्टार्ट ब्रेकर खुला"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "अटकना पकड़ा गया"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "लॉन्च हुआ"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "लिंक ठीक किया गया"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "अनाथ प्रक्रिया वापस ली गई"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "प्रीफ़्लाइट"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "रैंक बंद हो गई"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "रैंक जम गई"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "तैयार"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "रीस्टार्ट"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "शुरू होना विफल"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "रोकने का अनुरोध"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "रुका"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "[DONE] के बिना स्ट्रीम"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "मेमोरी पढ़ी नहीं जा सकती"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "मेमोरी गंभीर"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "मेमोरी चेतावनी"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "अभी कोई घटना नहीं।"
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "सुपरवाइज़र घटनाएँ"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "बेस URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "संदर्भ सीमा"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "मॉडल"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "रीस्टार्ट"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "रनर"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "विफल"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "विफल जाँचें"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "बैकएंड"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "संदर्भ (टोकन)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "कोऑर्डिनेटर पोर्ट"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "इस नोड पर मॉडल फ़ोल्डर"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "मॉडल"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "नाम"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "कम से कम 2 नोड"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "पाइपलाइन Python (वैकल्पिक)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "API पोर्ट"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "RDMA डिवाइस"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "कोई रैंक बंद हो या अटके तो रीस्टार्ट करें"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "ssh उपनाम"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Thunderbolt इंटरफ़ेस"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "Thunderbolt IPv4"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "नेटमास्क"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "नेटवर्क सेवा"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "समाता है"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "प्रगति में"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Thunderbolt के ज़रिए कई Mac में बँटा एक मॉडल। यह Mac रैंक 0 है: यह API परोसता है और हर रैंक की निगरानी करता है।"
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "अंतिम त्रुटि"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, one {परतें {first}–{last} · # परत} other {परतें {first}–{last} · # परतें}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "सीमाएँ: मेमोरी {memory} · wired {wired} · कैश {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "सीमाएँ अभी रिपोर्ट नहीं हुईं"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "सक्रियता"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "अटकने की सीमा के मुकाबले चुप्पी"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, one {# नमूना · माध्यिका {median} · अटकने की सीमा {bound} · चुप {silent}} other {# नमूने · माध्यिका {median} · अटकने की सीमा {bound} · चुप {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, one {# नमूना · चुप {silent} · अभी अटकने की सीमा नहीं} other {# नमूने · चुप {silent} · अभी अटकने की सीमा नहीं}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "अभी कोई प्रगति नहीं मापी गई"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "जब तक वितरित इंजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। नोड या मॉडल बदलने के लिए इसे रोकें।"
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "मेमोरी नहीं पढ़ी गई: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "अभी खाली: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "इस Mac के मॉडल फ़ोल्डर में नहीं"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "मॉडल चुनें"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "नहीं समाता"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "परतें रिपोर्ट नहीं हुईं"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "अभी कोई शिखर रिपोर्ट नहीं हुआ"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "इस रैंक की कोई योजना नहीं"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "नोड जोड़ें"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "रैंक {rank}। रैंक 0 यह Mac है; बाकी हर नोड तक उसके ssh उपनाम से पहुँचा जाता है।"
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "नोड संपादित करें"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "नोड"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "मापा नहीं गया"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "पास"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB शिखर · बजट रिपोर्ट नहीं हुआ"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB शिखर, {budget} GiB बजट में से"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "आप {host} प्रबंधित कर रहे हैं। इसे कॉन्फ़िगर करने, जाँचने, शुरू करने या रोकने के लिए “Manage on” को वापस “This device” पर करें।"
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "वितरित इंजन की निगरानी इसी Mac से होती है"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "बजट के मुकाबले नियोजित मेमोरी"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "वेट {weights} · स्थिति {state} · वर्कस्पेस {workspace} · प्रॉम्प्ट कैश {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB ओवरहेड सहित नियोजित, {budget} GiB बजट में से"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "नियोजित {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "अभी कोई प्रीफ़्लाइट नहीं चला। ड्राई रन हर नोड (पहुँच, मेमोरी, मॉडल, Python, Thunderbolt लिंक, पोर्ट) जाँचता है और कुछ भी लॉन्च किए बिना प्रति नोड परतों की योजना बनाता है।"
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "प्रीफ़्लाइट"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "दबाव गंभीर"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "दबाव सामान्य"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "दबाव अधिक"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "{time} पर चला"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "रैंक {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "वितरित इंजन पढ़ा जा रहा है…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "{name} हटाएँ"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "JACCL जाँच विफल होने पर Thunderbolt लिंक ठीक करें"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "लिंक मरम्मत"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "वापस लें"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "कोऑर्डिनेटर"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "वर्कर"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "कॉन्फ़िगरेशन सहेजें"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "सेट अप करें"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "शार्ड {index} / {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "निकाला गया"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "माँगा गया"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "गति रिपोर्ट नहीं हुई"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "शुरू करने पर प्रीफ़्लाइट चलता है, JACCL को ज़रूरत हो तो Thunderbolt लिंक ठीक होता है, फिर हर रैंक निगरानी में लॉन्च होती है।"
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "शुरू करना अस्वीकृत"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "चलने दें"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "{nodes} पर हर रैंक रोकी जाती है और हर pid के लिए बंद होने की पुष्टि की जाती है। प्रगति में अनुरोध कट जाएँगे।"
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "वितरित इंजन रोकें?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "रुकना सत्यापित नहीं"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "रुका, सत्यापित"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "वितरित इंजन"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "यह goose बैकएंड वितरित इंजन नहीं देता: mlxDistributed क्षमता मौजूद नहीं है, यानी यह उस बिल्ड से पुराना है जिसने इसे जोड़ा। एक मॉडल को कई Mac में बाँटने के लिए goose अपडेट करें।"
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "वितरित इन्फ़रेंस उपलब्ध नहीं है"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "एकल इंजन रखें"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "अनमाउंट करें और जारी रखें"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "इस Mac पर एकल MLX इंजन माउंट है ({detail})। एक Mac एक समय में एक ही इंजन का होता है: अनमाउंट करने से वह मॉडल रुकता है ताकि वितरित इंजन शुरू हो सके।"
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "एकल इंजन अनमाउंट करें?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "रैंक {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "स्थिति पढ़ी नहीं जा सकती"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "विफल"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "पास"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "चेतावनी"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "वितरित"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "कई Mac पर परोसा जा रहा है"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, one {वितरित · # नोड · {backend}} other {वितरित · # नोड · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, one {वितरित · # नोड} other {वितरित · # नोड}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "एकल · यह Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "{host} पर एकल इंजन"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "विफल"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "प्रीफ़्लाइट"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "तैयार"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "परोस रहा है"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "शुरू हो रहा है"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "रुका"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "रुक रहा है"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "खाली मेमोरी की तुलना में मॉडल का आकार"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "प्रवेश बंद: किसी नोड की मेमोरी कम है"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, one {अनुरोध प्रगति में} other {अनुरोध प्रगति में}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "प्रगति में: मापा नहीं गया"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "अभी कोई शिखर नहीं"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} / {budget} GiB शिखर"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} GiB शिखर"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "कैश लुकअप सफल"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "सोचने के नियंत्रण उपलब्ध नहीं: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "वितरित इंजन रोका नहीं जा सका"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "वितरित इंजन का रुकना सत्यापित नहीं हुआ: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX इंजन माउंट नहीं हो सका"

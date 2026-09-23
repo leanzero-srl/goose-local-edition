@@ -2714,6 +2714,498 @@
   "microphoneSelector.test": {
     "defaultMessage": "testi"
   },
+  "mlxDistributed.action.preflight": {
+    "defaultMessage": "Preflight (deneme çalıştırması)"
+  },
+  "mlxDistributed.action.start": {
+    "defaultMessage": "Başlat"
+  },
+  "mlxDistributed.action.stop": {
+    "defaultMessage": "Durdur"
+  },
+  "mlxDistributed.active": {
+    "defaultMessage": "etkin {gb} GiB"
+  },
+  "mlxDistributed.addNode": {
+    "defaultMessage": "Düğüm ekle"
+  },
+  "mlxDistributed.admissionClosed": {
+    "defaultMessage": "Kabul kapalı"
+  },
+  "mlxDistributed.admissionClosedWhy": {
+    "defaultMessage": "Bir düğümün belleği azaldı: yeni istekler o toparlanana kadar bekler."
+  },
+  "mlxDistributed.admissionOpen": {
+    "defaultMessage": "İstekleri kabul ediyor"
+  },
+  "mlxDistributed.apply": {
+    "defaultMessage": "Uygula"
+  },
+  "mlxDistributed.available": {
+    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+  },
+  "mlxDistributed.backend.jaccl": {
+    "defaultMessage": "JACCL · Thunderbolt 5 üzerinden RDMA"
+  },
+  "mlxDistributed.backend.ring": {
+    "defaultMessage": "ring · Thunderbolt bağlantısı üzerinden TCP"
+  },
+  "mlxDistributed.backendPick": {
+    "defaultMessage": "Bir arka uç seçin"
+  },
+  "mlxDistributed.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "mlxDistributed.clusterChecks": {
+    "defaultMessage": "Küme denetimleri"
+  },
+  "mlxDistributed.configNone": {
+    "defaultMessage": "Henüz kayıtlı dağıtık yapılandırma yok."
+  },
+  "mlxDistributed.configTitle": {
+    "defaultMessage": "Yapılandırma"
+  },
+  "mlxDistributed.contextDerived": {
+    "defaultMessage": "bellekten türetilir"
+  },
+  "mlxDistributed.contextLine": {
+    "defaultMessage": "bağlam {limit} ({source}) · sığan en büyük: {max}"
+  },
+  "mlxDistributed.editNode": {
+    "defaultMessage": "{name} düzenle"
+  },
+  "mlxDistributed.error.preflight": {
+    "defaultMessage": "Preflight hatası"
+  },
+  "mlxDistributed.error.save": {
+    "defaultMessage": "Kaydetme hatası"
+  },
+  "mlxDistributed.error.start": {
+    "defaultMessage": "Başlatma hatası"
+  },
+  "mlxDistributed.error.stop": {
+    "defaultMessage": "Durdurma hatası"
+  },
+  "mlxDistributed.error.unmount": {
+    "defaultMessage": "Kaldırma hatası"
+  },
+  "mlxDistributed.event.admissionClosed": {
+    "defaultMessage": "Kabul kapandı"
+  },
+  "mlxDistributed.event.admissionOpened": {
+    "defaultMessage": "Kabul açıldı"
+  },
+  "mlxDistributed.event.breakerOpen": {
+    "defaultMessage": "Yeniden başlatma sigortası attı"
+  },
+  "mlxDistributed.event.hang": {
+    "defaultMessage": "Takılma algılandı"
+  },
+  "mlxDistributed.event.launched": {
+    "defaultMessage": "Başlatıldı"
+  },
+  "mlxDistributed.event.linkRepaired": {
+    "defaultMessage": "Bağlantı onarıldı"
+  },
+  "mlxDistributed.event.orphanReclaimed": {
+    "defaultMessage": "Sahipsiz süreç geri alındı"
+  },
+  "mlxDistributed.event.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.event.rankDied": {
+    "defaultMessage": "Rank sonlandı"
+  },
+  "mlxDistributed.event.rankFrozen": {
+    "defaultMessage": "Rank dondu"
+  },
+  "mlxDistributed.event.ready": {
+    "defaultMessage": "Hazır"
+  },
+  "mlxDistributed.event.restart": {
+    "defaultMessage": "Yeniden başlatma"
+  },
+  "mlxDistributed.event.startFailed": {
+    "defaultMessage": "Başlatma başarısız"
+  },
+  "mlxDistributed.event.stopRequested": {
+    "defaultMessage": "Durdurma istendi"
+  },
+  "mlxDistributed.event.stopped": {
+    "defaultMessage": "Durduruldu"
+  },
+  "mlxDistributed.event.streamWithoutDone": {
+    "defaultMessage": "[DONE] olmadan akış"
+  },
+  "mlxDistributed.event.watchdogBlind": {
+    "defaultMessage": "Bellek okunamıyor"
+  },
+  "mlxDistributed.event.watchdogCritical": {
+    "defaultMessage": "Bellek kritik"
+  },
+  "mlxDistributed.event.watchdogWarn": {
+    "defaultMessage": "Bellek uyarısı"
+  },
+  "mlxDistributed.eventsNone": {
+    "defaultMessage": "Henüz olay yok."
+  },
+  "mlxDistributed.eventsTitle": {
+    "defaultMessage": "Denetleyici olayları"
+  },
+  "mlxDistributed.fact.baseUrl": {
+    "defaultMessage": "Temel URL"
+  },
+  "mlxDistributed.fact.contextLimit": {
+    "defaultMessage": "Bağlam sınırı"
+  },
+  "mlxDistributed.fact.model": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributed.fact.restarts": {
+    "defaultMessage": "Yeniden başlatmalar"
+  },
+  "mlxDistributed.fact.runner": {
+    "defaultMessage": "Çalıştırıcı"
+  },
+  "mlxDistributed.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "mlxDistributed.failing": {
+    "defaultMessage": "Başarısız denetimler"
+  },
+  "mlxDistributed.field.backend": {
+    "defaultMessage": "Arka uç"
+  },
+  "mlxDistributed.field.context": {
+    "defaultMessage": "Bağlam (token)"
+  },
+  "mlxDistributed.field.coordinatorPort": {
+    "defaultMessage": "Koordinatör bağlantı noktası"
+  },
+  "mlxDistributed.field.modelDir": {
+    "defaultMessage": "Bu düğümdeki model klasörü"
+  },
+  "mlxDistributed.field.modelId": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributed.field.name": {
+    "defaultMessage": "Ad"
+  },
+  "mlxDistributed.field.nodes": {
+    "defaultMessage": "en az 2 düğüm"
+  },
+  "mlxDistributed.field.pipelinePython": {
+    "defaultMessage": "Pipeline Python'u (isteğe bağlı)"
+  },
+  "mlxDistributed.field.port": {
+    "defaultMessage": "API bağlantı noktası"
+  },
+  "mlxDistributed.field.python": {
+    "defaultMessage": "Python (mlx + mlx_lm)"
+  },
+  "mlxDistributed.field.rdmaDevice": {
+    "defaultMessage": "RDMA aygıtı"
+  },
+  "mlxDistributed.field.restart": {
+    "defaultMessage": "Bir rank ölürse ya da takılırsa yeniden başlat"
+  },
+  "mlxDistributed.field.ssh": {
+    "defaultMessage": "ssh takma adı"
+  },
+  "mlxDistributed.field.tbInterface": {
+    "defaultMessage": "Thunderbolt arabirimi"
+  },
+  "mlxDistributed.field.tbIp": {
+    "defaultMessage": "Thunderbolt IPv4"
+  },
+  "mlxDistributed.field.tbNetmask": {
+    "defaultMessage": "Ağ maskesi"
+  },
+  "mlxDistributed.field.tbService": {
+    "defaultMessage": "Ağ hizmeti"
+  },
+  "mlxDistributed.fits": {
+    "defaultMessage": "sığar"
+  },
+  "mlxDistributed.inflight": {
+    "defaultMessage": "İşlenen"
+  },
+  "mlxDistributed.intro": {
+    "defaultMessage": "Thunderbolt üzerinden birkaç Mac'e bölünmüş tek bir model. Bu Mac rank 0'dır: API'yi sunar ve her rank'ı denetler."
+  },
+  "mlxDistributed.lastError": {
+    "defaultMessage": "Son hata"
+  },
+  "mlxDistributed.layers": {
+    "defaultMessage": "{count, plural, one {Katman {first}–{last} · # katman} other {Katman {first}–{last} · # katman}}"
+  },
+  "mlxDistributed.limits": {
+    "defaultMessage": "Sınırlar: bellek {memory} · wired {wired} · önbellek {cache} GiB"
+  },
+  "mlxDistributed.limitsNone": {
+    "defaultMessage": "Sınırlar henüz bildirilmedi"
+  },
+  "mlxDistributed.liveness": {
+    "defaultMessage": "Canlılık"
+  },
+  "mlxDistributed.livenessBar": {
+    "defaultMessage": "Takılma sınırına göre sessizlik"
+  },
+  "mlxDistributed.livenessLine": {
+    "defaultMessage": "{samples, plural, one {# örnek · medyan {median} · takılma sınırı {bound} · sessiz {silent}} other {# örnek · medyan {median} · takılma sınırı {bound} · sessiz {silent}}}"
+  },
+  "mlxDistributed.livenessNoBound": {
+    "defaultMessage": "{samples, plural, one {# örnek · sessiz {silent} · henüz takılma sınırı yok} other {# örnek · sessiz {silent} · henüz takılma sınırı yok}}"
+  },
+  "mlxDistributed.livenessNone": {
+    "defaultMessage": "Henüz ilerleme ölçülmedi"
+  },
+  "mlxDistributed.locked": {
+    "defaultMessage": "Dağıtık motor bu Mac'i kullanırken yapılandırma kilitlidir. Düğümleri veya modeli değiştirmek için onu durdurun."
+  },
+  "mlxDistributed.memoryUnread": {
+    "defaultMessage": "Bellek okunamadı: {error}"
+  },
+  "mlxDistributed.missing": {
+    "defaultMessage": "Hâlâ boş: {fields}"
+  },
+  "mlxDistributed.missingNode": {
+    "defaultMessage": "{node}: {field}"
+  },
+  "mlxDistributed.modelNotLocal": {
+    "defaultMessage": "bu Mac'in model klasöründe yok"
+  },
+  "mlxDistributed.modelPick": {
+    "defaultMessage": "Bir model seçin"
+  },
+  "mlxDistributed.noFit": {
+    "defaultMessage": "sığmaz"
+  },
+  "mlxDistributed.noLayers": {
+    "defaultMessage": "Katmanlar bildirilmedi"
+  },
+  "mlxDistributed.noPeak": {
+    "defaultMessage": "Henüz tepe değer bildirilmedi"
+  },
+  "mlxDistributed.noPlan": {
+    "defaultMessage": "Bu rank için plan yok"
+  },
+  "mlxDistributed.nodeDialog.add": {
+    "defaultMessage": "Düğüm ekle"
+  },
+  "mlxDistributed.nodeDialog.body": {
+    "defaultMessage": "Rank {rank}. Rank 0 bu Mac'tir; diğer her düğüme ssh takma adıyla ulaşılır."
+  },
+  "mlxDistributed.nodeDialog.edit": {
+    "defaultMessage": "Düğümü düzenle"
+  },
+  "mlxDistributed.nodes": {
+    "defaultMessage": "Düğümler"
+  },
+  "mlxDistributed.notMeasured": {
+    "defaultMessage": "ölçülmedi"
+  },
+  "mlxDistributed.passed": {
+    "defaultMessage": "Geçti"
+  },
+  "mlxDistributed.peakBar": {
+    "defaultMessage": "Bütçeye göre tepe bellek"
+  },
+  "mlxDistributed.peakNoBudget": {
+    "defaultMessage": "GiB tepe · bütçe bildirilmedi"
+  },
+  "mlxDistributed.peakOf": {
+    "defaultMessage": "GiB tepe, {budget} GiB bütçeden"
+  },
+  "mlxDistributed.peerBody": {
+    "defaultMessage": "{host} cihazını yönetiyorsunuz. Yapılandırmak, denetlemek, başlatmak veya durdurmak için “Manage on” seçeneğini yeniden “This device” yapın."
+  },
+  "mlxDistributed.peerTitle": {
+    "defaultMessage": "Dağıtık motor bu Mac'ten denetlenir"
+  },
+  "mlxDistributed.pid": {
+    "defaultMessage": "pid {pid}"
+  },
+  "mlxDistributed.planBar": {
+    "defaultMessage": "Bütçeye göre planlanan bellek"
+  },
+  "mlxDistributed.planBreakdown": {
+    "defaultMessage": "ağırlıklar {weights} · durum {state} · çalışma alanı {workspace} · istem önbelleği {cache} GiB"
+  },
+  "mlxDistributed.planLine": {
+    "defaultMessage": "GiB ek yükle planlandı, {budget} GiB bütçeden"
+  },
+  "mlxDistributed.planned": {
+    "defaultMessage": "planlanan {gb} GiB"
+  },
+  "mlxDistributed.preflightNone": {
+    "defaultMessage": "Henüz preflight çalıştırılmadı. Deneme çalıştırması her düğümü (erişilebilirlik, bellek, model, Python, Thunderbolt bağlantısı, bağlantı noktaları) denetler ve hiçbir şey başlatmadan katmanları düğümlere göre planlar."
+  },
+  "mlxDistributed.preflightTitle": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.pressure.critical": {
+    "defaultMessage": "Baskı kritik"
+  },
+  "mlxDistributed.pressure.normal": {
+    "defaultMessage": "Baskı normal"
+  },
+  "mlxDistributed.pressure.warn": {
+    "defaultMessage": "Baskı yüksek"
+  },
+  "mlxDistributed.ranAt": {
+    "defaultMessage": "{time} saatinde çalıştı"
+  },
+  "mlxDistributed.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.reading": {
+    "defaultMessage": "Dağıtık motor okunuyor…"
+  },
+  "mlxDistributed.removeNode": {
+    "defaultMessage": "{name} kaldır"
+  },
+  "mlxDistributed.repairLink": {
+    "defaultMessage": "Bir JACCL denetimi başarısız olursa Thunderbolt bağlantısını onar"
+  },
+  "mlxDistributed.repairs": {
+    "defaultMessage": "Bağlantı onarımları"
+  },
+  "mlxDistributed.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "mlxDistributed.revert": {
+    "defaultMessage": "Geri al"
+  },
+  "mlxDistributed.role.coordinator": {
+    "defaultMessage": "koordinatör"
+  },
+  "mlxDistributed.role.worker": {
+    "defaultMessage": "işçi"
+  },
+  "mlxDistributed.save": {
+    "defaultMessage": "Yapılandırmayı kaydet"
+  },
+  "mlxDistributed.setUp": {
+    "defaultMessage": "Kur"
+  },
+  "mlxDistributed.shard": {
+    "defaultMessage": "Parça {index} / {count}"
+  },
+  "mlxDistributed.source.derived": {
+    "defaultMessage": "türetildi"
+  },
+  "mlxDistributed.source.requested": {
+    "defaultMessage": "istendi"
+  },
+  "mlxDistributed.speedUnknown": {
+    "defaultMessage": "hız bildirilmedi"
+  },
+  "mlxDistributed.startHint": {
+    "defaultMessage": "Başlat, preflight'ı çalıştırır, JACCL gerektirdiğinde Thunderbolt bağlantısını onarır ve ardından her rank'ı denetim altında başlatır."
+  },
+  "mlxDistributed.startRefused": {
+    "defaultMessage": "Başlatma reddedildi"
+  },
+  "mlxDistributed.stopCancel": {
+    "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "mlxDistributed.stopMessage": {
+    "defaultMessage": "{nodes} üzerindeki her rank durdurulur ve pid pid sonlandığı doğrulanır. İşlenmekte olan istekler kesilir."
+  },
+  "mlxDistributed.stopTitle": {
+    "defaultMessage": "Dağıtık motor durdurulsun mu?"
+  },
+  "mlxDistributed.stopUnverified": {
+    "defaultMessage": "Durdurma doğrulanmadı"
+  },
+  "mlxDistributed.stopVerified": {
+    "defaultMessage": "Durduruldu, doğrulandı"
+  },
+  "mlxDistributed.thisMac": {
+    "defaultMessage": "bu Mac"
+  },
+  "mlxDistributed.title": {
+    "defaultMessage": "Dağıtık motor"
+  },
+  "mlxDistributed.unavailableBody": {
+    "defaultMessage": "Bu goose arka ucu dağıtık motoru sunmuyor: mlxDistributed yeteneği eksik, yani onu ekleyen derlemeden daha eski. Bir modeli birkaç Mac'e bölmek için goose'u güncelleyin."
+  },
+  "mlxDistributed.unavailableTitle": {
+    "defaultMessage": "Dağıtık çıkarım kullanılamıyor"
+  },
+  "mlxDistributed.unmountCancel": {
+    "defaultMessage": "Tekli motoru koru"
+  },
+  "mlxDistributed.unmountConfirm": {
+    "defaultMessage": "Kaldır ve devam et"
+  },
+  "mlxDistributed.unmountMessage": {
+    "defaultMessage": "Tekli MLX motoru bu Mac'e bağlı ({detail}). Bir Mac aynı anda tek bir motora aittir: kaldırmak o modeli durdurur, böylece dağıtık motor başlayabilir."
+  },
+  "mlxDistributed.unmountTitle": {
+    "defaultMessage": "Tekli motor kaldırılsın mı?"
+  },
+  "mlxDistributed.unnamedNode": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.unreadable": {
+    "defaultMessage": "Durum okunamıyor"
+  },
+  "mlxDistributed.verdict.fail": {
+    "defaultMessage": "başarısız"
+  },
+  "mlxDistributed.verdict.pass": {
+    "defaultMessage": "geçti"
+  },
+  "mlxDistributed.verdict.warn": {
+    "defaultMessage": "uyarı"
+  },
+  "mlxEngineView.distributedOwns": {
+    "defaultMessage": "Dağıtık"
+  },
+  "mlxEngineView.distributedOwnsText": {
+    "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
+  },
+  "mlxEngineView.servingDistributed": {
+    "defaultMessage": "Birden çok Mac üzerinde sunuluyor"
+  },
+  "mlxMode.distributed": {
+    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm · {backend}} other {Dağıtık · # düğüm · {backend}}}"
+  },
+  "mlxMode.distributedNoBackend": {
+    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm} other {Dağıtık · # düğüm}}"
+  },
+  "mlxMode.single": {
+    "defaultMessage": "Tekli · bu Mac"
+  },
+  "mlxMode.singlePeer": {
+    "defaultMessage": "{host} üzerinde tekli motor"
+  },
+  "mlxMode.state.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "mlxMode.state.loading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "mlxMode.state.preflight": {
+    "defaultMessage": "Preflight"
+  },
+  "mlxMode.state.ready": {
+    "defaultMessage": "Hazır"
+  },
+  "mlxMode.state.serving": {
+    "defaultMessage": "Sunuyor"
+  },
+  "mlxMode.state.starting": {
+    "defaultMessage": "Başlıyor"
+  },
+  "mlxMode.state.stopped": {
+    "defaultMessage": "Durduruldu"
+  },
+  "mlxMode.state.stopping": {
+    "defaultMessage": "Durduruluyor"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },
@@ -2857,6 +3349,27 @@
   },
   "mlxStateTile.costBar": {
     "defaultMessage": "Boş belleğe göre model boyutu"
+  },
+  "mlxStateTile.dist.held": {
+    "defaultMessage": "Kabul kapalı: bir düğümün belleği az"
+  },
+  "mlxStateTile.dist.inflight": {
+    "defaultMessage": "{count, plural, one {işlenen istek} other {işlenen istek}}"
+  },
+  "mlxStateTile.dist.inflightUnknown": {
+    "defaultMessage": "işlenen: ölçülmedi"
+  },
+  "mlxStateTile.dist.noPeak": {
+    "defaultMessage": "henüz tepe yok"
+  },
+  "mlxStateTile.dist.peak": {
+    "defaultMessage": "{peak} / {budget} GiB tepe"
+  },
+  "mlxStateTile.dist.peakBar": {
+    "defaultMessage": "Bütçeye göre tepe bellek"
+  },
+  "mlxStateTile.dist.peakNoBudget": {
+    "defaultMessage": "{peak} GiB tepe"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "önbellek aramasında isabet"
@@ -3043,6 +3556,12 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Düşünme denetimleri kullanılamıyor: {reason}"
+  },
+  "mlxTray.distributedStopFailed": {
+    "defaultMessage": "Dağıtık motor durdurulamadı"
+  },
+  "mlxTray.distributedStopUnverified": {
+    "defaultMessage": "Dağıtık motorun durdurulması doğrulanmadı: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX motoru bağlanamadı"
