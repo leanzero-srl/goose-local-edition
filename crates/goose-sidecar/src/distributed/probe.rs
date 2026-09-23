@@ -192,21 +192,33 @@ pub fn parse_ps_row(text: &str) -> Result<Option<ProcSample>> {
     }))
 }
 
+/// What a foreign MLX process is. A SINGLE server (`mlx_lm.server`, `rapid-mlx serve`) is one
+/// model behind one HTTP port — an independent engine whose resident memory the node's measured
+/// `available` already excludes. A DISTRIBUTED process (`mlx.launch`, the fork's
+/// `pipeline_qwen4`, a goose rank) joins a group: it holds a coordinator port or an RDMA queue
+/// pair and would collide with this launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForeignKind {
+    SingleServer,
+    Distributed,
+}
+
 /// `ps -axo pid=,command=` rows that ARE a distributed or MLX serving process: a python
 /// interpreter (argv[0]) whose arguments name one. Only the interpreter counts — a shell, a
 /// `pgrep` or an ssh client whose command line merely MENTIONS `mlx.launch` (a watcher loop, the
 /// ssh session carrying a peer's rank) is not an engine (STEP1b trap: `pgrep -f` matched the
-/// harness's own shell). `own` pids are left out. These are what "only one engine owns a Mac at a
-/// time" refuses on.
+/// harness's own shell). `own` pids are left out.
 pub fn foreign_engine_processes(text: &str, own: &[u32]) -> Vec<(u32, String)> {
-    const MARKERS: [&str; 6] = [
-        "mlx.launch",
-        "mlx_lm.server",
-        "mlx_lm/server",
-        "pipeline_qwen4",
-        "rapid-mlx serve",
-        super::launch::RANK_MARKER,
-    ];
+    classify_foreign_engines(text, own)
+        .into_iter()
+        .map(|(pid, command, _)| (pid, command))
+        .collect()
+}
+
+/// [`foreign_engine_processes`] with each row's [`ForeignKind`].
+pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, ForeignKind)> {
+    const DISTRIBUTED: [&str; 3] = ["mlx.launch", "pipeline_qwen4", super::launch::RANK_MARKER];
+    const SINGLE: [&str; 3] = ["mlx_lm.server", "mlx_lm/server", "rapid-mlx serve"];
     text.lines()
         .filter_map(|line| {
             let line = line.trim();
@@ -218,8 +230,17 @@ pub fn foreign_engine_processes(text: &str, own: &[u32]) -> Vec<(u32, String)> {
                 .next()
                 .and_then(|argv0| argv0.rsplit('/').next())
                 .is_some_and(|name| name.to_ascii_lowercase().starts_with("python"));
-            (interpreter && !own.contains(&pid) && MARKERS.iter().any(|m| command.contains(m)))
-                .then(|| (pid, command.chars().take(160).collect()))
+            if !interpreter || own.contains(&pid) {
+                return None;
+            }
+            let kind = if DISTRIBUTED.iter().any(|m| command.contains(m)) {
+                ForeignKind::Distributed
+            } else if SINGLE.iter().any(|m| command.contains(m)) {
+                ForeignKind::SingleServer
+            } else {
+                return None;
+            };
+            Some((pid, command.chars().take(160).collect(), kind))
         })
         .collect()
 }
@@ -484,6 +505,18 @@ Pages occupied by compressor:                 649325.
         assert_eq!(pids, vec![101, 103]);
         let orphan = foreign_engine_processes(ps, &[]);
         assert!(orphan.iter().any(|(p, _)| *p == 104));
+        let kinds: Vec<(u32, ForeignKind)> = classify_foreign_engines(ps, &[])
+            .into_iter()
+            .map(|(p, _, k)| (p, k))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (101, ForeignKind::SingleServer),
+                (103, ForeignKind::SingleServer),
+                (104, ForeignKind::Distributed)
+            ]
+        );
     }
 
     #[test]

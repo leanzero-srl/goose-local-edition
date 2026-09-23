@@ -3095,7 +3095,8 @@ pub struct MlxDistributedNodeConfigDto {
     /// The macOS network service on that interface (e.g. "EXO Thunderbolt 3"); the ONLY service
     /// the link repair may toggle, and only after proving it sits on a Thunderbolt hardware port.
     pub tb_service: String,
-    /// The RDMA device JACCL uses (e.g. rdma_en3).
+    /// The RDMA device JACCL uses (e.g. rdma_en3); empty under ring, which needs none.
+    #[serde(default)]
     pub rdma_device: String,
     /// Absolute path of the interpreter carrying mlx + mlx_lm on this node.
     pub python: String,
@@ -3362,6 +3363,9 @@ pub struct MlxDistributedStatusDto {
     /// The running config, else the persisted one (`mlx_distributed` config key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<MlxDistributedConfigDto>,
+    /// The last (or running) provisioning of the nodes' goose-managed Python.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provision: Option<MlxDistributedProvisionDto>,
 }
 
 /// Read the distributed engine's status (this Mac's supervisor).
@@ -3477,6 +3481,219 @@ pub struct MlxEngineDistributedConfigUpdateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDistributedConfigResponse {
     pub config: MlxDistributedConfigDto,
+}
+
+/// One ssh alias from `~/.ssh/config` (a `Host` line without wildcards) and whether it answered a
+/// non-interactive ssh (`BatchMode=yes`) just now.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedPeerCandidateDto {
+    pub alias: String,
+    pub answered: bool,
+    /// The peer's `hostname -s` when it answered, else ssh's own error.
+    pub detail: String,
+}
+
+/// The peers this Mac could reach: every non-wildcard `Host` alias in `~/.ssh/config`, probed.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedPeerCandidates",
+    response = MlxEngineDistributedPeerCandidatesResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedPeerCandidatesRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedPeerCandidatesResponse {
+    pub candidates: Vec<MlxDistributedPeerCandidateDto>,
+    /// The file read (absent `~/.ssh/config` = no candidates, and this says so).
+    pub source: String,
+}
+
+/// Where one discovered value came from. `node` absent = a config-level field (`modelId`,
+/// `backend`, `port`, `coordinatorPort`); else the rank, and `field` is the node field's wire name
+/// (`name`, `tbIp`, `tbNetmask`, `tbInterface`, `tbService`, `rdmaDevice`, `python`,
+/// `pipelinePython`, `modelDir`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedEvidenceDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<u32>,
+    pub field: String,
+    pub value: String,
+    pub evidence: String,
+}
+
+/// A field discovery could NOT fill, and why. The config carries it empty — never a guess.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedGapDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<u32>,
+    pub field: String,
+    pub reason: String,
+}
+
+/// A node's goose-managed Python. `state`: "ready" (imports the pinned mlx + mlx_lm) | "absent"
+/// (not provisioned yet — Save provisions it) | "broken" (present, wrong or failing import) |
+/// "noUv" (absent and the node has no uv to build it).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedDiscoveredEnvDto {
+    pub python: String,
+    pub state: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedDiscoveredNodeDto {
+    pub rank: u32,
+    pub name: String,
+    /// The ssh alias; absent for this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub reachable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_bytes: Option<u64>,
+    /// "normal" | "warn" | "critical".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<String>,
+    /// `path · version` of the uv that provisions this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<MlxDistributedDiscoveredEnvDto>,
+    /// The Thunderbolt receptacle's negotiated speed ("80 Gb/s").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_speed: Option<String>,
+}
+
+/// One model's presence on one node. `state`: "match" (same loaded files, same sizes as rank 0's)
+/// | "differs" (a directory of that name whose files differ) | "absent".
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedDiscoveredModelNodeDto {
+    pub rank: u32,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    pub detail: String,
+}
+
+/// A splittable model on this Mac (a `model_type` a runner exists for) and where it is on every
+/// other node. `manifest`: "agree" (SHA256SUMS identical on every node) | "differ" | "absent" (no
+/// manifest on rank 0; files compared by name and size).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedDiscoveredModelDto {
+    pub id: String,
+    pub model_type: String,
+    /// "mlxLmTensor" | "pipelineQwen4".
+    pub runner: String,
+    /// What a rank loads on this Mac (config, tokenizer, index, model*.safetensors), in bytes.
+    pub weights_bytes: u64,
+    pub on_every_node: bool,
+    pub manifest: String,
+    pub nodes: Vec<MlxDistributedDiscoveredModelNodeDto>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedDiscoveryDto {
+    /// The config, filled from evidence. A field listed in `gaps` is empty here.
+    pub config: MlxDistributedConfigDto,
+    /// Why this backend: JACCL needs RDMA on both ends of a Thunderbolt link, else ring.
+    pub backend_reason: String,
+    pub evidence: Vec<MlxDistributedEvidenceDto>,
+    pub gaps: Vec<MlxDistributedGapDto>,
+    pub nodes: Vec<MlxDistributedDiscoveredNodeDto>,
+    pub models: Vec<MlxDistributedDiscoveredModelDto>,
+    /// Wall time of the probe (every node in parallel), ms.
+    pub probe_ms: u64,
+}
+
+/// Probe this Mac locally and each peer over ssh (one script each) and return a filled config:
+/// names, the Thunderbolt link (interface, IPv4, netmask, network service — the LeanZero Link path
+/// detector), RDMA devices and their IPv4-mapped GID, the backend with its reason, the models on
+/// every node, free ports, memory and each node's goose-managed Python. Read-only.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedDiscover",
+    response = MlxEngineDistributedDiscoverResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedDiscoverRequest {
+    /// ssh aliases of the peers, in rank order (rank 0 is this Mac).
+    pub peers: Vec<String>,
+    /// Prefer this model when it is on every node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedDiscoverResponse {
+    pub discovery: MlxDistributedDiscoveryDto,
+}
+
+/// One node's provisioning. `state`: "running" | "done" | "failed" | "skipped" (its Python is the
+/// operator's own, set under Advanced — goose never touches it). `step`: the last `GOOSE_PROV`
+/// step (check | uv | venv | install | done | fail).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedProvisionNodeDto {
+    pub rank: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub python: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    pub detail: String,
+    /// Every line the node's script printed, in order.
+    pub lines: Vec<String>,
+    pub started_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<u64>,
+}
+
+/// `state`: "running" | "done" (every node done or skipped) | "failed" (a node failed).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedProvisionDto {
+    pub state: String,
+    pub started_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<u64>,
+    pub nodes: Vec<MlxDistributedProvisionNodeDto>,
+}
+
+/// Build each node's goose-managed Python (uv venv, pinned mlx + mlx_lm; the fork too when a node
+/// carries a managed `pipelinePython`), idempotently, in the background. Progress rides
+/// `distributedStatus.provision`. `config` absent = the persisted one. Refused while a
+/// provisioning run is in flight.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedProvision",
+    response = MlxEngineDistributedProvisionResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedProvisionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<MlxDistributedConfigDto>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedProvisionResponse {
+    pub provision: MlxDistributedProvisionDto,
 }
 
 // ============================================================================

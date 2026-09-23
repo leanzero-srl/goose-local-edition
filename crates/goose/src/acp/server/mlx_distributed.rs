@@ -9,16 +9,25 @@
 
 use super::*;
 use crate::config::ConfigError;
+use goose_sidecar::distributed::provision::{self, EnvSpec};
 use goose_sidecar::distributed::{
     self, supervisor::Liveness, Backend, CheckVerdict, DistributedConfig, DistributedStatus,
     NodeConfig, PreflightReport, RankPlan, StartOutcome, StopReport,
 };
+use goose_sidecar::distributed::{NodeExec, SystemExec};
+use goose_sidecar::engine::expand_tilde;
 use goose_sidecar::GIB;
+use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
+
+use super::mlx_distributed_discover as discover;
 
 const MLX_DISTRIBUTED_CONFIG_KEY: &str = "mlx_distributed";
 
 static LAST_DISTRIBUTED_STATE: StdMutex<String> = StdMutex::new(String::new());
+
+/// The last (or running) provisioning of the nodes' goose-managed Python; read by `distributedStatus`.
+static PROVISION: StdMutex<Option<MlxDistributedProvisionDto>> = StdMutex::new(None);
 
 fn gib(bytes: u64) -> f64 {
     bytes as f64 / GIB as f64
@@ -223,6 +232,7 @@ fn status_to_dto(
         restarts: status.restarts,
         last_error: status.last_error,
         config: status.config.or(persisted).map(config_to_dto),
+        provision: None,
     }
 }
 
@@ -312,9 +322,101 @@ fn status_response() -> Result<MlxEngineDistributedStatusResponse, agent_client_
     } else {
         None
     };
-    Ok(MlxEngineDistributedStatusResponse {
-        status: status_to_dto(status, persisted),
+    let mut status = status_to_dto(status, persisted);
+    status.provision = PROVISION.lock().unwrap().clone();
+    Ok(MlxEngineDistributedStatusResponse { status })
+}
+
+/// The provisioning jobs a config asks for: every node's `python` (and `pipelinePython`) that is a
+/// goose-managed env. An operator's own interpreter is reported `skipped`, never touched.
+fn provision_jobs(
+    config: &DistributedConfig,
+) -> Vec<(MlxDistributedProvisionNodeDto, Option<EnvSpec>)> {
+    let started_ms = goose_sidecar::distributed::preflight::now_ms();
+    let mut jobs = Vec::new();
+    for (rank, node) in config.nodes.iter().enumerate() {
+        let pythons = std::iter::once(node.python.clone()).chain(node.pipeline_python.clone());
+        for python in pythons {
+            let spec = EnvSpec::managed_by(&python);
+            let row = MlxDistributedProvisionNodeDto {
+                rank: rank as u32,
+                name: node.name.clone(),
+                host: node.ssh.clone(),
+                python: python.clone(),
+                state: if spec.is_some() { "running" } else { "skipped" }.to_string(),
+                step: None,
+                detail: match &spec {
+                    Some(spec) => format!("{} — {}", spec.name, spec.packages.join(" ")),
+                    None => {
+                        "the operator's own interpreter (Advanced) — goose does not provision it"
+                            .to_string()
+                    }
+                },
+                lines: Vec::new(),
+                started_ms,
+                finished_ms: spec.is_none().then_some(started_ms),
+            };
+            jobs.push((row, spec));
+        }
+    }
+    jobs
+}
+
+fn update_provision(index: usize, f: impl FnOnce(&mut MlxDistributedProvisionNodeDto)) {
+    let mut guard = PROVISION.lock().unwrap();
+    let Some(run) = guard.as_mut() else { return };
+    if let Some(row) = run.nodes.get_mut(index) {
+        f(row);
+    }
+    if run.nodes.iter().all(|n| n.state != "running") {
+        run.state = if run.nodes.iter().any(|n| n.state == "failed") {
+            "failed"
+        } else {
+            "done"
+        }
+        .to_string();
+        run.finished_ms
+            .get_or_insert_with(goose_sidecar::distributed::preflight::now_ms);
+    }
+}
+
+async fn run_provision_job(index: usize, host: Option<String>, spec: EnvSpec) {
+    let script = provision::provision_script(&spec);
+    let result = provision::run_streaming(host.as_deref(), &script, |line| {
+        let progress = provision::parse_progress(line);
+        update_provision(index, |row| {
+            row.lines.push(line.to_string());
+            if let Some(p) = progress {
+                row.step = Some(p.step.clone());
+                row.detail = p.detail;
+            }
+        });
     })
+    .await;
+    update_provision(index, |row| {
+        let finished = goose_sidecar::distributed::preflight::now_ms();
+        row.finished_ms = Some(finished);
+        match (&result, row.step.as_deref()) {
+            (Ok(Some(0)), Some("done")) => row.state = "done".to_string(),
+            (Ok(code), _) => {
+                row.state = "failed".to_string();
+                if row.step.as_deref() != Some("fail") {
+                    row.detail = format!(
+                        "the provisioning script exited {code:?} without finishing{}",
+                        if code == &Some(255) {
+                            " (ssh failed)"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
+            (Err(e), _) => {
+                row.state = "failed".to_string();
+                row.detail = format!("{e:#}");
+            }
+        }
+    });
 }
 
 impl GooseAcpAgent {
@@ -406,6 +508,123 @@ impl GooseAcpAgent {
         Ok(MlxEngineDistributedStopResponse {
             stop: stop_to_dto(report),
             status: status_response()?.status,
+        })
+    }
+
+    pub(super) async fn on_mlx_engine_distributed_peer_candidates(
+        &self,
+        _req: MlxEngineDistributedPeerCandidatesRequest,
+    ) -> Result<MlxEngineDistributedPeerCandidatesResponse, agent_client_protocol::Error> {
+        let path = dirs::home_dir()
+            .ok_or_else(|| {
+                agent_client_protocol::Error::internal_error().data("no home directory")
+            })?
+            .join(".ssh/config");
+        let source = path.display().to_string();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(MlxEngineDistributedPeerCandidatesResponse {
+                    candidates: Vec::new(),
+                    source: format!("{source} (absent)"),
+                })
+            }
+            Err(e) => return Err(e).internal_err_ctx("reading ~/.ssh/config"),
+        };
+        let exec = SystemExec;
+        let candidates =
+            futures::future::join_all(discover::ssh_config_hosts(&text).into_iter().map(|alias| {
+                let exec = &exec;
+                async move {
+                    let answer = exec.run(Some(&alias), "/bin/hostname -s").await;
+                    let (answered, detail) = match answer {
+                        Ok(out) if out.success() => (true, out.stdout.trim().to_string()),
+                        Ok(out) => (false, out.stderr.trim().to_string()),
+                        Err(e) => (false, format!("{e:#}")),
+                    };
+                    MlxDistributedPeerCandidateDto {
+                        alias,
+                        answered,
+                        detail,
+                    }
+                }
+            }))
+            .await;
+        Ok(MlxEngineDistributedPeerCandidatesResponse { candidates, source })
+    }
+
+    pub(super) async fn on_mlx_engine_distributed_discover(
+        &self,
+        req: MlxEngineDistributedDiscoverRequest,
+    ) -> Result<MlxEngineDistributedDiscoverResponse, agent_client_protocol::Error> {
+        let mut peers: Vec<String> = Vec::new();
+        for peer in req.peers.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+            if !peers.iter().any(|p| p == peer) {
+                peers.push(peer.to_string());
+            }
+        }
+        if peers.is_empty() {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("name at least one peer (an ssh alias such as `workhorse`)"));
+        }
+        let settings = super::mlx_engine::load_engine_settings()?;
+        let goose_models_dir = expand_tilde(&settings.models_dir).display().to_string();
+        let persisted = persisted_config()?;
+        let mut roots: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
+        roots
+            .entry(None)
+            .or_default()
+            .push(goose_models_dir.clone());
+        for node in persisted.iter().flat_map(|c| c.nodes.iter()) {
+            let parent = std::path::Path::new(&node.model_dir)
+                .parent()
+                .map(|p| p.display().to_string());
+            if let Some(parent) = parent {
+                roots.entry(node.ssh.clone()).or_default().push(parent);
+            }
+        }
+        let context = discover::Context {
+            single_port: settings.port,
+            goose_models_dir,
+            preferred_model: req
+                .model_id
+                .or_else(|| persisted.as_ref().map(|c| c.model_id.clone())),
+        };
+        let discovery = discover::discover(Arc::new(SystemExec), &peers, &roots, &context).await;
+        Ok(MlxEngineDistributedDiscoverResponse { discovery })
+    }
+
+    pub(super) async fn on_mlx_engine_distributed_provision(
+        &self,
+        req: MlxEngineDistributedProvisionRequest,
+    ) -> Result<MlxEngineDistributedProvisionResponse, agent_client_protocol::Error> {
+        let config = resolve_config(req.config)?;
+        let jobs = provision_jobs(&config);
+        let snapshot = {
+            let mut guard = PROVISION.lock().unwrap();
+            if guard.as_ref().is_some_and(|p| p.state == "running") {
+                return Err(agent_client_protocol::Error::invalid_params().data(
+                    "provisioning is already running; its progress is on distributedStatus",
+                ));
+            }
+            let started_ms = goose_sidecar::distributed::preflight::now_ms();
+            let all_skipped = jobs.iter().all(|(_, spec)| spec.is_none());
+            let run = MlxDistributedProvisionDto {
+                state: if all_skipped { "done" } else { "running" }.to_string(),
+                started_ms,
+                finished_ms: all_skipped.then_some(started_ms),
+                nodes: jobs.iter().map(|(row, _)| row.clone()).collect(),
+            };
+            *guard = Some(run.clone());
+            run
+        };
+        for (index, (row, spec)) in jobs.into_iter().enumerate() {
+            if let Some(spec) = spec {
+                tokio::spawn(run_provision_job(index, row.host, spec));
+            }
+        }
+        Ok(MlxEngineDistributedProvisionResponse {
+            provision: snapshot,
         })
     }
 

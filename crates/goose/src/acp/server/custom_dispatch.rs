@@ -1084,6 +1084,30 @@ impl GooseAcpAgent {
         self.on_mlx_engine_distributed_stop(req).await
     }
 
+    #[custom_method(MlxEngineDistributedPeerCandidatesRequest)]
+    async fn dispatch_mlx_engine_distributed_peer_candidates(
+        &self,
+        req: MlxEngineDistributedPeerCandidatesRequest,
+    ) -> Result<MlxEngineDistributedPeerCandidatesResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_peer_candidates(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedDiscoverRequest)]
+    async fn dispatch_mlx_engine_distributed_discover(
+        &self,
+        req: MlxEngineDistributedDiscoverRequest,
+    ) -> Result<MlxEngineDistributedDiscoverResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_discover(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedProvisionRequest)]
+    async fn dispatch_mlx_engine_distributed_provision(
+        &self,
+        req: MlxEngineDistributedProvisionRequest,
+    ) -> Result<MlxEngineDistributedProvisionResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_provision(req).await
+    }
+
     #[custom_method(MlxEngineDistributedConfigUpdateRequest)]
     async fn dispatch_mlx_engine_distributed_config_update(
         &self,

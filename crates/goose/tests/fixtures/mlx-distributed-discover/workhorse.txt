@@ -1,0 +1,1116 @@
+
+@@home
+/Users/workhorse
+
+@@names
+Work’s Mac Studio
+WorksMacStudio
+
+@@sysctl
+103079215104
+1
+49152
+
+@@vm
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                  2222692.
+Pages active:                                1269080.
+Pages inactive:                              1924117.
+Pages speculative:                             22697.
+Pages throttled:                                   0.
+Pages wired down:                             222092.
+Pages purgeable:                                5288.
+"Translation faults":                      450761418.
+Pages copy-on-write:                        33734198.
+Pages zero filled:                         450159893.
+Pages reactivated:                            830634.
+Pages purged:                                 791850.
+File-backed pages:                           2395052.
+Anonymous pages:                              820842.
+Pages stored in compressor:                   812224.
+Pages occupied by compressor:                 573728.
+Decompressions:                              1472314.
+Compressions:                                2381162.
+Pageins:                                    32590716.
+Pageouts:                                       3476.
+Swapins:                                         280.
+Swapouts:                                        420.
+
+@@ifconfig
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	options=1203<RXCSUM,TXCSUM,TXSTATUS,SW_TIMESTAMP>
+	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128 
+	inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1 
+	nd6 options=201<PERFORMNUD,DAD>
+gif0: flags=8010<POINTOPOINT,MULTICAST> mtu 1280
+stf0: flags=0<> mtu 1280
+anpi3: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:87
+	media: none
+	status: inactive
+anpi4: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:88
+	media: none
+	status: inactive
+anpi5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:89
+	media: none
+	status: inactive
+anpi2: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:86
+	media: none
+	status: inactive
+anpi0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:84
+	media: none
+	status: inactive
+anpi1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:85
+	media: none
+	status: inactive
+en8: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:64
+	media: none
+	status: inactive
+en9: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:65
+	media: none
+	status: inactive
+en10: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:66
+	media: none
+	status: inactive
+en11: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:67
+	media: none
+	status: inactive
+en12: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:68
+	media: none
+	status: inactive
+en13: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 36:aa:57:99:38:69
+	media: none
+	status: inactive
+en2: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:00
+	media: autoselect <full-duplex>
+	status: inactive
+en3: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:04
+	inet6 fe80::cb2:6f95:519a:a7cd%en3 prefixlen 64 secured scopeid 0x11 
+	inet 192.168.0.2 netmask 0xfffffffc broadcast 192.168.0.3
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect <full-duplex>
+	status: active
+en4: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:08
+	media: autoselect <full-duplex>
+	status: inactive
+en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:0c
+	media: autoselect <full-duplex>
+	status: inactive
+en6: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:10
+	media: autoselect <full-duplex>
+	status: inactive
+en7: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	ether 36:4a:c8:77:50:14
+	media: autoselect <full-duplex>
+	status: inactive
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=567<RXCSUM,TXCSUM,VLAN_MTU,TSO4,TSO6,AV,CHANNEL_IO>
+	ether 1c:1d:d3:e1:1f:7d
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+	status: inactive
+ap1: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether de:9f:00:d7:f9:89
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	ether 1c:1d:d3:e0:73:55
+	inet6 fe80::42c:b169:b502:73da%en1 prefixlen 64 secured scopeid 0x17 
+	inet 192.168.10.161 netmask 0xffffff00 broadcast 192.168.10.255
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+awdl0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	ether 76:95:26:7d:57:bb
+	inet6 fe80::7495:26ff:fe7d:57bb%awdl0 prefixlen 64 scopeid 0x18 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+llw0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=400<CHANNEL_IO>
+	ether 76:95:26:7d:57:bb
+	inet6 fe80::7495:26ff:fe7d:57bb%llw0 prefixlen 64 scopeid 0x19 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+	inet6 fe80::1e1d:d3ff:fee1:1f7d%utun0 prefixlen 64 scopeid 0x1b 
+	inet 100.122.51.13 --> 100.122.51.13 netmask 0xffffffff
+	inet6 fd7a:115c:a1e0::a633:330e --> fd7a:115c:a1e0::a633:330e prefixlen 128 
+	nd6 options=201<PERFORMNUD,DAD>
+utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500
+	inet6 fe80::5c0d:ab7e:e504:3664%utun1 prefixlen 64 scopeid 0x1c 
+	nd6 options=201<PERFORMNUD,DAD>
+utun2: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::3a6:a2c4:2d30:b402%utun2 prefixlen 64 scopeid 0x1d 
+	nd6 options=201<PERFORMNUD,DAD>
+utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 2000
+	inet6 fe80::839:c6f9:f584:930e%utun3 prefixlen 64 scopeid 0x1e 
+	nd6 options=201<PERFORMNUD,DAD>
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000
+	inet6 fe80::ce81:b1c:bd2c:69e%utun4 prefixlen 64 scopeid 0x1f 
+	nd6 options=201<PERFORMNUD,DAD>
+utun5: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::bfb6:ec10:70a8:9d2a%utun5 prefixlen 64 scopeid 0x20 
+	nd6 options=201<PERFORMNUD,DAD>
+utun6: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::e82f:4da9:d117:f2ff%utun6 prefixlen 64 scopeid 0x21 
+	nd6 options=201<PERFORMNUD,DAD>
+utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::388d:a5d5:d543:bdda%utun7 prefixlen 64 scopeid 0x22 
+	nd6 options=201<PERFORMNUD,DAD>
+utun8: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::a26c:e425:78e9:d914%utun8 prefixlen 64 scopeid 0x23 
+	nd6 options=201<PERFORMNUD,DAD>
+en15: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=404<VLAN_MTU,CHANNEL_IO>
+	ether fa:cb:4d:37:88:d0
+	inet6 fe80::f8cb:4dff:fe37:88d0%en15 prefixlen 64 scopeid 0x24 
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+en14: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	options=404<VLAN_MTU,CHANNEL_IO>
+	ether fa:cb:4d:37:88:f0
+	inet6 fe80::1423:66b9:cc43:9dae%en14 prefixlen 64 secured scopeid 0x25 
+	inet 169.254.250.146 netmask 0xffff0000 broadcast 169.254.255.255
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+
+@@hwports
+
+Hardware Port: Ethernet
+Device: en0
+Ethernet Address: 1c:1d:d3:e1:1f:7d
+
+Hardware Port: Ethernet Adapter (en8)
+Device: en8
+Ethernet Address: 36:aa:57:99:38:64
+
+Hardware Port: Ethernet Adapter (en9)
+Device: en9
+Ethernet Address: 36:aa:57:99:38:65
+
+Hardware Port: Ethernet Adapter (en10)
+Device: en10
+Ethernet Address: 36:aa:57:99:38:66
+
+Hardware Port: Ethernet Adapter (en11)
+Device: en11
+Ethernet Address: 36:aa:57:99:38:67
+
+Hardware Port: Ethernet Adapter (en12)
+Device: en12
+Ethernet Address: 36:aa:57:99:38:68
+
+Hardware Port: Ethernet Adapter (en13)
+Device: en13
+Ethernet Address: 36:aa:57:99:38:69
+
+Hardware Port: Wi-Fi
+Device: en1
+Ethernet Address: 1c:1d:d3:e0:73:55
+
+Hardware Port: Thunderbolt 1
+Device: en2
+Ethernet Address: 36:4a:c8:77:50:00
+
+Hardware Port: Thunderbolt 2
+Device: en3
+Ethernet Address: 36:4a:c8:77:50:04
+
+Hardware Port: Thunderbolt 3
+Device: en4
+Ethernet Address: 36:4a:c8:77:50:08
+
+Hardware Port: Thunderbolt 4
+Device: en5
+Ethernet Address: 36:4a:c8:77:50:0c
+
+Hardware Port: Thunderbolt 5
+Device: en6
+Ethernet Address: 36:4a:c8:77:50:10
+
+Hardware Port: Thunderbolt 6
+Device: en7
+Ethernet Address: 36:4a:c8:77:50:14
+
+VLAN Configurations
+===================
+
+@@services
+An asterisk (*) denotes that a network service is disabled.
+(1) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en1)
+
+(2) Ethernet
+(Hardware Port: Ethernet, Device: en0)
+
+(*) EXO Thunderbolt 1
+(Hardware Port: Thunderbolt 1, Device: en2)
+
+(3) EXO Thunderbolt 2
+(Hardware Port: Thunderbolt 2, Device: en3)
+
+(*) EXO Thunderbolt 3
+(Hardware Port: Thunderbolt 3, Device: en4)
+
+(*) EXO Thunderbolt 4
+(Hardware Port: Thunderbolt 4, Device: en5)
+
+(*) EXO Thunderbolt 5
+(Hardware Port: Thunderbolt 5, Device: en6)
+
+(*) EXO Thunderbolt 6
+(Hardware Port: Thunderbolt 6, Device: en7)
+
+
+@@tb
+{
+  "SPThunderboltDataType" : [
+    {
+      "_name" : "thunderboltusb4_bus_5",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "26C01E26-CD21-4788-89B6-99177229D2A0",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "6",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD405",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_4",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "2E19BBB1-16EF-4197-AA89-8B6D3EA979F2",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "5",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD404",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_3",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "D723A7DD-7600-454A-A470-AEFCAC1802F0",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "4",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD403",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_2",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "9EF55FDC-7A67-49CD-94C9-AE1FB814A2ED",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "3",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD402",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_items" : [
+        {
+          "_name" : "MacBook Pro",
+          "device_id_key" : "0xA",
+          "device_name_key" : "Mac16,5",
+          "domain_uuid_key" : "E44FA7FC-0682-46B5-892A-6A09C908C171",
+          "services_title" : [
+            {
+              "_name" : "service_ip",
+              "protocol_id_key" : 1,
+              "protocol_revision_key" : 1,
+              "protocol_version_key" : 1,
+              "service_uuid_key" : "6D7C6893-6452-47CC-9A6F-92432938A535"
+            },
+            {
+              "_name" : "unknown_xd_service",
+              "protocol_id_key" : 64087,
+              "protocol_revision_key" : 0,
+              "protocol_version_key" : 1,
+              "service_key_key" : "ˇˇˇˇˇˇAD",
+              "service_uuid_key" : "D5356181-045F-40AA-BC3C-7DC7FCB8BFF9"
+            }
+          ],
+          "vendor_id_key" : "0x0A27",
+          "vendor_name_key" : "Apple Inc."
+        }
+      ],
+      "_name" : "thunderboltusb4_bus_1",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "CDF1106C-8FEF-4945-AED5-88A371543554",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "80 Gb/s",
+        "link_status_key" : "0x2",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "2",
+        "receptacle_status_key" : "receptacle_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD401",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_0",
+      "device_name_key" : "Mac Studio",
+      "domain_uuid_key" : "9F6E508D-FD7B-4E15-A80C-8E11A2DE7B50",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "1",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "0x05ACB321DEDDD400",
+      "vendor_name_key" : "Apple Inc."
+    }
+  ]
+}
+@@ibv
+hca_id:	rdma_en3
+	transport:			Thunderbolt (100)
+	node_guid:			01d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_ACTIVE (4)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		2
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:5004
+			GID[  1]:		::ffff:192.168.0.2
+			GID[  2]:		fe80::cb2:6f95:519a:a7cd
+
+hca_id:	rdma_en2
+	transport:			Thunderbolt (100)
+	node_guid:			00d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		1
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:5000
+
+hca_id:	rdma_en4
+	transport:			Thunderbolt (100)
+	node_guid:			02d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		3
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:5008
+
+hca_id:	rdma_en5
+	transport:			Thunderbolt (100)
+	node_guid:			03d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		4
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:500c
+
+hca_id:	rdma_en6
+	transport:			Thunderbolt (100)
+	node_guid:			04d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		5
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:5010
+
+hca_id:	rdma_en7
+	transport:			Thunderbolt (100)
+	node_guid:			05d4:ddde:21b3:ac05
+	sys_image_guid:			0000:0000:0000:0000
+	vendor_id:			0x0000
+	vendor_part_id:			0
+	hw_ver:				0x0
+	phys_port_cnt:			1
+	max_mr_size:			0xfa0000
+	page_size_cap:			0x4000
+	max_qp:				11
+	max_qp_wr:			4095
+	device_cap_flags:		0x00000000
+	max_sge:			1
+	max_sge_rd:			0
+	max_cq:				11
+	max_cqe:			4096
+	max_mr:				100
+	max_pd:				11
+	max_qp_rd_atom:			0
+	max_ee_rd_atom:			0
+	max_res_rd_atom:		0
+	max_qp_init_rd_atom:		0
+	max_ee_init_rd_atom:		0
+	atomic_cap:			ATOMIC_NONE (0)
+	max_ee:				0
+	max_rdd:			0
+	max_mw:				0
+	max_raw_ipv6_qp:		0
+	max_raw_ethy_qp:		0
+	max_mcast_grp:			0
+	max_mcast_qp_attach:		0
+	max_total_mcast_qp_attach:	0
+	max_ah:				32768
+	max_fmr:			0
+	max_srq:			0
+	max_pkeys:			1
+	local_ca_ack_delay:		0
+	general_odp_caps:
+	rc_odp_caps:
+					NO SUPPORT
+	uc_odp_caps:
+					NO SUPPORT
+	ud_odp_caps:
+					NO SUPPORT
+	xrc_odp_caps:
+					NO SUPPORT
+	completion_timestamp_mask not supported
+	core clock not supported
+	device_cap_flags_ex:		0x0
+	tso_caps:
+		max_tso:			0
+	rss_caps:
+		max_rwq_indirection_tables:			0
+		max_rwq_indirection_table_size:			0
+		rx_hash_function:				0x0
+		rx_hash_fields_mask:				0x0
+	max_wq_type_rq:			0
+	packet_pacing_caps:
+		qp_rate_limit_min:	0kbps
+		qp_rate_limit_max:	0kbps
+	tag matching not supported
+	num_comp_vectors:		1
+		port:	1
+			state:			PORT_DOWN (1)
+			max_mtu:		4096 (5)
+			active_mtu:		4096 (5)
+			sm_lid:			0
+			port_lid:		6
+			port_lmc:		0x00
+			link_layer:		Thunderbolt
+			max_msg_sz:		0x1000000
+			port_cap_flags:		0x04000000
+			port_cap_flags2:	0x0000
+			max_vl_num:		invalid value (0)
+			bad_pkey_cntr:		0x0
+			qkey_viol_cntr:		0x0
+			sm_sl:			0
+			pkey_tbl_len:		1
+			gid_tbl_len:		1024
+			subnet_timeout:		0
+			init_type_reply:	0
+			active_width:		8X (4)
+			active_speed:		10.0 Gbps (4)
+			GID[  0]:		fe80::344a:c8ff:fe77:5014
+
+
+@@listen
+COMMAND     PID      USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+rapportd   1568 workhorse   10u  IPv4 0xc8beaa68fd80aabb      0t0  TCP *:49242 (LISTEN)
+rapportd   1568 workhorse   11u  IPv6  0x2e0fba1b9a1051f      0t0  TCP *:49242 (LISTEN)
+ControlCe  1702 workhorse    9u  IPv4 0x99025863deb33858      0t0  TCP *:7000 (LISTEN)
+ControlCe  1702 workhorse   10u  IPv6 0x72429b929431a4d7      0t0  TCP *:7000 (LISTEN)
+ControlCe  1702 workhorse   11u  IPv4 0x537d5440d7f9de31      0t0  TCP *:5000 (LISTEN)
+ControlCe  1702 workhorse   12u  IPv6 0xeec7532943624cb2      0t0  TCP *:5000 (LISTEN)
+stable     1815 workhorse   39u  IPv4 0x554a9eb72e25bc3e      0t0  TCP 127.0.0.1:9277 (LISTEN)
+LM\x20Stu  2114 workhorse   76u  IPv4 0xa1e0a470496d7466      0t0  TCP 127.0.0.1:41343 (LISTEN)
+LM\x20Stu  2114 workhorse   78u  IPv4 0x8f8480a11ed47d67      0t0  TCP *:1234 (LISTEN)
+lmlink-co  2282 workhorse   16u  IPv4 0x9a0d0c6b1f9fefdf      0t0  TCP *:37820 (LISTEN)
+postgres   9457 workhorse    7u  IPv6 0xa64b7cce88b57386      0t0  TCP [::1]:5432 (LISTEN)
+postgres   9457 workhorse    8u  IPv4 0x1c8b02d874e46e81      0t0  TCP 127.0.0.1:5432 (LISTEN)
+java      10393 workhorse  182u  IPv6 0xbf84136832798977      0t0  TCP *:8080 (LISTEN)
+java      10393 workhorse  333u  IPv6 0x1e809b5f8e5a6ef9      0t0  TCP 127.0.0.1:8005 (LISTEN)
+Python    22868 workhorse    4u  IPv4 0xf9790ba2770f9cdb      0t0  TCP 127.0.0.1:8000 (LISTEN)
+goose     23008 workhorse   10u  IPv4 0x937c2af0335c6d2d      0t0  TCP 127.0.0.1:58841 (LISTEN)
+goose     23008 workhorse   11u  IPv4 0xdfa337e21884446c      0t0  TCP 127.0.0.1:3399 (LISTEN)
+node      42116 workhorse   13u  IPv4 0x53922cf90e1f08ce      0t0  TCP 127.0.0.1:10000 (LISTEN)
+node      42147 workhorse   14u  IPv4 0x126ecdc1905ceacd      0t0  TCP 127.0.0.1:8791 (LISTEN)
+headscale 42160 workhorse   15u  IPv4 0xadef0cce7998d21a      0t0  TCP 127.0.0.1:8790 (LISTEN)
+headscale 42160 workhorse   16u  IPv4 0x22f754f07cdf8705      0t0  TCP 127.0.0.1:9790 (LISTEN)
+node      42171 workhorse   14u  IPv4 0xfbcb9cfbf212433d      0t0  TCP 127.0.0.1:8443 (LISTEN)
+node      62105 workhorse   12u  IPv4 0x99d28c994bdf0da9      0t0  TCP 127.0.0.1:8793 (LISTEN)
+
+@@uv
+/opt/homebrew/bin/uv|uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin)
+/opt/homebrew/bin/uv|uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin)
+
+@@env
+absent /Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python
+
+@@envpipeline
+absent /Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python
+
+@@models
+R /Users/workhorse/.goose/models
+M /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit
+T qwen3_5
+F 1954 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/README.md
+F 7756 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/chat_template.jinja
+F 3331 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/config.json
+F 5349771222 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/model-00001-of-00002.safetensors
+F 600449850 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/model-00002-of-00002.safetensors
+F 123592 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/model.safetensors.index.json
+F 390 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/preprocessor_config.json
+F 1300 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/processor_config.json
+F 19989343 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/tokenizer.json
+F 1139 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/tokenizer_config.json
+F 385 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/video_preprocessor_config.json
+F 6722759 /Users/workhorse/.goose/models/mlx-community/Qwen3.5-9B-MLX-4bit/vocab.json
+M /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit
+T llama
+F 638 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/README.md
+F 803 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/config.json
+F 466391 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/merges.txt
+F 75789919 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/model.safetensors
+F 48978 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/model.safetensors.index.json
+F 655 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/special_tokens_map.json
+F 2104556 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/tokenizer.json
+F 3590 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/tokenizer_config.json
+F 800662 /Users/workhorse/.goose/models/mlx-community/SmolLM-135M-Instruct-4bit/vocab.json
+M /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit
+T qwen4_exp
+F 3235 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/LICENSE
+F 13638 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/README.md
+F 3279 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/SHA256SUMS.txt
+F 324507 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/config.json
+F 202 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/generation_config.json
+F 4153497896 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00001-of-00028.safetensors
+F 4250028749 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00002-of-00028.safetensors
+F 4250028741 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00003-of-00028.safetensors
+F 4250028696 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00004-of-00028.safetensors
+F 4250028703 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00005-of-00028.safetensors
+F 4250028696 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00006-of-00028.safetensors
+F 4250028697 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00007-of-00028.safetensors
+F 4250028684 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00008-of-00028.safetensors
+F 3689157429 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00009-of-00028.safetensors
+F 3936684321 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00010-of-00028.safetensors
+F 3387872856 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00011-of-00028.safetensors
+F 3875078473 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00012-of-00028.safetensors
+F 3420536270 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00013-of-00028.safetensors
+F 3875078453 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00014-of-00028.safetensors
+F 3420536336 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00015-of-00028.safetensors
+F 3904020819 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00016-of-00028.safetensors
+F 3358930505 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00017-of-00028.safetensors
+F 3932963168 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00018-of-00028.safetensors
+F 3391593944 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00019-of-00028.safetensors
+F 3904020849 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00020-of-00028.safetensors
+F 3358930520 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00021-of-00028.safetensors
+F 3936684201 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00022-of-00028.safetensors
+F 3358930458 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00023-of-00028.safetensors
+F 3936684357 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00024-of-00028.safetensors
+F 3387872738 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00025-of-00028.safetensors
+F 3904020632 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00026-of-00028.safetensors
+F 3818161404 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00027-of-00028.safetensors
+F 980579778 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model-00028-of-00028.safetensors
+F 411134 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/model.safetensors.index.json
+F 12809320 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/tokenizer.json
+F 17928 /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/tokenizer_config.json
+S 826f00b27d6b534b6c02f35954b8f2c339a16817d54442db2adbfa9ec5c4b144  /Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit/SHA256SUMS.txt
+R /Users/workhorse/jaccl-smoke/models
+M /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx
+T qwen3_5
+F 24894 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/README.md
+F 8952 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/chat_template.jinja
+F 4075 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/config.json
+F 202 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/generation_config.json
+F 3353259 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/merges.txt
+F 5309034401 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00001-of-00006.safetensors
+F 5354102618 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00002-of-00006.safetensors
+F 5340689742 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00003-of-00006.safetensors
+F 5347222141 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00004-of-00006.safetensors
+F 5296430945 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00005-of-00006.safetensors
+F 5237610310 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model-00006-of-00006.safetensors
+F 204877 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/model.safetensors.index.json
+F 849400447 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/mtp.safetensors
+F 415 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/mtplx_runtime.json
+F 390 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/preprocessor_config.json
+F 12809320 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer.json
+F 17928 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer_config.json
+F 385 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/video_preprocessor_config.json
+F 6722759 /Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx/vocab.json
+R /Users/workhorse/.lmstudio/models
+M /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx
+T qwen3_5
+F 6727 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/README.md
+F 7756 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/chat_template.jinja
+F 3099 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/config.json
+F 12791 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/merge_report.json
+F 3353259 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/merges.txt
+F 5348000712 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/model-00001-of-00003.safetensors
+F 5336237200 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/model-00002-of-00003.safetensors
+F 1649449757 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/model-00003-of-00003.safetensors
+F 115709 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/model.safetensors.index.json
+F 486582869 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/mtp.safetensors
+F 415 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/mtplx_runtime.json
+F 390 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/preprocessor_config.json
+F 12807982 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/tokenizer.json
+F 16710 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/tokenizer_config.json
+F 385 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/video_preprocessor_config.json
+F 6722759 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.5-9B-Atlassian-Q8-mlx/vocab.json
+M /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx
+T qwen3_5
+F 17207 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/README.md
+F 8952 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/chat_template.jinja
+F 4075 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/config.json
+F 202 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/generation_config.json
+F 28125 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/merge_report.json
+F 3353259 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/merges.txt
+F 5309034401 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00001-of-00006.safetensors
+F 5354102618 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00002-of-00006.safetensors
+F 5340689742 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00003-of-00006.safetensors
+F 5347222141 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00004-of-00006.safetensors
+F 5296430945 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00005-of-00006.safetensors
+F 5237610310 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model-00006-of-00006.safetensors
+F 204877 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/model.safetensors.index.json
+F 849400447 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/mtp.safetensors
+F 415 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/mtplx_runtime.json
+F 390 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/preprocessor_config.json
+F 12809320 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer.json
+F 17928 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/tokenizer_config.json
+F 385 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/video_preprocessor_config.json
+F 6722759 /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx/vocab.json
+M /Users/workhorse/.cache/huggingface/hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+T qwen3_5
+F 4312 /Users/workhorse/.cache/huggingface/hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/config.json
+M /Users/workhorse/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/4f097d4be4584c505fd6ca4fde11583646410e0a
+T qwen3_5
+F 3957 /Users/workhorse/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/4f097d4be4584c505fd6ca4fde11583646410e0a/config.json
+F 1167 /Users/workhorse/.cache/huggingface/hub/models--Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality/snapshots/4f097d4be4584c505fd6ca4fde11583646410e0a/mtplx_runtime.json
+
+@@end
