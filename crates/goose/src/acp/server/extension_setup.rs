@@ -36,6 +36,7 @@ impl GooseAcpAgent {
                 settings,
                 tools: vec![],
                 saved_file: None,
+                probe_output: None,
             });
         }
         let key = config.key();
@@ -45,6 +46,27 @@ impl GooseAcpAgent {
         let result = async {
             let tools = manager.get_prefixed_tools("mcp-setup", Some(key.clone())).await.internal_err()?;
             let mut saved_file = None;
+            let mut probe_output = None;
+            if let Some(query) = req.search_query {
+                if query.trim().is_empty() {
+                    return Err(agent_client_protocol::Error::invalid_params().data("Enter a search query."));
+                }
+                let tool_name = format!("{key}__get-web-search-summaries");
+                if !tools.iter().any(|tool| tool.name == tool_name) {
+                    return Err(agent_client_protocol::Error::invalid_params().data("This server does not provide web search."));
+                }
+                let ctx = crate::agents::ToolCallContext::new("mcp-setup".into(), None, None);
+                let call = CallToolRequestParams::new(tool_name).with_arguments(serde_json::json!({"query": query}).as_object().expect("object literal").clone());
+                let response = manager.dispatch_tool_call(&ctx, call, CancellationToken::new()).await.internal_err()?.result.await.internal_err()?;
+                if response.is_error == Some(true) {
+                    return Err(agent_client_protocol::Error::internal_error().data("The search tool failed. Check your Serper key and account allowance."));
+                }
+                let text = response.content.iter().filter_map(|content| content.as_text().map(|text| text.text.as_str())).collect::<Vec<_>>().join("\n\n");
+                if text.trim().is_empty() {
+                    return Err(agent_client_protocol::Error::internal_error().data("The search returned no output. This does not verify your search key."));
+                }
+                probe_output = Some(text);
+            }
             if let Some(source) = req.source_url {
                 let url = url::Url::parse(&source).map_err(|_| agent_client_protocol::Error::invalid_params().data("Enter a valid source URL."))?;
                 if !matches!(url.scheme(), "https" | "http") || !url.username().is_empty() || url.password().is_some() {
@@ -85,7 +107,7 @@ impl GooseAcpAgent {
                 "description": tool.description,
                 "inputSchema": tool.input_schema,
             })).collect();
-            Ok(InspectConfigExtensionResponse { settings, tools, saved_file })
+            Ok(InspectConfigExtensionResponse { settings, tools, saved_file, probe_output })
         }.await;
         manager.remove_extension(&key).await.internal_err()?;
         result

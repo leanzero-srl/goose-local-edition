@@ -1462,6 +1462,13 @@
             "null"
           ],
           "default": null
+        },
+        "searchQuery": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1485,6 +1492,12 @@
           "items": {}
         },
         "savedFile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "probeOutput": {
           "type": [
             "string",
             "null"

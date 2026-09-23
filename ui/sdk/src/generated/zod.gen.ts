@@ -662,6 +662,10 @@ export const zInspectConfigExtensionRequest_unstable = z.object({
     sourceUrl: z.union([
         z.string(),
         z.null()
+    ]).optional().default(null),
+    searchQuery: z.union([
+        z.string(),
+        z.null()
     ]).optional().default(null)
 });
 
@@ -669,6 +673,10 @@ export const zInspectConfigExtensionResponse_unstable = z.object({
     settings: z.record(z.string()),
     tools: z.array(z.unknown()),
     savedFile: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    probeOutput: z.union([
         z.string(),
         z.null()
     ]).optional()

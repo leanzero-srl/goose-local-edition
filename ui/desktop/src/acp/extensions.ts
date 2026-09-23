@@ -181,11 +181,17 @@ export async function setConfigExtensionEnabled(
 export async function inspectConfigExtension(
   name: string,
   sourceUrl?: string,
-  settingsOnly = false
+  settingsOnly = false,
+  searchQuery?: string
 ) {
   try {
     const client = await getAcpClient();
-    return await client.goose.configExtensionsInspect_unstable({ name, sourceUrl, settingsOnly });
+    return await client.goose.configExtensionsInspect_unstable({
+      name,
+      sourceUrl,
+      settingsOnly,
+      searchQuery,
+    });
   } catch (error) {
     throw normalizeAcpError(error, 'Could not inspect the MCP server.');
   }

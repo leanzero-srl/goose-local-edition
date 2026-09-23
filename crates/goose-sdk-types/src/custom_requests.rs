@@ -3197,6 +3197,8 @@ pub struct InspectConfigExtensionRequest {
     pub settings_only: bool,
     #[serde(default)]
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub search_query: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -3205,4 +3207,5 @@ pub struct InspectConfigExtensionResponse {
     pub settings: BTreeMap<String, String>,
     pub tools: Vec<serde_json::Value>,
     pub saved_file: Option<String>,
+    pub probe_output: Option<String>,
 }

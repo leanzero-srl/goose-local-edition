@@ -771,6 +771,7 @@ export type InspectConfigExtensionRequest_unstable = {
     name: string;
     settingsOnly?: boolean;
     sourceUrl?: string | null;
+    searchQuery?: string | null;
 };
 
 export type InspectConfigExtensionResponse_unstable = {
@@ -779,6 +780,7 @@ export type InspectConfigExtensionResponse_unstable = {
     };
     tools: Array<unknown>;
     savedFile?: string | null;
+    probeOutput?: string | null;
 };
 
 /**
